@@ -4,6 +4,7 @@ import (
 	"aiden-agent/internal/logging"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,10 @@ import (
 
 const appSearchOpenLaunchDelay = 1200 * time.Millisecond
 const appSearchResultSettleDelay = 350 * time.Millisecond
+
+// Restoring the pointer profile re-enumerates USB HID. iOS drops the hardware
+// keyboard for a moment and can show the software keyboard, shifting results.
+const appSearchPointerRestoreSettleDelay = 800 * time.Millisecond
 
 func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	if delay <= 0 {
@@ -114,8 +119,10 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 		sleep:            t.sleep,
 	})
 	if err != nil {
+		logging.Infof("agent", "app_search", "open finished target=%q ok=false error=%q steps=%q", args.App, err.Error(), result.Steps)
 		return jsonString(map[string]any{"ok": false, "error": err.Error(), "target": args.App, "steps": result.Steps, "vlm_calls": result.VLMCalls}), nil
 	}
+	logging.Infof("agent", "app_search", "open finished target=%q ok=%t reason=%q steps=%q", args.App, result.Opened, result.Reason, result.Steps)
 	output := map[string]any{
 		"ok":        result.Opened,
 		"target":    args.App,
@@ -199,14 +206,34 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 	}
 	steps = append(steps, "opened system search")
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+	isolation := iosKeyboardIsolationControllerFromContext(ctx)
 	searchTerms := appSearchFallbackTerms(searchTerm)
 	for index, term := range searchTerms {
 		if err := enterSearchQuery(ctx, cfg, term, index > 0); err != nil {
-			result.Steps = append(steps, "search query entry failed")
-			return result, err
+			var unverified *searchQueryUnverifiedError
+			if !errors.As(err, &unverified) {
+				result.Steps = append(steps, "search query entry failed")
+				return result, err
+			}
+			// System search lists the app while the query is still uncommitted
+			// IME text, so the result lookup and open confirmation decide.
+			logging.Infof("agent", "app_search", "search query unverified term=%q; checking results", term)
+			steps = append(steps, "search input unverified; checking results")
 		}
 		steps = append(steps, fmt.Sprintf("searched %q", term))
-		if err := sleep(ctx, appSearchResultSettleDelay); err != nil {
+		// Switch profiles before the result screenshot: a tap point captured
+		// under the keyboard-only profile can be stale after re-enumeration.
+		restored, err := isolation.restoreForPointer(ctx)
+		if err != nil {
+			result.Steps = append(steps, "restore pointer profile failed")
+			return result, err
+		}
+		settleDelay := appSearchResultSettleDelay
+		if restored {
+			logging.Infof("agent", "app_search", "pointer profile restored before result lookup term=%q", term)
+			settleDelay = appSearchPointerRestoreSettleDelay
+		}
+		if err := sleep(ctx, settleDelay); err != nil {
 			result.Steps = append(steps, "wait for search results canceled")
 			return result, err
 		}
@@ -317,7 +344,7 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 		"text":  term,
 		"focus": map[string]any{"x": 500, "y": 120},
 	}
-	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), true)
+	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
 	if err != nil {
 		return err
 	}
@@ -326,9 +353,19 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 		return fmt.Errorf("parse search entry result: %w", err)
 	}
 	if !result.OK {
-		return fmt.Errorf("enter search query: %s", strings.TrimSpace(result.Suggestion))
+		return &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
 	return nil
+}
+
+// searchQueryUnverifiedError means local entry ran but its result was not
+// confirmed; the query may still be on screen as pending IME composition.
+type searchQueryUnverifiedError struct {
+	suggestion string
+}
+
+func (e *searchQueryUnverifiedError) Error() string {
+	return "enter search query: " + e.suggestion
 }
 
 // PiP can write the clipboard without leaving the focused system search UI.
@@ -401,7 +438,7 @@ func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, e
 		return bridgeSearchResult{}, 0, fmt.Errorf("app search vision is not configured")
 	}
 	prompt := buildAppSearchResultPrompt(searchTerm)
-	raw, err := modelVision.visionJSON(ctx, "app_search", prompt, shot)
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_search", prompt, []string{"found"}, shot)
 	if err != nil {
 		return bridgeSearchResult{}, 1, err
 	}
@@ -459,7 +496,7 @@ Rules:
 - opened=true only when the screenshot clearly shows the target app screen or a loading transition into that app.
 - opened=false if the screenshot still looks like the system search page, launcher, keyboard search results, or any unrelated app.
 - Keep reason short and concrete.`, searchTerm))
-	raw, err := modelVision.visionJSON(ctx, "app_open_confirmation", prompt, shot)
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", prompt, []string{"opened"}, shot)
 	if err != nil {
 		return bridgeAppOpenResult{}, 1, err
 	}

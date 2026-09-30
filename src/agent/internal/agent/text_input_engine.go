@@ -71,6 +71,7 @@ type textInputArgs struct {
 	Focus            focusPointArgs `json:"focus"`
 	CurrentIMEPart   string         `json:"-"`
 	VerifyTextSuffix bool           `json:"-"`
+	ReplaceField     bool           `json:"-"`
 }
 
 type textInputResult struct {
@@ -157,7 +158,7 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 		segments, planErr := e.planCompositionSegmentsForChunks(planCtx, chunks)
 		planResultCh <- compositionPlanResult{chunks: chunks, segments: segments, err: planErr}
 	}()
-	currentMode, _, err := e.probeTextInputMode(ctx, platform, args.Focus)
+	currentMode, _, err := e.probeTextInputMode(ctx, platform, args.Focus, args.ReplaceField)
 	if err != nil {
 		cancelPlanning()
 		return textInputFailure(err), nil
@@ -339,13 +340,18 @@ func (e *textInputEngine) planCompositionSegmentsForChunks(ctx context.Context, 
 	return segments, nil
 }
 
-func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus focusPointArgs) (mode textInputMode, vlmCalls int, err error) {
+func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus focusPointArgs, replaceField bool) (mode textInputMode, vlmCalls int, err error) {
 	undoKeys, err := textInputKeyboardKeysForUndo(platform)
+	if err != nil {
+		return textInputModeUnknown, vlmCalls, err
+	}
+	selectAllKeys, err := textInputKeyboardKeysForSelectAll(platform)
 	if err != nil {
 		return textInputModeUnknown, vlmCalls, err
 	}
 	var probeBeforeScreenshot screenshotResult
 	cleanupVision, cleanupSupported := e.vision.(textInputProbeCleanupVision)
+	cleanupSupported = cleanupSupported && !replaceField
 	if cleanupSupported {
 		probeBeforeScreenshot, err = e.captureScreenshot(ctx)
 		if err != nil {
@@ -357,6 +363,22 @@ func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform strin
 		return textInputModeUnknown, vlmCalls, fmt.Errorf("input mode probe: type a: %w", err)
 	}
 	defer func() {
+		if replaceField {
+			// The caller replaces the whole field. Undo can resurrect a previous
+			// query when the probe is uncommitted IME text, so clear explicitly.
+			clearErr := e.tapKeys(ctx, selectAllKeys)
+			if clearErr == nil {
+				clearErr = e.sleepFor(ctx, textInputKeystrokeGap)
+			}
+			if clearErr == nil {
+				clearErr = e.tapKeys(ctx, []string{"backspace"})
+			}
+			if clearErr == nil {
+				clearErr = e.sleepFor(ctx, textInputProbeSettleDelay)
+			}
+			err = errors.Join(err, clearErr)
+			return
+		}
 		// Send undo keys
 		undoErr := e.tapKeys(ctx, undoKeys)
 		if undoErr == nil {

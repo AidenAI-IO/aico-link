@@ -267,12 +267,31 @@ func TestTextInputProbeWaitsForConfiguredSettleDelayBeforeCapture(t *testing.T) 
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
 	if len(delays) == 0 || delays[0] != textInputProbeSettleDelay {
 		t.Fatalf("probe delays=%v, want first delay %s", delays, textInputProbeSettleDelay)
+	}
+}
+
+func TestTextInputProbeClearsReplacedFieldWithoutUndo(t *testing.T) {
+	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+	engine := newTextInputEngineWithSleep(textInputHardwareDeps{
+		keyboardTap:  keys,
+		keyboardText: &recordingTextInputTool{name: "keyboard_text", out: "ok"},
+		screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+	}, &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeComposition}}}, testNoWaitSleep)
+
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, true)
+	if err != nil || mode != textInputModeComposition {
+		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
+	}
+	selectAll, _ := textInputKeyboardKeysForSelectAll("ios")
+	want := []string{jsonString(map[string]any{"keys": selectAll}), jsonString(map[string]any{"keys": []string{"backspace"}})}
+	if !reflect.DeepEqual(keys.calls, want) {
+		t.Fatalf("keyboard_tap=%v, want %v", keys.calls, want)
 	}
 }
 
@@ -287,7 +306,7 @@ func TestTextInputProbeSupportsWindowsAndLinuxPlatforms(t *testing.T) {
 				return nil
 			})
 
-			mode, _, err := engine.probeTextInputMode(context.Background(), platform, focusPointArgs{})
+			mode, _, err := engine.probeTextInputMode(context.Background(), platform, focusPointArgs{}, false)
 			if err != nil || mode != textInputModeASCII {
 				t.Fatalf("probeTextInputMode(%q) mode=%s err=%v", platform, mode, err)
 			}
@@ -341,7 +360,7 @@ func TestTextInputProbeVerificationSendsBackspaceWhenCharacterStillVisible(t *te
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -383,7 +402,7 @@ func TestTextInputProbeVerificationSkipsBackspaceWhenCharacterRemoved(t *testing
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}

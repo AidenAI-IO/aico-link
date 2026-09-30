@@ -33,10 +33,12 @@ type textInputVisionRecordingModel struct {
 	content  string
 	contents []string
 	calls    int
+	messages [][]llms.MessageContent
 }
 
-func (m *textInputVisionRecordingModel) GenerateContent(_ context.Context, _ []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (m *textInputVisionRecordingModel) GenerateContent(_ context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	m.options = options
+	m.messages = append(m.messages, messages)
 	m.calls++
 	content := m.content
 	if len(m.contents) > 0 {
@@ -234,6 +236,33 @@ func TestAnalyzeScreenRetriesTruncatedVisionJSON(t *testing.T) {
 	}
 	if calls != 2 || vision.calls != 2 {
 		t.Fatalf("calls = %d, vision calls = %d; want 2", calls, vision.calls)
+	}
+}
+
+func TestAnalyzeScreenRetriesFormatEchoWithFeedback(t *testing.T) {
+	model := &textInputVisionRecordingModel{contents: []string{
+		`{"type": "json_object"}`,
+		`{"observed_mode":"composition","field_text":"wei xin","target_matched":false,"composition_pending":true}`,
+	}}
+	vision := &llmTextInputVision{models: model}
+	analysis, err := vision.AnalyzeScreen(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, textInputScreenAnalysisRequest{TargetText: "微信"})
+	if err != nil || !analysis.CompositionPending || model.calls != 2 {
+		t.Fatalf("analysis=%+v calls=%d err=%v", analysis, model.calls, err)
+	}
+	retry := fmt.Sprint(model.messages[1][1].Parts[0])
+	if !strings.Contains(retry, "missing required fields: observed_mode, target_matched, composition_pending") {
+		t.Fatalf("retry prompt lacks validation feedback: %s", retry)
+	}
+}
+
+func TestAnalyzeScreenRejectsRepeatedFormatEcho(t *testing.T) {
+	model := &textInputVisionRecordingModel{content: `{"type": "json_object"}`}
+	vision := &llmTextInputVision{models: model}
+	if _, err := vision.AnalyzeScreen(context.Background(), screenshotResult{Data: "ZmFrZQ=="}, textInputScreenAnalysisRequest{}); err == nil {
+		t.Fatal("a response without decision fields must not become an unknown observation")
+	}
+	if model.calls != textInputVisionParseAttempts {
+		t.Fatalf("calls=%d, want %d", model.calls, textInputVisionParseAttempts)
 	}
 }
 
