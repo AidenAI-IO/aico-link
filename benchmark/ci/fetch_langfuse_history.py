@@ -6,39 +6,49 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-import requests
-
 
 def fetch_benchmark_history(
     *,
     lookback_days: int = 90,
     branch_filter: str | None = None,
     dataset_prefix: str = "aiden-benchmark",
-    limit: int = 500,
 ) -> list[dict[str, Any]]:
     """
-    Fetch benchmark run history from Langfuse.
+    Fetch benchmark run history from Langfuse using the Python SDK.
 
     Args:
         lookback_days: How many days of history to fetch
         branch_filter: Only include runs from this branch (e.g. "main"), or None for all
         dataset_prefix: Prefix for benchmark dataset names
-        limit: Max number of runs to fetch per dataset
 
     Returns:
         List of benchmark run records, sorted by timestamp (oldest first).
         Each record contains run metadata and metrics.
     """
+    try:
+        from langfuse import Langfuse
+    except ImportError as exc:
+        raise RuntimeError(
+            "Langfuse SDK is not installed; run `uv sync` in benchmark/"
+        ) from exc
+
     public_key, secret_key, base_url = _langfuse_connection()
+    client = Langfuse(
+        public_key=public_key,
+        secret_key=secret_key,
+        base_url=base_url,
+    )
+
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
-    # Get all datasets
-    datasets_response = _api_get(base_url, "/api/public/datasets", public_key, secret_key)
-    all_datasets = datasets_response.get("data", [])
+    # Get all datasets to find benchmark datasets
+    # SDK doesn't have a list_datasets method, so we'll iterate through known dataset names
+    # or fetch them via the API property
+    all_datasets = client.api.datasets.get_many().data
 
     benchmark_datasets = [
         d for d in all_datasets
-        if d.get("name", "").startswith(dataset_prefix)
+        if d.name and d.name.startswith(dataset_prefix)
     ]
 
     if not benchmark_datasets:
@@ -47,38 +57,24 @@ def fetch_benchmark_history(
     history: list[dict[str, Any]] = []
 
     for dataset in benchmark_datasets:
-        dataset_name = dataset["name"]
+        dataset_name = dataset.name
 
-        # URL-encode the dataset name for the API request
-        from urllib.parse import quote
-        encoded_dataset_name = quote(dataset_name, safe='')
+        # Use SDK's get_dataset_runs method
+        try:
+            runs = client.get_dataset_runs(dataset_name=dataset_name)
+        except Exception as e:
+            # Dataset might not have any runs, skip it
+            print(f"Warning: Could not fetch runs for {dataset_name}: {e}")
+            continue
 
-        # Get runs for this dataset
-        runs_response = _api_get(
-            base_url,
-            f"/api/public/dataset-runs?datasetName={encoded_dataset_name}&limit={limit}",
-            public_key,
-            secret_key,
-        )
-
-        runs = runs_response.get("data", [])
-
-        for run in runs:
+        for run in runs.data if hasattr(runs, 'data') else runs:
             # Parse timestamp
-            created_at_str = run.get("createdAt") or run.get("created_at")
-            if not created_at_str:
-                continue
-
-            try:
-                created_at = _parse_timestamp(created_at_str)
-            except ValueError:
-                continue
-
-            if created_at < cutoff:
+            created_at = _get_timestamp(run)
+            if not created_at or created_at < cutoff:
                 continue
 
             # Extract metadata
-            metadata = run.get("metadata", {})
+            metadata = run.metadata if hasattr(run, 'metadata') else {}
 
             # Skip if not a benchmark run
             if metadata.get("aiden_benchmark") != "true":
@@ -90,9 +86,12 @@ def fetch_benchmark_history(
                 continue
 
             # Extract run info
+            run_name = run.name if hasattr(run, 'name') else str(run.get("name", ""))
+            run_id = run.id if hasattr(run, 'id') else str(run.get("id", ""))
+
             run_record = {
-                "run_id": run.get("name"),
-                "dataset_run_id": run.get("id"),
+                "run_id": run_name,
+                "dataset_run_id": run_id,
                 "dataset_name": dataset_name,
                 "timestamp": created_at.isoformat(),
                 "commit_sha": metadata.get("git_sha", "unknown"),
@@ -138,53 +137,41 @@ def _langfuse_connection() -> tuple[str, str, str]:
     return public_key, secret_key, base_url
 
 
-def _api_get(base_url: str, path: str, public_key: str, secret_key: str) -> dict[str, Any]:
+def _get_timestamp(run: Any) -> datetime | None:
     """
-    Make GET request to Langfuse API.
+    Extract timestamp from a dataset run object.
 
     Args:
-        base_url: Base URL of Langfuse instance
-        path: API endpoint path
-        public_key: Langfuse public key
-        secret_key: Langfuse secret key
+        run: Dataset run object from Langfuse SDK
 
     Returns:
-        JSON response as dictionary
-
-    Raises:
-        requests.HTTPError: If request fails
-        ValueError: If response is not valid JSON dict
+        Timezone-aware datetime or None if not found
     """
-    response = requests.get(
-        f"{base_url}{path}",
-        auth=(public_key, secret_key),
-        timeout=30,
-    )
-    response.raise_for_status()
-    payload = response.json()
+    # Try different attribute names
+    created_at = None
+    if hasattr(run, 'created_at'):
+        created_at = run.created_at
+    elif hasattr(run, 'createdAt'):
+        created_at = run.createdAt
+    elif isinstance(run, dict):
+        created_at = run.get('created_at') or run.get('createdAt')
 
-    if not isinstance(payload, dict):
-        raise ValueError(f"Unexpected Langfuse response from {path}")
+    if not created_at:
+        return None
 
-    return payload
+    # If it's already a datetime, return it
+    if isinstance(created_at, datetime):
+        return created_at if created_at.tzinfo else created_at.replace(tzinfo=timezone.utc)
 
+    # Parse string timestamp
+    if isinstance(created_at, str):
+        try:
+            dt = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
 
-def _parse_timestamp(ts: str) -> datetime:
-    """
-    Parse ISO timestamp from Langfuse.
-
-    Args:
-        ts: ISO 8601 timestamp string (may end with 'Z')
-
-    Returns:
-        Timezone-aware datetime object in UTC
-
-    Raises:
-        ValueError: If timestamp cannot be parsed
-    """
-    # Langfuse typically returns ISO 8601 format
-    dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    return None
 
 
 if __name__ == "__main__":
@@ -198,9 +185,7 @@ if __name__ == "__main__":
             print(f"Latest: {latest['run_id']} at {latest['timestamp']}")
             print(f"  Commit: {latest['commit_sha']}")
             print(f"  Suite: {latest['suite']}")
-            print(f"  Branch: {latest.get('git_branch', 'unknown')}")
+            print(f"  Branch: {latest['git_branch']}")
     except Exception as e:
         print(f"Error: {e}", file=sys.stderr)
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
