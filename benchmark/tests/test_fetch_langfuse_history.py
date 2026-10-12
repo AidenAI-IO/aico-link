@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
+from urllib.parse import quote
 
 from ci.fetch_langfuse_history import (
     fetch_benchmark_history,
@@ -123,3 +124,56 @@ def test_fetch_benchmark_history_skips_non_benchmark_runs():
 
     assert len(result) == 1
     assert result[0]["run_id"] == "ci-12345-1"
+
+
+def test_fetch_benchmark_history_url_encodes_dataset_names():
+    """Test that dataset names with special characters are URL-encoded."""
+    recent = datetime.now(timezone.utc) - timedelta(days=1)
+    recent_str = recent.isoformat()
+
+    mock_response = {
+        "data": [
+            {
+                "name": "aiden-benchmark:memory_v1",  # Contains colon
+                "id": "dataset-1",
+            }
+        ]
+    }
+
+    mock_runs_response = {
+        "data": [
+            {
+                "id": "run-1",
+                "name": "ci-12345-1",
+                "createdAt": recent_str,
+                "metadata": {
+                    "aiden_benchmark": "true",
+                    "git_sha": "abc123",
+                },
+            },
+        ]
+    }
+
+    with patch("ci.fetch_langfuse_history._api_get") as mock_api_get:
+        mock_api_get.side_effect = [mock_response, mock_runs_response]
+
+        with patch("ci.fetch_langfuse_history._langfuse_connection") as mock_conn:
+            mock_conn.return_value = ("pk", "sk", "http://test")
+
+            result = fetch_benchmark_history(lookback_days=30)
+
+    # Verify the API was called with URL-encoded dataset name
+    calls = mock_api_get.call_args_list
+    assert len(calls) == 2
+
+    # Second call should be for dataset-runs with encoded name
+    dataset_runs_call = calls[1]
+    url_path = dataset_runs_call[0][1]  # Second positional arg is the path
+
+    # Verify the dataset name is URL-encoded (colon becomes %3A)
+    expected_encoded = quote("aiden-benchmark:memory_v1", safe='')
+    assert expected_encoded in url_path
+    assert f"datasetName={expected_encoded}" in url_path
+
+    assert len(result) == 1
+
