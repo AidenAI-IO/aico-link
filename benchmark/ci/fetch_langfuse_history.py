@@ -42,9 +42,19 @@ def fetch_benchmark_history(
     cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
     # Get all datasets to find benchmark datasets
-    # SDK doesn't have a list_datasets method, so we'll iterate through known dataset names
-    # or fetch them via the API property
-    all_datasets = client.api.datasets.get_many().data
+    # Use pagination to fetch all datasets
+    all_datasets = []
+    page = 1
+    while True:
+        try:
+            resp = client.api.datasets.list(page=page, limit=100)
+            all_datasets.extend(resp.data)
+            if page >= resp.meta.total_pages:
+                break
+            page += 1
+        except Exception as e:
+            print(f"Warning: Failed to fetch datasets page {page}: {e}")
+            break
 
     benchmark_datasets = [
         d for d in all_datasets
@@ -59,54 +69,71 @@ def fetch_benchmark_history(
     for dataset in benchmark_datasets:
         dataset_name = dataset.name
 
-        # Use SDK's get_dataset_runs method
+        # Use SDK's get_runs method to fetch all runs for this dataset
         try:
-            runs = client.get_dataset_runs(dataset_name=dataset_name)
+            # Paginate through all runs
+            run_page = 1
+            while True:
+                runs_resp = client.api.datasets.get_runs(
+                    dataset_name=dataset_name,
+                    page=run_page,
+                    limit=100
+                )
+
+                runs = runs_resp.data if hasattr(runs_resp, 'data') else []
+                if not runs:
+                    break
+
+                for run in runs:
+                    # Parse timestamp
+                    created_at = _get_timestamp(run)
+                    if not created_at or created_at < cutoff:
+                        continue
+
+                    # Extract metadata
+                    metadata = run.metadata if hasattr(run, 'metadata') else {}
+
+                    # Skip if not a benchmark run
+                    if metadata.get("aiden_benchmark") != "true":
+                        continue
+
+                    # Apply branch filter if specified
+                    git_branch = metadata.get("git_branch")
+                    if branch_filter and git_branch and git_branch != branch_filter:
+                        continue
+
+                    # Extract run info
+                    run_name = run.name if hasattr(run, 'name') else str(run.get("name", ""))
+                    run_id = run.id if hasattr(run, 'id') else str(run.get("id", ""))
+
+                    run_record = {
+                        "run_id": run_name,
+                        "dataset_run_id": run_id,
+                        "dataset_name": dataset_name,
+                        "timestamp": created_at.isoformat(),
+                        "commit_sha": metadata.get("git_sha", "unknown"),
+                        "git_dirty": metadata.get("git_dirty") == "true",
+                        "git_branch": git_branch,
+                        "suite": metadata.get("benchmark_suite"),
+                        "agent_model": metadata.get("agent_model"),
+                        "judge_model": metadata.get("judge_model"),
+                        "target_platform": metadata.get("target_platform"),
+                        "metrics_schema_version": metadata.get("metrics_schema_version"),
+                        # TODO: Extract aggregated scores from run if available
+                        # For now, we'll need to fetch metrics from local artifacts or compute them
+                    }
+
+                    history.append(run_record)
+
+                # Check if there are more pages
+                if run_page >= runs_resp.meta.total_pages:
+                    break
+                run_page += 1
+
         except Exception as e:
             # Dataset might not have any runs, skip it
             print(f"Warning: Could not fetch runs for {dataset_name}: {e}")
             continue
-
-        for run in runs.data if hasattr(runs, 'data') else runs:
-            # Parse timestamp
-            created_at = _get_timestamp(run)
-            if not created_at or created_at < cutoff:
-                continue
-
-            # Extract metadata
-            metadata = run.metadata if hasattr(run, 'metadata') else {}
-
-            # Skip if not a benchmark run
-            if metadata.get("aiden_benchmark") != "true":
-                continue
-
-            # Apply branch filter if specified
-            git_branch = metadata.get("git_branch")
-            if branch_filter and git_branch and git_branch != branch_filter:
-                continue
-
-            # Extract run info
-            run_name = run.name if hasattr(run, 'name') else str(run.get("name", ""))
-            run_id = run.id if hasattr(run, 'id') else str(run.get("id", ""))
-
-            run_record = {
-                "run_id": run_name,
-                "dataset_run_id": run_id,
-                "dataset_name": dataset_name,
-                "timestamp": created_at.isoformat(),
-                "commit_sha": metadata.get("git_sha", "unknown"),
-                "git_dirty": metadata.get("git_dirty") == "true",
-                "git_branch": git_branch,
-                "suite": metadata.get("benchmark_suite"),
-                "agent_model": metadata.get("agent_model"),
-                "judge_model": metadata.get("judge_model"),
-                "target_platform": metadata.get("target_platform"),
-                "metrics_schema_version": metadata.get("metrics_schema_version"),
-                # TODO: Extract aggregated scores from run if available
-                # For now, we'll need to fetch metrics from local artifacts or compute them
-            }
-
-            history.append(run_record)
 
     return sorted(history, key=lambda x: x["timestamp"])
 
