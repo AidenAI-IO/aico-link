@@ -654,7 +654,9 @@ def build_mobilegym_environment_command(
         docker_publish_arg(
             host_bridge_port,
             bridge_port,
-            bind_host="127.0.0.1" if int(host_bridge_port) == 0 else "",
+            # Agent containers reach this port through host.docker.internal.
+            # A loopback-only publish works for the host's readiness checks but
+            # refuses connections through the Linux host gateway.
         ),
         "-v",
         f"{benchmark_dir.resolve()}:/app/benchmark:ro",

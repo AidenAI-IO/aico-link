@@ -2441,7 +2441,8 @@ def test_start_mobilegym_environment_returns_docker_reachable_endpoint(tmp_path:
     assert health_urls == [("http://127.0.0.1:19090/health", webui.DEFAULT_MOBILEGYM_READY_TIMEOUT_SEC)]
     assert commands and "aiden-mobilegym-env-" in commands[0][5]
     assert "127.0.0.1::4173" in commands[0]
-    assert "127.0.0.1::9090" in commands[0]
+    assert "9090" in commands[0]
+    assert "127.0.0.1::9090" not in commands[0]
     assert "--parallel-envs 2" in commands[0][-1]
 
 

@@ -92,7 +92,8 @@ def test_start_mobilegym_env_uses_docker_assigned_ports_when_auto(tmp_path: Path
     assert health_urls == [("http://127.0.0.1:19090/health", 12)]
     command = commands[0][0]
     assert "127.0.0.1::4173" in command
-    assert "127.0.0.1::9090" in command
+    assert "9090" in command
+    assert "127.0.0.1::9090" not in command
 
 
 def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp_path: Path, monkeypatch, capsys):

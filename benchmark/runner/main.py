@@ -22,7 +22,9 @@ from runner.platform import (
     resolve_environment_platform,
 )
 from runner.preflight import (
+    AgentEnvironmentPreflightError,
     MOBILEGYM_PREFLIGHT_COMPLETE_ENV,
+    preflight_agent_environment,
     preflight_mobilegym_environment,
 )
 from runner.report import (
@@ -790,6 +792,11 @@ def _cmd_run_auto_agent_setup_inner(
                 )
             if task_mock_environment is not None:
                 client.set_phone_bridge_state(task_mock_environment.phone_bridge)
+            if args.environment_url and mock_server is None and not unit.task.input_screenshot:
+                preflight_agent_environment(
+                    client, args.environment_url, task_id=route_id,
+                )
+                append_log(runner_log, "Agent environment screenshot preflight passed")
             if not args.skip_clock_wait and not wait_for_agent_clock(
                 client,
                 timeout_sec=args.clock_timeout_sec,
@@ -821,7 +828,7 @@ def _cmd_run_auto_agent_setup_inner(
             )
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
-            return skipped_task_result(
+            result = skipped_task_result(
                 suite,
                 unit.task,
                 unit.attempt,
@@ -829,6 +836,13 @@ def _cmd_run_auto_agent_setup_inner(
                 run_id,
                 str(exc),
             )
+            if isinstance(exc, AgentEnvironmentPreflightError):
+                result.status = "failed"
+                result.metrics.update(
+                    success=False, agent_eligible=False,
+                    failure_class="environment", first_failure_stage="setup",
+                )
+            return result
         finally:
             if args.environment_url:
                 try:
