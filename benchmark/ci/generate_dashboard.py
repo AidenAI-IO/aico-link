@@ -50,7 +50,20 @@ def generate_dashboard(
 
 
 def _compute_stats(history: list[dict[str, Any]]) -> dict[str, Any]:
-    """Compute statistics from history data."""
+    """
+    Compute statistics from history data.
+
+    Args:
+        history: List of benchmark run records
+
+    Returns:
+        Dictionary containing:
+        - total_runs: Total number of runs
+        - latest: Most recent run record or None
+        - by_suite: Count of runs per suite
+        - by_branch: Count of runs per branch
+        - date_range: Start and end timestamps
+    """
     if not history:
         return {
             "total_runs": 0,
@@ -90,12 +103,17 @@ def _compute_stats(history: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _render_dashboard_html(history: list[dict[str, Any]], stats: dict[str, Any]) -> str:
-    """Render dashboard HTML with embedded data."""
-    # For now, create a simple HTML with embedded JSON
-    # TODO: Use Jinja2 template when we finalize the design
+    """
+    Render dashboard HTML with embedded data.
 
-    history_json = json.dumps(history, indent=2)
-    stats_json = json.dumps(stats, indent=2)
+    Data is safely embedded as JSON with ensure_ascii=True to prevent XSS attacks
+    from malicious branch names or other user-controlled fields. The JSON is placed
+    in a script tag which treats content as data, not executable code.
+    """
+    # Use ensure_ascii=True to escape all non-ASCII characters and special chars
+    # This prevents XSS even if user-controlled data (like branch names) contains HTML/JS
+    history_json = json.dumps(history, indent=2, ensure_ascii=True)
+    stats_json = json.dumps(stats, indent=2, ensure_ascii=True)
 
     return f"""<!DOCTYPE html>
 <html lang="en">

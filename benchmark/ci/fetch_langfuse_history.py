@@ -109,7 +109,15 @@ def fetch_benchmark_history(
 
 
 def _langfuse_connection() -> tuple[str, str, str]:
-    """Get Langfuse connection credentials from environment."""
+    """
+    Get Langfuse connection credentials from environment.
+
+    Returns:
+        Tuple of (public_key, secret_key, base_url)
+
+    Raises:
+        ValueError: If required credentials are not set
+    """
     public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
     secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
     base_url = (
@@ -127,7 +135,22 @@ def _langfuse_connection() -> tuple[str, str, str]:
 
 
 def _api_get(base_url: str, path: str, public_key: str, secret_key: str) -> dict[str, Any]:
-    """Make GET request to Langfuse API."""
+    """
+    Make GET request to Langfuse API.
+
+    Args:
+        base_url: Base URL of Langfuse instance
+        path: API endpoint path
+        public_key: Langfuse public key
+        secret_key: Langfuse secret key
+
+    Returns:
+        JSON response as dictionary
+
+    Raises:
+        requests.HTTPError: If request fails
+        ValueError: If response is not valid JSON dict
+    """
     response = requests.get(
         f"{base_url}{path}",
         auth=(public_key, secret_key),
@@ -143,7 +166,18 @@ def _api_get(base_url: str, path: str, public_key: str, secret_key: str) -> dict
 
 
 def _parse_timestamp(ts: str) -> datetime:
-    """Parse ISO timestamp from Langfuse."""
+    """
+    Parse ISO timestamp from Langfuse.
+
+    Args:
+        ts: ISO 8601 timestamp string (may end with 'Z')
+
+    Returns:
+        Timezone-aware datetime object in UTC
+
+    Raises:
+        ValueError: If timestamp cannot be parsed
+    """
     # Langfuse typically returns ISO 8601 format
     dt = datetime.fromisoformat(ts.replace('Z', '+00:00'))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
