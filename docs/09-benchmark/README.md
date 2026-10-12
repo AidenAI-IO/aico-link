@@ -371,6 +371,19 @@ it remains explicitly selectable for a manual calibration run. A manual
 single-suite run must use the matching `runnable` or `hardware` profile; use
 `all` when intentionally overriding that boundary.
 
+For a phone-control baseline in MobileGym, manually dispatch with profile
+`runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
+the Android-style MobileGym simulator automatically; no external iOS bridge is
+required. This case is excluded from the scheduled sweep while its baseline is
+being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+applicable tasks. Simulator support and setup failures must be reviewed separately
+from Agent capability failures. The same suite with profile `hardware` selects
+the existing external iOS case; profile `all` selects both environments.
+
+When a suite has cases in multiple environment profiles, an explicit suite
+selection runs only cases belonging to the requested profile. A selection with
+no matching case remains an error.
+
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the Monday/Wednesday/Friday schedule

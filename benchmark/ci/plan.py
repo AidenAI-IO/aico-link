@@ -132,7 +132,10 @@ def select_cases(
                 if profile == "runnable"
                 else HARDWARE_ENVIRONMENTS
             )
-            if any(case.environment not in allowed_environments for case in selected):
+            selected = tuple(
+                case for case in selected if case.environment in allowed_environments
+            )
+            if not selected:
                 raise CatalogError(
                     f"suite {suite} is outside the {profile} profile; "
                     "select the matching profile or all"
