@@ -25,7 +25,24 @@ var (
 	errStandaloneTTSUnavailable = errors.New("standalone TTS is unavailable")
 )
 
-func ttsUnavailableFallbackPath(cfg Config) string {
+// denormalizeLocaleForFilename converts a normalized locale (lowercase with
+// hyphens, e.g. "zh-cn", "en-us") to standard BCP 47 format (e.g. "zh-CN",
+// "en-US") for matching prerecorded audio filenames.
+func denormalizeLocaleForFilename(locale string) string {
+	parts := strings.Split(locale, "-")
+	if len(parts) == 2 {
+		return parts[0] + "-" + strings.ToUpper(parts[1])
+	}
+	return locale
+}
+
+// ttsUnavailableFallbackPath returns the path to the prerecorded fallback WAV
+// clip for the given failure code and locale. If a failure-specific clip exists
+// (e.g. "session-idle.zh-CN.wav"), it is preferred; otherwise the generic
+// "tts-unavailable.<locale>.wav" is returned.
+//
+// failureCode is optional; pass empty string to skip failure-specific lookup.
+func ttsUnavailableFallbackPath(cfg Config, failureCode TurnFailureCode) string {
 	if !cfg.VoiceNotifications.EnabledOrDefault() {
 		return ""
 	}
@@ -33,15 +50,31 @@ func ttsUnavailableFallbackPath(cfg Config) string {
 	if dir == "" {
 		dir = defaultTTSUnavailableFallbackDir
 	}
+
+	locale := resolvedVoiceNotificationLocale(cfg)
+
+	// Try failure-specific clip first if a code is provided.
+	// The locale is normalized (lowercase), but filenames use standard BCP 47
+	// format (e.g. zh-CN, en-US), so we denormalize it for filesystem lookup.
+	if failureCode != "" {
+		standardLocale := denormalizeLocaleForFilename(locale)
+		filename := fmt.Sprintf("%s.%s.wav", failureCode, standardLocale)
+		path := filepath.Join(dir, filename)
+		if info, err := os.Stat(path); err == nil && info.Mode().IsRegular() && info.Size() > 44 {
+			return path
+		}
+	}
+
+	// Fall back to the generic "tts-unavailable.<locale>.wav".
 	filename := ttsUnavailableFallbackChinese
-	if strings.HasPrefix(resolvedVoiceNotificationLocale(cfg), "en") {
+	if strings.HasPrefix(locale, "en") {
 		filename = ttsUnavailableFallbackEnglish
 	}
 	return filepath.Join(dir, filename)
 }
 
-func canPlayTTSUnavailableFallback(cfg Config) bool {
-	path := ttsUnavailableFallbackPath(cfg)
+func canPlayTTSUnavailableFallback(cfg Config, failureCode TurnFailureCode) bool {
+	path := ttsUnavailableFallbackPath(cfg, failureCode)
 	if path == "" {
 		return false
 	}
@@ -49,7 +82,7 @@ func canPlayTTSUnavailableFallback(cfg Config) bool {
 	return err == nil && info.Mode().IsRegular() && info.Size() > 44
 }
 
-func playTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config) error {
+func playTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config, failureCode TurnFailureCode) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -59,7 +92,7 @@ func playTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBacke
 	if audio == nil {
 		return errors.New("audio backend is not configured")
 	}
-	path := ttsUnavailableFallbackPath(cfg)
+	path := ttsUnavailableFallbackPath(cfg, failureCode)
 	if path == "" {
 		return errors.New("local TTS fallback is disabled")
 	}
@@ -94,8 +127,10 @@ func playTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBacke
 // attemptTTSUnavailableFallback preserves the original TTS error even when
 // the local recording plays successfully. Callers use the non-nil error to
 // avoid acknowledging response-tail delivery for speech that was not spoken.
-func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config, speechStarted bool, ttsErr error) (bool, error) {
-	if ttsErr == nil || speechStarted || !canPlayTTSUnavailableFallback(cfg) {
+//
+// failureCode is optional; pass empty string to use only the generic fallback clip.
+func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config, failureCode TurnFailureCode, speechStarted bool, ttsErr error) (bool, error) {
+	if ttsErr == nil || speechStarted || !canPlayTTSUnavailableFallback(cfg, failureCode) {
 		return false, ttsErr
 	}
 	if ctx == nil {
@@ -107,7 +142,7 @@ func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBa
 	if errors.Is(ttsErr, context.Canceled) {
 		return false, ttsErr
 	}
-	if err := playTTSUnavailableFallback(ctx, audio, cfg); err != nil {
+	if err := playTTSUnavailableFallback(ctx, audio, cfg, failureCode); err != nil {
 		return false, errors.Join(ttsErr, err)
 	}
 	return true, ttsErr

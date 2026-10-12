@@ -13,6 +13,8 @@ are:
 - CLI for scripted runs, single-suite debugging, rejudge, and compare.
 
 For the full manual, see [`benchmark/manual.md`](../../benchmark/manual.md).
+For field definitions, units, denominators, and missing-value semantics, see the
+[Metrics Reference](./metrics-reference.md).
 
 ## Quick Start
 
@@ -385,7 +387,7 @@ The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AIDEN_` prefix; the workflow maps them to the runner variables documented
 below.
 
-- Variables: `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
+- Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
   `BENCHMARK_AGENT_BASE_URL`, `BENCHMARK_JUDGE_MODEL`,
   `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `ANDROID_SERIAL`,
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
@@ -395,6 +397,12 @@ below.
   `BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL`.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
+
+Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
+`3` to repeat each task in scheduled and manual runs. A nonempty manual
+`repeats` input overrides that variable for one run; leave it blank to use the
+repository setting. If neither is set, the workflow uses `1`. The report derives
+`metrics_k` from the planned task repeats; no separate metrics variable is needed.
 
 The benchmark job uses the dedicated `aiden-hosted-01` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,

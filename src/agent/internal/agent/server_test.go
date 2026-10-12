@@ -4717,12 +4717,25 @@ func TestHandleBenchmarkSeedSessionChunkSucceeds(t *testing.T) {
 	}
 
 	tool := NewRecallSessionChunksTool(NewMultiSessionChunkStore(agentpath.ContextManagerSessionFolder(configDir)))
-	out, err := tool.Call(context.Background(), `{"entities":["蓝海报销App"],"limit":1}`)
-	if err != nil {
-		t.Fatalf("recall seeded chunk: %v", err)
-	}
-	if !strings.Contains(out, "ZX-91-ALPHA") || !strings.Contains(out, "海鸥计划") {
-		t.Fatalf("seeded chunk recall missing expected details: %s", out)
+	for _, query := range []string{
+		`{"limit":1}`,
+		`{"entities":["蓝海报销App"],"limit":1}`,
+		`{"tags":["蓝海报销"],"limit":1}`,
+	} {
+		out, err := tool.Call(context.Background(), query)
+		if err != nil {
+			t.Fatalf("recall seeded chunk: %v", err)
+		}
+		var recalled struct {
+			Results []ChunkRecallResult `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(out), &recalled); err != nil {
+			t.Fatal(err)
+		}
+		if len(recalled.Results) != 1 || recalled.Results[0].SessionID != "benchmark_expense_session" ||
+			recalled.Results[0].Summary != "蓝海报销App 对话详情：核销码为 ZX-91-ALPHA，项目代号为 海鸥计划。" {
+			t.Fatalf("query %s: seeded conversation not recalled: %s", query, out)
+		}
 	}
 }
 

@@ -41,6 +41,111 @@ func TestWakeStopGracePeriodRejectsPreviousConnectionCleanup(t *testing.T) {
 	}
 }
 
+func TestConnectionWindowRequiresSubscriptionAndAuthenticatedReadInSameWindow(t *testing.T) {
+	opened := time.Unix(200, 0)
+	before := opened.Add(-time.Second)
+	after := opened.Add(time.Second)
+	cases := []struct {
+		name          string
+		authenticated time.Time
+		subscribed    time.Time
+		want          bool
+	}{
+		// iOS forgot the board but BlueZ kept the old key: the CCCD write
+		// arrives without an encrypted read and must keep pairing possible.
+		{name: "subscription without authenticated read", subscribed: after},
+		{name: "authenticated read without subscription", authenticated: after},
+		{name: "read from a previous window", authenticated: before, subscribed: after},
+		{name: "subscription from a previous window", authenticated: after, subscribed: before},
+		{name: "authenticated and subscribed", authenticated: after, subscribed: after, want: true},
+		{name: "both at window start", authenticated: opened, subscribed: opened, want: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectionWindowComplete(opened, tc.authenticated, tc.subscribed); got != tc.want {
+				t.Fatalf("connectionWindowComplete() = %t, want %t", got, tc.want)
+			}
+		})
+	}
+}
+
+func newOpenWindowBackend(openedAt time.Time) *blueZBackend {
+	backend := newBlueZBackend(NewService(8), "Aiden", time.Minute)
+	backend.pairingOpen = true
+	backend.pairingOpenedAt = openedAt
+	backend.pairingDeadline = openedAt.Add(time.Minute)
+	return backend
+}
+
+func pairingWindowOpen(backend *blueZBackend) bool {
+	backend.stateMu.Lock()
+	defer backend.stateMu.Unlock()
+	return backend.pairingOpen
+}
+
+func waitForPairingWindowClosed(t *testing.T, backend *blueZBackend) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for pairingWindowOpen(backend) {
+		if time.Now().After(deadline) {
+			t.Fatal("pairing window stayed open after an authenticated subscription")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// StartNotify and a successful ReadValue reach the window rule through
+// recordWakeSubscribed and recordWakeAuthenticatedRead; the exported D-Bus
+// properties themselves need a live bus and are not part of the rule.
+func TestWakeCallbacksCloseWindowOnlyAfterAuthenticatedSubscription(t *testing.T) {
+	opened := time.Unix(300, 0)
+	orders := map[string][]func(*blueZBackend){
+		"subscribe then read": {
+			func(b *blueZBackend) { b.recordWakeSubscribed(opened.Add(time.Second)) },
+			func(b *blueZBackend) { b.recordWakeAuthenticatedRead(opened.Add(2 * time.Second)) },
+		},
+		"read then subscribe": {
+			func(b *blueZBackend) { b.recordWakeAuthenticatedRead(opened.Add(time.Second)) },
+			func(b *blueZBackend) { b.recordWakeSubscribed(opened.Add(2 * time.Second)) },
+		},
+	}
+	for name, steps := range orders {
+		t.Run(name, func(t *testing.T) {
+			backend := newOpenWindowBackend(opened)
+			steps[0](backend)
+			time.Sleep(20 * time.Millisecond)
+			if !pairingWindowOpen(backend) {
+				t.Fatal("pairing window closed after only one of subscription and authenticated read")
+			}
+			steps[1](backend)
+			waitForPairingWindowClosed(t, backend)
+		})
+	}
+}
+
+func TestWakeSubscriptionFromPreviousWindowKeepsWindowOpen(t *testing.T) {
+	opened := time.Unix(400, 0)
+	backend := newOpenWindowBackend(opened)
+	backend.wakeSubscribedAt = opened.Add(-time.Second)
+	backend.recordWakeAuthenticatedRead(opened.Add(time.Second))
+	time.Sleep(20 * time.Millisecond)
+	if !pairingWindowOpen(backend) {
+		t.Fatal("a subscription from an earlier window closed the current window")
+	}
+}
+
+func TestCompletionOfOldWindowDoesNotCloseNewerWindow(t *testing.T) {
+	opened := time.Unix(500, 0)
+	backend := newOpenWindowBackend(opened.Add(time.Second))
+	closed, err := backend.closePairingWindowOpenedAt(opened)
+	if closed || err != nil {
+		t.Fatalf("closePairingWindowOpenedAt(old) = %t, %v; want false, nil", closed, err)
+	}
+	if !pairingWindowOpen(backend) {
+		t.Fatal("completion of an earlier window closed the newer window")
+	}
+}
+
 func TestANCSControlPointUsesWriteRequest(t *testing.T) {
 	options := ancsControlPointWriteOptions()
 	writeType, ok := options["type"]

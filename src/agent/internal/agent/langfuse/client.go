@@ -9,8 +9,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/net/http/httpproxy"
 )
 
 type Config struct {
@@ -28,12 +32,26 @@ type Client struct {
 }
 
 func NewClient(cfg Config) *Client {
+	var transport http.RoundTripper
+	if proxy := strings.TrimSpace(os.Getenv("AIDEN_LANGFUSE_HTTPS_PROXY")); proxy != "" {
+		// CI's model and device endpoints use direct routing. Only telemetry
+		// inherits this proxy; retain NO_PROXY for local Langfuse deployments.
+		proxyConfig := httpproxy.FromEnvironment()
+		proxyConfig.HTTPSProxy = proxy
+		proxyForURL := proxyConfig.ProxyFunc()
+		cloned := http.DefaultTransport.(*http.Transport).Clone()
+		cloned.Proxy = func(req *http.Request) (*url.URL, error) {
+			return proxyForURL(req.URL)
+		}
+		transport = cloned
+	}
 	return &Client{
 		baseURL:   strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
 		publicKey: strings.TrimSpace(cfg.PublicKey),
 		secretKey: strings.TrimSpace(cfg.SecretKey),
 		httpClient: &http.Client{
-			Timeout: cfg.UploadTimeout,
+			Timeout:   cfg.UploadTimeout,
+			Transport: transport,
 		},
 	}
 }

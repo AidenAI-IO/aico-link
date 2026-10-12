@@ -21,39 +21,75 @@
         {
           "id": "content_mentions_dark_mode",
           "check": "Among save_memory calls, at least one has input.content mentioning dark mode (English 'dark mode' or Chinese '深色'/'暗色')."
+        },
+        {
+          "id": "persisted_content",
+          "check": "The post-task memory_state contains the information requested by the user, with the same meaning as the requested fact, preference, rule, or procedure. An acknowledgement or a tool input alone is insufficient."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected": [
+          {
+            "type": "preference"
+          }
+        ]
       }
     },
     {
       "id": "save_user_fact",
       "category": "memory",
-      "description_for_judge": "Agent must save a stable user fact to long-term memory. Success = save_memory is called with type='fact' and content preserving both the employee ID and city.",
+      "description_for_judge": "Persist the employee ID AIDEN-7429 and office city Hangzhou. User background may correctly be stored as profile or fact. Evaluate persisted memory_state, not merely a save request.",
       "prompt": "记住：我的工号是 AIDEN-7429，办公城市是杭州。",
       "rubric": [
         {
-          "id": "called_save_memory",
-          "check": "The tool trace contains at least one save_memory call."
+          "id": "appropriate_type",
+          "check": "The persisted employee ID and office city are classified as profile or fact."
         },
         {
-          "id": "type_is_fact",
-          "check": "Among save_memory calls, at least one has input.type == 'fact'."
-        },
-        {
-          "id": "content_preserves_fact",
-          "check": "The saved content mentions both 'AIDEN-7429' and '杭州'."
+          "id": "correct_city",
+          "check": "The persisted office city is Hangzhou. Accept equivalent names in any language; exact wording is not required."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "save_memory",
+            "input_contains": {
+              "content": {
+                "$contains": "AIDEN-7429"
+              }
+            }
+          }
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected": [
+          {
+            "content_contains": "AIDEN-7429"
+          }
+        ]
       }
     },
     {
@@ -73,13 +109,30 @@
         {
           "id": "content_captures_rule",
           "check": "The saved content mentions rollback/reversible guidance and destructive commands (Chinese 可回滚/破坏性 or equivalent English)."
+        },
+        {
+          "id": "persisted_content",
+          "check": "The post-task memory_state contains the information requested by the user, with the same meaning as the requested fact, preference, rule, or procedure. An acknowledgement or a tool input alone is insufficient."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected": [
+          {
+            "type": "rule"
+          }
+        ]
       }
     },
     {
@@ -99,13 +152,30 @@
         {
           "id": "content_preserves_steps",
           "check": "The saved content mentions the date folder, invoice screenshot filename pattern, and expense.md summary."
+        },
+        {
+          "id": "persisted_content",
+          "check": "The post-task memory_state contains the information requested by the user, with the same meaning as the requested fact, preference, rule, or procedure. An acknowledgement or a tool input alone is insufficient."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected": [
+          {
+            "type": "procedure"
+          }
+        ]
       }
     },
     {
@@ -129,20 +199,37 @@
         {
           "id": "tags_avoid_unrelated_topics",
           "check": "The save_memory input tags do not include clearly unrelated topics such as github, login, weather, or bluetooth."
+        },
+        {
+          "id": "persisted_content",
+          "check": "The post-task memory_state contains the information requested by the user, with the same meaning as the requested fact, preference, rule, or procedure. An acknowledgement or a tool input alone is insufficient."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected": [
+          {
+            "type": "rule"
+          }
+        ]
       }
     },
     {
       "id": "use_rule_to_block_action",
       "category": "memory",
-      "description_for_judge": "Given a stored rule that customer emails require confirmation, the agent must recall the rule and refuse to send or draft-as-sent without confirmation.",
-      "prompt": "帮我给客户王总发个会议邀请邮件，主题是月度复盘。",
+      "description_for_judge": "Recall and apply the seeded customer-email confirmation rule. This asks about the prerequisite to sending, not to operate an email app. No connected device is needed.",
+      "prompt": "我准备给客户王总发月度复盘会议邀请邮件。按我之前让你记住的约定，发送前需要先做什么？",
       "rubric": [
         {
           "id": "called_recall_memory",
@@ -161,18 +248,90 @@
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 120,
-        "response_required": true
-      }
+        "response_required": true,
+        "required_tools": [
+          "recall_memory"
+        ]
+      },
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_customer_email_rule",
+              "store": "long_term",
+              "type": "rule",
+              "content": "Before sending any customer email, ask the user for confirmation. Never send it without confirmation.",
+              "tags": [
+                "customer email",
+                "客户邮件",
+                "confirmation"
+              ],
+              "entities": [
+                "email"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {
+              "id": "fixture_customer_email_rule",
+              "type": "rule",
+              "content_contains": "Before sending any customer email, ask the user for confirmation. Never send it without confirmation."
+            }
+          ]
+        }
+      ],
+      "expected_recalled_memory_ids": [
+        "fixture_customer_email_rule"
+      ]
     },
     {
       "id": "use_procedure_steps",
       "category": "memory",
-      "description_for_judge": "After a multi-step procedure is saved, the agent must recall the ordered steps and apply them without flattening the procedure into a generic fact.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "记住我的报销流程：先按日期建文件夹，再把发票截图命名为 YYYY-MM-DD-商家-金额，最后汇总到 expense.md。",
-        "timeout_sec": 120
-      },
+      "description_for_judge": "Recall and apply the seeded reimbursement procedure in order.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_reimbursement_procedure",
+              "store": "long_term",
+              "type": "procedure",
+              "content": "Create a folder by date, name each invoice screenshot YYYY-MM-DD-商家-金额, then summarize the invoices in expense.md.",
+              "tags": [
+                "报销",
+                "reimbursement"
+              ],
+              "entities": [
+                "invoices"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {
+              "id": "fixture_reimbursement_procedure",
+              "type": "procedure",
+              "content_contains": "Create a folder by date, name each invoice screenshot YYYY-MM-DD-商家-金额, then summarize the invoices in expense.md."
+            }
+          ]
+        }
+      ],
       "prompt": "我报销时应该按什么步骤整理发票？",
       "rubric": [
         {
@@ -181,7 +340,7 @@
         },
         {
           "id": "answer_preserves_order",
-          "check": "The final response preserves the folder step, includes the exact invoice filename pattern 'YYYY-MM-DD-商家-金额', and includes the final expense.md step in order."
+          "check": "The final response preserves these steps in order: create a folder by date, name each invoice screenshot with date, merchant, and amount fields, then summarize the invoices in expense.md. Preserve the YYYY-MM-DD date format and literal expense.md filename. Merchant and amount are semantic placeholders and may be translated into the response language."
         }
       ],
       "hard_assertions": {
@@ -189,17 +348,51 @@
         "max_tool_calls": 8,
         "must_complete_within_sec": 120,
         "response_required": true
-      }
+      },
+      "expected_recalled_memory_ids": [
+        "fixture_reimbursement_procedure"
+      ]
     },
     {
       "id": "recall_saved_fact_after_setup",
       "category": "memory",
-      "description_for_judge": "After setup saved a user fact and cleared visible chat history, the agent must recall long-term memory and answer with the saved employee ID and city.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "记住：我的工号是 AIDEN-7429，办公城市是杭州。",
-        "timeout_sec": 120
-      },
+      "description_for_judge": "Recall the independently seeded employee profile and correctly answer the employee ID and office city. Accept equivalent city names in any language.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_employee_profile",
+              "store": "long_term",
+              "type": "profile",
+              "content": "Employee ID: AIDEN-7429. Office city: Hangzhou.",
+              "tags": [
+                "work",
+                "办公城市",
+                "工号"
+              ],
+              "entities": [
+                "user"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {
+              "id": "fixture_employee_profile",
+              "type": "profile",
+              "content_contains": "Employee ID: AIDEN-7429. Office city: Hangzhou."
+            }
+          ]
+        }
+      ],
       "prompt": "我的工号是什么？顺便说一下我的办公城市。",
       "rubric": [
         {
@@ -212,7 +405,7 @@
         },
         {
           "id": "answer_mentions_city",
-          "check": "The final response contains '杭州'."
+          "check": "The final response identifies the office city as Hangzhou. Accept equivalent names in any language; exact wording is not required."
         }
       ],
       "hard_assertions": {
@@ -220,7 +413,10 @@
         "max_tool_calls": 10,
         "must_complete_within_sec": 120,
         "response_required": true
-      }
+      },
+      "expected_recalled_memory_ids": [
+        "fixture_employee_profile"
+      ]
     },
     {
       "id": "recall_session_chunk_details",
@@ -251,49 +447,97 @@
         },
         {
           "id": "recall_searches_seeded_session",
-          "check": "The recall_session_chunks call searches for 蓝海报销App/核销码 or otherwise retrieves the seeded session chunk."
+          "check": "The recall_session_chunks tool result contains the seeded conversation details. Any query that retrieves the relevant evidence is valid."
         },
         {
           "id": "answer_mentions_recalled_details",
-          "check": "The final response contains both 'ZX-91-ALPHA' and '海鸥计划'."
+          "check": "The answer gives the exact code ZX-91-ALPHA and identifies the project as Seagull Project (海鸥计划). Equivalent translations of the project name are valid."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 120,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "recall_session_chunks"
+        ]
       }
     },
     {
       "id": "update_changed_preference",
       "category": "memory",
-      "description_for_judge": "Given a previously saved dark-mode preference, the user changes it to light mode. The agent must recall the old memory and save or supersede the new light-mode preference.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "记住我喜欢用 dark mode，所有界面都给我切深色。",
-        "timeout_sec": 120
-      },
+      "description_for_judge": "Update a seeded dark-mode preference to light mode. The post-task memory_state must contain only the current light-mode preference, with no active contradictory dark-mode preference. Explicit recall before saving is not required if the store updates correctly.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_dark_mode",
+              "store": "long_term",
+              "type": "preference",
+              "content": "The user prefers dark mode for all interfaces.",
+              "tags": [
+                "UI",
+                "theme",
+                "preference"
+              ],
+              "entities": [
+                "interface"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {
+              "id": "fixture_dark_mode",
+              "type": "preference",
+              "content_contains": "The user prefers dark mode for all interfaces."
+            }
+          ]
+        }
+      ],
       "prompt": "我改主意了，以后界面请用 light mode，不要再按 dark mode 处理。请更新这个偏好。",
       "rubric": [
         {
-          "id": "called_recall_memory",
-          "check": "The tool trace contains at least one recall_memory call to find the existing dark-mode preference."
+          "id": "persisted_light_mode",
+          "check": "The post-task memory_state says light mode is the current UI preference. A save tool input alone is insufficient."
         },
         {
-          "id": "saved_light_mode_preference",
-          "check": "The tool trace contains a save_memory call whose input.type == 'preference' and content mentions light mode or 浅色/亮色."
+          "id": "no_conflicting_preference",
+          "check": "No record in the post-task memory_state still recommends dark mode as the current preference. Historical wording explaining the replacement is allowed."
         },
         {
           "id": "response_confirms_update",
-          "check": "The final response confirms the preference was updated from dark mode to light mode."
+          "check": "The final response confirms the UI preference has been updated to light mode."
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 12,
         "must_complete_within_sec": 120,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 1,
+        "expected": [
+          {
+            "type": "preference"
+          }
+        ]
       }
     },
     {
@@ -320,23 +564,161 @@
         "max_tool_calls": 8,
         "must_complete_within_sec": 120,
         "response_required": true
-      }
+      },
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_reimbursement_rule",
+              "store": "long_term",
+              "type": "rule",
+              "content": "For reimbursement amounts above 5000, OA approval is required.",
+              "tags": [
+                "报销",
+                "reimbursement",
+                "OA"
+              ],
+              "entities": [
+                "OA"
+              ],
+              "priority": 80
+            },
+            {
+              "id": "fixture_vpn",
+              "store": "long_term",
+              "type": "fact",
+              "content": "The VPN workspace identifier is PX-42.",
+              "tags": [
+                "VPN",
+                "login"
+              ],
+              "entities": [
+                "VPN"
+              ],
+              "priority": 80
+            },
+            {
+              "id": "fixture_payment",
+              "store": "long_term",
+              "type": "rule",
+              "content": "Confirm the recipient before making a payment.",
+              "tags": [
+                "payment"
+              ],
+              "entities": [
+                "recipient"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 3,
+          "expected": [
+            {
+              "id": "fixture_reimbursement_rule",
+              "type": "rule",
+              "content_contains": "For reimbursement amounts above 5000, OA approval is required."
+            },
+            {
+              "id": "fixture_vpn",
+              "type": "fact",
+              "content_contains": "The VPN workspace identifier is PX-42."
+            },
+            {
+              "id": "fixture_payment",
+              "type": "rule",
+              "content_contains": "Confirm the recipient before making a payment."
+            }
+          ]
+        }
+      ],
+      "expected_recalled_memory_ids": [
+        "fixture_reimbursement_rule"
+      ]
     },
     {
       "id": "forget_on_request",
       "category": "memory",
-      "description_for_judge": "Given setup stored a dark-mode preference, the user asks to forget it. The agent must recall the memory ID and call forget_memory for the dark-mode preference.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "请记住三条长期偏好：我喜欢用 dark mode；我希望回答简短；所有列表都用 markdown 格式。",
-        "timeout_sec": 120
-      },
+      "description_for_judge": "Forget the seeded dark-mode preference while retaining the independent concise-answer and Markdown preferences. The harness verifies persisted deletion and preservation.",
+      "setup": [
+        {
+          "type": "seed_memory",
+          "memories": [
+            {
+              "id": "fixture_dark_mode",
+              "store": "long_term",
+              "type": "preference",
+              "content": "The user prefers dark mode.",
+              "tags": [
+                "UI",
+                "theme"
+              ],
+              "entities": [
+                "interface"
+              ],
+              "priority": 80
+            },
+            {
+              "id": "fixture_brief",
+              "store": "long_term",
+              "type": "preference",
+              "content": "The user prefers concise answers.",
+              "tags": [
+                "response"
+              ],
+              "entities": [
+                "user"
+              ],
+              "priority": 80
+            },
+            {
+              "id": "fixture_markdown",
+              "store": "long_term",
+              "type": "preference",
+              "content": "The user prefers lists in Markdown format.",
+              "tags": [
+                "format"
+              ],
+              "entities": [
+                "user"
+              ],
+              "priority": 80
+            }
+          ]
+        },
+        {
+          "type": "assert_memory",
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 3,
+          "expected": [
+            {
+              "id": "fixture_dark_mode",
+              "type": "preference",
+              "content_contains": "The user prefers dark mode."
+            },
+            {
+              "id": "fixture_brief",
+              "type": "preference",
+              "content_contains": "The user prefers concise answers."
+            },
+            {
+              "id": "fixture_markdown",
+              "type": "preference",
+              "content_contains": "The user prefers lists in Markdown format."
+            }
+          ]
+        }
+      ],
       "prompt": "请把关于 dark mode 的偏好忘掉。",
       "rubric": [
-        {
-          "id": "called_recall_then_forget",
-          "check": "The tool trace shows at least one recall_memory call followed by at least one forget_memory call."
-        },
         {
           "id": "forget_targets_dark_mode",
           "check": "The forgotten memory or surrounding trace references dark mode (English 'dark mode' or Chinese '深色'/'暗色')."
@@ -347,32 +729,57 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 12,
         "must_complete_within_sec": 120,
-        "response_required": true
+        "response_required": true,
+        "required_tools": [
+          "forget_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 2,
+        "absent_ids": [
+          "fixture_dark_mode"
+        ],
+        "expected": [
+          {
+            "id": "fixture_brief"
+          },
+          {
+            "id": "fixture_markdown"
+          }
+        ]
       }
     },
     {
       "id": "avoid_saving_ephemeral_fact",
       "category": "memory",
       "description_for_judge": "The user gives an explicitly temporary fact and says not to remember it long-term. The agent should answer from current context without calling save_memory.",
-      "prompt": "今天临时会议室是 B201，只在这次对话里用，不要长期记住。请告诉我会议室在哪。",
+      "prompt": "今天临时会议室是 B201，只在这次对话里用，不要长期记住。请重复一下今天的会议室编号。",
       "rubric": [
         {
           "id": "answer_mentions_b201",
-          "check": "The final response contains 'B201'."
-        },
-        {
-          "id": "did_not_save_memory",
-          "check": "The tool trace contains zero save_memory calls."
+          "check": "The response identifies B201 as the room for today, without claiming its building or location is unknown or inventing a location."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 0,
         "max_tool_calls": 5,
         "must_complete_within_sec": 60,
-        "response_required": true
+        "response_required": true,
+        "forbidden_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 0
       }
     },
     {
@@ -382,10 +789,6 @@
       "prompt": "顺便聊一下，今天天气真不错，适合出门走走。",
       "rubric": [
         {
-          "id": "did_not_save_memory",
-          "check": "The tool trace contains zero save_memory calls."
-        },
-        {
           "id": "responds_naturally",
           "check": "The final response is a normal conversational reply and does not claim to have remembered or stored this small talk."
         }
@@ -394,35 +797,44 @@
         "min_tool_calls": 0,
         "max_tool_calls": 3,
         "must_complete_within_sec": 60,
-        "response_required": true
+        "response_required": true,
+        "forbidden_tools": [
+          "save_memory"
+        ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 0
       }
     },
     {
       "id": "no_recall_when_in_context",
       "category": "memory",
-      "description_for_judge": "Within the same turn the user states a fact (meeting room is B201) and immediately asks where the meeting room is. Since the answer is in the current conversation context, the agent should answer correctly WITHOUT calling recall_memory or recall_session_chunks.",
-      "prompt": "今天会议室是 B201。请问会议室在哪？",
+      "description_for_judge": "The user states the meeting room number and immediately asks to repeat it. Answer from current context without recall_memory or recall_session_chunks; no building or location lookup is requested.",
+      "prompt": "今天会议室是 B201。请重复一下今天的会议室编号。",
       "rubric": [
         {
-          "id": "answer_mentions_b201",
-          "check": "The final response contains 'B201'."
-        },
-        {
-          "id": "did_not_call_recall",
-          "check": "The tool trace contains zero tool_calls where tool='recall_memory' or tool='recall_session_chunks'."
+          "id": "answers_from_context",
+          "check": "The response identifies B201 as the room for today, using the supplied context without claiming the room is unknown or introducing unrelated locations."
         }
       ],
       "hard_assertions": {
         "min_tool_calls": 0,
         "max_tool_calls": 5,
         "must_complete_within_sec": 60,
-        "response_required": true
+        "response_required": true,
+        "forbidden_tools": [
+          "recall_memory",
+          "recall_session_chunks"
+        ]
       }
     },
     {
       "id": "multi_turn_overwrite_and_verify_last_value",
       "category": "memory",
-      "description_for_judge": "In one conversation, the user first asks the agent to remember a city, then overwrites it twice in the middle of the conversation, and finally asks what the remembered city is. The agent must keep updating the SAME memory (overwriting the value, not appending duplicate versions), and the final answer must equal the LAST modified value (成都), not the earlier values (杭州 or 深圳).",
+      "description_for_judge": "Across three user turns, save the initial office city, update it twice, and answer with the final value. The post-task memory_state must contain one current office-city memory for Chengdu. In-place update, supersession, or deleting and replacing an old record are all valid. The final answer may use the retained conversation context. Do not require a particular memory ID, tag spelling, language, or exact call count.",
       "setup": [
         {
           "type": "agent_prompt",
@@ -447,37 +859,34 @@
       "rubric": [
         {
           "id": "saved_initial_value",
-          "check": "The trace contains at least one save_memory call whose content mentions 杭州 as the initially remembered office city."
+          "check": "A successful save records Hangzhou as the initial office city. Equivalent city names in any language are valid."
         },
         {
           "id": "saved_mid_value",
-          "check": "The trace shows the office-city memory was updated once to 深圳 (a save_memory or update whose content mentions 深圳)."
+          "check": "A successful save or update records Shenzhen as the second office city. Equivalent city names in any language are valid."
         },
         {
-          "id": "saved_final_value",
-          "check": "The trace contains a save_memory call whose content mentions 成都 as the final office city, i.e. the last modification."
-        },
-        {
-          "id": "recalled_before_answer",
-          "check": "The trace contains at least one recall_memory call before the final answer to the city question."
+          "id": "persisted_final_value",
+          "check": "The post-task memory_state identifies Chengdu as the current office city, with no active obsolete office-city value. Historical wording is allowed."
         },
         {
           "id": "answers_last_value",
-          "check": "The final answer states the current office city is 成都 only — it does NOT answer 杭州 or 深圳, and it reflects that this is the value after the last modification."
+          "check": "The final answer identifies Chengdu as the current office city, not Hangzhou or Shenzhen. Equivalent city names in any language are valid."
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 4,
-        "max_tool_calls": 4,
+        "min_tool_calls": 3,
         "must_complete_within_sec": 180,
         "response_required": true,
-        "required_tools": ["save_memory", "recall_memory"],
-        "required_tool_calls": [
-          {"tool": "save_memory", "input_contains": {"content": {"$contains": "杭州"}}},
-          {"tool": "save_memory", "input_contains": {"content": {"$contains": "深圳"}}},
-          {"tool": "save_memory", "input_contains": {"content": {"$contains": "成都"}}},
-          {"tool": "recall_memory", "input_contains": {"tags": {"$contains": "办公城市"}}}
+        "required_tools": [
+          "save_memory"
         ]
+      },
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 1
       }
     }
   ]

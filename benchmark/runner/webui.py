@@ -54,6 +54,7 @@ try:
     )
     from benchmark.runner.config import (
         AgentConfigManager,
+        apply_benchmark_telemetry,
         apply_agent_toml_runtime_defaults,
         materialize_agent_config_credentials,
         missing_agent_config_error,
@@ -73,6 +74,7 @@ except ImportError:
     )
     from runner.config import (
         AgentConfigManager,
+        apply_benchmark_telemetry,
         apply_agent_toml_runtime_defaults,
         materialize_agent_config_credentials,
         missing_agent_config_error,
@@ -951,9 +953,9 @@ class BenchmarkWebApp:
                     self._raise_if_job_stop_requested(job)
                     self._run_suite(job, suite_key)
             finally:
+                stop_daemon_compose(job)
                 if log_proc is not None:
                     log_proc.terminate()
-                stop_daemon_compose(job)
                 self._release_job_environment(job)
             self._raise_if_job_stop_requested(job)
             self._refresh_job_report(job)
@@ -1324,9 +1326,9 @@ class BenchmarkWebApp:
                 except ResetError as exc:
                     append_log(Path(job.runner_log), f"warning: failed to release {benchmark_task_id}: {exc}")
                     append_log(Path(worker_job.runner_log), f"warning: failed to release {benchmark_task_id}: {exc}")
+            stop_daemon_compose(worker_job)
             if log_proc is not None:
                 log_proc.terminate()
-            stop_daemon_compose(worker_job)
             self._unregister_daemon_job(job.id, worker_job)
             self._unregister_task_daemon_job(job.id, token, worker_job)
 
@@ -1809,6 +1811,7 @@ def prepare_run_config(
             raise missing_agent_config_error(base_config_dir)
 
     content = apply_agent_toml_runtime_defaults(config.read_text(encoding="utf-8"))
+    content = apply_benchmark_telemetry(content)
     content = materialize_agent_config_credentials(content)
     validate_agent_toml(content)
     config.write_text(content, encoding="utf-8")
@@ -2247,9 +2250,8 @@ def daemon_compose_env(
     environment_bridge_mode: bool | None = None,
 ) -> dict[str, str]:
     env = dict(os.environ)
-    # Benchmark runs never go through an HTTP proxy: strip any proxy variables the
-    # host shell may have exported (e.g. a running Clash), so neither the docker
-    # build (base image / go mod / apt) nor the daemon container inherits them.
+    # Strip general host proxies so builds and model/device traffic do not
+    # inherit them. The explicitly configured telemetry-only proxy is retained.
     # NO_PROXY is a bypass list, not a proxy, and is set explicitly below.
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                 "http_proxy", "https_proxy", "all_proxy"):

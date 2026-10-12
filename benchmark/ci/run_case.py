@@ -22,6 +22,8 @@ ACTION_ENVIRONMENT_ALIASES = {
     "BENCHMARK_JUDGE_MODEL": "AIDEN_BENCHMARK_JUDGE_MODEL",
     "BENCHMARK_JUDGE_BASE_URL": "AIDEN_BENCHMARK_JUDGE_BASE_URL",
     "BENCHMARK_JUDGE_API_KEY": "AIDEN_BENCHMARK_JUDGE_API_KEY",
+    "BENCHMARK_TELEMETRY": "AIDEN_BENCHMARK_TELEMETRY",
+    "LANGFUSE_HTTPS_PROXY": "AIDEN_LANGFUSE_HTTPS_PROXY",
     "DAEMON_IMAGE": "AIDEN_DAEMON_IMAGE",
     "BENCHMARK_PHONE_ENVIRONMENT_URL": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL",
     "BENCHMARK_IOS_ENVIRONMENT_URL": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL",
@@ -416,6 +418,21 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
+        repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()
+        if repeats:
+            try:
+                repeat_count = int(repeats)
+            except ValueError as exc:
+                raise RuntimeError(
+                    "BENCHMARK_REPEATS must be a positive integer, "
+                    f"got {repeats!r}"
+                ) from exc
+            if repeat_count <= 0:
+                raise RuntimeError(
+                    "BENCHMARK_REPEATS must be a positive integer, "
+                    f"got {repeats!r}"
+                )
+            command.extend(["--repeats", str(repeat_count)])
         if environment_url:
             command.extend(["--environment-url", environment_url])
         if case.target_platform != "auto":

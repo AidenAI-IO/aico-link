@@ -74,7 +74,10 @@ def test_chat_long_polls_async_result_until_complete():
     seen = []
     responses = [
         FakeResponse(200, {"request_id": "req-1"}),
-        FakeResponse(200, {"status": "complete", "response": "done", "history": history}),
+        FakeResponse(200, {
+            "status": "complete", "response": "done", "history": history,
+            "messages": [{"type": "assistant", "episode_id": "ep-current"}],
+        }),
     ]
 
     def fake_urlopen(req, timeout=None):
@@ -87,9 +90,49 @@ def test_chat_long_polls_async_result_until_complete():
 
     assert resp.response == "done"
     assert resp.history == history
+    assert resp.episode_id == "ep-current"
     assert seen[0][0].endswith("/api/chat")
     assert seen[1][0].endswith("/api/chat/result?request_id=req-1&wait=true")
     assert seen[1][2] == 30
+
+
+@pytest.mark.parametrize("messages, expected", [
+    ([{"episode_id": "ep-current"}], "ep-current"),
+    ([{"episode_id": "ep-current"}, {"episode_id": "ep-other"}], None),
+    ([], None),
+])
+def test_chat_correlation_prefers_current_request_over_old_history(messages, expected):
+    client = AgentClient(base_url="http://test")
+    body = {
+        "status": "complete", "response": "done", "messages": messages,
+        "history": [{"episode_id": "ep-previous"}],
+    }
+    with patch("urllib.request.urlopen", _captured({}, body=body)):
+        response = client._wait_for_chat_result("req-1")
+    assert response.episode_id == expected
+
+
+def test_chat_error_retains_execution_correlation():
+    client = AgentClient(base_url="http://test")
+    body = {
+        "status": "error", "error": "provider failed",
+        "messages": [{"episode_id": "ep-failed"}],
+    }
+    with patch("urllib.request.urlopen", _captured({}, body=body)), \
+         pytest.raises(AgentRequestError) as exc_info:
+        client._wait_for_chat_result("req-failed")
+    assert exc_info.value.request_id == "req-failed"
+    assert exc_info.value.episode_id == "ep-failed"
+
+
+def test_chat_episode_id_reads_in_progress_request_without_waiting():
+    client = AgentClient(base_url="http://test")
+    seen = {}
+    body = {"status": "running", "messages": [{"episode_id": "ep-running"}]}
+    with patch("urllib.request.urlopen", _captured(seen, body=body)):
+        assert client.chat_episode_id("req/one") == "ep-running"
+    assert seen["url"].endswith("/api/chat/result?request_id=req%2Fone")
+    assert seen["timeout"] == 5
 
 
 def test_get_history_returns_current_history():

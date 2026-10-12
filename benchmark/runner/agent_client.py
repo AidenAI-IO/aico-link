@@ -23,10 +23,12 @@ class AgentRequestError(RuntimeError):
         *,
         request_id: str | None = None,
         status_code: int | None = None,
+        episode_id: str | None = None,
     ):
         super().__init__(message)
         self.request_id = request_id
         self.status_code = status_code
+        self.episode_id = episode_id
 
 
 class AgentSemanticError(AgentRequestError):
@@ -51,6 +53,28 @@ def _parse_json_response(
 class ChatResponse:
     response: str
     history: list[dict[str, Any]]
+    episode_id: str | None = None
+
+
+def _chat_episode_id(body: dict[str, Any]) -> str | None:
+    """Prefer request-scoped events: context-backed history drops episode IDs."""
+    explicit = body.get("episode_id")
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip()
+    for field in ("messages", "history"):
+        messages = body.get(field)
+        if not isinstance(messages, list):
+            continue
+        ids = {
+            message["episode_id"].strip()
+            for message in messages
+            if isinstance(message, dict)
+            and isinstance(message.get("episode_id"), str)
+            and message["episode_id"].strip()
+        }
+        if field == "messages" or ids:
+            return next(iter(ids)) if len(ids) == 1 else None
+    return None
 
 
 @dc.dataclass
@@ -295,6 +319,7 @@ class AgentClient:
         return ChatResponse(
             response=body.get("response", ""),
             history=body.get("history", []),
+            episode_id=_chat_episode_id(body),
         )
 
     def _wait_for_chat_result(
@@ -320,7 +345,11 @@ class AgentClient:
 
         result_status = body.get("status")
         if result_status == "error":
-            raise AgentRequestError(f"chat failed: {body.get('error', 'unknown')}")
+            raise AgentRequestError(
+                f"chat failed: {body.get('error', 'unknown')}",
+                request_id=request_id,
+                episode_id=_chat_episode_id(body),
+            )
         if result_status == "not_found":
             raise AgentRequestError(f"chat result not found for {request_id}")
         if result_status != "complete":
@@ -331,7 +360,17 @@ class AgentClient:
         return ChatResponse(
             response=body.get("response", ""),
             history=body.get("history", []),
+            episode_id=_chat_episode_id(body),
         )
+
+    def chat_episode_id(self, request_id: str) -> str | None:
+        """Read available correlation evidence, including for a timed-out request."""
+        encoded_id = urllib.parse.quote(request_id, safe="")
+        status, payload = self._get(f"/api/chat/result?request_id={encoded_id}", timeout=5)
+        if status != 200:
+            raise AgentRequestError(f"chat/result returned {status}", request_id=request_id)
+        body = _parse_json_response(payload, "chat/result", request_id=request_id)
+        return _chat_episode_id(body) if isinstance(body, dict) else None
 
     def cancel_chat(self, request_id: str, timeout: int = 15) -> str:
         status, body_bytes = self._post(

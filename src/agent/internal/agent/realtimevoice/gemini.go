@@ -615,7 +615,7 @@ func (s *geminiSession) translate(body []byte) []Event {
 		return []Event{{Kind: EventReady}}
 	}
 	if envelope.Error != nil {
-		return []Event{{Kind: EventError, Error: errors.New(envelope.Error.Message)}}
+		return []Event{{Kind: EventError, Error: classifyServerErrorMessage(envelope.Error.Message)}}
 	}
 	var events []Event
 	usageEmitted := false

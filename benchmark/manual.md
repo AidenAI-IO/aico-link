@@ -371,6 +371,7 @@ Common fields:
 | `app_ids` | Optional MobileGym app IDs to preload during environment setup; omitted tasks skip eager app data loading |
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
 | `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
+| `memory_assertions` | Optional post-task `recall_memory` observation with `query`, `expected_count`, `expected`, and/or `absent_ids`; uses the same checks as `assert_memory` setup |
 | `rubric` | The judge model's scoring items |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
 | `hard_assertions.required_tool_calls` | Requires a tool call whose input contains a specified nested subset |
@@ -386,6 +387,36 @@ the task setup on any other output.
 
 A unit suite is a different format with `kind` set to `unit`; it tests a tool's
 input/output directly without going through agent chat.
+
+#### Memory benchmark
+
+Run `suites/memory_v1.json` with `--auto-agent-setup` so each task and repeat
+starts with an isolated memory store. Reusing a live user's memory store is
+unsupported: setup verifies exact fixture counts but does not erase unrelated
+memories. Recall/application tasks seed and verify their own data instead of
+depending on another task's writes. The multi-turn update task intentionally
+uses real Agent turns to test repeated updates and the final stored value; its
+last answer may use the conversation context without an unnecessary recall.
+
+`memory_assertions` checks the persisted state after the Agent finishes. These
+harness reads are excluded from Agent tool counts and recall evidence. The
+runner records their results in `trace.json` as `memory_state`; semantic rubrics
+can evaluate the actual stored meaning. A state mismatch fails the task, while
+unavailable evidence is an evaluation error and is excluded from Agent success
+metrics. Use a query limit covering the known isolated fixture set; absence and
+count checks describe the returned result set. The judge also receives the
+Agent's memory-tool results, so failed writes cannot pass on intent alone.
+
+Session-chunk setup verifies that `recall_session_chunks` can return the seeded
+session and its summary without topic filters, after any requested history
+clear. Missing or unreadable evidence is a setup error, excluded from Agent
+success metrics. This check does not supply the answer to the Agent or choose
+its retrieval query.
+
+The corrected fixtures and rubrics change the suite hash. Establish a new
+baseline before evaluating Agent changes; scores from the previous suite are
+not directly comparable. City names and equivalent natural-language facts are
+judged semantically, while identifiers such as employee IDs remain exact.
 
 #### Notification Memory benchmark
 
@@ -812,7 +843,10 @@ uv run python -m runner rejudge \
 ```
 
 `rejudge` reads the existing artifacts and `rubric_spec` and rewrites the judge
-verdict/status.
+verdict/status in `results.rejudged.jsonl`. Recorded execution failures and hard
+assertion failures remain failed. Text-only tasks do not require screenshots;
+screenshots recorded as present in the original run must still be available.
+Post-task memory evidence must also be present when memory assertions were used.
 
 ### 3.5 compare: compare two runs
 

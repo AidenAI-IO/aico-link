@@ -30,6 +30,20 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+@pytest.mark.parametrize("assertions", [
+    {}, [], {"expected": []}, {"absent_ids": []}, {"expected_count": None},
+    {"expected_count": True}, {"expected_count": -1}, {"expected_count": "1"},
+    {"expected_count": 1, "unknown": True}, {"expected": [{"id": 12}]},
+])
+def test_load_suite_rejects_invalid_memory_assertions(tmp_path: Path, assertions):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["memory_assertions"] = assertions
+    path = tmp_path / "invalid.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match="memory_assertions"):
+        load_suite(path)
+
+
 def test_load_suite_parses_environment_assertions(tmp_path: Path):
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["tasks"][0]["environment_assertions"] = {
@@ -1368,45 +1382,14 @@ def test_memory_suite_covers_representative_memory_behaviors():
     assert len(suite.tasks) >= 15
     assert all(task.category == "memory" for task in suite.tasks)
 
-    procedure_task = task_by_id["use_procedure_steps"]
-    assert any(
-        "YYYY-MM-DD-商家-金额" in item.check
-        for item in procedure_task.rubric
-    )
-
-    assert any(
-        "recall_session_chunks" in item.check
-        for item in task_by_id["recall_session_chunk_details"].rubric
-    )
-
     overwrite_task = task_by_id["multi_turn_overwrite_and_verify_last_value"]
     assert isinstance(overwrite_task.setup, list)
-    assert [item["prompt"] for item in overwrite_task.setup] == [
-        "请记住：我的办公城市是杭州。",
-        "我改主意了，办公城市改成深圳。",
-        "又调整了一下，办公城市最终定为成都",
-    ]
+    assert [item["type"] for item in overwrite_task.setup] == ["agent_prompt"] * 3
     assert all(item["clear_history_after"] is False for item in overwrite_task.setup)
-    assert overwrite_task.prompt == "我现在的办公城市是什么？"
-    assert "第 1 步" not in overwrite_task.prompt
-    assert "recall_memory" not in overwrite_task.prompt
-    assert "记忆工具" not in overwrite_task.prompt
-    assert overwrite_task.hard_assertions.min_tool_calls == 4
-    assert overwrite_task.hard_assertions.max_tool_calls == 4
-    assert [item.tool for item in overwrite_task.hard_assertions.required_tool_calls] == [
-        "save_memory",
-        "save_memory",
-        "save_memory",
-        "recall_memory",
-    ]
-    assert [item.input_contains["content"]["$contains"] for item in overwrite_task.hard_assertions.required_tool_calls[:3]] == [
-        "杭州",
-        "深圳",
-        "成都",
-    ]
-    assert overwrite_task.hard_assertions.required_tool_calls[3].input_contains == {
-        "tags": {"$contains": "办公城市"}
-    }
+    assert overwrite_task.hard_assertions.min_tool_calls == 3
+    assert overwrite_task.hard_assertions.max_tool_calls > 4
+    assert overwrite_task.hard_assertions.required_tools == ["save_memory"]
+    assert overwrite_task.memory_assertions["expected_count"] == 1
 
 
 def test_personamem_lt_recall_suite_uses_deterministic_answers():

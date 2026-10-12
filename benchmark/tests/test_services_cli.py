@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from runner import services, webui
@@ -392,12 +393,12 @@ def test_start_agent_daemon_reports_missing_agent_config(tmp_path: Path, capsys)
 
 
 def test_daemon_compose_env_strips_host_proxy(monkeypatch):
-    # The benchmark never uses an HTTP proxy: a proxy exported on the host (e.g.
-    # a running Clash) must not leak into the docker build or the daemon
-    # container. NO_PROXY is a bypass list and must survive.
+    # General host proxies must not leak into builds or model/device traffic.
+    # The explicit telemetry-only proxy and NO_PROXY bypass list must survive.
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                 "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.setenv(key, "http://127.0.0.1:7897")
+    monkeypatch.setenv("AIDEN_LANGFUSE_HTTPS_PROXY", "http://telemetry.test:8080")
 
     env = webui.daemon_compose_env(
         image="aiden-agent-daemon:test",
@@ -408,14 +409,17 @@ def test_daemon_compose_env_strips_host_proxy(monkeypatch):
                 "http_proxy", "https_proxy", "all_proxy"):
         assert key not in env, f"{key} leaked into daemon env"
     assert "host.docker.internal" in env["NO_PROXY"]
+    assert env["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://telemetry.test:8080"
 
 
-def test_agent_daemon_compose_does_not_forward_proxy():
+def test_agent_daemon_compose_only_forwards_dedicated_telemetry_proxy():
     compose = (webui.BENCHMARK_DOCKER_DIR / "docker-compose.agent-daemon.yml").read_text(encoding="utf-8")
 
-    assert "HTTP_PROXY" not in compose
-    assert "HTTPS_PROXY" not in compose
-    assert "ALL_PROXY" not in compose
+    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
+                "http_proxy", "https_proxy", "all_proxy"):
+        assert re.search(rf"(?m)^\s+(?:-\s+)?{key}\s*[:=]", compose) is None
+        assert "${" + key not in compose
+    assert "AIDEN_LANGFUSE_HTTPS_PROXY: ${AIDEN_LANGFUSE_HTTPS_PROXY:-}" in compose
 
 
 def test_daemon_compose_env_enables_benchmark_token_for_config_dir(tmp_path: Path):

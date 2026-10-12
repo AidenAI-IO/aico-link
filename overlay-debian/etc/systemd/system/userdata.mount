@@ -1,7 +1,7 @@
 [Unit]
 Description=Aiden persistent userdata
 DefaultDependencies=no
-Requires=aiden-slot-resolve.service
+Requires=aiden-slot-resolve.service aiden-rootfs-grow.service
 After=aiden-slot-resolve.service aiden-rootfs-grow.service
 Before=local-fs.target
 

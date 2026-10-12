@@ -551,6 +551,11 @@ func shellStartPTYBackground(ctx context.Context, session *shellSession, argumen
 		_ = ptmx.Close()
 		return err
 	}
+	// The child holds its own slave fds now. Drop ours so the master reports
+	// EIO once the child exits instead of blocking until the drain timeout.
+	if unixPty, ok := ptmx.(gopty.UnixPty); ok {
+		_ = unixPty.Slave().Close()
+	}
 
 	session.pty = ptmx
 	session.ptyCmd = ptyCmd

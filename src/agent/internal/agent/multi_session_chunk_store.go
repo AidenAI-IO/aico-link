@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 )
 
 // MultiSessionChunkStore searches for chunks across all sessions in a session folder.
@@ -90,32 +89,14 @@ func matchesChunkQuery(chunk chunkIndexEntry, query ChunkRecallQuery) bool {
 		return false
 	}
 
-	// Match by tags
-	if len(query.Tags) > 0 {
-		for _, queryTag := range query.Tags {
-			for _, chunkTag := range chunk.Tags {
-				if strings.EqualFold(queryTag, chunkTag) {
-					return true
-				}
-			}
-		}
-	}
-
-	// Match by entities
-	if len(query.Entities) > 0 {
-		for _, queryEntity := range query.Entities {
-			for _, chunkEntity := range chunk.Entities {
-				if strings.EqualFold(queryEntity, chunkEntity) {
-					return true
-				}
-			}
-		}
-	}
-
 	// If no specific filters, match all
 	if len(query.ChunkIDs) == 0 && len(query.Tags) == 0 && len(query.Entities) == 0 {
 		return true
 	}
 
-	return false
+	// The summary remains searchable even when extraction did not produce a
+	// matching tag or the caller classified a topic in a different field.
+	haystacks := []string{chunk.Summary}
+	return scoreMemoryQueryValues(query.Tags, chunk.Tags, chunk.Entities, haystacks) > 0 ||
+		scoreMemoryQueryValues(query.Entities, chunk.Entities, chunk.Tags, haystacks) > 0
 }

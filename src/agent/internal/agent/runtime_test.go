@@ -1348,7 +1348,7 @@ func TestRuntimeCloseWaitsForAsyncEpisodeMaintenance(t *testing.T) {
 }
 
 func TestAsyncEpisodeMaintenanceCloseAndWaitCancelsWorkOnTimeout(t *testing.T) {
-	var maintenance asyncEpisodeMaintenance
+	var maintenance asyncRuntimeWork
 	maintenanceCtx, started := maintenance.begin()
 	if !started {
 		t.Fatal("begin() = false, want true")

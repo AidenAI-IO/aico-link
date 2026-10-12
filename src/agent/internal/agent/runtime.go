@@ -49,6 +49,7 @@ const (
 	runtimeSessionEventPersistTimeout = 2 * time.Second
 	runtimeTTSCloseTimeout            = 5 * time.Second
 	runtimeEpisodeMaintenanceTimeout  = 10 * time.Second
+	runtimeTelemetryDrainTimeout      = 35 * time.Second
 	maxPublicToolResultRunes          = maxToolObservationRunes
 )
 
@@ -101,7 +102,8 @@ type Runtime struct {
 	storageMonitor          *StorageMonitor
 	ttsManager              *tts.ProviderManager
 	ttsManagerOnce          sync.Once
-	episodeMaintenance      asyncEpisodeMaintenance
+	episodeMaintenance      asyncRuntimeWork
+	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
 }
 
@@ -117,7 +119,7 @@ func (r *Runtime) ConfigSnapshot() Config {
 	return r.config
 }
 
-type asyncEpisodeMaintenance struct {
+type asyncRuntimeWork struct {
 	mu      sync.Mutex
 	wg      sync.WaitGroup
 	closing bool
@@ -2133,7 +2135,7 @@ func (r *Runtime) commitEpisodeBestEffort(recorder *EpisodeRecorder, input strin
 	r.exportEpisodeBestEffort(episode, promptCapture)
 }
 
-func (m *asyncEpisodeMaintenance) begin() (context.Context, bool) {
+func (m *asyncRuntimeWork) begin() (context.Context, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closing {
@@ -2146,11 +2148,11 @@ func (m *asyncEpisodeMaintenance) begin() (context.Context, bool) {
 	return m.ctx, true
 }
 
-func (m *asyncEpisodeMaintenance) done() {
+func (m *asyncRuntimeWork) done() {
 	m.wg.Done()
 }
 
-func (m *asyncEpisodeMaintenance) closeAndWait(ctx context.Context) error {
+func (m *asyncRuntimeWork) closeAndWait(ctx context.Context) error {
 	m.mu.Lock()
 	m.closing = true
 	cancel := m.cancel
@@ -2242,11 +2244,27 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 	episodesRoot := filepath.Join(r.ConfigSnapshot().ConfigDir, "memory", "episodes")
 	episodeDir := EpisodeDirectory(episodesRoot, episode)
 	timeout := r.ConfigSnapshot().Telemetry.UploadTimeoutOrDefault()
+	parent := context.Background()
+	drainOnClose := r.ConfigSnapshot().Telemetry.EnvironmentOrDefault() == "benchmark"
+	if drainOnClose {
+		var started bool
+		parent, started = r.telemetryExports.begin()
+		if !started {
+			return
+		}
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		if drainOnClose {
+			defer r.telemetryExports.done()
+		}
+		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
-		if err := exporter.ExportEpisodeDir(ctx, episodeDir, episode, promptCalls); err != nil && r.logger != nil {
-			r.logger.Warn("[telemetry] export episode failed: %v", err)
+		if err := exporter.ExportEpisodeDir(ctx, episodeDir, episode, promptCalls); err != nil {
+			if r.logger != nil {
+				r.logger.Warn("[telemetry] export episode %s failed: %v", episode.ID, err)
+			}
+		} else if drainOnClose && r.logger != nil {
+			r.logger.Info("[telemetry] exported episode %s trace %s", episode.ID, telemetryTraceID(episode.ID))
 		}
 	}()
 }
@@ -2901,6 +2919,16 @@ func (r *Runtime) Close() error {
 		r.logger.Error("episode maintenance drain on close: %v", err)
 	}
 	maintenanceCancel()
+	// Benchmark workers exit immediately after each attempt, so retain their
+	// execution evidence before container teardown. Ordinary runtimes keep the
+	// existing best-effort export and non-blocking telemetry shutdown behavior.
+	if r.ConfigSnapshot().Telemetry.EnvironmentOrDefault() == "benchmark" {
+		telemetryCtx, telemetryCancel := context.WithTimeout(context.Background(), runtimeTelemetryDrainTimeout)
+		if err := r.telemetryExports.closeAndWait(telemetryCtx); err != nil && r.logger != nil {
+			r.logger.Warn("[telemetry] drain on close: %v", err)
+		}
+		telemetryCancel()
+	}
 	if plane, ok := r.memoryPlane.(*FilesystemMemoryPlane); ok {
 		plane.StopEpisodeMemory()
 		plane.StopNotificationMemory()

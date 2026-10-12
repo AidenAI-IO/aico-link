@@ -28,7 +28,11 @@ not expand the contract. See [Runtime Configuration Managed by the Business Pack
 `src/` and `assets/business/` are normally business; OTA implementation, Go dependency
 declarations, CMake files, and factory Agent configuration are system. Files not listed
 as business, including out-of-scope overlays, SDK, kernel, partitions, base dependencies,
-and build/release scripts, default to system. Business skills' `SKILL.md` files are business resources.
+and build/release scripts, default to system. Non-payload Markdown and `.gitignore` files
+do not affect releases. Markdown in bundled skills, config-web assets, and business assets
+or the embedded Agent Web UI remains business content. Markdown and `.gitignore` under
+`overlay-debian/` follow the normal overlay classification because they can be copied
+into the image or business package. Release notes are separate assets, not image contents.
 
 Deletions and renames participate in comparison. Squash merges and rebases are supported:
 the previous release commit need not be an ancestor of the candidate commit, but both

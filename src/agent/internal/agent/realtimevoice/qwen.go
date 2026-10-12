@@ -349,7 +349,7 @@ func translateQwenEvent(body []byte) (Event, bool) {
 		if isQwenNoActiveResponseCancelError(event.Error.Type, event.Error.Param, event.Error.Message) {
 			return Event{}, false
 		}
-		return Event{Kind: EventError, Error: errors.New(event.Error.Message)}, true
+		return Event{Kind: EventError, Error: classifyServerErrorMessage(event.Error.Message)}, true
 	default:
 		return Event{}, false
 	}

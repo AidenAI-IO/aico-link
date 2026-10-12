@@ -837,9 +837,9 @@ def _cmd_run_auto_agent_setup_inner(
                     print(f"warning: failed to release environment task route for {route_id}: {exc}", file=sys.stderr, flush=True)
             if client is not None:
                 client.close()
+            stop_daemon_compose(job)
             if log_proc is not None:
                 log_proc.terminate()
-            stop_daemon_compose(job)
 
     results = []
     completed = 0

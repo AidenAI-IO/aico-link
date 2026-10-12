@@ -10,6 +10,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/godbus/dbus/v5"
+
+	"aiden-agent/internal/logging"
 )
 
 var errPairingModeState = errors.New("BLE pairing mode update failed")
@@ -138,6 +140,7 @@ func (b *blueZBackend) Disconnect() error {
 	if closed || b.conn == nil || !b.adapter.IsValid() {
 		return ErrBluetoothUnavailable
 	}
+	logging.Infof("ble_service", "pairing", "BLE user disconnect requested")
 	b.setConnectionEnabled(false)
 	var result error
 	result = errors.Join(result, b.closePairingWindow())
@@ -192,11 +195,13 @@ func (b *blueZBackend) ForgetPairing() (int, error) {
 			blueZAdapterInterface+".RemoveDevice",
 			device.path,
 		).Err; err != nil {
+			logging.Warnf("ble_service", "pairing", "BLE bond removal failed device=%s removed=%d: %v", device.path, removed, err)
 			b.requestRescan()
 			return removed, fmt.Errorf("remove Bluetooth bond %s: %w", device.path, err)
 		}
 		removed++
 	}
+	logging.Infof("ble_service", "pairing", "BLE board bonds removed count=%d", removed)
 
 	b.stateMu.Lock()
 	b.trustedDevice = ""
@@ -248,6 +253,15 @@ func (b *blueZBackend) updateDeviceStatus(
 	connectionEnabled := b.connectionEnabled
 	b.stateMu.Unlock()
 	connected := connectionEnabled && trusted.IsValid() && variantBool(properties, "Connected")
+	if previous := b.service.Status(); previous.Connected != connected ||
+		previous.BondedDeviceCount != bondedCount {
+		logging.Infof(
+			"ble_service", "pairing",
+			"BLE device state connected=%t paired=%t services_resolved=%t bonded=%d pairing_open=%t device=%s",
+			connected, variantBool(properties, "Paired"), variantBool(properties, "ServicesResolved"),
+			bondedCount, pairingOpen, trusted,
+		)
+	}
 	if !connected {
 		// BlueZ normally invokes StopNotify when the central disconnects, but an
 		// abrupt link loss or bluetoothd restart can omit that callback. Clear the
@@ -318,6 +332,7 @@ func (b *blueZBackend) beginPairingWindow(now time.Time) error {
 
 	b.stateMu.Lock()
 	b.pairingOpen = true
+	b.pairingOpenedAt = now
 	b.pairingDeadline = now.Add(b.pairingWindow)
 	b.pairingModeDirty = true
 	deadline := b.pairingDeadline
@@ -329,10 +344,12 @@ func (b *blueZBackend) beginPairingWindow(now time.Time) error {
 		cleanupErr := b.setPairingMode(false)
 		b.stateMu.Lock()
 		b.pairingOpen = false
+		b.pairingOpenedAt = time.Time{}
 		b.pairingDeadline = time.Time{}
 		b.pairingModeDirty = cleanupErr != nil
 		b.stateMu.Unlock()
 		resultErr := fmt.Errorf("%w: %v", errPairingModeState, err)
+		logging.Warnf("ble_service", "pairing", "BLE pairing window open failed: %v", resultErr)
 		b.service.status.update(func(status *RuntimeStatus) {
 			status.PairingOpen = false
 			status.PairingDeadline = ""
@@ -343,6 +360,7 @@ func (b *blueZBackend) beginPairingWindow(now time.Time) error {
 	b.stateMu.Lock()
 	b.pairingModeDirty = false
 	b.stateMu.Unlock()
+	logging.Infof("ble_service", "pairing", "BLE pairing window opened deadline=%s", formatDeadline(deadline))
 	b.service.status.update(func(status *RuntimeStatus) {
 		status.PairingOpen = true
 		status.PairingDeadline = formatDeadline(deadline)
@@ -354,11 +372,32 @@ func (b *blueZBackend) beginPairingWindow(now time.Time) error {
 func (b *blueZBackend) closePairingWindow() error {
 	b.pairingModeMu.Lock()
 	defer b.pairingModeMu.Unlock()
+	return b.closePairingWindowLocked()
+}
 
+// closePairingWindowOpenedAt closes the window only if it is still the one
+// opened at openedAt. The check and the close share one pairingModeMu
+// acquisition so a concurrent explicit Connect cannot open a newer window in
+// between and have it closed by a completion that belonged to the old one.
+func (b *blueZBackend) closePairingWindowOpenedAt(openedAt time.Time) (bool, error) {
+	b.pairingModeMu.Lock()
+	defer b.pairingModeMu.Unlock()
+	b.stateMu.Lock()
+	sameWindow := b.pairingOpen && b.pairingOpenedAt.Equal(openedAt)
+	b.stateMu.Unlock()
+	if !sameWindow {
+		return false, nil
+	}
+	return true, b.closePairingWindowLocked()
+}
+
+// closePairingWindowLocked requires pairingModeMu.
+func (b *blueZBackend) closePairingWindowLocked() error {
 	b.stateMu.Lock()
 	wasOpen := b.pairingOpen
 	wasDirty := b.pairingModeDirty
 	b.pairingOpen = false
+	b.pairingOpenedAt = time.Time{}
 	b.pairingDeadline = time.Time{}
 	b.pairingModeDirty = wasOpen || wasDirty
 	b.stateMu.Unlock()
@@ -393,6 +432,7 @@ func (b *blueZBackend) expirePairingWindow(now time.Time) error {
 	expired := b.pairingOpen && !b.pairingDeadline.IsZero() && !now.Before(b.pairingDeadline)
 	b.stateMu.Unlock()
 	if expired {
+		logging.Infof("ble_service", "pairing", "BLE pairing window closed reason=deadline")
 		return b.closePairingWindow()
 	}
 	return nil

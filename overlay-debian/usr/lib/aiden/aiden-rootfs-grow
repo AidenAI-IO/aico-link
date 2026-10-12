@@ -21,10 +21,58 @@ expected_root=$(readlink -f "/dev/disk/by-partlabel/rootfs${AIDEN_SLOT_SUFFIX}")
 # writable before resizing it or provisioning runtime state under /etc and /var.
 mount -o remount,rw /
 
+# resize2fs checks an unmounted filesystem before checking whether its size
+# already matches the partition. Previously used userdata can therefore require
+# fsck even after a clean shutdown. Inspect the geometry first so a rootfs-only
+# OTA does not needlessly check or resize the preserved data partitions.
+grow_persistent_filesystem() {
+    device=$1
+    if ! superblock=$(LC_ALL=C dumpe2fs -h "${device}" 2>/dev/null); then
+        echo "Cannot read ext4 geometry for ${device}" >&2
+        return 1
+    fi
+    blocks=$(printf '%s\n' "${superblock}" | awk '$1 == "Block" && $2 == "count:" { print $3 }')
+    block_size=$(printf '%s\n' "${superblock}" | awk '$1 == "Block" && $2 == "size:" { print $3 }')
+    partition_bytes=$(blockdev --getsize64 "${device}")
+    for value in "${blocks}" "${block_size}" "${partition_bytes}"; do
+        case "${value}" in
+            ''|*[!0-9]*|0)
+                echo "Invalid filesystem or partition geometry for ${device}" >&2
+                return 1
+                ;;
+        esac
+    done
+    partition_blocks=$((partition_bytes / block_size))
+    if [ "${blocks}" -gt "${partition_blocks}" ]; then
+        echo "Filesystem on ${device} is larger than its partition" >&2
+        return 1
+    fi
+    if [ "${blocks}" -eq "${partition_blocks}" ]; then
+        echo "Filesystem on ${device} already fills its partition; skipping growth"
+        return 0
+    fi
+
+    if ! findmnt -rn -S "${device}" >/dev/null; then
+        echo "Checking ${device} before offline growth"
+        fsck_status=0
+        e2fsck -f -p "${device}" || fsck_status=$?
+        case "${fsck_status}" in
+            0|1) ;;
+            *)
+                echo "Filesystem check failed for ${device}: status=${fsck_status}" >&2
+                return "${fsck_status}"
+                ;;
+        esac
+    fi
+    echo "Growing ${device} from ${blocks} to ${partition_blocks} blocks"
+    resize2fs "${device}"
+}
+
 if [ ! -e "${marker}" ]; then
+    echo "Growing active rootfs ${root_device}"
     resize2fs "${root_device}"
-    resize2fs /dev/disk/by-partlabel/userdata
-    resize2fs /dev/disk/by-partlabel/ota
+    grow_persistent_filesystem /dev/disk/by-partlabel/userdata
+    grow_persistent_filesystem /dev/disk/by-partlabel/ota
     mkdir -p "$(dirname "${marker}")"
     tmp=${marker}.tmp.$$
     printf 'slot=%s\nroot=%s\n' "${AIDEN_SLOT_SUFFIX}" "${root_device}" >"${tmp}"

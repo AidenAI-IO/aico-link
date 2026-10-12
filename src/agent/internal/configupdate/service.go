@@ -159,6 +159,9 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 	if err != nil {
 		return Result{}, internalConfigUpdate(err)
 	}
+	if err := persistImplicitProviderTypes(patch, currentDTO, original); err != nil {
+		return Result{}, internalConfigUpdate(err)
+	}
 	if len(patch) > 0 {
 		if err := persistLegacyProviderFields(patch, current, original, renames, explicitCredentials); err != nil {
 			return Result{}, internalConfigUpdate(err)
@@ -820,6 +823,59 @@ func isProviderRecordSection(section string) bool {
 		}
 	}
 	return false
+}
+
+// A resolved default provider may not exist in the file yet. Once an edit
+// creates its table, its type must be explicit even if it matched the default
+// and was removed by no-op filtering.
+func persistImplicitProviderTypes(patch map[string]json.RawMessage, current Config, original []byte) error {
+	var document map[string]any
+	metadata, err := toml.Decode(string(original), &document)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(current)
+	if err != nil {
+		return err
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &values); err != nil {
+		return err
+	}
+	for _, section := range []string{"model_providers", "tts_providers", "stt_providers", "voice_model_providers"} {
+		var records map[string]json.RawMessage
+		if json.Unmarshal(patch[section], &records) != nil {
+			continue
+		}
+		var defaults map[string]map[string]json.RawMessage
+		if json.Unmarshal(values[section], &defaults) != nil {
+			continue
+		}
+		for name, raw := range records {
+			if providerRecordDefined(metadata, section, name) {
+				continue
+			}
+			var fields map[string]json.RawMessage
+			if json.Unmarshal(raw, &fields) != nil || fields == nil {
+				continue
+			}
+			if _, exists := fields["type"]; exists {
+				continue
+			}
+			if providerType, exists := defaults[name]["type"]; exists {
+				fields["type"] = providerType
+				records[name], err = json.Marshal(fields)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		patch[section], err = json.Marshal(records)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func filterNoopWebConfigPatch(patch map[string]json.RawMessage, current Config) (map[string]json.RawMessage, error) {

@@ -1,7 +1,7 @@
 [Unit]
 Description=Aiden OTA workspace
 DefaultDependencies=no
-Requires=userdata.mount aiden-slot-resolve.service
+Requires=userdata.mount aiden-slot-resolve.service aiden-rootfs-grow.service
 After=userdata.mount aiden-rootfs-grow.service
 Before=local-fs.target
 

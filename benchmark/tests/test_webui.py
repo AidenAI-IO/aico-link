@@ -285,6 +285,39 @@ def test_prepare_run_config_ignores_legacy_agent_model_environment(tmp_path: Pat
     assert 'api_key = ""' in rendered
 
 
+def test_prepare_run_config_enables_ci_telemetry_only_when_requested(tmp_path: Path, monkeypatch):
+    config_text = '[model_settings.model]\nprovider = "fake"\n'
+    base, dest = tmp_path / "base", tmp_path / "dest"
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://langfuse.example")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    secret = 'sk-quote"back\\slash'
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", secret)
+    monkeypatch.delenv("AIDEN_BENCHMARK_TELEMETRY", raising=False)
+    webui.prepare_run_config(base, dest, agent_config_text=config_text)
+    config = tomllib.loads((dest / "agent.toml").read_text())
+    assert "advanced_settings" not in config
+
+    monkeypatch.setenv("AIDEN_BENCHMARK_TELEMETRY", "1")
+    webui.prepare_run_config(base, dest, agent_config_text=config_text)
+    config = tomllib.loads((dest / "agent.toml").read_text())
+    telemetry = config["advanced_settings"]["runtime"]["telemetry"]
+    assert telemetry["enabled"] is True
+    assert telemetry["base_url"] == "https://langfuse.example"
+    assert telemetry["public_key"] == "pk-test"
+    assert telemetry["secret_key"] == secret
+    assert telemetry["upload_screenshots"] is False
+    assert telemetry["environment"] == "benchmark"
+
+    # An explicit opt-out is preserved; missing CI credentials fail clearly.
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY")
+    explicit = config_text + '[advanced_settings.runtime.telemetry]\nenabled = false\n'
+    webui.prepare_run_config(base, dest, agent_config_text=explicit)
+    config = tomllib.loads((dest / "agent.toml").read_text())
+    assert config["advanced_settings"]["runtime"]["telemetry"] == {"enabled": False}
+    with pytest.raises(ValueError, match="benchmark telemetry requires LANGFUSE_SECRET_KEY"):
+        webui.prepare_run_config(base, dest, agent_config_text=config_text)
+
+
 def test_prepare_run_config_uses_agent_config_text(tmp_path: Path):
     base = tmp_path / "base"
     base.mkdir()

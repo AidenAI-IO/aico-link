@@ -24,7 +24,7 @@ BENCHMARK_AGENT_MODEL_ENV = "AIDEN_BENCHMARK_AGENT_MODEL"
 BENCHMARK_AGENT_BASE_URL_ENV = "AIDEN_BENCHMARK_AGENT_BASE_URL"
 BENCHMARK_AGENT_API_KEY_ENV = "AIDEN_BENCHMARK_AGENT_API_KEY"
 
-AGENT_CREDENTIAL_KEYS = ("api_key", "relay_api_key")
+AGENT_CREDENTIAL_KEYS = ("api_key", "relay_api_key", "public_key", "secret_key")
 _AGENT_CREDENTIAL_ENV_REFERENCE = re.compile(
     rf"(?m)^(?P<prefix>\s*(?:{'|'.join(AGENT_CREDENTIAL_KEYS)})\s*=\s*)"
     r"(?P<quote>['\"])(?P<reference>\$[A-Za-z_][A-Za-z0-9_]*)"
@@ -255,6 +255,41 @@ def render_agent_template(text: str) -> str:
         escaped = json.dumps(value, ensure_ascii=False)[1:-1]
         rendered = rendered.replace("{{" + key + "}}", escaped)
     return rendered
+
+
+def apply_benchmark_telemetry(content: str) -> str:
+    """Opt CI workers into execution tracing; explicit Agent settings take precedence."""
+    if os.getenv("AIDEN_BENCHMARK_TELEMETRY", "").strip().lower() not in {"1", "true"}:
+        return content
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    config = tomllib.loads(content)
+    runtime = config.get("advanced_settings", {}).get("runtime", {})
+    if "telemetry" in runtime:
+        return content
+    values = {}
+    for key in ("LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
+        value = os.getenv(key, "").strip()
+        if not value:
+            raise ValueError(f"benchmark telemetry requires {key}")
+        values[key] = json.dumps(value, ensure_ascii=False)
+    return content.rstrip() + "\n\n" + "\n".join([
+        "[advanced_settings.runtime.telemetry]",
+        "enabled = true",
+        'provider = "langfuse"',
+        f'base_url = {values["LANGFUSE_BASE_URL"]}',
+        f'public_key = {values["LANGFUSE_PUBLIC_KEY"]}',
+        f'secret_key = {values["LANGFUSE_SECRET_KEY"]}',
+        "upload_screenshots = false",
+        "upload_timeout_sec = 30",
+        "max_retry = 2",
+        'environment = "benchmark"',
+        'tags = ["benchmark"]',
+        "",
+    ])
 
 
 def materialize_agent_config_credentials(

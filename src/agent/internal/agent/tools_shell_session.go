@@ -19,6 +19,7 @@ import (
 
 const (
 	shellSessionIdleTimeout = 30 * time.Minute
+	shellPTYDrainTimeout    = 2 * time.Second
 )
 
 type shellSession struct {
@@ -160,6 +161,16 @@ func (s *shellSession) wait() {
 		if s.ptyCmd.ProcessState != nil {
 			code := s.ptyCmd.ProcessState.ExitCode()
 			exitCode = &code
+		}
+		// Let capture drain the PTY before closing the master: closing it
+		// first discards output still buffered in the kernel. Once every
+		// slave fd is closed the read returns EIO and capture ends on its own;
+		// the timeout covers a background child that keeps the slave open.
+		if s.captureDone != nil {
+			select {
+			case <-s.captureDone:
+			case <-time.After(shellPTYDrainTimeout):
+			}
 		}
 		s.closeInput()
 		if s.captureDone != nil {

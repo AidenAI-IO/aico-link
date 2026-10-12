@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +11,7 @@ import pytest
 
 from runner.langfuse_reporter import (
     LangfusePublishError,
+    _agent_trace_id,
     _fetch_dataset_item_via_public_api,
     publish_run,
 )
@@ -144,6 +147,137 @@ class FakeLangfuse:
 
     def flush(self):
         self.flushed = True
+
+    def get_trace_url(self, *, trace_id):
+        return f"http://langfuse.local/project/project-1/traces/{trace_id}"
+
+
+class ExecutionLangfuse(FakeLangfuse):
+    def __init__(self, *, environment="benchmark", roots_available=True):
+        super().__init__()
+        self.environment = environment
+        self.roots_available = roots_available
+        self.execution_observations = []
+        self.link_calls = []
+        self.api.observations = SimpleNamespace(get_many=self.get_roots)
+        self.api.dataset_run_items = SimpleNamespace(create=self.link_item)
+
+    def create_dataset_item(self, **kwargs):
+        return super().create_dataset_item(dataset_id="dataset-1", **kwargs)
+
+    def get_roots(self, **kwargs):
+        self.trace_calls.append(kwargs["trace_id"])
+        roots = [SimpleNamespace(id="agent-root", environment=self.environment)]
+        return SimpleNamespace(data=roots if self.roots_available else [])
+
+    def start_observation(self, **kwargs):
+        record = {**kwargs, "attributes": {}, "ended": False}
+        self.execution_observations.append(record)
+        observation_id = f"observation-{len(self.execution_observations)}"
+        return SimpleNamespace(
+            id=observation_id,
+            _otel_span=SimpleNamespace(set_attributes=record["attributes"].update),
+            end=lambda: record.update(ended=True),
+        )
+
+    def link_item(self, **kwargs):
+        self.link_calls.append(kwargs)
+        existing_items = list(self.existing_run.dataset_run_items) if self.existing_run else []
+        existing_items.append(SimpleNamespace(
+            dataset_item_id=kwargs["dataset_item_id"], trace_id=kwargs["trace_id"],
+        ))
+        self.existing_run = SimpleNamespace(
+            id="dataset-run-1", metadata=kwargs["metadata"], dataset_run_items=existing_items,
+        )
+        return SimpleNamespace(dataset_run_id="dataset-run-1")
+
+
+def test_publish_run_binds_item_and_scores_to_execution_trace(tmp_path: Path):
+    client = ExecutionLangfuse()
+    run_dir = _write_run(tmp_path)
+    published = publish_run(run_dir, client=client)
+    trace_id = _agent_trace_id("episode-a")
+    assert published.dataset_run_id == "dataset-run-1"
+    assert published.dataset_run_url == (
+        "http://langfuse.local/project/project-1/experiments/results?baseline=dataset-run-1"
+    )
+    assert client.experiment is None
+    assert client.spans == []
+    record = client.execution_observations[0]
+    assert record["trace_context"] == {"trace_id": trace_id, "parent_span_id": "agent-root"}
+    assert record["output"]["execution_trace_status"] == "available"
+    assert record["attributes"]["langfuse.experiment.item.root_observation_id"] == "observation-1"
+    assert record["attributes"]["langfuse.experiment.id"] == "dataset-run-1"
+    assert record["attributes"]["langfuse.internal.as_root"] is False
+    assert record["attributes"]["langfuse.experiment.metadata.benchmark_run_id"] == "run-a"
+    assert client.link_calls[0]["trace_id"] == trace_id
+    assert client.link_calls[0]["observation_id"] == "observation-1"
+    assert record["ended"] is True
+    assert all(s["trace_id"] == trace_id for s in client.score_calls if s.get("trace_id"))
+    publish_run(run_dir, client=client)
+    assert len(client.execution_observations) == 1
+
+
+@pytest.mark.parametrize("environment", ["production", "default", "", None])
+def test_publish_run_refuses_to_modify_normal_agent_trace(tmp_path: Path, environment):
+    client = ExecutionLangfuse(environment=environment)
+    with pytest.raises(LangfusePublishError, match="non-benchmark trace"):
+        publish_run(_write_run(tmp_path), client=client)
+    assert client.execution_observations == []
+    assert client.link_calls == []
+    assert client.score_calls == []
+
+
+def test_publish_run_does_not_attach_to_unverified_execution_trace(tmp_path: Path):
+    client = ExecutionLangfuse(roots_available=False)
+    published = publish_run(_write_run(tmp_path), client=client)
+    assert published.dataset_run_url == "http://langfuse.local/dataset-run-1"
+    assert client.execution_observations == []
+    assert client.link_calls == []
+    output = client.experiment["item_results"][0].output
+    assert output["aiden_trace_id"] == _agent_trace_id("episode-a")
+    assert output["execution_trace_status"] == "pending_or_missing"
+
+
+def test_publish_run_without_episode_keeps_failure_replay(tmp_path: Path):
+    run_dir = _write_run(tmp_path)
+    path = run_dir / "results.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    for row in rows:
+        row["metrics"].pop("episode_id", None)
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+    client = ExecutionLangfuse()
+    published = publish_run(run_dir, client=client)
+    assert published.dataset_run_url == "http://langfuse.local/dataset-run-1"
+    assert client.execution_observations == []
+    assert client.experiment is not None
+    assert client.experiment["item_results"][0].output["aiden_trace_id"] is None
+    assert client.experiment["item_results"][0].output["execution_trace_status"] == "no_episode"
+
+
+def test_publish_run_preserves_mixed_execution_and_replay_items(tmp_path: Path):
+    run_dir = _write_run(tmp_path, attempt_count=2)
+    path = run_dir / "results.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    rows[1]["metrics"].pop("episode_id")
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+    client = ExecutionLangfuse()
+
+    published = publish_run(run_dir, client=client)
+
+    assert published.item_count == 2
+    assert published.dataset_run_url == (
+        "http://langfuse.local/project/project-1/experiments/results?baseline=dataset-run-1"
+    )
+    assert len(client.execution_observations) == 1
+    assert len(client.experiment["data"]) == 1
+    assert len(client.existing_run.dataset_run_items) == 2
+    assert {score["trace_id"] for score in client.score_calls if score.get("trace_id")} == {
+        _agent_trace_id("episode-a-1"),
+        f"trace-{client.experiment['data'][0].id}",
+    }
+    publish_run(run_dir, client=client)
+    assert len(client.execution_observations) == 1
 
 
 def _write_run(
@@ -391,13 +525,60 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     assert run_scores["reliability.retry_count.sum"] == 1.0
     assert run_scores["capability.first_success_attempt.p50"] == 1.0
     assert run_scores["status.passed"] == 1
-    assert run_scores["category.diagnostic.pass_rate"] == 1.0
+    assert not any(name.startswith("category.") for name in run_scores)
     assert run_scores["observations.used_memory.pass_rate"] == 1.0
     assert client.experiment["metadata"]["git_sha"] == "abc123"
     assert len(client.experiment["metadata"]["workload_sha256"]) == 64
     assert client.spans[0]["metadata"]["aiden_episode_id"] == "episode-a"
+    trace_id = uuid.uuid5(uuid.NAMESPACE_URL, "episode-a").hex
+    expected_url = f"http://langfuse.local/project/project-1/traces/{trace_id}"
+    output = client.experiment["item_results"][0].output
+    assert output["aiden_trace_id"] == trace_id
+    assert output["aiden_trace_url"] == expected_url
+    assert client.spans[0]["metadata"]["aiden_trace_url"] == expected_url
     assert client.flushed is True
-    assert client.trace_calls
+
+
+@pytest.mark.parametrize("client_type", [FakeLangfuse, ExecutionLangfuse])
+def test_publish_run_retains_category_data_without_category_scores(tmp_path: Path, client_type):
+    run_dir = _write_run(tmp_path)
+    metrics_path = run_dir / "metrics.json"
+    metrics = json.loads(metrics_path.read_text())
+    metrics["aggregate"]["by_category"]["memory"] = {
+        "passed": 2, "total": 3, "rubric_pass": 4, "rubric_total": 6,
+    }
+    metrics_path.write_text(json.dumps(metrics), encoding="utf-8")
+    client = client_type()
+
+    publish_run(run_dir, client=client)
+
+    assert not any(score["name"].startswith("category.") for score in client.score_calls)
+    assert any(score["name"] == "capability.pass_at_1" for score in client.score_calls)
+    assert client.items[0].input["category"] == "diagnostic"
+    assert client.items[0].metadata["category"] == "diagnostic"
+    assert json.loads(metrics_path.read_text()) == metrics
+
+
+@pytest.mark.parametrize("client_type", [FakeLangfuse, ExecutionLangfuse])
+def test_publish_run_keeps_scores_when_trace_url_lookup_fails(tmp_path: Path, client_type):
+    client = client_type()
+
+    def unavailable(**kwargs):
+        raise RuntimeError("project lookup unavailable")
+
+    client.get_trace_url = unavailable
+    published = publish_run(_write_run(tmp_path), client=client)
+    if isinstance(client, ExecutionLangfuse):
+        assert client.execution_observations[0]["output"]["aiden_trace_url"] is None
+        assert published.dataset_run_url is None
+    else:
+        assert client.experiment["item_results"][0].output["aiden_trace_url"] is None
+    assert client.score_calls
+
+
+def test_agent_trace_id_matches_otlp_uuid_format():
+    assert _agent_trace_id("8f1c0f4e-6c2f-4a2e-9f1e-2f6b0f0d3a11") == "8f1c0f4e6c2f4a2e9f1e2f6b0f0d3a11"
+    assert _agent_trace_id(None) is None
 
 
 def test_publish_run_uses_stable_dataset_and_item_ids(tmp_path: Path):
@@ -421,6 +602,83 @@ def test_publish_run_uses_stable_dataset_and_item_ids(tmp_path: Path):
     )
 
 
+def test_publish_run_includes_answer_and_tools_from_moved_repeated_run(tmp_path: Path):
+    original = _write_run(tmp_path / "original", attempt_count=2)
+    rows = [json.loads(line) for line in (original / "results.jsonl").read_text().splitlines()]
+    for row in rows:
+        directory = original / "tasks" / "task-a" / f"attempt_{row['attempt']}"
+        directory.mkdir(parents=True)
+        row["artifact_dir"] = str(directory)
+        (directory / "trace.json").write_text(json.dumps({
+            "final_response": f"已更新为浅色模式（第 {row['attempt']} 次）",
+            "tool_calls": [{"step": 1, "tool": "save_memory", "input": {"content": "light mode"}}],
+        }), encoding="utf-8")
+    (original / "results.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    moved = tmp_path / "downloaded" / "run-a"
+    shutil.copytree(original, moved)
+    # The original still exists: publication must use the downloaded evidence.
+    (original / "tasks/task-a/attempt_1/trace.json").write_text('{}')
+    client = FakeLangfuse()
+
+    publish_run(moved, client=client)
+
+    outputs = [result.output for result in client.experiment["item_results"]]
+    assert [output["final_response"] for output in outputs] == [
+        "已更新为浅色模式（第 1 次）", "已更新为浅色模式（第 2 次）",
+    ]
+    assert outputs[0]["tool_calls"][0]["input"] == {"content": "light mode"}
+    assert outputs[1]["trace_artifact"] == {
+        "status": "available", "path": "tasks/task-a/attempt_2/trace.json",
+    }
+
+
+@pytest.mark.parametrize("payload,expected_status,answer", [
+    (None, "missing", None),
+    ('{"final_response": "", "tool_calls": []}', "available", ""),
+    ('{"final_response": "answer", "tool_calls": []}', "available", "answer"),
+    ('{broken', "invalid", None),
+    ('[]', "invalid", None),
+    ('{"final_response": 5, "tool_calls": []}', "invalid", None),
+])
+def test_publish_run_distinguishes_missing_invalid_and_empty_answers(
+    tmp_path: Path, payload, expected_status, answer,
+):
+    run_dir = _write_run(tmp_path)
+    directory = run_dir / "tasks/task-a"
+    directory.mkdir(parents=True)
+    if payload is not None:
+        (directory / "trace.json").write_text(payload)
+    client = FakeLangfuse()
+
+    publish_run(run_dir, client=client)
+
+    output = client.experiment["item_results"][0].output
+    assert output["final_response"] == answer
+    assert output["trace_artifact"]["status"] == expected_status
+    assert output["status"] == "passed"
+
+
+def test_publish_run_does_not_borrow_trace_from_another_attempt_or_outside_run(tmp_path: Path):
+    run_dir = _write_run(tmp_path, attempt_count=2)
+    directory = run_dir / "tasks/task-a"
+    directory.mkdir(parents=True)
+    (directory / "trace.json").write_text(json.dumps({"final_response": "wrong attempt", "tool_calls": []}))
+    outside = tmp_path / "private"
+    outside.mkdir()
+    (outside / "trace.json").write_text(json.dumps({"final_response": "outside", "tool_calls": []}))
+    (directory / "attempt_1").symlink_to(outside, target_is_directory=True)
+    rows = [json.loads(line) for line in (run_dir / "results.jsonl").read_text().splitlines()]
+    for row in rows:
+        row["artifact_dir"] = f"tasks/task-a/attempt_{row['attempt']}"
+    (run_dir / "results.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    client = FakeLangfuse()
+
+    publish_run(run_dir, client=client)
+
+    assert all(result.output["final_response"] is None for result in client.experiment["item_results"])
+    assert all(result.output["trace_artifact"]["status"] == "missing" for result in client.experiment["item_results"])
+
+
 def test_publish_run_serializes_dataset_run_item_creation(tmp_path: Path):
     run_dir = _write_run(tmp_path, attempt_count=3)
     client = FakeLangfuse()
@@ -440,8 +698,8 @@ def test_publish_run_reports_publication_progress(tmp_path: Path):
         "dataset=aiden-benchmark:smoke_suite run=run-a items=1" in message
         for message in progress
     )
-    assert any("experiment replay start" in message for message in progress)
-    assert any("verification complete" in message for message in progress)
+    assert any("experiment publication start" in message for message in progress)
+    assert any("benchmark scores published" in message for message in progress)
 
 
 def test_publish_run_uses_suite_snapshot_when_source_changes(tmp_path: Path):
@@ -565,76 +823,43 @@ def test_publish_run_fails_when_score_write_fails(tmp_path: Path):
         publish_run(_write_run(tmp_path), client=client)
 
 
-def test_publish_run_fails_when_trace_is_not_readable_after_flush(tmp_path: Path):
-    client = FakeLangfuse(trace_error=FakeAPIError(503, "trace storage unavailable"))
+def test_publish_run_publishes_scores_without_reading_the_run_back(tmp_path: Path):
+    """Scores must not depend on a read-back that Langfuse may not serve yet.
 
-    with pytest.raises(LangfusePublishError, match="trace storage unavailable"):
-        publish_run(_write_run(tmp_path), client=client)
+    Self-hosted Langfuse acknowledges the experiment write before the dataset run
+    is readable, so a publisher that re-reads the run to collect trace IDs never
+    reaches the score phase. This client serves the write and then refuses every
+    subsequent run lookup.
+    """
 
+    class WriteOnlyLangfuse(FakeLangfuse):
+        def __init__(self):
+            super().__init__()
+            self.published = False
 
-def test_publish_run_retries_trace_readback_on_not_found(monkeypatch, tmp_path: Path):
-    class EventuallyReadableTrace(FakeTrace):
-        def get(self, trace_id, **kwargs):
-            self.owner.trace_calls.append(trace_id)
-            if len(self.owner.trace_calls) == 1:
-                raise FakeAPIError(404, "not found yet")
-            return SimpleNamespace(id=trace_id)
+        def get_dataset_run(self, **kwargs):
+            if self.published:
+                raise FakeAPIError(404, "run is not readable yet")
+            return super().get_dataset_run(**kwargs)
 
-    now = 0.0
-    sleep_calls = []
+        def run_experiment(self, **kwargs):
+            result = super().run_experiment(**kwargs)
+            self.published = True
+            return result
 
-    def monotonic():
-        return now
+    client = WriteOnlyLangfuse()
 
-    def sleep(seconds):
-        nonlocal now
-        sleep_calls.append(seconds)
-        now += seconds
+    published = publish_run(_write_run(tmp_path), client=client)
 
-    monkeypatch.setattr("runner.langfuse_reporter.time.monotonic", monotonic)
-    monkeypatch.setattr("runner.langfuse_reporter.time.sleep", sleep)
-    client = FakeLangfuse()
-    client.api.trace = EventuallyReadableTrace(client)
-
-    publish_run(_write_run(tmp_path), client=client)
-
-    assert len(client.trace_calls) == 2
-    assert sleep_calls == [1.0]
-
-
-def test_publish_run_uses_exponential_backoff_until_deadline(monkeypatch, tmp_path: Path):
-    now = 0.0
-    sleep_calls = []
-
-    def monotonic():
-        return now
-
-    def sleep(seconds):
-        nonlocal now
-        sleep_calls.append(seconds)
-        now += seconds
-
-    monkeypatch.setenv("LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS", "7")
-    monkeypatch.setattr("runner.langfuse_reporter.time.monotonic", monotonic)
-    monkeypatch.setattr("runner.langfuse_reporter.time.sleep", sleep)
-    client = FakeLangfuse(trace_error=FakeAPIError(404, "not found yet"))
-
-    with pytest.raises(LangfusePublishError, match="traces were not readable"):
-        publish_run(_write_run(tmp_path), client=client)
-
-    assert sleep_calls == [1.0, 2.0, 4.0]
-    assert len(client.trace_calls) == 4
-
-
-@pytest.mark.parametrize("value", ["invalid", "0", "inf"])
-def test_publish_run_rejects_invalid_verify_timeout(monkeypatch, tmp_path: Path, value: str):
-    monkeypatch.setenv("LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS", value)
-
-    with pytest.raises(
-        LangfusePublishError,
-        match="LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS must be a positive number",
-    ):
-        publish_run(_write_run(tmp_path), client=FakeLangfuse())
+    assert published.dataset_run_id == "dataset-run-1"
+    score_names = {call["name"] for call in client.score_calls}
+    assert "capability.pass_at_1" in score_names
+    assert "benchmark.success" in score_names
+    attempt_scores = [call for call in client.score_calls if call["trace_id"]]
+    assert attempt_scores
+    assert all(
+        call["trace_id"].startswith("trace-") for call in attempt_scores
+    )
 
 
 def test_publish_run_does_not_create_dataset_after_lookup_failure(tmp_path: Path):

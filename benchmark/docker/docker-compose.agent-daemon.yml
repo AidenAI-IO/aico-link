@@ -1,5 +1,7 @@
 services:
   daemon:
+    # Runtime drains pending telemetry on SIGTERM before Docker removes the worker.
+    stop_grace_period: 90s
     image: ${AIDEN_DAEMON_IMAGE:-aiden-agent-daemon:local}
     build:
       context: ../..
@@ -16,7 +18,9 @@ services:
       AIDEN_DEVICE_TYPE: ${AIDEN_DEVICE_TYPE:-}
       AIDEN_BENCHMARK_TOKEN_FILE: ${AIDEN_BENCHMARK_TOKEN_FILE:-}
       AIDEN_RUNTIME_CONFIG_DIR: /tmp/aiden-config
-      # Benchmark runs never use an HTTP proxy; NO_PROXY is only a bypass list.
+      # Dedicated to telemetry; model/device traffic keeps its existing routing.
+      AIDEN_LANGFUSE_HTTPS_PROXY: ${AIDEN_LANGFUSE_HTTPS_PROXY:-}
+      # Bypass local endpoints when the dedicated telemetry proxy is configured.
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,host.docker.internal}
       no_proxy: ${no_proxy:-localhost,127.0.0.1,host.docker.internal}
     extra_hosts:

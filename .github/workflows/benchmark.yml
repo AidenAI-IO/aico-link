@@ -19,6 +19,10 @@ on:
         description: Optional suite path, for example suites/memory_v1.json
         required: false
         type: string
+      repeats:
+        description: Optional attempt count override; defaults to repository BENCHMARK_REPEATS
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -101,6 +105,7 @@ jobs:
     env:
       MATRIX: ${{ needs.plan.outputs.matrix }}
       BENCHMARK_CI_MAX_PARALLEL: '2'
+      BENCHMARK_REPEATS: ${{ inputs.repeats || vars.BENCHMARK_REPEATS || '1' }}
       BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
       DOCKER_BUILDKIT: 1
       BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
@@ -130,6 +135,8 @@ jobs:
       LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
       LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+      BENCHMARK_TELEMETRY: '1'
+      LANGFUSE_HTTPS_PROXY: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
       ANDROID_SERIAL: ${{ vars.ANDROID_SERIAL }}
       BENCHMARK_PHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_PHONE_ENVIRONMENT_URL }}
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
@@ -349,6 +356,11 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/summary.md
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/ci-case.log
           if-no-files-found: warn
@@ -369,6 +381,11 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/summary.md
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/ci-case.log
           if-no-files-found: warn

@@ -34,7 +34,7 @@ class ManifestRunnerTest(unittest.TestCase):
         full = {suite["name"] for suite in run_manifest.select_suites(suites, profile="full")}
         self.assertEqual(quick, {
             "manifest-runner", "contracts", "cpp-host", "go-static", "go-unit",
-            "web", "benchmark-python", "skillopt-python",
+            "web", "benchmark-python", "skillopt-python", "debian-rootfs-grow",
         })
         self.assertEqual(full, {suite["name"] for suite in suites if suite["required"]})
         self.assertIn("script-contracts", full)
