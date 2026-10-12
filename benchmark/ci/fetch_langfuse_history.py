@@ -49,10 +49,14 @@ def fetch_benchmark_history(
     for dataset in benchmark_datasets:
         dataset_name = dataset["name"]
 
+        # URL-encode the dataset name for the API request
+        from urllib.parse import quote
+        encoded_dataset_name = quote(dataset_name, safe='')
+
         # Get runs for this dataset
         runs_response = _api_get(
             base_url,
-            f"/api/public/dataset-runs?datasetName={dataset_name}&limit={limit}",
+            f"/api/public/dataset-runs?datasetName={encoded_dataset_name}&limit={limit}",
             public_key,
             secret_key,
         )
