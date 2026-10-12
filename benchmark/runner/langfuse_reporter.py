@@ -1208,6 +1208,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "metrics_k": manifest.get("metrics_k"),
         "git_sha": manifest.get("git_sha"),
         "git_dirty": manifest.get("git_dirty"),
+        "git_branch": os.environ.get("GITHUB_REF_NAME"),
         "agent_model": manifest.get("agent_model"),
         "judge_provider": judge.get("provider"),
         "judge_model": judge.get("model"),

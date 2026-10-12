@@ -339,6 +339,22 @@ jobs:
           publication_summary="Langfuse publication: $attempted attempted, $succeeded succeeded, $failed failed"
           echo "::notice::$publication_summary"
           echo "$publication_summary" >> "$GITHUB_STEP_SUMMARY"
+      - name: Generate benchmark dashboard
+        if: ${{ always() }}
+        continue-on-error: true
+        working-directory: benchmark
+        run: |
+          set -uo pipefail
+          # Generate dashboard from Langfuse history (last 30 days, all branches for now)
+          uv run python -m ci.generate_dashboard \
+            --output dashboard.html \
+            --data-output dashboard-data.json \
+            --lookback-days 30
+          if [[ -f dashboard.html ]]; then
+            echo "Dashboard generated successfully"
+            echo "## Benchmark Dashboard" >> "$GITHUB_STEP_SUMMARY"
+            echo "A real-time dashboard has been generated and included in the artifact." >> "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Upload benchmark artifacts
         id: upload_benchmark_artifacts
         if: ${{ always() }}
@@ -349,6 +365,8 @@ jobs:
         with:
           name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            benchmark/dashboard.html
+            benchmark/dashboard-data.json
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
@@ -374,6 +392,8 @@ jobs:
         with:
           name: benchmark-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            benchmark/dashboard.html
+            benchmark/dashboard-data.json
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
