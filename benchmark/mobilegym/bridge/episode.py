@@ -6,6 +6,8 @@ import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from .input import SimulatorInput
+
 BENCHMARK_TASK_ID_HEADER = "benchmark-task-id"
 EPISODE_RESET_TIMEOUT_SEC = 45
 EPISODE_RESTART_TIMEOUT_SEC = 30
@@ -125,6 +127,7 @@ class BridgeTaskRouter:
 class BridgeEpisodeState:
     def __init__(self, env: Any, owner_loop: asyncio.AbstractEventLoop | None = None):
         self.env = env
+        self.input = SimulatorInput(env)
         self.owner_loop = owner_loop or asyncio.get_event_loop()
         self.active_episode_id: str | None = None
         self.action_log: list[dict[str, Any]] = []
@@ -139,6 +142,8 @@ class BridgeEpisodeState:
             raise ValueError("episode_id is required")
         async with self._env_lock:
             await self._await_pending_restart()
+            if self.input.contact_active:
+                await self.input.release()
             self.active_episode_id = episode_id
             self.action_log = []
             self._action_counter = 0
@@ -154,6 +159,8 @@ class BridgeEpisodeState:
             raise ValueError("episode_id is required")
         async with self._env_lock:
             await self._await_pending_restart()
+            if self.input.contact_active:
+                await self.input.release()
             reset_ran = False
             for attempt in range(2):
                 reset = getattr(self.env, "reset", None)
@@ -266,6 +273,7 @@ class BridgeEpisodeState:
             started_env = await self._invoke_env_callable(restart)
             if started_env is not None:
                 self.env = started_env
+            self.input = SimulatorInput(self.env)
             return True
 
         close = getattr(self.env, "close", None)
@@ -276,6 +284,7 @@ class BridgeEpisodeState:
         started_env = await self._invoke_env_callable(start)
         if started_env is not None:
             self.env = started_env
+        self.input = SimulatorInput(self.env)
         return True
 
     async def _invoke_env_callable(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -292,6 +301,8 @@ class BridgeEpisodeState:
         async with self._env_lock:
             if self.active_episode_id != episode_id:
                 raise StaleEpisodeError("stale episode_id")
+            if self.input.contact_active:
+                await self.input.release()
             logs = list(self.action_log)
             self.active_episode_id = None
         return {"episode_id": episode_id, "action_log": logs}

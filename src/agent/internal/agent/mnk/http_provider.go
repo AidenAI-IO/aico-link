@@ -129,6 +129,14 @@ func (p *HTTPProvider) Keypress(ctx context.Context, keys []string) error {
 	return p.sendRequest(ctx, req)
 }
 
+// KeyboardText sends an internal typing primitive, not an enter_text shortcut.
+func (p *HTTPProvider) KeyboardText(ctx context.Context, text string) error {
+	return p.sendRequest(ctx, MNKRequest{
+		Operation:    "keyboard_text",
+		KeyboardText: &KeyboardTextParams{Text: text},
+	})
+}
+
 // Move performs a move operation via HTTP
 func (p *HTTPProvider) Move(ctx context.Context, x, y float64) error {
 	req := MNKRequest{
@@ -227,16 +235,17 @@ func (p *HTTPProvider) sendRequest(ctx context.Context, req MNKRequest) error {
 
 // MNKRequest represents an MNK operation request
 type MNKRequest struct {
-	Operation    string             `json:"operation"`
-	Click        *ClickParams       `json:"click,omitempty"`
-	DoubleClick  *DoubleClickParams `json:"double_click,omitempty"`
-	Swipe        *SwipeParams       `json:"swipe,omitempty"`
-	DragStart    *DragPointParams   `json:"drag_start,omitempty"`
-	DragRelease  *DragPointParams   `json:"drag_release,omitempty"`
-	Keypress     *KeypressParams    `json:"keypress,omitempty"`
-	Move         *MoveParams        `json:"move,omitempty"`
-	Scroll       *ScrollParams      `json:"scroll,omitempty"`
-	TouchActions []TouchAction      `json:"touch_actions,omitempty"`
+	KeyboardText *KeyboardTextParams `json:"keyboard_text,omitempty"`
+	Operation    string              `json:"operation"`
+	Click        *ClickParams        `json:"click,omitempty"`
+	DoubleClick  *DoubleClickParams  `json:"double_click,omitempty"`
+	Swipe        *SwipeParams        `json:"swipe,omitempty"`
+	DragStart    *DragPointParams    `json:"drag_start,omitempty"`
+	DragRelease  *DragPointParams    `json:"drag_release,omitempty"`
+	Keypress     *KeypressParams     `json:"keypress,omitempty"`
+	Move         *MoveParams         `json:"move,omitempty"`
+	Scroll       *ScrollParams       `json:"scroll,omitempty"`
+	TouchActions []TouchAction       `json:"touch_actions,omitempty"`
 }
 
 // ClickParams parameters for click operation
@@ -269,6 +278,10 @@ type DragPointParams struct {
 	X      float64 `json:"x"`
 	Y      float64 `json:"y"`
 	Button string  `json:"button,omitempty"`
+}
+
+type KeyboardTextParams struct {
+	Text string `json:"text"`
 }
 
 // KeypressParams parameters for keypress operation

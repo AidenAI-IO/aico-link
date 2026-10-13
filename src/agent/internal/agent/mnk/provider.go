@@ -98,6 +98,13 @@ type Provider interface {
 	Scroll(ctx context.Context, scrollX, scrollY int) error
 }
 
+// TextProvider types ASCII keystrokes through a remote input backend. It is
+// optional so local HID/ADB typing retains its existing layout-aware behavior.
+// This primitive does not focus, clear, paste, or verify a field.
+type TextProvider interface {
+	KeyboardText(ctx context.Context, text string) error
+}
+
 // TouchAction is one low-level pointer/touch primitive. Coordinates use the
 // same normalized 0-1000 space as Provider. A point is optional for
 // touch_up (the current contact position is used) and required for the other

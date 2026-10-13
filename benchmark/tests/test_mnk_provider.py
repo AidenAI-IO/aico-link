@@ -152,3 +152,13 @@ def test_execute_mnk_request_stops_on_tool_error():
     assert status == 500
     assert response == {"error": "device unavailable"}
     assert calls == [("mouse_move", {"x": 250.0, "y": 750.0})]
+
+
+def test_keyboard_text_and_persistent_drag_dispatch():
+    assert mnk_tool_calls({"operation": "keyboard_text", "keyboard_text": {"text": "Aiden test!"}}) == [
+        ("keyboard_text", {"text": "Aiden test!"})
+    ]
+    for operation in ("drag_start", "drag_release"):
+        assert mnk_tool_calls({"operation": operation, operation: {"x": 148, "y": 114}}) == [
+            ("touch_gesture", {"type": operation, "point": {"x": 148, "y": 114}})
+        ]

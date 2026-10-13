@@ -274,6 +274,9 @@ def _handler_for(bridge: BridgeServer):
 
         def _handle_release(self) -> None:
             task_id = benchmark_task_id_from_headers(self.headers)
+            state = bridge.router.existing_state_for_task_id(task_id)
+            if state is not None and state.active_episode_id:
+                bridge.submit_to_state(state, state.end_episode(state.active_episode_id))
             released = bridge.router.release_task_id(task_id)
             bridge.setup_tokens.clear_completed_for_task(task_id)
             self._send_json(200, bridge_ok({"released": released}))

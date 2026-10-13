@@ -167,3 +167,35 @@ func TestWhitespaceOnlyEnvironmentBridgeEndpointKeepsLocalProviders(t *testing.T
 		t.Fatal("blank endpoint disabled local isolation requirement")
 	}
 }
+
+func TestEnvironmentBridgeTextInputUsesRemoteKeyboard(t *testing.T) {
+	var gotText string
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/providers/mnk" || r.Header.Get(mnk.BenchmarkTaskIDHeader) != "typing-task" {
+			t.Errorf("unexpected keyboard request: %s task=%q", r.URL.Path, r.Header.Get(mnk.BenchmarkTaskIDHeader))
+		}
+		var payload struct {
+			Operation    string `json:"operation"`
+			KeyboardText struct {
+				Text string `json:"text"`
+			} `json:"keyboard_text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if payload.Operation != "keyboard_text" {
+			t.Errorf("operation = %q", payload.Operation)
+		}
+		gotText = payload.KeyboardText.Text
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer bridge.Close()
+	tools := NewBuiltinToolSetFromConfig(Config{EnvironmentBridge: EnvironmentBridgeConfig{
+		Enabled: true, Endpoint: bridge.URL, BenchmarkTaskID: "typing-task",
+	}}, ProxyConfig{})
+	// Exercise the exact internal dependency used by enter_text's probe and chunks.
+	out, err := tools.textInputHW.keyboardText.Call(context.Background(), `{"text":"Aiden test-2026!"}`)
+	if err != nil || out != "ok" || gotText != "Aiden test-2026!" {
+		t.Fatalf("remote typing: output=%q err=%v text=%q", out, err, gotText)
+	}
+}

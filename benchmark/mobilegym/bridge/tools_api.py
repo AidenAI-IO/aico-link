@@ -10,6 +10,7 @@ import asyncio
 import json
 import math
 import time
+from collections.abc import Awaitable, Callable
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -106,7 +107,7 @@ class ToolsAPIHandler:
                     "properties": {
                         "type": {
                             "type": "string",
-                            "enum": ["tap", "double_tap", "long_press", "swipe", "drag"],
+                            "enum": ["tap", "double_tap", "long_press", "swipe", "drag", "drag_start", "drag_release"],
                             "description": "Type of gesture to perform",
                         },
                         "point": {
@@ -448,6 +449,10 @@ class ToolsAPIHandler:
 
         # Map gesture type to bridge action
         try:
+            if gesture_type in {"drag_start", "drag_release"}:
+                point = _normalized_point_arg(tool_input)
+                return self._execute_input(state, episode_id, "touch_gesture", tool_input,
+                    lambda: state.input.contact(gesture_type, point))
             if gesture_type == "tap":
                 point = _normalized_point_arg(tool_input)
                 action = build_action("tap", point)
@@ -508,15 +513,14 @@ class ToolsAPIHandler:
         )
 
     def _call_mouse_move(self, state: BridgeEpisodeState, tool_input: dict[str, Any], episode_id: str) -> dict[str, Any]:
-        """Validate mouse_move input and return a screenshot.
-
-        MobileGym has no hover/pointer state, but accepting the tool keeps the
-        proxy contract aligned with the local HID tools.
-        """
+        """Move an active drag contact; otherwise retain the legacy hover no-op."""
         try:
             _normalized_point_arg(tool_input)
         except (TypeError, ValueError) as exc:
             return {"output": f"error: {exc}", "is_error": True}
+        if state.input.contact_active:
+            return self._execute_input(state, episode_id, "mouse_move", tool_input,
+                lambda: state.input.contact("move", _normalized_point_arg(tool_input)))
         return self._call_noop_with_screenshot(state, episode_id)
 
     def _call_mouse_scroll(self, state: BridgeEpisodeState, tool_input: dict[str, Any], episode_id: str) -> dict[str, Any]:
@@ -678,8 +682,8 @@ class ToolsAPIHandler:
                 "output": f"error: keyboard_text supports only US-keyboard ASCII characters; unsupported characters: {unsupported!r}",
                 "is_error": True,
             }
-        action = build_action("type_text", {"text": text})
-        return self._execute_action(state, action, episode_id, tool_name="keyboard_text", tool_input=tool_input)
+        return self._execute_input(state, episode_id, "keyboard_text", tool_input,
+            lambda: state.input.text(text))
 
     def _call_keyboard_tap(self, state: BridgeEpisodeState, tool_input: dict[str, Any], episode_id: str) -> dict[str, Any]:
         """Execute keyboard_tap tool."""
@@ -701,6 +705,13 @@ class ToolsAPIHandler:
         normalized_keys = [alias_map.get(k, k) for k in normalized_keys]
         has_meta = any(k in ("meta", "cmd", "super", "win") for k in normalized_keys)
         non_modifiers = [k for k in normalized_keys if k not in ("meta", "cmd", "super", "win", "ctrl", "alt", "shift")]
+
+        native_keys = {"backspace", "delete", "tab", "space", "left", "right", "up", "down", "end", "pageup", "pagedown"}
+        if (any(k in ("ctrl", "control", "shift", "alt") for k in normalized_keys)
+                or (has_meta and non_modifiers != ["h"] and non_modifiers)
+                or any(k in native_keys or (len(k) == 1 and k.isascii()) for k in non_modifiers)):
+            return self._execute_input(state, episode_id, "keyboard_tap", tool_input,
+                lambda: state.input.keypress(normalized_keys))
 
         try:
             if has_meta and len(non_modifiers) == 0:
@@ -727,6 +738,43 @@ class ToolsAPIHandler:
             return {"output": f"error: {exc}", "is_error": True}
 
         return self._execute_action(state, action, episode_id, tool_name="keyboard_tap", tool_input=tool_input)
+
+    def _execute_input(
+        self,
+        state: BridgeEpisodeState,
+        episode_id: str,
+        tool_name: str,
+        tool_input: dict[str, Any],
+        invoke: Callable[[], Awaitable[None]],
+    ) -> dict[str, Any]:
+        async def execute(env: Any) -> dict[str, Any]:
+            state.require_active(episode_id)
+            started = time.monotonic()
+            try:
+                await invoke()
+            except Exception as exc:
+                state.log_action(
+                    tool_name=tool_name, tool_input=tool_input,
+                    mobilegym_action={"type": "input"},
+                    duration_ms=int((time.monotonic() - started) * 1000),
+                    error=str(exc), episode_id=episode_id,
+                )
+                return {"output": str(exc), "is_error": True}
+            screenshot = _encode_observation_screenshot(await _maybe_await(env.get_observation()))
+            state.log_action(
+                tool_name=tool_name, tool_input=tool_input,
+                mobilegym_action={"type": "input"},
+                duration_ms=int((time.monotonic() - started) * 1000),
+                error=None, episode_id=episode_id, screenshot=screenshot,
+            )
+            output = {
+                "action_output": "ok", "data": screenshot["data"],
+                "width": screenshot["width"], "height": screenshot["height"],
+                "format": screenshot.get("format", "jpeg"),
+            }
+            return {"output": json.dumps(output), "is_error": False}
+        future = asyncio.run_coroutine_threadsafe(state.run_env(execute), state.owner_loop)
+        return future.result(timeout=self.request_timeout_sec)
 
     def _execute_action(
         self,

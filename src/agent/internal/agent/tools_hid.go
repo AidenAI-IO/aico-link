@@ -735,6 +735,7 @@ func (t *KeyboardTapTool) Call(ctx context.Context, input string) (string, error
 
 // KeyboardTextTool types a string character by character via HID.
 type KeyboardTextTool struct {
+	textProvider         mnk.TextProvider
 	dev                  *HIDDevice
 	adb                  *ADBInputController
 	keyboardLayout       string
@@ -788,6 +789,13 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 	}
 	if looksLikeSpacedRomanizationBlob(text) {
 		return toolErrorResultString(ctx, CodeInvalidArguments, "keyboard_text received spaced romanization; use enter_text instead."), nil
+	}
+
+	if t.textProvider != nil {
+		if err := t.textProvider.KeyboardText(ctx, text); err != nil {
+			return toolErrorResultf(ctx, CodeToolExecutionFailed, "remote keyboard input failed: %v", err), nil
+		}
+		return "ok", nil
 	}
 
 	if t.adb != nil {

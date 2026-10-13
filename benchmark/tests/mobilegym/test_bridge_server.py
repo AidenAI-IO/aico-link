@@ -97,6 +97,18 @@ class FakeStepResult:
         self.observation = observation
 
 
+class RecordingKeyboard:
+    def __init__(self):
+        self.typed = []
+        self.pressed = []
+
+    async def type(self, text):
+        self.typed.append(text)
+
+    async def press(self, chord):
+        self.pressed.append(chord)
+
+
 class FakeEnv:
     def __init__(self, owner_loop):
         self.owner_loop = owner_loop
@@ -752,6 +764,7 @@ def test_tools_api_pointer_and_quick_action_inputs_map_to_mobilegym_actions():
 
 def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
     with RunningBridge() as bridge:
+        bridge.env.page = types.SimpleNamespace(keyboard=RecordingKeyboard())
         status, body = request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "reset-ep1"})
         assert status == 200
         assert body["data"] == {"episode_id": "reset-ep1", "reset": True}
@@ -764,10 +777,8 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
         )
         assert status == 200
         assert body["is_error"] is False
-        assert action_to_dict(bridge.env.actions[-1]) == {
-            "action_type": "TYPE",
-            "data": {"value": "plain text"},
-        }
+        assert bridge.env.page.keyboard.typed == ["plain text"]
+        assert not bridge.env.actions  # No value-setting TYPE shortcut.
 
         status, body = request_json(
             bridge.base_url,
@@ -796,8 +807,8 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
             {"input": {"keys": ["ctrl", "c"]}},
         )
         assert status == 200
-        assert body["is_error"] is True
-        assert "does not support key" in body["output"]
+        assert body["is_error"] is False
+        assert bridge.env.page.keyboard.pressed == ["Control+c"]
 
 
 def test_tools_api_mobilegym_text_entry_tools_do_not_depend_on_hid_devices():
@@ -1081,3 +1092,28 @@ def test_env_work_is_serialized_and_bridge_serves_screenshot_while_chat_is_block
         release_chat.set()
         chat_thread.join(timeout=1)
         assert not chat_thread.is_alive()
+
+
+def test_persistent_drag_cleans_up_on_reset_and_release():
+    with RunningBridge() as bridge:
+        operations = []
+
+        async def evaluate(script, args):
+            operations.append(args["operation"])
+
+        bridge.env.page = types.SimpleNamespace(evaluate=evaluate)
+        request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "first"})
+        def drag(operation):
+            return request_json(bridge.base_url, "POST", "/api/providers/mnk",
+                {"operation": operation, operation: {"x": 148, "y": 114}})
+        assert drag("drag_start")[0] == 200
+        # Starting twice must fail, not silently lift the contact.
+        assert drag("drag_start")[0] == 500
+        assert bridge.state.input.contact_active
+        request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "second"})
+        assert operations == ["drag_start", "cancel"]
+        assert drag("drag_release")[0] == 500
+        assert drag("drag_start")[0] == 200
+        assert drag("drag_release")[0] == 200
+        assert operations[-2:] == ["drag_start", "drag_release"]
+        assert not bridge.state.input.contact_active
