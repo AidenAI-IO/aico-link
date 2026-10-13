@@ -46,8 +46,17 @@ A low-to-high WL_EN pulse followed by host reprobing restored both SDIO
 functions and wlan0, with 32 and 30 scanned BSS entries across 2.4/5 GHz.
 The non-removable host only scans once, so a GPIO pulse alone did not
 trigger enumeration. This recovery does not prove that an absent MCU
-supply can be restored by WL_EN. The WLAN guard, Bluetooth and BLE feature
-gates remain disabled.
+supply can be restored by WL_EN. The WLAN guard feature gate remains
+disabled.
+
+The Bluetooth HCI and BLE service gates are enabled (ENABLE_BLUETOOTH_HCI=1,
+ENABLE_BLE_SERVICE=1). On 2026-10-12, enabling both gates on a running
+SCH v1 board attached the AIC8800D80 controller on /dev/ttyS0 at 1.5 Mbaud,
+exposed hci0, started ble_service on /run/ble_service/ble_service.sock and
+registered one advertising instance, with wlan0 still associated and zero
+failed systemd units. This check edited the gates on the running rootfs
+and started the services by hand; a reboot, a physical cold boot, phone
+pairing and ANCS were not tested.
 
 After installing the boot helper, two further software reboots recovered
 Wi-Fi automatically, with 29 and 33 scanned BSS entries across both bands

@@ -343,8 +343,8 @@ grep -Fq 'StandardError=append:/var/log/wlan_guard/wlan_guard.log' \
 grep -Fqx 'AIDEN_WIFI_HE=0' "${OVERLAY}/etc/aiden_boot.conf"
 grep -Fqx 'ENABLE_WIFIDRV=1' "${OVERLAY}/etc/aiden_boot.conf"
 grep -Fqx 'ENABLE_WLAN_GUARD=0' "${OVERLAY}/etc/aiden_boot.conf"
-grep -Fqx 'ENABLE_BLUETOOTH_HCI=0' "${OVERLAY}/etc/aiden_boot.conf"
-grep -Fqx 'ENABLE_BLE_SERVICE=0' "${OVERLAY}/etc/aiden_boot.conf"
+grep -Fqx 'ENABLE_BLUETOOTH_HCI=1' "${OVERLAY}/etc/aiden_boot.conf"
+grep -Fqx 'ENABLE_BLE_SERVICE=1' "${OVERLAY}/etc/aiden_boot.conf"
 grep -Fqx 'After=aiden-wifi-driver.service dev-ttyS0.device' \
     "${UNIT_DIR}/aiden-bluetooth-attach.service" \
     || fail "Bluetooth attach service does not wait for the Aiden UART0 device"

@@ -37,8 +37,9 @@ This project's firmware is built on `pico-sdk` and includes the following custom
   fail startup instead of triggering another download. The loader requires
   `fw_state` to report `provisioned` or `reused` and holds the SDIO host active
   through BSP and Wi-Fi driver initialization before restoring its power policy.
-  Bluetooth preparation checks the same shared firmware state; Bluetooth and
-  BLE remain disabled by default;
+  Bluetooth preparation checks the same shared firmware state. Bluetooth HCI
+  and the BLE service are enabled by default (`ENABLE_BLUETOOTH_HCI=1`,
+  `ENABLE_BLE_SERVICE=1`) and attach the controller on `/dev/ttyS0`;
 - Kernel builds the Rockchip RK628 HDMI-to-CSI V4L2 driver and disables the
   unpopulated Toshiba TC358743 path;
 - The Aiden SCH v1 DTS declares RK628F on 100 kHz I2C4 at `0x50`, with
