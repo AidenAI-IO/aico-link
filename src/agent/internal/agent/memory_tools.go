@@ -46,7 +46,7 @@ func (t *RecallSessionChunksTool) Description() string {
 	return strings.Join([]string{
 		"Recall compressed session history chunks from this conversation and prior sessions.",
 		"Call this tool whenever the user references or asks about prior conversation content that is not present in your visible context — including denials such as 'we never discussed X'. The visible context is only the recent hot window; older turns are compressed into archived chunks invisible until recalled.",
-		"The tool automatically searches all sessions in a single call, so do not retry with different parameters.",
+		"The tool searches all sessions in a single call. If no results match, retry once with broader topic terms or no filters before concluding the history is unavailable.",
 		"Prefer chunk_ids when known; otherwise pass tags (topic keywords from the user's question) and use empty tags [] for recent history.",
 		"For remembered preferences, rules, procedures, or facts, use recall_memory instead.",
 	}, " ")
@@ -55,7 +55,7 @@ func (t *RecallSessionChunksTool) Description() string {
 func (t *RecallSessionChunksTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
 		"chunk_ids": stringArrayArgSchema("Specific session chunk ids to retrieve."),
-		"tags":      stringArrayArgSchema("Topic keywords to search when chunk_ids are not known."),
+		"tags":      stringArrayArgSchema("Topic keywords matched against chunk metadata and summaries when chunk_ids are not known."),
 		"entities":  stringArrayArgSchema("Named entities to search for."),
 		"limit":     minIntegerArgSchema("Maximum number of chunks to return.", 1),
 	})
@@ -162,26 +162,9 @@ func recallMemoryResultScore(query MemoryQuery, result MemoryResult) int {
 		}
 		return 0
 	}
-	score := 0
-	for _, want := range query.Tags {
-		for _, got := range result.Tags {
-			if strings.EqualFold(strings.TrimSpace(want), strings.TrimSpace(got)) {
-				score += 4
-			}
-		}
-	}
-	for _, want := range query.Entities {
-		for _, got := range result.Entities {
-			if strings.EqualFold(strings.TrimSpace(want), strings.TrimSpace(got)) {
-				score += 5
-			}
-		}
-	}
-	for _, want := range query.Types {
-		if strings.EqualFold(strings.TrimSpace(want), result.Type) {
-			score += 3
-		}
-	}
+	score := scoreMemoryEntry(query, memoryIndexEntry{
+		Type: result.Type, Tags: result.Tags, Entities: result.Entities, Summary: result.Summary,
+	}, parsedMemoryMarkdown{Title: result.Title, Content: result.Content})
 	if score > 0 && result.MemoryScope == "temporary" {
 		score++
 	}

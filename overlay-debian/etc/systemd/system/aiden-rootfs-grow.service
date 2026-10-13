@@ -1,6 +1,8 @@
 [Unit]
 Description=Grow active Debian A/B filesystems to their partitions
 DefaultDependencies=no
+# Keep manual stop/restart jobs from propagating to live data mounts.
+RefuseManualStop=yes
 Requires=aiden-slot-resolve.service
 After=aiden-slot-resolve.service systemd-remount-fs.service
 Before=userdata.mount userdata-ota.mount systemd-timesyncd.service local-fs.target
@@ -8,6 +10,7 @@ Before=userdata.mount userdata-ota.mount systemd-timesyncd.service local-fs.targ
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/aiden/aiden-rootfs-grow
+RemainAfterExit=yes
 TimeoutStartSec=90s
 
 [Install]

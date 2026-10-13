@@ -503,6 +503,17 @@
   height: var(--size-sheet-grabber);
 }
 
+/*
+ * The handle lane and title are where a finger grabs the sheet, so the page
+ * must not claim that drag as a scroll: with the default `touch-action`,
+ * WebKit starts a native pan and cancels the pointer stream a few pixels in,
+ * and the sheet never moves. The scrollable body keeps vertical panning.
+ */
+.ds-sheet__grabber,
+.ds-sheet__title {
+  touch-action: none;
+}
+
 .ds-sheet__handle {
   width: var(--size-sheet-handle);
   height: 5px;

@@ -32,9 +32,61 @@ for sensor in imx415 os04a10 sc4336 sc3336 sc530ai gc2053 sc200ai \
         rmmod "${sensor}" 2>/dev/null || true
     fi
 done
-# Keep async notifiers intact while the media graph is incomplete or probing.
-# clr_unready_dev forces completion with missing endpoints and can Oops in
-# vendor CIF kernels when the input format is not available.
+
+media_log() {
+    printf '[aiden-media-modules] %s\n' "$*" >&2
+}
+
+hdmi_bridge_linked() {
+    command -v media-ctl >/dev/null 2>&1 || return 3
+    query_failed=0
+    for media in /dev/media*; do
+        [ -e "${media}" ] || continue
+        if topology=$(media-ctl -d "${media}" -p 2>&1); then
+            :
+        else
+            media_log "WARN: topology query failed for ${media}: ${topology}"
+            query_failed=2
+            continue
+        fi
+        # The dual-bridge DT describes two alternatives, but only one is fitted.
+        # D-PHY creates this link in its bound callback, before CIF completion
+        # registers /dev/v4l-subdev*. Neither devnodes nor HDMI signal are a
+        # prerequisite for pruning the unused alternative.
+        if printf '%s\n' "${topology}" | awk '
+            /^driver[[:space:]]+rkcif$/ { cif = 1 }
+            /^- entity [0-9]+:/ { bridge = ($0 ~ /rk628-csi|tc358743/) }
+            bridge && /-> "rockchip-csi2-dphy[0-9]+":0 \[ENABLED/ { linked = 1 }
+            END { exit !(cif && linked) }
+        '; then
+            return 0
+        fi
+    done
+    [ "${query_failed}" -eq 0 ] || return "${query_failed}"
+    return 1
+}
+
+if hdmi_bridge_linked; then
+    # Finish CIF before ISP. Clearing with no bound bridge can call the vendor
+    # format check with a NULL input format and Oops; keep waiting in that case.
+    for module in video_rkcif video_rkisp; do
+        parameter=/sys/module/${module}/parameters/clr_unready_dev
+        # Only advance to ISP after a successful CIF write.
+        if [ ! -w "${parameter}" ] || ! (echo 1 >"${parameter}"); then
+            media_log "WARN: ${module} clr_unready_dev is unavailable or its write failed; skipping remaining notifier cleanup and continuing other media/audio modules."
+            break
+        fi
+    done
+else
+    bridge_status=$?
+    case "${bridge_status}" in
+        1) media_log "WARN: neither RK628 nor TC358743 has an enabled link to CSI D-PHY." ;;
+        2) media_log "WARN: media topology query failed; HDMI bridge readiness is unknown." ;;
+        3) media_log "WARN: media-ctl is unavailable; cannot verify HDMI bridge readiness." ;;
+    esac
+    media_log "CIF/ISP async notifiers remain pending; skipping clr_unready_dev and continuing other media/audio modules."
+    media_log "After the bridge binds, stop aiden-frame.service and rerun /usr/lib/aiden/aiden-media-modules before restarting capture."
+fi
 
 insert_if_present rga3.ko
 insert_if_present mpp_vcodec.ko

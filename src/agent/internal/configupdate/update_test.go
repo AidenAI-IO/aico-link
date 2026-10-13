@@ -1711,3 +1711,32 @@ keyboard_layout = "qwerty"
 		t.Fatal("Plan must reject a patch Update would reject")
 	}
 }
+
+func TestUpdateDefaultQwenProviderPersistsType(t *testing.T) {
+	for _, record := range []string{`{"type":"qwen","api_key":"test-key"}`, `{"api_key":"test-key"}`} {
+		t.Run(record, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "agent.toml")
+			if err := os.WriteFile(path, []byte(""), 0600); err != nil {
+				t.Fatal(err)
+			}
+			patch := []byte(`{"config":{"voice_model_providers":{"qwen":` + record + `}}}`)
+			if _, err := NewService().Plan(path, patch); err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadFile(path)
+			if len(before) != 0 {
+				t.Fatal("plan changed config")
+			}
+			if _, err := NewService().Update(path, patch); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := agent.LoadResolvedConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.VoiceModelProviders["qwen"].Type != "qwen" || cfg.VoiceModelProviders["qwen"].APIKey != "test-key" {
+				t.Fatal("provider did not round trip")
+			}
+		})
+	}
+}

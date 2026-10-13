@@ -49,6 +49,7 @@ class RecordingSetupClient:
 
     def seed_session_chunk(self, chunk, timeout=30):
         self.calls.append(("seed_session_chunk", chunk, timeout))
+        self.seeded_chunk = dict(chunk)
         return {"status": "seeded", "session_id": chunk["session_id"]}
 
     def seed_memory(self, memory, timeout=30):
@@ -71,6 +72,12 @@ class RecordingSetupClient:
         self.calls.append(("invoke_tool", name, args, timeout))
         from runner.agent_client import ToolInvokeResult
 
+        if name == "recall_session_chunks":
+            return ToolInvokeResult(
+                output=json.dumps({"results": [self.seeded_chunk]}),
+                is_error=False,
+                duration_ms=0,
+            )
         return ToolInvokeResult(
             output='{"results":[{"id":"tmp_notification_1","memory_scope":"temporary"}]}',
             is_error=False,
@@ -188,7 +195,8 @@ def test_seed_session_chunk_setup_writes_chunk_without_clearing_history_by_defau
                 "messages": [{"role": "user", "content": "old question"}],
             },
             45,
-        )
+        ),
+        ("invoke_tool", "recall_session_chunks", {"limit": 100}, 45),
     ]
 
 
@@ -215,7 +223,26 @@ def test_seed_session_chunk_setup_can_explicitly_clear_history_after_seed():
             30,
         ),
         ("clear_history",),
+        ("invoke_tool", "recall_session_chunks", {"limit": 100}, 30),
     ]
+
+
+@pytest.mark.parametrize("result", [
+    ToolInvokeResult('{"results":null}', False, 0),
+    ToolInvokeResult('{"results":[]}', False, 0),
+    ToolInvokeResult('{"results":[{"session_id":"other","summary":"expected"}]}', False, 0),
+    ToolInvokeResult('{"results":[{"session_id":"seeded","summary":"wrong"}]}', False, 0),
+    ToolInvokeResult('invalid json', False, 0),
+    ToolInvokeResult('unavailable', True, 0),
+])
+def test_seed_session_chunk_rejects_unavailable_or_wrong_evidence(result):
+    client = RecordingSetupClient()
+    client.invoke_tool = lambda *args, **kwargs: result
+    with pytest.raises(ResetError, match="seed_session_chunk verification"):
+        per_task_setup(client, {
+            "type": "seed_session_chunk", "session_id": "seeded", "summary": "expected",
+            "messages": [{"role": "user", "content": "old question"}],
+        })
 
 
 def test_seed_session_chunk_setup_wraps_clear_history_timeout_as_reset_error():

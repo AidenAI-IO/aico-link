@@ -67,11 +67,16 @@ control path.
 The iOS app explicitly calls the Agent pairing API over USB ECM; only then does
 the service open a five-minute pairing window. The app reads the board's stable
 `device_name` and collision-resistant `board_identity` first and only connects
-a Wake-service advertiser carrying both values. A successful encrypted Wake
-read followed by an active standard notification subscription closes the
-window; an existing bond does not prevent an explicit Connect action from
-reopening it. Outside that window, only the selected trusted phone is
-authorized. `PAIRING_WINDOW_SECONDS` in
+a Wake-service advertiser carrying both values. The window closes only when a
+Wake subscription and a successful encrypted Wake read both happen inside the
+current window, in either order. A notification subscription by itself does
+not close it: the Wake CCCD has no encryption requirement, so iOS can subscribe,
+or restore a cached CCCD, on a link it cannot decrypt yet. That happens when
+iOS has forgotten the board while BlueZ still holds the old key. Closing the
+window at that point would make the kernel answer the phone's next SMP Pairing
+Request with "Pairing not supported". An existing bond does not prevent an
+explicit Connect action from reopening the window. Outside that window, only
+the selected trusted phone is authorized. `PAIRING_WINDOW_SECONDS` in
 `/etc/aiden_ble_service.conf` controls the maximum user-initiated window.
 
 The five-minute value is an upper bound that tolerates Bluetooth permission and
@@ -293,9 +298,20 @@ Logs:
 
 ```text
 /var/log/aiden-hciattach.log
-/var/log/bluetoothd/bluetoothd.log
 /var/log/ble_service/ble_service.log
+/userdata/agent/log/agent.log
 ```
+
+`bluetoothd` writes to the systemd journal (`journalctl -u bluetooth`). At its
+default level it does not log SMP pairing results, so use `btmon` to capture
+pairing failures on the air.
+
+`ble_service.log` records device connection changes, pairing-window
+transitions with their reason (`app_connected`, `deadline`, user disconnect),
+windows kept open because the Wake subscription was not authenticated,
+encrypted Wake reads, pairing-agent decisions, and board-bond removals.
+`agent.log` records each App-initiated `pairing/start`, `pairing/reset`, and
+`disconnect` call together with the resulting board state.
 
 Useful checks:
 
@@ -307,4 +323,5 @@ ls -l /userdata/ble_service/bluetooth
 
 Before the app requests pairing, `bluetoothctl show` should report
 `Pairable: no` and `Discoverable: no`. After `pairing_start` both become `yes`
-until pairing succeeds or the configured deadline expires.
+until the App finishes the authenticated Wake connection or the configured
+deadline expires.

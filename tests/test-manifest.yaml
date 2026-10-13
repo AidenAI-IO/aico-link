@@ -140,6 +140,23 @@ suites:
     required: true
     timeout_seconds: 180
 
+  - name: debian-rootfs-grow
+    class: deterministic
+    paths: [overlay-debian/usr/lib/aiden/aiden-rootfs-grow, overlay-debian/etc/systemd/system/aiden-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]
+    command: bash scripts/test_debian_rootfs_grow.sh
+    quick: true
+    dependencies: [bash, sh, awk, sed, date, dumpe2fs, e2fsck, mke2fs, resize2fs, debugfs, stat, truncate]
+    required: true
+    timeout_seconds: 60
+
+  - name: debian-media-modules
+    class: deterministic
+    paths: [overlay-debian/usr/lib/aiden/aiden-media-modules, overlay-debian/etc/systemd/system/aiden-media-modules.service, scripts/test_debian_media_modules.sh]
+    command: bash scripts/test_debian_media_modules.sh
+    dependencies: [bash, sh, awk, sed]
+    required: true
+    timeout_seconds: 30
+
   - name: script-contracts
     class: deterministic
     paths: [scripts, .github/workflows, tests]

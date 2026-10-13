@@ -1,8 +1,56 @@
 import json
 from pathlib import Path
+import pytest
 
 from runner import rejudge
 from runner.models import RubricVerdict
+
+
+@pytest.mark.parametrize("case", ["text", "hard_failure", "missing_image", "missing_memory", "judge_error"])
+def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, monkeypatch, case):
+    attempt = tmp_path / "tasks" / "task" / "attempt_1"
+    attempt.mkdir(parents=True)
+    trace = {"final_response": "done"}
+    if case == "missing_memory":
+        trace["memory_assertions"] = {"expected_count": 1}
+    (attempt / "trace.json").write_text(json.dumps(trace))
+    row = {
+        "task_id": "task", "attempt": 1, "status": "failed",
+        "rubric_spec": [{"id": "ok", "check": "Completed"}], "rubric_total": 1,
+        "metrics": {"success": False, "quality_score": 0.0, "agent_eligible": True},
+    }
+    if case == "hard_failure":
+        row["hard_assertions"] = {"required_tools": False}
+    if case == "missing_image":
+        row["metrics"]["post_screenshot_file"] = True
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs)
+        if case == "judge_error":
+            raise RuntimeError("judge unavailable")
+        return type("Verdict", (), {"verdicts": [RubricVerdict("ok", "yes", "Completed")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    if case == "hard_failure":
+        assert result == row
+        assert judged == []
+    elif case == "text":
+        assert result["status"] == "passed"
+        assert result["metrics"]["success"] is True
+        assert result["metrics"]["quality_score"] == 1.0
+        assert judged[0]["pre_screenshot"] is None
+        assert judged[0]["post_screenshot"] is None
+    else:
+        assert result["status"] == "judge_error"
+        assert result["metrics"]["success"] is None
+        assert result["metrics"]["quality_score"] is None
+        assert result["metrics"]["agent_eligible"] is False
+        if case != "judge_error":
+            assert judged == []
 
 
 def test_rejudge_uses_latest_legacy_step_screenshot_when_post_missing(tmp_path: Path, monkeypatch):

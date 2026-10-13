@@ -104,7 +104,7 @@ func (t *jsonWebSocketTransport) readLoop(translate func([]byte) []Event) {
 		if err != nil {
 			if !normalClose(err) && !errors.Is(err, context.Canceled) {
 				select {
-				case t.errs <- err:
+				case t.errs <- classifyTransportError(err):
 				default:
 				}
 			}

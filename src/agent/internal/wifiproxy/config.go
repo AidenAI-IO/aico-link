@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -193,4 +194,34 @@ func RedactedURL(raw string) string {
 		return ""
 	}
 	return parsed.Redacted()
+}
+
+// redactedPassword is the placeholder url.URL.Redacted writes in place of a
+// password, and so what a client echoes back when it did not change one.
+const redactedPassword = "xxxxx"
+
+// RestoreRedactedPassword returns submitted with its password taken from saved
+// when the client sent back the redacted form RedactedURL produced: the same
+// user with the placeholder password. Clients only ever see the redacted URL,
+// so editing its host or port must not wipe the stored password. Anything else
+// is returned unchanged.
+func RestoreRedactedPassword(submitted, saved string) string {
+	next, err := netproxy.Parse(submitted, "http", "https", "socks5", "socks5h")
+	if err != nil || next.User == nil {
+		return submitted
+	}
+	password, hasPassword := next.User.Password()
+	if !hasPassword || password != redactedPassword {
+		return submitted
+	}
+	previous, err := netproxy.Parse(saved, "http", "https", "socks5", "socks5h")
+	if err != nil || previous.User == nil || previous.User.Username() != next.User.Username() {
+		return submitted
+	}
+	savedPassword, ok := previous.User.Password()
+	if !ok {
+		return submitted
+	}
+	next.User = url.UserPassword(next.User.Username(), savedPassword)
+	return next.String()
 }

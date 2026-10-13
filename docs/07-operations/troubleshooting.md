@@ -78,6 +78,49 @@ If the matching `rk628-csi` or `tc358743` node was not selected, set
 `FRAME_SERVICE_SUBDEV=/dev/v4l-subdevX` in
 `/etc/aiden_frame_service.conf` to that node and restart `aiden-frame.service`.
 
+## HDMI bridge probes but capture cannot discover it
+
+The shared device tree describes RK628 and TC358743 as alternatives. Each
+board has exactly one bridge. The vendor V4L2 notifier waits for both endpoints
+until the unused alternative is cleared. Without that completion, the fitted
+bridge can probe successfully but its `/dev/v4l-subdev*` node is not created,
+leaving Frame Service in `RECOVERING` at bridge discovery.
+
+`aiden-media-modules` checks the CIF media topology for an enabled link from
+either bridge to the CSI D-PHY, then writes the CIF and ISP `clr_unready_dev`
+parameters in that order. The D-PHY bound callback creates this link before
+notifier completion, so the check does not depend on a subdevice node or a live
+HDMI signal. If neither bridge is linked, the helper preserves the waiting
+endpoints and continues loading the independent media/audio modules. Clearing
+them without a bound bridge can Oops in the vendor CIF input-format check.
+
+The helper reports pending initialization to both the system journal and the
+boot console with an `[aiden-media-modules]` prefix. It distinguishes a missing
+enabled bridge link from a failed topology query (or missing `media-ctl`),
+and explicitly states that CIF/ISP notifiers remain pending, cleanup was
+skipped, and independent modules will continue loading. Query failures include
+the media device path and diagnostic output; they do not imply a bridge is
+absent.
+
+Inspect the graph with `media-ctl -d /dev/media0 -p` (select the media device
+whose driver is `rkcif`). If the bridge binds after the initial module helper
+has finished, stop capture and rerun the helper so it can safely complete the
+graph:
+
+```bash
+sudo systemctl stop aiden-frame.service
+sudo /usr/lib/aiden/aiden-media-modules
+sudo systemctl start aiden-frame.service
+```
+
+An I2C driver symlink alone does not prove binding has finished: Linux creates
+it before calling the driver's probe function. Do not use that symlink as the
+condition for forcing notifier completion.
+
+ISP cleanup is attempted only after a successful CIF parameter write. If the
+CIF parameter is missing, not writable, or rejects the write, the helper logs
+a warning, leaves ISP pending, and continues loading independent modules.
+
 ## RK628 or I2C times out while Frame Service stays active
 
 Every native service log line includes `monotonic_ms`, `pid`, and the native

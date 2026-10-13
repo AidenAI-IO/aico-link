@@ -13,6 +13,10 @@ import {text} from './text.js';
 const DISMISS_RATIO = 0.28;
 /** Downward drag in pixels that dismisses regardless of panel height. */
 const DISMISS_FLOOR = 80;
+/** Movement in pixels after which a press is a drag rather than a tap. */
+const CAPTURE_AFTER_PX = 4;
+/** Elements whose own taps must not start a drag. */
+const INTERACTIVE = 'input, textarea, select, button, a, label, [role="button"], [role="option"]';
 
 /**
  * @param {object} props
@@ -74,15 +78,26 @@ export function sheet(props) {
   scrim.addEventListener('click', () => setOpen(false));
 
   // Drag to dismiss, using pointer events so mouse and touch share one path.
+  // Controls and tappable rows keep their taps: a drag never starts on them.
   panel.addEventListener('pointerdown', event => {
-    if (!open || event.target.closest('input, textarea, button')) return;
-    dragging = {startY: event.clientY, offset: 0, id: event.pointerId};
+    if (!open || event.target.closest(INTERACTIVE)) return;
+    dragging = {startY: event.clientY, offset: 0, id: event.pointerId, captured: false};
     panel.style.transition = 'none';
   });
   panel.addEventListener('pointermove', event => {
     if (!dragging || event.pointerId !== dragging.id) return;
     dragging.offset = Math.max(0, event.clientY - dragging.startY);
     panel.style.transform = `translateY(${dragging.offset}px)`;
+    // Capture only once this is clearly a drag, so the finger can leave the
+    // panel. Capturing on press would retarget a plain tap's click to the panel.
+    if (!dragging.captured && dragging.offset > CAPTURE_AFTER_PX && panel.setPointerCapture) {
+      dragging.captured = true;
+      try {
+        panel.setPointerCapture(event.pointerId);
+      } catch {
+        // A pointer that already ended cannot be captured; the drag still works.
+      }
+    }
   });
 
   function endDrag(event) {

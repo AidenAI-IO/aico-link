@@ -127,6 +127,8 @@ def test_ci_maps_unprefixed_action_variables_to_benchmark_runtime() -> None:
             "BENCHMARK_JUDGE_API_KEY": "judge-key",
             "DAEMON_IMAGE": "agent-daemon:test",
             "LANGFUSE_PUBLIC_KEY": "langfuse-key",
+            "BENCHMARK_TELEMETRY": "1",
+            "LANGFUSE_HTTPS_PROXY": "http://proxy.test:8080",
         }
     )
 
@@ -134,6 +136,10 @@ def test_ci_maps_unprefixed_action_variables_to_benchmark_runtime() -> None:
     assert runtime["AIDEN_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
     assert runtime["AIDEN_DAEMON_IMAGE"] == "agent-daemon:test"
     assert runtime["LANGFUSE_PUBLIC_KEY"] == "langfuse-key"
+    assert runtime["AIDEN_BENCHMARK_TELEMETRY"] == "1"
+    assert runtime["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
+    assert "AIDEN_BENCHMARK_TELEMETRY" not in _runtime_environment({})
+    assert "AIDEN_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
 
 
 def test_ci_uses_prepared_images_only_when_explicitly_enabled() -> None:
@@ -407,9 +413,15 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     )
 
     assert "cli-services" not in artifact_paths
-    assert "workers" not in artifact_paths
+    # Only diagnostic logs may leave worker directories: agent.toml and control
+    # tokens contain materialized credentials and must never match an upload glob.
+    worker_paths = [path for path in artifact_paths.splitlines() if "/workers/" in path]
+    assert worker_paths
+    assert all(path.endswith(("/workers/*/daemon.log", "/workers/*/runner.log")) for path in worker_paths)
     assert "auto-agent-setup.log" in artifact_paths
-    assert "tasks/**" not in artifact_paths
+    task_paths = [path for path in artifact_paths.splitlines() if "/tasks/" in path]
+    assert task_paths
+    assert all(path.endswith(("/tasks/**/trace.json", "/tasks/**/history.json", "/tasks/**/episode.json")) for path in task_paths)
     assert "id: upload_benchmark_artifacts" in workflow
     assert "steps.upload_benchmark_artifacts.outcome == 'failure'" in workflow
     assert "overwrite: true" in workflow
@@ -475,6 +487,7 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
     ).read_text(encoding="utf-8")
 
     assert re.search(r"(?m)^\s+AIDEN_[A-Z0-9_]+:", workflow) is None
+    assert "BENCHMARK_TELEMETRY: '1'" in workflow
     expected_mappings = {
         "BENCHMARK_AGENT_PROVIDER": "vars.BENCHMARK_AGENT_PROVIDER",
         "BENCHMARK_AGENT_MODEL": "vars.BENCHMARK_AGENT_MODEL",
@@ -483,6 +496,7 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         "BENCHMARK_JUDGE_MODEL": "vars.BENCHMARK_JUDGE_MODEL",
         "BENCHMARK_JUDGE_BASE_URL": "vars.BENCHMARK_JUDGE_BASE_URL",
         "BENCHMARK_JUDGE_API_KEY": "secrets.BENCHMARK_JUDGE_API_KEY",
+        "LANGFUSE_HTTPS_PROXY": "secrets.BENCHMARK_HTTPS_PROXY",
         "DAEMON_IMAGE": "vars.DAEMON_IMAGE",
         "BENCHMARK_PHONE_ENVIRONMENT_URL": "vars.BENCHMARK_PHONE_ENVIRONMENT_URL",
         "BENCHMARK_IOS_ENVIRONMENT_URL": "vars.BENCHMARK_IOS_ENVIRONMENT_URL",

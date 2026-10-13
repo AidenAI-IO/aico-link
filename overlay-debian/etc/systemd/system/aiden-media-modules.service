@@ -8,6 +8,8 @@ Type=oneshot
 ExecStart=/usr/lib/aiden/aiden-media-modules
 RemainAfterExit=yes
 TimeoutStartSec=30s
+StandardOutput=journal+console
+StandardError=journal+console
 
 [Install]
 WantedBy=multi-user.target

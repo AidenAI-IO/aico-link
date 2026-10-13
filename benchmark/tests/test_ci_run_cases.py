@@ -20,6 +20,29 @@ def _case(case_id: str, environment: str) -> SuiteCase:
     )
 
 
+@pytest.mark.parametrize("repeats", ["1", "3"])
+def test_run_case_forwards_configured_repeat_count(monkeypatch, tmp_path, repeats):
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_case_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("", None))
+    monkeypatch.setattr(run_case_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(run_case_module, "_effective_exit_code", lambda code, path: code)
+
+    assert run_case_module.run_case(
+        _case("isolated", "isolated"),
+        run_id="ci-repeats",
+        environment={"BENCHMARK_REPEATS": repeats},
+    ) == 0
+
+    assert len(commands) == 1
+    assert commands[0][-2:] == ["--repeats", repeats]
+
+
 def test_run_cases_starts_mobilegym_together_without_prepopulating_run_dirs(
     monkeypatch,
     tmp_path: Path,

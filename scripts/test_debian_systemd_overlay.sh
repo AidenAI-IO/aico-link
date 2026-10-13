@@ -136,6 +136,10 @@ printf '%s\n' "${bypass_output}" \
 test ! -e "${UNIT_DIR}/oem.mount"
 grep -qx 'What=/dev/mmcblk0p9' "${UNIT_DIR}/userdata.mount"
 grep -qx 'What=/dev/mmcblk0p10' "${UNIT_DIR}/userdata-ota.mount"
+for unit in userdata.mount userdata-ota.mount; do
+    grep -q '^Requires=.*aiden-rootfs-grow.service' "${UNIT_DIR}/${unit}" \
+        || fail "${unit} can mount after failed filesystem preparation"
+done
 grep -q 'aiden.slot_suffix' "${OVERLAY}/usr/lib/aiden/aiden-slot-resolve"
 grep -q 'Root slot.*disagrees' "${OVERLAY}/usr/lib/aiden/aiden-slot-resolve"
 grep -q 'rootfs${AIDEN_SLOT_SUFFIX}' "${OVERLAY}/usr/lib/aiden/aiden-rootfs-grow"
@@ -148,6 +152,9 @@ if grep -q '^ConditionPathExists=!/var/lib/aiden/rootfs-grown$' \
 fi
 grep -q 'systemd-timesyncd.service' \
     "${UNIT_DIR}/aiden-rootfs-grow.service"
+grep -qx 'RemainAfterExit=yes' "${UNIT_DIR}/aiden-rootfs-grow.service"
+grep -qx 'RefuseManualStop=yes' "${UNIT_DIR}/aiden-rootfs-grow.service" \
+    || fail "manual growth-service restarts can stop live data mounts"
 grep -q 'mkdir -p /userdata/agent/log' \
     "${OVERLAY}/usr/lib/aiden/aiden-userdata-migrate"
 

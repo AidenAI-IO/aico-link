@@ -1127,40 +1127,50 @@ func scoreMemoryEntry(query MemoryQuery, entry memoryIndexEntry, parsed parsedMe
 		typeScore = 3
 	}
 	haystacks := []string{parsed.Title, entry.Summary, parsed.Content}
-	topicScore := scoreMemoryQueryValues(query.Tags, entry.Tags, haystacks)
-	topicScore += scoreMemoryQueryValues(nonGenericMemoryEntities(query.Entities), entry.Entities, haystacks)
+	topicScore := scoreMemoryQueryValues(query.Tags, entry.Tags, entry.Entities, haystacks)
+	topicScore += scoreMemoryQueryValues(nonGenericMemoryEntities(query.Entities), entry.Entities, entry.Tags, haystacks)
 	if topicScore == 0 && memoryQueryHasTopicalTerms(query) {
 		return 0
 	}
 	return typeScore + topicScore
 }
 
-func scoreMemoryQueryValues(queryValues []string, candidateValues []string, haystacks []string) int {
+func scoreMemoryQueryValues(queryValues, candidateValues, crossFieldValues, haystacks []string) int {
 	score := 0
 	for _, queryValue := range queryValues {
 		queryTerm := normalizeMemorySearchTerm(queryValue)
 		if queryTerm == "" {
 			continue
 		}
-		for _, candidateValue := range candidateValues {
-			candidateTerm := normalizeMemorySearchTerm(candidateValue)
-			if candidateTerm == "" {
-				continue
-			}
-			if queryTerm == candidateTerm {
-				score += 10
-				break
-			}
-			if memorySearchTermContains(queryTerm, candidateTerm) {
-				score += 6
-				break
-			}
+		metadataScore := scoreMemoryMetadataTerm(queryTerm, candidateValues)
+		if metadataScore == 0 {
+			// Models may classify the same topic as a tag when saving and an
+			// entity when recalling. Prefer matches in the original field.
+			metadataScore = scoreMemoryMetadataTerm(queryTerm, crossFieldValues) / 2
 		}
+		score += metadataScore
 		for _, haystack := range haystacks {
 			if strings.Contains(normalizeMemorySearchTerm(haystack), queryTerm) {
 				score += 4
 				break
 			}
+		}
+	}
+	return score
+}
+
+func scoreMemoryMetadataTerm(queryTerm string, values []string) int {
+	score := 0
+	for _, value := range values {
+		term := normalizeMemorySearchTerm(value)
+		if term == "" {
+			continue
+		}
+		if queryTerm == term {
+			return 10
+		}
+		if memorySearchTermContains(queryTerm, term) {
+			score = 6
 		}
 	}
 	return score

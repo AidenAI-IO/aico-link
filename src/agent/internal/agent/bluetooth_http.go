@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"aiden-agent/internal/ble"
+	"aiden-agent/internal/logging"
 )
 
 const defaultBLEServiceSocketPath = "/run/ble_service/ble_service.sock"
@@ -75,9 +77,11 @@ func (s *Server) handleBluetoothPairingStart(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	status, err := s.bluetoothPairingStartRequest()(ctx, s.bluetoothServiceSocketPath())
 	if err != nil {
+		logging.Warnf("agent", "bluetooth", "Bluetooth pairing start failed: %v", err)
 		writeBluetoothRequestError(w, err)
 		return
 	}
+	logBluetoothControl("pairing_start", status, -1)
 	writeBluetoothJSON(w, http.StatusOK, bluetoothStatusResponse{OK: true, Bluetooth: status})
 }
 
@@ -95,9 +99,11 @@ func (s *Server) handleBluetoothPairingReset(w http.ResponseWriter, r *http.Requ
 	defer cancel()
 	result, err := s.bluetoothPairingForgetRequest()(ctx, s.bluetoothServiceSocketPath())
 	if err != nil {
+		logging.Warnf("agent", "bluetooth", "Bluetooth pairing reset failed: %v", err)
 		writeBluetoothRequestError(w, err)
 		return
 	}
+	logBluetoothControl("pairing_reset", result.Bluetooth, result.Removed)
 	writeBluetoothJSON(w, http.StatusOK, bluetoothStatusResponse{
 		OK:        true,
 		Bluetooth: result.Bluetooth,
@@ -119,10 +125,27 @@ func (s *Server) handleBluetoothDisconnect(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	status, err := s.bluetoothDisconnectRequest()(ctx, s.bluetoothServiceSocketPath())
 	if err != nil {
+		logging.Warnf("agent", "bluetooth", "Bluetooth disconnect failed: %v", err)
 		writeBluetoothRequestError(w, err)
 		return
 	}
+	logBluetoothControl("disconnect", status, -1)
 	writeBluetoothJSON(w, http.StatusOK, bluetoothStatusResponse{OK: true, Bluetooth: status})
+}
+
+// logBluetoothControl records App-initiated pairing control. These requests
+// decide whether the board accepts a new bond, so they must be visible when a
+// phone fails to connect. A negative removed count means "not applicable".
+func logBluetoothControl(action string, status ble.RuntimeStatus, removed int) {
+	removedField := ""
+	if removed >= 0 {
+		removedField = fmt.Sprintf(" removed=%d", removed)
+	}
+	logging.Infof(
+		"agent", "bluetooth",
+		"Bluetooth %s pairing_open=%t bonded=%d connected=%t wake_subscriber=%t%s",
+		action, status.PairingOpen, status.BondedDeviceCount, status.Connected, status.WakeSubscriber, removedField,
+	)
 }
 
 func (s *Server) handleBluetoothUSBReenumerationWake(w http.ResponseWriter, r *http.Request) {

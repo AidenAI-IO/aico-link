@@ -140,6 +140,12 @@ def classify(path, policy):
         if (any(fnmatch.fnmatchcase(relative, p) for p in CONFIG_BOUNDARY["include"])
                 and not any(fnmatch.fnmatchcase(relative, p) for p in CONFIG_BOUNDARY["exclude"])):
             return "config"
+    shipped_content = ("overlay-debian/", "src/agent/config/skills/",
+                       "src/agent/internal/agent/web_ui/", "src/config_web/web/",
+                       "assets/business/")
+    if ((path.endswith(".md") or path == ".gitignore" or path.endswith("/.gitignore"))
+            and not path.startswith(shipped_content)):
+        return "ignore"
     for kind in ("ignore", "system", "business"):
         if any(fnmatch.fnmatchcase(path, pattern) for pattern in policy[kind]):
             return kind
@@ -206,10 +212,11 @@ def make_plan(root, repo, channel, records, ref="HEAD", version=None, force_ota=
         raw = subprocess.check_output(["git", "diff", "--name-only", "--no-renames", "-z",
                                        previous["source_commit"], commit, "--"], cwd=root)
         paths = [p.decode() for p in raw.split(b"\0") if p]
+        previous_current_policy = source_fingerprints(root, previous["source_commit"], policy)
         kind = "none"
-        if fingerprints["business"] != previous["fingerprints"]["business"]:
+        if fingerprints["business"] != previous_current_policy["business"]:
             kind = "business"
-        if fingerprints["system"] != previous["fingerprints"]["system"]:
+        if fingerprints["system"] != previous_current_policy["system"]:
             kind = "ota"
         if previous.get("runtime_config", 0) != 1:
             kind = "ota"
@@ -219,6 +226,8 @@ def make_plan(root, repo, channel, records, ref="HEAD", version=None, force_ota=
         kind = "ota"
     if force_ota:
         kind = "ota"
+    if previous and kind != "ota":
+        fingerprints["system"] = previous["fingerprints"]["system"]
     latest = max([version_tuple(r["version"]) for r in records] + [(0, 0, 1)])
     next_version = version or f"{latest[0]}.{latest[1]}.{latest[2] + 1}"
     if version_tuple(next_version) <= latest:
@@ -251,7 +260,8 @@ def make_plan(root, repo, channel, records, ref="HEAD", version=None, force_ota=
     }
     if kind == "ota":
         plan["ota_requirement"] = ota_requirement(
-            root, commit, log_range, set(plan["changes"]["system"]), previous, policy)
+            root, commit, log_range, set(plan["changes"]["system"]),
+            {**previous, "fingerprints": previous_current_policy} if previous else None, policy)
     validate_record(plan)
     return plan
 

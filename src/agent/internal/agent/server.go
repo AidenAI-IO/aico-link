@@ -2357,7 +2357,7 @@ func (s *Server) canSpeakFinalText() bool {
 	if s.runtime == nil {
 		return false
 	}
-	return canPlayTTSUnavailableFallback(s.runtime.ConfigSnapshot())
+	return canPlayTTSUnavailableFallback(s.runtime.ConfigSnapshot(), "")
 }
 
 // CanSpeakVoiceNotification reports whether a standalone speech path is
@@ -2371,7 +2371,7 @@ func (s *Server) CanSpeakVoiceNotification(allowFallbackClip bool) bool {
 	if s.currentTTSManager() != nil {
 		return true
 	}
-	return allowFallbackClip && s.runtime != nil && canPlayTTSUnavailableFallback(s.runtime.ConfigSnapshot())
+	return allowFallbackClip && s.runtime != nil && canPlayTTSUnavailableFallback(s.runtime.ConfigSnapshot(), "")
 }
 
 // SpeakVoiceNotification plays notification text through the configured
@@ -2407,7 +2407,7 @@ func (s *Server) SpeakTurnFailure(ctx context.Context, failure *TurnFailure) (bo
 	if text == "" {
 		return false, nil
 	}
-	return s.speakTextObservedMode(ctx, "", text, 0, false, true)
+	return s.speakTextObservedModeWithFailure(ctx, "", text, 0, false, true, failure.Code)
 }
 
 func (s *Server) speakFinalText(ctx context.Context, requestID string, prepared SpokenTextResult) {
@@ -2434,6 +2434,10 @@ func (s *Server) speakTextObserved(ctx context.Context, requestID, text string, 
 }
 
 func (s *Server) speakTextObservedMode(ctx context.Context, requestID, text string, timeoutAfterLock time.Duration, registerOutput, allowFallback bool) (bool, error) {
+	return s.speakTextObservedModeWithFailure(ctx, requestID, text, timeoutAfterLock, registerOutput, allowFallback, "")
+}
+
+func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID, text string, timeoutAfterLock time.Duration, registerOutput, allowFallback bool, failureCode TurnFailureCode) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -2492,7 +2496,7 @@ func (s *Server) speakTextObservedMode(ctx context.Context, requestID, text stri
 	if ttsErr == nil || !allowFallback {
 		return false, ttsErr
 	}
-	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, speechStarted, ttsErr)
+	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, failureCode, speechStarted, ttsErr)
 }
 
 func (s *Server) speakText(ctx context.Context, text string, timeoutAfterLock time.Duration) error {

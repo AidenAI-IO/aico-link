@@ -244,6 +244,47 @@ func TestMultiSessionChunkStoreLogsCorruptIndex(t *testing.T) {
 	}
 }
 
+func TestRecallSessionChunksToolSearchesSummaryWithoutConfiguredVocabulary(t *testing.T) {
+	ctx := context.Background()
+	folder := t.TempDir()
+	writer := NewSessionChunkWriter(folder, MemoryExtractionConfig{})
+	const summary = "Project Cedar launch token: K-84."
+	for _, entry := range []struct{ session, summary string }{
+		{"launch", summary}, {"unrelated", "Lunch is at noon."},
+	} {
+		if err := writer.WriteChunk(ctx, entry.session, []messages.Message{
+			{Role: messages.MessageRoleUser, Content: entry.summary},
+		}, entry.summary); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := NewRecallSessionChunksTool(NewMultiSessionChunkStore(folder))
+	for _, query := range []string{
+		`{"tags":[" cedar "],"limit":5}`,
+		`{"entities":["CEDAR"],"limit":5}`,
+		`{"tags":["absent"]}`,
+		`{"chunk_ids":["missing"],"tags":["Cedar"]}`,
+	} {
+		out, err := tool.Call(ctx, query)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got struct {
+			Results []ChunkRecallResult `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatal(err)
+		}
+		if query == `{"tags":["absent"]}` || query == `{"chunk_ids":["missing"],"tags":["Cedar"]}` {
+			if len(got.Results) != 0 {
+				t.Fatalf("query %s returned unrelated chunks: %#v", query, got.Results)
+			}
+		} else if len(got.Results) != 1 || got.Results[0].SessionID != "launch" || got.Results[0].Summary != summary {
+			t.Fatalf("query %s did not retrieve persisted summary: %#v", query, got.Results)
+		}
+	}
+}
+
 func TestRecallSessionChunksToolReturnsMatchingChunk(t *testing.T) {
 	ctx := context.Background()
 	sessionFolder := t.TempDir()
@@ -398,6 +439,84 @@ func TestRecallMemoryToolReturnsMatchingLongTermMemory(t *testing.T) {
 	}
 	if decoded.Results[0].ID != "mem_login" || !strings.Contains(decoded.Results[0].Content, "重新获取验证码") {
 		t.Fatalf("unexpected memory recall result: %#v", decoded.Results[0])
+	}
+}
+
+func TestRecallMemoryToolMatchesTopicsAcrossMetadataFields(t *testing.T) {
+	for _, field := range []string{"tags", "entities"} {
+		t.Run(field, func(t *testing.T) {
+			ctx := context.Background()
+			longTerm := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+			temporary := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "temporary"))
+			for _, fixture := range []struct {
+				id       string
+				matching bool
+				cross    bool
+			}{
+				{id: "same_field", matching: true},
+				{id: "cross_field", matching: true, cross: true},
+				{id: "unrelated"},
+				{id: "deleted", matching: true, cross: true},
+			} {
+				item := MemoryItem{
+					ID: fixture.id, Type: "profile", Priority: 100,
+					Content: "Reference value: R-42.", EvidenceExcerpts: []string{"R-42"},
+				}
+				term := "unrelated-topic"
+				if fixture.matching {
+					term = "project-code"
+				}
+				if (field == "tags") != fixture.cross {
+					item.Tags = []string{term}
+				} else {
+					item.Entities = []string{term}
+				}
+				store := temporary
+				if fixture.id == "same_field" {
+					store = longTerm
+					item.Priority = 1 // Relevance must beat priority and scope.
+				}
+				if _, err := store.AddMemory(ctx, item); err != nil {
+					t.Fatal(err)
+				}
+				if fixture.id == "deleted" {
+					if err := store.Forget(ctx, item.ID, "removed"); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			tool := NewRecallMemoryToolWithTemporary(longTerm, temporary)
+			for _, limit := range []int{1, 5} {
+				input, err := json.Marshal(map[string]any{
+					field: []string{" PROJECT-CODE "}, "types": []string{"profile"}, "limit": limit,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				out, err := tool.Call(ctx, string(input))
+				if err != nil {
+					t.Fatal(err)
+				}
+				var decoded struct {
+					Results []MemoryResult `json:"results"`
+				}
+				if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+					t.Fatal(err)
+				}
+				want := []string{"same_field", "cross_field"}
+				if limit == 1 {
+					want = want[:1]
+				}
+				if len(decoded.Results) != len(want) {
+					t.Fatalf("limit %d: got %#v, want IDs %v", limit, decoded.Results, want)
+				}
+				for i, id := range want {
+					if decoded.Results[i].ID != id || decoded.Results[i].Content != "Reference value: R-42." {
+						t.Fatalf("result %d: got %#v, want %s with persisted content", i, decoded.Results[i], id)
+					}
+				}
+			}
+		})
 	}
 }
 

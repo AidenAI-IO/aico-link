@@ -62,6 +62,11 @@ func (c wiFiConfig) publicValue(proxyConfigs ...wifiproxy.Config) map[string]any
 		if configured, ok := proxyConfig.Networks[network.SSID]; ok {
 			value["proxy_mode"] = string(configured.Mode)
 			value["no_proxy"] = configured.NoProxy
+			// The detail page shows the saved proxy, so it must be sent; its
+			// password never is, and a save echoing the redacted form keeps it.
+			if configured.Mode == wifiproxy.ModeProxy {
+				value["proxy_url"] = wifiproxy.RedactedURL(configured.ProxyURL)
+			}
 		}
 		networks = append(networks, value)
 	}
@@ -1111,6 +1116,9 @@ func applyWiFiProxyRequest(config *wifiproxy.Config, request wifiConnectionReque
 			}
 		} else {
 			network.ProxyURL = strings.TrimSpace(*request.ProxyURL)
+			if hasExisting && existing.Mode == wifiproxy.ModeProxy {
+				network.ProxyURL = wifiproxy.RestoreRedactedPassword(network.ProxyURL, existing.ProxyURL)
+			}
 		}
 		if request.NoProxy != nil {
 			network.NoProxy = *request.NoProxy

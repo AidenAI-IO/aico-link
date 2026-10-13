@@ -135,9 +135,53 @@ class PlannerTests(GitFixture):
         self.commit({"docs/readme.md": "docs", "src/agent/foo_test.go": "test", "scripts/test_x.py": "test"})
         self.assertEqual(self.make()["kind"], "none")
 
+    def test_repository_markdown_and_gitignore_do_not_change_release(self):
+        base = self.publish()
+        paths = ("scripts/UPDATE_SUMMARY.md", "src/README.md", "src/agent/README.md",
+                 "CLAUDE.md", ".gitignore", "src/.gitignore")
+        self.commit({path: "documentation" for path in paths})
+        record = self.make()
+        self.assertEqual(record["kind"], "none")
+        self.assertEqual(record["fingerprints"], base["fingerprints"])
+        self.assertEqual(record["changes"]["ignore"], sorted(paths))
+
+    def test_old_fingerprint_policy_does_not_force_ota(self):
+        base = self.publish()
+        self.commit({".gitignore": "output/", "scripts/UPDATE_SUMMARY.md": "notes"})
+        legacy = self.publish(force_ota=True)
+        legacy["fingerprints"]["system"] = "a" * 64
+        legacy["fingerprints"]["business"] = "b" * 64
+        self.assertEqual(self.make()["kind"], "none")
+        self.commit({"src/agent/main.go": "business change"})
+        record = self.make()
+        self.assertEqual(record["kind"], "business")
+        self.assertEqual(record["platform"], legacy["platform"])
+        self.assertEqual(record["fingerprints"]["system"], legacy["fingerprints"]["system"])
+        plan.validate_history([base, legacy, record], REPO)
+
+    def test_overlay_markdown_remains_system(self):
+        self.publish()
+        self.commit({"overlay-debian/usr/share/aiden/platform/README.md": "platform content"})
+        self.assertEqual(self.make()["kind"], "ota")
+
+    def test_overlay_gitignore_is_shipped(self):
+        self.publish()
+        self.commit({"overlay-debian/etc/aiden/.gitignore": "managed config"})
+        self.assertEqual(self.publish()["kind"], "business")
+        self.commit({"overlay-debian/usr/share/aiden/platform/.gitignore": "platform content"})
+        self.assertEqual(self.make()["kind"], "ota")
+
     def test_skill_markdown_is_business(self):
         self.publish()
         self.commit({"src/agent/config/skills/new/SKILL.md": "runtime skill"})
+        self.assertEqual(self.make()["kind"], "business")
+
+    def test_other_shipped_markdown_is_business(self):
+        self.publish()
+        self.commit({"src/config_web/web/help.md": "web content",
+                     "assets/business/audio/guide.md": "audio content",
+                     "src/agent/internal/agent/web_ui/help.md": "embedded web content",
+                     "src/agent/config/skills/new/.gitignore": "skill payload"})
         self.assertEqual(self.make()["kind"], "business")
 
     def test_mixed_unknown_ota_and_dependency_changes_are_system(self):

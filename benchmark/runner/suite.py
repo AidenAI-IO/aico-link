@@ -121,6 +121,7 @@ class TaskSpec:
     app_ids: list[str] = dc.field(default_factory=list)
     foreground_app_id: str | None = None
     environment_assertions: dict[str, Any] = dc.field(default_factory=dict)
+    memory_assertions: dict[str, Any] | None = None
     consolidation_expectation: ConsolidationExpectation | None = None
 
 @dc.dataclass
@@ -344,6 +345,18 @@ def load_suite(path: Path) -> Suite:
                     )
         else:
             consolidation_expectation = None
+        memory_assertions = raw.get("memory_assertions")
+        if memory_assertions is not None:
+            allowed = SETUP_KEYS["assert_memory"] - {"type"}
+            if not isinstance(memory_assertions, dict) or not memory_assertions or set(memory_assertions) - allowed:
+                raise SuiteValidationError(f"task {tid}: invalid memory_assertions")
+            if not (
+                memory_assertions.get("expected_count") is not None
+                or memory_assertions.get("expected")
+                or memory_assertions.get("absent_ids")
+            ):
+                raise SuiteValidationError(f"task {tid}: memory_assertions requires an expectation")
+            validate_assert_memory_setup(memory_assertions, path=f"task {tid}: memory_assertions")
         tasks.append(TaskSpec(
             id=tid, category=cat,
             description_for_judge=raw["description_for_judge"],
@@ -362,6 +375,7 @@ def load_suite(path: Path) -> Suite:
             app_ids=app_ids,
             foreground_app_id=foreground_app_id,
             environment_assertions=environment_assertions,
+            memory_assertions=memory_assertions,
             consolidation_expectation=consolidation_expectation,
         ))
     prompt_prefix = data.get("prompt_prefix", "")
@@ -424,6 +438,11 @@ def validate_assert_memory_setup(
     *,
     path: str = "assert_memory",
 ) -> None:
+    expected_count = setup.get("expected_count")
+    if expected_count is not None and (
+        isinstance(expected_count, bool) or not isinstance(expected_count, int) or expected_count < 0
+    ):
+        raise SuiteValidationError(f"{path} expected_count must be a non-negative integer")
     query = setup.get("query")
     if query is not None and not isinstance(query, dict):
         raise SuiteValidationError(f"{path} query must be an object")

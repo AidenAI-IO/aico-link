@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"aiden-agent/internal/agent/tts"
+
+	"github.com/gorilla/websocket"
 )
 
 // ErrUnsupportedCapability is returned when a caller invokes an operation
@@ -21,6 +23,51 @@ var ErrUnsupportedCapability = errors.New("realtime voice capability is unsuppor
 // conversation should open a new session instead of treating this as a fault.
 // Wrap it with errors.Is to distinguish rotation from a real error.
 var ErrSessionRotated = errors.New("realtime voice session was rotated by the provider")
+
+// ErrSessionIdleTimeout reports that the provider closed the session because no
+// response was generated for its idle window. This is normal session
+// management, not a fault, so callers should announce it as an idle timeout
+// rather than a service outage. Wrap it with errors.Is to distinguish an idle
+// close from a real error.
+var ErrSessionIdleTimeout = errors.New("realtime voice session was closed after an idle timeout")
+
+// isSessionIdleCloseMessage reports whether a server-sent reason describes an
+// idle close. Gemini Live and Qwen Omni Realtime both word it the same way and
+// neither offers a machine-readable signal, so the wording is the only seam
+// available. Keep this provider-neutral: the text comes from the server, and a
+// provider reaching it through either seam below gets the same classification.
+func isSessionIdleCloseMessage(reason string) bool {
+	normalized := strings.ToLower(reason)
+	if !strings.Contains(normalized, "session") || !strings.Contains(normalized, "closed") {
+		return false
+	}
+	return strings.Contains(normalized, "no response was generated")
+}
+
+// classifyServerErrorMessage wraps a provider's JSON error-frame message with
+// ErrSessionIdleTimeout when it describes an idle close. An unrecognized
+// message stays a plain error and keeps its existing handling.
+func classifyServerErrorMessage(message string) error {
+	if isSessionIdleCloseMessage(message) {
+		return fmt.Errorf("%w: %s", ErrSessionIdleTimeout, message)
+	}
+	return errors.New(message)
+}
+
+// classifyTransportError wraps a websocket read error with
+// ErrSessionIdleTimeout when the peer's close reason describes an idle close.
+// An idle close arrives as a close frame, which never reaches a provider's
+// event translation, so this covers every provider at the transport seam.
+func classifyTransportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var closeErr *websocket.CloseError
+	if !errors.As(err, &closeErr) || !isSessionIdleCloseMessage(closeErr.Text) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", ErrSessionIdleTimeout, err)
+}
 
 // DeviceMediaConfig is the PCM contract between Aiden's audio device and the
 // managed realtime session. Provider-native formats stay behind this seam.

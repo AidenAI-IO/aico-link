@@ -1151,7 +1151,7 @@ func (d *AudioDialog) SpeakFinal(ctx context.Context, text string, interrupt <-c
 }
 
 func (d *AudioDialog) CanSpeakFinalText() bool {
-	return d != nil && d.currentTTSPlaybackBackend() != nil && (d.currentTTSManager() != nil || canPlayTTSUnavailableFallback(d.config))
+	return d != nil && d.currentTTSPlaybackBackend() != nil && (d.currentTTSManager() != nil || canPlayTTSUnavailableFallback(d.config, ""))
 }
 
 func (d *AudioDialog) currentTTSManager() *tts.ProviderManager {
@@ -1259,9 +1259,9 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 	if !allowFallback {
 		return ttsErr
 	}
-	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, speechStarted, ttsErr)
+	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, "", speechStarted, ttsErr)
 	if fallbackPlayed {
-		logging.Warnf("agent", "tts", "Local unavailable fallback played: %s", ttsUnavailableFallbackPath(d.config))
+		logging.Warnf("agent", "tts", "Local unavailable fallback played: %s", ttsUnavailableFallbackPath(d.config, ""))
 	}
 	return resultErr
 }

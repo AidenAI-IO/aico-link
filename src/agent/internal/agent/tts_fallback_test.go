@@ -11,24 +11,77 @@ import (
 	ttsmodule "aiden-agent/internal/agent/tts"
 )
 
+func TestDenormalizeLocaleForFilename(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"zh-cn", "zh-CN"},
+		{"en-us", "en-US"},
+		{"ja-jp", "ja-JP"},
+		{"ko-kr", "ko-KR"},
+		{"zh", "zh"},       // single part, returned as-is
+		{"", ""},           // empty
+		{"en-US", "en-US"}, // already uppercase in region part
+	}
+
+	for _, tt := range tests {
+		got := denormalizeLocaleForFilename(tt.input)
+		if got != tt.expected {
+			t.Errorf("denormalizeLocaleForFilename(%q) = %q, want %q", tt.input, got, tt.expected)
+		}
+	}
+}
+
 func TestTTSUnavailableFallbackPathSelectsLocale(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(ttsUnavailableFallbackDirEnv, dir)
 
 	zhPath := ttsUnavailableFallbackPath(Config{
 		Locale: "zh-CN",
-	})
+	}, "")
 	if want := filepath.Join(dir, ttsUnavailableFallbackChinese); zhPath != want {
 		t.Fatalf("zh fallback path = %q, want %q", zhPath, want)
 	}
-	enPath := ttsUnavailableFallbackPath(Config{Locale: "en-US"})
+	enPath := ttsUnavailableFallbackPath(Config{Locale: "en-US"}, "")
 	if want := filepath.Join(dir, ttsUnavailableFallbackEnglish); enPath != want {
 		t.Fatalf("en fallback path = %q, want %q", enPath, want)
 	}
 
 	disabled := false
-	if got := ttsUnavailableFallbackPath(Config{VoiceNotifications: VoiceNotificationsConfig{Enabled: &disabled}}); got != "" {
+	if got := ttsUnavailableFallbackPath(Config{VoiceNotifications: VoiceNotificationsConfig{Enabled: &disabled}}, ""); got != "" {
 		t.Fatalf("disabled fallback path = %q, want empty", got)
+	}
+}
+
+func TestTTSUnavailableFallbackPathPrefersFailureSpecificClip(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(ttsUnavailableFallbackDirEnv, dir)
+
+	// Write generic fallback
+	writeTestTTSFallback(t, dir, ttsUnavailableFallbackChinese)
+
+	// Write failure-specific clip
+	writeTestTTSFallback(t, dir, "session_idle.zh-CN.wav")
+
+	cfg := Config{Locale: "zh-CN"}
+
+	// Without failure code, should return generic
+	genericPath := ttsUnavailableFallbackPath(cfg, "")
+	if want := filepath.Join(dir, ttsUnavailableFallbackChinese); genericPath != want {
+		t.Fatalf("generic fallback path = %q, want %q", genericPath, want)
+	}
+
+	// With failure code, should return specific
+	specificPath := ttsUnavailableFallbackPath(cfg, TurnFailureSessionIdle)
+	if want := filepath.Join(dir, "session_idle.zh-CN.wav"); specificPath != want {
+		t.Fatalf("session_idle fallback path = %q, want %q", specificPath, want)
+	}
+
+	// With unknown failure code, should fall back to generic
+	unknownPath := ttsUnavailableFallbackPath(cfg, "unknown-code")
+	if want := filepath.Join(dir, ttsUnavailableFallbackChinese); unknownPath != want {
+		t.Fatalf("unknown code fallback path = %q, want %q", unknownPath, want)
 	}
 }
 
@@ -39,7 +92,7 @@ func TestPlayTTSUnavailableFallbackStreamsBundledWAV(t *testing.T) {
 
 	ops := &recordedAudioOps{}
 	audio := NewAudioServiceClient(startRecordedTTSPlaybackAudioSocket(t, ops))
-	if err := playTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}); err != nil {
+	if err := playTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}, ""); err != nil {
 		t.Fatalf("playTTSUnavailableFallback() error = %v", err)
 	}
 	if got := ops.countOp("start_playback"); got != 1 {
@@ -58,7 +111,7 @@ func TestAttemptTTSUnavailableFallbackPreservesOriginalError(t *testing.T) {
 	ops := &recordedAudioOps{}
 	audio := NewAudioServiceClient(startRecordedTTSPlaybackAudioSocket(t, ops))
 	original := errors.New("dial tcp: connection refused")
-	played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}, false, original)
+	played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original)
 	if !played {
 		t.Fatal("fallback played = false, want true")
 	}
@@ -78,12 +131,12 @@ func TestAttemptTTSUnavailableFallbackSkipsPartialSpeechAndCancellation(t *testi
 	ops := &recordedAudioOps{}
 	audio := NewAudioServiceClient(startRecordedTTSPlaybackAudioSocket(t, ops))
 	original := errors.New("dial tcp: connection reset")
-	if played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{}, true, original); played || !errors.Is(err, original) {
+	if played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{}, "", true, original); played || !errors.Is(err, original) {
 		t.Fatalf("partial speech fallback = (%v, %v), want (false, original error)", played, err)
 	}
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{}, false, original); played || !errors.Is(err, original) {
+	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{}, "", false, original); played || !errors.Is(err, original) {
 		t.Fatalf("canceled fallback = (%v, %v), want (false, original error)", played, err)
 	}
 	if got := ops.countOp("start_playback"); got != 0 {

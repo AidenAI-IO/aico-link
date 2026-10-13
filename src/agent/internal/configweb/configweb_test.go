@@ -1828,16 +1828,28 @@ func TestWiFiProxyRequestValidationAndPasswordProtection(t *testing.T) {
 	}
 	public := (wiFiConfig{Networks: []wiFiNetwork{{SSID: "Office"}}}).publicValue(config)
 	network := public["networks"].([]map[string]any)[0]
-	if network["proxy_mode"] != "proxy" || network["proxy_url"] != "" || network["no_proxy"] != noProxy {
+	// The detail page shows the saved proxy, but never its password.
+	if network["proxy_mode"] != "proxy" || network["proxy_url"] != "http://alice:xxxxx@proxy.example:7890" || network["no_proxy"] != noProxy {
 		t.Fatalf("public proxy=%#v", network)
+	}
+
+	// Saving the redacted form back (here with a new port) keeps the password.
+	edited := "http://alice:xxxxx@proxy.example:8080"
+	if err := applyWiFiProxyRequest(&config, wifiConnectionRequest{SSID: "Office", ProxyMode: "proxy", ProxyURL: &edited}); err != nil {
+		t.Fatal(err)
+	}
+	editedSaved := "http://alice:secret@proxy.example:8080"
+	if got := config.Networks["Office"].ProxyURL; got != editedSaved {
+		t.Fatalf("saved proxy after redacted edit=%q", got)
 	}
 
 	blank := ""
 	if err := applyWiFiProxyRequest(&config, wifiConnectionRequest{SSID: "Office", ProxyMode: "proxy", ProxyURL: &blank}); err != nil {
 		t.Fatalf("blank saved proxy should preserve existing value: %v", err)
 	}
-	if got := config.Networks["Office"].ProxyURL; got != customURL {
-		t.Fatalf("preserved proxy=%q, want %q", got, customURL)
+	// A blank URL keeps whatever is stored, which is now the edited proxy.
+	if got := config.Networks["Office"].ProxyURL; got != editedSaved {
+		t.Fatalf("preserved proxy=%q, want %q", got, editedSaved)
 	}
 	emptyNoProxy := ""
 	if err := applyWiFiProxyRequest(&config, wifiConnectionRequest{SSID: "Office", ProxyMode: "proxy", ProxyURL: &blank, NoProxy: &emptyNoProxy}); err != nil {

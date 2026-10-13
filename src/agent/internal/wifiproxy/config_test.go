@@ -136,3 +136,27 @@ func TestNormalizeNetworkUpgradesLegacyDefaultNoProxy(t *testing.T) {
 		t.Fatalf("explicit legacy NO_PROXY produced %#v", network)
 	}
 }
+
+func TestRestoreRedactedPassword(t *testing.T) {
+	saved := "http://alice:secret@proxy.example:7890"
+	cases := []struct {
+		name, submitted, want string
+	}{
+		{"unchanged redacted form", "http://alice:xxxxx@proxy.example:7890", saved},
+		{"new port keeps the password", "http://alice:xxxxx@proxy.example:8080", "http://alice:secret@proxy.example:8080"},
+		{"a typed password wins", "http://alice:newpass@proxy.example:7890", "http://alice:newpass@proxy.example:7890"},
+		{"another user is not given alice's password", "http://bob:xxxxx@proxy.example:7890", "http://bob:xxxxx@proxy.example:7890"},
+		{"no credentials", "http://proxy.example:7890", "http://proxy.example:7890"},
+	}
+	for _, tc := range cases {
+		if got := RestoreRedactedPassword(tc.submitted, saved); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if got := RestoreRedactedPassword("http://alice:xxxxx@proxy.example:7890", "http://proxy.example:7890"); got != "http://alice:xxxxx@proxy.example:7890" {
+		t.Errorf("saved URL without a password must not invent one: %q", got)
+	}
+	if got := RedactedURL("http://proxy.example:7890"); got != "http://proxy.example:7890" {
+		t.Errorf("a proxy without credentials is shown as is: %q", got)
+	}
+}

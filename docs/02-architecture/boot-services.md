@@ -51,6 +51,38 @@ userdata and the OTA workspace, which is why it is ordered ahead of `aiden-platf
 `systemd-timesyncd`, and the media services. If those units fail with
 `Read-only file system`, check that `aiden-rootfs-grow.service` ran.
 
+On the first boot of a rootfs slot, the helper grows the mounted rootfs and
+compares the userdata and OTA ext4 block counts with their partition capacities.
+It skips data filesystems that already fill their partitions. Only an unmounted
+data filesystem that actually needs growth is checked with `e2fsck -f -p` before
+`resize2fs`; fsck statuses 0 and 1 permit growth, while other statuses stop
+preparation without writing the completion marker. Mounted filesystems use
+online growth without an offline fsck. The data mounts require preparation to
+succeed, so a failed check cannot be bypassed by a later retry against a mounted
+filesystem. Successful preparation remains active for the current boot.
+The growth service refuses manual stop and restart requests, preventing those
+requests from stopping live data mounts through their `Requires=` dependencies.
+After correcting a preparation failure, retry it with
+`systemctl start aiden-rootfs-grow.service`.
+
+The ext4 regression suite uses image files and simulated mount discovery. Its
+mounted cases verify that neither userdata nor OTA receives an offline fsck;
+actual online growth still requires validation with mounted filesystems on a
+board.
+
+This matters when OTA replaces a rootfs slot while preserving previously used
+userdata: `resize2fs` can require fsck on an unmounted filesystem even when it is
+clean and already full. Such a failure cancels dependent service start jobs.
+On older firmware, the data mounts could still start and the log retention
+timer could later retry preparation, without restarting the canceled device
+services. Check both the boot journal and the service group, since such a retry
+could leave `systemctl --failed` empty while device services were inactive:
+
+```bash
+journalctl -b -u aiden-rootfs-grow.service
+systemctl status aiden.target aiden-agent.service aiden-usb-gadget.service ssh.service
+```
+
 ## USB HID and ECM
 
 `aiden-usb-gadget.service` exposes a composite gadget (`1d6b:0104`) with a
