@@ -12,8 +12,13 @@ import termios
 import time
 
 REQ, RESP, EVENT = 1, 2, 3
-GET_STATE, RV_READY, SHUTDOWN_REQUEST = 0x01, 0x10, 0x20
-EVENT_NAMES = {0x11: "RK628_PLUGIN_DET_CHANGED", 0x12: "WAKEUP"}
+GET_STATE, GET_BATTERY = 0x01, 0x02
+SET_WAKEUP_TIMER, GET_WAKEUP_TIMER, CANCEL_WAKEUP_TIMER = 0x03, 0x04, 0x05
+RV_READY, WAKEUP, RK628_PLUGIN_DET_CHANGED = 0x06, 0x07, 0x08
+SHUTDOWN_REQUEST, SHUTDOWN_READY = 0x09, 0x0a
+EVENT_NAMES = {WAKEUP: "WAKEUP", RK628_PLUGIN_DET_CHANGED: "RK628_PLUGIN_DET_CHANGED"}
+WAKE_SOURCES = {1: "EXTERNAL_POWER", 2: "POWER_SWITCH", 3: "TOUCH_KEY",
+                4: "RTC_TIMER", 5: "OTHER", 6: "ASR"}
 MAX_PAYLOAD = 64
 
 
@@ -65,8 +70,15 @@ class Parser:
 def handle(frame):
     kind, seq, cmd, payload = frame
     if kind == EVENT:
-        print("EVENT cmd=0x%02x name=%s seq=%d payload=%s" %
-              (cmd, EVENT_NAMES.get(cmd, "UNKNOWN"), seq, payload.hex()), flush=True)
+        details = ""
+        if cmd == WAKEUP:
+            if len(payload) != 4 or any(payload[1:]):
+                details = " invalid_payload=expected_source_and_three_zero_reserved_bytes"
+            else:
+                details = " wake_source=0x%02x wake_source_name=%s" % (
+                    payload[0], WAKE_SOURCES.get(payload[0], "UNKNOWN"))
+        print("EVENT cmd=0x%02x name=%s seq=%d payload=%s%s" %
+              (cmd, EVENT_NAMES.get(cmd, "UNKNOWN"), seq, payload.hex(), details), flush=True)
         return None
     if kind != REQ:
         return None
@@ -74,6 +86,8 @@ def handle(frame):
         # STATUS, protocol version, service version 0.1.0, RV READY.
         return encode(RESP, seq, cmd, b"\x00\x01\x00\x01\x00\x02")
     if cmd == SHUTDOWN_REQUEST:
+        if payload != b"\x01\0\0\0":
+            return encode(RESP, seq, cmd, b"\x02")  # INVALID
         print("SHUTDOWN_REQUEST seq=%d payload=%s: poweroff is not managed by this service" %
               (seq, payload.hex()), flush=True)
         return encode(RESP, seq, cmd, b"\x04")  # DENIED

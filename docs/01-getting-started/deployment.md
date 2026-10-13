@@ -228,15 +228,28 @@ stdout/stderr that is intentionally persisted remains in the files above.
 
 The `aiden-mcu-event` service reads V1 frames from `/dev/ttyS5` at 115200 8N1.
 Every valid MCU EVENT is logged with its command, sequence, and raw payload;
-`WAKEUP` (`0x12`) and `RK628_PLUGIN_DET_CHANGED` (`0x11`) have names, and
+`WAKEUP` (`0x07`) and `RK628_PLUGIN_DET_CHANGED` (`0x08`) have names, and
 unknown event commands retain their command and payload in the journal. It
-announces `RV_READY` and answers MCU `GET_STATE` probes so queued events can be
-delivered. It does not query wake reasons or perform any event action. A
-`SHUTDOWN_REQUEST` is logged and answered `DENIED`; this diagnostic service
-does not perform Linux shutdown or send `SHUTDOWN_READY`, so it is not a
+decodes WAKEUP's four-byte payload as `wake_source, 00, 00, 00` and logs both
+the numeric source and its name (for example,
+`wake_source=0x06 wake_source_name=ASR`). Unknown source values remain visible
+as `UNKNOWN`. Wrong lengths or nonzero reserved bytes are logged with
+`invalid_payload` and no inferred source. Wake reasons are carried directly
+by the event; there is no separate wake-source query. The service announces
+`RV_READY` (`0x06`) and answers MCU `GET_STATE` (`0x01`) probes so queued events
+can be delivered. It does not perform any event action. A valid
+`SHUTDOWN_REQUEST` (`0x09`) is logged and answered `DENIED`; malformed requests
+receive `INVALID`. This diagnostic service does not perform Linux shutdown
+or send `SHUTDOWN_READY` (`0x0A`), so it is not a
 complete power-management peer. Stop it before using another owner of
 `/dev/ttyS5`. This board configures journald with volatile storage, so export
 the event journal before reboot when the record needs to be retained.
+
+The remaining MCU request commands are `GET_BATTERY` (`0x02`),
+`SET_WAKEUP_TIMER` (`0x03`), `GET_WAKEUP_TIMER` (`0x04`), and
+`CANCEL_WAKEUP_TIMER` (`0x05`). The diagnostic logger does not issue these
+requests. Command IDs and wake-source values are separate fields: ASR source
+`0x06` is the first payload byte of a `WAKEUP` command `0x07`.
 
 For a Wi-Fi startup failure, collect the following without rebooting if
 possible:
