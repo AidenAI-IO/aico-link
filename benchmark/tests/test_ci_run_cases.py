@@ -43,6 +43,25 @@ def test_run_case_forwards_configured_repeat_count(monkeypatch, tmp_path, repeat
     assert commands[0][-2:] == ["--repeats", repeats]
 
 
+def test_run_case_activates_catalogued_skill(monkeypatch, tmp_path):
+    commands: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(run_case_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("", None))
+    monkeypatch.setattr(run_case_module.subprocess, "run", fake_run)
+    monkeypatch.setattr(run_case_module, "_effective_exit_code", lambda code, path: code)
+
+    case = SuiteCase(id="phone-control-mobilegym", suite="suites/phone_control_v1.json",
+                     environment="mobilegym", active_skills=["device-operator"])
+    assert run_case_module.run_case(case, run_id="ci-skill", environment={}) == 0
+    assert commands[0].count("--skill") == 1
+    assert commands[0][commands[0].index("--skill") + 1] == "device-operator"
+
+
 def test_run_cases_starts_mobilegym_together_without_prepopulating_run_dirs(
     monkeypatch,
     tmp_path: Path,

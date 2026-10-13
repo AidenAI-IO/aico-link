@@ -17,8 +17,48 @@ from runner.suite import (
     Suite,
     TaskSpec,
     TraceObservationSpec,
+    load_suite,
 )
 import runner.runtask as runtask_mod
+
+
+@pytest.mark.parametrize("task_id,tool_names,expected_status", [
+    ("type_long_mixed_text", ["enter_text"], "passed"),
+    ("drag_app_icon", ["touch_gesture", "touch_gesture"], "failed"),
+])
+def test_phone_control_successful_action_count_reaches_visual_judge(
+    tmp_path: Path, monkeypatch, task_id, tool_names, expected_status
+):
+    suite = load_suite(Path(__file__).parents[1] / "suites" / "phone_control_v1.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    history = []
+    for index, tool_name in enumerate(tool_names):
+        gesture = "drag_start" if index == 0 else "drag_release"
+        tool_input = {"text": "Aiden test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
+        history.extend([
+            {"type": "tool_call", "tool_name": tool_name, "tool_input": json.dumps(tool_input)},
+            {"type": "tool_result", "tool_name": tool_name, "content": '{"ok":true}'},
+        ])
+    history.append({"type": "assistant", "content": "Done"})
+    judged = []
+
+    def fake_judge(**kwargs):
+        judged.append(kwargs)
+        if task_id == "drag_app_icon":
+            assert any("folder" in item.check for item in kwargs["rubric"])
+        verdicts = [RubricVerdict(item.id, "no" if task_id == "drag_app_icon" and item.id == "icon_moved" else "yes", "visual evidence")
+                    for item in kwargs["rubric"]]
+        return JudgeOutput(verdicts, "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", fake_judge)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None,
+        run_id="regression", timed_out=False,
+    )
+    assert len(judged) == 1
+    assert result.status == expected_status
+    assert result.hard_assertion_failures == []
 
 
 class FakeClient:

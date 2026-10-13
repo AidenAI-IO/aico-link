@@ -335,7 +335,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 15,
         "must_complete_within_sec": 180
       }
@@ -453,7 +453,7 @@
     {
       "id": "drag_app_icon",
       "category": "multi_step",
-      "description_for_judge": "Agent must drag a currently visible normal app icon from its current position to a different location on the home screen. The icon should end up in a visibly different grid position.",
+      "description_for_judge": "Agent must drag a currently visible normal app icon to an empty home-screen grid position. The icon must move without creating a folder or replacing another icon.",
       "setup": {
         "type": "agent_prompt",
         "prompt": "回到桌面，选一个图标比较少的桌面页。",
@@ -464,19 +464,19 @@
       "rubric": [
         {
           "id": "icon_located",
-          "check": "Trace shows agent took a screenshot and identified a visible normal app icon position."
+          "check": "The pre-screenshot and trace identify a visible normal app icon at the drag_start position. A separate screenshot tool call is not required when the environment supplied the pre-screenshot."
         },
         {
           "id": "drag_performed",
-          "check": "Trace contains a touch_gesture drag action with start and end coordinates that differ significantly."
+          "check": "Trace contains a successful touch_gesture drag_start followed by drag_release at a significantly different position."
         },
         {
           "id": "icon_moved",
-          "check": "Post-screenshot shows the chosen app icon in a different grid position compared to the pre-screenshot."
+          "check": "Post-screenshot shows the chosen app icon in a previously empty grid position compared to the pre-screenshot, without merging icons into a folder or displacing another icon."
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 3,
+        "min_tool_calls": 2,
         "max_tool_calls": 15,
         "must_complete_within_sec": 120
       }

@@ -35,6 +35,7 @@ class SuiteCase:
     target_platform: str = "auto"
     max_concurrency: int = 1
     timeout_minutes: int = 180
+    active_skills: list[str] = dc.field(default_factory=list)
     # False keeps the case out of the automatic runnable profile; it stays
     # selectable by explicit --suite (workflow_dispatch).
     runnable: bool = True
@@ -79,6 +80,10 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         raise CatalogError(f"max_concurrency for {case.id} must be positive")
     if case.timeout_minutes < 1:
         raise CatalogError(f"timeout_minutes for {case.id} must be positive")
+    if not isinstance(case.active_skills, list) or any(
+        not isinstance(name, str) or not name.strip() for name in case.active_skills
+    ):
+        raise CatalogError(f"active_skills for {case.id} must be a list of skill names")
     return case
 
 

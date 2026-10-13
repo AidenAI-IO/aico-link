@@ -103,9 +103,11 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
     assert [case.id for case in mobilegym] == ["phone-control-mobilegym"]
     assert mobilegym[0].environment == "mobilegym"
     assert mobilegym[0].target_platform == "android"
+    assert mobilegym[0].active_skills == ["device-operator"]
     assert mobilegym[0].runnable is False
     assert mobilegym[0] not in select_cases(catalog, profile="runnable")
     assert [case.id for case in ios] == ["phone-control-ios"]
+    assert ios[0].active_skills == []
     assert {case.id for case in both} == {"phone-control-mobilegym", "phone-control-ios"}
 
 

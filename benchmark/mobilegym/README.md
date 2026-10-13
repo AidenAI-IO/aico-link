@@ -52,6 +52,8 @@ uv run python -m runner run \
 
 **Note**: The unified environment bridge mode is now used; `device.backend=mobilegym` is no longer required.
 
+The CI `phone-control-mobilegym` case activates the bundled `device-operator` skill through its catalog `active_skills` setting. The run manifest records the active skill. Compare scores against runs with the same skill setting; a change from autonomous skill discovery to explicit activation changes the Agent context even when the model and suite are unchanged.
+
 ### Option 2: WebUI / CLI services (recommended)
 
 ```bash
