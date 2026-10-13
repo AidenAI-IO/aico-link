@@ -472,5 +472,8 @@ if (document.getElementById('measurement-panel-latency').hidden || elements.get(
 if (!elements.get('measurement-note').textContent.startsWith('0 / 6')) process.exit(25);
 selectDataset(datasets.findIndex(s => s.suite !== 'other'));
 if (!elements.get('measurement-empty-latency').hidden || latency.data.datasets[0].label !== 'p50') process.exit(26);
+const costSpec = DATA.metricCharts.find(spec => spec.id === 'cost');
+if (!measurementText(0.00000012, costSpec).includes('0.00000012')) process.exit(28);
+if (measurementText(0, costSpec) !== '0 USD') process.exit(29);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

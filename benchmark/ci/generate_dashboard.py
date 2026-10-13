@@ -529,7 +529,7 @@ const measurementValue = (point, series) => {{
   return dist?.count === 0 ? null : dist?.[series.statistic] ?? null;
 }};
 const measurementText = (value, spec) => value == null ? "Unavailable" :
-  (value * spec.scale).toLocaleString(undefined, {{ maximumFractionDigits: spec.unit === "USD" ? 4 : spec.unit === "tokens" ? 0 : 2 }}) + " " + spec.unit;
+  (value * spec.scale).toLocaleString(undefined, spec.unit === "USD" ? {{ maximumSignificantDigits: 6 }} : {{ maximumFractionDigits: spec.unit === "tokens" ? 0 : 2 }}) + " " + spec.unit;
 const sampleText = (point, series) => `${{count(point.distributions?.[series.metric]?.count)}} / ${{count(point.eligible_attempts)}} eligible attempts measured`;
 el("metric-charts").innerHTML = DATA.metricCharts.map(spec => `<div class="panel" id="measurement-panel-${{spec.id}}">
   <h2 id="measurement-title-${{spec.id}}">${{esc(spec.title)}}</h2><p class="empty">${{esc(spec.description)}}</p>

@@ -348,6 +348,15 @@ func (r *EpisodeRecorder) Finish(output string, metrics *RunMetrics, runErr erro
 		if metrics.FirstTokenTime > 0 {
 			episode.Extra["first_token_time_ms"] = metrics.FirstTokenTime
 		}
+		if metrics.LLMCalls > 0 {
+			episode.Extra["llm_calls"] = metrics.LLMCalls
+			episode.Extra["llm_time_ms"] = metrics.LLMTimeMs
+			episode.Extra["cost_reported_calls"] = metrics.costReportedCalls
+		}
+		if metrics.CostUSD != nil {
+			episode.Extra["cost_usd"] = *metrics.CostUSD
+			episode.Extra["cost_source"] = metrics.CostSource
+		}
 		if metrics.CachedPromptTokens > 0 {
 			episode.Extra["cached_prompt_tokens"] = metrics.CachedPromptTokens
 		}

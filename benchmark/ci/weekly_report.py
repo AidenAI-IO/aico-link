@@ -9,6 +9,19 @@ from typing import Any
 from ci.fetch_langfuse_history import _timestamp, comparison_key
 
 
+def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
+    # Run sums contain only measured eligible attempts. A present sum alone
+    # does not establish full coverage of the window's attempts.
+    key = f"{metric}_sum"
+    if not records or any(
+        r.get(key) is None or r.get("eligible_attempts") is None
+        or r.get("distributions", {}).get(metric, {}).get("count") != r["eligible_attempts"]
+        for r in records
+    ):
+        return None
+    return sum(r[key] for r in records)
+
+
 def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     measured = [r for r in records if not r.get("missing_metrics")
                 and r.get("eligible_tasks") is not None and r.get("passed") is not None]
@@ -21,8 +34,8 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
         "passed": sum(r["passed"] for r in measured),
         "pass_at_1": sum(r["passed"] for r in measured) / eligible if eligible else None,
         # Missing cost/token measurements must not silently become zero.
-        **{key: sum(r[key] for r in records) if records and all(r.get(key) is not None for r in records) else None
-           for key in ("cost_usd_sum", "total_tokens_sum")},
+        **{f"{metric}_sum": _complete_resource_sum(records, metric)
+           for metric in ("cost_usd", "total_tokens")},
     }
 
 
@@ -95,7 +108,7 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for label, totals in (("Last 7 days", report["current"]), ("Previous 7 days", report["previous"])):
-        cost = "—" if totals["cost_usd_sum"] is None else f"{totals['cost_usd_sum']:.4f}"
+        cost = "—" if totals["cost_usd_sum"] is None else f"{totals['cost_usd_sum']:.6g}"
         tokens = "—" if totals["total_tokens_sum"] is None else f"{totals['total_tokens_sum']:.0f}"
         lines.append(f"| {label} | {totals['suite_runs']} | {totals['measured_suite_runs']} | "
                      f"{totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | {_pct(totals['pass_at_1'])} | {cost} | {tokens} |")

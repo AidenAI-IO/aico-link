@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -331,7 +332,7 @@ func telemetryCostDetailsFromMap(info map[string]any) map[string]float64 {
 	if v, ok := costMetricFloat(firstMapValue(info, "total_cost", "cost", "estimated_cost", "cost_usd")); ok {
 		cost["total"] = v
 	}
-	if cost["total"] == 0 && (cost["input"] > 0 || cost["output"] > 0) {
+	if _, hasTotal := cost["total"]; !hasTotal && (cost["input"] > 0 || cost["output"] > 0) {
 		cost["total"] = cost["input"] + cost["output"]
 	}
 	if len(cost) == 0 {
@@ -567,18 +568,20 @@ func firstMapValue(values map[string]any, keys ...string) any {
 }
 
 func costMetricFloat(value any) (float64, bool) {
+	var cost float64
 	switch typed := value.(type) {
 	case float32:
-		return float64(typed), true
+		cost = float64(typed)
 	case float64:
-		return typed, true
+		cost = typed
 	case int:
-		return float64(typed), true
+		cost = float64(typed)
 	case int32:
-		return float64(typed), true
+		cost = float64(typed)
 	case int64:
-		return float64(typed), true
+		cost = float64(typed)
 	default:
 		return 0, false
 	}
+	return cost, cost >= 0 && !math.IsNaN(cost) && !math.IsInf(cost, 0)
 }

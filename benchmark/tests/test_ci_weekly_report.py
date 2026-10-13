@@ -13,6 +13,8 @@ def _record(timestamp="2026-10-12T00:00:00+00:00", **overrides):
          "metrics_schema_version": "p0-v1", "metrics_k": "1", "target_platform": "auto",
          "agent_model": "model", "tasks": 10, "eligible_tasks": 8,
          "passed": 4, "cost_usd_sum": 1.0, "total_tokens_sum": 200,
+         "eligible_attempts": 8,
+         "distributions": {"cost_usd": {"count": 8}, "total_tokens": {"count": 8}},
          "missing_metrics": []}
     r.update(overrides)
     return r
@@ -57,3 +59,19 @@ def test_weekly_markdown_escapes_untrusted_suite_names():
     markdown = render_weekly(report, [])
     assert "<img" not in markdown
     assert "&#124;" in markdown
+
+
+@pytest.mark.parametrize("metric", ["cost_usd", "total_tokens"])
+def test_weekly_resource_totals_require_every_eligible_attempt(metric):
+    distributions = {"cost_usd": {"count": 8}, "total_tokens": {"count": 8}}
+    distributions[metric]["count"] = 7
+    report = summarize_weekly([_record(distributions=distributions)], end=END)
+    assert report["current"][f"{metric}_sum"] is None
+
+
+def test_weekly_cost_preserves_free_calls_and_small_billed_amounts():
+    report = summarize_weekly([_record(cost_usd_sum=0)], end=END)
+    assert report["current"]["cost_usd_sum"] == 0
+    assert "| 0 | 200 |" in render_weekly(report, [])
+    report = summarize_weekly([_record(cost_usd_sum=0.00000012)], end=END)
+    assert "1.2e-07" in render_weekly(report, [])

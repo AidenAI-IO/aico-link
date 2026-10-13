@@ -383,10 +383,13 @@ type compatibleInputAudio struct {
 // comes from prompt_tokens_details and powers prompt-cache hit-rate metrics
 // (cache hit rate = cached_tokens / prompt_tokens).
 type compatibleUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	TotalTokens         int `json:"total_tokens"`
-	ReasoningTokens     int `json:"reasoning_tokens,omitempty"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+	ReasoningTokens  int `json:"reasoning_tokens,omitempty"`
+	// OpenRouter reports the billed USD amount in usage.cost. A pointer keeps
+	// an explicitly free call distinct from a provider that omits cost.
+	Cost                *float64 `json:"cost,omitempty"`
 	PromptTokensDetails *struct {
 		CachedTokens int `json:"cached_tokens"`
 	} `json:"prompt_tokens_details,omitempty"`
@@ -406,6 +409,9 @@ func (u *compatibleUsage) generationInfo() map[string]any {
 	}
 	if u.ReasoningTokens > 0 {
 		info["reasoning_tokens"] = u.ReasoningTokens
+	}
+	if u.Cost != nil {
+		info["cost_usd"] = *u.Cost
 	}
 	return info
 }

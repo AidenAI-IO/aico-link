@@ -714,6 +714,8 @@ def test_evaluate_task_history_persists_episode_for_failure_evidence(tmp_path: P
         hard_assertions=HardAssertions(required_tools=["bridge_contacts"]),
     )
     episode = {
+        "extra": {"llm_calls": 3, "llm_time_ms": 75.0,
+                  "cost_usd": 0.0024, "cost_source": "provider_reported"},
         "events": [
             {
                 "type": "tool_result",
@@ -742,6 +744,10 @@ def test_evaluate_task_history_persists_episode_for_failure_evidence(tmp_path: P
     )
 
     assert result.metrics["failure_event_ref"] == "episode.json#/events/0"
+    assert result.metrics["cost_usd"] == 0.0024
+    assert result.metrics["cost_source"] == "provider_reported"
+    assert result.metrics["llm_calls"] == 3
+    assert result.metrics["llm_time_ms"] == 75.0
     assert json.loads((tmp_path / "artifacts" / "episode.json").read_text()) == episode
 
 

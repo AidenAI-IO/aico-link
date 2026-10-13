@@ -1239,8 +1239,17 @@ measured zero durations or counts remain zero.
 Timing components overlap and are never stacked into a wall-time breakdown.
 Vision LLM metrics use an image-observation heuristic, screenshot timing covers
 runner captures, and device execution timing requires recorded action durations.
-The runner currently does not calculate monetary cost or populate an Agent retry
-count, so those charts explicitly indicate missing measurements. Reported
+The Agent preserves OpenAI-compatible `usage.cost` (including OpenRouter's USD
+billing), sums provider-reported costs across the task's model calls, and records
+the total and `cost_source=provider_reported` in the episode. Every call must
+supply a finite, nonnegative cost; missing billing, failed calls without billing,
+and text-only calls leave the task cost unknown. Explicitly free calls remain
+zero. The runner reads this episode total and publishes cost distributions to
+Langfuse; it does not estimate cost from token prices or use Experiment replay
+costs. Older runs without recorded cost remain unavailable. Episode model-call
+counts and elapsed times also supplement history, including compaction and
+failed calls. Vision-specific timings still require history evidence.
+The runner does not populate an Agent retry count. Reported
 run cost and token sums remain in the source snapshot; they cover recorded
 samples and are not necessarily complete totals.
 
@@ -1261,7 +1270,9 @@ excluded from comparisons. Changing configuration is not reported as regression.
 The weekly report compares rolling UTC windows: the last seven days versus the
 preceding seven days. Its overall rates describe each window's task mix; changes
 are computed only within matching suite/configuration groups. Cost and token
-totals are reported only when every included suite run supplies them. The report
+totals are reported only when every included suite run supplies them with numeric
+sample counts covering every eligible attempt. Partial recorded sums remain in
+the source snapshot but do not masquerade as complete weekly totals. The report
 is included in the Actions job summary, independently of artifact upload.
 
 To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,

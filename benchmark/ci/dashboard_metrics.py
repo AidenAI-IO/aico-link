@@ -17,13 +17,13 @@ METRIC_CHARTS = [
     },
     {
         "id": "calls", "title": "Agent work per attempt", "unit": "per attempt", "scale": 1,
-        "description": "Mean counts per measured eligible attempt. Device actions are recognized device-changing tools; LLM calls require usage evidence. Vision calls are inferred from image observations.",
+        "description": "Mean counts per measured eligible attempt. Device actions are recognized device-changing tools. LLM calls use episode totals when available (including failed calls and compaction), otherwise usage-bearing history. Vision calls are inferred from image observations.",
         "series": [_series("tool_calls", "mean", "Tool calls"), _series("device_actions", "mean", "Device actions"),
                    _series("llm_calls", "mean", "LLM calls"), _series("vision_llm_calls", "mean", "Vision LLM calls")],
     },
     {
         "id": "timings", "title": "Recorded timings · p50", "unit": "s", "scale": 0.001,
-        "description": "These timings overlap and must not be added together. Vision LLM time is inferred, not isolated vision processing; screenshots measure runner captures only. Missing instrumentation leaves gaps.",
+        "description": "These timings overlap and must not be added together. LLM time uses episode model-call totals when available, otherwise complete history durations. Vision LLM time is inferred, not isolated vision processing; screenshots measure runner captures only. Missing instrumentation leaves gaps.",
         "series": [_series("llm_time_ms", "p50", "LLM"), _series("vision_llm_time_ms", "p50", "Vision LLM"),
                    _series("device_execution_ms", "p50", "Device execution"),
                    _series("screenshot_capture_ms", "p50", "Screenshot capture"),
@@ -36,7 +36,7 @@ METRIC_CHARTS = [
     },
     {
         "id": "cost", "title": "Cost per attempt", "unit": "USD", "scale": 1,
-        "description": "Only explicitly reported monetary cost is shown. The current runner does not calculate cost; unavailable measurements are not zero or an estimate from token counts.",
+        "description": "Provider-reported Agent model cost in USD, excluding setup and judging. Every model call in an attempt must report cost; incomplete billing leaves gaps. No token-price estimates are used. Inspect sample coverage before comparing runs.",
         "series": [_series("cost_usd", "mean", "Mean"), _series("cost_usd", "p90", "p90")],
     },
     {

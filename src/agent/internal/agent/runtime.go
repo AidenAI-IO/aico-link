@@ -243,6 +243,13 @@ type RunMetrics struct {
 	ContextWindow    int     `json:"context_window,omitempty"`
 	FirstTokenTime   float64 `json:"first_token_time_ms,omitempty"`
 	ToolCount        int     `json:"tool_count,omitempty"`
+	// Model calls include compaction and failed calls made by the run's wrapper.
+	LLMCalls          int      `json:"llm_calls,omitempty"`
+	LLMTimeMs         float64  `json:"llm_time_ms,omitempty"`
+	CostUSD           *float64 `json:"cost_usd,omitempty"`
+	CostSource        string   `json:"cost_source,omitempty"`
+	costReportedCalls int
+	reportedCostUSD   float64
 	// CachedPromptTokens accumulates provider-reported cached prompt tokens
 	// (usage.prompt_tokens_details.cached_tokens) across the run. The prompt-cache
 	// hit rate is CachedPromptTokens / PromptTokens.
@@ -366,6 +373,7 @@ func (m *usageTrackingModel) Spec() model.ModelSpec {
 func (m *usageTrackingModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
 	startedAt := time.Now()
 	res, err := m.inner.GenerateContent(ctx, messages, options...)
+	recordModelCallMetrics(m.metrics, res, startedAt)
 	if err == nil {
 		recordUsageMetrics(m.metrics, res)
 	}
@@ -388,6 +396,7 @@ func (m *usageTrackingModel) GenerateContentFromMessageList(ctx context.Context,
 
 	startedAt := time.Now()
 	res, err := inner.GenerateContentFromMessageList(ctx, messageList, options...)
+	recordModelCallMetrics(m.metrics, res, startedAt)
 	if err == nil {
 		recordUsageMetrics(m.metrics, res)
 	}
@@ -400,6 +409,8 @@ func (m *usageTrackingModel) GenerateContentFromMessageList(ctx context.Context,
 func (m *usageTrackingModel) Call(ctx context.Context, prompt string, options ...llms.CallOption) (string, error) {
 	startedAt := time.Now()
 	out, err := m.inner.Call(ctx, prompt, options...)
+	// The text-only API does not expose provider usage or cost.
+	recordModelCallMetrics(m.metrics, nil, startedAt)
 	if m.promptCapture != nil {
 		res := &llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: out}}}
 		m.promptCapture.Record(ctx, startedAt, time.Now(), []llms.MessageContent{{
@@ -2318,6 +2329,48 @@ func (h *runtimeCallbackHandler) HandleLLMGenerateContentStart(ctx context.Conte
 
 func (h *runtimeCallbackHandler) HandleLLMGenerateContentEnd(ctx context.Context, res *llms.ContentResponse) {
 	recordUsageMetrics(h.metrics, res)
+}
+
+func recordModelCallMetrics(metrics *RunMetrics, res *llms.ContentResponse, startedAt time.Time) {
+	if metrics == nil {
+		return
+	}
+	metrics.LLMCalls++
+	metrics.LLMTimeMs += float64(time.Since(startedAt)) / float64(time.Millisecond)
+	if cost, ok := providerResponseCostUSD(res); ok {
+		metrics.costReportedCalls++
+		metrics.reportedCostUSD += cost
+	}
+	// One unpriced call makes the whole task's cost unknown. Never export a
+	// partial sum as a complete task bill, including after subsequent calls.
+	metrics.CostUSD = nil
+	metrics.CostSource = ""
+	if metrics.costReportedCalls == metrics.LLMCalls && !math.IsInf(metrics.reportedCostUSD, 0) {
+		cost := metrics.reportedCostUSD
+		metrics.CostUSD = &cost
+		metrics.CostSource = "provider_reported"
+	}
+}
+
+func providerResponseCostUSD(res *llms.ContentResponse) (float64, bool) {
+	if res == nil || len(res.Choices) == 0 || res.Choices[0] == nil {
+		return 0, false
+	}
+	info := res.Choices[0].GenerationInfo
+	valid := func(value any) (float64, bool) {
+		cost, ok := costMetricFloat(value)
+		return cost, ok && cost >= 0 && !math.IsNaN(cost) && !math.IsInf(cost, 0)
+	}
+	for _, key := range []string{"cost_usd", "total_cost", "cost"} {
+		if value, exists := info[key]; exists {
+			return valid(value)
+		}
+	}
+	// Both components are required; estimated_cost is deliberately excluded.
+	input, inputOK := valid(firstMapValue(info, "input_cost", "prompt_cost"))
+	output, outputOK := valid(firstMapValue(info, "output_cost", "completion_cost"))
+	total := input + output
+	return total, inputOK && outputOK && !math.IsInf(total, 0)
 }
 
 func recordUsageMetrics(metrics *RunMetrics, res *llms.ContentResponse) {

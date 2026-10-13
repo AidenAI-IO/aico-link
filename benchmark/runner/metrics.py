@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import math
 import statistics
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -205,11 +206,28 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
         "cached_prompt_tokens": "cached_input_tokens",
         "reasoning_tokens": "reasoning_tokens",
         "first_token_time_ms": "time_to_first_token_ms",
+        "llm_calls": "llm_calls",
+        "llm_time_ms": "llm_time_ms",
     }
     for source, target in mappings.items():
         value = extra.get(source)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and value >= 0):
             metrics[target] = value
+    # Episode totals cover calls absent from public history (e.g. compaction).
+    # A missing/invalid cost is unknown, including when only some calls were priced.
+    cost = extra.get("cost_usd")
+    billed_calls = extra.get("cost_reported_calls")
+    calls = metrics.get("llm_calls")
+    complete_billing = billed_calls is None or (
+        isinstance(billed_calls, (int, float)) and not isinstance(billed_calls, bool)
+        and calls is not None and calls > 0 and float(calls).is_integer()
+        and billed_calls == calls
+    )
+    if (isinstance(cost, (int, float)) and not isinstance(cost, bool)
+            and math.isfinite(cost) and cost >= 0 and complete_billing):
+        metrics["cost_usd"] = cost
+        metrics["cost_source"] = extra.get("cost_source") or "episode_reported"
     events = episode.get("events") if isinstance(episode.get("events"), list) else []
     device_execution_ms = 0
     device_actions_seen = 0
