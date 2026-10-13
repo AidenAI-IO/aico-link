@@ -228,3 +228,29 @@ curl http://localhost:8080/health
 # Verify the bridge tool catalog
 curl http://localhost:8888/api/tools
 ```
+
+## Input coverage and result interpretation
+
+Environment-bridge mode keeps the Agent's `enter_text` engine: mode probing,
+probe cleanup, ASCII/IME planning, and verification still run in the Agent.
+Its internal ASCII keyboard primitive uses the MNK `keyboard_text` operation
+instead of opening a local HID device. MobileGym sends native browser keyboard
+events so undo, selection, copy/paste, and deletion retain editing semantics.
+This does not validate physical USB HID or real-phone IME compatibility.
+
+The bridge supports persistent `drag_start` / `move` / `drag_release` contact.
+Start holds for 500 ms and performs the same bounded activation movement as the
+Agent's local provider; release moves to the destination, holds, and lifts.
+Contacts belong to one environment slot and are cancelled on episode reset,
+end, or task release. Atomic `touch_actions` programs remain unsupported.
+
+A successful screenshot preflight proves connectivity, not input coverage.
+Judge traces include tool results as well as attempted calls; failed calls are
+not evidence that an operation happened. Human handoff is recorded explicitly
+as unfinished execution. An episode final answer can supply missing response
+text, but does not itself prove task completion.
+
+The phone-control rubric accepts a single successful long press. Device-info
+navigation accepts "About phone" or "My device" and requires scrolling only
+when necessary. Compare these rubric corrections separately from changes in
+Agent completion rates; suite hashes identify the changed evaluation inputs.

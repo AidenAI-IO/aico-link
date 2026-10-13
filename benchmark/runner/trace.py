@@ -78,3 +78,30 @@ def extract_step_screenshots(history: list[dict[str, Any]]) -> list[tuple[str, s
                 if data:
                     result.append((last_tool_name or msg.get("tool_name", ""), data))
     return result
+
+
+def tool_result_evidence(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep execution outcomes for judging, without duplicating inline images."""
+    results = []
+    for msg in history:
+        if msg.get("type") != "tool_result":
+            continue
+        result = dict(msg)
+        content = _safe_loads(msg.get("content", ""))
+        if isinstance(content, dict) and isinstance(content.get("data"), str) and (
+            "width" in content or "format" in content
+        ):
+            content = {key: value for key, value in content.items() if key != "data"}
+            result["content"] = json.dumps(content, ensure_ascii=False)
+        results.append(result)
+    return results
+
+
+def human_handoff_requested(history: list[dict[str, Any]]) -> bool:
+    for msg in history:
+        if msg.get("type") != "tool_result" or msg.get("tool_name") != "request_user_action":
+            continue
+        content = _safe_loads(msg.get("content", ""))
+        if isinstance(content, dict) and content.get("status") == "HUMAN_HANDOFF_REQUESTED":
+            return True
+    return False

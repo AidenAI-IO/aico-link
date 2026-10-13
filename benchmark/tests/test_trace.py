@@ -81,3 +81,21 @@ def test_trace_has_skill_read_detects_matching_tool_call():
 
     assert trace_has_skill_read(trace, "device-operator") is True
     assert trace_has_skill_read(trace, "other-skill") is False
+
+
+def test_tool_result_evidence_keeps_failures_without_image_payloads():
+    from runner.trace import tool_result_evidence
+    result = tool_result_evidence([{
+        "type": "tool_result", "tool_name": "touch_gesture", "is_error": True,
+        "content": '{"data":"BASE64_IMAGE","width":1080,"action_output":"unknown operation: drag_start"}',
+    }])
+    assert result[0]["is_error"] is True
+    assert "unknown operation: drag_start" in result[0]["content"]
+    assert "BASE64_IMAGE" not in result[0]["content"]
+
+
+def test_handoff_is_detected_from_result_not_just_attempted_call():
+    from runner.trace import human_handoff_requested
+    assert not human_handoff_requested([{"type": "tool_call", "tool_name": "request_user_action"}])
+    assert human_handoff_requested([{"type": "tool_result", "tool_name": "request_user_action",
+        "content": '{"status":"HUMAN_HANDOFF_REQUESTED","reason":"stuck"}'}])

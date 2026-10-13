@@ -1612,3 +1612,25 @@ def test_run_one_task_sends_live_post_screenshot_to_judge(tmp_path: Path, monkey
     ]
     assert result.status == "passed"
     assert result.rubric_pass_count == 1
+
+
+@pytest.mark.parametrize("handoff", [False, True])
+def test_episode_answer_does_not_turn_handoff_into_success(tmp_path, handoff):
+    suite = Suite(name="phone", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
+    task = TaskSpec(id="input", category="phone", description_for_judge="Type text", prompt="Type text",
+        rubric=[], hard_assertions=HardAssertions(min_tool_calls=0))
+    history = [{"type": "tool_call", "tool_name": "enter_text", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "enter_text", "content": '{"ok":false}', "is_error": True}]
+    if handoff:
+        history.append({"type": "tool_result", "tool_name": "request_user_action",
+            "content": '{"status":"HUMAN_HANDOFF_REQUESTED"}'})
+    result = runtask_mod.evaluate_task_history(suite=suite, task=task, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="run", history=history, timed_out=False,
+        pre_screenshot=None, post_screenshot=None,
+        episode={"outcome": {"success": True, "final_answer": "Please finish manually" if handoff else "Finished"}})
+    assert result.metrics["human_handoff_requested"] == handoff
+    assert result.status == ("failed" if handoff else "passed")
+    if handoff:
+        assert any(f.id == "human_handoff" for f in result.hard_assertion_failures)
+    trace = json.loads((tmp_path / "trace.json").read_text())
+    assert trace["tool_results"][0]["is_error"] is True

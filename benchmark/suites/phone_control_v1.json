@@ -296,7 +296,7 @@
         },
         {
           "id": "stopped_at_bottom",
-          "check": "Post-screenshot shows the bottom area of the settings list rather than the same top or middle content visible in the pre-screenshot."
+          "check": "Post-screenshot shows the bottom area of the settings list rather than the same top or middle content visible in the pre-screenshot. Blank padding below the final list item or above system navigation is not evidence that more list content remains."
         },
         {
           "id": "agent_acknowledged",
@@ -405,16 +405,12 @@
     {
       "id": "find_and_tap_specific_item",
       "category": "multi_step",
-      "description_for_judge": "Agent must navigate into Settings and scroll to find a specific item ('关于手机' / 'About phone'), then tap it.",
-      "prompt": "打开系统设置，往下找到「关于手机」并点进去。",
+      "description_for_judge": "Agent must open Settings, find the device-information entry (About phone or My device), and open it. Scroll only if the entry is not visible.",
+      "prompt": "打开系统设置，找到设备信息入口（可能叫「关于手机」或「我的设备」）并点进去；如果当前看不到，再滚动查找。",
       "rubric": [
         {
           "id": "in_settings",
           "check": "Trace shows agent inside Settings."
-        },
-        {
-          "id": "scrolled",
-          "check": "Trace contains at least one scroll/swipe action inside Settings."
         },
         {
           "id": "on_about_page",
@@ -422,7 +418,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 3,
+        "min_tool_calls": 2,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240
       }
@@ -449,7 +445,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
       }

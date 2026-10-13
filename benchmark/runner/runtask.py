@@ -25,7 +25,7 @@ from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerd
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
 from runner.reset import ResetError, SetupAssertionError, assert_memory_results, read_memory_results
 from runner.suite import Suite, TaskSpec, effective_mock_environment
-from runner.trace import extract_trace
+from runner.trace import extract_trace, tool_result_evidence, human_handoff_requested
 from runner.report import now_iso
 
 
@@ -175,6 +175,14 @@ def evaluate_task_history(
             encoding="utf-8",
         )
     trace = extract_trace(history)
+    handoff = human_handoff_requested(history)
+    base.metrics["human_handoff_requested"] = handoff
+    if episode and isinstance(episode.get("outcome"), dict):
+        episode_answer = episode["outcome"].get("final_answer")
+        if not trace.final_response and not handoff and isinstance(episode_answer, str):
+            trace.final_response = episode_answer
+            base.metrics["final_response_source"] = "episode.outcome.final_answer"
+
     recorded_task_wall = base.metrics.get("task_wall_ms")
     if isinstance(recorded_task_wall, (int, float)) and not isinstance(recorded_task_wall, bool):
         wall_ms = int(recorded_task_wall)
@@ -202,12 +210,7 @@ def evaluate_task_history(
         ]
     trace_dict = {
         "tool_calls": [dc.asdict(tc) for tc in trace.tool_calls],
-        "tool_results": [
-            msg for msg in history
-            if msg.get("type") == "tool_result" and msg.get("tool_name") in {
-                "save_memory", "recall_memory", "forget_memory", "recall_session_chunks",
-            }
-        ],
+        "tool_results": tool_result_evidence(history),
         "final_response": trace.final_response,
         "total_tool_calls": trace.total_tool_calls,
     }
@@ -272,6 +275,13 @@ def evaluate_task_history(
             ))
     if recall_outcome is not None:
         base.hard_assertions.expected_recalled_memory = recall_outcome.passed
+    if handoff:
+        outcome.all_passed = False
+        base.hard_assertion_failures.append(HardAssertionFailure(
+            id="human_handoff", label="Human Handoff",
+            requirement="The Agent must complete the task without handing execution to a user.",
+            actual="Agent requested user action; the task is unfinished.",
+        ))
     execution_error = bool(base.metrics.get("agent_error"))
     if execution_error or not outcome.all_passed:
         base.status = "timeout" if timed_out else "failed"
