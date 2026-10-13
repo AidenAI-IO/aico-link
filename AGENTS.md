@@ -7,9 +7,16 @@ component being modified and preserve the interfaces between these parts.
 
 ## Required workflow
 
+The test commands in this section apply when the current task changes this
+repository's source, tests, scripts, configuration, or documentation, or when
+the user explicitly asks to test this repository. Work confined to sibling
+repositories (for example, `aiden-mcu` or `aiden-design`) does not trigger
+`aiden-firmware` checks. An edit limited to this `AGENTS.md` guidance does not
+require a firmware test run.
+
 1. Work from the repository root unless a component's documentation says
    otherwise.
-2. After every change, run the quick test suite:
+2. After changes within this repository, run the quick test suite:
 
    ```bash
    make check
@@ -19,8 +26,9 @@ component being modified and preserve the interfaces between these parts.
    contracts, host C++ tests, focused Go and web checks, and a small benchmark
    sample. Do not replace it with an unscoped local test command; the test
    image supplies the pinned toolchains and dependencies.
-3. For changes that affect multiple components, release behavior, production
-   packaging, or before merging, also run:
+3. For changes that affect multiple components of this repository, release
+   behavior, production packaging, or before merging changes to this
+   repository, also run:
 
    ```bash
    make check-full
