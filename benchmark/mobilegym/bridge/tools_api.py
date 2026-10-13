@@ -707,7 +707,8 @@ class ToolsAPIHandler:
         non_modifiers = [k for k in normalized_keys if k not in ("meta", "cmd", "super", "win", "ctrl", "alt", "shift")]
 
         native_keys = {"backspace", "delete", "tab", "space", "left", "right", "up", "down", "end", "pageup", "pagedown"}
-        if (any(k in ("ctrl", "control", "shift", "alt") for k in normalized_keys)
+        home_chord = has_meta and non_modifiers == ["h"] and len(normalized_keys) == 2
+        if not home_chord and (any(k in ("ctrl", "control", "shift", "alt") for k in normalized_keys)
                 or (has_meta and non_modifiers != ["h"] and non_modifiers)
                 or any(k in native_keys or (len(k) == 1 and k.isascii()) for k in non_modifiers)):
             return self._execute_input(state, episode_id, "keyboard_tap", tool_input,

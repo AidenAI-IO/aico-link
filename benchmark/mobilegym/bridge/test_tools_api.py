@@ -2,6 +2,7 @@
 
 import json
 import time
+from types import SimpleNamespace
 from threading import Event, Thread
 from urllib.request import Request, urlopen
 
@@ -19,8 +20,20 @@ def mock_env():
 
 
 def mock_env_factory():
+    class MockKeyboard:
+        def __init__(self):
+            self.typed = []
+            self.pressed = []
+
+        async def type(self, text):
+            self.typed.append(text)
+
+        async def press(self, keys):
+            self.pressed.append(keys)
+
     class MockEnv:
         def __init__(self):
+            self.page = SimpleNamespace(keyboard=MockKeyboard())
             self.last_action = None
             self.actions = []
             self.step_count = 0
@@ -97,7 +110,7 @@ def test_get_tools_catalog(bridge_server):
     assert touch_props["point"]["required"] == ["x", "y"]
     assert "coord_space" not in touch_props
     assert touch_props["button"]["enum"] == ["left", "right", "middle"]
-    assert touch_props["type"]["enum"] == ["tap", "double_tap", "long_press", "swipe", "drag"]
+    assert touch_props["type"]["enum"] == ["tap", "double_tap", "long_press", "swipe", "drag", "drag_start", "drag_release"]
     assert touch_props["direction"]["enum"] == ["up", "down", "left", "right"]
     assert touch_props["speed"]["exclusiveMinimum"] == 0
     assert "hold_ms" in touch_props
@@ -256,10 +269,8 @@ def test_invoke_keyboard_text(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "hello world"},
-    }
+    assert state.env.page.keyboard.typed == ["hello world"]
+    assert state.env.actions == []
 
 
 def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server):
@@ -479,10 +490,8 @@ def test_invoke_keyboard_text_accepts_plain_text_fallback(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "plain text"},
-    }
+    assert state.env.page.keyboard.typed == ["plain text"]
+    assert state.env.actions == []
 
 
 def test_invoke_enter_text_focuses_and_types_unicode(bridge_server):
@@ -1372,6 +1381,16 @@ def test_multi_env_tools_return_capacity_error_until_task_released():
             headers={"Content-Type": "application/json", "benchmark-task-id": "task.alpha"},
         )
         with urlopen(release_req, timeout=5) as resp:
+            assert resp.status == 200
+
+        assert states[0].active_episode_id is None
+        setup_req = Request(
+            f"{base_url}/api/setup",
+            data=json.dumps({"episode_id": "ep-beta"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json", "benchmark-task-id": "task.beta"},
+        )
+        with urlopen(setup_req, timeout=5) as resp:
             assert resp.status == 200
 
         request_body = json.dumps({"input": {"type": "tap", "point": {"x": 500, "y": 500}}}).encode()

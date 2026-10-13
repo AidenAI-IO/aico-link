@@ -5,51 +5,12 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from runner.agent_client import AgentClient
 from runner.platform import read_environment_health
 from runner.recovery import DEFAULT_ENVIRONMENT_SETUP_TIMEOUT_SEC
 from runner.reset import call_environment_release, call_environment_setup
 
 
 MOBILEGYM_PREFLIGHT_COMPLETE_ENV = "AIDEN_BENCHMARK_MOBILEGYM_PREFLIGHT_COMPLETE"
-
-
-class AgentEnvironmentPreflightError(RuntimeError):
-    """The worker cannot observe its device before model execution."""
-
-
-def preflight_agent_environment(
-    client: AgentClient,
-    environment_url: str,
-    *,
-    task_id: str,
-    timeout: int = 30,
-) -> None:
-    """Check the worker's provider route, not just the runner's host route.
-
-    The direct tool invocation does not use the model or enter its chat history.
-    Release the temporary route before normal task isolation initializes it.
-    """
-    error: Exception | None = None
-    try:
-        call_environment_setup(environment_url, task_id=task_id, timeout=timeout)
-        result = client.invoke_tool(
-            "screenshot", {}, timeout=timeout, benchmark_task_id=task_id,
-        )
-        if result.is_error:
-            raise AgentEnvironmentPreflightError(result.output)
-    except Exception as exc:
-        error = exc
-    finally:
-        try:
-            call_environment_release(environment_url, task_id=task_id, timeout=timeout)
-        except Exception as exc:
-            if error is None:
-                error = exc
-    if error is not None:
-        raise AgentEnvironmentPreflightError(
-            f"Agent environment screenshot preflight failed: {error}"
-        ) from error
 
 
 def _environment_count(health: dict[str, Any]) -> int:

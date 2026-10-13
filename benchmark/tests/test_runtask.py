@@ -1658,10 +1658,11 @@ def test_run_one_task_sends_live_post_screenshot_to_judge(tmp_path: Path, monkey
 def test_episode_answer_does_not_turn_handoff_into_success(tmp_path, handoff):
     suite = Suite(name="phone", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
     task = TaskSpec(id="input", category="phone", description_for_judge="Type text", prompt="Type text",
-        rubric=[], hard_assertions=HardAssertions(min_tool_calls=0))
+        rubric=[], hard_assertions=HardAssertions(min_tool_calls=0, forbidden_tools=["request_user_action"]))
     history = [{"type": "tool_call", "tool_name": "enter_text", "tool_input": "{}"},
         {"type": "tool_result", "tool_name": "enter_text", "content": '{"ok":false}', "is_error": True}]
     if handoff:
+        history.append({"type": "tool_call", "tool_name": "request_user_action", "tool_input": "{}"})
         history.append({"type": "tool_result", "tool_name": "request_user_action",
             "content": '{"status":"HUMAN_HANDOFF_REQUESTED"}'})
     result = runtask_mod.evaluate_task_history(suite=suite, task=task, attempt=1,
@@ -1671,6 +1672,19 @@ def test_episode_answer_does_not_turn_handoff_into_success(tmp_path, handoff):
     assert result.metrics["human_handoff_requested"] == handoff
     assert result.status == ("failed" if handoff else "passed")
     if handoff:
-        assert any(f.id == "human_handoff" for f in result.hard_assertion_failures)
+        assert any("forbidden" in f.id for f in result.hard_assertion_failures)
     trace = json.loads((tmp_path / "trace.json").read_text())
     assert trace["tool_results"][0]["is_error"] is True
+
+
+def test_handoff_is_not_a_global_failure_policy(tmp_path):
+    suite = Suite(name="confirmation", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
+    task = TaskSpec(id="confirm", category="diagnostic", description_for_judge="Request confirmation", prompt="Ask before proceeding",
+        rubric=[], hard_assertions=HardAssertions(response_required=False))
+    history = [{"type": "tool_call", "tool_name": "request_user_action", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "request_user_action",
+         "content": '{"status":"HUMAN_HANDOFF_REQUESTED"}'}]
+    result = runtask_mod.evaluate_task_history(suite=suite, task=task, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="run", history=history, timed_out=False)
+    assert result.metrics["human_handoff_requested"] is True
+    assert result.status == "passed"

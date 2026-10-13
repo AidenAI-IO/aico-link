@@ -3,13 +3,55 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screenprovider"
 )
+
+type recordingBridgeTextProvider struct {
+	text string
+	err  error
+}
+
+func (p *recordingBridgeTextProvider) KeyboardText(_ context.Context, text string) error {
+	p.text = text
+	return p.err
+}
+
+func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			sink := &recordingBridgeTextProvider{}
+			if fail {
+				sink.err = fmt.Errorf("keyboard disconnected")
+			}
+			tools := &ToolSet{
+				mnkProvider: mnk.NewMockProvider(),
+				textInputHW: &textInputHardwareDeps{keyboardText: &KeyboardTextTool{textProvider: sink}},
+			}
+			server := &Server{runtime: &Runtime{tools: tools}}
+			endpoint := httptest.NewServer(http.HandlerFunc(server.handleProviderMNK))
+			defer endpoint.Close()
+			client := mnk.NewHTTPProvider(mnk.HTTPProviderConfig{BaseURL: endpoint.URL})
+			err := client.KeyboardText(context.Background(), "Aiden 2026!")
+			if fail {
+				if err == nil || !strings.Contains(err.Error(), "keyboard disconnected") {
+					t.Fatalf("lost keyboard failure: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if sink.text != "Aiden 2026!" {
+				t.Fatalf("typed %q", sink.text)
+			}
+		})
+	}
+}
 
 func TestBuiltinToolSetFromConfigUsesEnvironmentBridgeProviders(t *testing.T) {
 	tools := NewBuiltinToolSetFromConfig(Config{

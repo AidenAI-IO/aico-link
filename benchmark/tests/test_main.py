@@ -1120,8 +1120,7 @@ def test_read_optional_token_fails_fast_for_empty_file(tmp_path):
         main._read_optional_token(token_file)
 
 
-@pytest.mark.parametrize("device_error", [False, True])
-def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path, device_error):
+def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1150,13 +1149,6 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
             captured["client_base_url"] = base_url
             self.benchmark_token = benchmark_token
             captured["client_benchmark_token"] = benchmark_token
-
-        def invoke_tool(self, name, args, timeout=90, benchmark_task_id=None):
-            captured["preflight"] = (name, benchmark_task_id)
-            return ToolInvokeResult(
-                output="connect: connection refused" if device_error else "screen captured",
-                is_error=device_error, duration_ms=1,
-            )
 
         def close(self):
             pass
@@ -1233,18 +1225,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     assert captured["kwargs"]["host_port"] == 0
     assert captured["kwargs"]["environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert captured["kwargs"]["environment_bridge_mode"] is True
-    assert captured["preflight"][0] == "screenshot"
-    assert captured["preflight"][1] == captured["kwargs"]["benchmark_task_id"]
-    if device_error:
-        assert "task_kwargs" not in captured
-        row = json.loads((tmp_path / "runs/auto-run/results.jsonl").read_text())
-        assert row["status"] == "failed"
-        assert row["metrics"]["agent_eligible"] is False
-        assert row["metrics"]["failure_class"] == "environment"
-        assert row["metrics"]["first_failure_stage"] == "setup"
-        assert "connection refused" in row["metrics"]["error"]
-    else:
-        assert captured["task_kwargs"]["active_skills"] == ["device-operator"]
+    assert captured["task_kwargs"]["active_skills"] == ["device-operator"]
     assert "device_type" not in captured["prepare_config_kwargs"]
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]
@@ -1911,7 +1892,6 @@ def test_mock_suite_loading_rejects_effective_spec_without_platform(tmp_path):
 
 
 def test_auto_agent_setup_caps_environment_concurrency(monkeypatch, tmp_path):
-    monkeypatch.setattr(main, "preflight_agent_environment", lambda *args, **kwargs: None)
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(

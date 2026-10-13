@@ -28,6 +28,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
@@ -49,6 +50,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
@@ -72,6 +74,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
@@ -97,6 +100,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 2,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
@@ -120,6 +124,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
@@ -137,6 +142,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
@@ -154,6 +160,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
@@ -182,6 +189,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 3,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240
@@ -213,6 +221,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 120
@@ -244,6 +253,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 120
@@ -273,6 +283,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 4,
         "max_tool_calls": 25,
         "must_complete_within_sec": 300
@@ -304,6 +315,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 3,
         "max_tool_calls": 25,
         "must_complete_within_sec": 300
@@ -335,6 +347,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 15,
         "must_complete_within_sec": 180
@@ -362,6 +375,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 2,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
@@ -397,6 +411,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 4,
         "max_tool_calls": 18,
         "must_complete_within_sec": 180
@@ -418,6 +433,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 2,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240
@@ -445,6 +461,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
@@ -476,6 +493,7 @@
         }
       ],
       "hard_assertions": {
+        "forbidden_tools": ["request_user_action"],
         "min_tool_calls": 2,
         "max_tool_calls": 15,
         "must_complete_within_sec": 120

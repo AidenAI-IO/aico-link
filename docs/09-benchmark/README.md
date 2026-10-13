@@ -251,17 +251,20 @@ Credential references such as `api_key = "$AIDEN_BENCHMARK_AGENT_API_KEY"` must 
 host before the daemon starts. MobileGym endpoints also pass a functional
 `setup` / `release` preflight before workers are created.
 
-For live device environments, each auto-started worker also invokes its own
-`screenshot` tool before task setup or model execution. This checks the actual
-worker-to-device provider route, which can fail even when host-side setup and
-report screenshots succeed. A failed probe is recorded as an environment setup
-failure and excluded from Agent capability metrics. Scripted mock environments
-and tasks using input screenshots do not run this live-device probe.
-
 MobileGym's bridge port must be reachable through the Docker host gateway on
 Linux. Both fixed and automatically assigned bridge ports are published on the
 host interfaces; the simulator web UI remains bound to loopback. Host-side
 `/health` success alone does not establish worker connectivity.
+
+Auto-started workers receive the bundled skill files under `config/skills`.
+The Go Agent exposes their catalog summaries and the `skill_read` tool to the
+model; skill bodies enter the conversation only when that tool is called.
+The runner's requested `skills` field does not preload skills through the Go
+Agent chat API. Use recorded `skill_read` calls to verify actual skill use.
+
+The phone-control suite forbids `request_user_action` through each task's
+existing `hard_assertions.forbidden_tools`: these tasks require autonomous
+completion. Handoff is not a global failure policy for other suites.
 
 ### `rejudge`
 

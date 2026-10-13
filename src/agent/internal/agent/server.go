@@ -3155,7 +3155,11 @@ func (s *Server) handleProviderMNK(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mnk.MNKErrorResponse{Error: "mnk provider not configured"})
 		return
 	}
-	mnk.NewHTTPHandler(provider).ServeHTTP(w, r)
+	var textProvider mnk.TextProvider
+	if tools := s.runtime.toolSnapshot(); tools != nil && tools.textInputHW != nil {
+		textProvider, _ = tools.textInputHW.keyboardText.(mnk.TextProvider)
+	}
+	mnk.NewHTTPHandler(provider, textProvider).ServeHTTP(w, r)
 }
 
 // handleHealth serves GET /health, the environment-bridge readiness probe that

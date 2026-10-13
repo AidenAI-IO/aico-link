@@ -762,7 +762,8 @@ def test_tools_api_pointer_and_quick_action_inputs_map_to_mobilegym_actions():
         assert len(bridge.env.actions) == before
 
 
-def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
+@pytest.mark.parametrize("home_keys", [["meta"], ["meta", "h"], ["cmd", "h"], ["super", "h"], ["win", "h"]])
+def test_tools_api_keyboard_inputs_match_agent_proxy_contract(home_keys):
     with RunningBridge() as bridge:
         bridge.env.page = types.SimpleNamespace(keyboard=RecordingKeyboard())
         status, body = request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "reset-ep1"})
@@ -794,11 +795,12 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
             bridge.base_url,
             "POST",
             "/api/tools/keyboard_tap",
-            {"input": {"keys": ["meta"], "hold_ms": 120}},
+            {"input": {"keys": home_keys, "hold_ms": 120}},
         )
         assert status == 200
         assert body["is_error"] is False
         assert action_to_dict(bridge.env.actions[-1]) == {"action_type": "HOME", "data": {}}
+        assert bridge.env.page.keyboard.pressed == []
 
         status, body = request_json(
             bridge.base_url,

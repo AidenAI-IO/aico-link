@@ -275,13 +275,6 @@ def evaluate_task_history(
             ))
     if recall_outcome is not None:
         base.hard_assertions.expected_recalled_memory = recall_outcome.passed
-    if handoff:
-        outcome.all_passed = False
-        base.hard_assertion_failures.append(HardAssertionFailure(
-            id="human_handoff", label="Human Handoff",
-            requirement="The Agent must complete the task without handing execution to a user.",
-            actual="Agent requested user action; the task is unfinished.",
-        ))
     execution_error = bool(base.metrics.get("agent_error"))
     if execution_error or not outcome.all_passed:
         base.status = "timeout" if timed_out else "failed"

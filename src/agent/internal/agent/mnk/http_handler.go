@@ -12,14 +12,18 @@ import (
 
 // HTTPHandler handles HTTP requests for MNK operations
 type HTTPHandler struct {
-	provider Provider
+	provider     Provider
+	textProvider TextProvider
 }
 
 // NewHTTPHandler creates a new HTTP handler for MNK operations
-func NewHTTPHandler(provider Provider) *HTTPHandler {
-	return &HTTPHandler{
-		provider: provider,
+func NewHTTPHandler(provider Provider, textProvider ...TextProvider) *HTTPHandler {
+	h := &HTTPHandler{provider: provider}
+	h.textProvider, _ = provider.(TextProvider)
+	if len(textProvider) > 0 {
+		h.textProvider = textProvider[0]
 	}
+	return h
 }
 
 // ServeHTTP handles HTTP requests for MNK operations
@@ -68,6 +72,8 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		execErr = h.handleDragRelease(reqCtx, req.DragRelease)
 	case "keypress":
 		execErr = h.handleKeypress(reqCtx, req.Keypress)
+	case "keyboard_text":
+		execErr = h.handleKeyboardText(reqCtx, req.KeyboardText)
 	case "move":
 		execErr = h.handleMove(reqCtx, req.Move)
 	case "scroll":
@@ -92,6 +98,21 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Write success response
 	h.writeSuccess(w)
+}
+
+func (h *HTTPHandler) handleKeyboardText(ctx context.Context, params *KeyboardTextParams) error {
+	if params == nil || params.Text == "" {
+		return InvalidArguments("keyboard_text requires non-empty ASCII text")
+	}
+	for _, c := range params.Text {
+		if c > 127 {
+			return InvalidArguments("keyboard_text requires ASCII text")
+		}
+	}
+	if h.textProvider == nil {
+		return ModuleUnavailable("keyboard_text is not supported by this provider")
+	}
+	return h.textProvider.KeyboardText(ctx, params.Text)
 }
 
 func (h *HTTPHandler) handleTouchActions(ctx context.Context, actions []TouchAction) error {
