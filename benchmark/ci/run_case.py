@@ -418,8 +418,6 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
-        for skill in case.active_skills:
-            command.extend(["--skill", skill])
         repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()
         if repeats:
             try:

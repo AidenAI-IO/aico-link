@@ -166,7 +166,7 @@ def test_evaluate_trace_observations_reports_skill_read():
     assert results[0].passed is True
 
 
-def test_evaluate_trace_observations_accepts_chat_active_skill():
+def test_evaluate_trace_observations_does_not_trust_requested_skill():
     trace = Trace(tool_calls=[], final_response="", total_tool_calls=0, total_duration_ms=0)
     specs = [
         TraceObservationSpec(
@@ -178,8 +178,8 @@ def test_evaluate_trace_observations_accepts_chat_active_skill():
 
     results = evaluate_trace_observations(trace, specs, active_skills=["device-operator"])
 
-    assert results[0].passed is True
-    assert "requested active skill" in results[0].reason
+    assert results[0].passed is False
+    assert "No skill_read call" in results[0].reason
 
 
 def test_evaluate_hard_assertions_fails_prohibited_quick_action_send():

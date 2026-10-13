@@ -1445,7 +1445,7 @@ def test_run_one_task_applies_suite_prompt_prefix(tmp_path: Path):
     ]
 
 
-def test_run_one_task_requests_active_skill_and_marks_trace_observation(tmp_path: Path):
+def test_run_one_task_requests_active_skill_without_claiming_it_was_read(tmp_path: Path):
     suite = Suite(
         name="phone",
         global_reset={},
@@ -1486,8 +1486,8 @@ def test_run_one_task_requests_active_skill_and_marks_trace_observation(tmp_path
     assert result.metrics["active_skills"] == ["device-operator"]
     obs = result.metrics["trace_observations"][0]
     assert obs["id"] == "skill_read_device_operator"
-    assert obs["passed"] is True
-    assert "requested active skill" in obs["reason"]
+    assert obs["passed"] is False
+    assert "No skill_read call" in obs["reason"]
 
 
 class TimeoutClient(FakeClient):

@@ -16,7 +16,7 @@
     {"id": "perception", "suite": "suites/perception/perception_v1.json", "environment": "isolated"},
     {"id": "mobilegym-basic", "suite": "suites/mobilegym_basic.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 3, "timeout_minutes": 240},
     {"id": "mobilegym-scroll-sweep", "suite": "suites/mobilegym_scroll_sweep.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 4, "timeout_minutes": 360, "runnable": false},
-    {"id": "phone-control-mobilegym", "suite": "suites/phone_control_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360, "runnable": false, "active_skills": ["device-operator"]},
+    {"id": "phone-control-mobilegym", "suite": "suites/phone_control_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360, "runnable": false},
 
     {"id": "adb-android", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
     {"id": "app-workflow", "suite": "suites/app_workflow_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL", "timeout_minutes": 360},
