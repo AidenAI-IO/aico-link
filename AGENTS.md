@@ -16,19 +16,19 @@ require a firmware test run.
 
 1. Work from the repository root unless a component's documentation says
    otherwise.
-2. After changes within this repository, run the quick test suite:
+2. After changes within this repository, run the local test suite:
 
    ```bash
    make check
    ```
 
-   This is the Docker-backed quick-feedback profile. It covers the shared
+   This is the default and only required check for local development, including
+   cross-component, release, and packaging changes. It covers the shared
    contracts, host C++ tests, focused Go and web checks, and a small benchmark
    sample. Do not replace it with an unscoped local test command; the test
    image supplies the pinned toolchains and dependencies.
-3. For changes that affect multiple components of this repository, release
-   behavior, production packaging, or before merging changes to this
-   repository, also run:
+3. CI runs the full validation profile before merging. Run it locally only when
+   explicitly requested or when investigating a full-suite failure:
 
    ```bash
    make check-full
