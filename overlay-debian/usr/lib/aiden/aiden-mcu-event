@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+"""Log MCU V1 UART events without performing device power-management actions."""
+
+import argparse
+import binascii
+import fcntl
+import os
+import select
+import struct
+import sys
+import termios
+import time
+
+REQ, RESP, EVENT = 1, 2, 3
+GET_STATE, RV_READY, SHUTDOWN_REQUEST = 0x01, 0x10, 0x20
+EVENT_NAMES = {0x11: "RK628_PLUGIN_DET_CHANGED", 0x12: "WAKEUP"}
+MAX_PAYLOAD = 64
+
+
+def encode(kind, seq, cmd, payload=b""):
+    if kind not in (REQ, RESP, EVENT) or len(payload) > MAX_PAYLOAD:
+        raise ValueError("invalid V1 frame")
+    body = struct.pack("<BBBBH", 1, kind, seq, cmd, len(payload)) + payload
+    return b"\xaa\x55" + body + struct.pack("<H", binascii.crc_hqx(body, 0xffff))
+
+
+class Parser:
+    def __init__(self):
+        self.buffer = bytearray()
+        self.last_byte = 0.0
+
+    def feed(self, data, now):
+        if self.buffer and now - self.last_byte >= 0.1:
+            self.buffer.clear()
+        frames = []
+        for byte in data:
+            self.buffer.append(byte)
+            self.last_byte = now
+            while self.buffer:
+                b = self.buffer
+                if (b[0] != 0xaa or (len(b) >= 2 and b[1] != 0x55)
+                        or (len(b) >= 3 and b[2] != 1)
+                        or (len(b) >= 4 and b[3] not in (REQ, RESP, EVENT))):
+                    del b[0]
+                    continue
+                if len(b) < 8:
+                    break
+                length = int.from_bytes(b[6:8], "little")
+                if length > MAX_PAYLOAD or (b[3] == RESP and length == 0):
+                    del b[0]
+                    continue
+                total = length + 10
+                if len(b) < total:
+                    break
+                if (binascii.crc_hqx(b[2:8 + length], 0xffff)
+                        != int.from_bytes(b[8 + length:total], "little")
+                        or (b[3] == RESP and b[8] > 6)):
+                    del b[0]
+                    continue
+                frames.append((b[3], b[4], b[5], bytes(b[8:8 + length])))
+                del b[:total]
+        return frames
+
+
+def handle(frame):
+    kind, seq, cmd, payload = frame
+    if kind == EVENT:
+        print("EVENT cmd=0x%02x name=%s seq=%d payload=%s" %
+              (cmd, EVENT_NAMES.get(cmd, "UNKNOWN"), seq, payload.hex()), flush=True)
+        return None
+    if kind != REQ:
+        return None
+    if cmd == GET_STATE and not payload:
+        # STATUS, protocol version, service version 0.1.0, RV READY.
+        return encode(RESP, seq, cmd, b"\x00\x01\x00\x01\x00\x02")
+    if cmd == SHUTDOWN_REQUEST:
+        print("SHUTDOWN_REQUEST seq=%d payload=%s: poweroff is not managed by this service" %
+              (seq, payload.hex()), flush=True)
+        return encode(RESP, seq, cmd, b"\x04")  # DENIED
+    return encode(RESP, seq, cmd, b"\x02")  # INVALID
+
+
+def run(port):
+    fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        settings = termios.tcgetattr(fd)
+        settings[0] = settings[1] = settings[3] = 0
+        settings[2] = termios.CS8 | termios.CREAD | termios.CLOCAL
+        settings[4] = settings[5] = termios.B115200
+        settings[6][termios.VMIN] = settings[6][termios.VTIME] = 0
+        termios.tcsetattr(fd, termios.TCSANOW, settings)
+        parser = Parser()
+        pending = bytearray()
+        # The MCU retains request sequence numbers for two seconds after use.
+        guard_end = time.monotonic() + 2.0
+        while time.monotonic() < guard_end:
+            readable, _, _ = select.select([fd], [], [], min(0.05, guard_end - time.monotonic()))
+            if readable:
+                os.read(fd, 4096)
+        pending.extend(encode(EVENT, os.urandom(1)[0], RV_READY, b"\x01\0\0\0"))
+        print("MCU event service ready on %s" % port, flush=True)
+        while True:
+            readable, writable, _ = select.select([fd], [fd] if pending else [], [], 0.05)
+            if writable:
+                try:
+                    del pending[:os.write(fd, pending)]
+                except BlockingIOError:
+                    pass
+            if readable:
+                try:
+                    data = os.read(fd, 4096)
+                except BlockingIOError:
+                    data = b""
+                for frame in parser.feed(data, time.monotonic()):
+                    response = handle(frame)
+                    if response:
+                        pending.extend(response)
+            else:
+                parser.feed(b"", time.monotonic())
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    argument_parser = argparse.ArgumentParser(description=__doc__)
+    argument_parser.add_argument("--port", default="/dev/ttyS5")
+    args = argument_parser.parse_args()
+    try:
+        run(args.port)
+    except (OSError, ValueError) as error:
+        print("MCU event service failed: %s" % error, file=sys.stderr)
+        sys.exit(1)

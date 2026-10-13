@@ -140,6 +140,15 @@ suites:
     required: true
     timeout_seconds: 180
 
+  - name: mcu-event-service
+    class: deterministic
+    paths: [overlay-debian/usr/lib/aiden/aiden-mcu-event, overlay-debian/etc/systemd/system/aiden-mcu-event.service, tests/test_mcu_event_service.py]
+    command: python3 tests/test_mcu_event_service.py
+    quick: true
+    dependencies: [python3]
+    required: true
+    timeout_seconds: 60
+
   - name: debian-rootfs-grow
     class: deterministic
     paths: [overlay-debian/usr/lib/aiden/aiden-rootfs-grow, overlay-debian/etc/systemd/system/aiden-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]

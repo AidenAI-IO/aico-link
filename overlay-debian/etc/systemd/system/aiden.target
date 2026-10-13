@@ -6,6 +6,7 @@ Wants=aiden-zram.service aiden-swap.service aiden-media-modules.service
 Wants=aiden-wifi-driver.service aiden-bluetooth-attach.service bluetooth.service
 Wants=aiden-usb-gadget.service aiden-usb-dnsmasq.service aiden-usb-ecm-watchdog.service
 Wants=aiden-frame.service aiden-audio.service aiden-ble.service aiden-agent.service
+Wants=aiden-mcu-event.service
 Wants=aiden-agent-log-retention.timer
 Wants=aiden-wifi-proxy.service aiden-wifi-proxy-agent-restart.path
 Wants=aiden-config-web.service aiden-ota-health-marker.service aiden-ota-health.service

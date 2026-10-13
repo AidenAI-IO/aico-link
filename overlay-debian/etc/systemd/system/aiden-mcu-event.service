@@ -1,0 +1,18 @@
+[Unit]
+Description=Aiden MCU UART event log
+After=dev-ttyS5.device
+ConditionPathExists=/dev/ttyS5
+
+[Service]
+Type=simple
+User=aiden
+Group=aiden
+SupplementaryGroups=dialout
+ExecStart=/usr/bin/python3 /usr/lib/aiden/aiden-mcu-event --port /dev/ttyS5
+Restart=on-failure
+RestartSec=2s
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=aiden.target

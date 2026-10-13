@@ -8,7 +8,7 @@ state_dir=$state_parent/service-transition
 config_state=$state_parent/config-transition
 watcher=aiden-wifi-proxy-agent-restart.path
 restart_job=aiden-wifi-proxy-agent-restart.service
-services='aiden-wifi-proxy.service aiden-frame.service aiden-audio.service aiden-ble.service aiden-agent.service aiden-config-web.service aiden-ttyd.service'
+services='aiden-wifi-proxy.service aiden-frame.service aiden-audio.service aiden-ble.service aiden-agent.service aiden-config-web.service aiden-ttyd.service aiden-mcu-event.service'
 
 live_systemd() {
     [ -z "${DPKG_ROOT:-}" ] && [ "${SYSTEMD_OFFLINE:-0}" != 1 ] &&
