@@ -899,3 +899,14 @@ def test_langfuse_v3_dataset_item_compatibility(monkeypatch):
     assert item.id == "item-1"
     assert item.dataset_id == "dataset-1"
     assert item.input == {"task_id": "task-a", "attempt": 1}
+
+
+def test_reporting_metadata_preserves_old_publication_retry_identity():
+    from runner.langfuse_reporter import _validate_existing_run_metadata
+    old = {"artifact_sha256": "hash", "agent_model": "model"}
+    added = {**old, "git_branch": "main", "benchmark_started_at": "2026-10-13",
+             "workflow_run_id": "123", "workflow_run_attempt": "1"}
+    _validate_existing_run_metadata(SimpleNamespace(metadata=old), added, "run")
+    with pytest.raises(LangfusePublishError, match="conflicts"):
+        _validate_existing_run_metadata(SimpleNamespace(metadata=old),
+                                        {**added, "artifact_sha256": "changed"}, "run")

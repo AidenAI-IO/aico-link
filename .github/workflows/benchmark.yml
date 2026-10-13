@@ -341,19 +341,30 @@ jobs:
           echo "$publication_summary" >> "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
         if: ${{ always() }}
+        # The dashboard is a reporting side channel: losing it must not turn a
+        # passing benchmark into a failed job.
         continue-on-error: true
+        timeout-minutes: 15
         working-directory: benchmark
+        env:
+          RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -uo pipefail
-          # Generate dashboard from Langfuse history (last 30 days, all branches for now)
+          # History is read from Langfuse v4 experiments and paginated scores.
+          # Local metrics include this run even if publication is delayed or fails.
           uv run python -m ci.generate_dashboard \
             --output dashboard.html \
             --data-output dashboard-data.json \
-            --lookback-days 30
+            --weekly-output weekly-report.md \
+            --lookback-days 30 \
+            --runs-dir runs \
+            --run-id-prefix "$RUN_ID_PREFIX"
+          if [[ -f weekly-report.md ]]; then
+            cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [[ -f dashboard.html ]]; then
-            echo "Dashboard generated successfully"
-            echo "## Benchmark Dashboard" >> "$GITHUB_STEP_SUMMARY"
-            echo "A real-time dashboard has been generated and included in the artifact." >> "$GITHUB_STEP_SUMMARY"
+            echo "## Benchmark dashboard" >> "$GITHUB_STEP_SUMMARY"
+            echo "\`dashboard.html\` in the run artifact charts pass@1 per commit and flags suite regressions." >> "$GITHUB_STEP_SUMMARY"
           fi
       - name: Upload benchmark artifacts
         id: upload_benchmark_artifacts
@@ -367,6 +378,7 @@ jobs:
           path: |
             benchmark/dashboard.html
             benchmark/dashboard-data.json
+            benchmark/weekly-report.md
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
@@ -394,6 +406,7 @@ jobs:
           path: |
             benchmark/dashboard.html
             benchmark/dashboard-data.json
+            benchmark/weekly-report.md
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json

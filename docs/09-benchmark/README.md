@@ -337,6 +337,18 @@ second step:
   run: uv run python -m runner publish-langfuse --run-dir "runs/$RUN_ID"
 ```
 
+## Historical dashboard and weekly report
+
+Benchmark CI reads history directly from Langfuse v4 experiments and paginated
+scores. It never downloads earlier Actions artifacts. The dashboard includes
+pass@1 trends, coverage, and configuration-matched regressions. A rolling
+seven-day report compares matching configurations with the preceding seven
+days and is appended to the Actions job summary. Missing history, metrics, and
+publication limitations are displayed explicitly.
+
+See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
+for credentials, report commands, time windows, and comparison rules.
+
 ## GitHub Actions CI
 
 The benchmark workflow is `.github/workflows/benchmark.yml`. It deliberately

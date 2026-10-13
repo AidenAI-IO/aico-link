@@ -1156,6 +1156,131 @@ Key files:
 At the end of a run, the runner tries to upload the report to the agent board's
 `/benchmark` page. If the upload fails, the local `report.html` is still available.
 
+### Cross-run dashboard and weekly report
+
+The CI workflow generates `dashboard.html`, `dashboard-data.json`, and
+`weekly-report.md`. Historical data comes exclusively from Langfuse v4
+`experiments.list()` and `scores_v3.get_many_v3()`, with cursor pagination for
+both. Dataset-run read endpoints are unavailable in v4 `events_only` mode.
+Embedded experiment scores are limited to 50, so reporting queries the separate
+scores endpoint instead. GitHub Actions artifacts are never downloaded to
+collect history; their retention does not constrain the report's lookback.
+
+Completed current-run metrics on disk supplement Langfuse while publication is
+delayed or fails. Local results replace the same suite/run once, without double
+counting. Historical publication failures are unavailable in Langfuse and cannot
+be inferred from its experiment list. API failures, missing score counts, and
+unreadable local runs appear explicitly as data availability warnings. Unknown
+metrics remain unknown rather than becoming zero or bridging a chart gap.
+
+The dashboard focuses on individual datasets (each published benchmark suite
+maps to a Langfuse dataset). The default **Latest results** tab shows one overview
+table with highlighted changes, followed by the dataset score comparison. **Weekly trends**
+contains the selected dataset's trend and performance
+charts. Run details and history are collapsed by default. Clicking a dataset in a comparison bar or overview row
+opens its Weekly trends tab. Switching tabs preserves the selected dataset and
+visible metrics; arrow keys, Home, and End also navigate the tabs.
+The displayed window is always the seven days before report generation (start
+inclusive, end exclusive). Older records remain in the JSON source snapshot
+for the weekly report's preceding-week baseline, but do not appear in dashboard
+charts, latest-result cards, comparisons, or run tables.
+The most recently run dataset is selected initially. Each chart point represents
+one dataset run, including separate workflow retries and runs with missing
+scores; it is not the pooled workflow rate. The overview shows the latest
+result and observed metric changes for every dataset.
+
+The overview table compares each dataset's newest two runs in the display
+window across all three pass metrics, highlighting every increase or decrease
+without the regression detector's five-point threshold. Changed datasets appear
+first, ordered by the largest absolute change across the three metrics; their
+original dataset selection identities remain stable. A dataset can have
+mixed changes. Missing scores or a missing previous run are unavailable, not
+unchanged; comparisons never skip over an unmeasured previous run. The overview
+summarizes configuration uncertainty without repeating a status and run count
+in every row. Expand **Run details** in Weekly trends to inspect the comparison
+status and the latest two runs' commit, branch, model, platform, k, and reported
+Git changes. Observed changes with changed or unverified configurations do not establish a performance
+improvement or regression. Weekly regression comparisons still require matching
+configuration metadata.
+
+The trend chart uses three distinct solid colors for pass@1, pass@k (at least
+one of the first k attempts passes), and pass^k (all first k attempts pass).
+Click legend labels to show or hide individual metrics; hover over points for
+commit, branch, model, k and eligible task counts. Missing scores leave gaps.
+The two k-attempt rates require a full eligible set of k attempts and use their
+own eligible task counts. Configuration or workload changes can affect the
+trend; check Run details before interpreting a change.
+
+Measurement panels, legend entries, and latest-value summaries remain visible
+even when a metric has no measurements in the seven-day window. Such series
+are labeled **no data**, values show **Unavailable**, and empty charts explain
+the missing measurements. This makes gaps in instrumentation visible. Measured
+zeros remain zero; missing values never become zero or bridge a chart gap.
+The latest commit card links to the selected dataset's newest commit and shows
+k. Duplicate latest efficiency cards are omitted; performance charts provide
+the measurements and Run details provides additional provenance.
+
+A horizontal bar chart compares the latest available pass@1 scores by dataset;
+click a bar to inspect that dataset. Scores describe different task sets and are
+not a controlled ranking. The task-outcome doughnut is omitted because it
+repeats the pass-rate information; eligible task counts remain in chart tooltips.
+
+Weekly trends also includes separate charts for task execution latency (p50 and
+p90), mean tool/device/LLM calls per attempt, recorded timing components (p50),
+token distributions, explicitly measured monetary cost, and tool errors/replans/
+retries. All lines follow the selected dataset's runs within the seven-day
+window. Each chart shows the latest value and its numeric sample count over
+eligible attempts; tooltips expose the same coverage for historical points.
+Distributions include measured eligible attempts, including failures, and are
+not percentiles of successful completions alone. Run-level percentiles are not
+averaged into a weekly percentile. Zero samples produce missing points, while
+measured zero durations or counts remain zero.
+
+Timing components overlap and are never stacked into a wall-time breakdown.
+Vision LLM metrics use an image-observation heuristic, screenshot timing covers
+runner captures, and device execution timing requires recorded action durations.
+The runner currently does not calculate monetary cost or populate an Agent retry
+count, so those charts explicitly indicate missing measurements. Reported
+run cost and token sums remain in the source snapshot; they cover recorded
+samples and are not necessarily complete totals.
+
+The failure-stage bar chart shows the selected dataset's latest eligible failed
+attempts across all repeats, including unclassified (`unknown`) stages and known-
+stage coverage. It does not infer grounding/planning/keyboard root causes from
+coarse failure classes. See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md)
+for measurement boundaries. Record-specific data availability warnings use the
+same seven-day display window; API-wide errors remain visible regardless of scope.
+
+Pass@1 uses first-attempt successes divided by eligible first-attempt tasks,
+with total tasks shown separately for coverage. Workflow attempts remain
+separate. Regressions require the same branch, suite hash, workload hash, metrics
+schema, `k`, agent model, judge provider/model/prompt version, platform, and
+active skills. Dirty runs and runs missing required configuration metadata are
+excluded from comparisons. Changing configuration is not reported as regression.
+
+The weekly report compares rolling UTC windows: the last seven days versus the
+preceding seven days. Its overall rates describe each window's task mix; changes
+are computed only within matching suite/configuration groups. Cost and token
+totals are reported only when every included suite run supplies them. The report
+is included in the Actions job summary, independently of artifact upload.
+
+To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
+`LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` as for `publish-langfuse`:
+
+```bash
+cd benchmark
+uv run python -m ci.generate_dashboard \
+  --output dashboard.html --data-output dashboard-data.json \
+  --weekly-output weekly-report.md --lookback-days 30
+```
+
+Use `--branch-filter main` for one branch (records with unknown branches are
+excluded with a warning), `--repo owner/repo` for commit links outside Actions,
+and `--runs-dir runs --run-id-prefix ci-123-1` to include current local results.
+`--history-json dashboard-data.json` regenerates reports from a saved snapshot.
+A weekly report requires at least 14 days of lookback. History availability is
+subject to Langfuse retention and successful publication, not artifact retention.
+
 ## 5. Environment variables
 
 Common environment variables:

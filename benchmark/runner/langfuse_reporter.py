@@ -4,6 +4,7 @@ import dataclasses as dc
 import hashlib
 import json
 import os
+import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -496,6 +497,10 @@ def _validate_existing_run_metadata(
     if not isinstance(actual, Mapping) or any(
         str(actual.get(key) or "") != value
         for key, value in expected.items()
+        # Reporting context is not benchmark identity, and older publications
+        # predate these fields. Artifact hashes still guard conflicting results.
+        if key not in {"git_branch", "benchmark_started_at", "workflow_run_id",
+                       "workflow_run_attempt", "workflow_run_number"}
     ):
         raise LangfusePublishError(
             f"Langfuse run {run_name} conflicts with benchmark artifacts; "
@@ -1198,6 +1203,7 @@ def _nested(value: Mapping[str, Any], *path: str) -> Any:
 def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
     manifest = artifacts.manifest
     judge = manifest.get("judge_config") if isinstance(manifest.get("judge_config"), dict) else {}
+    ci_run = re.fullmatch(r"ci-(\d+)-(\d+)-.+", str(manifest.get("run_id") or ""))
     values = {
         "benchmark_run_id": manifest.get("run_id"),
         "benchmark_suite": artifacts.suite.name,
@@ -1208,7 +1214,12 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "metrics_k": manifest.get("metrics_k"),
         "git_sha": manifest.get("git_sha"),
         "git_dirty": manifest.get("git_dirty"),
-        "git_branch": os.environ.get("GITHUB_REF_NAME"),
+        "git_branch": manifest.get("git_branch") or os.environ.get("GITHUB_REF_NAME"),
+        "benchmark_started_at": manifest.get("started_at"),
+        "workflow_run_id": ci_run.group(1) if ci_run else None,
+        "workflow_run_attempt": ci_run.group(2) if ci_run else None,
+        "workflow_run_number": os.environ.get("GITHUB_RUN_NUMBER")
+            if ci_run and ci_run.group(1) == os.environ.get("GITHUB_RUN_ID") else None,
         "agent_model": manifest.get("agent_model"),
         "judge_provider": judge.get("provider"),
         "judge_model": judge.get("model"),
