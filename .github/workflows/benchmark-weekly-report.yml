@@ -78,18 +78,30 @@ jobs:
       - name: Upload to OSS
         if: ${{ always() }}
         continue-on-error: true
-        uses: aliyun/oss-github-action@v1.1.0
-        with:
-          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          endpoint: oss-cn-hongkong.aliyuncs.com
-          bucket: firmware-agent
-          source: benchmark/
-          target: benchmark/weekly/${{ github.run_number }}/
-          include: |
-            dashboard.html
-            dashboard-data.json
-            weekly-report.md
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          set -uo pipefail
+          if [[ -z "${OSS_ACCESS_KEY_ID:-}" || -z "${OSS_ACCESS_KEY_SECRET:-}" ]]; then
+            echo "OSS credentials not configured, skipping upload" >&2
+            exit 0
+          fi
+          curl -fsSL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip -o /tmp/ossutil.zip
+          unzip -q /tmp/ossutil.zip -d /tmp
+          chmod +x /tmp/ossutil-v1.7.19-linux-amd64/ossutil
+          /tmp/ossutil-v1.7.19-linux-amd64/ossutil config \
+            -e oss-cn-hongkong.aliyuncs.com \
+            -i "$OSS_ACCESS_KEY_ID" \
+            -k "$OSS_ACCESS_KEY_SECRET"
+          prefix="oss://firmware-agent/benchmark/weekly/${{ github.run_number }}"
+          cd benchmark
+          for file in dashboard.html dashboard-data.json weekly-report.md; do
+            if [[ -f "$file" ]]; then
+              /tmp/ossutil-v1.7.19-linux-amd64/ossutil cp "$file" "$prefix/$file"
+            fi
+          done
+          echo "Files uploaded to $prefix/" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload weekly report artifacts
         if: ${{ always() }}
         continue-on-error: true
