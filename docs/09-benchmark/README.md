@@ -369,8 +369,9 @@ The execution policy is based only on whether CI can prepare the environment:
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
-The scheduled sweep runs at 02:17 Asia/Shanghai on Monday, Wednesday, and
-Friday. It selects every case whose environment is `isolated` or `mobilegym`.
+The scheduled sweep runs at 02:07 Asia/Shanghai every day, and the weekly
+report generates every Thursday at 09:07 Asia/Shanghai, ahead of the weekly
+meeting. It selects every case whose environment is `isolated` or `mobilegym`.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
