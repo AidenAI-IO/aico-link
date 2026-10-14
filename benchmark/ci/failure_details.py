@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from runner.metrics import _status_fields
+from runner.metrics import status_fields
 
 
 def _object(value: Any) -> dict[str, Any]:
@@ -27,7 +27,7 @@ def normalize_failure(input: Any, output: Any, *, trace_id: str | None = None,
                       trace_url: str | None = None) -> dict[str, Any] | None:
     """Keep failed/excluded attempts; successful attempts need no detail row."""
     input, output = _object(input), _object(output)
-    success, failure_class, eligible = _status_fields(output)
+    success, failure_class, eligible = status_fields(output)
     if success is True:
         return None
     metrics = _object(output.get("metrics"))
@@ -69,10 +69,11 @@ def _benchmark_output(value: Any) -> bool:
 
 
 def fetch_failure_details(client: Any, experiment: Any) -> dict[str, Any]:
-    """Inspect every item, following its exact evaluation observation or trace.
+    """Inspect benchmark outputs exported by paginated experiment items.
 
     Native execution attaches the evaluation to a child observation. Reading
-    only the Agent trace root would lose the rubric and hard-assertion results.
+    its experiment-item output preserves rubric and hard-assertion results
+    without reading the Agent trace root.
     An inaccessible item never becomes a successful attempt or zero failures.
     """
     details, items, errors = [], {}, {}

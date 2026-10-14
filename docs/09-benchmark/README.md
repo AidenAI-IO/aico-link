@@ -339,12 +339,11 @@ second step:
 
 ## Historical dashboard and weekly report
 
-Benchmark CI reads history directly from Langfuse v4 experiments and paginated
-scores. It never downloads earlier Actions artifacts. The dashboard includes
-pass@1 trends, coverage, and configuration-matched regressions. A rolling
-seven-day report compares matching configurations with the preceding seven
-days and is appended to the Actions job summary. Missing history, metrics, and
-publication limitations are displayed explicitly.
+The daily benchmark workflow generates `dashboard.html` with the last 7 days
+of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
+workflow runs every Thursday before the weekly meeting, compares the last 7 days
+with the previous 7, and sends a Lark notification card. Both read history from
+Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
 for credentials, report commands, time windows, and comparison rules.
@@ -365,7 +364,7 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Monday, Wednesday, Friday schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
+| Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
@@ -385,7 +384,7 @@ single-suite run must use the matching `runnable` or `hardware` profile; use
 
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
-device. Real benchmark execution comes from the Monday/Wednesday/Friday schedule
+device. Real benchmark execution comes from the daily schedule and `workflow_dispatch`.
 on the default branch or a manual dispatch on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 

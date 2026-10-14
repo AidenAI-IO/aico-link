@@ -119,7 +119,7 @@ def fetch_benchmark_history(
                 if not metadata.get("git_branch"):
                     result.warnings.append(f"{experiment.name}: excluded because branch metadata is missing.")
                 continue
-            timestamp = _timestamp(metadata.get("benchmark_started_at")) or experiment.start_time
+            timestamp = parse_timestamp(metadata.get("benchmark_started_at")) or experiment.start_time
             if not cutoff <= timestamp < now:
                 continue
             experiments.setdefault(experiment.id, experiment)
@@ -148,7 +148,7 @@ def fetch_benchmark_history(
             metadata = experiment.metadata or {}
             record = _record(
                 metadata=metadata, run_id=metadata.get("benchmark_run_id") or experiment.name,
-                timestamp=_timestamp(metadata.get("benchmark_started_at")) or experiment.start_time,
+                timestamp=parse_timestamp(metadata.get("benchmark_started_at")) or experiment.start_time,
                 scores=scores[experiment.id], experiment_id=experiment.id, source="langfuse",
             )
             result.records.append(record)
@@ -160,7 +160,7 @@ def fetch_benchmark_history(
     for record in sorted(result.records, key=lambda r: r["timestamp"]):
         by_identity[(record["run_id"], record["suite"])] = record
     for record in local:
-        if cutoff <= _timestamp(record["timestamp"]) < now:
+        if cutoff <= parse_timestamp(record["timestamp"]) < now:
             identity = (record["run_id"], record["suite"])
             if identity in by_identity:
                 record["experiment_id"] = by_identity[identity]["experiment_id"]
@@ -171,7 +171,7 @@ def fetch_benchmark_history(
 
         latest = {}
         for record in result.records:
-            if now - timedelta(days=7) <= _timestamp(record["timestamp"]) < now:
+            if now - timedelta(days=7) <= parse_timestamp(record["timestamp"]) < now:
                 latest[record["suite"]] = record
         for record in latest.values():
             if record["source"] == "local":
@@ -194,7 +194,7 @@ def _number(value: Any) -> float | None:
     return None
 
 
-def _timestamp(value: Any) -> datetime | None:
+def parse_timestamp(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
     if not isinstance(value, str) or not value:
@@ -290,7 +290,7 @@ def _read_local_runs(runs_dir: Path | None, prefix: str | None, branch_filter: s
             metadata = _experiment_metadata(artifacts)
             if branch_filter and metadata.get("git_branch") != branch_filter:
                 continue
-            timestamp = _timestamp(artifacts.manifest.get("started_at"))
+            timestamp = parse_timestamp(artifacts.manifest.get("started_at"))
             if timestamp is None:
                 raise ValueError("manifest started_at is missing")
             scores = {score["name"]: float(score["value"])

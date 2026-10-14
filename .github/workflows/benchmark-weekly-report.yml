@@ -1,0 +1,90 @@
+name: Benchmark Weekly Report
+
+on:
+  schedule:
+    # Every Thursday at 01:07 UTC (09:07 Asia/Shanghai).
+    - cron: '7 1 * * 4'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  weekly-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+      LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+      LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
+      LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+      LARK_WEBHOOK_SECRET: ${{ secrets.LARK_WEBHOOK_SECRET }}
+      https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: benchmark/uv.lock
+      - name: Install Python and benchmark dependencies
+        working-directory: benchmark
+        run: |
+          uv python install 3.12
+          uv sync --frozen --python 3.12
+      - name: Validate required credentials
+        env:
+          REQUIRED_VALUES: >-
+            LANGFUSE_PUBLIC_KEY
+            LANGFUSE_SECRET_KEY
+            LANGFUSE_BASE_URL
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in $REQUIRED_VALUES; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+          if (( ${#missing[@]} )); then
+            echo "Missing required configuration: ${missing[*]}" >&2
+            exit 1
+          fi
+      - name: Generate weekly report
+        working-directory: benchmark
+        run: |
+          set -uo pipefail
+          uv run python -m ci.generate_dashboard \
+            --output dashboard.html \
+            --data-output dashboard-data.json \
+            --weekly-output weekly-report.md \
+            --lookback-days 14 \
+            --branch-filter main
+
+          if [[ -f weekly-report.md ]]; then
+            cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Send Lark notification
+        if: ${{ always() }}
+        continue-on-error: true
+        working-directory: benchmark
+        run: |
+          set -uo pipefail
+          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          uv run python -m ci.notify_lark \
+            --data-json dashboard-data.json \
+            --run-url "$run_url"
+      - name: Upload weekly report artifacts
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-report-${{ github.run_id }}
+          path: |
+            benchmark/dashboard.html
+            benchmark/dashboard-data.json
+            benchmark/weekly-report.md
+          if-no-files-found: warn
+          retention-days: 90
+          compression-level: 9

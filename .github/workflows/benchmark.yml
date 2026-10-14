@@ -2,8 +2,8 @@ name: Benchmark
 
 on:
   schedule:
-    # 02:17 Asia/Shanghai on Monday, Wednesday, and Friday.
-    - cron: '17 18 * * 0,2,4'
+    # 02:07 Asia/Shanghai daily (UTC 18:07 previous day).
+    - cron: '7 18 * * *'
   workflow_dispatch:
     inputs:
       profile:
@@ -355,13 +355,9 @@ jobs:
           uv run python -m ci.generate_dashboard \
             --output dashboard.html \
             --data-output dashboard-data.json \
-            --weekly-output weekly-report.md \
-            --lookback-days 30 \
+            --lookback-days 14 \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
-          if [[ -f weekly-report.md ]]; then
-            cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
-          fi
           if [[ -f dashboard.html ]]; then
             echo "## Benchmark dashboard" >> "$GITHUB_STEP_SUMMARY"
             echo "\`dashboard.html\` in the run artifact charts pass@1 per commit and flags suite regressions." >> "$GITHUB_STEP_SUMMARY"
@@ -378,7 +374,6 @@ jobs:
           path: |
             benchmark/dashboard.html
             benchmark/dashboard-data.json
-            benchmark/weekly-report.md
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
@@ -406,7 +401,6 @@ jobs:
           path: |
             benchmark/dashboard.html
             benchmark/dashboard-data.json
-            benchmark/weekly-report.md
             benchmark/${{ env.PREPARE_LOG }}
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json

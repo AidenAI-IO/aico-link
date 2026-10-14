@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Benchmark Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f5f7; --panel: #ffffff; --text: #1d1d1f; --muted: #6e6e73;
+    --line: #e5e5ea; --accent: #0071e3; --bad: #d70015; --good: #1d8102;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #161618; --panel: #1f1f22; --text: #f5f5f7; --muted: #9b9ba1;
+      --line: #32323a; --accent: #4da3ff; --bad: #ff6961; --good: #5dd868;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding-block: 32px; padding-inline: 20px;
+    background: var(--bg); color: var(--text);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 20px; margin-bottom: 16px;
+  }
+  h2 { font-size: 15px; margin: 0 0 14px; font-weight: 600; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+  .num { font-size: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .cap { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+  .bad { color: var(--bad); }
+  .good { color: var(--good); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left; color: var(--muted); font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .4px;
+    padding: 0 10px 8px 0; border-bottom: 1px solid var(--line);
+  }
+  td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--line); }
+  tr:last-child td { border-bottom: 0; }
+  th.n, td.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  code {
+    font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--bg); padding: 3px 6px; border-radius: 5px;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .scroll { overflow-x: auto; }
+  .failure-dataset { border-top: 1px solid var(--line); padding: 12px 0; }
+  .failure-dataset summary { cursor: pointer; overflow-wrap: anywhere; }
+  .failure-dataset .sub { margin: 8px 0 12px; }
+  .failure-table { min-width: 650px; table-layout: fixed; }
+  .failure-table th:nth-child(1) { width: 20%; }
+  .failure-table th:nth-child(2) { width: 13%; }
+  .failure-table th:nth-child(4) { width: 9%; }
+  .failure-table td { vertical-align: top; overflow-wrap: anywhere; }
+  .failure-evidence { white-space: pre-wrap; margin: 5px 0; }
+  .evidence-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+  .evidence-heading strong { font-size: 14px; font-weight: 600; }
+  .evidence-kind { color: var(--muted); font-size: 11px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+  .evidence-message { white-space: pre-wrap; line-height: 1.65; }
+  .evidence-values { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; }
+  .evidence-values > div { padding: 10px 12px; background: var(--bg); border-radius: 6px; }
+  .evidence-values dt { color: var(--muted); font-size: 11px; margin-bottom: 4px; }
+  .evidence-values dd { margin: 0; white-space: pre-wrap; line-height: 1.6; }
+  .evidence-values .evidence-actual { background: color-mix(in srgb, var(--bad) 7%, var(--panel)); }
+  .evidence-actual dt, .evidence-actual dd { color: var(--bad); }
+  .evidence-actual dd { font-weight: 600; }
+  .failure-table td { padding-block: 16px; }
+  .failure-table details { margin-top: 12px; }
+  .failure-table details > summary { color: var(--muted); font-size: 12px; }
+  .failure-table .additional-evidence > .failure-evidence { padding-top: 12px; margin-top: 12px; border-top: 1px solid var(--line); }
+  .failure-outcome { display: inline-block; padding: 2px 7px; border-radius: 4px; background: var(--bg); }
+  .failure-outcome.bad { background: color-mix(in srgb, var(--bad) 7%, var(--panel)); }
+  @media (max-width: 800px) { .evidence-values { grid-template-columns: 1fr; } }
+  .alert { border-left: 3px solid var(--bad); padding: 10px 0 10px 14px; margin-bottom: 10px; }
+  .alert:last-child { margin-bottom: 0; }
+  .alert b { font-weight: 600; }
+  .empty { color: var(--muted); font-size: 13px; }
+  canvas { max-width: 100%; }
+  .chart { position: relative; height: 300px; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-bottom: 16px; }
+  select { max-width: 100%; padding: 9px 12px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; }
+  button.dataset { background: none; border: 0; padding: 0; color: var(--accent); font: inherit; text-align: left; cursor: pointer; }
+  button.dataset:hover { text-decoration: underline; }
+  button.dataset[aria-pressed="true"] { font-weight: 700; }
+  select:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  [hidden] { display: none !important; }
+  .tabs { display: flex; gap: 6px; padding: 5px; margin-bottom: 20px; width: fit-content; max-width: 100%; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); position: sticky; top: 8px; z-index: 2; }
+  .tabs button { border: 0; border-radius: 6px; padding: 10px 18px; font: inherit; font-weight: 600; cursor: pointer; background: transparent; color: var(--muted); }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: white; }
+  .tabs button:hover:not([aria-selected="true"]) { background: var(--bg); color: var(--text); }
+  .cards { margin: 16px 0; }
+  .improved { border-left: 4px solid var(--good); }
+  .declined { border-left: 4px solid var(--bad); }
+  .mixed { border-left: 4px solid #b7791f; }
+  .delta { display: block; font-size: 11px; white-space: nowrap; }
+  .metric-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+  .metric-grid .panel { margin-bottom: 0; min-width: 0; }
+  .metric-grid .chart { height: 260px; }
+  .metric-summary { margin-top: 12px; }
+  @media (max-width: 850px) { .metric-grid { grid-template-columns: 1fr; } }
+  summary { cursor: pointer; margin-top: 12px; }
+  .warnings { max-height: 320px; overflow-y: auto; margin-top: 12px; overflow-wrap: anywhere; }
+  #availability { margin-bottom: 16px; }
+  .section-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; justify-content: space-between; margin-bottom: 12px; }
+  .section-actions h2 { margin: 0; }
+  .action { border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--accent); padding: 7px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+  .action:hover { background: var(--bg); }
+  .row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .row-actions .action { padding: 3px 7px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; margin: 12px 0; }
+  .filters button[aria-pressed="true"] { background: var(--text); color: var(--panel); border-color: var(--text); }
+  #overview-panel, .failure-dataset, #dataset-panel, .metric-grid .panel, #history-panel { scroll-margin-top: 84px; }
+  #suites th:first-child { min-width: 210px; }
+  #suites td:first-child { overflow-wrap: anywhere; }
+  #suites tbody tr:hover { background: var(--bg); }
+  .reading-notes { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+  .reading-notes p { margin: 8px 0; }
+  .metric-nav { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 20px; font-size: 13px; }
+  .metric-nav a { text-decoration: underline; text-underline-offset: 3px; }
+  .metric-grid { align-items: start; }
+  .metric-description { font-size: 12px; color: var(--muted); margin-bottom: 12px; }
+  .metric-description summary { margin-top: 0; }
+  .metric-description p { margin-bottom: 0; }
+  .measurement-table caption { text-align: left; font-size: 11px; margin-bottom: 6px; color: var(--muted); }
+  .measurement-table th, .measurement-table td { padding: 4px 8px 4px 0; font-size: 12px; }
+  .measurement-table th { text-transform: none; letter-spacing: normal; }
+  .measurement-table th[scope="row"] { overflow-wrap: anywhere; }
+  .measurement-table tbody tr:last-child th { border-bottom: 0; }
+  .measurement-table td:nth-child(2) { color: var(--text); font-weight: 600; }
+  .chart-unavailable { color: var(--bad); }
+  @media (max-width: 600px) {
+    body { padding: 16px 12px; }
+    .panel { padding: 16px; }
+    .tabs { width: 100%; }
+    .tabs button { flex: 1; padding-inline: 10px; }
+    .toolbar select { width: 100%; }
+    .num { font-size: 24px; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Benchmark Dashboard</h1>
+  <div class="sub" id="sub"></div>
+  <div class="tabs" id="dashboard-tabs" role="tablist" aria-label="Dashboard view">
+    <button id="tab-latest" role="tab" type="button" aria-selected="true" aria-controls="view-latest" tabindex="0">Latest results</button>
+    <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
+  </div>
+  <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
+  <div class="panel" id="overview-panel"><h2>Dataset overview · latest results</h2><p id="latest-run-note" class="empty"></p>
+    <p class="empty">Compare each dataset with its previous run. Open failure details to inspect tasks, or view trends to investigate changes.</p>
+    <div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets"></div>
+    <p class="empty" id="filter-count" role="status" aria-live="polite"></p>
+    <details class="reading-notes"><summary id="reading-notes-label">How to read these results</summary><p id="comparison-note"></p><p>Calls and task time include measured eligible attempts, including failures. n = measured / eligible attempts. Changes use the previous run within the last 7 days.</p><div id="availability"></div></details>
+    <div class="scroll"><table id="suites"></table></div><p class="empty" id="overview-empty" hidden>No datasets match this filter. Select All to show all datasets.</p>
+  </div>
+  <div class="panel"><div class="section-actions"><h2>Failure details · latest run per dataset</h2><button class="action" id="back-overview" type="button">Back to overview ↑</button></div>
+    <p class="empty">Recorded errors and failed checks across all attempts. Excluded attempts are separate from capability failures. Dataset filters above also apply here.</p>
+    <div id="failure-details"></div>
+    <p class="empty" id="failures-empty" hidden>No datasets match these filters.</p>
+  </div>
+  </section>
+  <section id="view-trends" role="tabpanel" aria-labelledby="tab-trends" hidden>
+  <div class="panel" id="dataset-panel">
+    <div class="section-actions"><h2>Dataset trends</h2><button class="action" id="selected-failures" type="button">View latest failure details →</button></div>
+    <div class="toolbar"><label for="dataset-select">Dataset</label><select id="dataset-select" aria-label="Dataset"></select></div>
+    <div class="empty" id="dataset-context"></div>
+    <nav class="metric-nav" aria-label="Jump to metric"><a href="#dataset-panel">Pass rates</a><a href="#measurement-panel-latency">Latency</a><a href="#measurement-panel-timings">Timings</a><a href="#measurement-panel-calls">Tool &amp; LLM calls</a><a href="#measurement-panel-reliability">Reliability</a><a href="#measurement-panel-tokens">Tokens</a><a href="#measurement-panel-cost">Cost</a><a href="#history-panel">Run history</a></nav>
+    <div class="cards" id="latest"></div>
+    <details><summary>Run details</summary><p id="comparison-details" class="empty"></p><div class="scroll"><table id="run-details"></table></div></details>
+    <details class="reading-notes"><summary>Pass metrics &amp; chart controls</summary><p>Each point is one dataset run. Click a legend label to show or hide a metric. pass@k: at least one of k attempts passes; pass^k: all k attempts pass.</p></details>
+    <p id="chart-unavailable" class="chart-unavailable" hidden>Charts could not load. Run values and links remain available in Run history below.</p>
+    <div class="chart"><canvas id="trend" aria-label="Selected dataset pass rates over time" role="img"></canvas></div>
+    <p class="empty">Missing scores leave gaps. Hover for commit, model, k and task counts.</p>
+  </div>
+  <div id="metric-charts" class="metric-grid"></div><p id="measurement-note" class="empty"></p>
+  <details class="panel" id="history-panel"><summary id="history-title">Dataset run history</summary><div class="scroll"><table id="history"></table></div></details>
+  </section>
+</div>
+<script>
+const DATA = JSON.parse(__DASHBOARD_DATA__);
+const esc = value => String(value ?? "\\u2014").replace(/[&<>"']/g, c => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+}[c]));
+const count = value => value === null || value === undefined ? "\\u2014" : value;
+const pct = v => v === null || v === undefined ? "\\u2014" : (v * 100).toFixed(1) + "%";
+const sha = s => (s || "unknown").slice(0, 8);
+const commitLink = s => DATA.repo && s && s !== "unknown"
+  ? `<a href="https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/commit/${encodeURIComponent(s)}" target="_blank" rel="noopener"><code>${esc(sha(s))}</code></a>`
+  : `<code>${esc(sha(s))}</code>`;
+const when = t => t ? new Date(t).toLocaleString() : "\\u2014";
+const signed = d => (d > 0 ? "+" : "") + (d * 100).toFixed(1) + " pp";
+const el = id => document.getElementById(id);
+
+const runs = DATA.runs;
+
+el("availability").innerHTML = `Data coverage: ${DATA.dataCompleteness.measured} / ${DATA.dataCompleteness.total} dataset runs have complete first-attempt counts. Historical publication failures remain unknown.` +
+  (DATA.warnings.length ? ` <details><summary>${DATA.warnings.length} data warnings</summary><div class="warnings">` +
+    DATA.warnings.map(w => `<div class="alert">${esc(w)}</div>`).join("") + '</div></details>' : '');
+el("reading-notes-label").textContent = `How to read these results${DATA.warnings.length ? ` · ${DATA.warnings.length} data warnings` : ""}`;
+
+el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${runs.length} workflow runs · ${DATA.suites.length} datasets`;
+
+const datasets = DATA.suites;
+const newestDataset = datasets.reduce((newest, dataset) =>
+  !newest || dataset.latest.timestamp > newest.latest.timestamp ? dataset : newest, null);
+el("latest-run-note").innerHTML = `Latest commit · ${commitLink(newestDataset?.latest.commit_sha)}`;
+const safeLink = (url, label) => {
+  try {
+    const parsed = new URL(url);
+    if (!["https:", "http:"].includes(parsed.protocol)) return "";
+    return `<a href="${esc(parsed.href)}" target="_blank" rel="noopener noreferrer">${esc(label)}</a>`;
+  } catch { return ""; }
+};
+const evidenceHTML = check => {
+  const title = check.label || check.kind || "Failure";
+  const reason = check.reason || "";
+  const message = reason.length > 280 ? `<div class="evidence-message">${esc(reason.slice(0, 280))}…</div><details><summary>Full message</summary><div class="evidence-message">${esc(reason)}</div></details>` :
+    reason ? `<div class="evidence-message">${esc(reason)}</div>` : "";
+  return `<div class="failure-evidence"><div class="evidence-heading"><strong>${esc(title)}</strong>${check.label && check.kind ? `<span class="evidence-kind">${esc(check.kind)}</span>` : ""}</div>${message}
+    ${check.expected || check.actual ? `<dl class="evidence-values">${check.expected ? `<div><dt>Expected</dt><dd>${esc(check.expected)}</dd></div>` : ""}${check.actual ? `<div class="evidence-actual"><dt>Actual</dt><dd>${esc(check.actual)}</dd></div>` : ""}</dl>` : ""}</div>`;
+};
+const detailDatasets = [...datasets].sort((a, b) => b.latest.timestamp.localeCompare(a.latest.timestamp));
+const expandedDataset = detailDatasets.find(dataset => dataset.latest.failure_details?.length);
+el("failure-details").innerHTML = detailDatasets.map(dataset => {
+  const latest = dataset.latest;
+  const rows = latest.failure_details || [];
+  const available = latest.failure_details_status === "available";
+  const coverage = `${count(latest.failure_details_inspected)} / ${count(latest.failure_details_expected)} attempt outputs inspected`;
+  const failures = rows.filter(row => row.agent_eligible).length;
+  const excluded = rows.length - failures;
+  const headline = rows.length ? `${failures} eligible failures · ${excluded} excluded attempts` :
+    available ? "No failed or excluded attempts" : "Failure details unavailable";
+  const note = available || !rows.length ? "" : latest.failure_details_status === "partial" ? " · Partial details" : " · Details unavailable";
+  const index = datasets.indexOf(dataset);
+  return `<details class="failure-dataset" id="failure-dataset-${index}" data-filter-dataset="${index}"${dataset === expandedDataset ? " open" : ""}>
+    <summary><b>${esc(dataset.suite)}</b> · ${headline}${note}</summary>
+    <div class="section-actions"><p class="sub">${coverage}${!available ? ". Missing outputs may contain additional failures." : ""}</p><button class="action" type="button" data-trend-dataset="${index}">View dataset trends →</button></div>
+    ${Object.entries(latest.failure_details_errors || {}).map(([reason, count]) => `<p class="empty">${esc(reason)} · ${count}</p>`).join("")}
+    ${rows.length ? `<div class="scroll"><table class="failure-table"><thead><tr><th>Task / attempt</th><th>Outcome</th><th>Failure reason / evidence</th><th>Trace</th></tr></thead><tbody>` + rows.map(row => {
+      const evidence = row.evidence || [];
+      const classification = [row.failure_class ? `Class: ${row.failure_class}` : "",
+        row.first_failure_stage ? `Stage: ${row.first_failure_stage}` : ""].filter(Boolean).join(" · ");
+      return `<tr><td><b>${esc(row.task_id)}</b><div class="empty">Attempt ${esc(row.attempt)}</div></td>
+        <td><span class="failure-outcome ${row.agent_eligible ? "bad" : ""}">${esc(row.status)}</span>${!row.agent_eligible ? '<div class="empty">Excluded from capability</div>' : ""}</td>
+        <td>${evidence.length ? evidenceHTML(evidence[0]) : '<span class="empty">No failure reason recorded</span>'}
+          ${evidence.length > 1 || row.final_response || row.failure_event_ref || classification ? `<details class="additional-evidence"><summary>Additional evidence${evidence.length > 1 ? ` (${evidence.length - 1} more check${evidence.length === 2 ? "" : "s"})` : ""}</summary>` +
+            evidence.slice(1).map(evidenceHTML).join("") +
+            (row.final_response ? `<div class="failure-evidence"><b>Agent final response</b><br>${esc(row.final_response)}</div>` : "") +
+            (row.failure_event_ref ? `<div class="empty">Recorded event: ${esc(row.failure_event_ref)}</div>` : "") +
+            (classification ? `<div class="empty">${esc(classification)}</div>` : "") + '</details>' : ""}</td>
+        <td>${safeLink(row.trace_url, "Open trace") || '<span class="empty">Unavailable</span>'}</td></tr>`;
+    }).join("") + '</tbody></table></div>' : `<p class="empty">${available ? "All inspected attempts succeeded." : "Task output could not be inspected. This does not mean there were no failures."}</p>`}
+  </details>`;
+}).join("") || '<p class="empty">No dataset runs in the last 7 days.</p>';
+const metrics = [
+  { key: "pass_at_1", label: "pass@1", color: "#1d8102" },
+  { key: "pass_at_k", label: "pass@k", color: "#ea580c" },
+  { key: "pass_pow_k", label: "pass^k", color: "#db2777" },
+];
+let selected = null;
+let chart = null;
+const measurementCharts = [];
+const palette = ["#0891b2", "#ea580c", "#db2777", "#7c3aed", "#65a30d"];
+const measurementValue = (point, series) => {
+  const dist = point.distributions?.[series.metric];
+  return dist?.count === 0 ? null : dist?.[series.statistic] ?? null;
+};
+const measurementText = (value, spec) => value == null ? "Unavailable" :
+  (value * spec.scale).toLocaleString(undefined, spec.unit === "USD" ? { maximumSignificantDigits: 6 } : { maximumFractionDigits: spec.unit === "tokens" ? 0 : 2 }) + " " + spec.unit;
+const sampleText = (point, series) => `${count(point.distributions?.[series.metric]?.count)} / ${count(point.eligible_attempts)} eligible attempts measured`;
+const overviewMeasure = (suite, metric, statistic, scale, unit) => {
+  const distribution = suite.latest.distributions?.[metric];
+  if (!distribution || distribution.count === 0 || !Number.isFinite(distribution[statistic])) return '<span class="empty">Unavailable</span>';
+  const value = distribution[statistic] * scale;
+  return `${value.toFixed(1)} ${unit}<span class="delta empty">n=${count(distribution.count)} / ${count(suite.latest.eligible_attempts)}</span>`;
+};
+el("metric-charts").innerHTML = DATA.metricCharts.map(spec => `<div class="panel" id="measurement-panel-${spec.id}">
+  <h2 id="measurement-title-${spec.id}">${esc(spec.title)}</h2><details class="metric-description"><summary>Measurement definition</summary><p>${esc(spec.description)}</p></details>
+  <div class="chart" id="measurement-wrap-${spec.id}"><canvas id="measurement-${spec.id}" role="img" aria-label="${esc(spec.title)}"></canvas></div>
+  <p id="measurement-empty-${spec.id}" class="empty" hidden>No measurements available in the last 7 days. Missing data is not zero.</p>
+  <div id="measurement-summary-${spec.id}" class="empty metric-summary"></div>
+</div>`).join("");
+const deltaClass = d => d == null || d === 0 ? "" : d > 0 ? "good" : "bad";
+const deltaLabel = d => d == null ? "No comparison" : d === 0 ? "Unchanged" : `${d > 0 ? "↑" : "↓"} ${signed(d)}`;
+const overviewRows = datasets.map((s, index) => ({ ...s, index }))
+  .sort((a, b) => Number(["declined", "mixed"].includes(b.change_direction)) - Number(["declined", "mixed"].includes(a.change_direction)) ||
+    Math.max(...Object.values(b.metric_deltas).map(v => Math.abs(v || 0))) - Math.max(...Object.values(a.metric_deltas).map(v => Math.abs(v || 0))));
+const datasetFilters = [
+  {id: "all", label: "All", matches: () => true},
+  {id: "declined", label: "Declined / mixed", matches: s => ["declined", "mixed"].includes(s.change_direction)},
+  {id: "improved", label: "Improved", matches: s => s.change_direction === "improved"},
+  {id: "failures", label: "Failed / excluded attempts", matches: s => (s.latest.failure_details || []).length > 0 || s.latest.eligible_failures > 0},
+  {id: "unavailable", label: "Incomplete data", matches: s => s.latest.metrics_complete === false || s.latest.failure_details_status !== "available"},
+];
+let activeFilter = "all";
+el("change-summary").innerHTML = datasetFilters.map(filter => `<button type="button" class="action" data-filter="${filter.id}" aria-pressed="${filter.id === activeFilter}">${filter.label} · ${datasets.filter(filter.matches).length}</button>`).join("");
+function matchingDatasetIndices(filterId) {
+  const matches = (datasetFilters.find(filter => filter.id === filterId) || datasetFilters[0]).matches;
+  return datasets.flatMap((dataset, index) => matches(dataset) ? [index] : []);
+}
+function applyDatasetFilters() {
+  const indices = matchingDatasetIndices(activeFilter);
+  document.querySelectorAll("[data-filter-dataset]").forEach(node => { node.hidden = !indices.includes(Number(node.dataset.filterDataset)); });
+  document.querySelectorAll("button[data-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.filter === activeFilter)));
+  el("filter-count").textContent = `${indices.length} of ${datasets.length} datasets · Declined and mixed changes appear first`;
+  el("overview-empty").hidden = indices.length > 0;
+  el("failures-empty").hidden = indices.length > 0;
+}
+function clearDatasetFilters() {
+  activeFilter = "all";
+  applyDatasetFilters();
+}
+const unverified = datasets.filter(s => s.comparison_status === "Configuration unverified").length;
+const changedConfig = datasets.filter(s => s.comparison_status === "Configuration changed").length;
+el("comparison-note").textContent = unverified || changedConfig
+  ? `Observed score changes: ${unverified} datasets with unverified configurations; ${changedConfig} with changed configurations. Check Run details before treating a change as improvement or regression.`
+  : "Changes compare the latest two runs. Missing scores or a previous run leave the change unavailable.";
+el("dataset-select").innerHTML = datasets.length
+  ? datasets.map((s, i) => `<option value="${i}">${esc(s.suite)}</option>`).join("")
+  : '<option value="">No datasets available</option>';
+el("dataset-select").disabled = !datasets.length;
+
+el("suites").innerHTML = `
+  <thead><tr><th>Dataset</th><th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th>
+  <th class="n">Tool calls · mean</th><th class="n">LLM calls · mean</th><th class="n">Task time · p50</th><th>Latest run</th></tr></thead><tbody>` +
+  (datasets.length ? overviewRows.map(s => {
+    const details = s.latest.failure_details || [];
+    const detailLabel = details.length ? `${details.length} failed / excluded` : s.latest.failure_details_status === "available" ? "No failures" : "Details unavailable";
+    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button><div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
+      ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
+      <td class="n">${overviewMeasure(s, "tool_calls", "mean", 1, "calls")}</td>
+      <td class="n">${overviewMeasure(s, "llm_calls", "mean", 1, "calls")}</td>
+      <td class="n">${overviewMeasure(s, "task_wall_ms", "p50", 0.001, "s")}</td>
+      <td>${when(s.latest.timestamp)}</td></tr>`;
+  }).join("") : '<tr><td colspan="8" class="empty">No datasets.</td></tr>') + "</tbody>";
+
+function selectDataset(index) {
+  selected = datasets[index];
+  if (!selected) {
+    el("dataset-context").textContent = "No dataset history is available.";
+    el("latest").innerHTML = '<div class="empty">Nothing to show yet.</div>';
+    el("history").innerHTML = '<tr><td class="empty">No runs.</td></tr>';
+    return;
+  }
+  el("dataset-select").value = String(index);
+  el("selected-failures").disabled = false;
+  document.querySelectorAll("button[data-dataset]").forEach(button => {
+    button.setAttribute("aria-pressed", String(button.dataset.dataset === String(index)));
+  });
+  const points = selected.points;
+  const latest = selected.latest;
+  el("dataset-context").textContent = `${selected.suite} · ${points.length} runs · ${when(points[0].timestamp)} — ${when(latest.timestamp)}`;
+  el("latest").innerHTML = metrics.map(metric => `<div>
+    <div class="num">${pct(latest[metric.key])}</div><div class="cap">Latest ${metric.label}</div>
+    <span class="delta ${deltaClass(selected.metric_deltas[metric.key])}">${deltaLabel(selected.metric_deltas[metric.key])}</span>
+  </div>`).join("") + `<div><div class="num" style="font-size:15px;padding-top:10px">${commitLink(latest.commit_sha)}</div>
+    <div class="cap">Latest commit · k=${esc(latest.metrics_k)}</div></div>`;
+  el("comparison-details").textContent = `${selected.comparison_status}. Comparison requires complete, matching workload and configuration metadata. Missing metadata or reported local Git changes make the configuration unverified; this is not a task failure.`;
+  el("run-details").innerHTML = `<thead><tr><th>Run</th><th>When</th><th>Commit</th><th>Branch</th><th>Model</th><th>Platform</th><th class="n">k</th><th>Git changes reported</th></tr></thead><tbody>` +
+    [["Latest", latest], ["Baseline", selected.previous]].filter(([label, run]) => run).map(([label, run]) =>
+      `<tr><td>${label}</td><td>${when(run.timestamp)}</td><td>${commitLink(run.commit_sha)}</td><td>${esc(run.git_branch)}</td><td>${esc(run.agent_model)}</td><td>${esc(run.target_platform)}</td><td class="n">${esc(run.metrics_k)}</td><td>${run.git_dirty == null ? "Unknown" : run.git_dirty ? "Yes" : "No"}</td></tr>`).join("") + "</tbody>";
+  el("history-title").textContent = selected.suite + " · run history";
+  el("history").innerHTML = `
+    <thead><tr><th>When</th><th>Commit</th><th class="n">k</th>
+    <th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th><th>Run</th></tr></thead><tbody>` +
+    points.slice().reverse().map(r => `<tr>
+      <td>${when(r.timestamp)}</td><td>${commitLink(r.commit_sha)}</td><td class="n">${esc(r.metrics_k)}</td>
+      ${metrics.map(m => `<td class="n">${pct(r[m.key])}</td>`).join("")}
+      <td>${DATA.repo && r.workflow_run_id
+        ? `<a href="https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(r.workflow_run_id)}" target="_blank" rel="noopener">#${esc(r.workflow_run_number || r.workflow_run_id)} / attempt ${esc(r.workflow_run_attempt)}</a>`
+        : esc(r.run_id)}</td>
+    </tr>`).join("") + "</tbody>";
+  if (chart) {
+    chart.data.labels = points.map(p => when(p.timestamp));
+    chart.data.datasets.forEach((dataset, i) => {
+      dataset.data = points.map(p => p[metrics[i].key] == null ? null : p[metrics[i].key] * 100);
+    });
+    chart.update();
+  }
+  let visibleMeasurements = 0;
+  for (const spec of DATA.metricCharts) {
+    const values = spec.series.map(series => points.map(point => {
+      const value = measurementValue(point, series);
+      return value == null ? null : value * spec.scale;
+    }));
+    const missing = values.every(series => series.every(value => value == null));
+    if (!missing) visibleMeasurements++;
+    el("measurement-wrap-" + spec.id).hidden = missing || typeof Chart === "undefined";
+    el("measurement-empty-" + spec.id).hidden = !missing;
+    const statistic = spec.series.every(series => series.statistic === spec.series[0].statistic) ? spec.series[0].statistic : null;
+    const valueHeading = statistic === "mean" ? "Mean" : statistic || "Value";
+    el("measurement-summary-" + spec.id).innerHTML = `<table class="measurement-table"><caption>Latest run · Samples = measured / eligible attempts</caption><thead><tr><th scope="col">Metric</th><th scope="col" class="n">${esc(valueHeading)}</th><th scope="col" class="n">Samples</th></tr></thead><tbody>` +
+      spec.series.map(series => `<tr><th scope="row">${esc(series.label)}</th><td class="n">${measurementText(measurementValue(latest, series), spec)}</td><td class="n">${count(latest.distributions?.[series.metric]?.count)} / ${count(latest.eligible_attempts)}</td></tr>`).join("") + '</tbody></table>';
+    const instance = measurementCharts.find(item => item.id === spec.id)?.chart;
+    if (instance) {
+      instance.data.labels = points.map(point => when(point.timestamp));
+      instance.data.datasets.forEach((dataset, i) => {
+        dataset.data = values[i];
+        dataset.label = spec.series[i].label + (values[i].some(value => value != null) ? "" : " (no data)");
+      });
+      instance.resize(); instance.update("none");
+    }
+  }
+  el("measurement-note").textContent = `${visibleMeasurements} / ${DATA.metricCharts.length} charts have measurements in this dataset's last 7 days. All metrics remain listed; missing measurements are unavailable, while measured zero values remain zero.`;
+}
+
+if (datasets.length && typeof Chart !== "undefined") {
+  const ink = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim();
+  const line = getComputedStyle(document.documentElement).getPropertyValue("--line").trim();
+  for (const spec of DATA.metricCharts) {
+    measurementCharts.push({ id: spec.id, chart: new Chart(el("measurement-" + spec.id), {
+      type: "line",
+      data: { labels: [], datasets: spec.series.map((series, i) => ({
+        label: series.label, data: [], borderColor: palette[i % palette.length], backgroundColor: palette[i % palette.length],
+        borderWidth: 2, pointRadius: 2, pointHoverRadius: 5, tension: 0.15, spanGaps: false,
+      })) },
+      options: { responsive: true, maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { labels: { color: ink, usePointStyle: true } }, tooltip: { callbacks: {
+          title: items => { const point = selected.points[items[0].dataIndex]; return [selected.suite, `${sha(point.commit_sha)} · ${when(point.timestamp)}`]; },
+          label: item => { const point = selected.points[item.dataIndex], series = spec.series[item.datasetIndex];
+            return `${series.label}: ${measurementText(measurementValue(point, series), spec)} · ${sampleText(point, series)}`; },
+        } } },
+        scales: { y: { beginAtZero: true, title: { display: true, text: spec.unit, color: ink }, ticks: { color: ink }, grid: { color: line } },
+          x: { ticks: { color: ink, maxRotation: 0, maxTicksLimit: 4 }, grid: { display: false } } },
+      },
+    }) });
+  }
+  chart = new Chart(el("trend"), {
+    type: "line",
+    data: {
+      labels: [],
+      datasets: metrics.map(metric => ({
+        label: metric.label, data: [], borderColor: metric.color,
+        backgroundColor: metric.color, borderWidth: 2,
+        pointRadius: 3, pointHoverRadius: 5, tension: 0.2, spanGaps: false,
+      })),
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: true, labels: { color: ink, usePointStyle: true } },
+        tooltip: { callbacks: {
+          title: items => {
+            const r = selected.points[items[0].dataIndex];
+            return [selected.suite, `${sha(r.commit_sha)} · ${when(r.timestamp)}`,
+              `Branch: ${r.git_branch || "unknown"} · Model: ${r.agent_model || "unknown"} · k=${count(r.metrics_k)}`];
+          },
+          label: item => {
+            const r = selected.points[item.dataIndex];
+            const metric = metrics[item.datasetIndex];
+            const first = metric.key === "pass_at_1";
+            const successes = first ? r.passed : r[metric.key + "_successes"];
+            const eligible = first ? r.eligible_tasks : r[metric.key + "_eligible_tasks"];
+            return ` ${metric.label} ${pct(r[metric.key])} (${count(successes)}/${count(eligible)} eligible tasks)`;
+          },
+        } },
+      },
+      scales: {
+        y: { min: 0, max: 100, ticks: { color: ink, callback: v => v + "%" }, grid: { color: line } },
+        x: { ticks: { color: ink, maxRotation: 0, autoSkipPadding: 16 }, grid: { display: false } },
+      },
+    },
+  });
+}
+const views = ["latest", "trends"];
+function showView(view) {
+  if (!views.includes(view)) return;
+  for (const name of views) {
+    const active = name === view;
+    el("view-" + name).hidden = !active;
+    el("tab-" + name).setAttribute("aria-selected", String(active));
+    el("tab-" + name).tabIndex = active ? 0 : -1;
+  }
+  // Charts created in a hidden panel need their visible container dimensions.
+  for (const instance of view === "latest" ? [] : [chart, ...measurementCharts.map(item => item.chart)]) {
+    if (instance) { instance.resize(); instance.update("none"); }
+  }
+}
+for (const [index, view] of views.entries()) {
+  el("tab-" + view).addEventListener("click", () => showView(view));
+  el("tab-" + view).addEventListener("keydown", event => {
+    const targets = { ArrowRight: (index + 1) % views.length, ArrowLeft: (index + views.length - 1) % views.length, Home: 0, End: views.length - 1 };
+    if (!(event.key in targets)) return;
+    event.preventDefault();
+    const target = views[targets[event.key]];
+    showView(target);
+    el("tab-" + target).focus();
+  });
+}
+function openDataset(index) {
+  selectDataset(index);
+  showView("trends");
+  el("dataset-select").focus({ preventScroll: true });
+  el("dataset-panel").scrollIntoView({ block: "start" });
+}
+function openFailures(index) {
+  if (!datasets[index]) return;
+  selectDataset(index);
+  clearDatasetFilters();
+  showView("latest");
+  const detail = el("failure-dataset-" + index);
+  detail.open = true;
+  detail.querySelector("summary").focus({ preventScroll: true });
+  detail.scrollIntoView({ block: "start" });
+}
+el("dataset-select").addEventListener("change", event => selectDataset(Number(event.target.value)));
+el("suites").addEventListener("click", event => {
+  const failure = event.target.closest("button[data-failure-dataset]");
+  if (failure) { openFailures(Number(failure.dataset.failureDataset)); return; }
+  const button = event.target.closest("button[data-dataset]");
+  if (button) openDataset(Number(button.dataset.dataset));
+});
+el("failure-details").addEventListener("click", event => {
+  const button = event.target.closest("button[data-trend-dataset]");
+  if (button) openDataset(Number(button.dataset.trendDataset));
+});
+el("selected-failures").addEventListener("click", () => openFailures(datasets.indexOf(selected)));
+el("selected-failures").disabled = !datasets.length;
+el("back-overview").addEventListener("click", () => {
+  el("change-summary").querySelector('button[aria-pressed="true"]').focus({ preventScroll: true });
+  el("overview-panel").scrollIntoView({ block: "start" });
+});
+el("change-summary").addEventListener("click", event => {
+  const button = event.target.closest("button[data-filter]");
+  if (button) { activeFilter = button.dataset.filter; applyDatasetFilters(); }
+});
+document.querySelectorAll('.metric-nav a[href="#history-panel"]').forEach(link => link.addEventListener("click", () => { el("history-panel").open = true; }));
+el("chart-unavailable").hidden = typeof Chart !== "undefined";
+applyDatasetFilters();
+// Start with the most recently run dataset, not a pooled workflow rate.
+const initial = datasets.reduce((best, dataset, i) =>
+  dataset.latest.timestamp > datasets[best].latest.timestamp ? i : best, 0);
+selectDataset(initial);
+
+</script>
+</body>
+</html>

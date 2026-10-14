@@ -104,7 +104,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
     assert record["distributions"]["tool_calls"] == {"mean": 4.5, "count": 30}
     assert record["distributions"]["device_execution_ms"]["p50"] == 0
     assert record["distributions"]["tool_errors"]["mean"] == 0
-    assert record["distributions"]["retry_count"] == {"mean": None, "count": None}
+    assert "retry_count" not in record["distributions"]
     assert record["eligible_attempts"] == 32
     assert record["failure_stages"] == {"device_execution": 1, "unknown": 1}
     assert record["failure_stage_coverage"] == 0.5

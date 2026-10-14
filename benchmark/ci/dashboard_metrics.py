@@ -23,11 +23,10 @@ METRIC_CHARTS = [
     },
     {
         "id": "timings", "title": "Recorded timings · p50", "unit": "s", "scale": 0.001,
-        "description": "These timings overlap and must not be added together. LLM time uses episode model-call totals when available, otherwise complete history durations. Vision LLM time is inferred, not isolated vision processing; screenshots measure runner captures only. Missing instrumentation leaves gaps.",
-        "series": [_series("llm_time_ms", "p50", "LLM"), _series("vision_llm_time_ms", "p50", "Vision LLM"),
+        "description": "These timings overlap and must not be added together. LLM time uses episode model-call totals when available, otherwise complete history durations. Screenshots measure runner captures only. Older runs without instrumentation leave gaps.",
+        "series": [_series("llm_time_ms", "p50", "LLM"),
                    _series("device_execution_ms", "p50", "Device execution"),
-                   _series("screenshot_capture_ms", "p50", "Screenshot capture"),
-                   _series("time_to_first_token_ms", "p50", "First token")],
+                   _series("screenshot_capture_ms", "p50", "Screenshot capture")],
     },
     {
         "id": "tokens", "title": "Tokens per attempt", "unit": "tokens", "scale": 1,
@@ -40,10 +39,9 @@ METRIC_CHARTS = [
         "series": [_series("cost_usd", "mean", "Mean"), _series("cost_usd", "p90", "p90")],
     },
     {
-        "id": "reliability", "title": "Tool errors, replans and retries", "unit": "per attempt", "scale": 1,
-        "description": "Mean counts per measured eligible attempt. Tool errors can be recovered; replans require explicit evidence. Retry counts are currently unpopulated. Benchmark repeats (k) are not Agent retries.",
-        "series": [_series("tool_errors", "mean", "Tool errors"), _series("replan_count", "mean", "Replans"),
-                   _series("retry_count", "mean", "Retries")],
+        "id": "reliability", "title": "Tool errors per attempt", "unit": "per attempt", "scale": 1,
+        "description": "Mean recorded tool errors per measured eligible attempt. Errors can be recovered and do not necessarily cause the task to fail.",
+        "series": [_series("tool_errors", "mean", "Tool errors")],
     },
 ]
 

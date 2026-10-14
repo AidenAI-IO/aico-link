@@ -333,8 +333,9 @@ def test_data_availability_uses_display_window_but_retains_api_errors(tmp_path):
     ({"pass_at_1": 0.25, "passed": 1}, "declined", "Comparable"),
     ({"pass_at_1": 0.75, "passed": 3, "pass_pow_k": 0}, "mixed", "Comparable"),
     ({}, "unchanged", "Comparable"),
-    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "improved", "Configuration unverified"),
-    ({"pass_pow_k": 0, "agent_model": "different"}, "declined", "Configuration changed"),
+    # Unmatched configurations never produce a direction, even when rates move.
+    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "unavailable", "Configuration unverified"),
+    ({"pass_pow_k": 0, "agent_model": "different"}, "unavailable", "Configuration changed"),
 ])
 def test_latest_changes_include_all_metrics_and_label_comparability(overrides, direction, status):
     summary = _summarize_suites(_group_into_runs([
@@ -343,9 +344,24 @@ def test_latest_changes_include_all_metrics_and_label_comparability(overrides, d
     ]))[0]
     assert summary["change_direction"] == direction
     assert summary["comparison_status"] == status
-    assert summary["previous_run"]["workflow_run_id"] == 1
-    if status != "Comparable":
+    if status == "Comparable":
+        assert summary["previous"]["workflow_run_id"] == 1
+    else:
+        assert summary["previous"] is None
         assert summary["delta"] is None
+        assert all(value is None for value in summary["metric_deltas"].values())
+
+
+def test_latest_changes_skip_runs_with_a_different_configuration():
+    summary = _summarize_suites(_group_into_runs([
+        _k_record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00"),
+        _k_record(workflow_run_id=2, timestamp="2026-10-10T00:00:00+00:00", agent_model="different",
+                  pass_at_1=0.0, passed=0),
+        _k_record(workflow_run_id=3, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.75, passed=3),
+    ]))[0]
+    assert summary["previous"]["workflow_run_id"] == 1
+    assert summary["comparison_status"] == "Comparable"
+    assert summary["change_direction"] == "improved"
 
 
 def test_latest_changes_do_not_skip_over_a_missing_score():
@@ -478,12 +494,15 @@ if (Math.abs(latency.data.datasets[0].data[0] - 14.2) > 1e-9 ||
 if (!elements.get('measurement-summary-latency').innerHTML.includes('3 / 4')) process.exit(13);
 const reliability = measurementCharts.find(item => item.id === 'reliability').chart;
 if (reliability.data.datasets[0].data[0] !== 0) process.exit(14);
-if (reliability.data.datasets[2].data[0] !== null) process.exit(15);
+if (reliability.data.datasets.length !== 1) process.exit(15);
 if (document.getElementById('measurement-panel-cost').hidden || elements.get('measurement-empty-cost').hidden) process.exit(16);
 if (document.getElementById('measurement-panel-reliability').hidden) process.exit(21);
-if (reliability.data.datasets[0].label !== 'Tool errors' || reliability.data.datasets[2].label !== 'Retries (no data)') process.exit(22);
+if (reliability.data.datasets[0].label !== 'Tool errors') process.exit(22);
 if (!elements.get('measurement-summary-reliability').innerHTML.includes('Tool errors') ||
-    !elements.get('measurement-summary-reliability').innerHTML.includes('Retries: <b>Unavailable</b>')) process.exit(23);
+    elements.get('measurement-summary-reliability').innerHTML.includes('Retries')) process.exit(23);
+const chartMetrics = DATA.metricCharts.flatMap(spec => spec.series.map(series => series.metric));
+if (['retry_count', 'replan_count', 'time_to_first_token_ms', 'vision_llm_time_ms'].some(metric => chartMetrics.includes(metric))) process.exit(47);
+if (!['llm_time_ms', 'cost_usd', 'screenshot_capture_ms'].every(metric => chartMetrics.includes(metric))) process.exit(48);
 if (!elements.get('latest').innerHTML.includes('Latest commit')) process.exit(27);
 const overviewHTML = elements.get('suites').innerHTML;
 if (!elements.get('latest-run-note').innerHTML.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
@@ -510,6 +529,19 @@ if (detailHTML.includes('/commit/') || detailHTML.includes('<code>')) process.ex
 if (detailHTML.includes('<img') || detailHTML.includes('<script>') || detailHTML.includes('href="javascript:')) process.exit(32);
 if (!detailHTML.includes('&lt;script&gt;') || !detailHTML.includes('Attempt 2')) process.exit(33);
 if (!detailHTML.includes('Failure details unavailable') || !detailHTML.includes('No failed or excluded attempts')) process.exit(34);
+if (detailHTML.includes('Failure details unavailable · Details unavailable')) process.exit(38);
 if (!safeLink('https://langfuse.test/traces/a?x=1&y=2', 'Open trace').includes('&amp;')) process.exit(35);
+const namesForFilter = filter => matchingDatasetIndices(filter).map(i => datasets[i].suite);
+if (namesForFilter('all').length !== datasets.length) process.exit(39);
+if (namesForFilter('failures').includes('no_failures') || namesForFilter('unavailable').includes('no_failures')) process.exit(40);
+if (!namesForFilter('failures').includes('partial_stages')) process.exit(41);
+if (!namesForFilter('unavailable').includes('other')) process.exit(42);
+activeFilter = 'improved';
+applyDatasetFilters();
+if (el('overview-empty').hidden || el('failures-empty').hidden) process.exit(43);
+clearDatasetFilters();
+if (!el('overview-empty').hidden || !el('failures-empty').hidden) process.exit(44);
+if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
+if (el('measurement-wrap-latency').hidden) process.exit(46);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

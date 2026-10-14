@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 from typing import Any
 
-from ci.fetch_langfuse_history import _timestamp, comparison_key
+from ci.fetch_langfuse_history import parse_timestamp, comparison_key
 
 
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
@@ -48,8 +48,8 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
     previous_start = start - timedelta(days=7)
-    current = [r for r in history if start <= _timestamp(r["timestamp"]) < end]
-    previous = [r for r in history if previous_start <= _timestamp(r["timestamp"]) < start]
+    current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
+    previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
     groups: dict[tuple[Any, ...], dict[str, Any]] = {}
     uncomparable = 0
     for window, records in (("current", current), ("previous", previous)):

@@ -1158,8 +1158,13 @@ At the end of a run, the runner tries to upload the report to the agent board's
 
 ### Cross-run dashboard and weekly report
 
-The CI workflow generates `dashboard.html`, `dashboard-data.json`, and
-`weekly-report.md`. Historical data comes exclusively from Langfuse v4
+The daily benchmark workflow generates `dashboard.html` and
+`dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
+workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai), ahead of the
+weekly meeting. It reads `main` history from Langfuse only, writes
+`weekly-report.md` to the step summary, keeps the HTML and JSON artifacts for
+90 days, and sends a Lark card when `LARK_WEBHOOK_URL` and
+`LARK_WEBHOOK_SECRET` are configured. Historical data comes exclusively from Langfuse v4
 `experiments.list()` and `scores_v3.get_many_v3()`, with cursor pagination for
 both. Dataset-run read endpoints are unavailable in v4 `events_only` mode.
 Embedded experiment scores are limited to 50, so reporting queries the separate
@@ -1232,14 +1237,29 @@ trend chart tooltips.
 
 Weekly trends also includes separate charts for task execution latency (p50 and
 p90), mean tool/device/LLM calls per attempt, recorded timing components (p50),
-token distributions, explicitly measured monetary cost, and tool errors/replans/
-retries. All lines follow the selected dataset's runs within the seven-day
+token distributions, explicitly measured monetary cost, and tool errors.
+All lines follow the selected dataset's runs within the seven-day
 window. Each chart shows the latest value and its numeric sample count over
 eligible attempts; tooltips expose the same coverage for historical points.
 Distributions include measured eligible attempts, including failures, and are
 not percentiles of successful completions alone. Run-level percentiles are not
 averaged into a weekly percentile. Zero samples produce missing points, while
 measured zero durations or counts remain zero.
+
+Latest results supports filters for declined/mixed scores,
+improvements, failed/excluded attempts, and incomplete latest data. Filters apply
+to both the overview and failure details. Declined/mixed datasets appear first.
+Each overview row links directly to its task details; the dataset name opens
+Weekly trends. Trends and failure details provide reciprocal navigation for the
+same dataset. Opening a specific dataset's details clears overview filters so
+the destination remains visible.
+
+Metric navigation jumps to a chart or expands run history. Measurement
+definitions are expandable, and charts without measurements use a compact
+unavailable state while retaining latest values and sample coverage. Reading
+notes group comparison caveats and data warnings; their summary shows the
+warning count. If Chart.js cannot load, the dashboard retains run values and
+links and displays a chart availability message.
 
 Timing components overlap and are never stacked into a wall-time breakdown.
 Vision LLM metrics use an image-observation heuristic, screenshot timing covers
@@ -1253,8 +1273,10 @@ zero. The runner reads this episode total and publishes cost distributions to
 Langfuse; it does not estimate cost from token prices or use Experiment replay
 costs. Older runs without recorded cost remain unavailable. Episode model-call
 counts and elapsed times also supplement history, including compaction and
-failed calls. Vision-specific timings still require history evidence.
-The runner does not populate an Agent retry count. Reported
+failed calls. The dashboard omits first-token latency, vision-specific duration,
+replans, and retries: the normal benchmark path does not provide reliable
+measurements for these fields. They remain part of the raw metric schema for
+consumers that have explicit instrumentation. Reported
 run cost and token sums remain in the source snapshot; they cover recorded
 samples and are not necessarily complete totals.
 
@@ -1274,13 +1296,16 @@ environment, and skipped attempts are labeled separately from eligible failures.
 An attempt without a recorded reason is labeled explicitly.
 
 The dashboard enables `fetch_benchmark_history(include_failure_details=True)`.
-It reads paginated SDK dataset-run items only for each dataset's latest run in
-the last seven days, then follows each item's exact linked evaluation observation
-or replay trace output. Historical aggregate scores remain the trend source.
+It reads paginated SDK experiment items, including their benchmark inputs and
+outputs, only for each dataset's latest run in the last seven days. Historical
+aggregate scores remain the trend source.
 Local current-run results supply the same normalized evidence. Inspected/expected
 attempt counts distinguish complete, partial, and unavailable details; missing
 outputs never imply that all tasks passed. Previously saved snapshots without
-these fields show unavailable details until refreshed from Langfuse.
+these fields show unavailable details until refreshed from Langfuse. HTML and
+JSON reports are static snapshots: a failed API read remains visible in that
+report even after the API recovers. Regenerate the report without
+`--history-json` to fetch fresh evidence; reusing a snapshot does not retry reads.
 
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks,
 with total tasks shown separately for coverage. Workflow attempts remain
@@ -1304,7 +1329,17 @@ To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
 cd benchmark
 uv run python -m ci.generate_dashboard \
   --output dashboard.html --data-output dashboard-data.json \
-  --weekly-output weekly-report.md --lookback-days 30
+  --lookback-days 14
+
+# Weekly report (requires 14 days)
+uv run python -m ci.generate_dashboard \
+  --output dashboard.html --data-output dashboard-data.json \
+  --weekly-output weekly-report.md --lookback-days 14
+
+# Send Lark notification (requires LARK_WEBHOOK_URL and LARK_WEBHOOK_SECRET)
+uv run python -m ci.notify_lark \
+  --data-json dashboard-data.json \
+  --run-url "https://github.com/owner/repo/actions/runs/123"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are
