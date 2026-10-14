@@ -127,13 +127,22 @@ jobs:
           if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
               raise SystemExit("BENCHMARK_REPORT_BASE_URL must be an HTTPS base URL without credentials, query, or fragment.")
           url = f"{base}/benchmark/weekly/{os.environ['GITHUB_RUN_NUMBER']}/dashboard.html"
-          with urllib.request.urlopen(url, timeout=30) as response:
-              if response.headers.get_content_type() != "text/html":
-                  raise SystemExit("Preview URL did not return HTML.")
-              if response.headers.get("Content-Disposition", "").lower().startswith("attachment") or response.headers.get("x-oss-force-download", "").lower() == "true":
-                  raise SystemExit("Preview URL still forces a download. Configure a custom domain or reverse proxy.")
-              if hashlib.sha256(response.read()).digest() != hashlib.sha256(Path("dashboard.html").read_bytes()).digest():
-                  raise SystemExit("Preview URL does not serve this run's dashboard.")
+          request = urllib.request.Request(url, headers={
+              "User-Agent": "Mozilla/5.0 (compatible; benchmark-weekly-report)",
+              "Accept": "text/html,application/xhtml+xml",
+          })
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  if response.headers.get_content_type() != "text/html":
+                      raise SystemExit(f"Preview URL returned {response.headers.get_content_type()}, expected text/html.")
+                  if response.headers.get("Content-Disposition", "").lower().startswith("attachment") or response.headers.get("x-oss-force-download", "").lower() == "true":
+                      raise SystemExit("Preview URL still forces a download. Configure a custom domain or reverse proxy.")
+                  if hashlib.sha256(response.read()).digest() != hashlib.sha256(Path("dashboard.html").read_bytes()).digest():
+                      raise SystemExit("Preview URL does not serve this run's dashboard.")
+          except urllib.error.HTTPError as e:
+              raise SystemExit(f"Preview URL returned HTTP {e.code}: {e.reason}. Check OSS bucket read permissions and CDN/domain configuration.") from None
+          except urllib.error.URLError as e:
+              raise SystemExit(f"Failed to reach preview URL: {e.reason}") from None
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"dashboard_url={url}\n")
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
