@@ -1,6 +1,9 @@
 name: Benchmark Weekly Report
 
 on:
+  push:
+    branches:
+      - worktree-benchmark-weekly-report
   schedule:
     # Every Thursday at 01:07 UTC (09:07 Asia/Shanghai).
     - cron: '7 1 * * 4'
