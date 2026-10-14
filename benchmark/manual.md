@@ -1161,182 +1161,95 @@ At the end of a run, the runner tries to upload the report to the agent board's
 The daily benchmark workflow generates `dashboard.html` and
 `dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai), ahead of the
-weekly meeting. It reads `main` history from Langfuse only, writes
-`weekly-report.md` to the step summary, keeps the HTML and JSON artifacts for
-90 days, and sends a Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
-`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. Historical data comes exclusively from Langfuse v4
-`experiments.list()` and `scores_v3.get_many_v3()`, with cursor pagination for
-both. Dataset-run read endpoints are unavailable in v4 `events_only` mode.
-Embedded experiment scores are limited to 50, so reporting queries the separate
-scores endpoint instead. GitHub Actions artifacts are never downloaded to
-collect history; their retention does not constrain the report's lookback.
-The weekly report runs on GitHub-hosted `ubuntu-latest` with direct network
-access. `BENCHMARK_HTTPS_PROXY` is used only by the self-hosted benchmark runner;
-its private-network proxy is not reachable from GitHub-hosted runners.
+weekly meeting. It reads `main` history from Langfuse, writes `weekly-report.md`
+to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
+Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
+`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. Historical data comes
+from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
+downloaded.
 
 For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
-bucket (including DNS and its TLS certificate), or serve the report through an
-existing HTTPS reverse proxy. Set the repository Actions variable
-`BENCHMARK_REPORT_BASE_URL` to that origin, for example `https://reports.example.com`.
-The workflow appends `/benchmark/weekly/<run-number>/dashboard.html`. The default
-`firmware-agent.oss-cn-hongkong.aliyuncs.com` domain forces HTML downloads even
-with `Content-Type: text/html` and `Content-Disposition: inline`; changing object
-metadata alone cannot enable preview. See the [OSS force-download documentation](https://help.aliyun.com/zh/oss/user-guide/0048-00000001).
-After uploading, the workflow checks the preview response headers and verifies
-that the served HTML matches this run before publishing its link or sending Lark.
-Without `BENCHMARK_REPORT_BASE_URL`, files are still uploaded but notifications
-are skipped with a configuration warning.
+bucket, or serve the report through an existing HTTPS reverse proxy. Set the
+repository Actions variable `BENCHMARK_REPORT_BASE_URL` to that origin, for
+example `https://reports.example.com`. The workflow appends
+`/benchmark/weekly/<run-number>/dashboard.html`. Without
+`BENCHMARK_REPORT_BASE_URL`, files are still uploaded but notifications are
+skipped with a configuration warning.
 
-Completed current-run metrics on disk supplement Langfuse while publication is
-delayed or fails. Local results replace the same suite/run once, without double
-counting. Historical publication failures are unavailable in Langfuse and cannot
-be inferred from its experiment list. API failures, missing score counts, and
-unreadable local runs appear explicitly as data availability warnings. Unknown
-metrics remain unknown rather than becoming zero or bridging a chart gap.
+Completed current-run metrics supplement Langfuse while publication is delayed
+or fails. API failures, missing measurements, and unreadable local runs appear
+as data availability warnings. Unknown metrics remain unknown rather than
+becoming zero.
 
 The dashboard focuses on individual datasets (each published benchmark suite
-maps to a Langfuse dataset). The default **Latest results** tab shows one overview
-table with highlighted changes, mean tool and LLM calls per eligible attempt,
-and p50 task execution time, followed by task-level failure details. Each efficiency
-cell shows its measured sample count over eligible attempts; unavailable measurements
-remain visible. Data coverage and expandable warnings sit within the overview.
-The overview's introductory note links to the newest dataset run's commit once;
-each row's Latest run cell shows its run time.
-**Weekly trends**
-contains the selected dataset's trend and performance
-charts. Run details and history are collapsed by default. Clicking a dataset in an overview row
-opens its Weekly trends tab. Switching tabs preserves the selected dataset and
-visible metrics; arrow keys, Home, and End also navigate the tabs.
-The displayed window is always the seven days before report generation (start
-inclusive, end exclusive). Older records remain in the JSON source snapshot
-for the weekly report's preceding-week baseline, but do not appear in dashboard
-charts, latest-result cards, comparisons, or run tables.
-The most recently run dataset is selected initially. Each chart point represents
-one dataset run, including separate workflow retries and runs with missing
-scores; it is not the pooled workflow rate. The overview shows the latest
-result and observed metric changes for every dataset.
+maps to a Langfuse dataset). The default **Latest results** tab shows one
+overview table with highlighted changes, mean tool and LLM calls per eligible
+attempt, and p50 task execution time, followed by task-level failure details.
+**Weekly trends** contains the selected dataset's pass@1 / pass@k trends and
+performance charts. Clicking a dataset in an overview row opens its Weekly
+trends tab. The displayed window is the seven days before report generation. The
+most recently run dataset is selected initially. Each chart point represents one
+dataset run; hover over points for commit, branch, model, k and eligible task
+counts.
 
-The overview table compares each dataset's newest two runs in the display
-window across all three pass metrics, highlighting every increase or decrease
-without the regression detector's five-point threshold. Changed datasets appear
-first, ordered by the largest absolute change across the three metrics; their
-original dataset selection identities remain stable. A dataset can have
-mixed changes. Missing scores or a missing previous run are unavailable, not
-unchanged; comparisons never skip over an unmeasured previous run. The overview
-summarizes configuration uncertainty without repeating a status and run count
-in every row. Expand **Run details** in Weekly trends to inspect the comparison
-status and the latest two runs' commit, branch, model, platform, k, and reported
-Git changes. Observed changes with changed or unverified configurations do not establish a performance
-improvement or regression. Weekly regression comparisons still require matching
-configuration metadata.
+The overview table compares each dataset's newest two runs across pass@1,
+pass@k, and pass^k, highlighting increases and decreases. Changed datasets
+appear first. Missing scores or a missing previous run show as unavailable.
+Expand **Run details** in Weekly trends to inspect the comparison status and the
+latest two runs' commit, branch, model, platform, k, and Git dirty flag.
 
-The trend chart uses three distinct solid colors for pass@1, pass@k (at least
-one of the first k attempts passes), and pass^k (all first k attempts pass).
-Click legend labels to show or hide individual metrics; hover over points for
-commit, branch, model, k and eligible task counts. Missing scores leave gaps.
-The two k-attempt rates require a full eligible set of k attempts and use their
-own eligible task counts. Configuration or workload changes can affect the
-trend; check Run details before interpreting a change.
+Weekly trends also includes charts for task execution latency (p50 and p90),
+mean tool/device/LLM calls per attempt, recorded timing components (p50), token
+distributions, explicitly measured monetary cost, and tool errors. Each chart
+shows the latest value and sample count over eligible attempts; tooltips expose
+the same coverage for historical points. Distributions include measured eligible
+attempts, including failures. Zero samples produce missing points; measured
+zeros remain zero.
 
-Measurement panels, legend entries, and latest-value summaries remain visible
-even when a metric has no measurements in the seven-day window. Such series
-are labeled **no data**, values show **Unavailable**, and empty charts explain
-the missing measurements. This makes gaps in instrumentation visible. Measured
-zeros remain zero; missing values never become zero or bridge a chart gap.
-The latest commit card links to the selected dataset's newest commit and shows
-k. Duplicate latest efficiency cards are omitted; performance charts provide
-the measurements and Run details provides additional provenance.
+Latest results supports filters for declined/mixed scores, improvements,
+failed/excluded attempts, and incomplete data. Filters apply to both the
+overview and failure details.
 
-The overview is the single latest-score comparison; scores describe different
-task sets and are not a controlled ranking. Eligible task counts remain in
-trend chart tooltips.
-
-Weekly trends also includes separate charts for task execution latency (p50 and
-p90), mean tool/device/LLM calls per attempt, recorded timing components (p50),
-token distributions, explicitly measured monetary cost, and tool errors.
-All lines follow the selected dataset's runs within the seven-day
-window. Each chart shows the latest value and its numeric sample count over
-eligible attempts; tooltips expose the same coverage for historical points.
-Distributions include measured eligible attempts, including failures, and are
-not percentiles of successful completions alone. Run-level percentiles are not
-averaged into a weekly percentile. Zero samples produce missing points, while
-measured zero durations or counts remain zero.
-
-Latest results supports filters for declined/mixed scores,
-improvements, failed/excluded attempts, and incomplete latest data. Filters apply
-to both the overview and failure details. Declined/mixed datasets appear first.
-Each overview row links directly to its task details; the dataset name opens
-Weekly trends. Trends and failure details provide reciprocal navigation for the
-same dataset. Opening a specific dataset's details clears overview filters so
-the destination remains visible.
-
-Metric navigation jumps to a chart or expands run history. Measurement
-definitions are expandable, and charts without measurements use a compact
+Metric definitions are expandable, and charts without measurements use a compact
 unavailable state while retaining latest values and sample coverage. Reading
-notes group comparison caveats and data warnings; their summary shows the
-warning count. If Chart.js cannot load, the dashboard retains run values and
-links and displays a chart availability message.
+notes group comparison caveats and data warnings.
 
-Timing components overlap and are never stacked into a wall-time breakdown.
-Vision LLM metrics use an image-observation heuristic, screenshot timing covers
-runner captures, and device execution timing requires recorded action durations.
-The Agent preserves OpenAI-compatible `usage.cost` (including OpenRouter's USD
-billing), sums provider-reported costs across the task's model calls, and records
-the total and `cost_source=provider_reported` in the episode. Every call must
-supply a finite, nonnegative cost; missing billing, failed calls without billing,
-and text-only calls leave the task cost unknown. Explicitly free calls remain
-zero. The runner reads this episode total and publishes cost distributions to
-Langfuse; it does not estimate cost from token prices or use Experiment replay
-costs. Older runs without recorded cost remain unavailable. Episode model-call
-counts and elapsed times also supplement history, including compaction and
-failed calls. The dashboard omits first-token latency, vision-specific duration,
-replans, and retries: the normal benchmark path does not provide reliable
-measurements for these fields. They remain part of the raw metric schema for
-consumers that have explicit instrumentation. Reported
-run cost and token sums remain in the source snapshot; they cover recorded
-samples and are not necessarily complete totals.
+Timing components overlap and are not stacked. Vision LLM metrics use an
+image-observation heuristic. The Agent preserves OpenAI-compatible `usage.cost`
+(including OpenRouter's USD billing) and sums provider-reported costs across the
+task's model calls. Every call must supply a finite, nonnegative cost; missing
+billing leaves the task cost unknown. Explicitly free calls remain zero. The
+runner publishes cost distributions to Langfuse. Episode model-call counts and
+elapsed times also supplement history, including compaction and failed calls.
 
 See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md) for
-measurement boundaries. Record-specific data warnings use the same seven-day
-display window; API-wide errors remain visible regardless of scope.
+measurement boundaries.
 
-Latest results also groups **Failure details** by dataset, with the most recent
-dataset containing failures expanded initially. Each task/attempt shows its
-recorded execution error, failed hard assertion (expected and actual values),
-rubric reason, or failed trace check. Additional evidence includes the Agent's
-final response and recorded event reference; trace links open Langfuse. The
-additional details also include the failure class and stage. Commit and run time
-appear in the overview instead of being repeated in each dataset's failure section.
-These are recorded evaluation findings, not inferred root causes. Excluded evaluation,
-environment, and skipped attempts are labeled separately from eligible failures.
-An attempt without a recorded reason is labeled explicitly.
+Latest results also groups **Failure details** by dataset. Each task/attempt
+shows its recorded execution error, failed hard assertion (expected and actual
+values), rubric reason, or failed trace check. Additional evidence includes the
+Agent's final response; trace links open Langfuse. The additional details also
+include the failure class and stage. These are recorded evaluation findings, not
+inferred root causes. Excluded attempts are labeled separately from eligible
+failures.
 
-The dashboard enables `fetch_benchmark_history(include_failure_details=True)`.
-It reads paginated SDK experiment items, including their benchmark inputs and
-outputs, only for each dataset's latest run in the last seven days. Historical
-aggregate scores remain the trend source.
-Local current-run results supply the same normalized evidence. Inspected/expected
-attempt counts distinguish complete, partial, and unavailable details; missing
-outputs never imply that all tasks passed. Previously saved snapshots without
-these fields show unavailable details until refreshed from Langfuse. HTML and
-JSON reports are static snapshots: a failed API read remains visible in that
-report even after the API recovers. Regenerate the report without
-`--history-json` to fetch fresh evidence; reusing a snapshot does not retry reads.
+The dashboard reads task-level failure evidence for each dataset's latest run in
+the last seven days. Local current-run results supply the same evidence.
+Inspected/expected attempt counts distinguish complete, partial, and unavailable
+details; missing outputs do not imply that all tasks passed.
 
-Pass@1 uses first-attempt successes divided by eligible first-attempt tasks,
-with total tasks shown separately for coverage. Workflow attempts remain
-separate. Regressions require the same branch, suite hash, workload hash, metrics
-schema, `k`, agent model, judge provider/model/prompt version, platform, and
-active skills. Dirty runs and runs missing required configuration metadata are
-excluded from comparisons. Changing configuration is not reported as regression.
+Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
+Regressions require the same branch, suite hash, workload hash, metrics schema,
+`k`, agent model, judge provider/model/prompt version, platform, and active
+skills. Dirty runs and runs missing configuration metadata are excluded from
+comparisons.
 
 The weekly report compares rolling UTC windows: the last seven days versus the
-preceding seven days. Its overall rates describe each window's task mix; changes
-are computed only within matching suite/configuration groups. Cost and token
-totals are reported only when every included suite run supplies them with numeric
-sample counts covering every eligible attempt. Partial recorded sums remain in
-the source snapshot but do not masquerade as complete weekly totals. The report
-is included in the Actions job summary, independently of artifact upload.
+preceding seven days. Overall rates describe each window's task mix; changes are
+computed only within matching suite/configuration groups. Cost and token totals
+are reported only when every included suite run supplies them with sample counts
+covering every eligible attempt. The report is included in the Actions job
+summary.
 
 To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
 `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` as for `publish-langfuse`:
