@@ -353,16 +353,11 @@ class ToolsAPIHandler:
 
         except TimeoutError:
             duration_ms = int((time.time() - started_at) * 1000)
-            output = "tool execution timed out"
-            if tool_name == "touch_gesture":
-                # Cancellation releases any held contact; a later drag_release
-                # would otherwise fail with no active contact.
-                output += "; any active touch contact was released"
             self._send_json(
                 handler,
                 504,
                 {
-                    "output": output,
+                    "output": "tool execution timed out",
                     "is_error": True,
                     "error": "timeout",
                     "duration_ms": duration_ms,

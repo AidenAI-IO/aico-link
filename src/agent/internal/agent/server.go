@@ -801,12 +801,34 @@ func validateBridgeEndpointNotSelf(endpoint string, listener net.Addr) error {
 	if port, err := strconv.Atoi(parsed.Port()); err != nil || port != listenAddr.Port {
 		return nil
 	}
-	host := parsed.Hostname()
-	ip := net.ParseIP(host)
-	if strings.EqualFold(host, "localhost") || (ip != nil && (ip.IsLoopback() || ip.IsUnspecified() || ip.Equal(listenAddr.IP))) {
-		return fmt.Errorf("environment bridge endpoint %q points to the agent listener", endpoint)
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	targets, err := net.DefaultResolver.LookupIPAddr(lookupCtx, parsed.Hostname())
+	if err != nil {
+		// An unreachable bridge is reported on use; reject only endpoints that
+		// provably resolve to this listener.
+		return nil
+	}
+	var localAddrs []net.Addr
+	if listenAddr.IP == nil || listenAddr.IP.IsUnspecified() {
+		// A wildcard listener also answers on every local interface address.
+		localAddrs, _ = net.InterfaceAddrs()
+	}
+	for _, target := range targets {
+		if target.IP.IsLoopback() || target.IP.IsUnspecified() || target.IP.Equal(listenAddr.IP) || ipInAddrs(target.IP, localAddrs) {
+			return fmt.Errorf("environment bridge endpoint %q points to the agent listener", endpoint)
+		}
 	}
 	return nil
+}
+
+func ipInAddrs(ip net.IP, addrs []net.Addr) bool {
+	for _, addr := range addrs {
+		if network, ok := addr.(*net.IPNet); ok && network.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleChat handles chat requests.

@@ -362,7 +362,6 @@ def test_timed_out_drag_screenshot_releases_active_contact():
         with pytest.raises(HTTPError) as exc_info:
             urlopen(req, timeout=2)
         assert exc_info.value.code == 504
-        assert "touch contact was released" in json.loads(exc_info.value.read())["output"]
         assert observing.wait(timeout=1)
         assert released.wait(timeout=1)
         assert not state.input.contact_active

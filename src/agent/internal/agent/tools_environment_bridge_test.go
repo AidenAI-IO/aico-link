@@ -49,6 +49,31 @@ func TestEnvironmentBridgeRejectsOwnAgentListener(t *testing.T) {
 	}
 }
 
+func TestEnvironmentBridgeRejectsLocalInterfaceAddressOnWildcardListener(t *testing.T) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("list interface addresses: %v", err)
+	}
+	var local net.IP
+	for _, addr := range addrs {
+		if network, ok := addr.(*net.IPNet); ok && !network.IP.IsLoopback() && network.IP.To4() != nil {
+			local = network.IP
+			break
+		}
+	}
+	if local == nil {
+		t.Skip("no non-loopback IPv4 interface address")
+	}
+	endpoint := "http://" + net.JoinHostPort(local.String(), "8080")
+	if err := validateBridgeEndpointNotSelf(endpoint, &net.TCPAddr{IP: net.IPv4zero, Port: 8080}); err == nil {
+		t.Fatalf("validateBridgeEndpointNotSelf(%q) on wildcard listener = nil; want rejection", endpoint)
+	}
+	// A listener bound to loopback only does not answer on interface addresses.
+	if err := validateBridgeEndpointNotSelf(endpoint, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080}); err != nil {
+		t.Fatalf("validateBridgeEndpointNotSelf(%q) on loopback listener = %v; want nil", endpoint, err)
+	}
+}
+
 func TestServerStartRejectsBridgeEndpointPointingAtItself(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
