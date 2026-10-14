@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import types
+from concurrent.futures import Future
 import urllib.error
 import urllib.request
 from enum import Enum
@@ -20,6 +21,7 @@ from mobilegym.bridge.server import (
     DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC,
     SCREENSHOT_PROVIDER_TIMEOUT_SEC,
 )
+from mobilegym.bridge.tools_api import future_result
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nmobilegym-png"
@@ -441,6 +443,39 @@ def test_setup_rejects_invalid_foreground_app_id(value):
         assert status == 400
         assert body["error"]["code"] == "bad_request"
         assert bridge.env.reset_calls == 0
+
+
+@pytest.mark.parametrize("completion_phase", ["before_done", "before_cancel"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_wait_timeout_preserves_concurrent_completion(completion_phase, fails):
+    class CompletingFuture(Future):
+        first_wait = True
+
+        def complete(self):
+            if fails:
+                self.set_exception(TimeoutError("phase=waitForData timeout"))
+            else:
+                self.set_result("completed")
+
+        def result(self, timeout=None):
+            if self.first_wait:
+                self.first_wait = False
+                if completion_phase == "before_done":
+                    self.complete()
+                raise TimeoutError("caller wait expired")
+            return super().result(timeout)
+
+        def cancel(self):
+            self.complete()
+            return super().cancel()
+
+    future = CompletingFuture()
+    if fails:
+        with pytest.raises(TimeoutError, match="phase=waitForData"):
+            future_result(future, timeout=0.01)
+    else:
+        assert future_result(future, timeout=0.01) == "completed"
+    assert not future.cancelled()
 
 
 def test_setup_timeout_preserves_mobilegym_phase_diagnostic():

@@ -83,13 +83,17 @@ def extract_step_screenshots(history: list[dict[str, Any]]) -> list[tuple[str, s
 def tool_result_evidence(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep execution outcomes for judging, without duplicating inline images."""
     results = []
+    last_tool_name = ""
     for msg in history:
+        if msg.get("type") == "tool_call":
+            last_tool_name = msg.get("tool_name", "")
         if msg.get("type") != "tool_result":
             continue
         result = dict(msg)
         content = _safe_loads(msg.get("content", ""))
         if isinstance(content, dict) and isinstance(content.get("data"), str) and (
             "width" in content or "format" in content
+            or (msg.get("tool_name") or last_tool_name) in {"screenshot", "touch_gesture"}
         ):
             content = {key: value for key, value in content.items() if key != "data"}
             result["content"] = json.dumps(content, ensure_ascii=False)

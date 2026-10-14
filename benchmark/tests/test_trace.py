@@ -1,3 +1,7 @@
+import json
+
+import pytest
+
 from runner.models import ToolCall, Trace
 from runner.trace import extract_trace, extract_step_screenshots, trace_has_skill_read
 
@@ -99,3 +103,27 @@ def test_handoff_is_detected_from_result_not_just_attempted_call():
     assert not human_handoff_requested([{"type": "tool_call", "tool_name": "request_user_action"}])
     assert human_handoff_requested([{"type": "tool_result", "tool_name": "request_user_action",
         "content": '{"status":"HUMAN_HANDOFF_REQUESTED","reason":"stuck"}'}])
+
+
+@pytest.mark.parametrize("tool", ["screenshot", "touch_gesture"])
+@pytest.mark.parametrize("result_has_tool_name", [False, True])
+def test_tool_result_evidence_removes_data_only_images(tool, result_has_tool_name):
+    from runner.trace import tool_result_evidence
+
+    result = {"type": "tool_result", "content": '{"data":"BASE64_IMAGE","action_output":"ok"}'}
+    if result_has_tool_name:
+        result["tool_name"] = tool
+    history = [{"type": "tool_call", "tool_name": tool}, result]
+
+    evidence = tool_result_evidence(history)
+
+    assert json.loads(evidence[0]["content"]) == {"action_output": "ok"}
+    assert "BASE64_IMAGE" in history[1]["content"]
+
+
+def test_tool_result_evidence_preserves_non_image_data():
+    from runner.trace import tool_result_evidence
+
+    history = [{"type": "tool_result", "tool_name": "skill_read", "content": '{"data":"skill contents"}'}]
+
+    assert tool_result_evidence(history) == history

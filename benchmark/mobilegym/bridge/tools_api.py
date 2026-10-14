@@ -70,8 +70,10 @@ def future_result(future: Any, timeout: float) -> Any:
         # A completed coroutine may itself raise TimeoutError with useful phase
         # diagnostics. Only cancel when the caller stopped waiting first.
         if future.done():
-            raise
-        future.cancel()
+            return future.result()
+        if not future.cancel():
+            # Work completed between the done check and cancellation.
+            return future.result()
         raise TimeoutError("bridge request timed out") from exc
 
 

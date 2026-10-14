@@ -688,8 +688,8 @@ def build_mobilegym_environment_command(
         docker_publish_arg(
             host_bridge_port,
             bridge_port,
-            # The unauthenticated bridge is reachable only through the host
-            # gateway used by Agent containers (or loopback on Docker Desktop).
+            # This avoids LAN-facing host interfaces, but other containers on
+            # the host may also reach this unauthenticated benchmark bridge.
             bind_host=bridge_bind_host,
         ),
         "-v",

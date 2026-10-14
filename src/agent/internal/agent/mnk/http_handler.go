@@ -20,7 +20,7 @@ type HTTPHandler struct {
 func NewHTTPHandler(provider Provider, textProvider ...TextProvider) *HTTPHandler {
 	h := &HTTPHandler{provider: provider}
 	h.textProvider, _ = provider.(TextProvider)
-	if len(textProvider) > 0 {
+	if len(textProvider) > 0 && textProvider[0] != nil {
 		h.textProvider = textProvider[0]
 	}
 	return h

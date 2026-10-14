@@ -254,6 +254,9 @@ host before the daemon starts. MobileGym endpoints also pass a functional
 MobileGym's bridge port must be reachable through the Docker host gateway on
 Linux. Fixed and automatically assigned bridge ports are bound to the Docker
 bridge gateway interface; the simulator web UI remains bound to loopback.
+The bridge is unauthenticated. Gateway binding does not isolate it from other
+containers on the same host; use a trusted benchmark host without untrusted
+workloads sharing the Docker daemon.
 Override `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
 daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
 `/health` success alone does not establish worker connectivity.

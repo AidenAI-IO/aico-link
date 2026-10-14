@@ -168,6 +168,10 @@ Environment variables available when starting the simulator:
 The Docker-published bridge is unauthenticated and is bound only to Docker's
 host-gateway interface on Linux (`docker network inspect bridge` gateway), so
 Agent containers can reach it without exposing it on every host interface.
+This binding does not restrict access to Agent workers: other containers on the
+same host may reach the control port, including automatically assigned ports.
+Use this setup only on a trusted benchmark host. It does not provide isolation
+from untrusted workloads sharing the Docker daemon.
 Docker Desktop on macOS and Windows keeps the binding on loopback. Set
 `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` to the address that `host.docker.internal`
 resolves to from Agent containers when the default lookup does not match it:
