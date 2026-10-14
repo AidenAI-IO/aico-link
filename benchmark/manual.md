@@ -1163,8 +1163,8 @@ The daily benchmark workflow generates `dashboard.html` and
 workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai), ahead of the
 weekly meeting. It reads `main` history from Langfuse only, writes
 `weekly-report.md` to the step summary, keeps the HTML and JSON artifacts for
-90 days, and sends a Lark card when `LARK_WEBHOOK_URL` and
-`LARK_WEBHOOK_SECRET` are configured. Historical data comes exclusively from Langfuse v4
+90 days, and sends a Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
+`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. Historical data comes exclusively from Langfuse v4
 `experiments.list()` and `scores_v3.get_many_v3()`, with cursor pagination for
 both. Dataset-run read endpoints are unavailable in v4 `events_only` mode.
 Embedded experiment scores are limited to 50, so reporting queries the separate
@@ -1336,7 +1336,7 @@ uv run python -m ci.generate_dashboard \
   --output dashboard.html --data-output dashboard-data.json \
   --weekly-output weekly-report.md --lookback-days 14
 
-# Send Lark notification (requires LARK_WEBHOOK_URL and LARK_WEBHOOK_SECRET)
+# Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
   --run-url "https://github.com/owner/repo/actions/runs/123"

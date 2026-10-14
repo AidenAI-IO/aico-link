@@ -171,11 +171,11 @@ def cli(argv: list[str] | None = None) -> int:
                         help="GitHub Actions run URL for the 'View full report' button")
     args = parser.parse_args(argv)
 
-    webhook_url = os.environ.get("LARK_WEBHOOK_URL")
-    webhook_secret = os.environ.get("LARK_WEBHOOK_SECRET")
+    webhook_url = os.environ.get("BENCHMARK_REPORT_LARK_WEBHOOK_URL")
+    webhook_secret = os.environ.get("BENCHMARK_REPORT_LARK_WEBHOOK_SECRET")
 
     if not webhook_url or not webhook_secret:
-        print("LARK_WEBHOOK_URL or LARK_WEBHOOK_SECRET not set; skipping notification")
+        print("BENCHMARK_REPORT_LARK_WEBHOOK_URL or BENCHMARK_REPORT_LARK_WEBHOOK_SECRET not set; skipping notification")
         return 0
 
     data = json.loads(args.data_json.read_text(encoding="utf-8"))
