@@ -809,13 +809,15 @@ func validateBridgeEndpointNotSelf(endpoint string, listener net.Addr) error {
 		// provably resolve to this listener.
 		return nil
 	}
+	wildcardListener := listenAddr.IP == nil || listenAddr.IP.IsUnspecified()
 	var localAddrs []net.Addr
-	if listenAddr.IP == nil || listenAddr.IP.IsUnspecified() {
+	if wildcardListener {
 		// A wildcard listener also answers on every local interface address.
 		localAddrs, _ = net.InterfaceAddrs()
 	}
 	for _, target := range targets {
-		if target.IP.IsLoopback() || target.IP.IsUnspecified() || target.IP.Equal(listenAddr.IP) || ipInAddrs(target.IP, localAddrs) {
+		if target.IP.Equal(listenAddr.IP) || (wildcardListener &&
+			(target.IP.IsLoopback() || target.IP.IsUnspecified() || ipInAddrs(target.IP, localAddrs))) {
 			return fmt.Errorf("environment bridge endpoint %q points to the agent listener", endpoint)
 		}
 	}

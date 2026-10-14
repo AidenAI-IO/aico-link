@@ -74,6 +74,13 @@ func TestEnvironmentBridgeRejectsLocalInterfaceAddressOnWildcardListener(t *test
 	}
 }
 
+func TestEnvironmentBridgeAllowsLoopbackOnDifferentListenerAddress(t *testing.T) {
+	listener := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 5), Port: 8080}
+	if err := validateBridgeEndpointNotSelf("http://127.0.0.1:8080", listener); err != nil {
+		t.Fatalf("loopback bridge on a different listener address = %v; want nil", err)
+	}
+}
+
 func TestServerStartRejectsBridgeEndpointPointingAtItself(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
