@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,6 +22,28 @@ type recordingBridgeTextProvider struct {
 func (p *recordingBridgeTextProvider) KeyboardText(_ context.Context, text string) error {
 	p.text = text
 	return p.err
+}
+
+func TestEnvironmentBridgeRejectsOwnAgentListener(t *testing.T) {
+	listener := &net.TCPAddr{IP: net.IPv4zero, Port: 8080}
+	for _, tc := range []struct {
+		endpoint string
+		reject   bool
+	}{
+		{endpoint: "http://127.0.0.1:8080", reject: true},
+		{endpoint: "http://127.0.0.1:08080", reject: true},
+		{endpoint: "http://localhost:8080", reject: true},
+		{endpoint: "http://0.0.0.0:8080", reject: true},
+		{endpoint: "http://127.0.0.1:9090", reject: false},
+		{endpoint: "http://192.0.2.5:8080", reject: false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			err := validateBridgeEndpointNotSelf(tc.endpoint, listener)
+			if (err != nil) != tc.reject {
+				t.Fatalf("validateBridgeEndpointNotSelf(%q) = %v; reject=%v", tc.endpoint, err, tc.reject)
+			}
+		})
+	}
 }
 
 func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {

@@ -18,6 +18,43 @@ def _manager_without_discovery(monkeypatch, tmp_path: Path) -> environment.Envir
     return environment.EnvironmentManager(runs_dir=tmp_path / "runs")
 
 
+def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(environment.sys, "platform", "linux")
+
+    def inspect(cmd, text=False, timeout=None):
+        captured["cmd"] = cmd
+        captured["timeout"] = timeout
+        return "172.19.0.1\n"
+
+    monkeypatch.setattr(environment.subprocess, "check_output", inspect)
+
+    assert environment.mobilegym_bridge_bind_host() == "172.19.0.1"
+    assert captured["cmd"] == [
+        "docker", "network", "inspect", "bridge", "--format",
+        "{{(index .IPAM.Config 0).Gateway}}",
+    ]
+    assert captured["timeout"] == 5
+
+
+def test_mobilegym_bridge_bind_is_loopback_on_docker_desktop(monkeypatch):
+    monkeypatch.setattr(environment.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        environment.subprocess,
+        "check_output",
+        lambda *args, **kwargs: pytest.fail("Docker gateway lookup is Linux-only"),
+    )
+
+    assert environment.mobilegym_bridge_bind_host() == "127.0.0.1"
+
+
+def test_mobilegym_bridge_bind_rejects_all_interfaces_override(monkeypatch):
+    monkeypatch.setenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", "0.0.0.0")
+
+    with pytest.raises(RuntimeError, match="no usable IPv4 host gateway"):
+        environment.mobilegym_bridge_bind_host()
+
+
 def test_list_all_coalesces_concurrent_docker_sync(monkeypatch, tmp_path: Path):
     manager = _manager_without_discovery(monkeypatch, tmp_path)
     calls = 0
@@ -65,6 +102,7 @@ def test_recovered_mobilegym_container_is_not_reusable_for_new_runs(monkeypatch,
         lambda container_name, container_port: 19090 if container_port == 9090 else 18173,
     )
     monkeypatch.setattr(environment, "_check_endpoint_health", lambda *args, **kwargs: True)
+    monkeypatch.setattr(environment, "mobilegym_bridge_bind_host", lambda: "172.17.0.1")
     monkeypatch.setattr(
         environment,
         "_docker_inspect_created",

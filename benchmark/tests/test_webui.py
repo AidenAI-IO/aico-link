@@ -2372,6 +2372,7 @@ def test_build_mobilegym_environment_command_starts_preview_and_bridge(tmp_path:
         container_name="aiden-mobilegym-env-test",
         host_web_port=18173,
         host_bridge_port=19090,
+        bridge_bind_host="127.0.0.1",
         benchmark_dir=benchmark_dir,
         parallel_envs=3,
     )
@@ -2379,7 +2380,7 @@ def test_build_mobilegym_environment_command_starts_preview_and_bridge(tmp_path:
     assert cmd[:5] == ["docker", "run", "--rm", "-d", "--name"]
     assert "aiden-mobilegym-env-test" in cmd
     assert "127.0.0.1:18173:4173" in cmd
-    assert "19090:9090" in cmd
+    assert "127.0.0.1:19090:9090" in cmd
     assert f"{benchmark_dir.resolve()}:/app/benchmark:ro" in cmd
     assert "MOBILEGYM_ROOT=/mobilegym" in cmd
     assert "--entrypoint" in cmd
@@ -2413,6 +2414,7 @@ def test_start_mobilegym_environment_returns_docker_reachable_endpoint(tmp_path:
 
     from runner import environment as env_module
 
+    monkeypatch.setattr(env_module, "mobilegym_bridge_bind_host", lambda: "127.0.0.1")
     monkeypatch.setattr(env_module, "ensure_mobilegym_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(env_module, "wait_for_http_health", lambda url, timeout: health_urls.append((url, timeout)))
     monkeypatch.setattr(env_module, "start_docker_logs", lambda *args, **kwargs: None)
@@ -2441,8 +2443,7 @@ def test_start_mobilegym_environment_returns_docker_reachable_endpoint(tmp_path:
     assert health_urls == [("http://127.0.0.1:19090/health", webui.DEFAULT_MOBILEGYM_READY_TIMEOUT_SEC)]
     assert commands and "aiden-mobilegym-env-" in commands[0][5]
     assert "127.0.0.1::4173" in commands[0]
-    assert "9090" in commands[0]
-    assert "127.0.0.1::9090" not in commands[0]
+    assert "127.0.0.1::9090" in commands[0]
     assert "--parallel-envs 2" in commands[0][-1]
 
 
@@ -2458,6 +2459,7 @@ def test_start_mobilegym_environment_defaults_to_five_envs(tmp_path: Path, monke
 
     from runner import environment as env_module
 
+    monkeypatch.setattr(env_module, "mobilegym_bridge_bind_host", lambda: "127.0.0.1")
     monkeypatch.setattr(env_module, "ensure_mobilegym_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(env_module, "wait_for_http_health", lambda *args, **kwargs: None)
     monkeypatch.setattr(env_module, "start_docker_logs", lambda *args, **kwargs: None)

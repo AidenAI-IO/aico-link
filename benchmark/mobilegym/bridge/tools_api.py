@@ -11,6 +11,7 @@ import json
 import math
 import time
 from collections.abc import Awaitable, Callable
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -752,30 +753,40 @@ class ToolsAPIHandler:
             state.require_active(episode_id)
             started = time.monotonic()
             try:
-                await invoke()
-            except Exception as exc:
+                try:
+                    await invoke()
+                except Exception as exc:
+                    state.log_action(
+                        tool_name=tool_name, tool_input=tool_input,
+                        mobilegym_action={"type": "input"},
+                        duration_ms=int((time.monotonic() - started) * 1000),
+                        error=str(exc), episode_id=episode_id,
+                    )
+                    return {"output": str(exc), "is_error": True}
+                screenshot = _encode_observation_screenshot(await _maybe_await(env.get_observation()))
                 state.log_action(
                     tool_name=tool_name, tool_input=tool_input,
                     mobilegym_action={"type": "input"},
                     duration_ms=int((time.monotonic() - started) * 1000),
-                    error=str(exc), episode_id=episode_id,
+                    error=None, episode_id=episode_id, screenshot=screenshot,
                 )
-                return {"output": str(exc), "is_error": True}
-            screenshot = _encode_observation_screenshot(await _maybe_await(env.get_observation()))
-            state.log_action(
-                tool_name=tool_name, tool_input=tool_input,
-                mobilegym_action={"type": "input"},
-                duration_ms=int((time.monotonic() - started) * 1000),
-                error=None, episode_id=episode_id, screenshot=screenshot,
-            )
-            output = {
-                "action_output": "ok", "data": screenshot["data"],
-                "width": screenshot["width"], "height": screenshot["height"],
-                "format": screenshot.get("format", "jpeg"),
-            }
-            return {"output": json.dumps(output), "is_error": False}
+                output = {
+                    "action_output": "ok", "data": screenshot["data"],
+                    "width": screenshot["width"], "height": screenshot["height"],
+                    "format": screenshot.get("format", "jpeg"),
+                }
+                return {"output": json.dumps(output), "is_error": False}
+            except asyncio.CancelledError:
+                if state.input.contact_active:
+                    await state.input.release()
+                raise
         future = asyncio.run_coroutine_threadsafe(state.run_env(execute), state.owner_loop)
-        return future.result(timeout=self.request_timeout_sec)
+        try:
+            return future.result(timeout=self.request_timeout_sec)
+        except FutureTimeoutError:
+            if not future.done():
+                future.cancel()
+            raise
 
     def _execute_action(
         self,

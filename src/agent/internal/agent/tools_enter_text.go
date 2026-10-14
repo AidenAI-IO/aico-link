@@ -188,8 +188,10 @@ func enterTextToolFailure(ctx context.Context, code, suggestion string) string {
 }
 
 func enterTextFailureSuggestion(result textInputResult) string {
-	reason := strings.ToLower(result.Reason)
-	if strings.Contains(reason, "remote keyboard input failed") || strings.Contains(reason, "mnk operation failed") || strings.Contains(reason, "open /dev/") {
+	if strings.Contains(strings.ToLower(result.Reason), "deadline") || strings.Contains(strings.ToLower(result.Reason), "timeout") {
+		return "Retry enter_text; if it times out again, enter a shorter section at a time."
+	}
+	if result.BackendFailure {
 		return "The input backend could not execute keyboard input. Refocusing will not fix this; report the input connection or unsupported operation."
 	}
 	if result.WrongIMESuspected {
@@ -197,9 +199,6 @@ func enterTextFailureSuggestion(result textInputResult) string {
 	}
 	if strings.TrimSpace(result.FieldText) != "" {
 		return "Inspect the latest screen and correct or clear the existing field text before retrying enter_text."
-	}
-	if strings.Contains(strings.ToLower(result.Reason), "deadline") || strings.Contains(strings.ToLower(result.Reason), "timeout") {
-		return "Retry enter_text; if it times out again, enter a shorter section at a time."
 	}
 	return "Inspect the latest screen, refocus the target field, then retry enter_text."
 }

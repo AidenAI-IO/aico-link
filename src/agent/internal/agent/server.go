@@ -678,6 +678,12 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
+	if bridge := s.runtime.ConfigSnapshot().EnvironmentBridge; bridge.Enabled && strings.TrimSpace(bridge.Endpoint) != "" {
+		if err := validateBridgeEndpointNotSelf(bridge.Endpoint, listener.Addr()); err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	s.httpMu.Lock()
 	if s.closing.Load() {
 		s.httpMu.Unlock()
@@ -778,6 +784,66 @@ func isLoopbackServerAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+func validateBridgeEndpointNotSelf(endpoint string, listener net.Addr) error {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("invalid environment bridge endpoint %q", endpoint)
+	}
+	listenAddr, ok := listener.(*net.TCPAddr)
+	if !ok {
+		return fmt.Errorf("unexpected agent listener address %T", listener)
+	}
+	port := parsed.Port()
+	if port == "" {
+		switch parsed.Scheme {
+		case "http":
+			port = "80"
+		case "https":
+			port = "443"
+		default:
+			return fmt.Errorf("invalid environment bridge endpoint scheme %q", parsed.Scheme)
+		}
+	}
+	endpointPort, err := strconv.Atoi(port)
+	if err != nil {
+		return fmt.Errorf("invalid environment bridge endpoint port %q: %w", port, err)
+	}
+	if endpointPort != listenAddr.Port {
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	addresses, err := net.DefaultResolver.LookupIPAddr(lookupCtx, parsed.Hostname())
+	if err != nil {
+		// An unavailable remote bridge is reported by the provider on use; only
+		// reject an endpoint when resolution proves it is this listener.
+		return nil
+	}
+	var localAddrs []net.Addr
+	if len(listenAddr.IP) == 0 || listenAddr.IP.IsUnspecified() {
+		localAddrs, err = net.InterfaceAddrs()
+		if err != nil {
+			return nil
+		}
+	}
+	for _, target := range addresses {
+		if target.IP.IsUnspecified() || listenAddr.IP.Equal(target.IP) ||
+			(len(localAddrs) > 0 && bridgeTargetIsLocal(target.IP, localAddrs)) {
+			return fmt.Errorf("environment bridge endpoint points to the agent listener")
+		}
+	}
+	return nil
+}
+
+func bridgeTargetIsLocal(target net.IP, addresses []net.Addr) bool {
+	for _, address := range addresses {
+		if network, ok := address.(*net.IPNet); ok && network.IP.Equal(target) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleChat handles chat requests.

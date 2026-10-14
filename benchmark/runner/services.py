@@ -47,6 +47,7 @@ from runner.webui import (
     stop_daemon_compose,
     wait_for_http_health,
 )
+from runner.environment import mobilegym_bridge_bind_host
 
 
 DEFAULT_CLI_RUNS_DIR = BENCHMARK_ROOT / "runs" / "cli-services"
@@ -290,11 +291,13 @@ def cmd_start_mobilegym_env(args: argparse.Namespace) -> int:
 
     try:
         ensure_mobilegym_image(args.mobilegym_image, not args.no_build_mobilegym_image, log_path)
+        bridge_bind_host = mobilegym_bridge_bind_host()
         command = build_mobilegym_environment_command(
             image=args.mobilegym_image,
             container_name=container_name,
             host_web_port=web_port,
             host_bridge_port=bridge_port,
+            bridge_bind_host=bridge_bind_host,
             benchmark_dir=BENCHMARK_ROOT,
             parallel_envs=args.parallel_envs,
         )
@@ -304,7 +307,7 @@ def cmd_start_mobilegym_env(args: argparse.Namespace) -> int:
             web_port = docker_published_port(container_name, 4173)
         if bridge_port == 0:
             bridge_port = docker_published_port(container_name, 9090)
-        public_endpoint = f"http://127.0.0.1:{bridge_port}"
+        public_endpoint = f"http://{bridge_bind_host}:{bridge_port}"
         docker_endpoint = f"http://host.docker.internal:{bridge_port}"
         wait_for_http_health(f"{public_endpoint}/health", args.ready_timeout_sec)
     except Exception as exc:

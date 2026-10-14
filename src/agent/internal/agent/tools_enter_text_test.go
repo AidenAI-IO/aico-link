@@ -976,6 +976,45 @@ func TestEnterTextToolIOSLocalPathRequiresIsolation(t *testing.T) {
 	}
 }
 
+func TestEnterTextFailureSuggestionUsesTypedKeyboardBackendFailure(t *testing.T) {
+	backendSuggestion := "The input backend could not execute keyboard input. Refocusing will not fix this; report the input connection or unsupported operation."
+	if got := enterTextFailureSuggestion(textInputResult{Reason: "remote keyboard input failed"}); got == backendSuggestion {
+		t.Fatal("an untyped reason string must not be classified as a keyboard backend failure")
+	}
+	if got := enterTextFailureSuggestion(textInputResult{BackendFailure: true}); got != backendSuggestion {
+		t.Fatalf("typed backend failure suggestion = %q", got)
+	}
+	if got := enterTextFailureSuggestion(textInputResult{BackendFailure: true, Reason: "context deadline exceeded"}); !strings.Contains(got, "times out") {
+		t.Fatalf("timeout suggestion = %q; want retry guidance", got)
+	}
+}
+
+func TestTextInputEngineMarksOnlyKeyboardExecutionFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code string
+		want bool
+	}{
+		{name: "backend", code: CodeToolExecutionFailed, want: true},
+		{name: "invalid input", code: CodeInvalidArguments, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTextInputEngineWithSleep(textInputHardwareDeps{
+				deviceTypeFn: func() string { return "Android" },
+				keyboardTap:  &recordingTextInputTool{name: "keyboard_tap", out: "ok"},
+				keyboardText: &contextToolErrorStub{name: "keyboard_text", toolErr: NewToolError(tc.code, "unfamiliar error")},
+				screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+			}, &stubTextInputVision{}, testNoWaitSleep)
+			result, err := engine.RunSegmented(context.Background(), textInputArgs{
+				Text: "x", Focus: focusPointArgs{X: 10, Y: 10},
+			})
+			if err != nil || result.BackendFailure != tc.want {
+				t.Fatalf("RunSegmented() = %+v, %v; want backend failure %t", result, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestEnterTextToolBridgeIOSBypassesLocalIsolationRequirement(t *testing.T) {
 	keyboard := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
 	engine := newTextInputEngineWithSleep(textInputHardwareDeps{

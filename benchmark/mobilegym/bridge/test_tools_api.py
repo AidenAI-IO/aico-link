@@ -273,6 +273,105 @@ def test_invoke_keyboard_text(bridge_server):
     assert state.env.actions == []
 
 
+def test_timed_out_keyboard_input_is_cancelled_before_later_actions():
+    import asyncio
+    from urllib.error import HTTPError
+
+    started = Event()
+    cancelled = Event()
+
+    class BlockingKeyboard:
+        def __init__(self):
+            self.typed = []
+
+        async def type(self, text):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            self.typed.append(text)
+
+    class BlockingEnv:
+        def __init__(self):
+            self.page = SimpleNamespace(keyboard=BlockingKeyboard())
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/keyboard_text",
+            data=json.dumps({"input": {"text": "late"}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert started.wait(timeout=1)
+        assert cancelled.wait(timeout=1)
+        assert state.env.page.keyboard.typed == []
+        follow_up = asyncio.run_coroutine_threadsafe(state.run_env(lambda env: "ready"), loop)
+        assert follow_up.result(timeout=1) == "ready"
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+
+def test_timed_out_drag_screenshot_releases_active_contact():
+    import asyncio
+    from urllib.error import HTTPError
+
+    observing = Event()
+    released = Event()
+
+    class BlockingEnv:
+        def __init__(self):
+            self.page = SimpleNamespace(evaluate=self.evaluate)
+
+        async def evaluate(self, _script, payload):
+            if payload["operation"] == "cancel":
+                released.set()
+
+        async def get_observation(self):
+            observing.set()
+            await asyncio.Event().wait()
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-drag-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/touch_gesture",
+            data=json.dumps({"input": {"type": "drag_start", "point": {"x": 200, "y": 300}}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert observing.wait(timeout=1)
+        assert released.wait(timeout=1)
+        assert not state.input.contact_active
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+
 def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server):
     server, base_url, state = bridge_server
     state.active_episode_id = "test-episode-enter-text"

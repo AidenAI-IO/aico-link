@@ -252,8 +252,9 @@ host before the daemon starts. MobileGym endpoints also pass a functional
 `setup` / `release` preflight before workers are created.
 
 MobileGym's bridge port must be reachable through the Docker host gateway on
-Linux. Both fixed and automatically assigned bridge ports are published on the
-host interfaces; the simulator web UI remains bound to loopback. Host-side
+Linux. Fixed and automatically assigned bridge ports are bound to the Docker
+bridge gateway interface; the simulator web UI remains bound to loopback.
+Override `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge. Host-side
 `/health` success alone does not establish worker connectivity.
 
 Auto-started workers receive the bundled skill files under `config/skills`.

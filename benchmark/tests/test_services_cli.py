@@ -8,6 +8,7 @@ from runner import services, webui
 def test_start_mobilegym_env_prints_environment_urls(tmp_path: Path, monkeypatch, capsys):
     commands = []
     health_urls = []
+    monkeypatch.setattr(services, "mobilegym_bridge_bind_host", lambda: "127.0.0.1")
 
     monkeypatch.setattr(services, "ensure_mobilegym_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(services, "wait_for_http_health", lambda url, timeout: health_urls.append((url, timeout)))
@@ -50,13 +51,14 @@ def test_start_mobilegym_env_prints_environment_urls(tmp_path: Path, monkeypatch
     assert text is True
     assert "aiden-mobilegym-simulator:test" in command
     assert "127.0.0.1:18173:4173" in command
-    assert "19090:9090" in command
+    assert "127.0.0.1:19090:9090" in command
     assert "--parallel-envs 3" in command[-1]
 
 
 def test_start_mobilegym_env_uses_docker_assigned_ports_when_auto(tmp_path: Path, monkeypatch, capsys):
     commands = []
     health_urls = []
+    monkeypatch.setattr(services, "mobilegym_bridge_bind_host", lambda: "127.0.0.1")
 
     monkeypatch.setattr(services, "ensure_mobilegym_image", lambda *args, **kwargs: None)
     monkeypatch.setattr(services, "wait_for_http_health", lambda url, timeout: health_urls.append((url, timeout)))
@@ -92,8 +94,7 @@ def test_start_mobilegym_env_uses_docker_assigned_ports_when_auto(tmp_path: Path
     assert health_urls == [("http://127.0.0.1:19090/health", 12)]
     command = commands[0][0]
     assert "127.0.0.1::4173" in command
-    assert "9090" in command
-    assert "127.0.0.1::9090" not in command
+    assert "127.0.0.1::9090" in command
 
 
 def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp_path: Path, monkeypatch, capsys):

@@ -165,6 +165,12 @@ Environment variables available when starting the simulator:
 - `AIDEN_BRIDGE_PORT`: Bridge port (automatically assigned by default)
 - `AIDEN_BRIDGE_PUBLIC_HOST`: Bridge public address (required for Docker)
 
+The Docker-published bridge is unauthenticated and is bound only to Docker's
+host-gateway interface on Linux (`docker network inspect bridge` gateway), so
+Agent containers can reach it without exposing it on every host interface.
+Set `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` when using a non-default Docker network;
+Docker Desktop keeps the binding on loopback.
+
 ## ✅ Validation
 
 ```bash
