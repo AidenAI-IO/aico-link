@@ -187,16 +187,16 @@
 </div>
 <script>
 const DATA = JSON.parse(__DASHBOARD_DATA__);
-const esc = value => String(value ?? "\\u2014").replace(/[&<>"']/g, c => ({
+const esc = value => String(value ?? "—").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
 }[c]));
-const count = value => value === null || value === undefined ? "\\u2014" : value;
-const pct = v => v === null || v === undefined ? "\\u2014" : (v * 100).toFixed(1) + "%";
+const count = value => value === null || value === undefined ? "—" : value;
+const pct = v => v === null || v === undefined ? "—" : (v * 100).toFixed(1) + "%";
 const sha = s => (s || "unknown").slice(0, 8);
 const commitLink = s => DATA.repo && s && s !== "unknown"
   ? `<a href="https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/commit/${encodeURIComponent(s)}" target="_blank" rel="noopener"><code>${esc(sha(s))}</code></a>`
   : `<code>${esc(sha(s))}</code>`;
-const when = t => t ? new Date(t).toLocaleString() : "\\u2014";
+const when = t => t ? new Date(t).toLocaleString() : "—";
 const signed = d => (d > 0 ? "+" : "") + (d * 100).toFixed(1) + " pp";
 const el = id => document.getElementById(id);
 

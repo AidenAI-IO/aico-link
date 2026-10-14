@@ -54,7 +54,7 @@ jobs:
       - name: Generate weekly report
         working-directory: benchmark
         run: |
-          set -uo pipefail
+          set -euo pipefail
           uv run python -m ci.generate_dashboard \
             --output dashboard.html \
             --data-output dashboard-data.json \
