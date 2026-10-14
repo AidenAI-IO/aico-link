@@ -89,12 +89,15 @@ def fetch_benchmark_history(
     local_run_id_prefix: str | None = None,
     client: Any = None,
     now: datetime | None = None,
+    include_failure_details: bool = False,
 ) -> HistoryResult:
     """Fetch every experiment page, then every score page; overlay local runs.
 
     Missing history and scores are reported explicitly. Embedded experiment
     scores are never used: that response truncates each experiment to 50 scores.
     Five experiment IDs share one score query to reduce request overhead.
+    Optional task evidence is fetched only for each dataset's latest run in
+    the dashboard's seven-day window, after applying the local overlay.
     """
     if lookback_days <= 0:
         raise ValueError("lookback_days must be positive")
@@ -163,6 +166,21 @@ def fetch_benchmark_history(
                 record["experiment_id"] = by_identity[identity]["experiment_id"]
             by_identity[identity] = record
     result.records = sorted(by_identity.values(), key=lambda r: r["timestamp"])
+    if include_failure_details:
+        from ci.failure_details import fetch_failure_details
+
+        latest = {}
+        for record in result.records:
+            if now - timedelta(days=7) <= _timestamp(record["timestamp"]) < now:
+                latest[record["suite"]] = record
+        for record in latest.values():
+            if record["source"] == "local":
+                continue
+            record.update(fetch_failure_details(client, experiments[record["experiment_id"]]))
+            if record["failure_details_status"] != "available":
+                result.warnings.append(f"{record['run_id']}: failure details {record['failure_details_status']}: "
+                                       f"{record['failure_details_inspected']} / "
+                                       f"{record['failure_details_expected']} attempt outputs inspected.")
     for record in result.records:
         if record["missing_metrics"]:
             result.warnings.append(f"{record['run_id']}: missing or invalid metrics: "
@@ -278,9 +296,16 @@ def _read_local_runs(runs_dir: Path | None, prefix: str | None, branch_filter: s
             scores = {score["name"]: float(score["value"])
                       for score in _run_scores(artifacts.metrics["aggregate"])
                       if _number(score["value"]) is not None}
-            records.append(_record(metadata=metadata, run_id=metadata["benchmark_run_id"],
+            record = _record(metadata=metadata, run_id=metadata["benchmark_run_id"],
                                    timestamp=timestamp, scores=scores,
-                                   experiment_id=None, source="local"))
+                                   experiment_id=None, source="local")
+            from ci.failure_details import normalize_failure
+            record.update(failure_details=[detail for row in artifacts.results
+                          if (detail := normalize_failure(row, row)) is not None],
+                          failure_details_status="available",
+                          failure_details_inspected=len(artifacts.results),
+                          failure_details_expected=len(artifacts.results))
+            records.append(record)
         except Exception as exc:
             warnings.append(f"{run_dir.name}: local metrics unavailable: {_error(exc)}.")
     return records

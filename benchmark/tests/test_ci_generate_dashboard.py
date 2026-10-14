@@ -210,7 +210,12 @@ def test_dataset_series_preserves_own_timestamps_metrics_and_attempts():
     history = [
         _k_record(suite="a", timestamp="2026-10-10T01:00:00+00:00", run_id="a1",
                   distributions={"tool_calls": {"mean": 4.5, "count": 3}}, eligible_attempts=4,
-                  failure_stages={"unknown": 2}, eligible_failures=2, failure_stage_coverage=0),
+                  failure_stages={"unknown": 2}, eligible_failures=2, failure_stage_coverage=0,
+                  failure_details_status="available", failure_details_inspected=4, failure_details_expected=4,
+                  failure_details=[{"task_id": '<img src=x onerror=alert(1)>', "attempt": 2,
+                    "status": "failed", "agent_eligible": True,
+                    "evidence": [{"kind": "Rubric", "label": "answer", "reason": '<script>alert(1)</script>'}],
+                    "final_response": '<img src=x>', "trace_url": 'javascript:alert(1)'}]),
         _k_record(suite="b", timestamp="2026-10-10T00:00:00+00:00", run_id="b1"),
         _k_record(suite="a", timestamp="2026-10-11T00:00:00+00:00", run_id="a2",
                   workflow_run_attempt=2, pass_pow_k=None, pass_pow_k_successes=None),
@@ -413,14 +418,30 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     generate_dashboard(history=[
         _k_record(suite='<img src=x onerror=alert(1)>', eligible_attempts=4,
                   distributions={"task_wall_ms": {"p50": 14200, "p90": 31500, "count": 3},
+                                 "tool_calls": {"mean": 4.5, "count": 3},
+                                 "llm_calls": {"mean": 0, "count": 4},
                                  "tool_errors": {"mean": 0, "count": 4},
                                  "retry_count": {"mean": 0, "count": 0}},
-                  failure_stages={"unknown": 2}, eligible_failures=2, failure_stage_coverage=0),
+                  failure_stages={"unknown": 2}, eligible_failures=2, failure_stage_coverage=0,
+                  failure_details_status="available", failure_details_inspected=4, failure_details_expected=4,
+                  failure_details=[{"task_id": '<img src=x onerror=alert(1)>', "attempt": 2,
+                    "status": "failed", "agent_eligible": True,
+                    "evidence": [{"kind": "Rubric", "label": "answer", "reason": '<script>alert(1)</script>'}],
+                    "final_response": '<img src=x>', "trace_url": 'javascript:alert(1)'}]),
         _k_record(suite="other", workflow_run_id=2, pass_at_1=0.25, passed=1),
         _k_record(suite="other", workflow_run_id=3, timestamp="2026-10-12T00:00:00+00:00",
                   pass_at_1=None, passed=None, eligible_tasks=None),
-    ], output_file=output, report_end=REPORT_END)
+        _k_record(suite="no_failures", eligible_failures=0, failure_stages={},
+                  failure_details_status="available", failure_details=[], failure_details_inspected=4,
+                  failure_details_expected=4),
+        _k_record(suite="partial_stages", eligible_failures=2,
+                  failure_stages={"tool_execution": 1}, failure_stage_coverage=0.5),
+    ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
+       repo="owner/repo")
     html = output.read_text()
+    assert '<h2>Data availability</h2>' not in html
+    assert 'Latest pass@1 by dataset' not in html
+    assert 'Latest failure stages by dataset' not in html
     script = html.split('<script>')[1].split('</script>')[0]
     prefix = """
 const elements = new Map();
@@ -435,6 +456,7 @@ global.document = {
 global.getComputedStyle = () => ({ getPropertyValue: () => '#fff' });
 global.Chart = function(element, config) {
   this.data = config.data;
+  this.options = config.options;
   this.update = () => {};
   this.resize = () => {};
 };
@@ -463,11 +485,19 @@ if (reliability.data.datasets[0].label !== 'Tool errors' || reliability.data.dat
 if (!elements.get('measurement-summary-reliability').innerHTML.includes('Tool errors') ||
     !elements.get('measurement-summary-reliability').innerHTML.includes('Retries: <b>Unavailable</b>')) process.exit(23);
 if (!elements.get('latest').innerHTML.includes('Latest commit')) process.exit(27);
-if (JSON.stringify(failureChart.data.datasets[0].data) !== '[2]') process.exit(17);
-if (!elements.get('failure-summary').textContent.includes('0.0%')) process.exit(18);
+const overviewHTML = elements.get('suites').innerHTML;
+if (!elements.get('latest-run-note').innerHTML.includes('https://github.com/owner/repo/commit/aaaaaaaa1111') ||
+    overviewHTML.includes('/commit/')) process.exit(36);
+if (!overviewHTML.includes('Tool calls · mean') || !overviewHTML.includes('LLM calls · mean') ||
+    !overviewHTML.includes('Task time · p50') || !overviewHTML.includes('4.5 calls') ||
+    !overviewHTML.includes('0.0 calls') || !overviewHTML.includes('14.2 s') ||
+    !overviewHTML.includes('n=3 / 4') || !overviewHTML.includes('Unavailable')) process.exit(17);
+if (!overviewMeasure(selected, 'retry_count', 'mean', 1, 'calls').includes('Unavailable')) process.exit(18);
+if (!elements.get('availability').innerHTML.includes('1 data warnings') ||
+    !elements.get('availability').innerHTML.includes('&lt;script&gt;')) process.exit(30);
 selectDataset(datasets.findIndex(s => s.suite === 'other'));
 if (latency.data.datasets[0].data.some(v => v !== null)) process.exit(19);
-if (!elements.get('failure-chart-wrap').hidden) process.exit(20);
+if (elements.get('suites').innerHTML !== overviewHTML) process.exit(20);
 if (document.getElementById('measurement-panel-latency').hidden || elements.get('measurement-empty-latency').hidden) process.exit(24);
 if (!elements.get('measurement-note').textContent.startsWith('0 / 6')) process.exit(25);
 selectDataset(datasets.findIndex(s => s.suite !== 'other'));
@@ -475,5 +505,11 @@ if (!elements.get('measurement-empty-latency').hidden || latency.data.datasets[0
 const costSpec = DATA.metricCharts.find(spec => spec.id === 'cost');
 if (!measurementText(0.00000012, costSpec).includes('0.00000012')) process.exit(28);
 if (measurementText(0, costSpec) !== '0 USD') process.exit(29);
+const detailHTML = elements.get('failure-details').innerHTML;
+if (detailHTML.includes('/commit/') || detailHTML.includes('<code>')) process.exit(37);
+if (detailHTML.includes('<img') || detailHTML.includes('<script>') || detailHTML.includes('href="javascript:')) process.exit(32);
+if (!detailHTML.includes('&lt;script&gt;') || !detailHTML.includes('Attempt 2')) process.exit(33);
+if (!detailHTML.includes('Failure details unavailable') || !detailHTML.includes('No failed or excluded attempts')) process.exit(34);
+if (!safeLink('https://langfuse.test/traces/a?x=1&y=2', 'Open trace').includes('&amp;')) process.exit(35);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

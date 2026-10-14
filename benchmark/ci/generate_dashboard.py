@@ -156,6 +156,9 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "distributions": record.get("distributions") or {},
             "failure_stages": record.get("failure_stages") or {},
             **{field: record.get(field) for field in (
+                "failure_details", "failure_details_status", "failure_details_inspected",
+                "failure_details_expected", "failure_details_errors")},
+            **{field: record.get(field) for field in (
                 "total_attempts", "eligible_attempts", "failure_stage_coverage",
                 "classified_failures", "eligible_failures")},
             **{f"{metric}{suffix}": record.get(f"{metric}{suffix}")
@@ -425,6 +428,16 @@ def _render_html(
   a {{ color: var(--accent); text-decoration: none; }}
   a:hover {{ text-decoration: underline; }}
   .scroll {{ overflow-x: auto; }}
+  .failure-dataset {{ border-top: 1px solid var(--line); padding: 12px 0; }}
+  .failure-dataset summary {{ cursor: pointer; overflow-wrap: anywhere; }}
+  .failure-dataset .sub {{ margin: 8px 0 12px; }}
+  .failure-table {{ min-width: 650px; table-layout: fixed; }}
+  .failure-table th:nth-child(1) {{ width: 22%; }}
+  .failure-table th:nth-child(2) {{ width: 18%; }}
+  .failure-table th:nth-child(4) {{ width: 9%; }}
+  .failure-table td {{ vertical-align: top; overflow-wrap: anywhere; }}
+  .failure-evidence {{ white-space: pre-wrap; margin: 5px 0; }}
+  .failure-table details {{ margin-top: 8px; }}
   .alert {{ border-left: 3px solid var(--bad); padding: 10px 0 10px 14px; margin-bottom: 10px; }}
   .alert:last-child {{ margin-bottom: 0; }}
   .alert b {{ font-weight: 600; }}
@@ -455,6 +468,7 @@ def _render_html(
   @media (max-width: 850px) {{ .metric-grid {{ grid-template-columns: 1fr; }} }}
   summary {{ cursor: pointer; margin-top: 12px; }}
   .warnings {{ max-height: 320px; overflow-y: auto; margin-top: 12px; overflow-wrap: anywhere; }}
+  #availability {{ margin-bottom: 16px; }}
 </style>
 </head>
 <body>
@@ -466,8 +480,11 @@ def _render_html(
     <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
   </div>
   <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
-  <div class="panel"><h2>Dataset overview · latest results</h2><div id="change-summary" class="sub"></div><p class="empty">Latest versus previous run within the last 7 days. Changed datasets appear first. Click a dataset to view its history.</p><p id="comparison-note" class="empty"></p><div class="scroll"><table id="suites"></table></div></div>
-  <div class="panel"><h2>Latest pass@1 by dataset</h2><p class="empty">Latest measured result within the last 7 days. Datasets use different tasks, so these scores are descriptive. Click a bar to view its history.</p><div class="chart" id="ranking-wrap"><canvas id="ranking" role="img" aria-label="Latest dataset pass at one scores"></canvas></div><p id="ranking-note" class="empty"></p></div>
+  <div class="panel"><h2>Dataset overview · latest results</h2><p id="latest-run-note" class="empty"></p><div id="change-summary" class="sub"></div><p class="empty">Latest versus previous run within the last 7 days. Changed datasets appear first. Click a dataset to view its history. Calls and task time include measured eligible attempts, including failures; n = measured / eligible attempts.</p><p id="comparison-note" class="empty"></p><div id="availability" class="empty"></div><div class="scroll"><table id="suites"></table></div></div>
+  <div class="panel"><h2>Failure details · latest run per dataset</h2>
+    <p class="empty">Recorded errors and failed checks across all attempts. Excluded attempts are labeled separately from capability failures. Expand a dataset for task details; the most recent dataset with failures is open.</p>
+    <div id="failure-details"></div>
+  </div>
   </section>
   <section id="view-trends" role="tabpanel" aria-labelledby="tab-trends" hidden>
   <div class="panel" id="dataset-panel">
@@ -481,13 +498,8 @@ def _render_html(
     <p class="empty">Missing scores leave gaps. Hover for commit, model, k and task counts.</p>
   </div>
   <div id="metric-charts" class="metric-grid"></div><p id="measurement-note" class="empty"></p>
-  <div class="panel"><h2>Latest failure stages</h2><p class="empty">Eligible failed attempts across all repeats, including unknown stages. These are evidence labels, not proven root causes; they cannot identify grounding, planner or keyboard failure percentages without supporting observations.</p>
-    <div class="chart" id="failure-chart-wrap"><canvas id="failure-stages" role="img" aria-label="Latest eligible failure stages"></canvas></div>
-    <p id="failure-summary" class="empty"></p>
-  </div>
   <details class="panel"><summary id="history-title">Dataset run history</summary><div class="scroll"><table id="history"></table></div></details>
   </section>
-  <div class="panel"><h2>Data availability</h2><div id="availability"></div></div>
 </div>
 <script>
 const DATA = JSON.parse({embedded});
@@ -506,13 +518,59 @@ const el = id => document.getElementById(id);
 
 const runs = DATA.runs;
 
-el("availability").innerHTML = `<div class="empty">Last 7 days: ${{DATA.dataCompleteness.measured}} / ${{DATA.dataCompleteness.total}} dataset runs have complete first-attempt counts. Historical publication failures remain unknown. Per-metric sample coverage is shown in the charts.</div>` +
-  (DATA.warnings.length ? `<details><summary>${{DATA.warnings.length}} data availability warnings — expand to inspect</summary><div class="warnings">` +
+el("availability").innerHTML = `Data coverage: ${{DATA.dataCompleteness.measured}} / ${{DATA.dataCompleteness.total}} dataset runs have complete first-attempt counts. Historical publication failures remain unknown.` +
+  (DATA.warnings.length ? ` <details><summary>${{DATA.warnings.length}} data warnings</summary><div class="warnings">` +
     DATA.warnings.map(w => `<div class="alert">${{esc(w)}}</div>`).join("") + '</div></details>' : '');
 
 el("sub").textContent = `Last 7 days · ${{when(DATA.windowStart)}} — ${{when(DATA.generatedAt)}} · ${{runs.length}} workflow runs · ${{DATA.suites.length}} datasets`;
 
 const datasets = DATA.suites;
+const newestDataset = datasets.reduce((newest, dataset) =>
+  !newest || dataset.latest.timestamp > newest.latest.timestamp ? dataset : newest, null);
+el("latest-run-note").innerHTML = `Latest commit · ${{commitLink(newestDataset?.latest.commit_sha)}}`;
+const safeLink = (url, label) => {{
+  try {{
+    const parsed = new URL(url);
+    if (!["https:", "http:"].includes(parsed.protocol)) return "";
+    return `<a href="${{esc(parsed.href)}}" target="_blank" rel="noopener noreferrer">${{esc(label)}}</a>`;
+  }} catch {{ return ""; }}
+}};
+const evidenceText = check => [check.kind, check.label, check.reason,
+  check.expected ? `Expected: ${{check.expected}}` : "",
+  check.actual ? `Actual: ${{check.actual}}` : ""].filter(Boolean).join(" · ");
+const detailDatasets = [...datasets].sort((a, b) => b.latest.timestamp.localeCompare(a.latest.timestamp));
+const expandedDataset = detailDatasets.find(dataset => dataset.latest.failure_details?.length);
+el("failure-details").innerHTML = detailDatasets.map(dataset => {{
+  const latest = dataset.latest;
+  const rows = latest.failure_details || [];
+  const available = latest.failure_details_status === "available";
+  const coverage = `${{count(latest.failure_details_inspected)}} / ${{count(latest.failure_details_expected)}} attempt outputs inspected`;
+  const failures = rows.filter(row => row.agent_eligible).length;
+  const excluded = rows.length - failures;
+  const headline = rows.length ? `${{failures}} eligible failures · ${{excluded}} excluded attempts` :
+    available ? "No failed or excluded attempts" : "Failure details unavailable";
+  const firstReason = rows[0]?.evidence?.[0];
+  const note = available ? "" : latest.failure_details_status === "partial" ? " · Partial details" : " · Details unavailable";
+  return `<details class="failure-dataset"${{dataset === expandedDataset ? " open" : ""}}>
+    <summary><b>${{esc(dataset.suite)}}</b> · ${{headline}}${{note}}${{firstReason ? ` — ${{esc(evidenceText(firstReason).slice(0, 180))}}` : ""}}</summary>
+    <p class="sub">${{coverage}}${{!available ? ". Missing outputs may contain additional failures." : ""}}</p>
+    ${{Object.entries(latest.failure_details_errors || {{}}).map(([reason, count]) => `<p class="empty">${{esc(reason)}} · ${{count}}</p>`).join("")}}
+    ${{rows.length ? `<div class="scroll"><table class="failure-table"><thead><tr><th>Task / attempt</th><th>Outcome</th><th>Failure reason / evidence</th><th>Trace</th></tr></thead><tbody>` + rows.map(row => {{
+      const evidence = row.evidence || [];
+      const classification = [row.failure_class ? `Class: ${{row.failure_class}}` : "",
+        row.first_failure_stage ? `Stage: ${{row.first_failure_stage}}` : ""].filter(Boolean).join(" · ");
+      return `<tr><td><b>${{esc(row.task_id)}}</b><div class="empty">Attempt ${{esc(row.attempt)}}</div></td>
+        <td><span class="${{row.agent_eligible ? "bad" : ""}}">${{esc(row.status)}}</span>${{!row.agent_eligible ? '<div class="empty">Excluded from capability</div>' : ""}}</td>
+        <td>${{evidence.length ? `<div class="failure-evidence">${{esc(evidenceText(evidence[0]))}}</div>` : '<span class="empty">No failure reason recorded</span>'}}
+          ${{evidence.length > 1 || row.final_response || row.failure_event_ref || classification ? `<details><summary>Additional evidence</summary>` +
+            evidence.slice(1).map(check => `<div class="failure-evidence">${{esc(evidenceText(check))}}</div>`).join("") +
+            (row.final_response ? `<div class="failure-evidence"><b>Agent final response</b><br>${{esc(row.final_response)}}</div>` : "") +
+            (row.failure_event_ref ? `<div class="empty">Recorded event: ${{esc(row.failure_event_ref)}}</div>` : "") +
+            (classification ? `<div class="empty">${{esc(classification)}}</div>` : "") + '</details>' : ""}}</td>
+        <td>${{safeLink(row.trace_url, "Open trace") || '<span class="empty">Unavailable</span>'}}</td></tr>`;
+    }}).join("") + '</tbody></table></div>' : `<p class="empty">${{available ? "All inspected attempts succeeded." : "Task output could not be inspected. This does not mean there were no failures."}}</p>`}}
+  </details>`;
+}}).join("") || '<p class="empty">No dataset runs in the last 7 days.</p>';
 const metrics = [
   {{ key: "pass_at_1", label: "pass@1", color: "#0891b2" }},
   {{ key: "pass_at_k", label: "pass@k", color: "#ea580c" }},
@@ -520,8 +578,6 @@ const metrics = [
 ];
 let selected = null;
 let chart = null;
-let rankingChart = null;
-let failureChart = null;
 const measurementCharts = [];
 const palette = ["#0891b2", "#ea580c", "#db2777", "#7c3aed", "#65a30d"];
 const measurementValue = (point, series) => {{
@@ -531,6 +587,12 @@ const measurementValue = (point, series) => {{
 const measurementText = (value, spec) => value == null ? "Unavailable" :
   (value * spec.scale).toLocaleString(undefined, spec.unit === "USD" ? {{ maximumSignificantDigits: 6 }} : {{ maximumFractionDigits: spec.unit === "tokens" ? 0 : 2 }}) + " " + spec.unit;
 const sampleText = (point, series) => `${{count(point.distributions?.[series.metric]?.count)}} / ${{count(point.eligible_attempts)}} eligible attempts measured`;
+const overviewMeasure = (suite, metric, statistic, scale, unit) => {{
+  const distribution = suite.latest.distributions?.[metric];
+  if (!distribution || distribution.count === 0 || !Number.isFinite(distribution[statistic])) return '<span class="empty">Unavailable</span>';
+  const value = distribution[statistic] * scale;
+  return `${{value.toFixed(1)}} ${{unit}}<span class="delta empty">n=${{count(distribution.count)}} / ${{count(suite.latest.eligible_attempts)}}</span>`;
+}};
 el("metric-charts").innerHTML = DATA.metricCharts.map(spec => `<div class="panel" id="measurement-panel-${{spec.id}}">
   <h2 id="measurement-title-${{spec.id}}">${{esc(spec.title)}}</h2><p class="empty">${{esc(spec.description)}}</p>
   <div class="chart" id="measurement-wrap-${{spec.id}}"><canvas id="measurement-${{spec.id}}" role="img" aria-label="${{esc(spec.title)}}"></canvas></div>
@@ -555,12 +617,15 @@ el("dataset-select").disabled = !datasets.length;
 
 el("suites").innerHTML = `
   <thead><tr><th>Dataset</th><th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th>
-  <th>Latest run</th></tr></thead><tbody>` +
+  <th class="n">Tool calls · mean</th><th class="n">LLM calls · mean</th><th class="n">Task time · p50</th><th>Latest run</th></tr></thead><tbody>` +
   (datasets.length ? overviewRows.map(s => {{
     return `<tr class="${{s.change_direction}}"><td><button class="dataset" data-dataset="${{s.index}}" aria-pressed="false">${{esc(s.suite)}}</button></td>
       ${{metrics.map(m => `<td class="n">${{pct(s.latest[m.key])}}<span class="delta ${{deltaClass(s.metric_deltas[m.key])}}">${{deltaLabel(s.metric_deltas[m.key])}}</span></td>`).join("")}}
+      <td class="n">${{overviewMeasure(s, "tool_calls", "mean", 1, "calls")}}</td>
+      <td class="n">${{overviewMeasure(s, "llm_calls", "mean", 1, "calls")}}</td>
+      <td class="n">${{overviewMeasure(s, "task_wall_ms", "p50", 0.001, "s")}}</td>
       <td>${{when(s.latest.timestamp)}}</td></tr>`;
-  }}).join("") : '<tr><td colspan="5" class="empty">No datasets.</td></tr>') + "</tbody>";
+  }}).join("") : '<tr><td colspan="8" class="empty">No datasets.</td></tr>') + "</tbody>";
 
 function selectDataset(index) {{
   selected = datasets[index];
@@ -626,18 +691,6 @@ function selectDataset(index) {{
     }}
   }}
   el("measurement-note").textContent = `${{visibleMeasurements}} / ${{DATA.metricCharts.length}} charts have measurements in this dataset's last 7 days. All metrics remain listed; missing measurements are unavailable, while measured zero values remain zero.`;
-  const stages = Object.entries(latest.failure_stages || {{}}).filter(([name, value]) => value > 0).sort((a, b) => b[1] - a[1]);
-  const observed = stages.reduce((total, [name, value]) => total + value, 0);
-  el("failure-chart-wrap").hidden = !stages.length;
-  el("failure-summary").textContent = latest.eligible_failures === 0 ? "No eligible failed attempts in this run." :
-    !stages.length ? "Failure-stage measurements are unavailable for this run." :
-    `${{observed}} stage counts reported / ${{count(latest.eligible_failures)}} eligible failures. Known-stage coverage: ${{pct(latest.failure_stage_coverage)}}. Unknown stages remain unclassified; counts are not a root-cause diagnosis.`;
-  if (failureChart) {{
-    failureChart.data.labels = stages.map(([name]) => name.replaceAll("_", " "));
-    failureChart.data.datasets[0].data = stages.map(([name, value]) => value);
-    failureChart.data.datasets[0].backgroundColor = stages.map(([name]) => name === "unknown" ? "#9ca3af" : "#db2777");
-    failureChart.resize(); failureChart.update("none");
-  }}
 }}
 
 if (datasets.length && typeof Chart !== "undefined") {{
@@ -661,16 +714,6 @@ if (datasets.length && typeof Chart !== "undefined") {{
       }},
     }}) }});
   }}
-  failureChart = new Chart(el("failure-stages"), {{
-    type: "bar", data: {{ labels: [], datasets: [{{ label: "Eligible failed attempts", data: [], borderRadius: 4 }}] }},
-    options: {{ indexAxis: "y", responsive: true, maintainAspectRatio: false,
-      plugins: {{ legend: {{ display: false }}, tooltip: {{ callbacks: {{
-        label: item => `${{item.raw}} attempts${{selected.latest.eligible_failures > 0 ? ` · ${{pct(item.raw / selected.latest.eligible_failures)}} of eligible failures` : ""}}`,
-      }} }} }},
-      scales: {{ x: {{ beginAtZero: true, ticks: {{ color: ink, precision: 0 }}, grid: {{ color: line }} }},
-        y: {{ ticks: {{ color: ink }}, grid: {{ display: false }} }} }},
-    }},
-  }});
   chart = new Chart(el("trend"), {{
     type: "line",
     data: {{
@@ -709,29 +752,6 @@ if (datasets.length && typeof Chart !== "undefined") {{
     }},
   }});
 }}
-const ranked = datasets.map((s, index) => ({{ ...s, index }})).filter(s => s.latest.pass_at_1 != null)
-  .sort((a, b) => b.latest.pass_at_1 - a.latest.pass_at_1);
-el("ranking-note").textContent = `${{ranked.length}} datasets with scores · ${{datasets.length - ranked.length}} without a latest score (not plotted).`;
-el("ranking-wrap").style.height = Math.max(180, ranked.length * 30 + 40) + "px";
-if (ranked.length && typeof Chart !== "undefined") {{
-  const ink = getComputedStyle(document.documentElement).getPropertyValue("--muted").trim();
-  rankingChart = new Chart(el("ranking"), {{
-    type: "bar",
-    data: {{ labels: ranked.map(s => s.suite), datasets: [{{
-      label: "Latest pass@1", data: ranked.map(s => s.latest.pass_at_1 * 100),
-      backgroundColor: ranked.map(s => s.metric_deltas.pass_at_1 > 0 ? "#1d8102" : s.metric_deltas.pass_at_1 < 0 ? "#d70015" : "#0891b2"),
-      borderRadius: 4,
-    }}] }},
-    options: {{ indexAxis: "y", responsive: true, maintainAspectRatio: false,
-      onClick: (event, items) => {{ if (items.length) openDataset(ranked[items[0].index].index); }},
-      plugins: {{ legend: {{ display: false }}, tooltip: {{ callbacks: {{
-        label: item => {{ const s = ranked[item.dataIndex]; return [`pass@1 ${{pct(s.latest.pass_at_1)}} · ${{count(s.latest.passed)}}/${{count(s.latest.eligible_tasks)}} eligible`, deltaLabel(s.metric_deltas.pass_at_1), s.comparison_status]; }},
-      }} }} }},
-      scales: {{ x: {{ min: 0, max: 100, ticks: {{ color: ink, callback: v => v + "%" }} }},
-        y: {{ ticks: {{ color: ink }}, grid: {{ display: false }} }} }},
-    }},
-  }});
-}}
 const views = ["latest", "trends"];
 function showView(view) {{
   if (!views.includes(view)) return;
@@ -742,7 +762,7 @@ function showView(view) {{
     el("tab-" + name).tabIndex = active ? 0 : -1;
   }}
   // Charts created in a hidden panel need their visible container dimensions.
-  for (const instance of view === "latest" ? [rankingChart] : [chart, failureChart, ...measurementCharts.map(item => item.chart)]) {{
+  for (const instance of view === "latest" ? [] : [chart, ...measurementCharts.map(item => item.chart)]) {{
     if (instance) {{ instance.resize(); instance.update("none"); }}
   }}
 }}
@@ -819,6 +839,7 @@ def cli(argv: list[str] | None = None) -> int:
             local_runs_dir=args.runs_dir,
             local_run_id_prefix=args.run_id_prefix,
             now=report_end,
+            include_failure_details=True,
         )
         history, warnings = result.records, result.warnings
     for warning in warnings:

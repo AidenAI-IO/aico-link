@@ -228,6 +228,132 @@ def test_inconsistent_pass_counts_are_unknown():
     assert "pass_at_1" in record["missing_metrics"]
 
 
+def _run_item(index, observation_id=None):
+    return {"id": f"item-{index}", "datasetRunId": "exp-1", "datasetRunName": "ci-123-1-memory",
+            "datasetItemId": f"task-{index}", "traceId": f"trace-{index}",
+            "observationId": observation_id, "createdAt": STAMP, "updatedAt": STAMP}
+
+
+def _trace(index, output, observations=None):
+    return {"id": f"trace-{index}", "timestamp": STAMP,
+            "input": {"task_id": f"task-{index}", "attempt": index}, "output": output,
+            "tags": [], "public": False, "environment": "default", "htmlPath": "/trace",
+            "observations": observations or [], "scores": []}
+
+
+def _observation(id, output):
+    return {"id": id, "type": "SPAN", "startTime": STAMP, "modelParameters": {},
+            "input": json.dumps({"task_id": "native-task", "attempt": 2}),
+            "output": json.dumps(output), "metadata": {},
+            "usage": {"input": 0, "output": 0, "total": 0}, "level": "DEFAULT",
+            "usageDetails": {}, "costDetails": {}, "environment": "default"}
+
+
+def _experiment_item(index, output, input=None, cursor=None):
+    return {"id": f"item-{index}", "traceId": f"trace-{index}", "startTime": STAMP,
+            "endTime": STAMP, "level": "DEFAULT", "environment": "default",
+            "experimentId": "exp-1", "experimentName": "ci-123-1-memory",
+            "experimentItemId": f"task-{index}", "experimentDatasetId": "dataset-1",
+            "input": input or {"task_id": f"task-{index}", "attempt": index},
+            "output": output, "experimentItemMetadata": {}}
+
+
+def test_failure_details_use_paginated_items_and_exact_child_observation():
+    requests = []
+    failed = {"status": "failed", "metrics": {"agent_eligible": True, "success": False,
+              "failure_class": "agent", "first_failure_stage": "unknown"},
+              "rubric": [{"id": "answer", "verdict": "no", "reason": "Returned 12, expected 42"}],
+              "aiden_trace_url": "https://langfuse.test/project/p/traces/trace-1"}
+    def handler(request):
+        requests.append(request)
+        if request.url.path.endswith("/experiments"):
+            return _response([{**_experiment(), "itemCount": 3}])
+        if request.url.path.endswith("/v3/scores"):
+            return _response(_metrics())
+        assert request.url.path.endswith("/experiment-items")
+        assert request.url.params["experimentId"] == "exp-1"
+        assert request.url.params["fields"] == "core,dataset,io,itemMetadata"
+        cursor = request.url.params.get("cursor")
+        data = [_experiment_item(1, failed, {"task_id": "native-task", "attempt": 2})] if not cursor else [
+            _experiment_item(2, {"status": "passed", "metrics": {}}),
+            _experiment_item(3, {"status": "judge_error", "metrics": {"error": "Judge response was invalid"}})]
+        return httpx.Response(200, json={"data": data, "meta": {"cursor": "next" if not cursor else None}})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, include_failure_details=True)
+    assert not result.warnings
+    record = result.records[0]
+    assert record["failure_details_status"] == "available"
+    assert record["failure_details_inspected"] == 3
+    failed, excluded = record["failure_details"]
+    assert failed["task_id"] == "native-task" and failed["attempt"] == 2
+    assert failed["evidence"][0]["reason"] == "Returned 12, expected 42"
+    assert failed["trace_url"].startswith("https://")
+    assert excluded["failure_class"] == "evaluation" and not excluded["agent_eligible"]
+    assert len(requests) == 4
+
+
+@pytest.mark.parametrize("missing_child", [False, True])
+def test_inaccessible_detail_never_means_no_failures(missing_child):
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([{**_experiment(), "itemCount": 1}])
+        if request.url.path.endswith("/v3/scores"):
+            return _response(_metrics())
+        if request.url.path.endswith("/experiment-items"):
+            return httpx.Response(200, json={"data": [] if missing_child else [_experiment_item(1, {"status": "failed", "metrics": {}})],
+                "meta": {"cursor": None}}) if missing_child else httpx.Response(403, json={"message": "private-value"})
+        return httpx.Response(500, json={})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, include_failure_details=True)
+    assert result.records[0]["failure_details_status"] == "unavailable"
+    assert result.records[0]["failure_details_inspected"] == 0
+    assert "0 / 1 attempt outputs" in result.warnings[0]
+    assert "private-value" not in str(result.warnings)
+
+
+def test_failure_details_only_fetch_latest_dataset_in_seven_day_window(monkeypatch):
+    from ci import failure_details
+    fetched = []
+    def read(client, experiment):
+        fetched.append(experiment.id)
+        return {"failure_details": [], "failure_details_status": "available"}
+    monkeypatch.setattr(failure_details, "fetch_failure_details", read)
+    older = {**_experiment("old", benchmark_run_id="older", benchmark_started_at="2026-10-10T00:00:00Z")}
+    outside = _experiment("outside", benchmark_run_id="outside", benchmark_suite="old-dataset",
+                          benchmark_started_at="2026-10-01T00:00:00Z")
+    def handler(request):
+        return _response([_experiment(), older, outside]) if request.url.path.endswith("/experiments") else _response(_metrics())
+    history.fetch_benchmark_history(client=_client(handler), now=NOW, include_failure_details=True)
+    assert fetched == ["exp-1"]
+
+
+def test_normalized_hard_assertions_and_missing_reasons_preserve_evidence():
+    from ci.failure_details import normalize_failure
+    detail = normalize_failure({"task_id": "task", "attempt": 1}, {"status": "failed", "metrics": {},
+             "hard_assertion_failures": [{"id": "exit", "label": "Exit code", "requirement": 0, "actual": 1}]})
+    assert detail["evidence"] == [{"kind": "Hard assertion", "label": "Exit code", "reason": "", "expected": "0", "actual": "1"}]
+    assert normalize_failure({}, {"status": "timeout", "metrics": {}})["evidence"] == []
+
+
+def test_partial_item_listing_keeps_retrieved_failure_evidence():
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([{**_experiment(), "itemCount": 2}])
+        if request.url.path.endswith("/v3/scores"):
+            return _response(_metrics())
+        if request.url.path.endswith("/experiment-items"):
+            if request.url.params.get("cursor") == "next":
+                return httpx.Response(403, json={"message": "private-value"})
+            return httpx.Response(200, json={"data": [_experiment_item(1, {"status": "timeout", "metrics": {"error": "Task exceeded time limit"}})],
+                "meta": {"cursor": "next"}})
+        return httpx.Response(500, json={})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, include_failure_details=True)
+    record = result.records[0]
+    assert record["failure_details_status"] == "partial"
+    assert record["failure_details_inspected"] == 1
+    assert record["failure_details"][0]["evidence"][0]["reason"] == "Task exceeded time limit"
+    assert any("HTTP 403" in reason for reason in record["failure_details_errors"])
+    assert "private-value" not in str(record["failure_details_errors"])
+
+
 def test_zero_eligible_tasks_have_no_rate_and_no_missing_counts():
     record = history._record(metadata={}, run_id="empty", timestamp=NOW,
         scores={"capability.pass_at_1.total_tasks": 4.0,

@@ -1175,9 +1175,15 @@ metrics remain unknown rather than becoming zero or bridging a chart gap.
 
 The dashboard focuses on individual datasets (each published benchmark suite
 maps to a Langfuse dataset). The default **Latest results** tab shows one overview
-table with highlighted changes, followed by the dataset score comparison. **Weekly trends**
+table with highlighted changes, mean tool and LLM calls per eligible attempt,
+and p50 task execution time, followed by task-level failure details. Each efficiency
+cell shows its measured sample count over eligible attempts; unavailable measurements
+remain visible. Data coverage and expandable warnings sit within the overview.
+The overview's introductory note links to the newest dataset run's commit once;
+each row's Latest run cell shows its run time.
+**Weekly trends**
 contains the selected dataset's trend and performance
-charts. Run details and history are collapsed by default. Clicking a dataset in a comparison bar or overview row
+charts. Run details and history are collapsed by default. Clicking a dataset in an overview row
 opens its Weekly trends tab. Switching tabs preserves the selected dataset and
 visible metrics; arrow keys, Home, and End also navigate the tabs.
 The displayed window is always the seven days before report generation (start
@@ -1220,10 +1226,9 @@ The latest commit card links to the selected dataset's newest commit and shows
 k. Duplicate latest efficiency cards are omitted; performance charts provide
 the measurements and Run details provides additional provenance.
 
-A horizontal bar chart compares the latest available pass@1 scores by dataset;
-click a bar to inspect that dataset. Scores describe different task sets and are
-not a controlled ranking. The task-outcome doughnut is omitted because it
-repeats the pass-rate information; eligible task counts remain in chart tooltips.
+The overview is the single latest-score comparison; scores describe different
+task sets and are not a controlled ranking. Eligible task counts remain in
+trend chart tooltips.
 
 Weekly trends also includes separate charts for task execution latency (p50 and
 p90), mean tool/device/LLM calls per attempt, recorded timing components (p50),
@@ -1253,12 +1258,29 @@ The runner does not populate an Agent retry count. Reported
 run cost and token sums remain in the source snapshot; they cover recorded
 samples and are not necessarily complete totals.
 
-The failure-stage bar chart shows the selected dataset's latest eligible failed
-attempts across all repeats, including unclassified (`unknown`) stages and known-
-stage coverage. It does not infer grounding/planning/keyboard root causes from
-coarse failure classes. See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md)
-for measurement boundaries. Record-specific data availability warnings use the
-same seven-day display window; API-wide errors remain visible regardless of scope.
+See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md) for
+measurement boundaries. Record-specific data warnings use the same seven-day
+display window; API-wide errors remain visible regardless of scope.
+
+Latest results also groups **Failure details** by dataset, with the most recent
+dataset containing failures expanded initially. Each task/attempt shows its
+recorded execution error, failed hard assertion (expected and actual values),
+rubric reason, or failed trace check. Additional evidence includes the Agent's
+final response and recorded event reference; trace links open Langfuse. The
+additional details also include the failure class and stage. Commit and run time
+appear in the overview instead of being repeated in each dataset's failure section.
+These are recorded evaluation findings, not inferred root causes. Excluded evaluation,
+environment, and skipped attempts are labeled separately from eligible failures.
+An attempt without a recorded reason is labeled explicitly.
+
+The dashboard enables `fetch_benchmark_history(include_failure_details=True)`.
+It reads paginated SDK dataset-run items only for each dataset's latest run in
+the last seven days, then follows each item's exact linked evaluation observation
+or replay trace output. Historical aggregate scores remain the trend source.
+Local current-run results supply the same normalized evidence. Inspected/expected
+attempt counts distinguish complete, partial, and unavailable details; missing
+outputs never imply that all tasks passed. Previously saved snapshots without
+these fields show unavailable details until refreshed from Langfuse.
 
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks,
 with total tasks shown separately for coverage. Workflow attempts remain
