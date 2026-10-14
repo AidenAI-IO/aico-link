@@ -28,7 +28,7 @@ def _format_cost(value: float | None) -> str:
     return "—" if value is None else f"${value:.3f}"
 
 
-def _build_card(weekly: dict[str, Any], run_url: str, warnings: list[str]) -> dict[str, Any]:
+def _build_card(weekly: dict[str, Any], dashboard_url: str, warnings: list[str]) -> dict[str, Any]:
     """Build a Lark interactive card from the weekly summary."""
     current, previous = weekly["current"], weekly["previous"]
 
@@ -122,9 +122,9 @@ def _build_card(weekly: dict[str, Any], run_url: str, warnings: list[str]) -> di
         "actions": [
             {
                 "tag": "button",
-                "text": {"tag": "plain_text", "content": "View full report"},
+                "text": {"tag": "plain_text", "content": "Open Dashboard"},
                 "type": "primary",
-                "url": run_url,
+                "url": dashboard_url,
             }
         ],
     })
@@ -167,8 +167,8 @@ def cli(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-json", type=Path, required=True,
                         help="dashboard-data.json with the weekly summary")
-    parser.add_argument("--run-url", required=True,
-                        help="GitHub Actions run URL for the 'View full report' button")
+    parser.add_argument("--dashboard-url", required=True,
+                        help="Public URL of the dashboard.html")
     args = parser.parse_args(argv)
 
     webhook_url = os.environ.get("BENCHMARK_REPORT_LARK_WEBHOOK_URL")
@@ -185,11 +185,11 @@ def cli(argv: list[str] | None = None) -> int:
         return 0
 
     warnings = data.get("warnings", [])
-    card = _build_card(weekly, args.run_url, warnings)
+    card = _build_card(weekly, args.dashboard_url, warnings)
 
     try:
         send_lark(card, webhook_url=webhook_url, webhook_secret=webhook_secret)
-        print(f"Lark notification sent: {args.run_url}")
+        print(f"Lark notification sent: {args.dashboard_url}")
     except Exception as exc:
         print(f"Failed to send Lark notification: {exc}")
         return 1

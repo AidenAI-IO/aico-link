@@ -74,7 +74,7 @@ jobs:
           run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           uv run python -m ci.notify_lark \
             --data-json dashboard-data.json \
-            --run-url "$run_url"
+            --dashboard-url "https://firmware-agent.oss-cn-hongkong.aliyuncs.com/benchmark/weekly/${{ github.run_number }}/dashboard.html"
       - name: Upload to OSS
         if: ${{ always() }}
         continue-on-error: true

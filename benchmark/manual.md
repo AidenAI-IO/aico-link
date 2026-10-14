@@ -1339,7 +1339,7 @@ uv run python -m ci.generate_dashboard \
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
-  --run-url "https://github.com/owner/repo/actions/runs/123"
+  --dashboard-url "https://your-oss-bucket.oss-cn-hongkong.aliyuncs.com/benchmark/weekly/123/dashboard.html"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are
