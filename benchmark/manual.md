@@ -1170,6 +1170,9 @@ both. Dataset-run read endpoints are unavailable in v4 `events_only` mode.
 Embedded experiment scores are limited to 50, so reporting queries the separate
 scores endpoint instead. GitHub Actions artifacts are never downloaded to
 collect history; their retention does not constrain the report's lookback.
+The weekly report runs on GitHub-hosted `ubuntu-latest` with direct network
+access. `BENCHMARK_HTTPS_PROXY` is used only by the self-hosted benchmark runner;
+its private-network proxy is not reachable from GitHub-hosted runners.
 
 Completed current-run metrics on disk supplement Langfuse while publication is
 delayed or fails. Local results replace the same suite/run once, without double

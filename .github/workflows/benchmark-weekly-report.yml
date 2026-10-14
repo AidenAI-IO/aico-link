@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   weekly-report:
+    # GitHub-hosted runners cannot reach the self-hosted benchmark's LAN proxy.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -19,7 +20,6 @@ jobs:
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
       LARK_WEBHOOK_URL: ${{ secrets.BENCHMARK_REPORT_LARK_WEBHOOK_URL }}
       LARK_WEBHOOK_SECRET: ${{ secrets.BENCHMARK_REPORT_LARK_WEBHOOK_SECRET }}
-      https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
     steps:
       - uses: actions/checkout@v4
         with:
