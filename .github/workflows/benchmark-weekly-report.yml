@@ -75,6 +75,21 @@ jobs:
           uv run python -m ci.notify_lark \
             --data-json dashboard-data.json \
             --run-url "$run_url"
+      - name: Upload to OSS
+        if: ${{ always() }}
+        continue-on-error: true
+        uses: aliyun/oss-github-action@v1.1.0
+        with:
+          access-key-id: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          access-key-secret: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          endpoint: oss-cn-hongkong.aliyuncs.com
+          bucket: firmware-agent
+          source: benchmark/
+          target: benchmark/weekly/${{ github.run_number }}/
+          include: |
+            dashboard.html
+            dashboard-data.json
+            weekly-report.md
       - name: Upload weekly report artifacts
         if: ${{ always() }}
         continue-on-error: true
