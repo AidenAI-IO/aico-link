@@ -354,6 +354,26 @@ def test_partial_item_listing_keeps_retrieved_failure_evidence():
     assert "private-value" not in str(record["failure_details_errors"])
 
 
+def test_failure_details_stop_on_repeated_pagination_cursor():
+    item_requests = []
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([{**_experiment(), "itemCount": 10}])
+        if request.url.path.endswith("/v3/scores"):
+            return _response(_metrics())
+        if request.url.path.endswith("/experiment-items"):
+            item_requests.append(request.url.params.get("cursor"))
+            return httpx.Response(200, json={"data": [_experiment_item(1, {"status": "pass", "metrics": {}})],
+                "meta": {"cursor": "same-cursor"}})
+        return httpx.Response(500, json={})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, include_failure_details=True)
+    record = result.records[0]
+    assert item_requests == [None, "same-cursor"]
+    assert record["failure_details_status"] == "partial"
+    assert record["failure_details_inspected"] == 1
+    assert record["failure_details_errors"] == {"Item listing: RuntimeError": 1}
+
+
 def test_zero_eligible_tasks_have_no_rate_and_no_missing_counts():
     record = history._record(metadata={}, run_id="empty", timestamp=NOW,
         scores={"capability.pass_at_1.total_tasks": 4.0,

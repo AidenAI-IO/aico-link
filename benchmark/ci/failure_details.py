@@ -84,7 +84,7 @@ def fetch_failure_details(client: Any, experiment: Any) -> dict[str, Any]:
         status = getattr(exc, "status_code", None)
         return type(exc).__name__ + (f" (HTTP {status})" if status else "")
 
-    cursor, listing_complete = None, False
+    cursor, listing_complete, seen_cursors = None, False, set()
     try:
         while True:
             response = client.api.experiments.list_items(
@@ -97,6 +97,9 @@ def fetch_failure_details(client: Any, experiment: Any) -> dict[str, Any]:
             if not cursor:
                 listing_complete = True
                 break
+            if cursor in seen_cursors:
+                raise RuntimeError("Langfuse returned a repeated pagination cursor")
+            seen_cursors.add(cursor)
     except Exception as exc:
         # Preserve inspected evidence from earlier pages and mark it partial.
         unavailable(f"Item listing: {read_error(exc)}")
