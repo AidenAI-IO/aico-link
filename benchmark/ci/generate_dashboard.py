@@ -58,13 +58,18 @@ def generate_dashboard(
 
     if data_output is not None:
         data_output.parent.mkdir(parents=True, exist_ok=True)
+        # Strip points from suites to reduce duplication; they're already in runs.
+        compact_suites = [
+            {k: v for k, v in suite.items() if k != "points"}
+            for suite in suites
+        ]
         data_output.write_text(
             json.dumps(
                 {
                     "generated_at": report_end.isoformat(),
                     "repo": repo,
                     "runs": runs,
-                    "suites": suites,
+                    "suites": compact_suites,
                     "regressions": regressions,
                     "history": history,
                     "warnings": warnings,

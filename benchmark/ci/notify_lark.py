@@ -28,10 +28,6 @@ def _format_cost(value: float | None) -> str:
     return "—" if value is None else f"${value:.3f}"
 
 
-def _format_tokens(value: float | None) -> str:
-    return "—" if value is None else f"{value / 1e6:.2f}M"
-
-
 def _build_card(weekly: dict[str, Any], run_url: str, warnings: list[str]) -> dict[str, Any]:
     """Build a Lark interactive card from the weekly summary."""
     current, previous = weekly["current"], weekly["previous"]
@@ -108,11 +104,11 @@ def _build_card(weekly: dict[str, Any], run_url: str, warnings: list[str]) -> di
         elements.append({"tag": "hr"})
         elements.append({"tag": "markdown", "content": "**Notable changes**"})
         for suite in notable:
-            delta_pp = suite["delta"] * 100
-            color = "red" if delta_pp < -5 else "green" if delta_pp > 0 else "grey"
+            suite_pp = suite["delta"] * 100
+            color = "red" if suite_pp < -5 else "green" if suite_pp > 0 else "grey"
             suite_line = (
                 f"<font color='{color}'>{suite['suite']}: {_format_rate(suite['previous']['pass_at_1'])} "
-                f"→ {_format_rate(suite['current']['pass_at_1'])} ({delta_pp:+.1f} pp)</font>"
+                f"→ {_format_rate(suite['current']['pass_at_1'])} ({suite_pp:+.1f} pp)</font>"
             )
             elements.append({"tag": "markdown", "content": suite_line})
 

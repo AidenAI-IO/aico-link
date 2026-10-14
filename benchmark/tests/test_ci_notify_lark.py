@@ -86,6 +86,18 @@ def test_build_card_shows_improvements():
     assert "green" in content.lower()
 
 
+def test_header_color_follows_overall_change_not_last_suite():
+    weekly = {
+        "start": "2026-10-06T00:00:00+00:00",
+        "end": "2026-10-13T00:00:00+00:00",
+        "current": {"pass_at_1": 0.60, "suite_runs": 3, "cost_usd_sum": None, "total_tokens_sum": None},
+        "previous": {"pass_at_1": 0.70, "suite_runs": 3, "cost_usd_sum": None, "total_tokens_sum": None},
+        "suites": [{"suite": "gained", "delta": 0.08,
+                    "current": {"pass_at_1": 0.88}, "previous": {"pass_at_1": 0.80}}],
+    }
+    assert _build_card(weekly, "https://example.com", [])["header"]["template"] == "red"
+
+
 def test_build_card_with_warnings():
     weekly = {
         "start": "2026-10-06T00:00:00+00:00",

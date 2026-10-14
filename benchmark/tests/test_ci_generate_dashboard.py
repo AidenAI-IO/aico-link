@@ -304,7 +304,8 @@ def test_dashboard_seven_day_boundary_preserves_weekly_baseline(tmp_path):
     generate_dashboard(history=history, output_file=output, data_output=data, report_end=REPORT_END)
     payload = json.loads(data.read_text())
     assert [run["workflow_run_id"] for run in payload["runs"]] == [2, 3]
-    assert len(payload["suites"][0]["points"]) == 2
+    # Per-suite points duplicate runs, so the JSON snapshot omits them.
+    assert "points" not in payload["suites"][0]
     assert len(payload["history"]) == 4
     assert payload["weekly"]["previous"]["suite_runs"] == 1
     assert payload["weekly"]["current"]["suite_runs"] == 2
