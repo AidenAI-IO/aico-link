@@ -86,17 +86,19 @@ type keyboardExecutionFailure struct{ error }
 
 func (e keyboardExecutionFailure) Unwrap() error { return e.error }
 
+// markKeyboardExecutionFailure tags keyboard tool errors that refocusing
+// cannot fix: the backend failed or does not support the operation.
 func markKeyboardExecutionFailure(err error) error {
 	var toolErr *ToolError
-	if errors.As(err, &toolErr) && toolErr.Code == CodeToolExecutionFailed {
+	if errors.As(err, &toolErr) && (toolErr.Code == CodeToolExecutionFailed || toolErr.Code == CodeModuleUnavailable) {
 		return keyboardExecutionFailure{err}
 	}
 	return err
 }
 
-func isKeyboardExecutionFailure(err error) bool {
+func textInputFailure(err error) textInputResult {
 	var failure keyboardExecutionFailure
-	return errors.As(err, &failure)
+	return textInputResult{Reason: err.Error(), BackendFailure: errors.As(err, &failure)}
 }
 
 func callKeyboardInputTool(ctx context.Context, tool langtools.Tool, input string) (string, error) {
@@ -158,7 +160,7 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 	currentMode, _, err := e.probeTextInputMode(ctx, platform, args.Focus)
 	if err != nil {
 		cancelPlanning()
-		return textInputResult{Reason: err.Error(), BackendFailure: isKeyboardExecutionFailure(err)}, nil
+		return textInputFailure(err), nil
 	}
 
 	planResult := <-planResultCh
@@ -178,16 +180,16 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 			}
 			currentMode, err = e.ensureTextInputMode(ctx, platform, currentMode, targetMode)
 			if err != nil {
-				return textInputResult{Reason: err.Error(), BackendFailure: isKeyboardExecutionFailure(err)}, nil
+				return textInputFailure(err), nil
 			}
 			if err := e.typeASCII(ctx, chunk.input); err != nil {
-				return textInputResult{Reason: err.Error(), BackendFailure: isKeyboardExecutionFailure(err)}, nil
+				return textInputFailure(err), nil
 			}
 			continue
 		}
 		currentMode, err = e.ensureTextInputMode(ctx, platform, currentMode, textInputModeComposition)
 		if err != nil {
-			return textInputResult{Reason: err.Error(), BackendFailure: isKeyboardExecutionFailure(err)}, nil
+			return textInputFailure(err), nil
 		}
 		if err := e.sleepFor(ctx, textInputCompositionReadyDelay); err != nil {
 			return textInputResult{Reason: err.Error()}, nil
@@ -197,14 +199,18 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 		partialArgs.CurrentIMEPart = chunk.text
 		partialArgs.VerifyTextSuffix = true
 		committed, fieldText, wrongIME, _, err := e.typeCompositionWithCandidateSelection(ctx, platform, partialArgs, compositionSegments[index])
-		if err != nil || !committed {
+		if err != nil {
+			result := textInputFailure(err)
+			result.FieldText = fieldText
+			result.WrongIMESuspected = wrongIME
+			return result, nil
+		}
+		if !committed {
 			reason := "IME run was not verified"
-			if err != nil {
-				reason = err.Error()
-			} else if wrongIME {
+			if wrongIME {
 				reason = "wrong IME suspected"
 			}
-			return textInputResult{FieldText: fieldText, WrongIMESuspected: wrongIME, Reason: reason, BackendFailure: isKeyboardExecutionFailure(err)}, nil
+			return textInputResult{FieldText: fieldText, WrongIMESuspected: wrongIME, Reason: reason}, nil
 		}
 		lastFieldText = fieldText
 	}

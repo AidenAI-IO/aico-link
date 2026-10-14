@@ -34,8 +34,11 @@ func TestEnvironmentBridgeRejectsOwnAgentListener(t *testing.T) {
 		{endpoint: "http://127.0.0.1:08080", reject: true},
 		{endpoint: "http://localhost:8080", reject: true},
 		{endpoint: "http://0.0.0.0:8080", reject: true},
+		{endpoint: "http://[::1]:8080", reject: true},
 		{endpoint: "http://127.0.0.1:9090", reject: false},
+		{endpoint: "http://127.0.0.1", reject: false},
 		{endpoint: "http://192.0.2.5:8080", reject: false},
+		{endpoint: "http://host.docker.internal:8080", reject: false},
 	} {
 		t.Run(tc.endpoint, func(t *testing.T) {
 			err := validateBridgeEndpointNotSelf(tc.endpoint, listener)
@@ -44,6 +47,34 @@ func TestEnvironmentBridgeRejectsOwnAgentListener(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerStartRejectsBridgeEndpointPointingAtItself(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve HTTP address: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release HTTP address: %v", err)
+	}
+	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://" + addr}}
+	server := &Server{
+		addr:             addr,
+		runtime:          &Runtime{config: cfg},
+		eventBroadcaster: NewEventBroadcaster(),
+		activeRuns:       make(map[string]context.CancelFunc),
+	}
+	err = server.Start()
+	if err == nil || !strings.Contains(err.Error(), "points to the agent listener") {
+		t.Fatalf("Server.Start() = %v; want self-endpoint rejection", err)
+	}
+	// The rejected listener must be released so the port is reusable.
+	again, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listener was not closed after rejection: %v", err)
+	}
+	_ = again.Close()
 }
 
 func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {

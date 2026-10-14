@@ -996,6 +996,7 @@ func TestTextInputEngineMarksOnlyKeyboardExecutionFailures(t *testing.T) {
 		want bool
 	}{
 		{name: "backend", code: CodeToolExecutionFailed, want: true},
+		{name: "unavailable", code: CodeModuleUnavailable, want: true},
 		{name: "invalid input", code: CodeInvalidArguments, want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

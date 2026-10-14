@@ -62,6 +62,19 @@ def _mobilegym_app_switch_action() -> Any:
     )
 
 
+def future_result(future: Any, timeout: float) -> Any:
+    """Wait for owner-loop work, cancelling it if the caller stops waiting."""
+    try:
+        return future.result(timeout=timeout)
+    except FutureTimeoutError as exc:
+        # A completed coroutine may itself raise TimeoutError with useful phase
+        # diagnostics. Only cancel when the caller stopped waiting first.
+        if future.done():
+            raise
+        future.cancel()
+        raise TimeoutError("bridge request timed out") from exc
+
+
 class ToolsAPIHandler:
     """Handler for the environment bridge /api/tools endpoint."""
 
@@ -340,11 +353,16 @@ class ToolsAPIHandler:
 
         except TimeoutError:
             duration_ms = int((time.time() - started_at) * 1000)
+            output = "tool execution timed out"
+            if tool_name == "touch_gesture":
+                # Cancellation releases any held contact; a later drag_release
+                # would otherwise fail with no active contact.
+                output += "; any active touch contact was released"
             self._send_json(
                 handler,
                 504,
                 {
-                    "output": "tool execution timed out",
+                    "output": output,
                     "is_error": True,
                     "error": "timeout",
                     "duration_ms": duration_ms,
@@ -781,12 +799,7 @@ class ToolsAPIHandler:
                     await state.input.release()
                 raise
         future = asyncio.run_coroutine_threadsafe(state.run_env(execute), state.owner_loop)
-        try:
-            return future.result(timeout=self.request_timeout_sec)
-        except FutureTimeoutError:
-            if not future.done():
-                future.cancel()
-            raise
+        return future_result(future, self.request_timeout_sec)
 
     def _execute_action(
         self,
@@ -833,7 +846,7 @@ class ToolsAPIHandler:
             return {"output": json.dumps(output_data), "is_error": False}
 
         future = asyncio.run_coroutine_threadsafe(state.run_env(step_env), state.owner_loop)
-        return future.result(timeout=self.request_timeout_sec)
+        return future_result(future, self.request_timeout_sec)
 
     def _call_noop_with_screenshot(self, state: BridgeEpisodeState, episode_id: str) -> dict[str, Any]:
         async def get_screenshot(env: Any) -> dict[str, Any]:
@@ -850,7 +863,7 @@ class ToolsAPIHandler:
             return {"output": json.dumps(output_data), "is_error": False}
 
         future = asyncio.run_coroutine_threadsafe(state.run_env(get_screenshot), state.owner_loop)
-        return future.result(timeout=self.request_timeout_sec)
+        return future_result(future, self.request_timeout_sec)
 
     def _send_json(self, handler: BaseHTTPRequestHandler, status: int, payload: dict[str, Any]) -> None:
         """Send JSON response."""

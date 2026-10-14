@@ -27,6 +27,7 @@ from runner.adb_android_environment import (
     terminate_pid,
 )
 from runner.desktop_environment import pid_alive as desktop_pid_alive, start_desktop_bridge_process, terminate_pid as terminate_desktop_pid, wait_for_desktop_bridge
+from runner.environment import mobilegym_bridge_bind_host
 from runner.webui import (
     BENCHMARK_ROOT,
     DEFAULT_BASE_CONFIG_DIR,
@@ -47,7 +48,6 @@ from runner.webui import (
     stop_daemon_compose,
     wait_for_http_health,
 )
-from runner.environment import mobilegym_bridge_bind_host
 
 
 DEFAULT_CLI_RUNS_DIR = BENCHMARK_ROOT / "runs" / "cli-services"

@@ -8,7 +8,6 @@ import threading
 import time
 import urllib.parse
 import uuid
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -31,7 +30,7 @@ from .protocol import (
     encode_provider_frame,
     encode_screenshot,
 )
-from .tools_api import ToolsAPIHandler
+from .tools_api import ToolsAPIHandler, future_result
 
 
 ACTION_ENDPOINTS = {"tap", "swipe", "drag", "type_text", "key", "back", "home", "wait"}
@@ -139,29 +138,17 @@ class BridgeServer:
 
     def submit(self, coro: Any, *, timeout: float | None = None) -> Any:
         future = asyncio.run_coroutine_threadsafe(coro, self.state.owner_loop)
-        return _future_result(
+        return future_result(
             future,
             self.request_timeout_sec if timeout is None else timeout,
         )
 
     def submit_to_state(self, state: BridgeEpisodeState, coro: Any, *, timeout: float | None = None) -> Any:
         future = asyncio.run_coroutine_threadsafe(coro, state.owner_loop)
-        return _future_result(
+        return future_result(
             future,
             self.request_timeout_sec if timeout is None else timeout,
         )
-
-
-def _future_result(future: Any, timeout: float) -> Any:
-    try:
-        return future.result(timeout=timeout)
-    except FutureTimeoutError as exc:
-        # A completed coroutine may itself raise TimeoutError with useful phase
-        # diagnostics. Only cancel when the caller stopped waiting first.
-        if future.done():
-            raise
-        future.cancel()
-        raise TimeoutError("bridge request timed out") from exc
 
 
 def _handler_for(bridge: BridgeServer):

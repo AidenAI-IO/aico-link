@@ -362,9 +362,59 @@ def test_timed_out_drag_screenshot_releases_active_contact():
         with pytest.raises(HTTPError) as exc_info:
             urlopen(req, timeout=2)
         assert exc_info.value.code == 504
+        assert "touch contact was released" in json.loads(exc_info.value.read())["output"]
         assert observing.wait(timeout=1)
         assert released.wait(timeout=1)
         assert not state.input.contact_active
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+
+def test_timed_out_mobilegym_step_is_cancelled_before_later_actions():
+    import asyncio
+    from urllib.error import HTTPError
+
+    started = Event()
+    cancelled = Event()
+
+    class BlockingEnv:
+        def __init__(self):
+            self.actions = []
+
+        async def step(self, action):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            self.actions.append(action)
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-step-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/keyboard_tap",
+            data=json.dumps({"input": {"keys": ["enter"]}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert started.wait(timeout=1)
+        assert cancelled.wait(timeout=1)
+        assert state.env.actions == []
+        follow_up = asyncio.run_coroutine_threadsafe(state.run_env(lambda env: "ready"), loop)
+        assert follow_up.result(timeout=1) == "ready"
     finally:
         server.stop()
         loop.call_soon_threadsafe(loop.stop)

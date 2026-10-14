@@ -217,12 +217,14 @@ class EnvironmentManager:
             return None
         env_id = container_name[len(prefix):]
 
-        bridge_port = _docker_published_port_safe(container_name, 9090)
+        bridge_host, bridge_port = _docker_published_binding_safe(container_name, 9090)
         web_port = _docker_published_port_safe(container_name, 4173)
         if bridge_port == 0:
             return None
 
-        public_endpoint = f"http://{mobilegym_bridge_bind_host()}:{bridge_port}"
+        # Use the address the container was actually published on; the current
+        # bind-host setting may differ from the one it was started with.
+        public_endpoint = f"http://{bridge_host}:{bridge_port}"
 
         # Health check: verify the container is actually responsive
         is_healthy = _check_endpoint_health(f"{public_endpoint}/health", timeout=2.0)
@@ -495,6 +497,33 @@ def _docker_published_port_safe(container_name: str, container_port: int) -> int
         return 0
 
 
+def _docker_published_binding_safe(container_name: str, container_port: int) -> tuple[str, int]:
+    """Return the (host IP, host port) a container port is published on, or ("", 0).
+
+    Wildcard bindings are reported as loopback so host-side checks still work.
+    """
+    try:
+        output = subprocess.check_output(
+            ["docker", "port", container_name, f"{int(container_port)}/tcp"],
+            text=True,
+            timeout=5,
+        ).strip()
+    except Exception:
+        return "", 0
+    for line in output.splitlines():
+        host, _, port = line.strip().rpartition(":")
+        host = host.strip("[]")
+        try:
+            address = ipaddress.ip_address(host)
+            port_number = int(port)
+        except ValueError:
+            continue
+        if address.version != 4:
+            continue
+        return ("127.0.0.1" if address.is_unspecified else host), port_number
+    return "", 0
+
+
 def _check_endpoint_health(url: str, timeout: float = 2.0) -> bool:
     """Quick health check: returns True only if endpoint returns 2xx."""
     try:
@@ -596,14 +625,13 @@ def build_mobilegym_environment_command(
     container_name: str,
     host_web_port: int,
     host_bridge_port: int,
-    bridge_bind_host: str | None = None,
+    bridge_bind_host: str,
     benchmark_dir: Path,
     bridge_port: int = 9090,
     parallel_envs: int = DEFAULT_MOBILEGYM_PARALLEL_ENVS,
 ) -> list[str]:
     """Build docker run command for MobileGym environment."""
     parallel_envs = max(1, int(parallel_envs))
-    bridge_bind_host = bridge_bind_host or mobilegym_bridge_bind_host()
     script = "\n".join(
         [
             "set -eu",
