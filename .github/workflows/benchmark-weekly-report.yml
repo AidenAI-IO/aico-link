@@ -99,7 +99,7 @@ jobs:
           # Set correct Content-Type so browsers render HTML instead of downloading
           if [[ -f dashboard.html ]]; then
             /tmp/ossutil-v1.7.19-linux-amd64/ossutil cp dashboard.html "$prefix/dashboard.html" \
-              --meta "Content-Type:text/html#charset=utf-8"
+              --meta "Content-Type:text/html; charset=utf-8"
           fi
           for file in dashboard-data.json weekly-report.md; do
             if [[ -f "$file" ]]; then
