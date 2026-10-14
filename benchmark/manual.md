@@ -1160,8 +1160,8 @@ At the end of a run, the runner tries to upload the report to the agent board's
 
 The daily benchmark workflow generates `dashboard.html` and
 `dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
-workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai), ahead of the
-weekly meeting. It reads `main` history from Langfuse, writes `weekly-report.md`
+workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
+`main` history from Langfuse, writes `weekly-report.md`
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. Historical data comes

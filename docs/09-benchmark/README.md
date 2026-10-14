@@ -341,7 +341,7 @@ second step:
 
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
 of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
-workflow runs every Thursday before the weekly meeting, compares the last 7 days
+workflow runs every Thursday, compares the last 7 days
 with the previous 7, and sends a Lark notification card. Both read history from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
 
@@ -369,9 +369,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
-The scheduled sweep runs at 02:07 Asia/Shanghai every day, and the weekly
-report generates every Thursday at 09:07 Asia/Shanghai, ahead of the weekly
-meeting. It selects every case whose environment is `isolated` or `mobilegym`.
+The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
+case whose environment is `isolated` or `mobilegym`.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
