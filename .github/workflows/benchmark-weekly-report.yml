@@ -96,7 +96,12 @@ jobs:
             -k "$OSS_ACCESS_KEY_SECRET"
           prefix="oss://firmware-agent/benchmark/weekly/${{ github.run_number }}"
           cd benchmark
-          for file in dashboard.html dashboard-data.json weekly-report.md; do
+          # Set correct Content-Type so browsers render HTML instead of downloading
+          if [[ -f dashboard.html ]]; then
+            /tmp/ossutil-v1.7.19-linux-amd64/ossutil cp dashboard.html "$prefix/dashboard.html" \
+              --meta "Content-Type:text/html#charset=utf-8"
+          fi
+          for file in dashboard-data.json weekly-report.md; do
             if [[ -f "$file" ]]; then
               /tmp/ossutil-v1.7.19-linux-amd64/ossutil cp "$file" "$prefix/$file"
             fi
