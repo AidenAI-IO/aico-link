@@ -479,6 +479,53 @@ def test_submit_to_state_cancels_work_after_wait_timeout():
         assert cancelled.wait(timeout=1)
 
 
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+def test_release_frees_task_route_when_episode_end_fails(failure):
+    with OwnerLoop() as owner:
+        state = BridgeEpisodeState(FakeEnv(owner.loop), owner_loop=owner.loop)
+        router = BridgeTaskRouter([state])
+        server = BridgeServer(router, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+        server.start()
+        cancelled = threading.Event()
+
+        def post(path, task_id, payload):
+            request = urllib.request.Request(
+                f"{server.base_url}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "benchmark-task-id": task_id},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, json.loads(response.read())
+
+        try:
+            status, _ = post("/api/setup", "task.alpha", {"episode_id": "ep-alpha", "setup_token": "token"})
+            assert status == 200
+
+            async def failed_end(episode_id):
+                if failure == "error":
+                    raise RuntimeError("episode cleanup failed")
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+            state.end_episode = failed_end
+            status, result = post("/api/release", "task.alpha", {})
+            assert status == 200
+            assert result["data"]["released"] is True
+            assert router.task_map() == {}
+            assert server.setup_tokens.clear_completed_for_task("task.alpha") == 0
+            if failure == "timeout":
+                assert cancelled.wait(timeout=1)
+
+            status, _ = post("/api/setup", "task.beta", {"episode_id": "ep-beta"})
+            assert status == 200
+        finally:
+            server.stop()
+
+
 def test_api_screen_is_removed():
     with RunningBridge() as bridge:
         status, _ = request_text(bridge.base_url, "GET", "/screen")

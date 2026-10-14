@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import socket
 import threading
 import time
@@ -48,6 +49,9 @@ ACTION_ENDPOINTS = {"tap", "swipe", "drag", "type_text", "key", "back", "home", 
 # both fail a hung POST /api/providers/screenshot at 30s.
 DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC = 180
 SCREENSHOT_PROVIDER_TIMEOUT_SEC = 30
+RELEASE_EPISODE_TIMEOUT_SEC = 5
+
+logger = logging.getLogger(__name__)
 
 
 def _setup_app_ids(payload: dict[str, Any]) -> list[str]:
@@ -263,7 +267,14 @@ def _handler_for(bridge: BridgeServer):
             task_id = benchmark_task_id_from_headers(self.headers)
             state = bridge.router.existing_state_for_task_id(task_id)
             if state is not None and state.active_episode_id:
-                bridge.submit_to_state(state, state.end_episode(state.active_episode_id))
+                try:
+                    bridge.submit_to_state(
+                        state,
+                        state.end_episode(state.active_episode_id),
+                        timeout=min(bridge.request_timeout_sec, RELEASE_EPISODE_TIMEOUT_SEC),
+                    )
+                except Exception as exc:
+                    logger.warning("Could not end MobileGym episode during release for task %s: %s", task_id, exc)
             released = bridge.router.release_task_id(task_id)
             bridge.setup_tokens.clear_completed_for_task(task_id)
             self._send_json(200, bridge_ok({"released": released}))
