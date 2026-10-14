@@ -20,6 +20,7 @@ def _manager_without_discovery(monkeypatch, tmp_path: Path) -> environment.Envir
 
 def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
     captured = {}
+    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
     monkeypatch.setattr(environment.sys, "platform", "linux")
 
     def inspect(cmd, text=False, timeout=None):
@@ -38,6 +39,7 @@ def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
 
 
 def test_mobilegym_bridge_bind_is_loopback_on_docker_desktop(monkeypatch):
+    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
     monkeypatch.setattr(environment.sys, "platform", "darwin")
     monkeypatch.setattr(
         environment.subprocess,
