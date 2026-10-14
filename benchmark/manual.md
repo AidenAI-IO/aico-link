@@ -1172,7 +1172,7 @@ For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
 bucket, or serve the report through an existing HTTPS reverse proxy. Set the
 repository Actions variable `BENCHMARK_REPORT_BASE_URL` to that origin, for
 example `https://reports.example.com`. The workflow appends
-`/benchmark/weekly/<run-number>/dashboard.html`. Without
+`/benchmark/weekly/<run-number>-<run-attempt>/dashboard.html`. Without
 `BENCHMARK_REPORT_BASE_URL`, files are still uploaded but notifications are
 skipped with a configuration warning.
 
@@ -1268,7 +1268,7 @@ uv run python -m ci.generate_dashboard \
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
-  --dashboard-url "https://reports.example.com/benchmark/weekly/123/dashboard.html"
+  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are
