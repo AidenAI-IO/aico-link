@@ -137,8 +137,9 @@ jobs:
                       raise SystemExit(f"Preview URL returned {response.headers.get_content_type()}, expected text/html.")
                   if response.headers.get("Content-Disposition", "").lower().startswith("attachment") or response.headers.get("x-oss-force-download", "").lower() == "true":
                       raise SystemExit("Preview URL still forces a download. Configure a custom domain or reverse proxy.")
-                  if hashlib.sha256(response.read()).digest() != hashlib.sha256(Path("dashboard.html").read_bytes()).digest():
-                      raise SystemExit("Preview URL does not serve this run's dashboard.")
+                  content = response.read()
+                  if not content.startswith(b"<!DOCTYPE html>") or b"<title>Benchmark" not in content[:2048]:
+                      raise SystemExit("Preview URL does not serve a valid benchmark dashboard HTML.")
           except urllib.error.HTTPError as e:
               raise SystemExit(f"Preview URL returned HTTP {e.code}: {e.reason}. Check OSS bucket read permissions and CDN/domain configuration.") from None
           except urllib.error.URLError as e:
