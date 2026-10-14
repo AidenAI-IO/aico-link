@@ -1174,6 +1174,19 @@ The weekly report runs on GitHub-hosted `ubuntu-latest` with direct network
 access. `BENCHMARK_HTTPS_PROXY` is used only by the self-hosted benchmark runner;
 its private-network proxy is not reachable from GitHub-hosted runners.
 
+For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
+bucket (including DNS and its TLS certificate), or serve the report through an
+existing HTTPS reverse proxy. Set the repository Actions variable
+`BENCHMARK_REPORT_BASE_URL` to that origin, for example `https://reports.example.com`.
+The workflow appends `/benchmark/weekly/<run-number>/dashboard.html`. The default
+`firmware-agent.oss-cn-hongkong.aliyuncs.com` domain forces HTML downloads even
+with `Content-Type: text/html` and `Content-Disposition: inline`; changing object
+metadata alone cannot enable preview. See the [OSS force-download documentation](https://help.aliyun.com/zh/oss/user-guide/0048-00000001).
+After uploading, the workflow checks the preview response headers and verifies
+that the served HTML matches this run before publishing its link or sending Lark.
+Without `BENCHMARK_REPORT_BASE_URL`, files are still uploaded but notifications
+are skipped with a configuration warning.
+
 Completed current-run metrics on disk supplement Langfuse while publication is
 delayed or fails. Local results replace the same suite/run once, without double
 counting. Historical publication failures are unavailable in Langfuse and cannot
@@ -1342,7 +1355,7 @@ uv run python -m ci.generate_dashboard \
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
-  --dashboard-url "https://your-oss-bucket.oss-cn-hongkong.aliyuncs.com/benchmark/weekly/123/dashboard.html"
+  --dashboard-url "https://reports.example.com/benchmark/weekly/123/dashboard.html"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are

@@ -65,17 +65,8 @@ jobs:
           if [[ -f weekly-report.md ]]; then
             cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Send Lark notification
-        if: ${{ always() }}
-        continue-on-error: true
-        working-directory: benchmark
-        run: |
-          set -uo pipefail
-          run_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          uv run python -m ci.notify_lark \
-            --data-json dashboard-data.json \
-            --dashboard-url "https://firmware-agent.oss-cn-hongkong.aliyuncs.com/benchmark/weekly/${{ github.run_number }}/dashboard.html"
       - name: Upload to OSS
+        id: upload
         if: ${{ always() }}
         continue-on-error: true
         env:
@@ -96,10 +87,11 @@ jobs:
             -k "$OSS_ACCESS_KEY_SECRET"
           prefix="oss://firmware-agent/benchmark/weekly/${{ github.run_number }}"
           cd benchmark
-          # Set correct Content-Type so browsers render HTML instead of downloading
+          # Correct metadata is necessary; OSS default domains still force HTML downloads.
           if [[ -f dashboard.html ]]; then
             /tmp/ossutil-v1.7.19-linux-amd64/ossutil cp dashboard.html "$prefix/dashboard.html" \
-              --meta "Content-Type:text/html; charset=utf-8"
+              --meta "Content-Type:text/html; charset=utf-8#Content-Disposition:inline" -f
+            echo "uploaded=true" >> "$GITHUB_OUTPUT"
           fi
           for file in dashboard-data.json weekly-report.md; do
             if [[ -f "$file" ]]; then
@@ -107,6 +99,53 @@ jobs:
             fi
           done
           echo "Files uploaded to $prefix/" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify online preview
+        id: preview
+        if: ${{ steps.upload.outcome == 'success' && steps.upload.outputs.uploaded == 'true' }}
+        working-directory: benchmark
+        env:
+          REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import urllib.parse
+          import urllib.request
+
+          base = os.environ.get("REPORT_BASE_URL", "").strip().rstrip("/")
+          if not base:
+              message = "Configure BENCHMARK_REPORT_BASE_URL with an HTTPS custom domain. OSS default domains force HTML downloads; no preview link or Lark notification was published."
+              print("::warning::" + message)
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("\n" + message + "\n")
+              raise SystemExit(0)
+          parsed = urllib.parse.urlsplit(base)
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+              raise SystemExit("BENCHMARK_REPORT_BASE_URL must be an HTTPS base URL without credentials, query, or fragment.")
+          url = f"{base}/benchmark/weekly/{os.environ['GITHUB_RUN_NUMBER']}/dashboard.html"
+          with urllib.request.urlopen(url, timeout=30) as response:
+              if response.headers.get_content_type() != "text/html":
+                  raise SystemExit("Preview URL did not return HTML.")
+              if response.headers.get("Content-Disposition", "").lower().startswith("attachment") or response.headers.get("x-oss-force-download", "").lower() == "true":
+                  raise SystemExit("Preview URL still forces a download. Configure a custom domain or reverse proxy.")
+              if hashlib.sha256(response.read()).digest() != hashlib.sha256(Path("dashboard.html").read_bytes()).digest():
+                  raise SystemExit("Preview URL does not serve this run's dashboard.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"dashboard_url={url}\n")
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"\n[Open benchmark dashboard]({url})\n")
+          PY
+      - name: Send Lark notification
+        if: ${{ success() && steps.preview.outputs.dashboard_url != '' }}
+        continue-on-error: true
+        working-directory: benchmark
+        env:
+          DASHBOARD_URL: ${{ steps.preview.outputs.dashboard_url }}
+        run: |
+          uv run python -m ci.notify_lark \
+            --data-json dashboard-data.json \
+            --dashboard-url "$DASHBOARD_URL"
       - name: Upload weekly report artifacts
         if: ${{ always() }}
         continue-on-error: true
