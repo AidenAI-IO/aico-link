@@ -464,13 +464,13 @@ def test_workflow_checks_docker_and_surfaces_setup_failures() -> None:
     assert "auto-agent-setup.log" in workflow
 
 
-def test_workflow_schedules_all_runnable_cases_on_monday_wednesday_friday() -> None:
+def test_workflow_schedules_all_runnable_cases_daily() -> None:
     workflow = (
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
     assert "  push:" not in workflow
-    assert "- cron: '17 18 * * 0,2,4'" in workflow
+    assert "- cron: '7 18 * * *'" in workflow
     self_hosted_guard = (
         "if: ${{ startsWith(github.ref, 'refs/heads/') "
         "&& github.event_name != 'pull_request' "
