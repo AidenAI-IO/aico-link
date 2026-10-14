@@ -63,7 +63,7 @@ jobs:
             --data-output dashboard-data.json \
             --weekly-output weekly-report.md \
             --lookback-days 14 \
-            ${{ github.event_name == 'push' && '' || '--branch-filter main' }}
+            ${{ github.event_name != 'push' && '--branch-filter main' || '' }}
 
           if [[ -f weekly-report.md ]]; then
             cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
