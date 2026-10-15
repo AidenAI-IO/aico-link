@@ -333,13 +333,3 @@ func TestPlanCompositionRetriesTruncatedJSONWithLargerTokenBudget(t *testing.T) 
 		t.Fatalf("planner MaxTokens=%d, want at least 4096", options.MaxTokens)
 	}
 }
-
-func TestVisionResponseFieldsOmitsValues(t *testing.T) {
-	got := visionResponseFields(`{"type":"json_object","field_text":"my secret message"}`)
-	if got != "[field_text,type]" {
-		t.Fatalf("visionResponseFields() = %q, want field names only", got)
-	}
-	if got := visionResponseFields(`secret text`); strings.Contains(got, "secret") {
-		t.Fatalf("visionResponseFields() = %q leaks a non-JSON response", got)
-	}
-}

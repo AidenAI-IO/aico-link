@@ -573,9 +573,6 @@ func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, e
 		return bridgeSearchResult{}, 1, err
 	}
 	result, err := parseAppSearchResult(raw)
-	if err != nil {
-		logging.Warnf("agent", "app_search", "app search result rejected: %v fields=%s", err, visionResponseFields(raw))
-	}
 	return result, 1, err
 }
 
@@ -643,7 +640,6 @@ Rules:
 	}
 	var result bridgeAppOpenResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		logging.Warnf("agent", "app_search", "app open confirmation rejected: %v fields=%s", err, visionResponseFields(raw))
 		return bridgeAppOpenResult{}, 1, fmt.Errorf("parse app open confirmation: %w", err)
 	}
 	return result, 1, nil

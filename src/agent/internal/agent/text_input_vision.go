@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -515,25 +514,9 @@ func (v *llmTextInputVision) visionDecisionJSON(ctx context.Context, operation, 
 		if len(missing) == 0 {
 			return raw, nil
 		}
-		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d fields=%s", operation, strings.Join(missing, ","), attempt, visionResponseFields(raw))
+		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d", operation, strings.Join(missing, ","), attempt)
 	}
 	return "", fmt.Errorf("vision %s response missing required fields: %s", operation, strings.Join(missing, ", "))
-}
-
-// visionResponseFields describes a model response for diagnostics by its
-// top-level field names only. Values are never logged: field_text can hold
-// the text a user is entering.
-func visionResponseFields(raw string) string {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
-		return fmt.Sprintf("<not a JSON object, %d bytes>", len(raw))
-	}
-	names := make([]string, 0, len(fields))
-	for name := range fields {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return "[" + strings.Join(names, ",") + "]"
 }
 
 // missingJSONFields leaves syntax errors to the caller's parser.
