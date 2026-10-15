@@ -7,7 +7,6 @@ import (
 	"encoding/base64"
 	"fmt"
 	"image"
-	"image/color"
 	"image/jpeg"
 )
 
@@ -236,18 +235,4 @@ func cropJPEGToActiveArea(jpegData []byte, active screen.ScreenActiveArea, quali
 		return nil, 0, 0, fmt.Errorf("encode cropped jpeg: %w", err)
 	}
 	return buf.Bytes(), active.Width, active.Height, nil
-}
-
-func decodeCoordinateDebugScreenshotBase64(data string) (image.Image, error) {
-	decoded, err := base64.StdEncoding.DecodeString(data)
-	if err != nil {
-		return nil, err
-	}
-	return jpeg.Decode(bytes.NewReader(decoded))
-}
-
-func imageEqualColorAt(img image.Image, x, y int, want color.Color) bool {
-	r1, g1, b1, a1 := img.At(x, y).RGBA()
-	r2, g2, b2, a2 := want.RGBA()
-	return r1 == r2 && g1 == g2 && b1 == b2 && a1 == a2
 }

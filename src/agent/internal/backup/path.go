@@ -33,19 +33,6 @@ func validRelativeSymlink(linkPath, target string) bool {
 	return resolved != "." && resolved != ".." && !strings.HasPrefix(resolved, "../")
 }
 
-func safeJoin(root, relative string) (string, error) {
-	if err := validateArchivePath(relative); err != nil {
-		return "", err
-	}
-	root = filepath.Clean(root)
-	target := filepath.Join(root, filepath.FromSlash(relative))
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path %q escapes target root", relative)
-	}
-	return target, nil
-}
-
 func excludedPath(relative string, patterns []string) bool {
 	relative = filepath.ToSlash(relative)
 	for _, pattern := range patterns {

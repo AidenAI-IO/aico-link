@@ -1163,26 +1163,6 @@ func (pb *PhoneBridge) ApplyBenchmarkStatus(status PhoneBridgeStatus) error {
 	return nil
 }
 
-func appendNonEmptyLine(builder *strings.Builder, prefix, value string) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return
-	}
-	builder.WriteString(prefix)
-	builder.WriteString(value)
-	builder.WriteByte('\n')
-}
-
-func joinNonEmpty(sep string, values ...string) string {
-	parts := make([]string, 0, len(values))
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			parts = append(parts, trimmed)
-		}
-	}
-	return strings.Join(parts, sep)
-}
-
 func firstNonEmptyPhoneField(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -1190,56 +1170,6 @@ func firstNonEmptyPhoneField(values ...string) string {
 		}
 	}
 	return ""
-}
-
-func fieldLabel(label, value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	return label + "=" + value
-}
-
-func boolLabel(label string, value *bool) string {
-	if value == nil {
-		return ""
-	}
-	if *value {
-		return label + "=true"
-	}
-	return label + "=false"
-}
-
-func formatPhoneBattery(battery PhoneBatteryInfo) string {
-	parts := make([]string, 0, 3)
-	if battery.Level != nil {
-		parts = append(parts, fmt.Sprintf("level=%.0f%%", *battery.Level*100))
-	}
-	if battery.Charging != nil {
-		parts = append(parts, boolLabel("charging", battery.Charging))
-	}
-	if state := strings.TrimSpace(battery.State); state != "" {
-		parts = append(parts, "state="+state)
-	}
-	return strings.Join(parts, ", ")
-}
-
-func availableAppNames(apps []AvailableAppInfo, limit int) []string {
-	names := make([]string, 0, len(apps))
-	for _, app := range apps {
-		if !app.Available {
-			continue
-		}
-		name := strings.TrimSpace(app.Name)
-		if name == "" {
-			continue
-		}
-		names = append(names, name)
-		if limit > 0 && len(names) >= limit {
-			break
-		}
-	}
-	return names
 }
 
 // handleBenchmarkWebSocketRelay serves an outbound connection from a benchmark

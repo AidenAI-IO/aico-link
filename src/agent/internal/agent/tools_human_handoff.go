@@ -86,16 +86,6 @@ var validHandoffReasonValues = []string{
 	string(HandoffReasonOther),
 }
 
-func normalizeHandoffReason(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	for _, valid := range validHandoffReasonValues {
-		if value == valid {
-			return value
-		}
-	}
-	return string(HandoffReasonOther)
-}
-
 func isValidHandoffReason(value string) bool {
 	value = strings.ToLower(strings.TrimSpace(value))
 	for _, valid := range validHandoffReasonValues {

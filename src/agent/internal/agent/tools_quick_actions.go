@@ -262,44 +262,6 @@ func (t *quickActionsTable) lookup(actionID, platform string) (quickActionDefini
 	return action, binding, true
 }
 
-func (t *quickActionsTable) catalogSummary(platform string) string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-
-	ids := make([]string, 0, len(t.document.Actions))
-	for id := range t.document.Actions {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
-	var builder strings.Builder
-	for _, id := range ids {
-		action := t.document.Actions[id]
-		binding, hasPlatform := action.Platforms[platform]
-		if platform != "" && !hasPlatform {
-			continue
-		}
-		if hasPlatform && bindingStatus(binding) != quickActionStatusActive {
-			continue
-		}
-		status := "missing"
-		tool := ""
-		if hasPlatform {
-			status = strings.TrimSpace(binding.Status)
-			if status == "" {
-				status = quickActionStatusReserved
-			}
-			tool = strings.TrimSpace(binding.Tool)
-		}
-		builder.WriteString(fmt.Sprintf("- %s (%s): %s", id, action.Label, status))
-		if tool != "" {
-			builder.WriteString(fmt.Sprintf(", tool=%s", tool))
-		}
-		builder.WriteString("\n")
-	}
-	return strings.TrimRight(builder.String(), "\n")
-}
-
 func (t *quickActionsTable) activeActionIDs(platform string) []string {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
@@ -826,15 +788,4 @@ func platformNote(actionID, platform string, binding quickActionBinding) string 
 		return ""
 	}
 	return fmt.Sprintf("%s on %s has no primary tool binding", actionID, platform)
-}
-
-func quickActionBehaviorSummary() string {
-	return strings.Join([]string{
-		"Common actions: back, home, hide_app, quit_app, app_switch, app_switch_back, spotlight_search, copy, paste, cut, undo, redo, select_all, delete_backward, delete_forward, find, send, browser_new_tab, browser_close_tab, browser_refresh, browser_address_bar.",
-		"- Cataloged semantic actions MUST use quick_action. keyboard_tap remains valid for explicit physical-key requests and uncataloged app-specific shortcuts.",
-		"- A raw chord fallback for a cataloged action is allowed only when a quick_action result in the current run explicitly reports status=reserved or unavailable before executing a binding. Do not infer unavailability from unrelated failures or assumptions.",
-		"- If an active binding executed but failed or had no visible effect: use a listed alternative or non-shortcut UI strategy; never replay the same binding as a raw keyboard chord.",
-		"- If ok=true but the screenshot shows no expected change or the outcome is wrong: treat as ineffective, try alternative=true once when alternatives are listed, otherwise switch tools.",
-		"- Never loop on the same quick_action binding; change tool or strategy after one failed attempt.",
-	}, "\n")
 }

@@ -73,7 +73,6 @@ type Runtime struct {
 	memories                *MemoryManager
 	tools                   *ToolSet
 	skills                  *SkillManager
-	skillsLoaded            bool
 	skillsReloadMu          sync.Mutex
 	skillsDirty             bool
 	runGateInit             sync.Once
@@ -688,7 +687,6 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 		memories:      memories,
 		tools:         tools,
 		skills:        skillManager,
-		skillsLoaded:  skillIndex != nil && len(skillIndex.Names()) > 0,
 		waitForWakeup: waitForWakeupController,
 		voiceNotifications: NewVoiceNotificationManager(
 			cfg.VoiceNotifications,
@@ -1811,15 +1809,8 @@ func (r *Runtime) reloadSkillsIfDirty() error {
 		return fmt.Errorf("reload skills: %w", err)
 	}
 	r.skills.ReplaceIndex(index)
-	r.skillsLoaded = len(index.Names()) > 0
 	r.skillsDirty = false
 	return nil
-}
-
-func (r *Runtime) hasLoadedSkills() bool {
-	r.skillsReloadMu.Lock()
-	defer r.skillsReloadMu.Unlock()
-	return r.skillsLoaded
 }
 
 func (r *Runtime) ClearAllMemory(ctx context.Context) error {

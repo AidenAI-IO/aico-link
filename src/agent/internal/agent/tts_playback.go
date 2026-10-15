@@ -62,25 +62,3 @@ func stopPlaybackIgnoringEnded(audio *AudioServiceClient, sessionID uint64) erro
 	}
 	return err
 }
-
-func writePlaybackPCM(audio *AudioServiceClient, sessionID uint64, pcm []byte) error {
-	return writePlaybackPCMContext(context.Background(), audio, sessionID, pcm)
-}
-
-func writePlaybackPCMContext(ctx context.Context, audio *AudioServiceClient, sessionID uint64, pcm []byte) error {
-	for off := 0; off < len(pcm); off += playbackChunkBytes {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		end := off + playbackChunkBytes
-		if end > len(pcm) {
-			end = len(pcm)
-		}
-		if err := audio.WritePlayChunk(sessionID, pcm[off:end], false); err != nil {
-			return fmt.Errorf("write play chunk: %w", err)
-		}
-	}
-	return nil
-}

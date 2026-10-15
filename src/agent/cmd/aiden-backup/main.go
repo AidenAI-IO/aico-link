@@ -236,24 +236,6 @@ func (c *client) create(args []string, out io.Writer) error {
 	return c.print(out, map[string]any{"ok": true, "job_id": jobID, "path": *output, "bytes": written, "backup_id": result.Manifest.BackupID, "components": result.Manifest.Components})
 }
 
-func defaultComponents(capabilities map[string]any, mode backup.Mode) []string {
-	components := []string{}
-	values, _ := capabilities["components"].([]any)
-	for _, value := range values {
-		item, _ := value.(map[string]any)
-		if item["default_selected"] != true || item["available"] == false {
-			continue
-		}
-		if item["same_device_only"] == true && mode != backup.ModeSameDevice {
-			continue
-		}
-		if id, ok := item["id"].(string); ok {
-			components = append(components, id)
-		}
-	}
-	return components
-}
-
 // splitPositional extracts the single positional argument so flags may be
 // written before or after it (Go's flag package stops at the first non-flag).
 func splitPositional(args []string) (string, []string) {
