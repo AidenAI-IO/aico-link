@@ -1,6 +1,9 @@
 name: Benchmark Weekly Report
 
 on:
+  push:
+    branches:
+      - worktree-benchmark-weekly-report
   schedule:
     # Every Thursday at 01:07 UTC (09:07 Asia/Shanghai).
     - cron: '7 1 * * 4'
@@ -60,11 +63,14 @@ jobs:
             --data-output dashboard-data.json \
             --weekly-output weekly-report.md \
             --lookback-days 14 \
-            --branch-filter main
+            ${{ github.event_name != 'push' && '--branch-filter main' || '' }}
 
           if [[ -f weekly-report.md ]]; then
             cat weekly-report.md >> "$GITHUB_STEP_SUMMARY"
           fi
+      - name: Mock previous week (temporary preview)
+        working-directory: benchmark
+        run: uv run python -m ci._mock_previous_week dashboard-data.json
       - name: Upload to OSS
         id: upload
         if: ${{ always() }}
