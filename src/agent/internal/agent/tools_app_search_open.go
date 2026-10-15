@@ -4,7 +4,9 @@ import (
 	"aiden-agent/internal/logging"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -12,6 +14,17 @@ import (
 
 const appSearchOpenLaunchDelay = 1200 * time.Millisecond
 const appSearchResultSettleDelay = 350 * time.Millisecond
+
+// Restoring the pointer profile re-enumerates USB HID. iOS drops the hardware
+// keyboard for a moment and can show the software keyboard, shifting results.
+const appSearchPointerRestoreSettleDelay = 800 * time.Millisecond
+
+// On iOS, Caps Lock switches between the active IME and English. Switching
+// away commits pending pinyin as letters, so the query survives the later
+// pointer-profile restore; the second tap switches back. With no pending text
+// both taps only toggle the language and, unlike Return, never open the top
+// result. iOS can ignore a second tap that follows too quickly.
+const appSearchQuickCommitGap = 800 * time.Millisecond
 
 func sleepWithContext(ctx context.Context, delay time.Duration) error {
 	if delay <= 0 {
@@ -39,6 +52,7 @@ type appSearchOpenTool struct {
 	launchDelay          time.Duration
 	sleep                func(context.Context, time.Duration) error
 	iosKeyboardIsolation *iosKeyboardIsolationController
+	exactEntryOnly       bool
 }
 
 type appSearchOpenArgs struct {
@@ -112,10 +126,13 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 		entryTool:        t.entryTool,
 		launchDelay:      t.launchDelay,
 		sleep:            t.sleep,
+		exactEntryOnly:   t.exactEntryOnly,
 	})
 	if err != nil {
+		logging.Infof("agent", "app_search", "open finished target=%q ok=false error=%q steps=%q", args.App, err.Error(), result.Steps)
 		return jsonString(map[string]any{"ok": false, "error": err.Error(), "target": args.App, "steps": result.Steps, "vlm_calls": result.VLMCalls}), nil
 	}
+	logging.Infof("agent", "app_search", "open finished target=%q ok=%t reason=%q steps=%q", args.App, result.Opened, result.Reason, result.Steps)
 	output := map[string]any{
 		"ok":        result.Opened,
 		"target":    args.App,
@@ -151,6 +168,8 @@ type appSearchOpenFlowConfig struct {
 	entryTool        *EnterTextTool
 	launchDelay      time.Duration
 	sleep            func(context.Context, time.Duration) error
+	// exactEntryOnly skips the quick pinyin query (tests of exact entry).
+	exactEntryOnly bool
 }
 
 type appSearchOpenFlowResult struct {
@@ -199,14 +218,57 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 	}
 	steps = append(steps, "opened system search")
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-	searchTerms := appSearchFallbackTerms(searchTerm)
-	for index, term := range searchTerms {
-		if err := enterSearchQuery(ctx, cfg, term, index > 0); err != nil {
-			result.Steps = append(steps, "search query entry failed")
+	isolation := iosKeyboardIsolationControllerFromContext(ctx)
+	type searchAttempt struct {
+		term       string
+		allowQuick bool
+	}
+	var attempts []searchAttempt
+	for index, term := range appSearchFallbackTerms(searchTerm) {
+		attempts = append(attempts, searchAttempt{term: term, allowQuick: index == 0})
+	}
+	previousQuick := false
+	for index := 0; index < len(attempts); index++ {
+		term := attempts[index].term
+		if previousQuick {
+			// The quick query is committed ASCII text, so no screen analysis
+			// is needed to clear it.
+			if err := clearSearchQueryText(ctx, cfg); err != nil {
+				result.Steps = append(steps, "clear quick query failed")
+				return result, err
+			}
+		}
+		quick, err := enterSearchQuery(ctx, cfg, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		previousQuick = quick
+		if err != nil {
+			var unverified *searchQueryUnverifiedError
+			if !errors.As(err, &unverified) {
+				result.Steps = append(steps, "search query entry failed")
+				return result, err
+			}
+			// System search lists the app while the query is still uncommitted
+			// IME text, so the result lookup and open confirmation decide.
+			logging.Infof("agent", "app_search", "search query unverified term=%q; checking results", term)
+			steps = append(steps, "search input unverified; checking results")
+		}
+		if quick {
+			steps = append(steps, fmt.Sprintf("searched %q with quick query", term))
+		} else {
+			steps = append(steps, fmt.Sprintf("searched %q", term))
+		}
+		// Switch profiles before the result screenshot: a tap point captured
+		// under the keyboard-only profile can be stale after re-enumeration.
+		restored, err := isolation.restoreForPointer(ctx)
+		if err != nil {
+			result.Steps = append(steps, "restore pointer profile failed")
 			return result, err
 		}
-		steps = append(steps, fmt.Sprintf("searched %q", term))
-		if err := sleep(ctx, appSearchResultSettleDelay); err != nil {
+		settleDelay := appSearchResultSettleDelay
+		if restored {
+			logging.Infof("agent", "app_search", "pointer profile restored before result lookup term=%q", term)
+			settleDelay = appSearchPointerRestoreSettleDelay
+		}
+		if err := sleep(ctx, settleDelay); err != nil {
 			result.Steps = append(steps, "wait for search results canceled")
 			return result, err
 		}
@@ -274,6 +336,10 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		if foundForTerm {
 			break
 		}
+		if quick {
+			// The quick query assumes standard pinyin input; retry with exact entry.
+			attempts = slices.Insert(attempts, index+1, searchAttempt{term: term})
+		}
 	}
 	result.Steps = steps
 	if result.Reason == "" {
@@ -282,34 +348,35 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 	return result, nil
 }
 
-func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string, clearFirst bool) error {
+// enterSearchQuery reports quick=true when it typed the quick ASCII query,
+// which the caller retries with exact entry if no result is found.
+func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string, clearFirst, allowQuick bool) (quick bool, err error) {
 	if clearFirst {
 		engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
 		if err := engine.clearField(ctx, cfg.platform); err != nil {
-			return err
+			return false, err
 		}
 	}
 	attempted, err := pasteSearchQuery(ctx, cfg, term)
 	if err := ctx.Err(); err != nil {
-		return err
+		return false, err
 	}
 	if attempted && err == nil {
 		logging.Infof("agent", "app_search", "query input route=pip_clipboard_paste")
-		return nil
+		return false, nil
 	}
 	if attempted {
 		logging.Infof("agent", "app_search", "query input route=local_hid clipboard_error=%v", err)
 		// A failed paste may have inserted text. Clear it without Escape,
 		// which could dismiss Spotlight, before the existing local input path.
-		engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-		if err := engine.tapKeys(ctx, []string{"meta", "a"}); err != nil {
-			return err
+		if err := clearSearchQueryText(ctx, cfg); err != nil {
+			return false, err
 		}
-		if err := engine.sleepFor(ctx, textInputKeystrokeGap); err != nil {
-			return err
-		}
-		if err := engine.tapKeys(ctx, []string{"backspace"}); err != nil {
-			return err
+	}
+	if allowQuick {
+		typed, err := typeQuickSearchQuery(ctx, cfg, term)
+		if err != nil || typed {
+			return typed, err
 		}
 	}
 
@@ -317,18 +384,118 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 		"text":  term,
 		"focus": map[string]any{"x": 500, "y": 120},
 	}
-	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), true)
+	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
 	if err != nil {
-		return err
+		return false, err
 	}
 	var result enterTextToolResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		return fmt.Errorf("parse search entry result: %w", err)
+		return false, fmt.Errorf("parse search entry result: %w", err)
 	}
 	if !result.OK {
-		return fmt.Errorf("enter search query: %s", strings.TrimSpace(result.Suggestion))
+		return false, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
-	return nil
+	return false, nil
+}
+
+// clearSearchQueryText removes committed query text with Select All and
+// Backspace, avoiding Escape, which could dismiss Spotlight.
+func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) error {
+	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+	selectAll, err := textInputKeyboardKeysForSelectAll(engine.hw.platform())
+	if err != nil {
+		return err
+	}
+	if err := engine.tapKeys(ctx, selectAll); err != nil {
+		return err
+	}
+	if err := engine.sleepFor(ctx, textInputKeystrokeGap); err != nil {
+		return err
+	}
+	return engine.tapKeys(ctx, []string{"backspace"})
+}
+
+// typeQuickSearchQuery types an ASCII form of term without probing the input
+// mode. System search lists apps for pinyin in both English and pinyin input,
+// so only the pending composition must be committed (see
+// appSearchQuickCommitGap). It reports false when no quick query applies.
+func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (bool, error) {
+	platform := cfg.platform
+	if platform == "" {
+		platform = cfg.entryTool.platform()
+	}
+	if platform != "ios" || cfg.exactEntryOnly {
+		return false, nil
+	}
+	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+	query, err := appSearchQuickQuery(ctx, engine, term)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return false, ctxErr
+		}
+		logging.Infof("agent", "app_search", "quick query unavailable term=%q: %v; using exact entry", term, err)
+		return false, nil
+	}
+	logging.Infof("agent", "app_search", "query input route=local_hid_quick query=%q", query)
+	if err := engine.typeASCII(ctx, query); err != nil {
+		return false, err
+	}
+	switchKeys, err := textInputKeyboardKeysForIMESwitch(platform)
+	if err != nil {
+		return false, err
+	}
+	for tap := 0; tap < 2; tap++ {
+		if err := engine.sleepFor(ctx, appSearchQuickCommitGap); err != nil {
+			return false, err
+		}
+		if err := engine.tapKeys(ctx, switchKeys); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// appSearchQuickQuery converts term to lowercase ASCII, romanizing non-ASCII
+// runs with the IME planner and dropping punctuation that only an IME can
+// produce. Lowercase avoids Shift, which some IMEs treat as a mode switch.
+// Spaces are dropped: typeASCII would tap Space between words, and Space
+// selects the first candidate while pinyin is still composing. System search
+// still lists "App Store" for "appstore".
+func appSearchQuickQuery(ctx context.Context, engine *textInputEngine, term string) (string, error) {
+	chunks, err := splitTextInputChunks(term)
+	if err != nil {
+		return "", err
+	}
+	var query strings.Builder
+	for _, chunk := range chunks {
+		switch {
+		case chunk.ascii && chunk.text == chunk.input:
+			query.WriteString(strings.ToLower(chunk.input))
+		case textInputChunkIsPunctuation(chunk):
+			continue
+		default:
+			segments, err := engine.compositionSegmentsForText(ctx, chunk.text, nil)
+			if err != nil {
+				return "", err
+			}
+			query.WriteString(strings.Join(segments, ""))
+		}
+	}
+	result := strings.Join(strings.Fields(query.String()), "")
+	if result == "" {
+		return "", fmt.Errorf("no ASCII query for %q", term)
+	}
+	return result, nil
+}
+
+// searchQueryUnverifiedError means local entry ran but its result was not
+// confirmed; the query may still be on screen as pending IME composition.
+type searchQueryUnverifiedError struct {
+	suggestion string
+}
+
+func (e *searchQueryUnverifiedError) Error() string {
+	return "enter search query: " + e.suggestion
 }
 
 // PiP can write the clipboard without leaving the focused system search UI.
@@ -401,18 +568,26 @@ func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, e
 		return bridgeSearchResult{}, 0, fmt.Errorf("app search vision is not configured")
 	}
 	prompt := buildAppSearchResultPrompt(searchTerm)
-	raw, err := modelVision.visionJSON(ctx, "app_search", prompt, shot)
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_search", prompt, []string{"found"}, shot)
 	if err != nil {
 		return bridgeSearchResult{}, 1, err
 	}
+	result, err := parseAppSearchResult(raw)
+	return result, 1, err
+}
+
+// parseAppSearchResult ignores unknown fields: some models echo the response
+// format next to the decision (deepseek-flash added "type":"json_object").
+// visionDecisionJSON has already required "found".
+func parseAppSearchResult(raw string) (bridgeSearchResult, error) {
 	var result bridgeSearchResult
-	if err := decodeStrictJSONObject(raw, &result); err != nil {
-		return bridgeSearchResult{}, 1, fmt.Errorf("parse app search result: %w", err)
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return bridgeSearchResult{}, fmt.Errorf("parse app search result: %w", err)
 	}
 	if result.Found && result.TapPoint == nil {
-		return bridgeSearchResult{}, 1, fmt.Errorf("parse app search result: found result is missing tap_point")
+		return bridgeSearchResult{}, fmt.Errorf("parse app search result: found result is missing tap_point")
 	}
-	return result, 1, nil
+	return result, nil
 }
 
 func buildAppSearchResultPrompt(searchTerm string) string {
@@ -459,7 +634,7 @@ Rules:
 - opened=true only when the screenshot clearly shows the target app screen or a loading transition into that app.
 - opened=false if the screenshot still looks like the system search page, launcher, keyboard search results, or any unrelated app.
 - Keep reason short and concrete.`, searchTerm))
-	raw, err := modelVision.visionJSON(ctx, "app_open_confirmation", prompt, shot)
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", prompt, []string{"opened"}, shot)
 	if err != nil {
 		return bridgeAppOpenResult{}, 1, err
 	}

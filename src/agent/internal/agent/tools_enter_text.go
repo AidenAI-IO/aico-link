@@ -26,6 +26,13 @@ type enterTextArgs struct {
 	Focus *focusPointArgs `json:"focus"`
 }
 
+// Search owns the whole query field, while public enter_text may append to an
+// existing document. Keep replacement intent internal and per call.
+type enterTextOptions struct {
+	disableBridge bool
+	replaceField  bool
+}
+
 type enterTextToolResult struct {
 	OK         bool   `json:"ok"`
 	Suggestion string `json:"suggestion,omitempty"`
@@ -89,10 +96,10 @@ func (t *EnterTextTool) ArgsSchema() map[string]any {
 }
 
 func (t *EnterTextTool) Call(ctx context.Context, input string) (string, error) {
-	return t.enterTextInner(ctx, input, false)
+	return t.enterTextInner(ctx, input, enterTextOptions{})
 }
 
-func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, disableBridge bool) (string, error) {
+func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, options enterTextOptions) (string, error) {
 	started := time.Now()
 	ctx, metrics := withTextInputMetrics(ctx)
 	var output string
@@ -119,6 +126,7 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, disabl
 		}
 		metrics.characters.Store(int64(len([]rune(publicArgs.Text))))
 		args := publicArgs.toEngineArgs()
+		args.ReplaceField = options.replaceField
 		if strings.TrimSpace(args.Text) == "" {
 			return enterTextToolFailure(batchCtx, CodeInvalidArguments, "Provide non-empty text, then retry enter_text."), nil
 		}
@@ -127,7 +135,7 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, disabl
 		if localController == nil {
 			localController = iosKeyboardIsolationControllerFromContext(batchCtx)
 		}
-		if !disableBridge && t.bridgeAvailable(args) {
+		if !options.disableBridge && t.bridgeAvailable(args) {
 			bridgeResult, attempted := t.bridgeTool.runClipboardFirstResult(batchCtx, args)
 			if attempted && bridgeResult.OK {
 				return enterTextToolResultString(bridgeResult), nil
