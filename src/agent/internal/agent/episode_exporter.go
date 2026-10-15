@@ -538,17 +538,6 @@ func iterationWindowForEvent(windows []langfuseIterationWindow, eventTime time.T
 	return langfuseIterationWindow{}, false
 }
 
-func iterationWindowForEventMetadata(windows []langfuseIterationWindow, event TaskEpisodeEvent, eventTime time.Time) (langfuseIterationWindow, bool) {
-	if index := taskEpisodeEventIterationIndex(event, 0); index > 0 {
-		for _, window := range windows {
-			if window.Index == index {
-				return window, true
-			}
-		}
-	}
-	return iterationWindowForEvent(windows, eventTime)
-}
-
 func taskEpisodeEventIterationIndex(event TaskEpisodeEvent, fallback int) int {
 	if event.Metadata != nil {
 		if value, ok := util.UsageMetricInt(event.Metadata["iteration"]); ok && value > 0 {

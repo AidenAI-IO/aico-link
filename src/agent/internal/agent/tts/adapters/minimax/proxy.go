@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
@@ -16,12 +15,6 @@ import (
 	"aiden-agent/internal/agent/tts"
 	"aiden-agent/internal/netproxy"
 )
-
-func httpClientForConfig(cfg commonConfig) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.Proxy = proxyFunc(cfg.proxy)
-	return &http.Client{Timeout: 60 * time.Second, Transport: transport}
-}
 
 func websocketDialerForConfig(cfg commonConfig) (websocket.Dialer, error) {
 	dialer := websocket.Dialer{
@@ -74,42 +67,6 @@ func configureWebSocketProxy(dialer *websocket.Dialer, cfg tts.ProxyConfig) erro
 		return fmt.Errorf("unsupported proxy URL scheme %q", u.Scheme)
 	}
 	return nil
-}
-
-func proxyFunc(cfg tts.ProxyConfig) func(*http.Request) (*url.URL, error) {
-	if proxyConfigIsZero(cfg) {
-		return http.ProxyFromEnvironment
-	}
-	return func(req *http.Request) (*url.URL, error) {
-		if req == nil || req.URL == nil {
-			return nil, nil
-		}
-		if bypassProxy(req.URL.Hostname(), req.URL.Port(), cfg.NoProxy) {
-			return nil, nil
-		}
-		proxyURL := strings.TrimSpace(cfg.AllProxy)
-		switch strings.ToLower(req.URL.Scheme) {
-		case "http":
-			if strings.TrimSpace(cfg.HTTPProxy) != "" {
-				proxyURL = cfg.HTTPProxy
-			}
-		case "https":
-			if strings.TrimSpace(cfg.HTTPSProxy) != "" {
-				proxyURL = cfg.HTTPSProxy
-			}
-		}
-		if strings.TrimSpace(proxyURL) == "" {
-			return nil, nil
-		}
-		return parseProxyURL(proxyURL)
-	}
-}
-
-func proxyConfigIsZero(cfg tts.ProxyConfig) bool {
-	return strings.TrimSpace(cfg.HTTPProxy) == "" &&
-		strings.TrimSpace(cfg.HTTPSProxy) == "" &&
-		strings.TrimSpace(cfg.AllProxy) == "" &&
-		strings.TrimSpace(cfg.NoProxy) == ""
 }
 
 func parseProxyURL(raw string) (*url.URL, error) {

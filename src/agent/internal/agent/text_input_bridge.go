@@ -132,35 +132,6 @@ func textViaBridgeResultToTextInputResult(bridgeResult textViaBridgeResult) text
 	return result
 }
 
-func (t *textInputBridge) runAutomaticClipboardFirstFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
-	bridge := t.currentBridge()
-	if bridge == nil {
-		return textViaBridgeResult{Err: fmt.Errorf("phone bridge is not configured")}
-	}
-	status := bridge.getStatus()
-	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case "ios":
-		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
-			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
-		}
-		if phoneBridgeCanUsePiPBackground(status, "clipboard_write") {
-			return t.runBackgroundClipboardQueueFlow(ctx, platform, args)
-		}
-		return textViaBridgeResult{}
-	case "android":
-		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
-			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
-		}
-		if !phoneBridgeReadyForCommand(status, "clipboard_write") &&
-			!phoneBridgeCanUseFGSBackground(status, "clipboard_write") {
-			return textViaBridgeResult{}
-		}
-		return t.runTargetPreservingClipboardFlow(ctx, platform, args)
-	default:
-		return textViaBridgeResult{}
-	}
-}
-
 func (t *textInputBridge) runTargetPreservingClipboardFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
 	bridge := t.currentBridge()
 	if bridge == nil {

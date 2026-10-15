@@ -145,13 +145,6 @@ func (s *Server) agentRestartPending() bool {
 	return s.restartReadinessPending || s.restartCommand != nil || s.restartDeferred || s.restartError != nil
 }
 
-func (s *Server) clearAgentRestartReadiness() {
-	s.restartMu.Lock()
-	s.restartReadinessPending = false
-	s.restartError = nil
-	s.restartMu.Unlock()
-}
-
 func (s *Server) launchRestartLocked() error {
 	path := strings.TrimSpace(s.options.AgentInitScript)
 	if path == "" {

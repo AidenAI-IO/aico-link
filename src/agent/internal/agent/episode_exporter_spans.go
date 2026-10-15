@@ -696,7 +696,3 @@ func (e *EpisodeExporter) successScore(episode TaskEpisode, traceID string) lang
 	}
 	return score
 }
-
-func newLangfuseID() string {
-	return uuid.NewString()
-}

@@ -361,10 +361,6 @@ func (s *Server) queryWiFiLinkSignalContext(ctx context.Context) (float64, bool)
 	return 0, false
 }
 
-func interfaceIPv4(interfaceName string) string {
-	return interfaceIPv4Context(context.Background(), interfaceName)
-}
-
 func interfaceIPv4Context(ctx context.Context, interfaceName string) string {
 	if !commandExists("ifconfig") {
 		return ""

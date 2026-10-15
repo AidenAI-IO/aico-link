@@ -895,16 +895,6 @@ func (b *blueZBackend) NotifyWake(sequence uint64, reason string) (bool, error) 
 	return notifying, nil
 }
 
-func (b *blueZBackend) wakeSubscribed() bool {
-	b.wakeMu.Lock()
-	defer b.wakeMu.Unlock()
-	if b.wakeProps == nil {
-		return false
-	}
-	notifying, _ := b.wakeProps.GetMust(blueZGattCharInterface, "Notifying").(bool)
-	return notifying
-}
-
 func wakeReasonCode(reason string) byte {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
 	case "queue", "phone_bridge", "command":

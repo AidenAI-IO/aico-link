@@ -182,11 +182,6 @@ func stateInt(values map[string]string, key string, fallback int) int {
 	}
 	return value
 }
-func stateNumber(values map[string]string, key string) float64 {
-	value, _ := strconv.ParseFloat(values[key], 64)
-	return value
-}
-
 func stateInt64(values map[string]string, key string) int64 {
 	value, err := strconv.ParseInt(strings.TrimSpace(values[key]), 10, 64)
 	if err != nil || value < 0 {
