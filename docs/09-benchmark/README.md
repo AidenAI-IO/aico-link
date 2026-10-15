@@ -342,7 +342,7 @@ second step:
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
 of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
-and their change from the previous 7, with a link to the dashboard. Both read history from
+and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)

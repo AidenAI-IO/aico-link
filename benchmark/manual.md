@@ -1277,7 +1277,7 @@ Use `--branch-filter main` for one branch (records with unknown branches are
 excluded with a warning), `--repo owner/repo` for commit links outside Actions,
 and `--runs-dir runs --run-id-prefix ci-123-1` to include current local results.
 `--history-json dashboard-data.json` regenerates reports from a saved snapshot.
-`--lookback-days` defaults to 14; the dashboard needs at least 7 and a weekly
+`--lookback-days` defaults to 14; a weekly
 report at least 14. History availability is
 subject to Langfuse retention and successful publication, not artifact retention.
 
