@@ -247,15 +247,6 @@ async function loadFile(index) {
     if (loadToken === state.fileLoadToken) state.fileLoadAbort = null;
   }
 }
-function groupEntries(entries) {
-  const groups = [];
-  let pendingGroup = null;
-  for (let i = 0; i < entries.length; i++) {
-    pendingGroup = appendGroupedEntry(groups, pendingGroup, entries[i]);
-  }
-  if (pendingGroup) groups.push(pendingGroup);
-  return groups;
-}
 function renderGroups() {
   const listEl = document.getElementById('requestList');
   const detailEl = document.getElementById('requestDetail');
@@ -855,11 +846,6 @@ function buildMessageDiffOps(oldMsgs, newMsgs) {
   while (i < n) { ops.push({kind: 'removed', oldIndex: i}); i++; }
   while (j < mm) { ops.push({kind: 'added', newIndex: j}); j++; }
   return ops;
-}
-function messagesCanLineDiff(oldMsg, newMsg) {
-  if (!oldMsg || !newMsg) return false;
-  if ((oldMsg.role || '') !== (newMsg.role || '')) return false;
-  return messageDiffText(oldMsg) !== messageDiffText(newMsg);
 }
 function serializeMsg(m) {
   let s = (m.role || '') + '\u0001';

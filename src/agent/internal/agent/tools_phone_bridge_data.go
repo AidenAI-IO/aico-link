@@ -18,32 +18,6 @@ func nextBridgeCmdID(prefix string) string {
 	return fmt.Sprintf("%s_%d_%d", prefix, time.Now().UnixMilli(), openAppCmdSeq.Add(1))
 }
 
-func bridgeNotConnected(status ...PhoneBridgeStatus) string {
-	result := map[string]interface{}{
-		"ok":    false,
-		"error": "phone bridge not connected",
-	}
-	if len(status) > 0 {
-		result["fallback"] = phoneBridgeRecoveryGuidance(status[0])
-	}
-	return jsonString(result)
-}
-
-func toolErrorBridgeResp(err error, status ...PhoneBridgeStatus) string {
-	result := map[string]interface{}{"ok": false, "error": err.Error()}
-	if len(status) > 0 {
-		result["fallback"] = phoneBridgeRecoveryGuidance(status[0])
-	}
-	return jsonString(result)
-}
-
-func bridgeStatusForError(bridge *PhoneBridge) []PhoneBridgeStatus {
-	if bridge == nil {
-		return nil
-	}
-	return []PhoneBridgeStatus{bridge.getStatus()}
-}
-
 // ClipboardTool reads and writes the connected phone's system clipboard.
 type ClipboardTool struct {
 	bridge   *PhoneBridge

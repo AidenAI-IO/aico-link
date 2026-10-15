@@ -773,19 +773,6 @@ func (s *Server) Close() {
 	s.clearAllRequestTerminations()
 }
 
-func isLoopbackServerAddr(addr string) bool {
-	host, _, err := net.SplitHostPort(addr)
-	if err != nil {
-		host = addr
-	}
-	host = strings.Trim(host, "[]")
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
 // validateBridgeEndpointNotSelf rejects an environment bridge endpoint that
 // loops back to this agent's own listener, which would make bridged keyboard
 // input recurse into the agent.

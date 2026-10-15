@@ -225,18 +225,6 @@ func (r *EpisodeRecorder) setStartedAtIfEarlier(startedAt time.Time) {
 	}
 }
 
-func (r *EpisodeRecorder) visualArtifactRoot() string {
-	if r == nil {
-		return ""
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.store == nil || strings.TrimSpace(r.store.rootDir) == "" {
-		return ""
-	}
-	return r.store.episodeDir(r.baseEpisodeLocked("running", time.Time{}))
-}
-
 func (r *EpisodeRecorder) Start(ctx context.Context) error {
 	if r == nil {
 		return nil

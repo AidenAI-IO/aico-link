@@ -2322,14 +2322,6 @@ func (s *realtimeTurnState) responseRequested() {
 	s.responseID = ""
 }
 
-func (s *realtimeTurnState) responseRequestFailed() {
-	s.responseTerminalPending = false
-	s.responseActive = false
-	s.responseID = ""
-	s.responseRequestPending = false
-	s.anonymousResponseStale = false
-}
-
 func (s *realtimeTurnState) speechStarted() {
 	if !s.inputSpeechActive {
 		s.inputTurnSequence++

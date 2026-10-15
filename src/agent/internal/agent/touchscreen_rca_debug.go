@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
 	"aiden-agent/internal/logging"
 	"fmt"
 	"os"
@@ -64,33 +63,6 @@ func formatTouchscreenRCAMetadata(meta *frameMetadata) string {
 	)
 }
 
-func formatTouchscreenRCAMappingSummary(screen *screen.ScreenState) string {
-	if !touchscreenRCADebugEnabledCached() {
-		return ""
-	}
-	if screen == nil {
-		return "screen=nil"
-	}
-	width, height, active, age, ok := screen.ActiveAreaWithAge()
-	if !ok {
-		return "active_area_ok=false"
-	}
-	return fmt.Sprintf(
-		"active_area_ok=true width=%d height=%d active=%s age_ms=%d",
-		width,
-		height,
-		active.Format(),
-		age.Milliseconds(),
-	)
-}
-
-func formatTouchscreenRCAPointerPoint(point *pointerPoint) string {
-	if point == nil {
-		return "<nil>"
-	}
-	return fmt.Sprintf("{x:%g y:%g}", point.X.Float64(), point.Y.Float64())
-}
-
 func touchscreenRCAPointerMode(pc *pointerController) string {
 	if pc == nil {
 		return "pointer=nil"
@@ -108,20 +80,6 @@ func formatTouchscreenRCAFloatPtr(value *float64) string {
 	return fmt.Sprintf("%.3f", *value)
 }
 
-func formatTouchscreenRCAQuickActionMapping(tool *QuickActionTool) string {
-	if !touchscreenRCADebugEnabledCached() {
-		return ""
-	}
-	if tool == nil {
-		return "quick_action=nil"
-	}
-	if tool.touch == nil {
-		return "quick_action.touch=nil"
-	}
-	// Note: screen field removed after MNK Provider integration
-	return "quick_action.touch (MNK Provider)"
-}
-
 func formatTouchscreenRCAQuickActionMappingSummary(tool *QuickActionTool) string {
 	if !touchscreenRCADebugEnabledCached() {
 		return ""
@@ -134,19 +92,4 @@ func formatTouchscreenRCAQuickActionMappingSummary(tool *QuickActionTool) string
 	}
 	// Note: screen field removed after MNK Provider integration
 	return "quick_action.touch (MNK Provider)"
-}
-
-func touchscreenRCALogResolvedPoint(label string, screen *screen.ScreenState, pc *pointerController, raw *pointerPoint, resolved resolvedPointerPoint) {
-	if !touchscreenRCADebugEnabledCached() {
-		return
-	}
-	touchscreenRCALogf(
-		"%s resolved raw_point=%s pointer_mode=%s absolute=(%d,%d) mapping_at_resolve={%s}",
-		label,
-		formatTouchscreenRCAPointerPoint(raw),
-		touchscreenRCAPointerMode(pc),
-		resolved.x,
-		resolved.y,
-		formatTouchscreenRCAMappingSummary(screen),
-	)
 }
