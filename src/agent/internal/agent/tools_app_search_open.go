@@ -402,7 +402,11 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 // Backspace, avoiding Escape, which could dismiss Spotlight.
 func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) error {
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-	if err := engine.tapKeys(ctx, []string{"meta", "a"}); err != nil {
+	selectAll, err := textInputKeyboardKeysForSelectAll(engine.hw.platform())
+	if err != nil {
+		return err
+	}
+	if err := engine.tapKeys(ctx, selectAll); err != nil {
 		return err
 	}
 	if err := engine.sleepFor(ctx, textInputKeystrokeGap); err != nil {
