@@ -436,3 +436,13 @@ func TestAppSearchQuickQuery(t *testing.T) {
 		t.Error("want an error when the planner cannot romanize the term")
 	}
 }
+
+func TestParseAppSearchResultIgnoresEchoedFormatField(t *testing.T) {
+	got, err := parseAppSearchResult(`{"type":"json_object","found":true,"tap_point":{"x":120,"y":180},"label":"Sam's Club"}`)
+	if err != nil || !got.Found || got.TapPoint == nil || got.TapPoint.X != 120 || got.TapPoint.Y != 180 {
+		t.Fatalf("parseAppSearchResult() = %+v, %v", got, err)
+	}
+	if _, err := parseAppSearchResult(`{"type":"json_object","found":true}`); err == nil {
+		t.Fatal("want an error when a found result has no tap_point")
+	}
+}

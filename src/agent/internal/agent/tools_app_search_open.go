@@ -572,14 +572,25 @@ func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, e
 	if err != nil {
 		return bridgeSearchResult{}, 1, err
 	}
+	result, err := parseAppSearchResult(raw)
+	if err != nil {
+		logging.Warnf("agent", "app_search", "app search result rejected: %v raw=%q", err, truncateVisionRaw(raw))
+	}
+	return result, 1, err
+}
+
+// parseAppSearchResult ignores unknown fields: some models echo the response
+// format next to the decision (deepseek-flash added "type":"json_object").
+// visionDecisionJSON has already required "found".
+func parseAppSearchResult(raw string) (bridgeSearchResult, error) {
 	var result bridgeSearchResult
-	if err := decodeStrictJSONObject(raw, &result); err != nil {
-		return bridgeSearchResult{}, 1, fmt.Errorf("parse app search result: %w", err)
+	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		return bridgeSearchResult{}, fmt.Errorf("parse app search result: %w", err)
 	}
 	if result.Found && result.TapPoint == nil {
-		return bridgeSearchResult{}, 1, fmt.Errorf("parse app search result: found result is missing tap_point")
+		return bridgeSearchResult{}, fmt.Errorf("parse app search result: found result is missing tap_point")
 	}
-	return result, 1, nil
+	return result, nil
 }
 
 func buildAppSearchResultPrompt(searchTerm string) string {
@@ -632,6 +643,7 @@ Rules:
 	}
 	var result bridgeAppOpenResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
+		logging.Warnf("agent", "app_search", "app open confirmation rejected: %v raw=%q", err, truncateVisionRaw(raw))
 		return bridgeAppOpenResult{}, 1, fmt.Errorf("parse app open confirmation: %w", err)
 	}
 	return result, 1, nil

@@ -514,9 +514,18 @@ func (v *llmTextInputVision) visionDecisionJSON(ctx context.Context, operation, 
 		if len(missing) == 0 {
 			return raw, nil
 		}
-		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d", operation, strings.Join(missing, ","), attempt)
+		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d raw=%q", operation, strings.Join(missing, ","), attempt, truncateVisionRaw(raw))
 	}
 	return "", fmt.Errorf("vision %s response missing required fields: %s", operation, strings.Join(missing, ", "))
+}
+
+// truncateVisionRaw bounds a model response quoted in diagnostics.
+func truncateVisionRaw(raw string) string {
+	const limit = 400
+	if runes := []rune(raw); len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return raw
 }
 
 // missingJSONFields leaves syntax errors to the caller's parser.
