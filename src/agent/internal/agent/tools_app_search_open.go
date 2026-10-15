@@ -458,6 +458,8 @@ func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term
 // appSearchQuickQuery converts term to lowercase ASCII, romanizing non-ASCII
 // runs with the IME planner and dropping punctuation that only an IME can
 // produce. Lowercase avoids Shift, which some IMEs treat as a mode switch.
+// Multi-word terms are rejected: typeASCII taps Space between words, and Space
+// selects the first candidate while pinyin is still composing.
 func appSearchQuickQuery(ctx context.Context, engine *textInputEngine, term string) (string, error) {
 	chunks, err := splitTextInputChunks(term)
 	if err != nil {
@@ -478,11 +480,14 @@ func appSearchQuickQuery(ctx context.Context, engine *textInputEngine, term stri
 			query.WriteString(strings.Join(segments, ""))
 		}
 	}
-	result := strings.Join(strings.Fields(query.String()), " ")
-	if result == "" {
+	words := strings.Fields(query.String())
+	if len(words) == 0 {
 		return "", fmt.Errorf("no ASCII query for %q", term)
 	}
-	return result, nil
+	if len(words) > 1 {
+		return "", fmt.Errorf("multi-word query %q needs exact entry", term)
+	}
+	return words[0], nil
 }
 
 // searchQueryUnverifiedError means local entry ran but its result was not

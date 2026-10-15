@@ -420,15 +420,19 @@ func TestAppSearchQuickQuery(t *testing.T) {
 	}
 	engine := newFastTextInputEngine(textInputHardwareDeps{}, vision)
 	for term, want := range map[string]string{
-		"QQ音乐":       "qqyinyue",
-		"微信，":        "weixin",
-		"Aiden App":  "aiden app",
-		"Safari":     "safari",
-		"Mi Home 微信": "mi home weixin",
+		"QQ音乐":   "qqyinyue",
+		"微信，":    "weixin",
+		"Safari": "safari",
 	} {
 		got, err := appSearchQuickQuery(context.Background(), engine, term)
 		if err != nil || got != want {
 			t.Errorf("appSearchQuickQuery(%q) = %q, %v; want %q", term, got, err, want)
+		}
+	}
+	// Space between words would select a pending pinyin candidate.
+	for _, term := range []string{"Aiden App", "Mi Home 微信"} {
+		if got, err := appSearchQuickQuery(context.Background(), engine, term); err == nil {
+			t.Errorf("appSearchQuickQuery(%q) = %q, want exact entry for a multi-word term", term, got)
 		}
 	}
 	if _, err := appSearchQuickQuery(context.Background(), engine, "未知"); err == nil {
