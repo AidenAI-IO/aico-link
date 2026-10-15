@@ -201,8 +201,6 @@ func newSearchIsolationTestTool(t *testing.T, events *[]string, keys *recordingT
 		hw: hw, vision: entryVision,
 		entryTool:            &EnterTextTool{engine: newFastTextInputEngine(*hw, entryVision), iosKeyboardIsolation: controller},
 		iosKeyboardIsolation: controller, sleep: testNoWaitSleep,
-		// Tests of the quick query clear this to exercise it.
-		exactEntryOnly: true,
 		findAppTapFn: func(ctx context.Context, _ screenshotResult, _ string) (bridgeSearchResult, error) {
 			if batch := controller.batchFromContext(ctx); batch != nil && batch.isolated {
 				t.Fatal("result lookup must observe the screen after the pointer profile is restored")
@@ -222,8 +220,8 @@ func TestOpenAppSearchChecksResultsAfterUnverifiedEntry(t *testing.T) {
 	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	vision := &plannedTextInputVision{
 		stubTextInputVision: &stubTextInputVision{analyses: []textInputScreenAnalysis{
-			{ObservedMode: textInputModeComposition}, // Probe.
-			{ObservedMode: textInputModeUnknown},     // Entry verification fails.
+			{ObservedMode: textInputModeComposition}, // 1: input-mode probe.
+			{ObservedMode: textInputModeUnknown},     // 2: entry verification fails.
 		}},
 		plans: map[string][]string{"微信": {"wei", "xin"}},
 	}
@@ -231,6 +229,7 @@ func TestOpenAppSearchChecksResultsAfterUnverifiedEntry(t *testing.T) {
 		// The app is listed while "wei xin" is still uncommitted IME text.
 		return bridgeSearchResult{Found: true, Label: "微信", TapPoint: &focusPointArgs{X: 170, Y: 170}}
 	})
+	tool.exactEntryOnly = true
 	out, err := tool.Call(context.Background(), `{"app":"微信"}`)
 	if err != nil || !enterTextOutputOK(out, err) || !*confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
@@ -248,15 +247,15 @@ func TestOpenAppSearchDoesNotTapWhenUnverifiedEntryHasNoResult(t *testing.T) {
 	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	vision := &plannedTextInputVision{
 		stubTextInputVision: &stubTextInputVision{analyses: []textInputScreenAnalysis{
-			{ObservedMode: textInputModeComposition},
-			{ObservedMode: textInputModeUnknown},
+			{ObservedMode: textInputModeComposition}, // 1: input-mode probe.
+			{ObservedMode: textInputModeUnknown},     // 2: entry verification fails.
 		}},
 		plans: map[string][]string{"微信": {"wei", "xin"}},
 	}
 	tool, confirmed := newSearchIsolationTestTool(t, &events, keys, vision, func(context.Context) bridgeSearchResult {
 		return bridgeSearchResult{Found: false}
 	})
-	tool.searchTermFn = func(string) string { return "微信" }
+	tool.exactEntryOnly = true
 	out, err := tool.Call(context.Background(), `{"app":"微信"}`)
 	if err != nil || enterTextOutputOK(out, err) || *confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
@@ -273,18 +272,16 @@ func TestOpenAppSearchRestoresHIDBeforeLookupAfterVerifiedEntry(t *testing.T) {
 	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	vision := &plannedTextInputVision{
 		stubTextInputVision: &stubTextInputVision{analyses: []textInputScreenAnalysis{
-			{ObservedMode: textInputModeComposition},
-			{ObservedMode: textInputModeComposition, FieldText: "豆包"},
+			{ObservedMode: textInputModeComposition},                  // 1: input-mode probe.
+			{ObservedMode: textInputModeComposition, FieldText: "豆包"}, // 2: entry verified.
 		}},
 		plans: map[string][]string{"豆包": {"dou", "bao"}},
 	}
 	var delays []time.Duration
 	tool, confirmed := newSearchIsolationTestTool(t, &events, keys, vision, func(context.Context) bridgeSearchResult {
-		if len(vision.analyses) != 0 {
-			t.Fatal("verified entry must not need another composition check")
-		}
 		return bridgeSearchResult{Found: true, Label: "豆包", TapPoint: &focusPointArgs{X: 150, Y: 160}}
 	})
+	tool.exactEntryOnly = true
 	tool.sleep = func(_ context.Context, delay time.Duration) error {
 		delays = append(delays, delay)
 		return nil
@@ -296,11 +293,10 @@ func TestOpenAppSearchRestoresHIDBeforeLookupAfterVerifiedEntry(t *testing.T) {
 	if !reflect.DeepEqual(events, []string{"isolate", "restore", "pointer"}) {
 		t.Fatalf("HID events=%v", events)
 	}
-	found := false
-	for _, delay := range delays {
-		found = found || delay == appSearchPointerRestoreSettleDelay
+	if len(vision.analyses) != 0 {
+		t.Fatalf("%d analyses left; want only the probe and the entry verification", len(vision.analyses))
 	}
-	if !found {
+	if countDelays(delays, appSearchPointerRestoreSettleDelay) == 0 {
 		t.Fatalf("delays=%v, want pointer restore settle %s", delays, appSearchPointerRestoreSettleDelay)
 	}
 }
@@ -316,7 +312,6 @@ func TestOpenAppSearchQuickQueryCommitsPinyinWithoutProbe(t *testing.T) {
 	tool, confirmed := newSearchIsolationTestTool(t, &events, keys, vision, func(context.Context) bridgeSearchResult {
 		return bridgeSearchResult{Found: true, Label: "微信", TapPoint: &focusPointArgs{X: 170, Y: 170}}
 	})
-	tool.exactEntryOnly = false
 	var delays []time.Duration
 	tool.sleep = func(_ context.Context, delay time.Duration) error {
 		delays = append(delays, delay)
@@ -326,35 +321,13 @@ func TestOpenAppSearchQuickQueryCommitsPinyinWithoutProbe(t *testing.T) {
 	if err != nil || !enterTextOutputOK(out, err) || !*confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
 	}
-	var typed []string
-	for _, call := range tool.hw.keyboardText.(*recordingTextInputTool).calls {
-		var input struct{ Text string }
-		if err := json.Unmarshal([]byte(call), &input); err != nil {
-			t.Fatalf("keyboard_text input %q: %v", call, err)
-		}
-		typed = append(typed, input.Text)
-	}
-	if !reflect.DeepEqual(typed, []string{"weixin"}) {
+	if typed := typedTexts(t, tool.hw.keyboardText.(*recordingTextInputTool)); !reflect.DeepEqual(typed, []string{"weixin"}) {
 		t.Fatalf("keyboard_text=%q, want the quick pinyin query only", typed)
 	}
-	var tapped [][]string
-	for _, call := range keys.calls {
-		var input struct{ Keys []string }
-		if err := json.Unmarshal([]byte(call), &input); err != nil {
-			t.Fatalf("keyboard_tap input %q: %v", call, err)
-		}
-		tapped = append(tapped, input.Keys)
-	}
-	if !reflect.DeepEqual(tapped, [][]string{{"capslock"}, {"capslock"}}) {
+	if tapped := tappedKeys(t, keys); !reflect.DeepEqual(tapped, [][]string{{"capslock"}, {"capslock"}}) {
 		t.Fatalf("keyboard_tap=%v, want two Caps Lock taps and no probe or Return", tapped)
 	}
-	gaps := 0
-	for _, delay := range delays {
-		if delay == appSearchQuickCommitGap {
-			gaps++
-		}
-	}
-	if gaps != 2 {
+	if gaps := countDelays(delays, appSearchQuickCommitGap); gaps != 2 {
 		t.Fatalf("delays=%v, want a commit gap before each Caps Lock tap", delays)
 	}
 	if !strings.Contains(out, "with quick query") {
@@ -366,22 +339,23 @@ func TestOpenAppSearchQuickQueryFallsBackToExactEntry(t *testing.T) {
 	events := []string{}
 	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	vision := &plannedTextInputVision{
+		// Used only by the exact entry that follows the quick query.
 		stubTextInputVision: &stubTextInputVision{analyses: []textInputScreenAnalysis{
-			{ObservedMode: textInputModeComposition},
-			{ObservedMode: textInputModeComposition, FieldText: "豆包"},
+			{ObservedMode: textInputModeComposition},                  // 1: input-mode probe.
+			{ObservedMode: textInputModeComposition, FieldText: "豆包"}, // 2: entry verified.
 		}},
 		plans: map[string][]string{"豆包": {"dou", "bao"}},
 	}
+	// The quick query gets two lookups (a check and one recheck); both miss.
+	const quickLookups = 2
 	lookups := 0
 	tool, confirmed := newSearchIsolationTestTool(t, &events, keys, vision, func(context.Context) bridgeSearchResult {
 		lookups++
-		if lookups <= 2 {
-			// Both checks after the quick query find nothing.
+		if lookups <= quickLookups {
 			return bridgeSearchResult{Found: false}
 		}
 		return bridgeSearchResult{Found: true, Label: "豆包", TapPoint: &focusPointArgs{X: 150, Y: 160}}
 	})
-	tool.exactEntryOnly = false
 	out, err := tool.Call(context.Background(), `{"app":"豆包"}`)
 	if err != nil || !enterTextOutputOK(out, err) || !*confirmed {
 		t.Fatalf("open_app=%s, %v; confirmed=%t", out, err, *confirmed)
@@ -389,18 +363,13 @@ func TestOpenAppSearchQuickQueryFallsBackToExactEntry(t *testing.T) {
 	if len(vision.analyses) != 0 {
 		t.Fatalf("exact entry did not run after the quick query: %d analyses left", len(vision.analyses))
 	}
-	clear := -1
-	for index, call := range keys.calls {
-		if strings.Contains(call, `"meta"`) && strings.Contains(call, `"a"`) {
-			clear = index
-			break
-		}
+	tapped := tappedKeys(t, keys)
+	quickThenClear := [][]string{{"capslock"}, {"capslock"}, {"meta", "a"}, {"backspace"}}
+	if len(tapped) < len(quickThenClear) || !reflect.DeepEqual(tapped[:len(quickThenClear)], quickThenClear) {
+		t.Fatalf("keyboard_tap=%v, want it to start with %v", tapped, quickThenClear)
 	}
-	if clear < 2 || !strings.Contains(keys.calls[clear+1], "backspace") {
-		t.Fatalf("keyboard_tap=%v, want the quick query cleared with Select All and Backspace", keys.calls)
-	}
-	for _, call := range keys.calls {
-		if strings.Contains(call, "escape") {
+	for _, keys := range tapped {
+		if slices.Contains(keys, "escape") {
 			t.Fatal("Escape can dismiss system search while clearing the quick query")
 		}
 	}
@@ -445,4 +414,42 @@ func TestParseAppSearchResultIgnoresEchoedFormatField(t *testing.T) {
 	if _, err := parseAppSearchResult(`{"type":"json_object","found":true}`); err == nil {
 		t.Fatal("want an error when a found result has no tap_point")
 	}
+}
+
+// typedTexts decodes the text of each recorded keyboard_text call.
+func typedTexts(t *testing.T, tool *recordingTextInputTool) []string {
+	t.Helper()
+	var texts []string
+	for _, call := range tool.calls {
+		var input struct{ Text string }
+		if err := json.Unmarshal([]byte(call), &input); err != nil {
+			t.Fatalf("keyboard_text input %q: %v", call, err)
+		}
+		texts = append(texts, input.Text)
+	}
+	return texts
+}
+
+// tappedKeys decodes the key chord of each recorded keyboard_tap call.
+func tappedKeys(t *testing.T, tool *recordingTextInputTool) [][]string {
+	t.Helper()
+	var chords [][]string
+	for _, call := range tool.calls {
+		var input struct{ Keys []string }
+		if err := json.Unmarshal([]byte(call), &input); err != nil {
+			t.Fatalf("keyboard_tap input %q: %v", call, err)
+		}
+		chords = append(chords, input.Keys)
+	}
+	return chords
+}
+
+func countDelays(delays []time.Duration, want time.Duration) int {
+	count := 0
+	for _, delay := range delays {
+		if delay == want {
+			count++
+		}
+	}
+	return count
 }

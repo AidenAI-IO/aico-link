@@ -249,6 +249,7 @@ func TestAnalyzeScreenRetriesFormatEchoWithFeedback(t *testing.T) {
 	if err != nil || !analysis.CompositionPending || model.calls != 2 {
 		t.Fatalf("analysis=%+v calls=%d err=%v", analysis, model.calls, err)
 	}
+	// Second call, user message (after the system message), prompt text part.
 	retry := fmt.Sprint(model.messages[1][1].Parts[0])
 	if !strings.Contains(retry, "missing required fields: observed_mode, target_matched, composition_pending") {
 		t.Fatalf("retry prompt lacks validation feedback: %s", retry)
