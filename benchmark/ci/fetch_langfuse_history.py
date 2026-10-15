@@ -83,7 +83,7 @@ def _error(exc: Exception) -> str:
 
 def fetch_benchmark_history(
     *,
-    lookback_days: int = 7,
+    lookback_days: int = 14,
     branch_filter: str | None = None,
     local_runs_dir: Path | None = None,
     local_run_id_prefix: str | None = None,

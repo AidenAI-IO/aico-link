@@ -1166,7 +1166,8 @@ to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
 last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
-over the week, flags configuration-matched regressions, and links to the dashboard. Historical data comes
+over the week with its change from the previous seven days (green up, red down),
+flags configuration-matched regressions, and links to the dashboard. Historical data comes
 from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
 downloaded.
 
@@ -1246,8 +1247,9 @@ Regressions require the same branch, suite hash, workload hash, metrics schema,
 skills. Runs missing configuration metadata are excluded from comparisons.
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
-suite's runs, eligible tasks, pass@1, and cost. Rates describe the window's task
-mix and are not comparisons between runs. Cost and token totals are reported only
+suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
+previous seven days in percentage points. Rates describe each window's task mix;
+a change is unknown when either window has no measured rate. Cost and token totals are reported only
 when every included suite run supplies them with sample counts covering every
 eligible attempt. The report is included in the Actions job
 summary.
@@ -1260,10 +1262,10 @@ cd benchmark
 uv run python -m ci.generate_dashboard \
   --output dashboard.html --data-output dashboard-data.json
 
-# Weekly report
+# Weekly report (requires 14 days)
 uv run python -m ci.generate_dashboard \
   --output dashboard.html --data-output dashboard-data.json \
-  --weekly-output weekly-report.md
+  --weekly-output weekly-report.md --lookback-days 14
 
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
@@ -1275,7 +1277,8 @@ Use `--branch-filter main` for one branch (records with unknown branches are
 excluded with a warning), `--repo owner/repo` for commit links outside Actions,
 and `--runs-dir runs --run-id-prefix ci-123-1` to include current local results.
 `--history-json dashboard-data.json` regenerates reports from a saved snapshot.
-`--lookback-days` defaults to and must be at least 7. History availability is
+`--lookback-days` defaults to 14; the dashboard needs at least 7 and a weekly
+report at least 14. History availability is
 subject to Langfuse retention and successful publication, not artifact retention.
 
 ## 5. Environment variables

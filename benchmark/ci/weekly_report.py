@@ -1,4 +1,4 @@
-"""Summarize the last seven days of benchmark runs."""
+"""Summarize the last seven days of benchmark runs against the seven before."""
 
 from __future__ import annotations
 
@@ -38,26 +38,49 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any]:
-    """Summarize the last seven days in UTC, overall and per suite.
+def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        groups.setdefault(record["suite"], []).append(record)
+    return groups
 
-    Overall and per-suite rates are descriptive totals over each window's
-    task mix; they are not comparisons between runs or configurations.
+
+def _change(current: float | None, previous: float | None) -> float | None:
+    return current - previous if current is not None and previous is not None else None
+
+
+def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any]:
+    """Summarize the last seven days in UTC and their change from the seven before.
+
+    Rates are descriptive totals over each window's task mix. A suite's change
+    compares its own two windows; it is unknown when either window has no rate.
     """
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
-    records = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
-    by_suite: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        by_suite.setdefault(record["suite"], []).append(record)
-    suites = [{"suite": name, **_totals(group)} for name, group in by_suite.items()]
+    previous_start = start - timedelta(days=7)
+    current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
+    previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
+    previous_by_suite = _by_suite(previous)
+    suites = []
+    for name, group in _by_suite(current).items():
+        totals = _totals(group)
+        before = _totals(previous_by_suite.get(name, []))["pass_at_1"]
+        suites.append({"suite": name, **totals, "previous_pass_at_1": before,
+                       "change": _change(totals["pass_at_1"], before)})
     # Weakest suites first; unknown rates last.
     suites.sort(key=lambda s: (s["pass_at_1"] is None, s["pass_at_1"] or 0.0, s["suite"]))
-    return {"start": start.isoformat(), "end": end.isoformat(), "totals": _totals(records), "suites": suites}
+    totals, previous_totals = _totals(current), _totals(previous)
+    return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
+            "totals": totals, "previous_totals": previous_totals,
+            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]), "suites": suites}
 
 
 def _pct(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:.1f}%"
+
+
+def _pp(value: float | None) -> str:
+    return "—" if value is None else f"{value * 100:+.1f} pp"
 
 
 def _cell(value: Any) -> str:
@@ -80,19 +103,20 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         f"UTC window: {report['start']} to {report['end']} (end exclusive).", "",
         "History source: Langfuse v4 experiments and scores.",
         "Only successfully published experiments are available as historical data; missing uploads cannot be counted.", "",
-        "| Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Cost (USD) | Tokens |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Change vs previous 7 days | Cost (USD) | Tokens |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
-        f"{_pct(totals['pass_at_1'])} | {cost} | {tokens} |",
-        "", "Rates are totals over each suite's runs in the window, not comparisons between runs.", "",
-        "| Suite | Runs | Eligible tasks | pass@1 | Cost (USD) |",
-        "| --- | ---: | ---: | ---: | ---: |",
+        f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
+        "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.", "",
+        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Cost (USD) |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
     for suite in report["suites"]:
         lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
-                     f"{_pct(suite['pass_at_1'])} | {_resources(suite)[0]} |")
+                     f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_pp(suite['change'])} | "
+                     f"{_resources(suite)[0]} |")
     if not report["suites"]:
-        lines.append("| No benchmark runs in this window | | | — | — |")
+        lines.append("| No benchmark runs in this window | | | — | — | — | — |")
     lines.append("")
     if warnings:
         lines.extend(["### Data availability", "", *[f"- {_cell(w)}" for w in warnings], ""])

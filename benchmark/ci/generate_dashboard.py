@@ -390,7 +390,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--history-json", type=Path, help="Reuse history from this JSON file")
     parser.add_argument("--output", type=Path, required=True, help="Output HTML file")
     parser.add_argument("--data-output", type=Path, help="Also write the dashboard data as JSON")
-    parser.add_argument("--lookback-days", type=int, default=7, help="Days of Langfuse history to fetch")
+    parser.add_argument("--lookback-days", type=int, default=14, help="Days of Langfuse history to fetch")
     parser.add_argument("--weekly-output", type=Path, help="Also write the rolling weekly report as Markdown")
     parser.add_argument("--branch-filter", help="Only include runs from this branch")
     parser.add_argument("--repo", default="", help="owner/repo for commit links; auto-detected when omitted")
@@ -405,8 +405,8 @@ def cli(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    if args.lookback_days < 7:
-        parser.error("lookback-days must be at least 7, the dashboard and weekly report window")
+    if args.lookback_days < 7 or (args.weekly_output and args.lookback_days < 14):
+        parser.error("lookback-days must be at least 7, and at least 14 for a weekly report")
     if args.runs_dir and not args.run_id_prefix:
         parser.error("--run-id-prefix is required with --runs-dir")
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")

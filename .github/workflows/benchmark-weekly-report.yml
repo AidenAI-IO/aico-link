@@ -59,7 +59,7 @@ jobs:
             --output dashboard.html \
             --data-output dashboard-data.json \
             --weekly-output weekly-report.md \
-            --lookback-days 7 \
+            --lookback-days 14 \
             --branch-filter main
 
           if [[ -f weekly-report.md ]]; then

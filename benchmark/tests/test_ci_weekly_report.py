@@ -49,15 +49,32 @@ def test_missing_metrics_or_cost_are_visible_without_false_zero():
     assert report["totals"]["cost_usd_sum"] is None
     markdown = render_weekly(report, ["Missing scores"])
     assert "Missing scores" in markdown
-    assert "| 1 | 0 | 0 / 0 | — | — |" in markdown
+    assert "| 1 | 0 | 0 / 0 | — | — | — |" in markdown
 
 
-def test_markdown_has_no_previous_week_and_escapes_untrusted_suite_names():
+def test_markdown_escapes_untrusted_suite_names():
     report = summarize_weekly([_record(suite="<img src=x>|\\nhello")], end=END)
     markdown = render_weekly(report, [])
-    assert "Previous" not in markdown
     assert "<img" not in markdown
     assert "&#124;" in markdown
+
+
+def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days():
+    report = summarize_weekly([
+        _record(passed=6), _record("2026-10-01T00:00:00+00:00", passed=4),
+        _record(suite="new", passed=2),
+        _record(suite="gone", timestamp="2026-10-01T00:00:00+00:00"),
+        _record(suite="unmeasured", passed=4), _record("2026-10-01T00:00:00+00:00", suite="unmeasured", missing_metrics=["passed"]),
+    ], end=END)
+    suites = {s["suite"]: s for s in report["suites"]}
+    assert suites["memory"]["previous_pass_at_1"] == 0.5
+    assert suites["memory"]["change"] == pytest.approx(0.25)
+    # No previous run, or no previous measured rate, is unknown rather than zero.
+    assert suites["new"]["change"] is None and suites["unmeasured"]["change"] is None
+    # A suite that only ran last week is not listed for this week.
+    assert "gone" not in suites
+    assert report["change"] == pytest.approx(12 / 24 - 8 / 16)
+    assert "+25.0 pp" in render_weekly(report, [])
 
 
 def test_empty_window_is_reported_explicitly():

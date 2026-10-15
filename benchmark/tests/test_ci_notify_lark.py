@@ -14,14 +14,15 @@ def _week(**overrides):
     return week
 
 
-def _suite(name, pass_at_1, passed=0, eligible=0, runs=1):
-    return {"suite": name, "pass_at_1": pass_at_1, "passed": passed, "eligible_tasks": eligible, "suite_runs": runs}
+def _suite(name, pass_at_1, passed=0, eligible=0, runs=1, change=None):
+    return {"suite": name, "pass_at_1": pass_at_1, "passed": passed, "eligible_tasks": eligible,
+            "suite_runs": runs, "change": change}
 
 
 def _data(**overrides):
     data = {
         "weekly": {"start": "2026-10-06T00:00:00+00:00", "end": "2026-10-13T00:00:00+00:00",
-                   "totals": _week(),
+                   "totals": _week(), "change": None,
                    "suites": [_suite("memory", 0.5, 2.0, 4.0, 2), _suite("perception", 0.9, 9, 10)]},
         "runs": [{}, {}],
         "regressions": [],
@@ -54,6 +55,20 @@ def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     assert "memory: 50.0% (2/4, 2 runs)" in text
     assert "perception: 90.0% (9/10, 1 run)" in text
     assert text.index("memory") < text.index("perception")
+
+
+def test_changes_from_the_previous_week_are_colored_by_direction():
+    data = _data()
+    data["weekly"]["change"] = -0.05
+    data["weekly"]["suites"] = [_suite("up", 0.9, 9, 10, change=0.1), _suite("down", 0.4, 4, 10, change=-0.2),
+                                _suite("flat", 0.5, 5, 10, change=0.0004), _suite("new", 0.5, 5, 10)]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "75.0% <font color='red'>-5.0pp</font> (18/24" in text
+    assert "up: 90.0% <font color='green'>+10.0pp</font> (9/10, 1 run)" in text
+    assert "down: 40.0% <font color='red'>-20.0pp</font>" in text
+    assert "flat: 50.0% <font color='grey'>±0.0pp</font>" in text
+    # Without a previous-week rate, no change is shown.
+    assert "new: 50.0% (5/10, 1 run)" in text
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():

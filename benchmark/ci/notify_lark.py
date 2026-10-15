@@ -28,15 +28,25 @@ def _format_cost(value: float | None) -> str:
     return "—" if value is None else f"${value:.3f}"
 
 
+def _format_change(change: float | None) -> str:
+    """Percentage-point change from the previous seven days: green up, red down."""
+    if change is None:
+        return ""
+    points = change * 100
+    if round(points, 1) == 0:
+        return " <font color='grey'>±0.0pp</font>"
+    return f" <font color='{'green' if points > 0 else 'red'}'>{points:+.1f}pp</font>"
+
+
 def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
-    """Build a Lark card summarizing the last seven days; details live in the dashboard."""
+    """Build a Lark card summarizing the last seven days and their change; details live in the dashboard."""
     weekly = data["weekly"]
     suites = weekly["suites"]
     week = weekly["totals"]
     regressions = data.get("regressions", [])
 
     overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
-                f"**pass@1:** {_format_rate(week['pass_at_1'])}"
+                f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly['change'])}"
                 f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
     if week["cost_usd_sum"] is not None:
         overview += f"\n**Cost:** {_format_cost(week['cost_usd_sum'])}"
@@ -47,12 +57,12 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
 
     if suites:
         # Weekly totals per dataset, weakest first, so datasets needing attention lead.
-        lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}"
+        lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}{_format_change(s['change'])}"
                  + (f" ({s['passed']:.0f}/{s['eligible_tasks']:.0f}, {s['suite_runs']} run{'s' if s['suite_runs'] != 1 else ''})"
                     if s["eligible_tasks"] else "")
                  for s in suites]
         elements += [{"tag": "hr"},
-                     {"tag": "markdown", "content": "**pass@1 by dataset**\n" + "\n".join(lines)}]
+                     {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]
 
     if regressions:
         lines = [f"<font color='red'>{r['suite']}: {_format_rate(r['previous'])} → {_format_rate(r['current'])}</font>"
