@@ -1165,8 +1165,8 @@ workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
-last seven days (runs, overall pass@1, known cost), lists each dataset's latest
-pass@1, flags configuration-matched regressions, and links to the dashboard. Historical data comes
+last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
+over the week, flags configuration-matched regressions, and links to the dashboard. Historical data comes
 from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
 downloaded.
 
@@ -1245,11 +1245,11 @@ Regressions require the same branch, suite hash, workload hash, metrics schema,
 `k`, agent model, judge provider/model/prompt version, platform, and active
 skills. Runs missing configuration metadata are excluded from comparisons.
 
-The weekly report compares rolling UTC windows: the last seven days versus the
-preceding seven days. Overall rates describe each window's task mix; changes are
-computed only within matching suite/configuration groups. Cost and token totals
-are reported only when every included suite run supplies them with sample counts
-covering every eligible attempt. The report is included in the Actions job
+The weekly report summarizes the last seven days in UTC: overall totals and each
+suite's runs, eligible tasks, pass@1, and cost. Rates describe the window's task
+mix and are not comparisons between runs. Cost and token totals are reported only
+when every included suite run supplies them with sample counts covering every
+eligible attempt. The report is included in the Actions job
 summary.
 
 To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
@@ -1258,13 +1258,12 @@ To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
 ```bash
 cd benchmark
 uv run python -m ci.generate_dashboard \
-  --output dashboard.html --data-output dashboard-data.json \
-  --lookback-days 14
+  --output dashboard.html --data-output dashboard-data.json
 
-# Weekly report (requires 14 days)
+# Weekly report
 uv run python -m ci.generate_dashboard \
   --output dashboard.html --data-output dashboard-data.json \
-  --weekly-output weekly-report.md --lookback-days 14
+  --weekly-output weekly-report.md
 
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
@@ -1276,7 +1275,7 @@ Use `--branch-filter main` for one branch (records with unknown branches are
 excluded with a warning), `--repo owner/repo` for commit links outside Actions,
 and `--runs-dir runs --run-id-prefix ci-123-1` to include current local results.
 `--history-json dashboard-data.json` regenerates reports from a saved snapshot.
-A weekly report requires at least 14 days of lookback. History availability is
+`--lookback-days` defaults to and must be at least 7. History availability is
 subject to Langfuse retention and successful publication, not artifact retention.
 
 ## 5. Environment variables

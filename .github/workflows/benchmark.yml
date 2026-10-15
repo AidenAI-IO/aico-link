@@ -355,7 +355,7 @@ jobs:
           uv run python -m ci.generate_dashboard \
             --output dashboard.html \
             --data-output dashboard-data.json \
-            --lookback-days 14 \
+            --lookback-days 7 \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
           if [[ -f dashboard.html ]]; then

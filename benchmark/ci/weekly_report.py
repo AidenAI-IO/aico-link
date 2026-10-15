@@ -1,12 +1,11 @@
-"""Summarize rolling seven-day benchmark windows using comparable configurations."""
+"""Summarize the last seven days of benchmark runs."""
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-import hashlib
 from typing import Any
 
-from ci.fetch_langfuse_history import parse_timestamp, comparison_key
+from ci.fetch_langfuse_history import parse_timestamp
 
 
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
@@ -40,52 +39,21 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any]:
-    """Compare the last seven days with the preceding seven days in UTC.
+    """Summarize the last seven days in UTC, overall and per suite.
 
-    The overall rates are descriptive; changes are calculated only within a
-    suite/configuration present in both windows, avoiding changing suite mixes.
+    Overall and per-suite rates are descriptive totals over each window's
+    task mix; they are not comparisons between runs or configurations.
     """
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
-    previous_start = start - timedelta(days=7)
-    current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
-    previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
-    groups: dict[tuple[Any, ...], dict[str, Any]] = {}
-    uncomparable = 0
-    for window, records in (("current", current), ("previous", previous)):
-        for record in records:
-            key = comparison_key(record)
-            if key is None:
-                if window == "current":
-                    uncomparable += 1
-                continue
-            group_key = (record["suite"], *key)
-            group = groups.setdefault(group_key, {
-                "suite": record["suite"], "agent_model": record.get("agent_model"),
-                "git_branch": record.get("git_branch"),
-                "configuration": hashlib.sha256(repr(group_key).encode()).hexdigest()[:10],
-                "current": [], "previous": [],
-            })
-            group[window].append(record)
-    suites = []
-    for group in groups.values():
-        if not group["current"]:
-            continue
-        current_totals = _totals(group["current"])
-        previous_totals = _totals(group["previous"])
-        before, after = previous_totals["pass_at_1"], current_totals["pass_at_1"]
-        complete = (current_totals["measured_suite_runs"] == current_totals["suite_runs"]
-                    and previous_totals["measured_suite_runs"] == previous_totals["suite_runs"])
-        suites.append({**group, "current": current_totals, "previous": previous_totals,
-                       "delta": after - before if complete and before is not None and after is not None else None})
-    suites.sort(key=lambda s: (s["delta"] is None, s["delta"] or 0, s["suite"], s["configuration"]))
-    return {
-        "start": start.isoformat(), "end": end.isoformat(),
-        "previous_start": previous_start.isoformat(),
-        "current": _totals(current), "previous": _totals(previous),
-        "uncomparable_suite_runs": uncomparable,
-        "suites": suites,
-    }
+    records = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
+    by_suite: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        by_suite.setdefault(record["suite"], []).append(record)
+    suites = [{"suite": name, **_totals(group)} for name, group in by_suite.items()]
+    # Weakest suites first; unknown rates last.
+    suites.sort(key=lambda s: (s["pass_at_1"] is None, s["pass_at_1"] or 0.0, s["suite"]))
+    return {"start": start.isoformat(), "end": end.isoformat(), "totals": _totals(records), "suites": suites}
 
 
 def _pct(value: float | None) -> str:
@@ -98,33 +66,34 @@ def _cell(value: Any) -> str:
     return html.escape(str(value)).replace("|", "&#124;").replace("\n", " ").replace("\r", " ")
 
 
+def _resources(totals: dict[str, Any]) -> tuple[str, str]:
+    cost = "—" if totals["cost_usd_sum"] is None else f"{totals['cost_usd_sum']:.6g}"
+    tokens = "—" if totals["total_tokens_sum"] is None else f"{totals['total_tokens_sum']:.0f}"
+    return cost, tokens
+
+
 def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
+    totals = report["totals"]
+    cost, tokens = _resources(totals)
     lines = [
         "## Benchmark weekly report", "",
         f"UTC window: {report['start']} to {report['end']} (end exclusive).", "",
-        "History source: Langfuse v4 experiments and scores; current-run local metrics when supplied.",
+        "History source: Langfuse v4 experiments and scores.",
         "Only successfully published experiments are available as historical data; missing uploads cannot be counted.", "",
-        "| Window | Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Cost (USD) | Tokens |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Cost (USD) | Tokens |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: |",
+        f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
+        f"{_pct(totals['pass_at_1'])} | {cost} | {tokens} |",
+        "", "Rates are totals over each suite's runs in the window, not comparisons between runs.", "",
+        "| Suite | Runs | Eligible tasks | pass@1 | Cost (USD) |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
-    for label, totals in (("Last 7 days", report["current"]), ("Previous 7 days", report["previous"])):
-        cost = "—" if totals["cost_usd_sum"] is None else f"{totals['cost_usd_sum']:.6g}"
-        tokens = "—" if totals["total_tokens_sum"] is None else f"{totals['total_tokens_sum']:.0f}"
-        lines.append(f"| {label} | {totals['suite_runs']} | {totals['measured_suite_runs']} | "
-                     f"{totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | {_pct(totals['pass_at_1'])} | {cost} | {tokens} |")
-    lines.extend(["", "Overall rates describe each window's task mix. Changes below require matching configurations.", "",
-                  "| Suite | Branch | Model | Configuration | Last 7 days | Previous 7 days | Change |",
-                  "| --- | --- | --- | --- | ---: | ---: | ---: |"])
     for suite in report["suites"]:
-        delta = "—" if suite["delta"] is None else f"{suite['delta'] * 100:+.1f} pp"
-        lines.append("| " + " | ".join([
-            _cell(suite["suite"]), _cell(suite["git_branch"]), _cell(suite["agent_model"]),
-            suite["configuration"], _pct(suite["current"]["pass_at_1"]),
-            _pct(suite["previous"]["pass_at_1"]), delta,
-        ]) + " |")
+        lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
+                     f"{_pct(suite['pass_at_1'])} | {_resources(suite)[0]} |")
     if not report["suites"]:
-        lines.append("| No comparable configuration metadata available | | | | — | — | — |")
-    lines.extend(["", f"Current suite runs excluded from comparisons due to missing configuration metadata: {report['uncomparable_suite_runs']}.", ""])
+        lines.append("| No benchmark runs in this window | | | — | — |")
+    lines.append("")
     if warnings:
         lines.extend(["### Data availability", "", *[f"- {_cell(w)}" for w in warnings], ""])
     return "\n".join(lines)

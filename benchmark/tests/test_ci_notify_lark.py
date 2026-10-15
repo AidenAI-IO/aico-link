@@ -14,16 +14,16 @@ def _week(**overrides):
     return week
 
 
-def _suite(name, pass_at_1, passed=None, eligible=None):
-    return {"suite": name, "latest": {"pass_at_1": pass_at_1, "passed": passed, "eligible_tasks": eligible}}
+def _suite(name, pass_at_1, passed=0, eligible=0, runs=1):
+    return {"suite": name, "pass_at_1": pass_at_1, "passed": passed, "eligible_tasks": eligible, "suite_runs": runs}
 
 
 def _data(**overrides):
     data = {
         "weekly": {"start": "2026-10-06T00:00:00+00:00", "end": "2026-10-13T00:00:00+00:00",
-                   "current": _week(), "previous": _week(pass_at_1=0.10), "suites": []},
+                   "totals": _week(),
+                   "suites": [_suite("memory", 0.5, 2.0, 4.0, 2), _suite("perception", 0.9, 9, 10)]},
         "runs": [{}, {}],
-        "suites": [_suite("memory", 0.5, 2.0, 4.0), _suite("perception", 0.9, 9, 10)],
         "regressions": [],
         "warnings": [],
     }
@@ -41,31 +41,32 @@ def test_sign_matches_lark_custom_bot_algorithm():
     assert _sign("test_secret", "1626164479") == expected
 
 
-def test_card_summarizes_the_last_week_without_a_previous_week_comparison():
+def test_card_summarizes_the_last_week():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
     assert "2026-10-06 to 2026-10-13" in text
     assert "2 workflow runs, 6 dataset runs" in text
     assert "75.0% (18/24 eligible tasks)" in text
-    # The previous window's 10% rate must not appear.
-    assert "10.0%" not in text and "Previous" not in text
+    assert "Previous" not in text
 
 
-def test_card_lists_every_dataset_in_the_given_order():
+def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "memory: 50.0% (2/4)" in text
-    assert "perception: 90.0% (9/10)" in text
+    assert "memory: 50.0% (2/4, 2 runs)" in text
+    assert "perception: 90.0% (9/10, 1 run)" in text
     assert text.index("memory") < text.index("perception")
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():
-    text = _text(_build_card(_data(suites=[_suite("new", None)]), "https://example.com/d.html"))
+    data = _data()
+    data["weekly"]["suites"] = [_suite("new", None)]
+    text = _text(_build_card(data, "https://example.com/d.html"))
     assert "new: —" in text and "new: — (" not in text
 
 
 def test_cost_is_shown_only_when_known():
     assert "Cost" not in _text(_build_card(_data(), "https://example.com/d.html"))
     data = _data()
-    data["weekly"]["current"] = _week(cost_usd_sum=1.25)
+    data["weekly"]["totals"] = _week(cost_usd_sum=1.25)
     assert "$1.250" in _text(_build_card(data, "https://example.com/d.html"))
 
 

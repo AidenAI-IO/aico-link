@@ -292,7 +292,7 @@ def test_generate_dashboard_renders_without_any_history(tmp_path: Path) -> None:
     assert '"runs": []' in html or '[]' in html
 
 
-def test_dashboard_seven_day_boundary_preserves_weekly_baseline(tmp_path):
+def test_dashboard_and_weekly_report_share_the_seven_day_window(tmp_path):
     history = [
         _record(workflow_run_id=1, timestamp="2026-10-05T23:59:59+00:00"),
         _record(workflow_run_id=2, timestamp="2026-10-06T00:00:00+00:00"),
@@ -307,8 +307,7 @@ def test_dashboard_seven_day_boundary_preserves_weekly_baseline(tmp_path):
     # Per-suite points duplicate runs, so the JSON snapshot omits them.
     assert "points" not in payload["suites"][0]
     assert len(payload["history"]) == 4
-    assert payload["weekly"]["previous"]["suite_runs"] == 1
-    assert payload["weekly"]["current"]["suite_runs"] == 2
+    assert payload["weekly"]["totals"]["suite_runs"] == 2
     assert "2026-10-06T00:00:00+00:00" in output.read_text()
 
 

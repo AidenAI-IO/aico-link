@@ -30,8 +30,9 @@ def _format_cost(value: float | None) -> str:
 
 def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     """Build a Lark card summarizing the last seven days; details live in the dashboard."""
-    weekly, suites = data["weekly"], data.get("suites", [])
-    week = weekly["current"]
+    weekly = data["weekly"]
+    suites = weekly["suites"]
+    week = weekly["totals"]
     regressions = data.get("regressions", [])
 
     overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
@@ -45,15 +46,13 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     ]
 
     if suites:
-        # Suites arrive weakest first, so the datasets needing attention lead.
-        lines = []
-        for suite in suites:
-            latest = suite["latest"]
-            counts = (f" ({latest['passed']:.0f}/{latest['eligible_tasks']:.0f})"
-                      if latest.get("passed") is not None and latest.get("eligible_tasks") is not None else "")
-            lines.append(f"{suite['suite']}: {_format_rate(latest.get('pass_at_1'))}{counts}")
+        # Weekly totals per dataset, weakest first, so datasets needing attention lead.
+        lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}"
+                 + (f" ({s['passed']:.0f}/{s['eligible_tasks']:.0f}, {s['suite_runs']} run{'s' if s['suite_runs'] != 1 else ''})"
+                    if s["eligible_tasks"] else "")
+                 for s in suites]
         elements += [{"tag": "hr"},
-                     {"tag": "markdown", "content": "**Latest result per dataset**\n" + "\n".join(lines)}]
+                     {"tag": "markdown", "content": "**pass@1 by dataset**\n" + "\n".join(lines)}]
 
     if regressions:
         lines = [f"<font color='red'>{r['suite']}: {_format_rate(r['previous'])} → {_format_rate(r['current'])}</font>"
