@@ -45,6 +45,7 @@ try:
     from benchmark.runner.environment import (
         EnvironmentManager,
         MobileGymEnvironment,
+        build_mobilegym_environment_command,
         ensure_mobilegym_image,
     )
     from benchmark.runner.adb_android_environment import (
@@ -65,6 +66,7 @@ except ImportError:
     from runner.environment import (
         EnvironmentManager,
         MobileGymEnvironment,
+        build_mobilegym_environment_command,
         ensure_mobilegym_image,
     )
     from runner.adb_android_environment import (
@@ -2056,91 +2058,6 @@ def container_boot_failure_detail(container_name: str) -> str:
     except Exception:
         pass
     return "\n".join(detail)
-
-
-def build_mobilegym_environment_command(
-    *,
-    image: str,
-    container_name: str,
-    host_web_port: int,
-    host_bridge_port: int,
-    benchmark_dir: Path,
-    bridge_port: int = 9090,
-    parallel_envs: int = DEFAULT_MOBILEGYM_PARALLEL_ENVS,
-) -> list[str]:
-    parallel_envs = max(1, int(parallel_envs))
-    script = "\n".join(
-        [
-            "set -eu",
-            'export PATH="/opt/venv/bin:$PATH"',
-            "cd /mobilegym",
-            "npm run preview -- --host 0.0.0.0 --port 4173 >/tmp/mobilegym-preview.log 2>&1 &",
-            'preview_pid="$!"',
-            'cleanup() { kill "$preview_pid" 2>/dev/null || true; }',
-            "trap cleanup INT TERM EXIT",
-            "ready=0",
-            "for _ in $(seq 1 120); do",
-            (
-                "  if python3 -c \"import urllib.request; "
-                "urllib.request.urlopen('http://127.0.0.1:4173', timeout=1).read(1)\" "
-                ">/dev/null 2>&1; then"
-            ),
-            "    ready=1",
-            "    break",
-            "  fi",
-            '  if ! kill -0 "$preview_pid" 2>/dev/null; then',
-            "    cat /tmp/mobilegym-preview.log >&2",
-            "    exit 1",
-            "  fi",
-            "  sleep 1",
-            "done",
-            'if [ "$ready" != "1" ]; then',
-            "  cat /tmp/mobilegym-preview.log >&2",
-            "  exit 1",
-            "fi",
-            (
-                "exec python3 /app/benchmark/mobilegym/scripts/start_simulator.py "
-                "--mobilegym-root /mobilegym "
-                "--env-url http://127.0.0.1:4173 "
-                "--bridge-host 0.0.0.0 "
-                f"--bridge-port {bridge_port} "
-                f"--parallel-envs {parallel_envs} "
-                "--headless"
-            ),
-        ]
-    )
-    bridge_endpoint = f"http://host.docker.internal:{host_bridge_port}"
-    return [
-        "docker",
-        "run",
-        "--rm",
-        "-d",
-        "--name",
-        container_name,
-        "--add-host",
-        "host.docker.internal:host-gateway",
-        "-p",
-        docker_publish_arg(host_web_port, 4173, bind_host="127.0.0.1"),
-        "-p",
-        docker_publish_arg(
-            host_bridge_port,
-            bridge_port,
-            bind_host="127.0.0.1" if int(host_bridge_port) == 0 else "",
-        ),
-        "-v",
-        f"{benchmark_dir.resolve()}:/app/benchmark:ro",
-        "-e",
-        "MOBILEGYM_ROOT=/mobilegym",
-        "-e",
-        f"NO_PROXY={docker_no_proxy(bridge_endpoint)}",
-        "-e",
-        f"no_proxy={docker_no_proxy(bridge_endpoint)}",
-        "--entrypoint",
-        "sh",
-        image,
-        "-c",
-        script,
-    ]
 
 
 def docker_no_proxy(endpoint: str) -> str:

@@ -678,6 +678,12 @@ func (s *Server) Start() error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
+	if bridge := s.runtime.ConfigSnapshot().EnvironmentBridge; bridge.Enabled && strings.TrimSpace(bridge.Endpoint) != "" {
+		if err := validateBridgeEndpointNotSelf(bridge.Endpoint, listener.Addr()); err != nil {
+			_ = listener.Close()
+			return err
+		}
+	}
 	s.httpMu.Lock()
 	if s.closing.Load() {
 		s.httpMu.Unlock()
@@ -778,6 +784,53 @@ func isLoopbackServerAddr(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
+}
+
+// validateBridgeEndpointNotSelf rejects an environment bridge endpoint that
+// loops back to this agent's own listener, which would make bridged keyboard
+// input recurse into the agent.
+func validateBridgeEndpointNotSelf(endpoint string, listener net.Addr) error {
+	parsed, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("invalid environment bridge endpoint %q", endpoint)
+	}
+	listenAddr, ok := listener.(*net.TCPAddr)
+	if !ok {
+		return nil
+	}
+	if port, err := strconv.Atoi(parsed.Port()); err != nil || port != listenAddr.Port {
+		return nil
+	}
+	lookupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	targets, err := net.DefaultResolver.LookupIPAddr(lookupCtx, parsed.Hostname())
+	if err != nil {
+		// An unreachable bridge is reported on use; reject only endpoints that
+		// provably resolve to this listener.
+		return nil
+	}
+	wildcardListener := listenAddr.IP == nil || listenAddr.IP.IsUnspecified()
+	var localAddrs []net.Addr
+	if wildcardListener {
+		// A wildcard listener also answers on every local interface address.
+		localAddrs, _ = net.InterfaceAddrs()
+	}
+	for _, target := range targets {
+		if target.IP.Equal(listenAddr.IP) || (wildcardListener &&
+			(target.IP.IsLoopback() || target.IP.IsUnspecified() || ipInAddrs(target.IP, localAddrs))) {
+			return fmt.Errorf("environment bridge endpoint %q points to the agent listener", endpoint)
+		}
+	}
+	return nil
+}
+
+func ipInAddrs(ip net.IP, addrs []net.Addr) bool {
+	for _, addr := range addrs {
+		if network, ok := addr.(*net.IPNet); ok && network.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleChat handles chat requests.
@@ -3155,7 +3208,11 @@ func (s *Server) handleProviderMNK(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(mnk.MNKErrorResponse{Error: "mnk provider not configured"})
 		return
 	}
-	mnk.NewHTTPHandler(provider).ServeHTTP(w, r)
+	var textProvider mnk.TextProvider
+	if tools := s.runtime.toolSnapshot(); tools != nil && tools.textInputHW != nil {
+		textProvider, _ = tools.textInputHW.keyboardText.(mnk.TextProvider)
+	}
+	mnk.NewHTTPHandler(provider, textProvider).ServeHTTP(w, r)
 }
 
 // handleHealth serves GET /health, the environment-bridge readiness probe that

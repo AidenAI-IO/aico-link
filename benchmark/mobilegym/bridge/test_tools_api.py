@@ -2,6 +2,7 @@
 
 import json
 import time
+from types import SimpleNamespace
 from threading import Event, Thread
 from urllib.request import Request, urlopen
 
@@ -19,8 +20,20 @@ def mock_env():
 
 
 def mock_env_factory():
+    class MockKeyboard:
+        def __init__(self):
+            self.typed = []
+            self.pressed = []
+
+        async def type(self, text):
+            self.typed.append(text)
+
+        async def press(self, keys):
+            self.pressed.append(keys)
+
     class MockEnv:
         def __init__(self):
+            self.page = SimpleNamespace(keyboard=MockKeyboard())
             self.last_action = None
             self.actions = []
             self.step_count = 0
@@ -97,7 +110,7 @@ def test_get_tools_catalog(bridge_server):
     assert touch_props["point"]["required"] == ["x", "y"]
     assert "coord_space" not in touch_props
     assert touch_props["button"]["enum"] == ["left", "right", "middle"]
-    assert touch_props["type"]["enum"] == ["tap", "double_tap", "long_press", "swipe", "drag"]
+    assert touch_props["type"]["enum"] == ["tap", "double_tap", "long_press", "swipe", "drag", "drag_start", "drag_release"]
     assert touch_props["direction"]["enum"] == ["up", "down", "left", "right"]
     assert touch_props["speed"]["exclusiveMinimum"] == 0
     assert "hold_ms" in touch_props
@@ -256,10 +269,156 @@ def test_invoke_keyboard_text(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "hello world"},
-    }
+    assert state.env.page.keyboard.typed == ["hello world"]
+    assert state.env.actions == []
+
+
+def test_timed_out_keyboard_input_is_cancelled_before_later_actions():
+    import asyncio
+    from urllib.error import HTTPError
+
+    started = Event()
+    cancelled = Event()
+
+    class BlockingKeyboard:
+        def __init__(self):
+            self.typed = []
+
+        async def type(self, text):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            self.typed.append(text)
+
+    class BlockingEnv:
+        def __init__(self):
+            self.page = SimpleNamespace(keyboard=BlockingKeyboard())
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/keyboard_text",
+            data=json.dumps({"input": {"text": "late"}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert started.wait(timeout=1)
+        assert cancelled.wait(timeout=1)
+        assert state.env.page.keyboard.typed == []
+        follow_up = asyncio.run_coroutine_threadsafe(state.run_env(lambda env: "ready"), loop)
+        assert follow_up.result(timeout=1) == "ready"
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+
+def test_timed_out_drag_screenshot_releases_active_contact():
+    import asyncio
+    from urllib.error import HTTPError
+
+    observing = Event()
+    released = Event()
+
+    class BlockingEnv:
+        def __init__(self):
+            self.page = SimpleNamespace(evaluate=self.evaluate)
+
+        async def evaluate(self, _script, payload):
+            if payload["operation"] == "cancel":
+                released.set()
+
+        async def get_observation(self):
+            observing.set()
+            await asyncio.Event().wait()
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-drag-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/touch_gesture",
+            data=json.dumps({"input": {"type": "drag_start", "point": {"x": 200, "y": 300}}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert observing.wait(timeout=1)
+        assert released.wait(timeout=1)
+        assert not state.input.contact_active
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
+
+
+def test_timed_out_mobilegym_step_is_cancelled_before_later_actions():
+    import asyncio
+    from urllib.error import HTTPError
+
+    started = Event()
+    cancelled = Event()
+
+    class BlockingEnv:
+        def __init__(self):
+            self.actions = []
+
+        async def step(self, action):
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            self.actions.append(action)
+
+    loop = asyncio.new_event_loop()
+    thread = Thread(target=loop.run_forever, daemon=True)
+    thread.start()
+    state = BridgeEpisodeState(BlockingEnv(), loop)
+    state.active_episode_id = "ep-step-timeout"
+    server = BridgeServer(state, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+    base_url = server.start()
+    try:
+        req = Request(
+            f"{base_url}/api/tools/keyboard_tap",
+            data=json.dumps({"input": {"keys": ["enter"]}}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json"},
+        )
+        with pytest.raises(HTTPError) as exc_info:
+            urlopen(req, timeout=2)
+        assert exc_info.value.code == 504
+        assert started.wait(timeout=1)
+        assert cancelled.wait(timeout=1)
+        assert state.env.actions == []
+        follow_up = asyncio.run_coroutine_threadsafe(state.run_env(lambda env: "ready"), loop)
+        assert follow_up.result(timeout=1) == "ready"
+    finally:
+        server.stop()
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2)
+        loop.close()
 
 
 def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server):
@@ -479,10 +638,8 @@ def test_invoke_keyboard_text_accepts_plain_text_fallback(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "plain text"},
-    }
+    assert state.env.page.keyboard.typed == ["plain text"]
+    assert state.env.actions == []
 
 
 def test_invoke_enter_text_focuses_and_types_unicode(bridge_server):
@@ -1372,6 +1529,16 @@ def test_multi_env_tools_return_capacity_error_until_task_released():
             headers={"Content-Type": "application/json", "benchmark-task-id": "task.alpha"},
         )
         with urlopen(release_req, timeout=5) as resp:
+            assert resp.status == 200
+
+        assert states[0].active_episode_id is None
+        setup_req = Request(
+            f"{base_url}/api/setup",
+            data=json.dumps({"episode_id": "ep-beta"}).encode(),
+            method="POST",
+            headers={"Content-Type": "application/json", "benchmark-task-id": "task.beta"},
+        )
+        with urlopen(setup_req, timeout=5) as resp:
             assert resp.status == 200
 
         request_body = json.dumps({"input": {"type": "tap", "point": {"x": 500, "y": 500}}}).encode()

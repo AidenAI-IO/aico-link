@@ -735,10 +735,28 @@ func (t *KeyboardTapTool) Call(ctx context.Context, input string) (string, error
 
 // KeyboardTextTool types a string character by character via HID.
 type KeyboardTextTool struct {
+	textProvider         mnk.TextProvider
 	dev                  *HIDDevice
 	adb                  *ADBInputController
 	keyboardLayout       string
 	iosKeyboardIsolation *iosKeyboardIsolationController
+}
+
+// KeyboardText serves the provider endpoint through the same layout-aware
+// primitive used by enter_text, without focusing or observing the device.
+func (t *KeyboardTextTool) KeyboardText(ctx context.Context, text string) error {
+	input, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	ctx, _ = WithToolError(ctx)
+	if _, err := t.Call(ctx, string(input)); err != nil {
+		return err
+	}
+	if toolErr := ToolErrorFromContext(ctx); toolErr != nil {
+		return fmt.Errorf("keyboard input failed: %s", toolErr.Message)
+	}
+	return nil
 }
 
 func (t *KeyboardTextTool) Name() string { return "keyboard_text" }
@@ -788,6 +806,13 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 	}
 	if looksLikeSpacedRomanizationBlob(text) {
 		return toolErrorResultString(ctx, CodeInvalidArguments, "keyboard_text received spaced romanization; use enter_text instead."), nil
+	}
+
+	if t.textProvider != nil {
+		if err := t.textProvider.KeyboardText(ctx, text); err != nil {
+			return toolErrorResultf(ctx, CodeToolExecutionFailed, "remote keyboard input failed: %v", err), nil
+		}
+		return "ok", nil
 	}
 
 	if t.adb != nil {

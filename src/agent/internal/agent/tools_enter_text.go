@@ -154,6 +154,10 @@ func (t *EnterTextTool) enterTextInner(ctx context.Context, input string, disabl
 		if err != nil {
 			return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, "Inspect the latest screen, refocus the target field, then retry enter_text."), nil
 		}
+		if !result.OK {
+			logging.Warnf("agent", "text_input", "enter_text failed: %s", result.Reason)
+			return enterTextToolFailure(batchCtx, CodeToolExecutionFailed, enterTextFailureSuggestion(result)), nil
+		}
 		return enterTextToolResultString(result), nil
 	})
 	return output, callErr
@@ -184,14 +188,17 @@ func enterTextToolFailure(ctx context.Context, code, suggestion string) string {
 }
 
 func enterTextFailureSuggestion(result textInputResult) string {
+	if strings.Contains(strings.ToLower(result.Reason), "deadline") || strings.Contains(strings.ToLower(result.Reason), "timeout") {
+		return "Retry enter_text; if it times out again, enter a shorter section at a time."
+	}
+	if result.BackendFailure {
+		return "The input backend could not execute keyboard input. Refocusing will not fix this; report the input connection or unsupported operation."
+	}
 	if result.WrongIMESuspected {
 		return "Switch to the intended IME, refocus the field, then retry enter_text."
 	}
 	if strings.TrimSpace(result.FieldText) != "" {
 		return "Inspect the latest screen and correct or clear the existing field text before retrying enter_text."
-	}
-	if strings.Contains(strings.ToLower(result.Reason), "deadline") || strings.Contains(strings.ToLower(result.Reason), "timeout") {
-		return "Retry enter_text; if it times out again, enter a shorter section at a time."
 	}
 	return "Inspect the latest screen, refocus the target field, then retry enter_text."
 }

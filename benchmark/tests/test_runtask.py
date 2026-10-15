@@ -17,8 +17,48 @@ from runner.suite import (
     Suite,
     TaskSpec,
     TraceObservationSpec,
+    load_suite,
 )
 import runner.runtask as runtask_mod
+
+
+@pytest.mark.parametrize("task_id,tool_names,expected_status", [
+    ("type_long_mixed_text", ["enter_text"], "passed"),
+    ("drag_app_icon", ["touch_gesture", "touch_gesture"], "failed"),
+])
+def test_phone_control_successful_action_count_reaches_visual_judge(
+    tmp_path: Path, monkeypatch, task_id, tool_names, expected_status
+):
+    suite = load_suite(Path(__file__).parents[1] / "suites" / "phone_control_v1.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    history = []
+    for index, tool_name in enumerate(tool_names):
+        gesture = "drag_start" if index == 0 else "drag_release"
+        tool_input = {"text": "Aiden test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
+        history.extend([
+            {"type": "tool_call", "tool_name": tool_name, "tool_input": json.dumps(tool_input)},
+            {"type": "tool_result", "tool_name": tool_name, "content": '{"ok":true}'},
+        ])
+    history.append({"type": "assistant", "content": "Done"})
+    judged = []
+
+    def fake_judge(**kwargs):
+        judged.append(kwargs)
+        if task_id == "drag_app_icon":
+            assert any("folder" in item.check for item in kwargs["rubric"])
+        verdicts = [RubricVerdict(item.id, "no" if task_id == "drag_app_icon" and item.id == "icon_moved" else "yes", "visual evidence")
+                    for item in kwargs["rubric"]]
+        return JudgeOutput(verdicts, "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", fake_judge)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None,
+        run_id="regression", timed_out=False,
+    )
+    assert len(judged) == 1
+    assert result.status == expected_status
+    assert result.hard_assertion_failures == []
 
 
 class FakeClient:
@@ -1405,7 +1445,7 @@ def test_run_one_task_applies_suite_prompt_prefix(tmp_path: Path):
     ]
 
 
-def test_run_one_task_requests_active_skill_and_marks_trace_observation(tmp_path: Path):
+def test_run_one_task_requests_active_skill_without_claiming_it_was_read(tmp_path: Path):
     suite = Suite(
         name="phone",
         global_reset={},
@@ -1446,8 +1486,8 @@ def test_run_one_task_requests_active_skill_and_marks_trace_observation(tmp_path
     assert result.metrics["active_skills"] == ["device-operator"]
     obs = result.metrics["trace_observations"][0]
     assert obs["id"] == "skill_read_device_operator"
-    assert obs["passed"] is True
-    assert "requested active skill" in obs["reason"]
+    assert obs["passed"] is False
+    assert "No skill_read call" in obs["reason"]
 
 
 class TimeoutClient(FakeClient):
@@ -1612,3 +1652,39 @@ def test_run_one_task_sends_live_post_screenshot_to_judge(tmp_path: Path, monkey
     ]
     assert result.status == "passed"
     assert result.rubric_pass_count == 1
+
+
+@pytest.mark.parametrize("handoff", [False, True])
+def test_episode_answer_does_not_turn_handoff_into_success(tmp_path, handoff):
+    suite = Suite(name="phone", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
+    task = TaskSpec(id="input", category="phone", description_for_judge="Type text", prompt="Type text",
+        rubric=[], hard_assertions=HardAssertions(min_tool_calls=0, forbidden_tools=["request_user_action"]))
+    history = [{"type": "tool_call", "tool_name": "enter_text", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "enter_text", "content": '{"ok":false}', "is_error": True}]
+    if handoff:
+        history.append({"type": "tool_call", "tool_name": "request_user_action", "tool_input": "{}"})
+        history.append({"type": "tool_result", "tool_name": "request_user_action",
+            "content": '{"status":"HUMAN_HANDOFF_REQUESTED"}'})
+    result = runtask_mod.evaluate_task_history(suite=suite, task=task, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="run", history=history, timed_out=False,
+        pre_screenshot=None, post_screenshot=None,
+        episode={"outcome": {"success": True, "final_answer": "Please finish manually" if handoff else "Finished"}})
+    assert result.metrics["human_handoff_requested"] == handoff
+    assert result.status == ("failed" if handoff else "passed")
+    if handoff:
+        assert any("forbidden" in f.id for f in result.hard_assertion_failures)
+    trace = json.loads((tmp_path / "trace.json").read_text())
+    assert trace["tool_results"][0]["is_error"] is True
+
+
+def test_handoff_is_not_a_global_failure_policy(tmp_path):
+    suite = Suite(name="confirmation", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
+    task = TaskSpec(id="confirm", category="diagnostic", description_for_judge="Request confirmation", prompt="Ask before proceeding",
+        rubric=[], hard_assertions=HardAssertions(response_required=False))
+    history = [{"type": "tool_call", "tool_name": "request_user_action", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "request_user_action",
+         "content": '{"status":"HUMAN_HANDOFF_REQUESTED"}'}]
+    result = runtask_mod.evaluate_task_history(suite=suite, task=task, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="run", history=history, timed_out=False)
+    assert result.metrics["human_handoff_requested"] is True
+    assert result.status == "passed"

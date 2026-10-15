@@ -79,6 +79,21 @@ def mnk_tool_calls(payload: dict[str, Any]) -> list[ToolCall]:
             gesture["duration_ms"] = duration_ms
         return [("touch_gesture", gesture)]
 
+    if operation == "keyboard_text":
+        params = _params(payload, operation)
+        text = params.get("text")
+        if not isinstance(text, str) or not text or not text.isascii():
+            raise MNKRequestError("keyboard_text requires non-empty ASCII text")
+        return [("keyboard_text", {"text": text})]
+
+    if operation in {"drag_start", "drag_release"}:
+        params = _params(payload, operation)
+        _touch_button(params.get("button", "left"))
+        return [("touch_gesture", {
+            "type": operation,
+            "point": _point(params.get("x"), params.get("y")),
+        })]
+
     if operation == "keypress":
         params = _params(payload, "keypress")
         keys = params.get("keys")

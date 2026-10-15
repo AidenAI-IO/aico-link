@@ -18,6 +18,60 @@ def _manager_without_discovery(monkeypatch, tmp_path: Path) -> environment.Envir
     return environment.EnvironmentManager(runs_dir=tmp_path / "runs")
 
 
+def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
+    captured = {}
+    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
+    monkeypatch.setattr(environment.sys, "platform", "linux")
+
+    def inspect(cmd, text=False, timeout=None):
+        captured["cmd"] = cmd
+        captured["timeout"] = timeout
+        return "172.19.0.1\n"
+
+    monkeypatch.setattr(environment.subprocess, "check_output", inspect)
+
+    assert environment.mobilegym_bridge_bind_host() == "172.19.0.1"
+    assert captured["cmd"] == [
+        "docker", "network", "inspect", "bridge", "--format",
+        "{{(index .IPAM.Config 0).Gateway}}",
+    ]
+    assert captured["timeout"] == 5
+
+
+def test_mobilegym_bridge_bind_is_loopback_on_docker_desktop(monkeypatch):
+    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
+    monkeypatch.setattr(environment.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        environment.subprocess,
+        "check_output",
+        lambda *args, **kwargs: pytest.fail("Docker gateway lookup is Linux-only"),
+    )
+
+    assert environment.mobilegym_bridge_bind_host() == "127.0.0.1"
+
+
+def test_mobilegym_bridge_bind_rejects_all_interfaces_override(monkeypatch):
+    monkeypatch.setenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", "0.0.0.0")
+
+    with pytest.raises(RuntimeError, match="no usable IPv4 host gateway"):
+        environment.mobilegym_bridge_bind_host()
+
+
+@pytest.mark.parametrize(
+    ("output", "expected"),
+    [
+        ("172.17.0.1:19090\n", ("172.17.0.1", 19090)),
+        ("0.0.0.0:19090\n[::]:19090\n", ("127.0.0.1", 19090)),
+        ("[::]:19090\n", ("", 0)),
+        ("", ("", 0)),
+    ],
+)
+def test_docker_published_binding_reports_actual_host_ip(monkeypatch, output, expected):
+    monkeypatch.setattr(environment.subprocess, "check_output", lambda *args, **kwargs: output)
+
+    assert environment._docker_published_binding_safe("aiden-mobilegym-env-x", 9090) == expected
+
+
 def test_list_all_coalesces_concurrent_docker_sync(monkeypatch, tmp_path: Path):
     manager = _manager_without_discovery(monkeypatch, tmp_path)
     calls = 0
@@ -59,12 +113,23 @@ def test_format_container_age_returns_unknown_for_future_timestamp():
 
 def test_recovered_mobilegym_container_is_not_reusable_for_new_runs(monkeypatch, tmp_path: Path):
     manager = _manager_without_discovery(monkeypatch, tmp_path)
+    health_urls = []
     monkeypatch.setattr(
         environment,
-        "_docker_published_port_safe",
-        lambda container_name, container_port: 19090 if container_port == 9090 else 18173,
+        "_docker_published_binding_safe",
+        lambda container_name, container_port: ("172.17.0.1", 19090),
     )
-    monkeypatch.setattr(environment, "_check_endpoint_health", lambda *args, **kwargs: True)
+    monkeypatch.setattr(environment, "_docker_published_port_safe", lambda container_name, container_port: 18173)
+    monkeypatch.setattr(
+        environment,
+        "_check_endpoint_health",
+        lambda url, **kwargs: health_urls.append(url) or True,
+    )
+    monkeypatch.setattr(
+        environment,
+        "mobilegym_bridge_bind_host",
+        lambda: pytest.fail("recovered containers must use their published bind address"),
+    )
     monkeypatch.setattr(
         environment,
         "_docker_inspect_created",
@@ -81,6 +146,8 @@ def test_recovered_mobilegym_container_is_not_reusable_for_new_runs(monkeypatch,
     )
 
     assert recovered is not None
+    assert health_urls == ["http://172.17.0.1:19090/health"]
+    assert recovered.public_endpoint == "http://172.17.0.1:19090"
     assert recovered.status == "stale"
     assert "start a fresh environment" in recovered.message
 

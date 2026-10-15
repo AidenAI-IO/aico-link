@@ -3,13 +3,141 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screenprovider"
 )
+
+type recordingBridgeTextProvider struct {
+	text string
+	err  error
+}
+
+func (p *recordingBridgeTextProvider) KeyboardText(_ context.Context, text string) error {
+	p.text = text
+	return p.err
+}
+
+func TestEnvironmentBridgeRejectsOwnAgentListener(t *testing.T) {
+	listener := &net.TCPAddr{IP: net.IPv4zero, Port: 8080}
+	for _, tc := range []struct {
+		endpoint string
+		reject   bool
+	}{
+		{endpoint: "http://127.0.0.1:8080", reject: true},
+		{endpoint: "http://127.0.0.1:08080", reject: true},
+		{endpoint: "http://localhost:8080", reject: true},
+		{endpoint: "http://0.0.0.0:8080", reject: true},
+		{endpoint: "http://[::1]:8080", reject: true},
+		{endpoint: "http://127.0.0.1:9090", reject: false},
+		{endpoint: "http://127.0.0.1", reject: false},
+		{endpoint: "http://192.0.2.5:8080", reject: false},
+		{endpoint: "http://host.docker.internal:8080", reject: false},
+	} {
+		t.Run(tc.endpoint, func(t *testing.T) {
+			err := validateBridgeEndpointNotSelf(tc.endpoint, listener)
+			if (err != nil) != tc.reject {
+				t.Fatalf("validateBridgeEndpointNotSelf(%q) = %v; reject=%v", tc.endpoint, err, tc.reject)
+			}
+		})
+	}
+}
+
+func TestEnvironmentBridgeRejectsLocalInterfaceAddressOnWildcardListener(t *testing.T) {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Skipf("list interface addresses: %v", err)
+	}
+	var local net.IP
+	for _, addr := range addrs {
+		if network, ok := addr.(*net.IPNet); ok && !network.IP.IsLoopback() && network.IP.To4() != nil {
+			local = network.IP
+			break
+		}
+	}
+	if local == nil {
+		t.Skip("no non-loopback IPv4 interface address")
+	}
+	endpoint := "http://" + net.JoinHostPort(local.String(), "8080")
+	if err := validateBridgeEndpointNotSelf(endpoint, &net.TCPAddr{IP: net.IPv4zero, Port: 8080}); err == nil {
+		t.Fatalf("validateBridgeEndpointNotSelf(%q) on wildcard listener = nil; want rejection", endpoint)
+	}
+	// A listener bound to loopback only does not answer on interface addresses.
+	if err := validateBridgeEndpointNotSelf(endpoint, &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 8080}); err != nil {
+		t.Fatalf("validateBridgeEndpointNotSelf(%q) on loopback listener = %v; want nil", endpoint, err)
+	}
+}
+
+func TestEnvironmentBridgeAllowsLoopbackOnDifferentListenerAddress(t *testing.T) {
+	listener := &net.TCPAddr{IP: net.IPv4(192, 0, 2, 5), Port: 8080}
+	if err := validateBridgeEndpointNotSelf("http://127.0.0.1:8080", listener); err != nil {
+		t.Fatalf("loopback bridge on a different listener address = %v; want nil", err)
+	}
+}
+
+func TestServerStartRejectsBridgeEndpointPointingAtItself(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve HTTP address: %v", err)
+	}
+	addr := listener.Addr().String()
+	if err := listener.Close(); err != nil {
+		t.Fatalf("release HTTP address: %v", err)
+	}
+	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://" + addr}}
+	server := &Server{
+		addr:             addr,
+		runtime:          &Runtime{config: cfg},
+		eventBroadcaster: NewEventBroadcaster(),
+		activeRuns:       make(map[string]context.CancelFunc),
+	}
+	err = server.Start()
+	if err == nil || !strings.Contains(err.Error(), "points to the agent listener") {
+		t.Fatalf("Server.Start() = %v; want self-endpoint rejection", err)
+	}
+	// The rejected listener must be released so the port is reusable.
+	again, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listener was not closed after rejection: %v", err)
+	}
+	_ = again.Close()
+}
+
+func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint(fail), func(t *testing.T) {
+			sink := &recordingBridgeTextProvider{}
+			if fail {
+				sink.err = fmt.Errorf("keyboard disconnected")
+			}
+			tools := &ToolSet{
+				mnkProvider: mnk.NewMockProvider(),
+				textInputHW: &textInputHardwareDeps{keyboardText: &KeyboardTextTool{textProvider: sink}},
+			}
+			server := &Server{runtime: &Runtime{tools: tools}}
+			endpoint := httptest.NewServer(http.HandlerFunc(server.handleProviderMNK))
+			defer endpoint.Close()
+			client := mnk.NewHTTPProvider(mnk.HTTPProviderConfig{BaseURL: endpoint.URL})
+			err := client.KeyboardText(context.Background(), "Aiden 2026!")
+			if fail {
+				if err == nil || !strings.Contains(err.Error(), "keyboard disconnected") {
+					t.Fatalf("lost keyboard failure: %v", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			if sink.text != "Aiden 2026!" {
+				t.Fatalf("typed %q", sink.text)
+			}
+		})
+	}
+}
 
 func TestBuiltinToolSetFromConfigUsesEnvironmentBridgeProviders(t *testing.T) {
 	tools := NewBuiltinToolSetFromConfig(Config{
@@ -165,5 +293,37 @@ func TestWhitespaceOnlyEnvironmentBridgeEndpointKeepsLocalProviders(t *testing.T
 	}
 	if tools.iosKeyboardIsolationOptional {
 		t.Fatal("blank endpoint disabled local isolation requirement")
+	}
+}
+
+func TestEnvironmentBridgeTextInputUsesRemoteKeyboard(t *testing.T) {
+	var gotText string
+	bridge := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/providers/mnk" || r.Header.Get(mnk.BenchmarkTaskIDHeader) != "typing-task" {
+			t.Errorf("unexpected keyboard request: %s task=%q", r.URL.Path, r.Header.Get(mnk.BenchmarkTaskIDHeader))
+		}
+		var payload struct {
+			Operation    string `json:"operation"`
+			KeyboardText struct {
+				Text string `json:"text"`
+			} `json:"keyboard_text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Error(err)
+		}
+		if payload.Operation != "keyboard_text" {
+			t.Errorf("operation = %q", payload.Operation)
+		}
+		gotText = payload.KeyboardText.Text
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer bridge.Close()
+	tools := NewBuiltinToolSetFromConfig(Config{EnvironmentBridge: EnvironmentBridgeConfig{
+		Enabled: true, Endpoint: bridge.URL, BenchmarkTaskID: "typing-task",
+	}}, ProxyConfig{})
+	// Exercise the exact internal dependency used by enter_text's probe and chunks.
+	out, err := tools.textInputHW.keyboardText.Call(context.Background(), `{"text":"Aiden test-2026!"}`)
+	if err != nil || out != "ok" || gotText != "Aiden test-2026!" {
+		t.Fatalf("remote typing: output=%q err=%v text=%q", out, err, gotText)
 	}
 }

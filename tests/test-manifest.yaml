@@ -83,7 +83,7 @@ suites:
   - name: benchmark-python
     class: deterministic
     paths: [benchmark]
-    command: cd benchmark && uv run --locked pytest -q tests ../tests/benchmark
+    command: cd benchmark && uv run --locked pytest -q tests ../tests/benchmark mobilegym/bridge/test_tools_api.py
     quick: true
     quick_command: cd benchmark && uv run --locked pytest -q tests/test_suite.py tests/test_mnk_provider.py
     dependencies: [uv]

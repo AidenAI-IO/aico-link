@@ -51,7 +51,7 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert all_cases == catalog.cases
     assert len(runnable) == 13
     assert len(hardware) == 12
-    assert len(all_cases) == 26
+    assert len(all_cases) == 27
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
@@ -90,6 +90,23 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     )
 
     assert {case.target_platform for case in selected} == {"ios", "android"}
+
+
+def test_phone_control_selection_uses_only_the_requested_environment_profile() -> None:
+    catalog = load_catalog()
+    suite = "suites/phone_control_v1.json"
+
+    mobilegym = select_cases(catalog, profile="runnable", suite=suite)
+    ios = select_cases(catalog, profile="hardware", suite=suite)
+    both = select_cases(catalog, profile="all", suite=suite)
+
+    assert [case.id for case in mobilegym] == ["phone-control-mobilegym"]
+    assert mobilegym[0].environment == "mobilegym"
+    assert mobilegym[0].target_platform == "android"
+    assert mobilegym[0].runnable is False
+    assert mobilegym[0] not in select_cases(catalog, profile="runnable")
+    assert [case.id for case in ios] == ["phone-control-ios"]
+    assert {case.id for case in both} == {"phone-control-mobilegym", "phone-control-ios"}
 
 
 def test_suite_selection_must_match_profile_unless_all() -> None:

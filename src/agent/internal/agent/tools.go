@@ -200,6 +200,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	waitStable := NewWaitStableScreenTool(provider, screenStable, screen)
 	keyboardTap := &KeyboardTapTool{mnkProvider: mnkProvider}
 	keyboardText := &KeyboardTextTool{dev: kbDev, adb: adbInput, keyboardLayout: hidCfg.KeyboardLayoutOrDefault(), iosKeyboardIsolation: iosKeyboardIsolation}
+	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	touchGesture := &TouchGestureTool{
 		mnkProvider: mnkProvider,
 		screen:      screen,
