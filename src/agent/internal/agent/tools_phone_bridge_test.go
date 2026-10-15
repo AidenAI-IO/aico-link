@@ -354,12 +354,12 @@ func TestSearchLaunchAppTextEntryDisablesBridgePath(t *testing.T) {
 	}
 	entryTool.SetDeviceTypeFunc(hw.deviceTypeFn)
 
-	err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{
+	_, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{
 		hw:        hw,
 		vision:    vision,
 		platform:  "android",
 		entryTool: entryTool,
-	}, "Aiden", false)
+	}, "Aiden", false, false)
 	if err != nil {
 		t.Fatalf("enterSearchQuery() error = %v", err)
 	}

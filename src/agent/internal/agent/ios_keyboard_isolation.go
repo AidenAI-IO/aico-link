@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aiden-agent/internal/logging"
 	"context"
 	"errors"
 	"fmt"
@@ -139,7 +140,9 @@ func (c *iosKeyboardIsolationController) switchProfile(command string) error {
 		_ = c.notifyReenumeration(notifyCtx)
 		notifyCancel()
 	}
+	started := time.Now()
 	output, err := c.run(ctx, c.controlPath, command)
+	logging.Infof("agent", "ios_keyboard_isolation", "profile switch command=%s duration_ms=%d error=%v", command, time.Since(started).Milliseconds(), err)
 	if err == nil {
 		return nil
 	}
