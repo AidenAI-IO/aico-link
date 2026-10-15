@@ -499,7 +499,7 @@ def _validate_existing_run_metadata(
         for key, value in expected.items()
         # Reporting context is not benchmark identity, and older publications
         # predate these fields. Artifact hashes still guard conflicting results.
-        if key not in {"git_branch", "benchmark_started_at", "workflow_run_id",
+        if key not in {"git_branch", "git_status", "benchmark_started_at", "workflow_run_id",
                        "workflow_run_attempt", "workflow_run_number"}
     ):
         raise LangfusePublishError(
@@ -1214,6 +1214,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "metrics_k": manifest.get("metrics_k"),
         "git_sha": manifest.get("git_sha"),
         "git_dirty": manifest.get("git_dirty"),
+        "git_status": manifest.get("git_status"),
         "git_branch": manifest.get("git_branch") or os.environ.get("GITHUB_REF_NAME"),
         "benchmark_started_at": manifest.get("started_at"),
         "workflow_run_id": ci_run.group(1) if ci_run else None,

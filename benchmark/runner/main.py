@@ -657,7 +657,7 @@ def _cmd_run_auto_agent_setup_inner(
     judge_cfg = None if args.no_judge else JudgeConfig(model=args.judge_model, base_url=args.judge_base_url)
     active_skills = _selected_skills(args)
     judge_cache = run_dir / "_judge_cache"
-    sha, dirty = git_sha(REPO_ROOT)
+    sha, dirty, git_status = git_sha(REPO_ROOT)
     started = now_iso()
     display_environment_url = (
         mock_server.redacted_url if mock_server is not None else args.environment_url
@@ -880,6 +880,7 @@ def _cmd_run_auto_agent_setup_inner(
     suite_snapshot_path = _write_suite_snapshot(run_dir, suite)
     manifest = {
         "run_id": run_id, "git_sha": sha, "git_dirty": dirty,
+        "git_status": git_status.splitlines()[:50],
         "suite_path": str(suite.source_path), "suite_sha256": suite.sha256,
         "suite_snapshot_path": suite_snapshot_path,
         "selected_task_ids": selected_task_ids,
@@ -1050,7 +1051,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     judge_cfg = None if args.no_judge else JudgeConfig(model=args.judge_model, base_url=args.judge_base_url)
     active_skills = _selected_skills(args)
     judge_cache = run_dir / "_judge_cache"
-    sha, dirty = git_sha(REPO_ROOT)
+    sha, dirty, git_status = git_sha(REPO_ROOT)
     started = now_iso()
     results = []
     # Compute total number of executions (accounting for repeats) for progress display
@@ -1169,6 +1170,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     suite_snapshot_path = _write_suite_snapshot(run_dir, suite)
     manifest = {
         "run_id": run_id, "git_sha": sha, "git_dirty": dirty,
+        "git_status": git_status.splitlines()[:50],
         "suite_path": str(suite.source_path), "suite_sha256": suite.sha256,
         "suite_snapshot_path": suite_snapshot_path,
         "selected_task_ids": selected_task_ids,

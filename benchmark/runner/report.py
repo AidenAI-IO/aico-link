@@ -47,17 +47,18 @@ def task_error_details(metrics: dict[str, Any]) -> list[tuple[str, Any]]:
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-def git_sha(repo_root: Path) -> tuple[str, bool]:
+def git_sha(repo_root: Path) -> tuple[str, bool, str]:
     try:
         sha = subprocess.check_output(
             ["git", "rev-parse", "HEAD"], cwd=repo_root, text=True
         ).strip()
-        dirty = bool(subprocess.check_output(
+        status = subprocess.check_output(
             ["git", "status", "--porcelain"], cwd=repo_root, text=True
-        ).strip())
-        return sha, dirty
+        ).strip()
+        dirty = bool(status)
+        return sha, dirty, status
     except Exception:
-        return "", False
+        return "", False, ""
 
 def write_jsonl(path: Path, results: list[TaskResult]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
