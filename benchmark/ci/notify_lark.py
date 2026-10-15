@@ -87,7 +87,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         "config": {"wide_screen_mode": True},
         "header": {
             "template": "red" if regressions else "blue",
-            "title": {"tag": "plain_text", "content": "Benchmark Weekly Report (MOCK preview, not real data)"},
+            "title": {"tag": "plain_text", "content": "Benchmark Weekly Report"},
         },
         "elements": elements,
     }
