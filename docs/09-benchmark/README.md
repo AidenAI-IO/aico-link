@@ -341,8 +341,8 @@ second step:
 
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
 of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
-workflow runs every Thursday, compares the last 7 days
-with the previous 7, and sends a Lark notification card. Both read history from
+workflow runs every Thursday and sends a Lark card summarizing the last 7 days,
+with a link to the dashboard. Both read history from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)

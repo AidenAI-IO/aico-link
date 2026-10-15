@@ -28,111 +28,56 @@ def _format_cost(value: float | None) -> str:
     return "—" if value is None else f"${value:.3f}"
 
 
-def _build_card(weekly: dict[str, Any], dashboard_url: str, warnings: list[str]) -> dict[str, Any]:
-    """Build a Lark interactive card from the weekly summary."""
-    current, previous = weekly["current"], weekly["previous"]
+def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
+    """Build a Lark card summarizing the last seven days; details live in the dashboard."""
+    weekly, suites = data["weekly"], data.get("suites", [])
+    week = weekly["current"]
+    regressions = data.get("regressions", [])
 
-    # Overall metrics
-    current_rate = _format_rate(current["pass_at_1"])
-    prev_rate = _format_rate(previous["pass_at_1"])
-    delta_pp = None
-    if current["pass_at_1"] is not None and previous["pass_at_1"] is not None:
-        delta_pp = (current["pass_at_1"] - previous["pass_at_1"]) * 100
-    delta_text = f" ({delta_pp:+.1f} pp)" if delta_pp is not None else ""
-
+    overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
+                f"**pass@1:** {_format_rate(week['pass_at_1'])}"
+                f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
+    if week["cost_usd_sum"] is not None:
+        overview += f"\n**Cost:** {_format_cost(week['cost_usd_sum'])}"
     elements = [
-        {
-            "tag": "markdown",
-            "content": f"**Benchmark Weekly Report**\n{weekly['start'][:10]} to {weekly['end'][:10]}",
-        },
-        {"tag": "hr"},
-        {
-            "tag": "column_set",
-            "flex_mode": "none",
-            "background_style": "grey",
-            "columns": [
-                {
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "elements": [
-                        {"tag": "markdown", "content": f"**Last 7 days**\n{current_rate}{delta_text}"},
-                    ],
-                },
-                {
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "elements": [
-                        {"tag": "markdown", "content": f"**Previous 7 days**\n{prev_rate}"},
-                    ],
-                },
-            ],
-        },
-        {
-            "tag": "column_set",
-            "flex_mode": "none",
-            "background_style": "grey",
-            "columns": [
-                {
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "elements": [
-                        {"tag": "markdown", "content": f"Runs: {current['suite_runs']}"},
-                        {"tag": "markdown", "content": f"Cost: {_format_cost(current['cost_usd_sum'])}"},
-                    ],
-                },
-                {
-                    "tag": "column",
-                    "width": "weighted",
-                    "weight": 1,
-                    "elements": [
-                        {"tag": "markdown", "content": f"Runs: {previous['suite_runs']}"},
-                        {"tag": "markdown", "content": f"Cost: {_format_cost(previous['cost_usd_sum'])}"},
-                    ],
-                },
-            ],
-        },
+        {"tag": "markdown", "content": f"{weekly['start'][:10]} to {weekly['end'][:10]} (UTC)"},
+        {"tag": "markdown", "content": overview},
     ]
 
-    # Top changes (up to 3, only if delta >= 5pp decline or any improvement)
-    changes = [s for s in weekly["suites"] if s["delta"] is not None and abs(s["delta"]) >= 0.001]
-    notable = [s for s in changes if s["delta"] < -0.05 or s["delta"] > 0][:3]
+    if suites:
+        # Suites arrive weakest first, so the datasets needing attention lead.
+        lines = []
+        for suite in suites:
+            latest = suite["latest"]
+            counts = (f" ({latest['passed']:.0f}/{latest['eligible_tasks']:.0f})"
+                      if latest.get("passed") is not None and latest.get("eligible_tasks") is not None else "")
+            lines.append(f"{suite['suite']}: {_format_rate(latest.get('pass_at_1'))}{counts}")
+        elements += [{"tag": "hr"},
+                     {"tag": "markdown", "content": "**Latest result per dataset**\n" + "\n".join(lines)}]
 
-    if notable:
-        elements.append({"tag": "hr"})
-        elements.append({"tag": "markdown", "content": "**Notable changes**"})
-        for suite in notable:
-            suite_pp = suite["delta"] * 100
-            color = "red" if suite_pp < -5 else "green" if suite_pp > 0 else "grey"
-            suite_line = (
-                f"<font color='{color}'>{suite['suite']}: {_format_rate(suite['previous']['pass_at_1'])} "
-                f"→ {_format_rate(suite['current']['pass_at_1'])} ({suite_pp:+.1f} pp)</font>"
-            )
-            elements.append({"tag": "markdown", "content": suite_line})
+    if regressions:
+        lines = [f"<font color='red'>{r['suite']}: {_format_rate(r['previous'])} → {_format_rate(r['current'])}</font>"
+                 for r in regressions]
+        elements += [{"tag": "hr"},
+                     {"tag": "markdown", "content": "**Regressions** (same configuration)\n" + "\n".join(lines)}]
 
-    if warnings:
-        elements.append({"tag": "hr"})
-        elements.append({"tag": "markdown", "content": "⚠️ Data incomplete (see run for details)"})
+    if data.get("warnings"):
+        elements.append({"tag": "markdown", "content": "⚠️ Some data is incomplete; see the dashboard."})
 
-    elements.append({"tag": "hr"})
-    elements.append({
+    elements += [{"tag": "hr"}, {
         "tag": "action",
-        "actions": [
-            {
-                "tag": "button",
-                "text": {"tag": "plain_text", "content": "Open Dashboard"},
-                "type": "primary",
-                "url": dashboard_url,
-            }
-        ],
-    })
+        "actions": [{
+            "tag": "button",
+            "text": {"tag": "plain_text", "content": "Open Dashboard"},
+            "type": "primary",
+            "url": dashboard_url,
+        }],
+    }]
 
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "template": "blue" if delta_pp is None or delta_pp >= 0 else "red",
+            "template": "red" if regressions else "blue",
             "title": {"tag": "plain_text", "content": "Benchmark Weekly Report"},
         },
         "elements": elements,
@@ -184,8 +129,7 @@ def cli(argv: list[str] | None = None) -> int:
         print("No weekly summary in data; skipping notification")
         return 0
 
-    warnings = data.get("warnings", [])
-    card = _build_card(weekly, args.dashboard_url, warnings)
+    card = _build_card(data, args.dashboard_url)
 
     try:
         send_lark(card, webhook_url=webhook_url, webhook_secret=webhook_secret)
