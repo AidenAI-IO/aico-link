@@ -1156,6 +1156,131 @@ Key files:
 At the end of a run, the runner tries to upload the report to the agent board's
 `/benchmark` page. If the upload fails, the local `report.html` is still available.
 
+### Cross-run dashboard and weekly report
+
+The daily benchmark workflow generates `dashboard.html` and
+`dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
+workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
+`main` history from Langfuse, writes `weekly-report.md`
+to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
+Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
+`BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
+last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
+over the week with its change from the previous seven days (green up, red down),
+flags configuration-matched regressions, and links to the dashboard. Historical data comes
+from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
+downloaded.
+
+For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
+bucket, or serve the report through an existing HTTPS reverse proxy. Set the
+repository Actions variable `BENCHMARK_REPORT_BASE_URL` to that origin, for
+example `https://reports.example.com`. The workflow appends
+`/benchmark/weekly/<run-number>-<run-attempt>/dashboard.html`. Without
+`BENCHMARK_REPORT_BASE_URL`, files are still uploaded but notifications are
+skipped with a configuration warning.
+
+Completed current-run metrics supplement Langfuse while publication is delayed
+or fails. API failures, missing measurements, and unreadable local runs appear
+as data availability warnings. Unknown metrics remain unknown rather than
+becoming zero.
+
+The dashboard focuses on individual datasets (each published benchmark suite
+maps to a Langfuse dataset). The default **Latest results** tab shows one
+overview table with highlighted changes, mean tool and LLM calls per eligible
+attempt, and p50 task execution time, followed by task-level failure details.
+**Weekly trends** contains the selected dataset's pass@1 / pass@k trends and
+performance charts. Clicking a dataset in an overview row opens its Weekly
+trends tab. The displayed window is the seven days before report generation. The
+most recently run dataset is selected initially. Each chart point represents one
+dataset run; hover over points for commit, branch, model, k and eligible task
+counts.
+
+The overview table compares each dataset's newest two runs across pass@1,
+pass@k, and pass^k, highlighting increases and decreases. Changed datasets
+appear first. Missing scores or a missing previous run show as unavailable.
+Expand **Run details** in Weekly trends to inspect the comparison status and the
+latest two runs' commit, branch, model, platform, and k.
+
+Weekly trends also includes charts for task execution latency (p50 and p90),
+mean tool/device/LLM calls per attempt, recorded timing components (p50), token
+distributions, explicitly measured monetary cost, and tool errors. Each chart
+shows the latest value and sample count over eligible attempts; tooltips expose
+the same coverage for historical points. Distributions include measured eligible
+attempts, including failures. Zero samples produce missing points; measured
+zeros remain zero.
+
+Latest results supports filters for declined/mixed scores, improvements,
+failed/excluded attempts, and incomplete data. Filters apply to both the
+overview and failure details.
+
+Metric definitions are expandable, and charts without measurements use a compact
+unavailable state while retaining latest values and sample coverage. Reading
+notes group comparison caveats and data warnings.
+
+Timing components overlap and are not stacked. Vision LLM metrics use an
+image-observation heuristic. The Agent preserves OpenAI-compatible `usage.cost`
+(including OpenRouter's USD billing) and sums provider-reported costs across the
+task's model calls. Every call must supply a finite, nonnegative cost; missing
+billing leaves the task cost unknown. Explicitly free calls remain zero. The
+runner publishes cost distributions to Langfuse. Episode model-call counts and
+elapsed times also supplement history, including compaction and failed calls.
+
+See the [Metrics Reference](../docs/09-benchmark/metrics-reference.md) for
+measurement boundaries.
+
+Latest results also groups **Failure details** by dataset. Each task/attempt
+shows its recorded execution error, failed hard assertion (expected and actual
+values), rubric reason, or failed trace check. Additional evidence includes the
+Agent's final response; trace links open Langfuse. The additional details also
+include the failure class and stage. These are recorded evaluation findings, not
+inferred root causes. Excluded attempts are labeled separately from eligible
+failures.
+
+The dashboard reads task-level failure evidence for each dataset's latest run in
+the last seven days. Local current-run results supply the same evidence.
+Inspected/expected attempt counts distinguish complete, partial, and unavailable
+details; missing outputs do not imply that all tasks passed.
+
+Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
+Regressions require the same branch, suite hash, workload hash, metrics schema,
+`k`, agent model, judge provider/model/prompt version, platform, and active
+skills. Runs missing configuration metadata are excluded from comparisons.
+
+The weekly report summarizes the last seven days in UTC: overall totals and each
+suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
+previous seven days in percentage points. Rates describe each window's task mix;
+a change is unknown when either window has no measured rate. Cost and token totals are reported only
+when every included suite run supplies them with sample counts covering every
+eligible attempt. The report is included in the Actions job
+summary.
+
+To generate reports locally, configure `LANGFUSE_PUBLIC_KEY`,
+`LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` as for `publish-langfuse`:
+
+```bash
+cd benchmark
+uv run python -m ci.generate_dashboard \
+  --output dashboard.html --data-output dashboard-data.json
+
+# Weekly report (requires 14 days)
+uv run python -m ci.generate_dashboard \
+  --output dashboard.html --data-output dashboard-data.json \
+  --weekly-output weekly-report.md --lookback-days 14
+
+# Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
+uv run python -m ci.notify_lark \
+  --data-json dashboard-data.json \
+  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html"
+```
+
+Use `--branch-filter main` for one branch (records with unknown branches are
+excluded with a warning), `--repo owner/repo` for commit links outside Actions,
+and `--runs-dir runs --run-id-prefix ci-123-1` to include current local results.
+`--history-json dashboard-data.json` regenerates reports from a saved snapshot.
+`--lookback-days` defaults to 14; a weekly
+report at least 14. History availability is
+subject to Langfuse retention and successful publication, not artifact retention.
+
 ## 5. Environment variables
 
 Common environment variables:

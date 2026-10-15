@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+import math
 import statistics
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -205,11 +206,28 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
         "cached_prompt_tokens": "cached_input_tokens",
         "reasoning_tokens": "reasoning_tokens",
         "first_token_time_ms": "time_to_first_token_ms",
+        "llm_calls": "llm_calls",
+        "llm_time_ms": "llm_time_ms",
     }
     for source, target in mappings.items():
         value = extra.get(source)
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
+        if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                and math.isfinite(value) and value >= 0):
             metrics[target] = value
+    # Episode totals cover calls absent from public history (e.g. compaction).
+    # A missing/invalid cost is unknown, including when only some calls were priced.
+    cost = extra.get("cost_usd")
+    billed_calls = extra.get("cost_reported_calls")
+    calls = metrics.get("llm_calls")
+    complete_billing = billed_calls is None or (
+        isinstance(billed_calls, (int, float)) and not isinstance(billed_calls, bool)
+        and calls is not None and calls > 0 and float(calls).is_integer()
+        and billed_calls == calls
+    )
+    if (isinstance(cost, (int, float)) and not isinstance(cost, bool)
+            and math.isfinite(cost) and cost >= 0 and complete_billing):
+        metrics["cost_usd"] = cost
+        metrics["cost_source"] = extra.get("cost_source") or "episode_reported"
     events = episode.get("events") if isinstance(episode.get("events"), list) else []
     device_execution_ms = 0
     device_actions_seen = 0
@@ -281,7 +299,7 @@ def _wilson(successes: int, trials: int, z: float = 1.959963984540054) -> dict[s
     return {"lower": max(0.0, centre - margin), "upper": min(1.0, centre + margin)}
 
 
-def _status_fields(row: Mapping[str, Any]) -> tuple[bool | None, str | None, bool]:
+def status_fields(row: Mapping[str, Any]) -> tuple[bool | None, str | None, bool]:
     status = str(row.get("status") or "").strip().lower()
     metrics = row.get("metrics") if isinstance(row.get("metrics"), Mapping) else {}
     success = metrics.get("success")
@@ -339,7 +357,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
     eligible_attempts = 0
     eligible_failures = 0
     for row in all_attempts:
-        success, failure_class, eligible = _status_fields(row)
+        success, failure_class, eligible = status_fields(row)
         if failure_class:
             failure_classes[failure_class] += 1
         if eligible and success is False:
@@ -359,16 +377,16 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
     for attempts in task_groups:
         first = attempts.get(1)
         if first is not None:
-            _, _, first_eligible = _status_fields(first)
+            _, _, first_eligible = status_fields(first)
             if first_eligible:
                 first_attempt_groups.append([first])
         group = [attempts[index] for index in range(1, k + 1) if index in attempts]
-        if len(group) == k and all(_status_fields(row)[2] for row in group):
+        if len(group) == k and all(status_fields(row)[2] for row in group):
             eligible_groups.append(group)
         prefix = []
         for index in range(1, max(attempts, default=0) + 1):
             row = attempts.get(index)
-            if row is None or not _status_fields(row)[2]:
+            if row is None or not status_fields(row)[2]:
                 break
             prefix.append(row)
         if prefix:
@@ -386,9 +404,9 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
             "ci95": _wilson(successes, trials),
         }
 
-    pass_at_k = task_metric(eligible_groups, lambda group: any(_status_fields(row)[0] is True for row in group))
-    pass_pow_k = task_metric(eligible_groups, lambda group: all(_status_fields(row)[0] is True for row in group))
-    pass_at_1 = task_metric(first_attempt_groups, lambda group: _status_fields(group[0])[0] is True)
+    pass_at_k = task_metric(eligible_groups, lambda group: any(status_fields(row)[0] is True for row in group))
+    pass_pow_k = task_metric(eligible_groups, lambda group: all(status_fields(row)[0] is True for row in group))
+    pass_at_1 = task_metric(first_attempt_groups, lambda group: status_fields(group[0])[0] is True)
     best_scores = []
     first_success_attempts: list[int] = []
     for group in eligible_groups:
@@ -398,7 +416,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
             best_scores.append(max(scores))
     for group in eligible_prefix_groups:
         for row in group:
-            if _status_fields(row)[0] is True:
+            if status_fields(row)[0] is True:
                 try:
                     attempt_number = int(row.get("attempt") or 1)
                 except (TypeError, ValueError):
@@ -406,7 +424,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
                 first_success_attempts.append(attempt_number)
                 break
 
-    eligible_attempts_rows = [row for row in all_attempts if _status_fields(row)[2]]
+    eligible_attempts_rows = [row for row in all_attempts if status_fields(row)[2]]
     metrics = {
         key: _task_metric(all_attempts, key)
         if key == "setup_ms"
@@ -421,7 +439,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
         )
     }
     attempt_successes = sum(
-        1 for row in all_attempts if _status_fields(row)[2] and _status_fields(row)[0] is True
+        1 for row in all_attempts if status_fields(row)[2] and status_fields(row)[0] is True
     )
     known_failure_stages = eligible_failures - failure_stages.get("unknown", 0)
     out: dict[str, Any] = {
@@ -471,7 +489,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
                     complete = False
                 else:
                     cumulative += value
-                if _status_fields(row)[0] is True:
+                if status_fields(row)[0] is True:
                     if complete:
                         values.append(cumulative)
                     break
@@ -486,12 +504,12 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
     per_task: dict[str, dict[str, Any]] = {}
     for task_id, attempts_dict in ordered.items():
         attempts = [attempts_dict[i] for i in sorted(attempts_dict.keys())]
-        eligible_attempts = [a for a in attempts if _status_fields(a)[2]]
+        eligible_attempts = [a for a in attempts if status_fields(a)[2]]
 
         if not eligible_attempts:
             continue
 
-        passed_count = sum(1 for a in eligible_attempts if _status_fields(a)[0] is True)
+        passed_count = sum(1 for a in eligible_attempts if status_fields(a)[0] is True)
         total_attempts = len(eligible_attempts)
 
         # Quality scores
@@ -515,7 +533,7 @@ def aggregate_rows(rows: list[Mapping[str, Any]], k: int = 1) -> dict[str, Any]:
             "passed": passed_count,
             "failed": total_attempts - passed_count,
             "pass_rate": passed_count / total_attempts if total_attempts > 0 else 0.0,
-            "first_attempt_passed": _status_fields(eligible_attempts[0])[0] is True if eligible_attempts else None,
+            "first_attempt_passed": status_fields(eligible_attempts[0])[0] is True if eligible_attempts else None,
             "best_quality_score": max(quality_scores) if quality_scores else None,
             "avg_quality_score": (sum(quality_scores) / len(quality_scores)) if quality_scores else None,
             "avg_wall_ms": (sum(wall_times) / len(wall_times)) if wall_times else None,

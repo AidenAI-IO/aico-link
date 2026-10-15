@@ -221,18 +221,19 @@ and retries instead use the `reliability.` prefix.
 | --- | --- |
 | `task_wall_ms` | Elapsed time around the task's Agent chat request. Excludes setup, judge time, post-run artifact collection, and timeout recovery. Legacy `wall_ms` mirrors it in current results. |
 | `setup_ms` | Task isolation/setup work. Report separately from task execution. |
-| `llm_time_ms` | Sum of recorded durations on usage-bearing assistant/tool-call messages; unavailable when those durations are incomplete. |
+| `llm_time_ms` | Episode sum of elapsed time around wrapped model calls, including failed calls and compaction. Older episodes fall back to recorded durations on usage-bearing assistant/tool-call messages; unavailable when those durations are incomplete. Provider-internal retries are included in elapsed time, not separately counted. |
 | `vision_llm_calls`, `vision_llm_time_ms` | Calls inferred from image/screenshot observations preceding model messages. This is an instrumentation heuristic, not an exact provider billing category. |
 | `time_to_first_token_ms` | Episode's reported first-token timing, when available. |
 | `device_execution_ms` | Sum of episode durations for recognized device-action results; unavailable if required durations are missing. Tool classification is an explicit allowlist. |
 | `screenshot_capture_ms` | Runner-side timed screenshot captures; not all screenshots taken internally by the Agent. Inspect `screenshot_capture_source`. |
 | `tool_calls`, `device_actions` | All traced tool calls versus recognized device-changing calls. Read-only bridge queries are excluded from device actions. |
-| `llm_calls` | Count derived from messages carrying usage; unavailable when no usage is present. Validate telemetry completeness before treating it as every provider call. |
+| `llm_calls` | Episode count of wrapped model calls, including failures and compaction. Older episodes fall back to messages carrying usage. Does not count retries internal to a provider transport. |
 | `input_tokens`, `output_tokens`, `total_tokens` | Reported Agent usage; episode totals can override history-derived totals. Does not measure the entire run cost or judge/setup consumption. |
 | `cached_input_tokens`, `reasoning_tokens` | Optional usage details; unknown when not reported. Do not add them to totals as independent extra usage. |
 | `tool_errors` | Recorded tool-result errors, including errors the Agent later recovered from. |
 | `replan_count` | Explicit episode `needs_replan` evidence; not inferred from tool names. |
-| `retry_count`, `cost_usd` | Schema/export support exists, but the current task runner does not populate a retry counter or calculate monetary cost. Expect unknown unless an explicit source supplies them. |
+| `cost_usd` | Episode total of provider-reported USD model-call costs. OpenAI-compatible `usage.cost` is preserved, including OpenRouter billing. Every wrapped call must report a finite, nonnegative cost; otherwise the task cost is unknown. Explicit zero is valid. Excludes setup, judging, and Experiment publication/replay; never inferred from token prices. |
+| `retry_count` | The current task runner does not populate an Agent retry counter. Expect unknown unless an explicit source supplies it. |
 | `recovery_attempted`, `recovery_succeeded` | Runner recovery after an Agent timeout; not success of the user's task or a count of Agent strategy retries. |
 
 Efficiency distributions use eligible attempts with numeric values; `setup_ms`
