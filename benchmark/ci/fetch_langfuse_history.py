@@ -47,7 +47,7 @@ def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
     """Require a known workload/configuration before claiming a regression."""
     required = ("git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
                 "metrics_k", "agent_model", "target_platform")
-    if record.get("git_dirty") or any(record.get(key) in (None, "") for key in required):
+    if any(record.get(key) in (None, "") for key in required):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
 
@@ -218,7 +218,6 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         "workflow_run_number": metadata.get("workflow_run_number"),
         "timestamp": timestamp.isoformat(),
         "commit_sha": metadata.get("git_sha") or "unknown",
-        "git_dirty": str(metadata.get("git_dirty", "false")).lower() == "true",
         "suite": metadata.get("benchmark_suite") or "unknown",
         "source": source,
         "tasks": scores.get("capability.pass_at_1.total_tasks"),

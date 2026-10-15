@@ -365,9 +365,9 @@ function selectDataset(index) {
   </div>`).join("") + `<div><div class="num" style="font-size:15px;padding-top:10px">${commitLink(latest.commit_sha)}</div>
     <div class="cap">Latest commit · k=${esc(latest.metrics_k)}</div></div>`;
   el("comparison-details").textContent = `${selected.comparison_status}. Comparison requires complete, matching workload and configuration metadata. Missing metadata or reported local Git changes make the configuration unverified; this is not a task failure.`;
-  el("run-details").innerHTML = `<thead><tr><th>Run</th><th>When</th><th>Commit</th><th>Branch</th><th>Model</th><th>Platform</th><th class="n">k</th><th>Git changes reported</th></tr></thead><tbody>` +
+  el("run-details").innerHTML = `<thead><tr><th>Run</th><th>When</th><th>Commit</th><th>Branch</th><th>Model</th><th>Platform</th><th class="n">k</th></tr></thead><tbody>` +
     [["Latest", latest], ["Baseline", selected.previous]].filter(([label, run]) => run).map(([label, run]) =>
-      `<tr><td>${label}</td><td>${when(run.timestamp)}</td><td>${commitLink(run.commit_sha)}</td><td>${esc(run.git_branch)}</td><td>${esc(run.agent_model)}</td><td>${esc(run.target_platform)}</td><td class="n">${esc(run.metrics_k)}</td><td>${run.git_dirty == null ? "Unknown" : run.git_dirty ? "Yes" : "No"}</td></tr>`).join("") + "</tbody>";
+      `<tr><td>${label}</td><td>${when(run.timestamp)}</td><td>${commitLink(run.commit_sha)}</td><td>${esc(run.git_branch)}</td><td>${esc(run.agent_model)}</td><td>${esc(run.target_platform)}</td><td class="n">${esc(run.metrics_k)}</td></tr>`).join("") + "</tbody>";
   el("history-title").textContent = selected.suite + " · run history";
   el("history").innerHTML = `
     <thead><tr><th>When</th><th>Commit</th><th class="n">k</th>

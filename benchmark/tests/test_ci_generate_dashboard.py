@@ -416,6 +416,13 @@ def test_unknown_configuration_is_not_a_regression():
     assert _find_regressions(_group_into_runs(history)) == []
 
 
+def test_runs_reporting_git_changes_remain_comparable():
+    # CI checks out fresh, so the runner's git_dirty flag does not change the configuration.
+    history = [_record(workflow_run_id=1, pass_at_1=1.0, git_dirty=True),
+               _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.5, git_dirty=True)]
+    assert [r["suite"] for r in _find_regressions(_group_into_runs(history))] == ["memory_v1"]
+
+
 def test_data_snapshot_can_be_reused_by_cli(tmp_path):
     from ci.generate_dashboard import cli
     data = tmp_path / "data.json"

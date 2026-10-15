@@ -149,7 +149,6 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         run["timestamp"] = min(run["timestamp"], record["timestamp"])
         run["suites"].append({
             **{field: record.get(field) for field in COMPARISON_FIELDS},
-            "git_dirty": record.get("git_dirty"),
             "comparison_key": comparison_key(record),
             "suite": record.get("suite") or "unknown",
             "timestamp": record.get("timestamp"),

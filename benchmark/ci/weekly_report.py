@@ -124,7 +124,7 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         ]) + " |")
     if not report["suites"]:
         lines.append("| No comparable configuration metadata available | | | | — | — | — |")
-    lines.extend(["", f"Current suite runs excluded from comparisons due to dirty or missing configuration metadata: {report['uncomparable_suite_runs']}.", ""])
+    lines.extend(["", f"Current suite runs excluded from comparisons due to missing configuration metadata: {report['uncomparable_suite_runs']}.", ""])
     if warnings:
         lines.extend(["### Data availability", "", *[f"- {_cell(w)}" for w in warnings], ""])
     return "\n".join(lines)

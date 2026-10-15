@@ -1198,7 +1198,7 @@ The overview table compares each dataset's newest two runs across pass@1,
 pass@k, and pass^k, highlighting increases and decreases. Changed datasets
 appear first. Missing scores or a missing previous run show as unavailable.
 Expand **Run details** in Weekly trends to inspect the comparison status and the
-latest two runs' commit, branch, model, platform, k, and Git dirty flag.
+latest two runs' commit, branch, model, platform, and k.
 
 Weekly trends also includes charts for task execution latency (p50 and p90),
 mean tool/device/LLM calls per attempt, recorded timing components (p50), token
@@ -1243,8 +1243,7 @@ details; missing outputs do not imply that all tasks passed.
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
 Regressions require the same branch, suite hash, workload hash, metrics schema,
 `k`, agent model, judge provider/model/prompt version, platform, and active
-skills. Dirty runs and runs missing configuration metadata are excluded from
-comparisons.
+skills. Runs missing configuration metadata are excluded from comparisons.
 
 The weekly report compares rolling UTC windows: the last seven days versus the
 preceding seven days. Overall rates describe each window's task mix; changes are
