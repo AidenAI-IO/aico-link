@@ -384,8 +384,8 @@ single-suite run must use the matching `runnable` or `hardware` profile; use
 
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
-device. Real benchmark execution comes from the daily schedule and `workflow_dispatch`.
-on the default branch or a manual dispatch on any repository branch. Manual
+device. Real benchmark execution comes from the daily schedule on the default
+branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 
 Treat the first two weeks as a baseline period. Review each scheduled case's run
