@@ -330,7 +330,7 @@ audit_rootfs() {
 audit_platform_files() {
     local actual expected library expected_sha actual_sha
     local storage_tool
-    for storage_tool in mkfs.vfat fsck.vfat mkfs.ext4 e2fsck mkfs.exfat fsck.exfat; do
+    for storage_tool in mkfs.vfat fsck.vfat mkfs.ext4 fsck.ext4 mkfs.exfat fsck.exfat; do
         test -x "${ROOTFS_MOUNT}/usr/sbin/${storage_tool}" \
             || fail "storage tool is missing or not executable: ${storage_tool}"
     done

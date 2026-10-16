@@ -274,10 +274,10 @@ func TestStorageUnmountContinuesAfterSyncFailure(t *testing.T) {
 			if (err != nil) != (!tc.lazy || tc.unmountExit != 0) {
 				t.Fatalf("Unmount = %v, lazy=%t, umount exit=%d", err, tc.lazy, tc.unmountExit)
 			}
-			if tc.unmountExit != 0 && (!strings.Contains(err.Error(), "target busy") || errors.Is(err, errStorageFlush)) {
+			if tc.unmountExit != 0 && (!strings.Contains(err.Error(), "target busy") || errors.Is(err, ErrStorageFlush)) {
 				t.Fatalf("umount failure lost: %v", err)
 			}
-			if !tc.lazy && tc.unmountExit == 0 && (!errors.Is(err, errStorageFlush) || !strings.Contains(err.Error(), "Input/output error")) {
+			if !tc.lazy && tc.unmountExit == 0 && (!errors.Is(err, ErrStorageFlush) || !strings.Contains(err.Error(), "Input/output error")) {
 				t.Fatalf("successful detach lost flush warning: %v", err)
 			}
 			want := "umount\n"
@@ -300,11 +300,11 @@ func TestStorageFlushFailureAllowsRecoveryButWarnsOnEject(t *testing.T) {
 			ops := &fakeStorageOps{present: true, healthy: true, free: 1 << 30, total: 1 << 31}
 			m := newTestStorageManager(t, ops)
 			tickN(m, 2)
-			ops.unmountErr = fmt.Errorf("%w: %w", errStorageFlush, syscall.EIO)
+			ops.unmountErr = fmt.Errorf("%w: %w", ErrStorageFlush, syscall.EIO)
 			switch action {
 			case "eject":
 				err := m.SafeEject()
-				if !errors.Is(err, errStorageFlush) || !strings.Contains(err.Error(), "pending writes") || strings.Contains(err.Error(), "close any shell") || strings.Count(err.Error(), "input/output error") != 1 {
+				if !errors.Is(err, ErrStorageFlush) || !strings.Contains(err.Error(), "pending writes") || strings.Contains(err.Error(), "close any shell") || strings.Count(err.Error(), "input/output error") != 1 {
 					t.Fatalf("SafeEject hid or misreported the failed flush: %v", err)
 				}
 				if status := m.Status(); status.Card.Mounted || status.EffectiveMode != StorageModeEMMCOnly || !m.ejected {

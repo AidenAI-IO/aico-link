@@ -95,11 +95,16 @@ func (s *Server) handleStorageEject(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "storage manager unavailable")
 		return
 	}
-	if err := storage.SafeEject(); err != nil {
+	err := storage.SafeEject()
+	if err != nil && !errors.Is(err, agent.ErrStorageFlush) {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.storageStatusResponse(storage.Status()))
+	payload := s.storageStatusResponse(storage.Status())
+	if err != nil {
+		payload["warning_code"] = "storage_flush_failed"
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleStorageFormat(w http.ResponseWriter, r *http.Request) {
