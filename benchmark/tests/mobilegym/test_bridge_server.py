@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import types
+from concurrent.futures import Future
 import urllib.error
 import urllib.request
 from enum import Enum
@@ -20,6 +21,7 @@ from mobilegym.bridge.server import (
     DEFAULT_BRIDGE_REQUEST_TIMEOUT_SEC,
     SCREENSHOT_PROVIDER_TIMEOUT_SEC,
 )
+from mobilegym.bridge.tools_api import future_result
 
 
 PNG_BYTES = b"\x89PNG\r\n\x1a\nmobilegym-png"
@@ -95,6 +97,18 @@ class FakeObservationWithoutMime:
 class FakeStepResult:
     def __init__(self, observation):
         self.observation = observation
+
+
+class RecordingKeyboard:
+    def __init__(self):
+        self.typed = []
+        self.pressed = []
+
+    async def type(self, text):
+        self.typed.append(text)
+
+    async def press(self, chord):
+        self.pressed.append(chord)
 
 
 class FakeEnv:
@@ -431,6 +445,39 @@ def test_setup_rejects_invalid_foreground_app_id(value):
         assert bridge.env.reset_calls == 0
 
 
+@pytest.mark.parametrize("completion_phase", ["before_done", "before_cancel"])
+@pytest.mark.parametrize("fails", [False, True])
+def test_wait_timeout_preserves_concurrent_completion(completion_phase, fails):
+    class CompletingFuture(Future):
+        first_wait = True
+
+        def complete(self):
+            if fails:
+                self.set_exception(TimeoutError("phase=waitForData timeout"))
+            else:
+                self.set_result("completed")
+
+        def result(self, timeout=None):
+            if self.first_wait:
+                self.first_wait = False
+                if completion_phase == "before_done":
+                    self.complete()
+                raise TimeoutError("caller wait expired")
+            return super().result(timeout)
+
+        def cancel(self):
+            self.complete()
+            return super().cancel()
+
+    future = CompletingFuture()
+    if fails:
+        with pytest.raises(TimeoutError, match="phase=waitForData"):
+            future_result(future, timeout=0.01)
+    else:
+        assert future_result(future, timeout=0.01) == "completed"
+    assert not future.cancelled()
+
+
 def test_setup_timeout_preserves_mobilegym_phase_diagnostic():
     with RunningBridge() as bridge:
         async def timeout_reset(app_ids=None):
@@ -465,6 +512,53 @@ def test_submit_to_state_cancels_work_after_wait_timeout():
             bridge.server.submit_to_state(bridge.state, wait_forever(), timeout=0.01)
 
         assert cancelled.wait(timeout=1)
+
+
+@pytest.mark.parametrize("failure", ["error", "timeout"])
+def test_release_frees_task_route_when_episode_end_fails(failure):
+    with OwnerLoop() as owner:
+        state = BridgeEpisodeState(FakeEnv(owner.loop), owner_loop=owner.loop)
+        router = BridgeTaskRouter([state])
+        server = BridgeServer(router, host="127.0.0.1", port=0, request_timeout_sec=0.05)
+        server.start()
+        cancelled = threading.Event()
+
+        def post(path, task_id, payload):
+            request = urllib.request.Request(
+                f"{server.base_url}{path}",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "benchmark-task-id": task_id},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                return response.status, json.loads(response.read())
+
+        try:
+            status, _ = post("/api/setup", "task.alpha", {"episode_id": "ep-alpha", "setup_token": "token"})
+            assert status == 200
+
+            async def failed_end(episode_id):
+                if failure == "error":
+                    raise RuntimeError("episode cleanup failed")
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+
+            state.end_episode = failed_end
+            status, result = post("/api/release", "task.alpha", {})
+            assert status == 200
+            assert result["data"]["released"] is True
+            assert router.task_map() == {}
+            assert server.setup_tokens.clear_completed_for_task("task.alpha") == 0
+            if failure == "timeout":
+                assert cancelled.wait(timeout=1)
+
+            status, _ = post("/api/setup", "task.beta", {"episode_id": "ep-beta"})
+            assert status == 200
+        finally:
+            server.stop()
 
 
 def test_api_screen_is_removed():
@@ -750,8 +844,10 @@ def test_tools_api_pointer_and_quick_action_inputs_map_to_mobilegym_actions():
         assert len(bridge.env.actions) == before
 
 
-def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
+@pytest.mark.parametrize("home_keys", [["meta"], ["meta", "h"], ["cmd", "h"], ["super", "h"], ["win", "h"]])
+def test_tools_api_keyboard_inputs_match_agent_proxy_contract(home_keys):
     with RunningBridge() as bridge:
+        bridge.env.page = types.SimpleNamespace(keyboard=RecordingKeyboard())
         status, body = request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "reset-ep1"})
         assert status == 200
         assert body["data"] == {"episode_id": "reset-ep1", "reset": True}
@@ -764,10 +860,8 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
         )
         assert status == 200
         assert body["is_error"] is False
-        assert action_to_dict(bridge.env.actions[-1]) == {
-            "action_type": "TYPE",
-            "data": {"value": "plain text"},
-        }
+        assert bridge.env.page.keyboard.typed == ["plain text"]
+        assert not bridge.env.actions  # No value-setting TYPE shortcut.
 
         status, body = request_json(
             bridge.base_url,
@@ -783,11 +877,12 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
             bridge.base_url,
             "POST",
             "/api/tools/keyboard_tap",
-            {"input": {"keys": ["meta"], "hold_ms": 120}},
+            {"input": {"keys": home_keys, "hold_ms": 120}},
         )
         assert status == 200
         assert body["is_error"] is False
         assert action_to_dict(bridge.env.actions[-1]) == {"action_type": "HOME", "data": {}}
+        assert bridge.env.page.keyboard.pressed == []
 
         status, body = request_json(
             bridge.base_url,
@@ -796,8 +891,8 @@ def test_tools_api_keyboard_inputs_match_agent_proxy_contract():
             {"input": {"keys": ["ctrl", "c"]}},
         )
         assert status == 200
-        assert body["is_error"] is True
-        assert "does not support key" in body["output"]
+        assert body["is_error"] is False
+        assert bridge.env.page.keyboard.pressed == ["Control+c"]
 
 
 def test_tools_api_mobilegym_text_entry_tools_do_not_depend_on_hid_devices():
@@ -1081,3 +1176,28 @@ def test_env_work_is_serialized_and_bridge_serves_screenshot_while_chat_is_block
         release_chat.set()
         chat_thread.join(timeout=1)
         assert not chat_thread.is_alive()
+
+
+def test_persistent_drag_cleans_up_on_reset_and_release():
+    with RunningBridge() as bridge:
+        operations = []
+
+        async def evaluate(script, args):
+            operations.append(args["operation"])
+
+        bridge.env.page = types.SimpleNamespace(evaluate=evaluate)
+        request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "first"})
+        def drag(operation):
+            return request_json(bridge.base_url, "POST", "/api/providers/mnk",
+                {"operation": operation, operation: {"x": 148, "y": 114}})
+        assert drag("drag_start")[0] == 200
+        # Starting twice must fail, not silently lift the contact.
+        assert drag("drag_start")[0] == 500
+        assert bridge.state.input.contact_active
+        request_json(bridge.base_url, "POST", "/api/setup", {"episode_id": "second"})
+        assert operations == ["drag_start", "cancel"]
+        assert drag("drag_release")[0] == 500
+        assert drag("drag_start")[0] == 200
+        assert drag("drag_release")[0] == 200
+        assert operations[-2:] == ["drag_start", "drag_release"]
+        assert not bridge.state.input.contact_active

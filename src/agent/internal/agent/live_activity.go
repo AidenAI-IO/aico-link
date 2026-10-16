@@ -1152,31 +1152,9 @@ func liveActivityJSONObject(input string) (map[string]interface{}, bool) {
 	return payload, true
 }
 
-func liveActivityJSONHasKey(input, key string) bool {
-	payload, ok := liveActivityJSONObject(input)
-	if !ok {
-		return false
-	}
-	_, ok = payload[key]
-	return ok
-}
-
 func liveActivityString(payload map[string]interface{}, key string) string {
 	if value, ok := payload[key].(string); ok {
 		return strings.TrimSpace(value)
-	}
-	return ""
-}
-
-func liveActivityFirstString(payload map[string]interface{}, key string) string {
-	values, ok := payload[key].([]interface{})
-	if !ok {
-		return ""
-	}
-	for _, value := range values {
-		if s, ok := value.(string); ok && strings.TrimSpace(s) != "" {
-			return strings.TrimSpace(s)
-		}
 	}
 	return ""
 }
@@ -1400,15 +1378,6 @@ func truncateLiveActivityText(s string, limit int) string {
 		return s
 	}
 	return strings.TrimSpace(string(runes[:limit-1])) + "..."
-}
-
-func isFinalLiveActivityStatus(status string) bool {
-	switch status {
-	case LiveActivityStatusCompleted, LiveActivityStatusFailed, LiveActivityStatusCanceled:
-		return true
-	default:
-		return false
-	}
 }
 
 func isCancelableLiveActivityStatus(status string) bool {

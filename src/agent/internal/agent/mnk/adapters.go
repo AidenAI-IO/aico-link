@@ -350,10 +350,6 @@ func (t *TouchGestureToolAdapter) handleDragRelease(ctx context.Context, point *
 	return "ok", nil
 }
 
-func swipeWithDuration(ctx context.Context, provider Provider, path [][2]float64, button string, durationMs int) error {
-	return swipeWithOptions(ctx, provider, path, button, SwipeOptions{DurationMs: durationMs})
-}
-
 func swipeWithOptions(ctx context.Context, provider Provider, path [][2]float64, button string, options SwipeOptions) error {
 	if configured, ok := provider.(swipeOptionsProvider); ok {
 		return configured.SwipeWithOptions(ctx, path, button, options)
@@ -364,11 +360,6 @@ func swipeWithOptions(ctx context.Context, provider Provider, path [][2]float64,
 		}
 	}
 	return provider.Swipe(ctx, path, button)
-}
-
-func resolveSwipeArgs(start, end *pointerPoint, direction string, speed *float64, durationMs *int) (*pointerPoint, *pointerPoint, int, error) {
-	resolvedStart, resolvedEnd, options, err := resolveSwipeArgsWithOptions(start, end, direction, speed, durationMs, nil, nil, nil)
-	return resolvedStart, resolvedEnd, options.DurationMs, err
 }
 
 func resolveSwipeArgsWithOptions(start, end *pointerPoint, direction string, speed *float64, durationMs, holdBeforeMs, holdAfterMs, steps *int) (*pointerPoint, *pointerPoint, SwipeOptions, error) {

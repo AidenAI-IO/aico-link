@@ -1548,14 +1548,6 @@ func requiredAssetURL(assets map[string]string, name string) (string, error) {
 	return url, nil
 }
 
-func fetchBytes(ctx context.Context, url string) ([]byte, error) {
-	return fetchBytesWithToken(ctx, url, "")
-}
-
-func fetchBytesWithToken(ctx context.Context, url string, bearerToken string) ([]byte, error) {
-	return fetchBytesWithTokenLimit(ctx, url, bearerToken, -1)
-}
-
 func fetchBytesWithTokenLimit(ctx context.Context, url string, bearerToken string, limit int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

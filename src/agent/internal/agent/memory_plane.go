@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -718,65 +717,6 @@ func (p *FilesystemMemoryPlane) recordAppProfiles(ctx context.Context, episode T
 	return nil
 }
 
-func renderMemoryHitLine(hit MemoryHit) string {
-	label := hit.ID
-	if label == "" {
-		label = hit.Type
-	}
-	var attrs []string
-	if hit.Type != "" {
-		attrs = append(attrs, "type="+hit.Type)
-	}
-	if hit.Confidence > 0 {
-		attrs = append(attrs, fmt.Sprintf("confidence=%.2f", hit.Confidence))
-	}
-	if hit.PageName != "" {
-		attrs = append(attrs, "page="+hit.PageName)
-	}
-	prefix := "[" + label
-	if len(attrs) > 0 {
-		prefix += " " + strings.Join(attrs, " ")
-	}
-	prefix += "] "
-
-	// procedure/navigation 有 Steps 时做结构化渲染
-	if (hit.Type == "procedure" || hit.Type == "navigation") && len(hit.Steps) > 0 {
-		title := firstNonEmptyString([]string{hit.Title, hit.Summary})
-		stepSummary := summarizeProcedureSteps(hit.Steps, 5)
-		body := title
-		if stepSummary != "" {
-			body += "\n" + stepSummary
-		}
-		return prefix + body
-	}
-
-	body := firstNonEmptyString([]string{hit.Summary, hit.Content, hit.Title})
-	body = strings.ReplaceAll(body, "\n", " ")
-	return prefix + truncateForLog(body, 280)
-}
-
-func normalizeMemoryContext(value interface{}) MemoryContext {
-	switch typed := value.(type) {
-	case MemoryContext:
-		return typed
-	case *MemoryContext:
-		if typed != nil {
-			return *typed
-		}
-	case string:
-		return MemoryContext{Planner: RoleMemoryContext{SessionSummary: typed}}
-	}
-	return MemoryContext{}
-}
-
-func readTextFileIfExists(path string) string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(data))
-}
-
 func normalizeSearchTerms(values []string) []string {
 	seen := map[string]bool{}
 	var terms []string
@@ -844,41 +784,6 @@ func cloneStringMap(values map[string]string) map[string]string {
 		cloned[key] = value
 	}
 	return cloned
-}
-
-func memoryHitApplicable(hit MemoryHit, req MemoryRetrieveRequest) bool {
-	if len(hit.Applicability) == 0 {
-		return true
-	}
-	for key, want := range hit.Applicability {
-		want = strings.TrimSpace(want)
-		if want == "" {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(key)) {
-		case "device", "device_id":
-			if req.DeviceID != "" && !strings.EqualFold(req.DeviceID, want) {
-				return false
-			}
-		case "language", "lang":
-			if req.CurrentHints.Language != "" && !strings.EqualFold(req.CurrentHints.Language, want) {
-				return false
-			}
-		case "screen", "resolution":
-			screen := ""
-			if req.CurrentHints.ScreenshotWidth > 0 && req.CurrentHints.ScreenshotHeight > 0 {
-				screen = fmt.Sprintf("%dx%d", req.CurrentHints.ScreenshotWidth, req.CurrentHints.ScreenshotHeight)
-			}
-			if screen != "" && !strings.EqualFold(screen, want) {
-				return false
-			}
-		case "app", "app_id", "app_name":
-			if req.CurrentHints.AppName != "" && !strings.EqualFold(req.CurrentHints.AppName, want) {
-				return false
-			}
-		}
-	}
-	return true
 }
 
 func ttlExpiresAt(now time.Time, ttl string) string {

@@ -251,6 +251,26 @@ Credential references such as `api_key = "$AIDEN_BENCHMARK_AGENT_API_KEY"` must 
 host before the daemon starts. MobileGym endpoints also pass a functional
 `setup` / `release` preflight before workers are created.
 
+MobileGym's bridge port must be reachable through the Docker host gateway on
+Linux. Fixed and automatically assigned bridge ports are bound to the Docker
+bridge gateway interface; the simulator web UI remains bound to loopback.
+The bridge is unauthenticated. Gateway binding does not isolate it from other
+containers on the same host; use a trusted benchmark host without untrusted
+workloads sharing the Docker daemon.
+Override `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
+daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
+`/health` success alone does not establish worker connectivity.
+
+Auto-started workers receive the bundled skill files under `config/skills`.
+The Go Agent exposes their catalog summaries and the `skill_read` tool to the
+model; skill bodies enter the conversation only when that tool is called.
+The runner's requested `skills` field does not preload skills through the Go
+Agent chat API. Use recorded `skill_read` calls to verify actual skill use.
+
+The phone-control suite forbids `request_user_action` through each task's
+existing `hard_assertions.forbidden_tools`: these tasks require autonomous
+completion. Handoff is not a global failure policy for other suites.
+
 ### `rejudge`
 
 ```bash
@@ -337,6 +357,17 @@ second step:
   run: uv run python -m runner publish-langfuse --run-dir "runs/$RUN_ID"
 ```
 
+## Historical dashboard and weekly report
+
+The daily benchmark workflow generates `dashboard.html` with the last 7 days
+of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
+workflow runs every Thursday and sends a Lark card summarizing the last 7 days
+and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
+Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
+
+See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
+for credentials, report commands, time windows, and comparison rules.
+
 ## GitHub Actions CI
 
 The benchmark workflow is `.github/workflows/benchmark.yml`. It deliberately
@@ -353,13 +384,13 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Monday, Wednesday, Friday schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
+| Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
-The scheduled sweep runs at 02:17 Asia/Shanghai on Monday, Wednesday, and
-Friday. It selects every case whose environment is `isolated` or `mobilegym`.
+The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
+case whose environment is `isolated` or `mobilegym`.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
@@ -371,10 +402,23 @@ it remains explicitly selectable for a manual calibration run. A manual
 single-suite run must use the matching `runnable` or `hardware` profile; use
 `all` when intentionally overriding that boundary.
 
+For a phone-control baseline in MobileGym, manually dispatch with profile
+`runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
+the Android-style MobileGym simulator automatically; no external iOS bridge is
+required. This case is excluded from the scheduled sweep while its baseline is
+being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+applicable tasks. Simulator support and setup failures must be reviewed separately
+from Agent capability failures. The same suite with profile `hardware` selects
+the existing external iOS case; profile `all` selects both environments.
+
+When a suite has cases in multiple environment profiles, an explicit suite
+selection runs only cases belonging to the requested profile. A selection with
+no matching case remains an error.
+
 Pull requests run the catalog and planner tests in the normal `CI` workflow, but
 do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
-device. Real benchmark execution comes from the Monday/Wednesday/Friday schedule
-on the default branch or a manual dispatch on any repository branch. Manual
+device. Real benchmark execution comes from the daily schedule on the default
+branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 
 Treat the first two weeks as a baseline period. Review each scheduled case's run

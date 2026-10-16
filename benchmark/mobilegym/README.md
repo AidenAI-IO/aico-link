@@ -165,6 +165,19 @@ Environment variables available when starting the simulator:
 - `AIDEN_BRIDGE_PORT`: Bridge port (automatically assigned by default)
 - `AIDEN_BRIDGE_PUBLIC_HOST`: Bridge public address (required for Docker)
 
+The Docker-published bridge is unauthenticated and is bound only to Docker's
+host-gateway interface on Linux (`docker network inspect bridge` gateway), so
+Agent containers can reach it without exposing it on every host interface.
+This binding does not restrict access to Agent workers: other containers on the
+same host may reach the control port, including automatically assigned ports.
+Use this setup only on a trusted benchmark host. It does not provide isolation
+from untrusted workloads sharing the Docker daemon.
+Docker Desktop on macOS and Windows keeps the binding on loopback. Set
+`AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` to the address that `host.docker.internal`
+resolves to from Agent containers when the default lookup does not match it:
+a non-default Docker network, a daemon configured with `host-gateway-ip`, or
+Docker Desktop on Linux (use `127.0.0.1`).
+
 ## ✅ Validation
 
 ```bash
@@ -228,3 +241,29 @@ curl http://localhost:8080/health
 # Verify the bridge tool catalog
 curl http://localhost:8888/api/tools
 ```
+
+## Input coverage and result interpretation
+
+Environment-bridge mode keeps the Agent's `enter_text` engine: mode probing,
+probe cleanup, ASCII/IME planning, and verification still run in the Agent.
+Its internal ASCII keyboard primitive uses the MNK `keyboard_text` operation
+instead of opening a local HID device. MobileGym sends native browser keyboard
+events so undo, selection, copy/paste, and deletion retain editing semantics.
+This does not validate physical USB HID or real-phone IME compatibility.
+
+The bridge supports persistent `drag_start` / `move` / `drag_release` contact.
+Start holds for 500 ms and performs the same bounded activation movement as the
+Agent's local provider; release moves to the destination, holds, and lifts.
+Contacts belong to one environment slot and are cancelled on episode reset,
+end, or task release. Atomic `touch_actions` programs remain unsupported.
+
+A successful screenshot preflight proves connectivity, not input coverage.
+Judge traces include tool results as well as attempted calls; failed calls are
+not evidence that an operation happened. Human handoff is recorded explicitly
+as unfinished execution. An episode final answer can supply missing response
+text, but does not itself prove task completion.
+
+The phone-control rubric accepts a single successful long press. Device-info
+navigation accepts "About phone" or "My device" and requires scrolling only
+when necessary. Compare these rubric corrections separately from changes in
+Agent completion rates; suite hashes identify the changed evaluation inputs.

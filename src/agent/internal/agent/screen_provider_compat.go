@@ -43,10 +43,6 @@ func runADBCommand(ctx context.Context, adbPath string, args ...string) ([]byte,
 	return screenprovider.RunADB(ctx, adbPath, args...)
 }
 
-func setAutoConfiguredADBSerial(serial string) error {
-	return screenprovider.SetAutoConfiguredSerial(serial)
-}
-
 func clearAutoConfiguredADBSerial(serial string) {
 	screenprovider.ClearAutoConfiguredSerial(serial)
 }

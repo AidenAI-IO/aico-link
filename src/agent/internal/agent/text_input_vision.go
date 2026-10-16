@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"aiden-agent/internal/agent/model"
+	"aiden-agent/internal/logging"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -86,7 +87,7 @@ func newLLMTextInputVision(models model.Model) textInputVision {
 
 func (v *llmTextInputVision) AnalyzeScreen(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
 	prompt := buildTextInputAnalysisPrompt(req)
-	raw, err := v.visionJSON(ctx, "screen_analysis", prompt, screenshot)
+	raw, err := v.visionDecisionJSON(ctx, "screen_analysis", prompt, []string{"observed_mode", "target_matched", "composition_pending"}, screenshot)
 	if err != nil {
 		return textInputScreenAnalysis{}, err
 	}
@@ -116,7 +117,7 @@ func (v *llmTextInputVision) AnalyzeScreen(ctx context.Context, screenshot scree
 }
 
 func (v *llmTextInputVision) DecideCandidateAction(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputCandidateAction, error) {
-	raw, err := v.visionJSON(ctx, "candidate_action", buildTextInputCandidateActionPrompt(req), screenshot)
+	raw, err := v.visionDecisionJSON(ctx, "candidate_action", buildTextInputCandidateActionPrompt(req), []string{"action"}, screenshot)
 	if err != nil {
 		return textInputCandidateAction{}, err
 	}
@@ -492,6 +493,45 @@ Rules:
 
 func (v *llmTextInputVision) visionJSON(ctx context.Context, operation, prompt string, screenshot screenshotResult) (string, error) {
 	return v.visionJSONWithScreenshots(ctx, operation, prompt, screenshot)
+}
+
+// visionDecisionJSON retries, with feedback, when a syntactically valid response
+// omits the decision fields. Some providers answer JSON mode with a bare format
+// echo such as {"type":"json_object"}, which would otherwise read as a negative
+// or unknown observation.
+func (v *llmTextInputVision) visionDecisionJSON(ctx context.Context, operation, prompt string, required []string, screenshots ...screenshotResult) (string, error) {
+	var missing []string
+	for attempt := 1; attempt <= textInputVisionParseAttempts; attempt++ {
+		attemptPrompt := prompt
+		if len(missing) > 0 {
+			attemptPrompt += fmt.Sprintf("\n\nThe previous response was missing required fields: %s. Analyze the same screenshot and return one complete JSON object with every required field.", strings.Join(missing, ", "))
+		}
+		raw, err := v.visionJSONWithScreenshots(ctx, operation, attemptPrompt, screenshots...)
+		if err != nil {
+			return "", err
+		}
+		missing = missingJSONFields(raw, required)
+		if len(missing) == 0 {
+			return raw, nil
+		}
+		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d", operation, strings.Join(missing, ","), attempt)
+	}
+	return "", fmt.Errorf("vision %s response missing required fields: %s", operation, strings.Join(missing, ", "))
+}
+
+// missingJSONFields leaves syntax errors to the caller's parser.
+func missingJSONFields(raw string, required []string) []string {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return nil
+	}
+	var missing []string
+	for _, key := range required {
+		if value, ok := fields[key]; !ok || strings.TrimSpace(string(value)) == "null" {
+			missing = append(missing, key)
+		}
+	}
+	return missing
 }
 
 func (v *llmTextInputVision) visionJSONWithScreenshots(ctx context.Context, operation, prompt string, screenshots ...screenshotResult) (string, error) {

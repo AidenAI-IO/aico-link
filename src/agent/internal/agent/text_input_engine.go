@@ -71,6 +71,7 @@ type textInputArgs struct {
 	Focus            focusPointArgs `json:"focus"`
 	CurrentIMEPart   string         `json:"-"`
 	VerifyTextSuffix bool           `json:"-"`
+	ReplaceField     bool           `json:"-"`
 }
 
 type textInputResult struct {
@@ -79,6 +80,31 @@ type textInputResult struct {
 	FieldText         string `json:"field_text,omitempty"`
 	WrongIMESuspected bool   `json:"wrong_ime_suspected,omitempty"`
 	Reason            string `json:"reason,omitempty"`
+	BackendFailure    bool   `json:"backend_failure,omitempty"`
+}
+
+type keyboardExecutionFailure struct{ error }
+
+func (e keyboardExecutionFailure) Unwrap() error { return e.error }
+
+// markKeyboardExecutionFailure tags keyboard tool errors that refocusing
+// cannot fix: the backend failed or does not support the operation.
+func markKeyboardExecutionFailure(err error) error {
+	var toolErr *ToolError
+	if errors.As(err, &toolErr) && (toolErr.Code == CodeToolExecutionFailed || toolErr.Code == CodeModuleUnavailable) {
+		return keyboardExecutionFailure{err}
+	}
+	return err
+}
+
+func textInputFailure(err error) textInputResult {
+	var failure keyboardExecutionFailure
+	return textInputResult{Reason: err.Error(), BackendFailure: errors.As(err, &failure)}
+}
+
+func callKeyboardInputTool(ctx context.Context, tool langtools.Tool, input string) (string, error) {
+	out, err := callTextInputTool(ctx, tool, input)
+	return out, markKeyboardExecutionFailure(err)
 }
 
 func newTextInputEngine(hw textInputHardwareDeps, vision textInputVision) *textInputEngine {
@@ -132,10 +158,10 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 		segments, planErr := e.planCompositionSegmentsForChunks(planCtx, chunks)
 		planResultCh <- compositionPlanResult{chunks: chunks, segments: segments, err: planErr}
 	}()
-	currentMode, _, err := e.probeTextInputMode(ctx, platform, args.Focus)
+	currentMode, _, err := e.probeTextInputMode(ctx, platform, args.Focus, args.ReplaceField)
 	if err != nil {
 		cancelPlanning()
-		return textInputResult{Reason: err.Error()}, nil
+		return textInputFailure(err), nil
 	}
 
 	planResult := <-planResultCh
@@ -155,16 +181,16 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 			}
 			currentMode, err = e.ensureTextInputMode(ctx, platform, currentMode, targetMode)
 			if err != nil {
-				return textInputResult{Reason: err.Error()}, nil
+				return textInputFailure(err), nil
 			}
 			if err := e.typeASCII(ctx, chunk.input); err != nil {
-				return textInputResult{Reason: err.Error()}, nil
+				return textInputFailure(err), nil
 			}
 			continue
 		}
 		currentMode, err = e.ensureTextInputMode(ctx, platform, currentMode, textInputModeComposition)
 		if err != nil {
-			return textInputResult{Reason: err.Error()}, nil
+			return textInputFailure(err), nil
 		}
 		if err := e.sleepFor(ctx, textInputCompositionReadyDelay); err != nil {
 			return textInputResult{Reason: err.Error()}, nil
@@ -174,11 +200,15 @@ func (e *textInputEngine) RunSegmented(ctx context.Context, args textInputArgs) 
 		partialArgs.CurrentIMEPart = chunk.text
 		partialArgs.VerifyTextSuffix = true
 		committed, fieldText, wrongIME, _, err := e.typeCompositionWithCandidateSelection(ctx, platform, partialArgs, compositionSegments[index])
-		if err != nil || !committed {
+		if err != nil {
+			result := textInputFailure(err)
+			result.FieldText = fieldText
+			result.WrongIMESuspected = wrongIME
+			return result, nil
+		}
+		if !committed {
 			reason := "IME run was not verified"
-			if err != nil {
-				reason = err.Error()
-			} else if wrongIME {
+			if wrongIME {
 				reason = "wrong IME suspected"
 			}
 			return textInputResult{FieldText: fieldText, WrongIMESuspected: wrongIME, Reason: reason}, nil
@@ -310,13 +340,18 @@ func (e *textInputEngine) planCompositionSegmentsForChunks(ctx context.Context, 
 	return segments, nil
 }
 
-func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus focusPointArgs) (mode textInputMode, vlmCalls int, err error) {
+func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform string, focus focusPointArgs, replaceField bool) (mode textInputMode, vlmCalls int, err error) {
 	undoKeys, err := textInputKeyboardKeysForUndo(platform)
+	if err != nil {
+		return textInputModeUnknown, vlmCalls, err
+	}
+	selectAllKeys, err := textInputKeyboardKeysForSelectAll(platform)
 	if err != nil {
 		return textInputModeUnknown, vlmCalls, err
 	}
 	var probeBeforeScreenshot screenshotResult
 	cleanupVision, cleanupSupported := e.vision.(textInputProbeCleanupVision)
+	cleanupSupported = cleanupSupported && !replaceField
 	if cleanupSupported {
 		probeBeforeScreenshot, err = e.captureScreenshot(ctx)
 		if err != nil {
@@ -328,6 +363,22 @@ func (e *textInputEngine) probeTextInputMode(ctx context.Context, platform strin
 		return textInputModeUnknown, vlmCalls, fmt.Errorf("input mode probe: type a: %w", err)
 	}
 	defer func() {
+		if replaceField {
+			// The caller replaces the whole field. Undo can resurrect a previous
+			// query when the probe is uncommitted IME text, so clear explicitly.
+			clearErr := e.tapKeys(ctx, selectAllKeys)
+			if clearErr == nil {
+				clearErr = e.sleepFor(ctx, textInputKeystrokeGap)
+			}
+			if clearErr == nil {
+				clearErr = e.tapKeys(ctx, []string{"backspace"})
+			}
+			if clearErr == nil {
+				clearErr = e.sleepFor(ctx, textInputProbeSettleDelay)
+			}
+			err = errors.Join(err, clearErr)
+			return
+		}
 		// Send undo keys
 		undoErr := e.tapKeys(ctx, undoKeys)
 		if undoErr == nil {
@@ -652,7 +703,7 @@ func (e *textInputEngine) tapKeys(ctx context.Context, keys []string) error {
 	if e == nil || e.hw.keyboardTap == nil {
 		return fmt.Errorf("keyboard_tap is not configured")
 	}
-	out, err := callTextInputTool(ctx, e.hw.keyboardTap, jsonString(map[string]any{"keys": keys}))
+	out, err := callKeyboardInputTool(ctx, e.hw.keyboardTap, jsonString(map[string]any{"keys": keys}))
 	if err != nil {
 		return err
 	}
@@ -730,7 +781,7 @@ func (e *textInputEngine) typeASCII(ctx context.Context, text string) error {
 }
 
 func (e *textInputEngine) typeASCIIChunk(ctx context.Context, text string) error {
-	out, err := callTextInputTool(ctx, e.hw.keyboardText, jsonString(map[string]string{"text": text}))
+	out, err := callKeyboardInputTool(ctx, e.hw.keyboardText, jsonString(map[string]string{"text": text}))
 	if err != nil {
 		return err
 	}
@@ -739,7 +790,7 @@ func (e *textInputEngine) typeASCIIChunk(ctx context.Context, text string) error
 
 func (e *textInputEngine) typeCompositionWithCandidateSelection(ctx context.Context, platform string, args textInputArgs, segments []string) (committed bool, fieldText string, wrongIME bool, vlmCalls int, err error) {
 	for _, segment := range segments {
-		out, err := callTextInputTool(ctx, e.hw.keyboardText, jsonString(map[string]string{"text": segment}))
+		out, err := callKeyboardInputTool(ctx, e.hw.keyboardText, jsonString(map[string]string{"text": segment}))
 		if err != nil {
 			return false, fieldText, false, vlmCalls, err
 		}

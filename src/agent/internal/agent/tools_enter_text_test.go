@@ -267,12 +267,31 @@ func TestTextInputProbeWaitsForConfiguredSettleDelayBeforeCapture(t *testing.T) 
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
 	if len(delays) == 0 || delays[0] != textInputProbeSettleDelay {
 		t.Fatalf("probe delays=%v, want first delay %s", delays, textInputProbeSettleDelay)
+	}
+}
+
+func TestTextInputProbeClearsReplacedFieldWithoutUndo(t *testing.T) {
+	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+	engine := newTextInputEngineWithSleep(textInputHardwareDeps{
+		keyboardTap:  keys,
+		keyboardText: &recordingTextInputTool{name: "keyboard_text", out: "ok"},
+		screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+	}, &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeComposition}}}, testNoWaitSleep)
+
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, true)
+	if err != nil || mode != textInputModeComposition {
+		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
+	}
+	selectAll, _ := textInputKeyboardKeysForSelectAll("ios")
+	want := []string{jsonString(map[string]any{"keys": selectAll}), jsonString(map[string]any{"keys": []string{"backspace"}})}
+	if !reflect.DeepEqual(keys.calls, want) {
+		t.Fatalf("keyboard_tap=%v, want %v", keys.calls, want)
 	}
 }
 
@@ -287,7 +306,7 @@ func TestTextInputProbeSupportsWindowsAndLinuxPlatforms(t *testing.T) {
 				return nil
 			})
 
-			mode, _, err := engine.probeTextInputMode(context.Background(), platform, focusPointArgs{})
+			mode, _, err := engine.probeTextInputMode(context.Background(), platform, focusPointArgs{}, false)
 			if err != nil || mode != textInputModeASCII {
 				t.Fatalf("probeTextInputMode(%q) mode=%s err=%v", platform, mode, err)
 			}
@@ -341,7 +360,7 @@ func TestTextInputProbeVerificationSendsBackspaceWhenCharacterStillVisible(t *te
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -383,7 +402,7 @@ func TestTextInputProbeVerificationSkipsBackspaceWhenCharacterRemoved(t *testing
 		return nil
 	})
 
-	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{})
+	mode, _, err := engine.probeTextInputMode(context.Background(), "ios", focusPointArgs{}, false)
 	if err != nil || mode != textInputModeASCII {
 		t.Fatalf("probeTextInputMode() mode=%s err=%v", mode, err)
 	}
@@ -973,6 +992,46 @@ func TestEnterTextToolIOSLocalPathRequiresIsolation(t *testing.T) {
 	}
 	if len(keyboard.calls) != 0 {
 		t.Fatalf("keyboard_text calls = %v, want no probe before isolation", keyboard.calls)
+	}
+}
+
+func TestEnterTextFailureSuggestionUsesTypedKeyboardBackendFailure(t *testing.T) {
+	backendSuggestion := "The input backend could not execute keyboard input. Refocusing will not fix this; report the input connection or unsupported operation."
+	if got := enterTextFailureSuggestion(textInputResult{Reason: "remote keyboard input failed"}); got == backendSuggestion {
+		t.Fatal("an untyped reason string must not be classified as a keyboard backend failure")
+	}
+	if got := enterTextFailureSuggestion(textInputResult{BackendFailure: true}); got != backendSuggestion {
+		t.Fatalf("typed backend failure suggestion = %q", got)
+	}
+	if got := enterTextFailureSuggestion(textInputResult{BackendFailure: true, Reason: "context deadline exceeded"}); !strings.Contains(got, "times out") {
+		t.Fatalf("timeout suggestion = %q; want retry guidance", got)
+	}
+}
+
+func TestTextInputEngineMarksOnlyKeyboardExecutionFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		code string
+		want bool
+	}{
+		{name: "backend", code: CodeToolExecutionFailed, want: true},
+		{name: "unavailable", code: CodeModuleUnavailable, want: true},
+		{name: "invalid input", code: CodeInvalidArguments, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := newTextInputEngineWithSleep(textInputHardwareDeps{
+				deviceTypeFn: func() string { return "Android" },
+				keyboardTap:  &recordingTextInputTool{name: "keyboard_tap", out: "ok"},
+				keyboardText: &contextToolErrorStub{name: "keyboard_text", toolErr: NewToolError(tc.code, "unfamiliar error")},
+				screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+			}, &stubTextInputVision{}, testNoWaitSleep)
+			result, err := engine.RunSegmented(context.Background(), textInputArgs{
+				Text: "x", Focus: focusPointArgs{X: 10, Y: 10},
+			})
+			if err != nil || result.BackendFailure != tc.want {
+				t.Fatalf("RunSegmented() = %+v, %v; want backend failure %t", result, err, tc.want)
+			}
+		})
 	}
 }
 

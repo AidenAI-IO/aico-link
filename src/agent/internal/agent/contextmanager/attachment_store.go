@@ -18,13 +18,6 @@ func sessionDataDir(sessionFolder string, sessionID string) string {
 	return filepath.Join(sessionFolder, sessionID)
 }
 
-func removeSessionDataDir(sessionFolder string, sessionID string) error {
-	if err := os.RemoveAll(sessionDataDir(sessionFolder, sessionID)); err != nil {
-		return fmt.Errorf("remove session directory %s: %w", sessionID, err)
-	}
-	return nil
-}
-
 func newAttachmentStore(sessionFolder string, sessionID string) (*attachmentStore, error) {
 	attachmentFolder := filepath.Join(sessionDataDir(sessionFolder, sessionID), "attachments")
 	if err := os.MkdirAll(attachmentFolder, 0o755); err != nil {

@@ -10,6 +10,45 @@ import (
 	"time"
 )
 
+type recordingTextProvider struct {
+	Provider
+	text string
+}
+
+func (p *recordingTextProvider) KeyboardText(ctx context.Context, text string) error {
+	p.text = text
+	return nil
+}
+
+func TestHTTPHandlerKeyboardTextProviderFallback(t *testing.T) {
+	for _, mode := range []string{"default", "nil", "override"} {
+		t.Run(mode, func(t *testing.T) {
+			provider := &recordingTextProvider{Provider: NewMockProvider()}
+			override := &recordingTextProvider{}
+			handler := NewHTTPHandler(provider)
+			if mode == "nil" {
+				handler = NewHTTPHandler(provider, nil)
+			} else if mode == "override" {
+				handler = NewHTTPHandler(provider, override)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/providers/mnk",
+				bytes.NewBufferString(`{"operation":"keyboard_text","keyboard_text":{"text":"hello"}}`))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, req)
+			if response.Code != http.StatusOK {
+				t.Fatalf("expected success, got %d: %s", response.Code, response.Body.String())
+			}
+			if mode == "override" {
+				if override.text != "hello" || provider.text != "" {
+					t.Fatalf("unexpected routing: default=%q override=%q", provider.text, override.text)
+				}
+			} else if provider.text != "hello" {
+				t.Fatalf("default provider received %q", provider.text)
+			}
+		})
+	}
+}
+
 // TestHTTPProvider tests the HTTP provider implementation
 func TestHTTPProvider(t *testing.T) {
 	// Create a mock provider to handle requests

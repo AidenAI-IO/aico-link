@@ -213,6 +213,17 @@ func (b *iosKeyboardIsolationBatch) restore() error {
 	return err
 }
 
+// restoreForPointer ends keyboard isolation in the current batch ahead of a
+// pointer action, so callers can observe the screen after the USB profile
+// switch instead of acting on coordinates captured before it.
+func (c *iosKeyboardIsolationController) restoreForPointer(ctx context.Context) (restored bool, err error) {
+	batch := c.batchFromContext(ctx)
+	if batch == nil || !batch.isolated {
+		return false, nil
+	}
+	return true, batch.restore()
+}
+
 // withBatch keeps consecutive keyboard operations in one pointer-free profile.
 // Nested composite tools reuse the same batch. Pointer input restores the normal
 // profile before it runs, and this outer scope always attempts a final restore

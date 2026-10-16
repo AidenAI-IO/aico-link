@@ -267,58 +267,6 @@ func applyDeviceTypeOverride(cfg *agent.Config, value string) error {
 	return cfg.OverrideDeviceType(value)
 }
 
-func runAudioMode(cfg agent.Config, runtime *agent.Runtime, server *agent.Server) {
-	// Setup signal handler for both legacy and realtime voice paths.
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigChan)
-	if cfg.InputModeOrDefault() == "realtime" {
-		tasks := newRealtimeAgentTaskManager(cfg, runtime)
-		if tasks != nil {
-			defer tasks.Close()
-		}
-		runRealtimeWakeupModeWithServer(cfg, sigChan, server, runtime, tasks, newGPIOWatcher)
-		return
-	}
-	dialog, err := agent.NewAudioDialog(runtime)
-	if err != nil {
-		_ = logging.LogEvent(logging.Error, "agent", "audio", "dialog_create_failed",
-			logging.Field{Key: "error", Value: err},
-		)
-		os.Exit(1)
-	}
-	defer func() {
-		if err := dialog.Close(); err != nil {
-			logging.Warnf("agent", "audio", "close dialog: %v", err)
-		}
-	}()
-	dialog.SetMessagePublisher(server.BroadcastMessage)
-	dialog.SetStorageManager(runtime.Storage())
-	dialog.SetStorageMonitor(runtime.StorageMonitor())
-
-	// Register preempt hook: when a new run starts, release GPIO audio resources.
-	runtime.RegisterPreemptHook(func() {
-		dialog.InterruptOutput()
-		if dialog.RecordingActive() {
-			_ = dialog.StopRecording()
-		}
-	})
-
-	inputMode := cfg.InputModeOrDefault()
-	logging.Infof("agent", "init", "Config loaded: model=%s, input_mode=%s",
-		cfg.Model.Model, inputMode)
-	vadBackend := cfg.VADBackendOrDefault()
-	logging.Infof("agent", "init", "VAD: backend=%s, rknn_model=%s, helper=%s, speech_threshold=%.2f, silence=%dms, min_speech=%dms",
-		vadBackend,
-		valueOrDefault(cfg.VADModelPath, agent.DefaultVADModelPath()),
-		agent.ResolveVADHelperPath(vadBackend, cfg.VADHelperPath),
-		floatOrDefault(cfg.VADSpeechThreshold, agent.DefaultVADSpeechThreshold()),
-		cfg.SilenceMs,
-		cfg.MinSpeechMs)
-
-	runWakeupMode(cfg, dialog, runtime, sigChan, newGPIOWatcher)
-}
-
 type audioDialogRunner interface {
 	StartRecording() error
 	StopRecording() error
@@ -347,20 +295,6 @@ type audioDialogRunner interface {
 type wakeupWatcher interface {
 	Start() error
 	Stop()
-}
-
-func valueOrDefault(value, fallback string) string {
-	if value != "" {
-		return value
-	}
-	return fallback
-}
-
-func floatOrDefault(value, fallback float64) float64 {
-	if value > 0 {
-		return value
-	}
-	return fallback
 }
 
 type wakeupWatcherFactory func(pin int, callback func()) (wakeupWatcher, error)

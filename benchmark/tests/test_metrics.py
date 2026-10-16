@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from runner.metrics import (
@@ -7,6 +9,49 @@ from runner.metrics import (
     derive_history_metrics,
 )
 from runner.models import TaskResult
+
+
+@pytest.mark.parametrize("cost", [0.0, 0.0024])
+def test_episode_billing_reaches_langfuse_history_distributions(cost):
+    from ci.fetch_langfuse_history import _record
+    from runner.langfuse_reporter import _run_scores
+
+    metrics = derive_episode_metrics({"extra": {
+        "llm_calls": 2, "llm_time_ms": 80.5, "cost_reported_calls": 2,
+        "cost_usd": cost, "cost_source": "provider_reported",
+    }})
+    assert metrics["cost_usd"] == cost
+    assert metrics["cost_source"] == "provider_reported"
+    assert metrics["llm_calls"] == 2
+    assert metrics["llm_time_ms"] == 80.5
+    agg = aggregate_rows([{"task_id": "a", "attempt": 1, "status": "passed", "metrics": metrics}])
+    scores = {score["name"]: score["value"] for score in _run_scores(agg)}
+    record = _record(metadata={"benchmark_suite": "test"}, run_id="test",
+                     timestamp=datetime.now(timezone.utc), scores=scores,
+                     experiment_id="exp", source="langfuse")
+    distribution = record["distributions"]["cost_usd"]
+    assert distribution == {"count": 1, "mean": cost, "p90": cost}
+    assert record["cost_usd_sum"] == cost
+    assert record["distributions"]["llm_calls"]["mean"] == 2
+    assert record["distributions"]["llm_time_ms"]["p50"] == 80.5
+
+
+@pytest.mark.parametrize("cost", [None, -1, True, "0.001", float("nan"), float("inf")])
+def test_episode_invalid_or_unreported_cost_is_unknown(cost):
+    metrics = derive_episode_metrics({"extra": {"cost_usd": cost, "llm_calls": 3, "cost_reported_calls": 2}})
+    assert metrics.get("cost_usd") is None
+    assert metrics.get("cost_source") is None
+    agg = aggregate_rows([{"task_id": "a", "status": "passed", "metrics": metrics}])
+    assert agg["cost_usd"]["count"] == 0
+    assert agg["cost_usd"]["sum"] is None
+
+
+def test_episode_partial_billing_is_not_a_task_total():
+    metrics = derive_episode_metrics({"extra": {
+        "cost_usd": 0.001, "llm_calls": 3, "cost_reported_calls": 2,
+    }})
+    assert metrics.get("cost_usd") is None
+    assert metrics.get("cost_source") is None
 
 
 def test_aggregate_counts_all_trace_observation_ids():

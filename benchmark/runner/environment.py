@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import configparser
 import dataclasses as dc
+import ipaddress
 import json
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.parse
@@ -215,12 +217,14 @@ class EnvironmentManager:
             return None
         env_id = container_name[len(prefix):]
 
-        bridge_port = _docker_published_port_safe(container_name, 9090)
+        bridge_host, bridge_port = _docker_published_binding_safe(container_name, 9090)
         web_port = _docker_published_port_safe(container_name, 4173)
         if bridge_port == 0:
             return None
 
-        public_endpoint = f"http://127.0.0.1:{bridge_port}"
+        # Use the address the container was actually published on; the current
+        # bind-host setting may differ from the one it was started with.
+        public_endpoint = f"http://{bridge_host}:{bridge_port}"
 
         # Health check: verify the container is actually responsive
         is_healthy = _check_endpoint_health(f"{public_endpoint}/health", timeout=2.0)
@@ -308,11 +312,13 @@ class EnvironmentManager:
             )
             self._set_environment(env, status="starting", message="starting container")
 
+            bridge_bind_host = mobilegym_bridge_bind_host()
             command = build_mobilegym_environment_command(
                 image=self.mobilegym_image,
                 container_name=env.container_name,
                 host_web_port=web_port,
                 host_bridge_port=bridge_port,
+                bridge_bind_host=bridge_bind_host,
                 benchmark_dir=self.repo_root / "benchmark",
                 parallel_envs=parallel_envs,
             )
@@ -330,7 +336,7 @@ class EnvironmentManager:
                 bridge_port=bridge_port,
                 web_port=web_port,
                 endpoint=f"http://host.docker.internal:{bridge_port}",
-                public_endpoint=f"http://127.0.0.1:{bridge_port}",
+                public_endpoint=f"http://{bridge_bind_host}:{bridge_port}",
                 web_url=f"http://127.0.0.1:{web_port}",
                 started_at=now_iso(),
                 message="waiting for bridge",
@@ -491,6 +497,33 @@ def _docker_published_port_safe(container_name: str, container_port: int) -> int
         return 0
 
 
+def _docker_published_binding_safe(container_name: str, container_port: int) -> tuple[str, int]:
+    """Return the (host IP, host port) a container port is published on, or ("", 0).
+
+    Wildcard bindings are reported as loopback so host-side checks still work.
+    """
+    try:
+        output = subprocess.check_output(
+            ["docker", "port", container_name, f"{int(container_port)}/tcp"],
+            text=True,
+            timeout=5,
+        ).strip()
+    except Exception:
+        return "", 0
+    for line in output.splitlines():
+        host, _, port = line.strip().rpartition(":")
+        host = host.strip("[]")
+        try:
+            address = ipaddress.ip_address(host)
+            port_number = int(port)
+        except ValueError:
+            continue
+        if address.version != 4:
+            continue
+        return ("127.0.0.1" if address.is_unspecified else host), port_number
+    return "", 0
+
+
 def _check_endpoint_health(url: str, timeout: float = 2.0) -> bool:
     """Quick health check: returns True only if endpoint returns 2xx."""
     try:
@@ -592,6 +625,7 @@ def build_mobilegym_environment_command(
     container_name: str,
     host_web_port: int,
     host_bridge_port: int,
+    bridge_bind_host: str,
     benchmark_dir: Path,
     bridge_port: int = 9090,
     parallel_envs: int = DEFAULT_MOBILEGYM_PARALLEL_ENVS,
@@ -654,7 +688,9 @@ def build_mobilegym_environment_command(
         docker_publish_arg(
             host_bridge_port,
             bridge_port,
-            bind_host="127.0.0.1" if int(host_bridge_port) == 0 else "",
+            # This avoids LAN-facing host interfaces, but other containers on
+            # the host may also reach this unauthenticated benchmark bridge.
+            bind_host=bridge_bind_host,
         ),
         "-v",
         f"{benchmark_dir.resolve()}:/app/benchmark:ro",
@@ -670,6 +706,24 @@ def build_mobilegym_environment_command(
         "-c",
         script,
     ]
+
+
+def mobilegym_bridge_bind_host() -> str:
+    """Resolve the host interface reachable through host.docker.internal."""
+    configured = os.getenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", "").strip()
+    if not configured and sys.platform != "linux":
+        return "127.0.0.1"
+    gateway = configured or subprocess.check_output(
+        ["docker", "network", "inspect", "bridge", "--format", "{{(index .IPAM.Config 0).Gateway}}"],
+        text=True, timeout=5,
+    ).strip()
+    try:
+        address = ipaddress.ip_address(gateway)
+    except ValueError as exc:
+        raise RuntimeError(f"Docker bridge has no valid host gateway: {gateway!r}") from exc
+    if not isinstance(address, ipaddress.IPv4Address) or address.is_unspecified:
+        raise RuntimeError(f"Docker bridge has no usable IPv4 host gateway: {gateway!r}")
+    return gateway
 
 
 def docker_publish_arg(host_port: int, container_port: int, *, bind_host: str = "") -> str:

@@ -420,13 +420,6 @@ func newPointerController(hid HIDConfig) *pointerController {
 	}
 }
 
-func withIOSPointerCall(ctx context.Context, pc *pointerController, action func(context.Context) (string, error)) (string, error) {
-	if pc == nil || pc.iosKeyboardIsolation == nil {
-		return action(ctx)
-	}
-	return pc.iosKeyboardIsolation.withPointerCall(ctx, action)
-}
-
 func NewHIDDevice(path string) *HIDDevice {
 	return &HIDDevice{
 		path:         path,
@@ -735,10 +728,28 @@ func (t *KeyboardTapTool) Call(ctx context.Context, input string) (string, error
 
 // KeyboardTextTool types a string character by character via HID.
 type KeyboardTextTool struct {
+	textProvider         mnk.TextProvider
 	dev                  *HIDDevice
 	adb                  *ADBInputController
 	keyboardLayout       string
 	iosKeyboardIsolation *iosKeyboardIsolationController
+}
+
+// KeyboardText serves the provider endpoint through the same layout-aware
+// primitive used by enter_text, without focusing or observing the device.
+func (t *KeyboardTextTool) KeyboardText(ctx context.Context, text string) error {
+	input, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return err
+	}
+	ctx, _ = WithToolError(ctx)
+	if _, err := t.Call(ctx, string(input)); err != nil {
+		return err
+	}
+	if toolErr := ToolErrorFromContext(ctx); toolErr != nil {
+		return fmt.Errorf("keyboard input failed: %s", toolErr.Message)
+	}
+	return nil
 }
 
 func (t *KeyboardTextTool) Name() string { return "keyboard_text" }
@@ -788,6 +799,13 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 	}
 	if looksLikeSpacedRomanizationBlob(text) {
 		return toolErrorResultString(ctx, CodeInvalidArguments, "keyboard_text received spaced romanization; use enter_text instead."), nil
+	}
+
+	if t.textProvider != nil {
+		if err := t.textProvider.KeyboardText(ctx, text); err != nil {
+			return toolErrorResultf(ctx, CodeToolExecutionFailed, "remote keyboard input failed: %v", err), nil
+		}
+		return "ok", nil
 	}
 
 	if t.adb != nil {
@@ -989,10 +1007,6 @@ func (t *TouchGestureTool) ensureTouchscreenMapping(ctx context.Context) error {
 		touchscreenRCALogf("touch_gesture prime mapping succeeded mapping_after={%s}", t.screen.Format())
 	}
 	return nil
-}
-
-func sameResolvedPointerPoint(first, second resolvedPointerPoint) bool {
-	return first.x == second.x && first.y == second.y
 }
 
 // MouseScrollTool sends mouse wheel events.
@@ -1205,30 +1219,6 @@ type resolvedPointerPoint struct {
 	y int
 }
 
-func resolveRequiredPoint(screen *screen.ScreenState, touchscreen bool, point *pointerPoint) (resolvedPointerPoint, error) {
-	if point == nil {
-		return resolvedPointerPoint{}, fmt.Errorf("point is required")
-	}
-
-	x, y, err := resolvePointerPositionForSurface(screen, touchscreen, point.X.Float64(), point.Y.Float64())
-	if err != nil {
-		return resolvedPointerPoint{}, err
-	}
-	return resolvedPointerPoint{x: x, y: y}, nil
-}
-
-func resolvePointOrDefaultNormalized(screen *screen.ScreenState, touchscreen bool, point *pointerPoint, defaultX, defaultY float64) (resolvedPointerPoint, error) {
-	if point != nil {
-		return resolveRequiredPoint(screen, touchscreen, point)
-	}
-
-	x, y, err := resolvePointerPositionForSurface(screen, touchscreen, defaultX, defaultY)
-	if err != nil {
-		return resolvedPointerPoint{}, err
-	}
-	return resolvedPointerPoint{x: x, y: y}, nil
-}
-
 func resolvePointerPosition(screen *screen.ScreenState, x, y float64) (int, int, error) {
 	return resolvePointerPositionForSurface(screen, false, x, y)
 }
@@ -1384,10 +1374,6 @@ func settlePointer(pc *pointerController, x, y int) error {
 	return nil
 }
 
-func positionPointer(pc *pointerController, x, y int, buttons uint8) error {
-	return movePointer(pc, x, y, buttons)
-}
-
 func pressPointer(pc *pointerController, x, y int, button uint8) error {
 	return movePointer(pc, x, y, button)
 }
@@ -1427,14 +1413,6 @@ func movePointer(pc *pointerController, x, y int, buttons uint8) error {
 
 func scrollPointer(pc *pointerController, delta int) error {
 	return pc.scroll(delta)
-}
-
-func runSwipeLikeGesture(pc *pointerController, start, end resolvedPointerPoint, button uint8, durationMs, holdBeforeMs, holdAfterMs, steps int) error {
-	return dragPointer(pc, start, end, button, durationMs, holdBeforeMs, holdAfterMs, steps)
-}
-
-func runPositionedDragGesture(pc *pointerController, start, end resolvedPointerPoint, button uint8, durationMs, holdBeforeMs, holdAfterMs, steps int) error {
-	return dragPointer(pc, start, end, button, durationMs, holdBeforeMs, holdAfterMs, steps)
 }
 
 func dragPointer(pc *pointerController, start, end resolvedPointerPoint, button uint8, durationMs, holdBeforeMs, holdAfterMs, steps int) (dragErr error) {
@@ -1514,20 +1492,6 @@ func realSleepMs(ms int) {
 	time.Sleep(time.Duration(ms) * time.Millisecond)
 }
 
-func intOrDefault(value *int, fallback int) int {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
-func positiveIntOrDefault(value *int, fallback int) int {
-	if value == nil || *value <= 0 {
-		return fallback
-	}
-	return *value
-}
-
 func clampUint16(val, max int) uint16 {
 	if val < 0 {
 		return 0
@@ -1536,23 +1500,6 @@ func clampUint16(val, max int) uint16 {
 		return uint16(max)
 	}
 	return uint16(val)
-}
-
-func clampInt(val, min, max int) int {
-	if val < min {
-		return min
-	}
-	if val > max {
-		return max
-	}
-	return val
-}
-
-func absInt(val int) int {
-	if val < 0 {
-		return -val
-	}
-	return val
 }
 
 func mouseButtonByte(button string) uint8 {

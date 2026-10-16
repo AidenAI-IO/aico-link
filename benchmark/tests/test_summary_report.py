@@ -21,7 +21,7 @@ def test_write_summary_describes_skill_activation_or_read(tmp_path: Path):
                 {
                     "id": "skill_read_device_operator",
                     "passed": True,
-                    "reason": "Task requested active skill 'device-operator' via chat skills payload.",
+                    "reason": "Trace contains skill_read for 'device-operator'.",
                 }
             ]
         },
@@ -37,7 +37,7 @@ def test_write_summary_describes_skill_activation_or_read(tmp_path: Path):
 
     text = (tmp_path / "summary.md").read_text(encoding="utf-8")
     assert "Agent: test-model" in text
-    assert "device-operator skill activation/read: 1/1 tasks" in text
+    assert "device-operator skill_read calls: 1/1 tasks" in text
     assert "device-operator skill_read:" not in text
 
 
