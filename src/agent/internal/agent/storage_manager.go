@@ -404,7 +404,6 @@ func (m *StorageManager) Status() StorageStatus {
 
 // SafeEject syncs and unmounts the card so it can be pulled. The card is not
 // remounted until it is physically removed and reinserted.
-// ErrStorageFlush reports successful detachment with a warning about unsaved data.
 func (m *StorageManager) SafeEject() error {
 	if m == nil || m.mirrorOnly {
 		return fmt.Errorf("storage hardware is owned by Config Web")
