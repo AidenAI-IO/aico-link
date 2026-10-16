@@ -91,11 +91,14 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
             tool_name = str(event.get("tool_name") or "")
             results.append((event, mapping[1] if mapping and mapping[0] == tool_name else None))
             mapping = None
-    if len(results) != len(trace.tool_calls):
+    # Only calls whose result reached history can pair with episode results; a
+    # trailing unfinished call must not discard evidence for completed ones.
+    completed = [tc for tc in trace.tool_calls if tc.has_result]
+    if len(results) != len(completed):
         return
-    if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, trace.tool_calls)):
+    if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
         return
-    for (result, normalized), tool_call in zip(results, trace.tool_calls):
+    for (result, normalized), tool_call in zip(results, completed):
         if result.get("is_error") or result.get("tool_error") is not None:
             tool_call.is_error = True
         if normalized is not None:

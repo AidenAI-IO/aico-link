@@ -159,6 +159,14 @@ def test_perception_scores_normalized_coordinates_from_pixel_model_episode():
     assert trace.tool_calls[0].input == normalized
     assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed is True
 
+    # A trailing call still running when history was captured keeps the earlier evidence.
+    pending = history + [{"type": "tool_call", "tool_name": "touch_gesture", "tool_input": pixel}]
+    trace = extract_trace(pending)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].input == normalized
+    assert trace.tool_calls[1].has_result is False
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed is True
+
 
 def test_trace_has_skill_read_detects_matching_tool_call():
     trace = Trace(
