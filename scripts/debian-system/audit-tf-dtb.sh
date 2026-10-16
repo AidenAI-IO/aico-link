@@ -10,7 +10,9 @@ expect() {
 }
 phandle() { fdtget -t u "${dtb}" "$1" phandle; }
 absent() {
-    if fdtget -p "${dtb}" "$1" | grep -qx "$2"; then
+    local properties
+    properties=$(fdtget -p "${dtb}" "$1") || fail "cannot inspect $1"
+    if grep -Fxq "$2" <<<"${properties}"; then
         fail "unexpected $1/$2"
     fi
 }

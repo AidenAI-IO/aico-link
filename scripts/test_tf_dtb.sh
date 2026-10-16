@@ -43,5 +43,24 @@ for entry in '/mmc@ffaa0000 rockchip,tf-diagnostics' '/vcc3v3-sd-regulator regul
         exit 1
     fi
 done
+# A failed node/property lookup must not count as an absent property.
+mkdir "${work_dir}/bin"
+cat >"${work_dir}/bin/fdtget" <<'EOF'
+#!/bin/sh
+if [ "$1" = '-p' ] && [ "$3" = "$AIDEN_FDTGET_FAIL_NODE" ]; then
+    exit 1
+fi
+exec "$AIDEN_REAL_FDTGET" "$@"
+EOF
+chmod +x "${work_dir}/bin/fdtget"
+real_fdtget=$(command -v fdtget)
+for node in /mmc@ffaa0000 /vcc3v3-sd-regulator; do
+    if PATH="${work_dir}/bin:${PATH}" AIDEN_REAL_FDTGET="${real_fdtget}" AIDEN_FDTGET_FAIL_NODE="${node}" \
+        bash "${audit}" "${work_dir}/board.dtb" >"${work_dir}/failure.log" 2>&1; then
+        echo "TF audit accepted a failed lookup of ${node}" >&2
+        exit 1
+    fi
+    grep -Fq "cannot inspect ${node}" "${work_dir}/failure.log"
+done
 grep -qx exfatprogs "${repo_root}/scripts/debian-system/packages.list"
 echo 'TF DTB regression tests passed.'

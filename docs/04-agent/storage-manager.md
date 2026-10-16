@@ -40,8 +40,11 @@ removal. When a card appears, it:
 
 1. Prefers the first partition, falling back to the whole device when there is
    no partition.
-2. Runs `fsck` with a 60-second deadline; a missing checker falls back to the
-   mount/probe gate, while I/O errors or uncorrected errors reject the card.
+2. Identifies the filesystem and runs `fsck.<type> -p` with a 60-second deadline.
+   An unknown filesystem or missing checker falls back to the mount/probe gate.
+   Corrected-error and reboot-recommended statuses (0–3 for ext4/exFAT) proceed
+   to that gate. FAT accepts 0/1; its usage/internal errors (2/3) reject the card.
+   I/O failures, uncorrected errors, and other checker failures reject the card.
 3. Mounts the card read-write at the configured mount point.
 4. Verifies the mount with a unique probe file, `fsync`, and readback. Existing
    mounts must belong to the requested device. Read-only mounts are unhealthy.
@@ -90,7 +93,9 @@ Keeping new writes on eMMC avoids making active recording depend on removable
 media. When the SD tier is available and eMMC free space falls below the start
 watermark, the manager migrates older audio archives to the SD card, oldest
 first. It stops after eMMC reaches the stop watermark, no eligible files remain,
-the card becomes unavailable, or an eject or format operation cancels the run.
+the card becomes unavailable, the next copy would cross the configured SD free
+space reserve, or an eject or format operation cancels the run. Capacity errors
+stop the run and retain the source file on eMMC.
 
 The default migration watermarks are:
 
@@ -106,7 +111,15 @@ both copies may exist. Failed or exhausted runs use a ten-minute retry cooldown.
 
 Safe eject cancels any active migration, syncs and unmounts the card, and latches
 the card as ejected. It is not mounted again until it is physically removed and
-reinserted.
+reinserted. If sync reports a writeback error, the failure is logged and unmount
+is still attempted so a failing card can be detached or manually reformatted.
+After successful detachment with a flush error, safe eject reports that pending
+writes may not have been saved and keeps the eject latch set. Formatting and
+reconfiguration may proceed once detachment succeeds.
+An unmount failure keeps the mounted state and blocks formatting.
+`last_warning` in storage status retains the most recent flush warning for the
+manager's lifetime, including across reconfiguration and remounting. The state
+mirror carries the same warning as `LAST_WARNING` for read-only consumers.
 
 Manual formatting is destructive: it rewrites the whole card with a fresh MBR,
 one partition, and a new filesystem labeled `AIDEN`. Supported filesystems are
@@ -123,8 +136,11 @@ Mount/unmount/sync commands have 15-second deadlines, signature probes have
 Kernel I/O in uninterruptible sleep can still exceed a userspace deadline.
 Storage events and rejection reasons are logged to the Config Web journal.
 Mounted cards also receive a synced write/readback probe every 30 seconds.
-Health I/O runs outside the status lock; a failed probe detaches the SD tier and
-prevents repeated mount attempts until reinsertion.
+Health I/O runs outside the status lock; an I/O or read-only failure detaches the
+SD tier and prevents repeated mount attempts until reinsertion. A full card or
+exhausted quota stays mounted, reports the capacity problem, and pauses migration
+so existing files remain readable and can be removed to recover space. A later
+successful probe clears the capacity reason without requiring reinsertion.
 
 ### StorageManager HTTP API
 

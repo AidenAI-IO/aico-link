@@ -125,6 +125,7 @@ type StorageStatus struct {
 	MountPoint    string              `json:"mount_point"`
 	FormatJob     StorageFormatJob    `json:"format_job"`
 	Migration     StorageMigrationJob `json:"migration"`
+	LastWarning   string              `json:"last_warning,omitempty"`
 }
 
 // StorageSnapshot identifies the exact mounted card covered by a backup or
@@ -158,11 +159,14 @@ type storageSysOps interface {
 	// Prepare runs fsck, mounts dev at mountPoint read-write, and probe-writes.
 	Prepare(dev, mountPoint string) error
 	// Unmount detaches mountPoint; lazy detach is used for forced removal.
+	// errStorageFlush means detachment succeeded after a failed flush.
 	Unmount(mountPoint string, lazy bool) error
 	// IsMounted reports whether mountPoint currently has a filesystem mounted.
 	IsMounted(mountPoint string) bool
 	// Healthy reports whether the mounted filesystem still responds.
 	Healthy(mountPoint string) bool
+	// VerifyWritable verifies a synced write and readback on the mounted card.
+	VerifyWritable(mountPoint string) error
 	// SpaceInfo returns free/total bytes for the filesystem containing path.
 	SpaceInfo(path string) (free, total int64, err error)
 	// FormatDisk rewrites the whole card: fresh MBR with one partition plus
@@ -199,8 +203,9 @@ type StorageManager struct {
 	stateWriteErr   bool             // log the mirror-write failure only once
 	formatJob       StorageFormatJob // async format task state
 	autoFormatDone  bool             // one auto-format attempt per insertion
-	mounting        bool             // a mount attempt runs ops.Prepare off m.mu
+	cardOperation   string           // exclusive mount or health I/O running off m.mu
 	lastHealthProbe time.Time
+	lastWarning     string // most recent flush warning, retained across reconfiguration
 
 	migration        StorageMigrationJob
 	migrationCancel  chan struct{} // non-nil while a migration run is active
@@ -331,12 +336,13 @@ func (m *StorageManager) Reconfigure(cfg StorageConfig) error {
 		m.mu.Unlock()
 		return fmt.Errorf("cannot change the storage device or mount point while a format job is running")
 	}
-	if identityChanged && m.mounting {
+	if identityChanged && m.cardOperation != "" {
+		operation := m.cardOperation
 		m.mu.Unlock()
-		return fmt.Errorf("cannot change the storage device or mount point while a mount attempt is in progress")
+		return fmt.Errorf("cannot change the storage device or mount point while %s is in progress", operation)
 	}
 	if identityChanged && m.card.Mounted {
-		if err := m.unmountLocked(false, ""); err != nil {
+		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, errStorageFlush) {
 			m.mu.Unlock()
 			return fmt.Errorf("cannot apply storage config: %w", err)
 		}
@@ -392,6 +398,7 @@ func (m *StorageManager) Status() StorageStatus {
 		MountPoint:    m.cfg.MountPointOrDefault(),
 		FormatJob:     m.formatJob,
 		Migration:     m.migration,
+		LastWarning:   m.lastWarning,
 	}
 }
 
@@ -422,17 +429,21 @@ func (m *StorageManager) SafeEject() error {
 	// A mount attempt in flight has not set m.card.Mounted yet, so reporting
 	// "no mounted card" here would be wrong and the mount would land right
 	// after the eject. Make the caller retry once the attempt settles.
-	if m.mounting {
-		return fmt.Errorf("a mount attempt is in progress; retry shortly")
+	if m.cardOperation != "" {
+		return fmt.Errorf("%s is in progress; retry shortly", m.cardOperation)
 	}
 	if !m.card.Mounted {
 		return fmt.Errorf("no mounted card to eject")
 	}
-	if err := m.unmountLocked(false, ""); err != nil {
+	err := m.unmountLocked(false, "")
+	if err != nil && !errors.Is(err, errStorageFlush) {
 		return fmt.Errorf("cannot eject: %w (close any shell or process using %s and retry)", err, m.cfg.MountPointOrDefault())
 	}
 	m.ejected = true
 	m.finishTransitionLocked()
+	if err != nil {
+		return fmt.Errorf("card was detached, but pending writes may not have been saved: %w", err)
+	}
 	return nil
 }
 
@@ -476,14 +487,14 @@ func (m *StorageManager) StartFormat(fs, confirm string) error {
 	// still false until it lands — so without this the unmount guard below is
 	// skipped and mkfs would run concurrently with mount. Mount attempts are
 	// short and the caller can retry.
-	if m.mounting {
-		return fmt.Errorf("a mount attempt is in progress; retry shortly")
+	if m.cardOperation != "" {
+		return fmt.Errorf("%s is in progress; retry shortly", m.cardOperation)
 	}
 	if _, present := m.ops.CardDevice(); !present {
 		return fmt.Errorf("no card present")
 	}
 	if m.card.Mounted {
-		if err := m.unmountLocked(false, ""); err != nil {
+		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, errStorageFlush) {
 			return fmt.Errorf("cannot format: %w (close any shell or process using %s and retry)", err, m.cfg.MountPointOrDefault())
 		}
 	}
@@ -540,6 +551,7 @@ func (m *StorageManager) runFormatJob(fs string) {
 // mounted and eMMC free space fell below the start watermark. Caller holds m.mu.
 func (m *StorageManager) maybeStartMigrationLocked() {
 	if !m.card.Mounted ||
+		m.card.FreeBytes < int64(m.cfg.MinCardFreeMBOrDefault())*1024*1024 ||
 		m.snapshotLease != nil ||
 		m.formatJob.Status == StorageFormatRunning ||
 		m.migration.Status == StorageFormatRunning {
@@ -667,8 +679,8 @@ func (m *StorageManager) AcquireSnapshotLease(ctx context.Context) (StorageSnaps
 	if m.formatJob.Status == StorageFormatRunning {
 		return nil, fmt.Errorf("cannot snapshot while a format job is running")
 	}
-	if m.mounting {
-		return nil, fmt.Errorf("cannot snapshot while a mount attempt is in progress")
+	if m.cardOperation != "" {
+		return nil, fmt.Errorf("cannot snapshot while %s is in progress", m.cardOperation)
 	}
 	if !m.card.Present || !m.card.Mounted || !m.ops.Healthy(m.cfg.MountPointOrDefault()) {
 		return nil, fmt.Errorf("no readable and writable SD card is mounted")
@@ -823,6 +835,10 @@ func (m *StorageManager) runMigration(cancel <-chan struct{}, done chan<- struct
 
 		size, err := m.migrateOneFile(filepath.Join(srcDir, candidate), filepath.Join(dstDir, candidate))
 		if err != nil {
+			if storageCapacityError(err) {
+				finish(StorageFormatFailed, "SD card has insufficient free space", err.Error(), true)
+				return
+			}
 			failedFiles++
 			m.warnf("[storage] migrate %s -> %s failed: %v", filepath.Join(srcDir, candidate), dstDir, err)
 			continue // a single bad file must not stall the whole run
@@ -926,6 +942,17 @@ func (m *StorageManager) migrateOneFile(src, dst string) (int64, error) {
 			return info.Size(), nil
 		}
 		return 0, fmt.Errorf("destination exists with different size (src %d, dst %d); refusing to overwrite", info.Size(), dstInfo.Size())
+	}
+
+	free, _, err := m.ops.SpaceInfo(filepath.Dir(dst))
+	if err != nil {
+		return 0, fmt.Errorf("check SD free space: %w", err)
+	}
+	m.mu.Lock()
+	reserve := int64(m.cfg.MinCardFreeMBOrDefault()) * 1024 * 1024
+	m.mu.Unlock()
+	if free < reserve || info.Size() > free-reserve {
+		return 0, fmt.Errorf("SD has %d bytes free; copying %d bytes would cross the %d-byte reserve: %w", free, info.Size(), reserve, syscall.ENOSPC)
 	}
 
 	partial := dst + migrationPartialSuffix
@@ -1108,6 +1135,7 @@ func (m *StorageManager) refreshStateMirrorLocked() {
 	data, err := os.ReadFile(m.statePath)
 	if err != nil {
 		m.card = StorageCardStatus{}
+		m.lastWarning = ""
 		m.formatJob = StorageFormatJob{Status: StorageFormatIdle}
 		m.migration = StorageMigrationJob{Status: StorageFormatIdle}
 		return
@@ -1141,6 +1169,7 @@ func (m *StorageManager) refreshStateMirrorLocked() {
 		FreeBytes:  parseInt64("SD_FREE_BYTES"),
 		Reason:     values["REASON"],
 	}
+	m.lastWarning = values["LAST_WARNING"]
 	if mountPoint := strings.TrimSpace(values["SD_MOUNTPOINT"]); mountPoint != "" {
 		m.cfg.MountPoint = mountPoint
 	}
@@ -1180,11 +1209,9 @@ func (m *StorageManager) tick() {
 	if m.formatJob.Status == StorageFormatRunning {
 		return
 	}
-	// A mount attempt is in flight, running ops.Prepare with m.mu released.
-	// Skip this tick; it will land its result and set state itself. Without
-	// this guard a second tick could launch a concurrent Prepare on the same
-	// device or race the in-flight one's state write.
-	if m.mounting {
+	// Mount or health I/O is in flight with m.mu released. Its result will
+	// update state; a second tick must not touch the same device meanwhile.
+	if m.cardOperation != "" {
 		return
 	}
 
@@ -1227,19 +1254,17 @@ func (m *StorageManager) tick() {
 	case present && m.card.Mounted:
 		mountPoint := m.cfg.MountPointOrDefault()
 		probeDue := time.Since(m.lastHealthProbe) >= 30*time.Second
-		m.mounting = true // keep exclusive operations away during health I/O
+		m.cardOperation = "a card health check"
 		m.mu.Unlock()
 		healthy := m.ops.Healthy(mountPoint)
 		var probeErr error
 		if healthy && probeDue {
-			if verifier, ok := m.ops.(interface{ VerifyWritable(string) error }); ok {
-				probeErr = verifier.VerifyWritable(mountPoint)
-				healthy = probeErr == nil
-			}
+			probeErr = m.ops.VerifyWritable(mountPoint)
+			healthy = probeErr == nil || storageCapacityError(probeErr)
 		}
 		free, total, spaceErr := m.ops.SpaceInfo(mountPoint)
 		m.mu.Lock()
-		m.mounting = false
+		m.cardOperation = ""
 		if probeDue {
 			m.lastHealthProbe = time.Now()
 		}
@@ -1251,8 +1276,17 @@ func (m *StorageManager) tick() {
 			}
 			m.unmountLocked(true, reason)
 			m.mountFailed = true
-		} else if spaceErr == nil {
-			m.card.FreeBytes, m.card.TotalBytes = free, total
+		} else {
+			if spaceErr == nil {
+				m.card.FreeBytes, m.card.TotalBytes = free, total
+			}
+			if storageCapacityError(probeErr) {
+				m.card.Reason = fmt.Sprintf("card capacity exhausted: %v", probeErr)
+				m.requestMigrationCancelLocked("card capacity exhausted")
+				m.migrationRetryAt = time.Now().Add(migrationRetryCooldown)
+			} else if probeDue && strings.HasPrefix(m.card.Reason, "card capacity exhausted:") {
+				m.card.Reason = ""
+			}
 		}
 	case present && !m.card.Mounted:
 		// Card sitting idle: mount unless safe-ejected or known bad.
@@ -1269,7 +1303,7 @@ func (m *StorageManager) tick() {
 // ops.Prepare shells out to fsck and mount, so running it
 // under m.mu would freeze Status/EffectiveMode/ReadRoots/CleanupRoots for the
 // duration. It is instead released across the Prepare call — guarded by the
-// m.mounting latch (checked in tick) so no second tick launches a concurrent
+// m.cardOperation guard (checked in tick) so no second tick launches a concurrent
 // Prepare — and re-acquired to land the result, following the same
 // lock-release pattern as runFormatJob and runMigration.
 func (m *StorageManager) tryMountLocked() {
@@ -1281,12 +1315,12 @@ func (m *StorageManager) tryMountLocked() {
 	m.card.Present = true
 	m.card.Device = dev
 
-	m.mounting = true
+	m.cardOperation = "a mount attempt"
 	m.mu.Unlock()
 	err := m.ops.Prepare(dev, mountPoint)
 	blank := err != nil && !errors.Is(err, errStorageIO) && !errors.Is(err, syscall.EIO) && !errors.Is(err, context.DeadlineExceeded) && m.ops.CardIsBlank()
 	m.mu.Lock()
-	m.mounting = false
+	m.cardOperation = ""
 
 	// The card may have been ejected or removed while Prepare ran with the
 	// lock released; the removal path already reset m.card, so discard this
@@ -1345,16 +1379,27 @@ func (m *StorageManager) tryMountLocked() {
 // and an error is returned — marking it unmounted here would desynchronize
 // state from reality and send the poll loop into mount/EBUSY churn. Lazy
 // unmounts are used when the card is physically gone; their failures cannot
-// leave a working mount behind, so state is cleared regardless.
+// leave a working mount behind, so state is cleared regardless. errStorageFlush
+// reports successful detachment after a failed flush; clear state and let the
+// caller decide whether that warning permits its operation.
 func (m *StorageManager) unmountLocked(lazy bool, reason string) error {
 	mountPoint := m.cfg.MountPointOrDefault()
+	var flushWarning error
 	if err := m.ops.Unmount(mountPoint, lazy); err != nil {
-		if !lazy {
+		if !lazy && errors.Is(err, errStorageFlush) {
+			flushWarning = err
+			m.lastWarning = fmt.Sprintf("Card was detached, but pending writes may not have been saved: %v", err)
+			if reason == "" {
+				reason = err.Error()
+			}
+			m.warnf("[storage] card detached after flush failure: %v", err)
+		} else if !lazy {
 			m.card.Reason = fmt.Sprintf("unmount failed: %v", err)
 			m.warnf("[storage] unmount %s failed; card stays mounted: %v", mountPoint, err)
 			return err
+		} else {
+			m.logf("[storage] lazy unmount %s: %v", mountPoint, err)
 		}
-		m.logf("[storage] lazy unmount %s: %v", mountPoint, err)
 	}
 	m.card.Mounted = false
 	m.card.TotalBytes = 0
@@ -1363,7 +1408,7 @@ func (m *StorageManager) unmountLocked(lazy bool, reason string) error {
 		m.card.Reason = reason
 		m.logf("[storage] card detached: %s", reason)
 	}
-	return nil
+	return flushWarning
 }
 
 func (m *StorageManager) refreshSpaceLocked() {
@@ -1416,6 +1461,7 @@ func (m *StorageManager) writeStateFileLocked() {
 	writeKV("SD_TOTAL_BYTES", fmt.Sprintf("%d", m.card.TotalBytes))
 	writeKV("SD_FREE_BYTES", fmt.Sprintf("%d", m.card.FreeBytes))
 	writeKV("REASON", strings.ReplaceAll(m.card.Reason, "\n", " "))
+	writeKV("LAST_WARNING", strings.ReplaceAll(m.lastWarning, "\n", " "))
 	writeKV("FORMAT_STATUS", m.formatJob.Status)
 	writeKV("FORMAT_FS", m.formatJob.FS)
 	writeKV("FORMAT_AUTO", bool01(m.formatJob.Auto))
@@ -1548,16 +1594,13 @@ func (o *realStorageOps) CardIsBlank() bool {
 	if _, err := io.ReadFull(f, buf); err != nil {
 		return false
 	}
-	if buf[510] == 0x55 && buf[511] == 0xAA {
-		return false // MBR / FAT boot sector signature
-	}
-	if string(buf[512:520]) == "EFI PART" {
-		return false // GPT header at LBA 1
-	}
 	return bytes.Equal(buf, make([]byte, len(buf)))
 }
 
-var errStorageIO = errors.New("card I/O failure")
+var (
+	errStorageIO    = errors.New("card I/O failure")
+	errStorageFlush = errors.New("card detached after flush failure")
+)
 
 // Kill checker subprocesses too: fsck starts a filesystem-specific child.
 func runStorageCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
@@ -1578,6 +1621,39 @@ func storageIOError(out []byte, err error) bool {
 	message := strings.ToLower(string(out))
 	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, syscall.EIO) ||
 		strings.Contains(message, "input/output error") || strings.Contains(message, "i/o error")
+}
+
+func storageCapacityError(err error) bool {
+	return errors.Is(err, syscall.ENOSPC) || errors.Is(err, syscall.EDQUOT)
+}
+
+// Resolve the filesystem-specific checker directly so a missing helper is
+// distinguishable from a checker that ran and reported filesystem errors.
+func checkStorageFilesystem(dev string) error {
+	fsType, _ := probeBlkid(dev)
+	if fsType == "" {
+		return nil // mount/probe remains the gate when the type is unknown
+	}
+	out, err := runStorageCommand(60*time.Second, "fsck."+fsType, "-p", dev)
+	if storageIOError(out, err) {
+		return fmt.Errorf("fsck %s: %w: %v: %s", dev, errStorageIO, err, strings.TrimSpace(string(out)))
+	}
+	if err == nil || errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		// FAT's checker uses 2 for usage errors and 3 for internal errors.
+		// With -p, 1 also covers changes successfully written to the card.
+		maxStatus := 3 // fsck bitmask: corrected errors / reboot recommended
+		if fsType == "vfat" || fsType == "fat" || fsType == "msdos" {
+			maxStatus = 1
+		}
+		if status := exit.ExitCode(); status >= 0 && status <= maxStatus {
+			return nil
+		}
+	}
+	return fmt.Errorf("fsck %s: %w: %s", dev, err, strings.TrimSpace(string(out)))
 }
 
 func storageWriteProbe(mountPoint string) error {
@@ -1618,7 +1694,7 @@ func (o *realStorageOps) Prepare(dev, mountPoint string) error {
 	// mount of the same device fails with EBUSY. The probe write below still
 	// validates the adopted mount.
 	if o.IsMounted(mountPoint) {
-		if source, _ := storageMount(mountPoint); source != dev {
+		if source, _ := storageMount(mountPoint); !sameStorageDevice(source, dev) {
 			return fmt.Errorf("mount point %s belongs to %s, expected %s", mountPoint, source, dev)
 		}
 		if err := storageWriteProbe(mountPoint); err != nil {
@@ -1626,16 +1702,8 @@ func (o *realStorageOps) Prepare(dev, mountPoint string) error {
 		}
 		return nil
 	}
-	// A missing checker can fall back to mount/probe. Uncorrected filesystem
-	// errors and operational failures must be reported before mounting.
-	if out, err := runStorageCommand(60*time.Second, "fsck", "-p", dev); err != nil && !errors.Is(err, exec.ErrNotFound) {
-		var exit *exec.ExitError
-		if storageIOError(out, err) {
-			return fmt.Errorf("fsck %s: %w: %v: %s", dev, errStorageIO, err, strings.TrimSpace(string(out)))
-		}
-		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
-			return fmt.Errorf("fsck %s: %w: %s", dev, err, strings.TrimSpace(string(out)))
-		}
+	if err := checkStorageFilesystem(dev); err != nil {
+		return err
 	}
 	// ext4 gets a tighter journal commit; other filesystems reject those
 	// options, so retry with the portable set.
@@ -1673,9 +1741,13 @@ func (o *realStorageOps) Unmount(mountPoint string, lazy bool) error {
 	if !o.IsMounted(mountPoint) {
 		return nil
 	}
+	var flushErr error
 	if !lazy {
 		if out, err := runStorageCommand(15*time.Second, "sync", "-f", mountPoint); err != nil {
-			return fmt.Errorf("sync %s: %w: %s", mountPoint, err, strings.TrimSpace(string(out)))
+			flushErr = fmt.Errorf("sync %s: %w: %s", mountPoint, err, strings.TrimSpace(string(out)))
+			// Pending writeback errors must not prevent eject or recovery by
+			// formatting. A successful umount still detaches the filesystem.
+			logging.Warnf("config_web", "storage", "sync %s failed; attempting unmount: %v: %s", mountPoint, err, strings.TrimSpace(string(out)))
 		}
 	}
 	args := []string{mountPoint}
@@ -1683,7 +1755,10 @@ func (o *realStorageOps) Unmount(mountPoint string, lazy bool) error {
 		args = []string{"-l", mountPoint}
 	}
 	if out, err := runStorageCommand(15*time.Second, "umount", args...); err != nil {
-		return fmt.Errorf("umount %s: %v: %s", mountPoint, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("umount %s: %w: %s", mountPoint, err, strings.TrimSpace(string(out)))
+	}
+	if flushErr != nil {
+		return fmt.Errorf("%w: %w", errStorageFlush, flushErr)
 	}
 	return nil
 }
@@ -1705,6 +1780,18 @@ func storageMount(mountPoint string) (source, options string) {
 		}
 	}
 	return "", ""
+}
+
+func sameStorageDevice(source, device string) bool {
+	if source == device {
+		return true
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		return false
+	}
+	deviceInfo, err := os.Stat(device)
+	return err == nil && os.SameFile(sourceInfo, deviceInfo)
 }
 
 func (o *realStorageOps) Healthy(mountPoint string) bool {
