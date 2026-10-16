@@ -686,3 +686,17 @@ def test_expected_recalled_memory_ids_uses_partial_aggregate_as_negative_episode
     assert result.passed is False
     assert result.recalled_memory_ids == []
     assert result.evidence_source == "episode"
+
+
+def test_null_device_recall_is_complete_negative_evidence():
+    history = [
+        {"type": "tool_call", "tool_name": "recall_device_memory", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "recall_device_memory", "content": '{"results":null}'},
+    ]
+    result = assertions.evaluate_expected_recalled_memory_ids(
+        history, ["expected-procedure"], recall_tool="recall_device_memory",
+        require_inline_recall=True, episode={"retrieved_memory_refs": ["expected-procedure"]},
+    )
+    assert result.passed is False
+    assert result.evidence_source == "inline"
+    assert result.recalled_memory_ids == []

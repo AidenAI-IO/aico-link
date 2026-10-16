@@ -2,7 +2,7 @@
   "name": "perception_v1",
   "suite_category": "Perception & Control",
   "global_reset": {},
-  "prompt_prefix": "你面前的屏幕是一个静态画面。请像人一样看清画面，找到目标并点击对应位置。",
+  "prompt_prefix": "This is a static-image target localization task. Locate the requested target in the image and click it exactly once, then briefly report the selected position. The fixture cannot change after a tap; do not retry or wait for a UI transition.",
   "tasks": [
     {
       "id": "find_settings_iphone",

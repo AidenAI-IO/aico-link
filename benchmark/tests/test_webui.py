@@ -2311,6 +2311,7 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert env["ENVIRONMENT_BRIDGE_ENDPOINT"] == "http://host.docker.internal:18080"
     assert env["AIDEN_BENCHMARK_TASK_ID"] == "suite.json:t1"
     assert env["AIDEN_ENVIRONMENT_BRIDGE_MODE"] == "1"
+    assert env["AIDEN_BENCHMARK_MOCK_TOOLS"] == "0"
     assert env["AIDEN_DEVICE_TYPE"] == "android"
     assert "host.docker.internal" in env["NO_PROXY"]
     compose_text = webui.AGENT_DAEMON_COMPOSE_FILE.read_text(encoding="utf-8")
@@ -2932,3 +2933,9 @@ def test_start_adb_android_environment_treats_port_zero_as_auto(tmp_path: Path, 
         app.start_adb_android_environment({"serial": "127.0.0.1:6555", "bridge_port": "abc"})
     with pytest.raises(ValueError, match="bridge_port"):
         app.start_adb_android_environment({"serial": "127.0.0.1:6555", "bridge_port": -1})
+
+
+def test_daemon_mock_mode_is_explicit_and_does_not_inherit_host_setting(monkeypatch):
+    monkeypatch.setenv("AIDEN_BENCHMARK_MOCK_TOOLS", "1")
+    assert webui.daemon_compose_env(image="test")["AIDEN_BENCHMARK_MOCK_TOOLS"] == "0"
+    assert webui.daemon_compose_env(image="test", benchmark_mock_tools=True)["AIDEN_BENCHMARK_MOCK_TOOLS"] == "1"

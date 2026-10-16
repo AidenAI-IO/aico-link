@@ -1601,6 +1601,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
         key: value for key, value in phone_state.items() if key != "platform"
     }
     assert captured["benchmark_token"] == "mock-token"
+    assert captured["daemon_kwargs"]["benchmark_mock_tools"] is True
     assert captured["job"].endpoint.startswith("http://127.0.0.1:")
     assert captured["job"].docker_endpoint.startswith(
         "http://host.docker.internal:"

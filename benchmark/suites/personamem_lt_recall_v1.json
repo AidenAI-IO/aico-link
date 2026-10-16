@@ -425,7 +425,7 @@
         },
         {
           "id": "uses_writing_style_memory",
-          "check": "The answer applies the stored concise practical writing style preference."
+          "check": "The answer cites the stored preference for concise, concrete, practical feedback and selects option (b). This is a multiple-choice task; do not require a new writing sample."
         }
       ],
       "hard_assertions": {

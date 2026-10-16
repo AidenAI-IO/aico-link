@@ -759,6 +759,7 @@ def _cmd_run_auto_agent_setup_inner(
                 benchmark_task_id=route_id,
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
+                benchmark_mock_tools=task_mock_environment is not None,
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")

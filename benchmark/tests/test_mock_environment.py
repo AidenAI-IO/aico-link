@@ -103,7 +103,7 @@ def test_mock_environment_returns_scripted_tool_result_and_updates_screen():
         assert blocked["is_error"] is True
 
         opened = _json_request(
-            f"{base_url}/api/tools/search_launch_app",
+            f"{base_url}/api/tools/open_app",
             "POST",
             {"input": json.dumps({"app": "备忘录"})},
         )
@@ -464,4 +464,27 @@ def test_mock_environment_times_out_incomplete_request_body(tmp_path, monkeypatc
         assert payload["error"]["code"] == "bad_request"
     finally:
         connection.close()
+        server.stop()
+
+
+def test_phone_bridge_proxy_status_uses_current_fixture_and_native_shape(tmp_path):
+    _, spec = _task_mock_environment("phone_bridge_data_policy_v1.json", "ios_pip_contacts_query")
+    server = MockEnvironmentServer(spec, tmp_path)
+    url = server.start()
+    try:
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["platform"] == "ios"
+        assert status["pip_bridge_enabled"] is True
+        assert status["connected"] is False
+        assert "data" not in status
+        _, android = _task_mock_environment("phone_bridge_data_policy_v1.json", "android_fgs_calendar_query")
+        server.activate(android)
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["platform"] == "android"
+        assert status["fgs_bridge_enabled"] is True
+        assert status["pip_bridge_enabled"] is False
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _json_request(url.replace(server.base_path, "") + "/api/phone-bridge/status")
+        assert exc.value.code == 404
+    finally:
         server.stop()

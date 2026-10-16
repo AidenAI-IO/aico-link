@@ -464,7 +464,13 @@ def _parse_inline_recall_result(content: Any) -> list[str] | None:
             payload = json.loads(content)
         except (TypeError, json.JSONDecodeError):
             return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+    if not isinstance(payload, dict) or "results" not in payload:
+        return None
+    # Go encodes a nil result slice as null. This is a completed empty recall,
+    # not missing/truncated telemetry; expected IDs must fail against it.
+    if payload["results"] is None:
+        return []
+    if not isinstance(payload["results"], list):
         return None
     recalled_ids: list[str] = []
     for item in payload["results"]:

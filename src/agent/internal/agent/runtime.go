@@ -1938,7 +1938,7 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	return r.filterPhoneBridgeAgentTools(tools)
+	return benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools))
 }
 
 // AvailableTools returns the runtime-filtered tools exposed to the

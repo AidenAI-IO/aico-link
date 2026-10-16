@@ -198,6 +198,16 @@ def _handler_for(server: MockEnvironmentServer):
                     },
                 )
                 return
+            if path == "/api/phone-bridge/status":
+                # The Agent proxy decodes the native status object, without an envelope.
+                with server._lock:
+                    status = {
+                        "connected": False,
+                        **server.spec.phone_bridge,
+                        "platform": server.spec.platform,
+                    }
+                self._json(200, status)
+                return
             if path == "/api/concurrent":
                 self._json(
                     200,

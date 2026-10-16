@@ -44,4 +44,8 @@ if [ "${AIDEN_ENVIRONMENT_BRIDGE_MODE:-}" = "1" ] || [ "${AIDEN_ENVIRONMENT_BRID
     fi
 fi
 
+if [ "${AIDEN_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
+    set -- "$@" --benchmark-mock-tools
+fi
+
 exec "$@"

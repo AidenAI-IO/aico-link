@@ -124,10 +124,23 @@ The Aiden App cases are consolidated into two suites:
 
 - `notes_entry_policy_v1.json`: Notes is already open, its icon is visible, or
   neither is visible. The Agent respectively enters text directly, clicks the
-  visible icon, or uses `search_launch_app`.
+  visible icon, or uses `open_app`.
 - `phone_bridge_data_policy_v1.json`: contacts, calendar query/create, clipboard
   read/write, and notification cases for iOS Dynamic Island restoration, iOS PiP,
   and Android FGS.
+
+Scripted suites explicitly enable `--benchmark-mock-tools` on their isolated
+workers. This mode requires a benchmark token and an environment bridge.
+The Agent retains its native tool schemas and runtime availability filtering;
+only device-tool execution is sent to the fixture's `/api/tools/<name>` endpoint.
+The mock also serves the native `/api/phone-bridge/status` object so PiP, FGS,
+and Dynamic Island capabilities reflect the active fixture. Real-device and
+MobileGym suites use normal provider and command transports. Mock policy runs
+therefore do not validate internal app-restoration, paste, or command transports.
+
+Single-frame perception tasks ask for one target click and a brief answer. Their
+scripted click does not generate a synthetic UI transition or a post-action
+screenshot. Coordinate rubrics and required final responses still apply.
 
 These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
 so they do not cover the BLE Wake-specific allowlist or runtime tool filtering.
@@ -157,6 +170,22 @@ Use real devices separately for iOS BLE pairing/Wake, the narrower BLE Wake
 allowlist, iOS PiP/Android FGS lifecycle, USB ECM, native permissions, actual
 background queue delivery, app launch behavior, and HID paste validation. Mock
 suites test their modeled policy and tool selection, not OS integration.
+
+### Time-independent memory fixtures
+
+A `seed_memory` item may set `expires_in_sec` to a positive finite number. The
+runner resolves it to an absolute `expires_at` immediately before each attempt,
+without changing the suite snapshot. Do not specify both fields. Notification
+mutation fixtures use a one-day lifetime so they do not expire as the calendar
+advances. Keep absolute timestamps only for tests that intentionally model expiry.
+
+An inline recall result with `results: null` is a completed empty result, matching
+Go's nil-slice JSON encoding. Expected IDs missing from that result are an eligible
+recall failure, not a judge error. Missing or truncated evidence remains ineligible.
+
+Shell utility tasks intentionally require tool execution: a correct calculation
+without the required shell call remains a failure. Workflow success indicates
+report completeness; inspect pass rates together with eligible-task coverage.
 
 ## Reports
 

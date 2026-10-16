@@ -246,7 +246,7 @@
               "source_refs": [{"type": "notification", "id": "fixture-update-old", "event_ids": ["old-event"]}],
               "evidence_refs": [{"type": "notification", "id": "fixture-update-evidence", "event_ids": ["old-evidence-event"]}],
               "evidence": ["The package arrives today."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
@@ -318,7 +318,7 @@
               "entities": ["com.calendar.reinforce"],
               "source_refs": [{"type": "notification", "id": "fixture-reinforce-old", "event_ids": ["old-event"]}],
               "evidence": ["The meeting is tomorrow at 10:00."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
@@ -392,7 +392,7 @@
                 }
               ],
               "evidence": ["The package delivery was scheduled for Friday."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             },
             {
               "store": "temporary",
@@ -404,7 +404,7 @@
               "entities": ["com.delivery.remove"],
               "source_refs": [{"type": "notification", "id": "fixture-remove-control", "event_ids": ["control-event"]}],
               "evidence": ["A different package is scheduled for Monday."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
@@ -475,7 +475,7 @@
               "source_refs": [{"type": "notification", "id": "fixture-promote-old", "event_ids": ["old-event"]}],
               "evidence_refs": [{"type": "notification", "id": "fixture-promote-evidence", "event_ids": ["old-evidence-event"]}],
               "evidence": ["Future packages should be delivered to the office."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },

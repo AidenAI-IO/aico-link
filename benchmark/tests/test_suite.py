@@ -208,7 +208,7 @@ def test_perception_v1_uses_fixture_backed_mock_environment_for_every_task():
         assert responses[0].is_error is False
 
 
-def test_perception_v1_describes_single_frame_environment_without_coaching():
+def test_perception_v1_describes_single_frame_contract_without_coordinate_hints():
     suite_path = (
         Path(__file__).resolve().parents[1]
         / "suites"
@@ -227,7 +227,6 @@ def test_perception_v1_describes_single_frame_environment_without_coaching():
         "width",
         "height",
         "0-1000",
-        "retry",
         "verify",
     ):
         assert leaked_instruction not in prompt_prefix
@@ -1670,7 +1669,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
     assert all(task.mock_environment is not None for task in suite.tasks)
 
     open_task = tasks["ios_pip_notes_already_open"]
-    assert "search_launch_app" in open_task.hard_assertions.forbidden_tools
+    assert "open_app" in open_task.hard_assertions.forbidden_tools
     assert "bridge_open_app" in open_task.hard_assertions.forbidden_tools
     assert "enter_text" in open_task.hard_assertions.required_tools
     assert "enter_text" not in open_task.prompt
@@ -1679,7 +1678,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
 
     icon_task = tasks["ios_pip_notes_icon_visible"]
     assert "touch_gesture" in icon_task.hard_assertions.required_tools
-    assert "search_launch_app" in icon_task.hard_assertions.forbidden_tools
+    assert "open_app" in icon_task.hard_assertions.forbidden_tools
     assert icon_task.hard_assertions.required_tool_calls[1].input_contains == {
         "type": "tap",
         "point": {"x": 180, "y": 310},
@@ -1690,7 +1689,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
     assert "search_launch_app" not in icon_task.prompt
 
     missing_task = tasks["ios_pip_notes_icon_missing"]
-    assert "search_launch_app" in missing_task.hard_assertions.required_tools
+    assert "open_app" in missing_task.hard_assertions.required_tools
     assert "bridge_open_app" in missing_task.hard_assertions.forbidden_tools
     assert "search_launch_app" not in missing_task.prompt
     assert "enter_text" not in missing_task.prompt
