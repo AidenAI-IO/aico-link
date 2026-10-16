@@ -164,8 +164,9 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             tc = trace.tool_calls[trace_index]
             if tc.tool != requirement.tool:
                 continue
-            # A failed call is an attempt, not the required action.
-            if not tc.is_error and dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
+            # A failed or unfinished call is an attempt, not the required action.
+            completed = tc.has_result and not tc.is_error
+            if completed and dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
                 matched_index = trace_index
                 break
             if requirement.first_attempt:

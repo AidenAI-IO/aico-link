@@ -11,6 +11,18 @@ def _safe_loads(s: str) -> Any:
         return None
 
 
+def tool_result_failed(message: dict[str, Any], content: Any = None) -> bool:
+    """Return whether a history tool_result reports failure.
+
+    Shared by trace matching and history metrics so both count the same results.
+    """
+    if message.get("is_error") or message.get("tool_error") is not None:
+        return True
+    if content is None:
+        content = _safe_loads(message.get("content", ""))
+    return isinstance(content, dict) and (bool(content.get("is_error")) or content.get("ok") is False)
+
+
 def extract_trace(history: list[dict[str, Any]]) -> Trace:
     tool_calls: list[ToolCall] = []
     final_response = ""
@@ -26,11 +38,12 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
             if not isinstance(args, dict):
                 args = {}
             pending = {"step": step, "tool": msg.get("tool_name", ""),
-                       "input": args, "has_screenshot": False}
+                       "input": args, "has_screenshot": False, "has_result": False}
         elif mtype == "tool_result" and pending is not None:
             raw = msg.get("content", "")
             content = _safe_loads(raw)
-            pending["is_error"] = bool(msg.get("is_error") or msg.get("tool_error") is not None)
+            pending["has_result"] = True
+            pending["is_error"] = tool_result_failed(msg, content)
             if isinstance(content, dict) and content.get("data"):
                 pending["has_screenshot"] = True
             elif isinstance(raw, str) and "screenshot observation" in raw.lower():
@@ -51,24 +64,42 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
     )
 
 
-def mark_failed_tool_calls(trace: Trace, episode: dict[str, Any] | None) -> None:
-    """Copy episode tool-result error flags onto the history-derived trace.
+def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) -> None:
+    """Apply episode-only tool evidence to the history-derived trace.
 
-    Public history omits error status, while the episode records it for every
-    result. Results pair with calls in order; a name mismatch leaves the trace
-    unchanged rather than guessing.
+    Public history omits error status and records the model's raw arguments.
+    The episode records each result's error status and, when the model uses
+    pixel coordinates, the normalized arguments the device received. Results
+    pair with calls in order; a count or name mismatch leaves the trace as-is.
     """
     events = episode.get("events") if isinstance(episode, dict) else None
     if not isinstance(events, list):
         return
-    results = [e for e in events if isinstance(e, dict) and e.get("type") == "tool_result"]
+    results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    mapping: tuple[str, dict[str, Any]] | None = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "visual_coordinate_mapping":
+            # Recorded during execution, before that call's result.
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            normalized = metadata.get("normalized_input")
+            if isinstance(normalized, str):
+                normalized = _safe_loads(normalized)
+            mapping = (str(metadata.get("tool") or ""), normalized) if isinstance(normalized, dict) else None
+        elif event.get("type") == "tool_result":
+            tool_name = str(event.get("tool_name") or "")
+            results.append((event, mapping[1] if mapping and mapping[0] == tool_name else None))
+            mapping = None
     if len(results) != len(trace.tool_calls):
         return
-    if any(str(r.get("tool_name") or "") != tc.tool for r, tc in zip(results, trace.tool_calls)):
+    if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, trace.tool_calls)):
         return
-    for result, tool_call in zip(results, trace.tool_calls):
+    for (result, normalized), tool_call in zip(results, trace.tool_calls):
         if result.get("is_error") or result.get("tool_error") is not None:
             tool_call.is_error = True
+        if normalized is not None:
+            tool_call.input = normalized
 
 
 def trace_has_skill_read(trace: Trace, skill_name: str) -> bool:

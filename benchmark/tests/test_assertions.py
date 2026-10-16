@@ -796,6 +796,28 @@ def test_required_tool_calls_reject_failed_attempts():
     assert out.results.required_tool_calls is False
 
 
+def test_required_tool_calls_reject_unfinished_and_failed_payload_calls():
+    from runner.trace import extract_trace
+
+    spec = HardAssertions(
+        required_tool_calls=[RequiredToolCallSpec(tool="touch_gesture", input_contains={"type": "tap"})]
+    )
+    unfinished = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+    ])
+    assert evaluate_hard_assertions(unfinished, spec, timed_out=False).results.required_tool_calls is False
+    failed_payload = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": false}'},
+    ])
+    assert evaluate_hard_assertions(failed_payload, spec, timed_out=False).results.required_tool_calls is False
+    completed = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": true}'},
+    ])
+    assert evaluate_hard_assertions(completed, spec, timed_out=False).results.required_tool_calls is True
+
+
 def test_required_tool_calls_first_attempt_only():
     spec = HardAssertions(
         required_tool_calls=[

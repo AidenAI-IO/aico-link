@@ -266,7 +266,10 @@ For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
 either bound may be omitted.
 
 A required call is satisfied only by a call whose result was not an error; the
-runner reads per-call error status from the recorded episode. Set
+runner reads per-call error status from the recorded episode. Coordinates are
+compared as the device received them: when the agent model uses pixel
+coordinates, the runner substitutes the normalized arguments the episode
+recorded, so 0-1000 bounds apply to every model. Set
 `"first_attempt": true` on a `required_tool_calls` entry when only the next call
 to that tool counts, so a later retry cannot satisfy a missed first attempt.
 
