@@ -1039,7 +1039,7 @@ def test_seed_memory_relative_expiry_is_fresh_for_each_attempt_without_mutating_
     assert memory["expires_in_sec"] == 86400
 
 
-@pytest.mark.parametrize("value", [0, -1, True, "86400", float("inf"), float("nan"), 1e300])
+@pytest.mark.parametrize("value", [0, -1, True, "86400", 1.5])
 def test_seed_memory_rejects_invalid_relative_expiry(value):
     with pytest.raises(ResetError, match="expires_in_sec"):
         per_task_setup(RecordingSetupClient(), {"type": "seed_memory", "memories": [

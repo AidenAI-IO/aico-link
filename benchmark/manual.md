@@ -262,6 +262,13 @@ may include harmless surrounding context, use `{"$contains": "substring"}` as
 the expected value. The same matcher works in mock responses and
 `hard_assertions.required_tool_calls`; for example, `{"text": {"$contains":
 "+1 202-555-0147"}}` accepts both the bare number and `Biden: +1 202-555-0147`.
+For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
+either bound may be omitted.
+
+A task may leave `rubric` empty when `hard_assertions.required_tool_calls`
+fully decides it. Such a task is scored without the judge. The perception suite
+uses this to check each tap's normalized coordinates against the target's
+bounds.
 
 `enter_text` has its own internal decision chain in the real Go tool:
 

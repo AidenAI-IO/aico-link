@@ -13,39 +13,43 @@ import (
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
-// benchmarkMockTools replaces execution only. Platform and Phone Bridge
-// availability filtering and native schemas still determine the model's tools.
+// benchmarkMockTools replaces device execution only. Descriptions, schemas,
+// availability filtering, and post-action screenshot verification stay native;
+// the verification screenshots come from the fixture's screen provider.
 // Real device suites never enable this mode.
 func benchmarkMockTools(cfg Config, tools []langtools.Tool) []langtools.Tool {
-	if !cfg.Benchmark.MockTools || cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled || cfg.EnvironmentBridge.Endpoint == "" {
+	if !cfg.Benchmark.MockTools {
 		return tools
 	}
+	endpoint := strings.TrimRight(cfg.EnvironmentBridge.Endpoint, "/")
 	result := make([]langtools.Tool, len(tools))
 	for i, tool := range tools {
 		result[i] = tool
 		switch tool.Name() {
 		case "touch_gesture", "keyboard_tap", "mouse_move", "mouse_scroll", "quick_action", "enter_text", "open_app", "open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification":
-			// The scripted call bypasses this decorator, so do not advertise its
-			// automatic screenshot and stability checks to the model.
 			if action, ok := tool.(*postActionScreenshotTool); ok {
-				tool = action.inner
+				decorated := *action
+				decorated.inner = &benchmarkMockTool{Tool: action.inner, endpoint: endpoint, taskID: cfg.EnvironmentBridge.BenchmarkTaskID}
+				result[i] = &decorated
+				continue
 			}
-			result[i] = &benchmarkMockTool{Tool: tool, endpoint: strings.TrimRight(cfg.EnvironmentBridge.Endpoint, "/"), taskID: cfg.EnvironmentBridge.BenchmarkTaskID}
+			result[i] = &benchmarkMockTool{Tool: tool, endpoint: endpoint, taskID: cfg.EnvironmentBridge.BenchmarkTaskID}
 		}
 	}
 	return result
+}
+
+// Local fixtures must not inherit a host proxy or redirect outside their URL.
+var benchmarkMockClient = &http.Client{
+	Timeout:       30 * time.Second,
+	Transport:     &http.Transport{Proxy: nil},
+	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 }
 
 type benchmarkMockTool struct {
 	langtools.Tool
 	endpoint string
 	taskID   string
-}
-
-const benchmarkMockExecutionDescription = "In this scripted benchmark, execution returns only the configured fixture result. Native device execution, internal recovery, automatic post-action screenshots, and screen-stability checks described above do not run. Call screenshot explicitly if another image is needed."
-
-func (t *benchmarkMockTool) Description() string {
-	return t.Tool.Description() + "\n\n" + benchmarkMockExecutionDescription
 }
 
 func (t *benchmarkMockTool) ArgsSchema() map[string]any {
@@ -68,14 +72,7 @@ func (t *benchmarkMockTool) Call(ctx context.Context, input string) (string, err
 	if t.taskID != "" {
 		req.Header.Set("benchmark-task-id", t.taskID)
 	}
-	// Local fixtures must not inherit a host proxy or redirect outside their URL.
-	client := &http.Client{
-		Timeout:       30 * time.Second,
-		Transport:     &http.Transport{Proxy: nil},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
-	defer client.CloseIdleConnections()
-	resp, err := client.Do(req)
+	resp, err := benchmarkMockClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("benchmark mock tool %s: %w", t.Name(), err)
 	}

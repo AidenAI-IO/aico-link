@@ -129,23 +129,15 @@ The Aiden App cases are consolidated into two suites:
   read/write, and notification cases for iOS Dynamic Island restoration, iOS PiP,
   and Android FGS.
 
-Scripted suites explicitly enable `--benchmark-mock-tools` on their isolated
-workers. This mode requires a benchmark token and an environment bridge.
-The Agent retains its native tool schemas and runtime availability filtering;
+Scripted suites run their isolated workers with `--benchmark-mock-tools`, which
+requires a benchmark token and an environment bridge. Tool descriptions, schemas,
+availability filtering, and post-action screenshot verification are unchanged;
 only device-tool execution is sent to the fixture's `/api/tools/<name>` endpoint.
-Mock tool descriptions explicitly disclose that native execution and automatic
-screenshots do not run. Screenshots remain available through the screenshot tool.
-Enabled FGS fixtures provide a fresh heartbeat on each status read, modeling an
-actively polling background service. Explicit `fgs_bridge_updated_at` values
-are preserved so fixtures can also test stale or missing heartbeat rejection.
-The mock also serves the native `/api/phone-bridge/status` object so PiP, FGS,
-and Dynamic Island capabilities reflect the active fixture. Real-device and
-MobileGym suites use normal provider and command transports. Mock policy runs
-therefore do not validate internal app-restoration, paste, or command transports.
-
-Single-frame perception tasks ask for one target click and a brief answer. Their
-scripted click does not generate a synthetic UI transition or a post-action
-screenshot. Coordinate rubrics and required final responses still apply.
+The mock serves the native `/api/phone-bridge/status` object, so PiP, FGS, and
+Dynamic Island capabilities reflect the active fixture. An enabled FGS fixture
+reports a fresh heartbeat unless it sets `fgs_bridge_updated_at` explicitly.
+Mock policy runs do not validate internal app-restoration, paste, or command
+transports.
 
 These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
 so they do not cover live BLE Wake capability discovery or delivery. Platform
@@ -179,7 +171,7 @@ suites test their modeled policy and tool selection, not OS integration.
 
 ### Time-independent memory fixtures
 
-A `seed_memory` item may set `expires_in_sec` to a positive finite number. The
+A `seed_memory` item may set `expires_in_sec` to a positive integer. The
 runner resolves it to an absolute `expires_at` immediately before each attempt,
 without changing the suite snapshot. Do not specify both fields. Notification
 mutation fixtures use a one-day lifetime so they do not expire as the calendar
@@ -188,10 +180,6 @@ advances. Keep absolute timestamps only for tests that intentionally model expir
 An inline recall result with `results: null` is a completed empty result, matching
 Go's nil-slice JSON encoding. Expected IDs missing from that result are an eligible
 recall failure, not a judge error. Missing or truncated evidence remains ineligible.
-
-Shell utility tasks intentionally require tool execution: a correct calculation
-without the required shell call remains a failure. Workflow success indicates
-report completeness; inspect pass rates together with eligible-task coverage.
 
 ## Reports
 

@@ -172,16 +172,32 @@ def test_notification_memory_suite_uses_benchmark_seed_setup():
     ]
 
 
-def test_perception_v1_settings_rubric_uses_0_1000_normalized_coordinates():
+def test_perception_v1_scores_tap_coordinates_deterministically():
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "perception" / "perception_v1.json"
     suite = load_suite(suite_path)
-    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
-    check = next(item.check for item in task.rubric if item.id == "click_targets_settings")
+    for task in suite.tasks:
+        # Coordinates are checked by the runner, never by the judge.
+        assert task.rubric == []
+        assert task.hard_assertions.response_required is False
+        assert [call.tool for call in task.hard_assertions.required_tool_calls] == ["touch_gesture"]
 
-    assert "(0-1000 normalized space" in check
-    assert "normalized x in [746, 930]" in check
-    assert "y in [441, 560]" in check
-    assert "[0.75, 0.98]" not in check
+    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
+    point = task.hard_assertions.required_tool_calls[0].input_contains["point"]
+    assert point == {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}
+
+    def outcome(tool_input):
+        trace = Trace(tool_calls=[ToolCall(step=1, tool="touch_gesture", input=tool_input)],
+                      final_response="", total_tool_calls=1, total_duration_ms=0)
+        return evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+    assert outcome({"type": "tap", "point": {"x": 845, "y": 477}})
+    # Outside the band, 0-1 style values, and an untyped gesture all fail.
+    assert not outcome({"type": "tap", "point": {"x": 500, "y": 500}})
+    assert not outcome({"type": "tap", "point": {"x": 0.85, "y": 0.48}})
+    assert not outcome({"point": {"x": 845, "y": 477}})
 
 
 def test_perception_v1_uses_fixture_backed_mock_environment_for_every_task():
@@ -208,7 +224,7 @@ def test_perception_v1_uses_fixture_backed_mock_environment_for_every_task():
         assert responses[0].is_error is False
 
 
-def test_perception_v1_describes_single_frame_contract_without_coordinate_hints():
+def test_perception_v1_describes_single_frame_environment_without_coaching():
     suite_path = (
         Path(__file__).resolve().parents[1]
         / "suites"
@@ -218,15 +234,18 @@ def test_perception_v1_describes_single_frame_contract_without_coordinate_hints(
     suite = load_suite(suite_path)
 
     prompt_prefix = suite.prompt_prefix.strip().lower()
-    assert "静态" in prompt_prefix or "static" in prompt_prefix
-    assert "找到" in prompt_prefix or "locate" in prompt_prefix
-    assert "点击" in prompt_prefix or "click" in prompt_prefix
+    assert "static" in prompt_prefix
+    assert "locate" in prompt_prefix
+    assert "click" in prompt_prefix
     for leaked_instruction in (
         "screenshot",
         "touch_gesture",
         "width",
         "height",
         "0-1000",
+        "normalized",
+        "coordinate",
+        "retry",
         "verify",
     ):
         assert leaked_instruction not in prompt_prefix

@@ -49,7 +49,7 @@
       "prompt": "The episode says Done, but there is no final screenshot or result. Should this be treated as a verified reusable lesson? Answer only (a) trusted or (b) untrusted.",
       "expected_answer": "(b)",
       "answer_format": "option_letter",
-      "rubric": [{"id": "rejects_unproven_success", "check": "The answer selects (b) untrusted. The prompt requests only an option, so that selection is sufficient; no explanation or tool call is required."}],
+      "rubric": [{"id": "rejects_unproven_success", "check": "The answer rejects the unsupported success claim."}],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
@@ -212,7 +212,7 @@
       "category": "memory",
       "description_for_judge": "Repeated observations of the same verified workaround should produce a bounded reusable memory set rather than duplicate memories.",
       "prompt": "Briefly confirm that repeated copies of the same verified QA Notes workaround should be compressed into one reusable procedure.",
-      "rubric": [{"id": "compresses_duplicate_lesson", "check": "The response confirms that repeated copies should become one reusable procedure. Setup already checks consolidation; do not require the answer to execute compression or show stored memories."}],
+      "rubric": [{"id": "compresses_duplicate_lesson", "check": "The response describes one consolidated reusable lesson rather than duplicate memories."}],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",

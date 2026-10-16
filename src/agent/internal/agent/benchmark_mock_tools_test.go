@@ -3,11 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	langtools "github.com/tmc/langchaingo/tools"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
+
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 type mockPolicyTestTool struct{ name string }
@@ -21,15 +22,11 @@ func (t mockPolicyTestTool) Call(context.Context, string) (string, error) {
 	panic("native execution must not run")
 }
 
-func TestBenchmarkMockToolsRequireExplicitAuthenticatedMode(t *testing.T) {
+func TestBenchmarkMockToolsRequireExplicitMode(t *testing.T) {
 	tools := []langtools.Tool{mockPolicyTestTool{"enter_text"}}
-	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://fixture"}, Benchmark: BenchmarkConfig{Token: "token", MockTools: true}}
-	for _, disable := range []func(*Config){func(c *Config) { c.Benchmark.MockTools = false }, func(c *Config) { c.Benchmark.Token = "" }, func(c *Config) { c.EnvironmentBridge.Enabled = false }, func(c *Config) { c.EnvironmentBridge.Endpoint = "" }} {
-		c := cfg
-		disable(&c)
-		if _, wrapped := benchmarkMockTools(c, tools)[0].(*benchmarkMockTool); wrapped {
-			t.Fatal("mock enabled without all prerequisites")
-		}
+	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://fixture"}, Benchmark: BenchmarkConfig{Token: "token"}}
+	if _, wrapped := benchmarkMockTools(cfg, tools)[0].(*benchmarkMockTool); wrapped {
+		t.Fatal("mock enabled without explicit mode")
 	}
 }
 
@@ -53,7 +50,7 @@ func TestBenchmarkMockToolsPreserveSchemasAndRejectFixtureFailures(t *testing.T)
 	native := mockPolicyTestTool{"touch_gesture"}
 	tools := benchmarkMockTools(cfg, []langtools.Tool{native, mockPolicyTestTool{"shell"}})
 	wrapped := tools[0].(*benchmarkMockTool)
-	if !reflect.DeepEqual(wrapped.ArgsSchema(), native.ArgsSchema()) || wrapped.Description() != native.Description()+"\n\n"+benchmarkMockExecutionDescription {
+	if !reflect.DeepEqual(wrapped.ArgsSchema(), native.ArgsSchema()) || wrapped.Description() != native.Description() {
 		t.Fatal("model schema changed")
 	}
 	if _, ok := tools[1].(*benchmarkMockTool); ok {
@@ -69,20 +66,26 @@ func TestBenchmarkMockToolsPreserveSchemasAndRejectFixtureFailures(t *testing.T)
 	}
 }
 
-func TestBenchmarkMockToolsDoNotPromiseNativePostActionScreenshots(t *testing.T) {
+func TestBenchmarkMockToolsKeepNativePostActionVerification(t *testing.T) {
 	base := mockPolicyTestTool{"touch_gesture"}
 	native := newPostActionScreenshotTool(base, nil, 0)
 	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://fixture"}, Benchmark: BenchmarkConfig{Token: "token", MockTools: true}}
-	wrapped := benchmarkMockTools(cfg, []langtools.Tool{native})[0]
-	if wrapped.Description() != base.Description()+"\n\n"+benchmarkMockExecutionDescription {
-		t.Fatalf("scripted action still promises native screenshot behavior: %s", wrapped.Description())
+	wrapped, ok := benchmarkMockTools(cfg, []langtools.Tool{native})[0].(*postActionScreenshotTool)
+	if !ok || wrapped == native {
+		t.Fatal("scripted action lost its post-action verification decorator")
 	}
-	if !reflect.DeepEqual(wrapped.(structuredInputTool).ArgsSchema(), base.ArgsSchema()) {
-		t.Fatal("base action schema changed")
+	if _, ok := wrapped.inner.(*benchmarkMockTool); !ok {
+		t.Fatal("native device execution still selected")
+	}
+	if wrapped.Description() != native.Description() || !reflect.DeepEqual(wrapped.ArgsSchema(), base.ArgsSchema()) {
+		t.Fatal("model-facing contract changed")
+	}
+	if native.(*postActionScreenshotTool).inner != langtools.Tool(base) {
+		t.Fatal("shared native tool was mutated")
 	}
 	cfg.Benchmark.MockTools = false
 	if got := benchmarkMockTools(cfg, []langtools.Tool{native})[0]; got != native {
-		t.Fatal("real-device tool lost its post-action screenshot wrapper")
+		t.Fatal("real-device tool changed")
 	}
 }
 

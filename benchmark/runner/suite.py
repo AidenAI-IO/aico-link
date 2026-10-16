@@ -178,8 +178,6 @@ def load_suite(path: Path) -> Suite:
         if cat not in VALID_CATEGORIES:
             raise SuiteValidationError(f"task {tid}: invalid category {cat!r}")
         rubric_raw = raw.get("rubric") or []
-        if not rubric_raw:
-            raise SuiteValidationError(f"task {tid}: empty rubric")
         rubric: list[RubricItem] = []
         for r in rubric_raw:
             if not isinstance(r, dict):
@@ -189,6 +187,9 @@ def load_suite(path: Path) -> Suite:
                 raise SuiteValidationError(f"task {tid}: rubric items require id and check")
             rubric.append(RubricItem(id=r["id"], check=check))
         ha = raw.get("hard_assertions") or {}
+        # A task may omit the judge only when deterministic call checks decide it.
+        if not rubric_raw and not ha.get("required_tool_calls"):
+            raise SuiteValidationError(f"task {tid}: empty rubric requires hard_assertions.required_tool_calls")
         # Validate hard_assertions types
         rr = ha.get("response_required", True)
         if isinstance(rr, str):

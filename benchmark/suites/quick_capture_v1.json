@@ -261,7 +261,7 @@
       ],
       "rubric": [
         {"id": "recalls_all_three_snapshots", "check": "The recall evidence contains the morning, noon, and evening snapshots."},
-        {"id": "orders_and_computes", "check": "The final answer gives 08:00 310 km, 12:30 284 km, and 19:10 259 km in chronological order, and computes a total decrease of 51 km. Accept equivalent 12-hour and 24-hour time notation (for example 7:10 PM equals 19:10); do not require a particular display format."}
+        {"id": "orders_and_computes", "check": "The final answer gives 08:00 310 km, 12:30 284 km, and 19:10 259 km in chronological order, and computes a total decrease of 51 km."}
       ],
       "hard_assertions": {
         "min_tool_calls": 1,

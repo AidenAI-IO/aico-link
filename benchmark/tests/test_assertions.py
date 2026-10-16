@@ -700,3 +700,64 @@ def test_null_device_recall_is_complete_negative_evidence():
     assert result.passed is False
     assert result.evidence_source == "inline"
     assert result.recalled_memory_ids == []
+
+
+def test_value_matches_numeric_range():
+    from runner.matching import value_matches
+    assert value_matches(50, {"$gte": 10, "$lte": 100})
+    assert value_matches(10, {"$gte": 10, "$lte": 100})
+    assert value_matches(100, {"$gte": 10, "$lte": 100})
+    assert not value_matches(9, {"$gte": 10, "$lte": 100})
+    assert not value_matches(101, {"$gte": 10, "$lte": 100})
+    assert value_matches(50, {"$gte": 10})
+    assert value_matches(50, {"$lte": 100})
+    assert not value_matches("50", {"$gte": 10})
+    assert not value_matches(True, {"$gte": 0})
+
+
+def test_dict_contains_with_nested_range():
+    from runner.matching import dict_contains
+    assert dict_contains(
+        {"point": {"x": 840, "y": 500}},
+        {"point": {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}}
+    )
+    assert not dict_contains(
+        {"point": {"x": 700, "y": 500}},
+        {"point": {"x": {"$gte": 746, "$lte": 930}}}
+    )
+
+
+def test_required_tool_calls_with_coordinate_range():
+    trace = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 840, "y": 500}})
+        ],
+        final_response="Tapped Settings",
+        total_tool_calls=1,
+        total_duration_ms=100,
+    )
+    spec = HardAssertions(
+        required_tool_calls=[
+            RequiredToolCallSpec(
+                tool="touch_gesture",
+                input_contains={
+                    "type": "tap",
+                    "point": {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}
+                }
+            )
+        ]
+    )
+    out = evaluate_hard_assertions(trace, spec, timed_out=False)
+    assert out.all_passed is True
+
+    trace_out_of_range = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 500, "y": 500}})
+        ],
+        final_response="Tapped wrong target",
+        total_tool_calls=1,
+        total_duration_ms=100,
+    )
+    out = evaluate_hard_assertions(trace_out_of_range, spec, timed_out=False)
+    assert out.all_passed is False
+    assert out.results.required_tool_calls is False

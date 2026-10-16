@@ -1,6 +1,5 @@
 from __future__ import annotations
 import json
-import math
 from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.request
@@ -289,13 +288,9 @@ def _per_task_setup_seed_memory(client: AgentClient, setup: dict[str, Any]) -> N
         memory = dict(memory)
         if "expires_in_sec" in memory:
             seconds = memory.pop("expires_in_sec")
-            if (isinstance(seconds, bool) or not isinstance(seconds, (int, float))
-                    or not math.isfinite(seconds) or seconds <= 0 or "expires_at" in memory):
-                raise ResetError("seed_memory expires_in_sec must be a positive finite number and cannot accompany expires_at")
-            try:
-                memory["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
-            except OverflowError as exc:
-                raise ResetError("seed_memory expires_in_sec is out of range") from exc
+            if type(seconds) is not int or seconds <= 0 or "expires_at" in memory:
+                raise ResetError("seed_memory expires_in_sec must be a positive integer and cannot accompany expires_at")
+            memory["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
         try:
             client.seed_memory(memory, timeout=timeout)
         except AgentTimeoutError as e:

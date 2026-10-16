@@ -367,7 +367,8 @@ def evaluate_task_history(
             _set_outcome_metrics(base, success=False, eligible=True, failure_class="agent", stage="unknown")
             base.finished_at = now_iso()
             return base
-    if judge_cfg is None:
+    # Tasks without a rubric are fully decided by their deterministic assertions.
+    if judge_cfg is None or not task.rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)

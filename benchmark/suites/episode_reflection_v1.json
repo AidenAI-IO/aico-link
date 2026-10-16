@@ -73,7 +73,7 @@
       "description_for_judge": "The episode has a structured failure and direct error evidence. The consolidation artifact must report not_achieved and retain at least one actionable failure lesson.",
       "prompt": "Briefly confirm that a failed device episode can be retained as an actionable guard rather than a successful procedure.",
       "rubric": [
-        {"id": "acknowledges_failure_guard", "check": "The response confirms that failure evidence can yield a guard rather than a successful procedure. A brief conceptual confirmation is sufficient; setup already checks the stored assessment and lesson, so do not require a specific episode detail or additional tool call."}
+        {"id": "acknowledges_failure_guard", "check": "The response distinguishes an actionable failure lesson from a successful procedure."}
       ],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
       "setup": {
