@@ -210,6 +210,23 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return runs
 
 
+def _changed_fields(latest: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
+    """Return the comparison fields that differ between two runs of a dataset."""
+    if previous is None:
+        return []
+    return [field for field in _CONFIG_ORDER
+            if str(latest.get(field) or "") != str(previous.get(field) or "")]
+
+
+# COMPARISON_FIELDS in reading order: settings that most often explain a score change first.
+_CONFIG_ORDER = (
+    "agent_model", "judge_model", "judge_prompt_version", "judge_provider", "suite_sha256",
+    "workload_sha256", "metrics_schema_version", "metrics_k", "target_platform",
+    "active_skills", "git_branch",
+)
+assert sorted(_CONFIG_ORDER) == sorted(COMPARISON_FIELDS)
+
+
 def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Build each dataset's history, preserving all metrics and run identities.
@@ -235,10 +252,11 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for name, points in series.items():
         points.sort(key=lambda point: point["timestamp"] or "")
         latest = points[-1]
-        previous = next((p for p in reversed(points[:-1])
-                         if latest["comparison_key"] is not None
-                         and p["comparison_key"] == latest["comparison_key"]), None)
-        # Metric deltas and change direction require matching configurations.
+        # Compare with the immediately previous run even when its configuration
+        # differs; the changed fields explain the delta. Regression alerts still
+        # require a matching configuration.
+        previous = points[-2] if len(points) > 1 else None
+        changed_fields = _changed_fields(latest, previous)
         metric_deltas = {metric: _delta(latest.get(metric), previous.get(metric) if previous else None)
                          for metric in ("pass_at_1", "pass_at_k", "pass_pow_k")}
         changes = [value for value in metric_deltas.values() if value is not None]
@@ -247,10 +265,10 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         direction = ("mixed" if increases and decreases else "improved" if increases
                      else "declined" if decreases else "unchanged" if changes else "unavailable")
         comparison_status = (
-            "No baseline" if len(points) < 2 else
-            "Configuration unverified" if latest["comparison_key"] is None else
-            "Configuration changed" if previous is None else
+            "No baseline" if previous is None else
             "Missing scores" if not changes else
+            "Configuration unverified" if latest["comparison_key"] is None or previous["comparison_key"] is None else
+            "Configuration changed" if changed_fields else
             "Comparable"
         )
         summaries.append({
@@ -260,6 +278,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "metric_deltas": metric_deltas,
             "change_direction": direction,
             "comparison_status": comparison_status,
+            "changed_fields": changed_fields,
             "delta": _delta(latest["pass_at_1"], previous["pass_at_1"] if previous else None),
             "points": points,
         })

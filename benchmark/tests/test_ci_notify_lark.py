@@ -69,6 +69,17 @@ def test_changes_from_the_previous_week_are_colored_by_direction():
     assert "flat: 50.0% <font color='grey'>±0.0pp</font>" in text
     # Without a previous-week rate, no change is shown.
     assert "new: 50.0% (5/10, 1 run)" in text
+    assert "Config changed" not in text
+
+
+def test_changed_settings_are_listed_under_the_dataset():
+    data = _data()
+    suite = _suite("perception", 0.75, 9, 12, change=-0.08)
+    suite["config_changes"] = [{"field": "agent model", "previous": "google/a", "current": "anthropic/b"}]
+    data["weekly"]["suites"] = [suite]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "perception: 75.0% <font color='red'>-8.0pp</font> (9/12, 1 run)\n" \
+           "  <font color='grey'>Config changed · agent model: google/a → anthropic/b</font>" in text
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():

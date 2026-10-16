@@ -75,6 +75,21 @@ def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days()
     assert "gone" not in suites
     assert report["change"] == pytest.approx(12 / 24 - 8 / 16)
     assert "+25.0 pp" in render_weekly(report, [])
+    assert suites["memory"]["config_changes"] == []
+
+
+def test_changes_name_settings_that_differ_between_the_windows():
+    report = summarize_weekly([
+        _record(passed=2, agent_model="anthropic/new", judge_prompt_version="v3"),
+        _record("2026-10-01T00:00:00+00:00", passed=6, judge_prompt_version="v2"),
+    ], end=END)
+    suite = report["suites"][0]
+    assert suite["change"] == pytest.approx(-0.5)
+    assert suite["config_changes"] == [
+        {"field": "agent model", "previous": "model", "current": "anthropic/new"},
+        {"field": "judge prompt", "previous": "v2", "current": "v3"},
+    ]
+    assert "agent model: model → anthropic/new; judge prompt: v2 → v3" in render_weekly(report, [])
 
 
 def test_empty_window_is_reported_explicitly():

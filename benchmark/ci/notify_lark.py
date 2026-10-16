@@ -13,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from ci.weekly_report import describe_config_changes
+
 
 def _sign(secret: str, timestamp: str) -> str:
     """Lark custom bot signature: HMAC-SHA256 keyed by 'timestamp\\nsecret'."""
@@ -60,6 +62,8 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}{_format_change(s['change'])}"
                  + (f" ({s['passed']:.0f}/{s['eligible_tasks']:.0f}, {s['suite_runs']} run{'s' if s['suite_runs'] != 1 else ''})"
                     if s["eligible_tasks"] else "")
+                 + (f"\n  <font color='grey'>Config changed · {describe_config_changes(s['config_changes'])}</font>"
+                    if s.get("config_changes") else "")
                  for s in suites]
         elements += [{"tag": "hr"},
                      {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]

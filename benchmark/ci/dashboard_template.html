@@ -120,6 +120,10 @@
   #suites th:first-child { min-width: 210px; }
   #suites td:first-child { overflow-wrap: anywhere; }
   #suites tbody tr:hover { background: var(--bg); }
+  #history td:first-child, #history th:first-child, #run-details td:first-child, #run-details th:first-child { padding-left: 12px; }
+  #history td, #history th, #run-details td, #run-details th { padding-right: 16px; white-space: nowrap; }
+  .config-change { display: block; margin-top: 4px; font-size: 11px; color: #b7791f; overflow-wrap: anywhere; }
+  .config-diff td.changed { color: #b7791f; font-weight: 600; }
   .reading-notes { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
   .reading-notes p { margin: 8px 0; }
   .metric-nav { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0 20px; font-size: 13px; }
@@ -291,6 +295,21 @@ el("metric-charts").innerHTML = DATA.metricCharts.map(spec => `<div class="panel
 </div>`).join("");
 const deltaClass = d => d == null || d === 0 ? "" : d > 0 ? "good" : "bad";
 const deltaLabel = d => d == null ? "No comparison" : d === 0 ? "Unchanged" : `${d > 0 ? "↑" : "↓"} ${signed(d)}`;
+const configFields = [
+  ["agent_model", "Agent model"], ["judge_model", "Judge model"], ["judge_prompt_version", "Judge prompt"],
+  ["judge_provider", "Judge provider"], ["suite_sha256", "Suite"], ["workload_sha256", "Workload"],
+  ["metrics_schema_version", "Metrics schema"], ["metrics_k", "k"], ["target_platform", "Platform"],
+  ["active_skills", "Skills"], ["git_branch", "Branch"],
+];
+const configLabel = field => (configFields.find(([key]) => key === field) || [field, field])[1];
+const configValue = (run, field) => {
+  const value = run?.[field];
+  const text = Array.isArray(value) ? value.join(", ") : value == null || value === "" ? "—" : String(value);
+  // Hashes are only useful for telling versions apart.
+  return field.endsWith("_sha256") && text !== "—" ? text.slice(0, 10) : text;
+};
+const configChangeText = s => (s.changed_fields || []).map(field =>
+  `${configLabel(field)}: ${configValue(s.previous, field)} → ${configValue(s.latest, field)}`).join("; ");
 const overviewRows = datasets.map((s, index) => ({ ...s, index }))
   .sort((a, b) => Number(["declined", "mixed"].includes(b.change_direction)) - Number(["declined", "mixed"].includes(a.change_direction)) ||
     Math.max(...Object.values(b.metric_deltas).map(v => Math.abs(v || 0))) - Math.max(...Object.values(a.metric_deltas).map(v => Math.abs(v || 0))));
@@ -322,8 +341,8 @@ function clearDatasetFilters() {
 const unverified = datasets.filter(s => s.comparison_status === "Configuration unverified").length;
 const changedConfig = datasets.filter(s => s.comparison_status === "Configuration changed").length;
 el("comparison-note").textContent = unverified || changedConfig
-  ? `Observed score changes: ${unverified} datasets with unverified configurations; ${changedConfig} with changed configurations. Check Run details before treating a change as improvement or regression.`
-  : "Changes compare the latest two runs. Missing scores or a previous run leave the change unavailable.";
+  ? `Changes compare each dataset with its previous run: ${changedConfig} with changed configurations; ${unverified} with unverified configurations. Changed datasets list what differs; open Run details to see both runs. Regression alerts only use matching configurations.`
+  : "Changes compare each dataset with its previous run. Missing scores or a previous run leave the change unavailable.";
 el("dataset-select").innerHTML = datasets.length
   ? datasets.map((s, i) => `<option value="${i}">${esc(s.suite)}</option>`).join("")
   : '<option value="">No datasets available</option>';
@@ -335,7 +354,7 @@ el("suites").innerHTML = `
   (datasets.length ? overviewRows.map(s => {
     const details = s.latest.failure_details || [];
     const detailLabel = details.length ? `${details.length} failed / excluded` : s.latest.failure_details_status === "available" ? "No failures" : "Details unavailable";
-    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button><div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
+    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button>${s.comparison_status === "Configuration changed" ? `<span class="config-change">Config changed · ${esc(configChangeText(s))}</span>` : ""}<div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
       ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
       <td class="n">${overviewMeasure(s, "tool_calls", "mean", 1, "calls")}</td>
       <td class="n">${overviewMeasure(s, "llm_calls", "mean", 1, "calls")}</td>
@@ -364,16 +383,24 @@ function selectDataset(index) {
     <span class="delta ${deltaClass(selected.metric_deltas[metric.key])}">${deltaLabel(selected.metric_deltas[metric.key])}</span>
   </div>`).join("") + `<div><div class="num" style="font-size:15px;padding-top:10px">${commitLink(latest.commit_sha)}</div>
     <div class="cap">Latest commit · k=${esc(latest.metrics_k)}</div></div>`;
-  el("comparison-details").textContent = `${selected.comparison_status}. Comparison requires complete, matching workload and configuration metadata. Missing metadata or reported local Git changes make the configuration unverified; this is not a task failure.`;
-  el("run-details").innerHTML = `<thead><tr><th>Run</th><th>When</th><th>Commit</th><th>Branch</th><th>Model</th><th>Platform</th><th class="n">k</th></tr></thead><tbody>` +
-    [["Latest", latest], ["Baseline", selected.previous]].filter(([label, run]) => run).map(([label, run]) =>
-      `<tr><td>${label}</td><td>${when(run.timestamp)}</td><td>${commitLink(run.commit_sha)}</td><td>${esc(run.git_branch)}</td><td>${esc(run.agent_model)}</td><td>${esc(run.target_platform)}</td><td class="n">${esc(run.metrics_k)}</td></tr>`).join("") + "</tbody>";
+  el("comparison-details").textContent = selected.comparison_status === "Configuration changed"
+    ? `Configuration changed: ${configChangeText(selected)}. The change compares runs with different settings; highlighted values differ.`
+    : `${selected.comparison_status}. Missing metadata or reported local Git changes make the configuration unverified; this is not a task failure.`;
+  const detailRuns = [["Latest", latest], ["Previous", selected.previous]].filter(([label, run]) => run);
+  const changed = new Set(selected.changed_fields || []);
+  el("run-details").className = "config-diff";
+  el("run-details").innerHTML = `<thead><tr><th>Setting</th>${detailRuns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>` +
+    `<tr><td>When</td>${detailRuns.map(([, run]) => `<td>${when(run.timestamp)}</td>`).join("")}</tr>` +
+    `<tr><td>Commit</td>${detailRuns.map(([, run]) => `<td>${commitLink(run.commit_sha)}</td>`).join("")}</tr>` +
+    configFields.map(([field, label]) => `<tr><td>${esc(label)}</td>${detailRuns.map(([, run]) =>
+      `<td class="${changed.has(field) ? "changed" : ""}">${esc(configValue(run, field))}</td>`).join("")}</tr>`).join("") + "</tbody>";
   el("history-title").textContent = selected.suite + " · run history";
   el("history").innerHTML = `
-    <thead><tr><th>When</th><th>Commit</th><th class="n">k</th>
+    <thead><tr><th>When</th><th>Commit</th><th>Agent model</th><th>Judge</th><th class="n">k</th>
     <th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th><th>Run</th></tr></thead><tbody>` +
     points.slice().reverse().map(r => `<tr>
-      <td>${when(r.timestamp)}</td><td>${commitLink(r.commit_sha)}</td><td class="n">${esc(r.metrics_k)}</td>
+      <td>${when(r.timestamp)}</td><td>${commitLink(r.commit_sha)}</td><td>${esc(configValue(r, "agent_model"))}</td>
+      <td>${esc(configValue(r, "judge_model"))} · ${esc(configValue(r, "judge_prompt_version"))}</td><td class="n">${esc(r.metrics_k)}</td>
       ${metrics.map(m => `<td class="n">${pct(r[m.key])}</td>`).join("")}
       <td>${DATA.repo && r.workflow_run_id
         ? `<a href="https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/actions/runs/${encodeURIComponent(r.workflow_run_id)}" target="_blank" rel="noopener">#${esc(r.workflow_run_number || r.workflow_run_id)} / attempt ${esc(r.workflow_run_attempt)}</a>`

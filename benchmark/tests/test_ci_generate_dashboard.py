@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from ci.fetch_langfuse_history import COMPARISON_FIELDS
 from ci.generate_dashboard import (
     _find_regressions,
     _group_into_runs,
@@ -26,6 +27,7 @@ def _record(**overrides):
         "tasks": 4,
         "workflow_run_attempt": 1,
         "suite_sha256": "suite-v1",
+        "judge_prompt_version": "v2",
         "workload_sha256": "tasks-v1",
         "metrics_schema_version": "p0-v1",
         "metrics_k": "1",
@@ -333,9 +335,9 @@ def test_data_availability_uses_display_window_but_retains_api_errors(tmp_path):
     ({"pass_at_1": 0.25, "passed": 1}, "declined", "Comparable"),
     ({"pass_at_1": 0.75, "passed": 3, "pass_pow_k": 0}, "mixed", "Comparable"),
     ({}, "unchanged", "Comparable"),
-    # Unmatched configurations never produce a direction, even when rates move.
-    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "unavailable", "Configuration unverified"),
-    ({"pass_pow_k": 0, "agent_model": "different"}, "unavailable", "Configuration changed"),
+    # A configuration change still shows the score change and names what differs.
+    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "improved", "Configuration unverified"),
+    ({"pass_pow_k": 0, "agent_model": "different"}, "declined", "Configuration changed"),
 ])
 def test_latest_changes_include_all_metrics_and_label_comparability(overrides, direction, status):
     summary = _summarize_suites(_group_into_runs([
@@ -344,24 +346,30 @@ def test_latest_changes_include_all_metrics_and_label_comparability(overrides, d
     ]))[0]
     assert summary["change_direction"] == direction
     assert summary["comparison_status"] == status
-    if status == "Comparable":
-        assert summary["previous"]["workflow_run_id"] == 1
-    else:
-        assert summary["previous"] is None
-        assert summary["delta"] is None
-        assert all(value is None for value in summary["metric_deltas"].values())
+    assert summary["previous"]["workflow_run_id"] == 1
+    assert summary["changed_fields"] == [field for field in overrides if field in COMPARISON_FIELDS]
 
 
-def test_latest_changes_skip_runs_with_a_different_configuration():
+def test_latest_changes_compare_the_previous_run_and_name_changed_settings():
     summary = _summarize_suites(_group_into_runs([
         _k_record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00"),
         _k_record(workflow_run_id=2, timestamp="2026-10-10T00:00:00+00:00", agent_model="different",
-                  pass_at_1=0.0, passed=0),
-        _k_record(workflow_run_id=3, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.75, passed=3),
+                  judge_prompt_version="v3", pass_at_1=0.0, passed=0),
     ]))[0]
     assert summary["previous"]["workflow_run_id"] == 1
-    assert summary["comparison_status"] == "Comparable"
-    assert summary["change_direction"] == "improved"
+    assert summary["comparison_status"] == "Configuration changed"
+    assert summary["changed_fields"] == ["agent_model", "judge_prompt_version"]
+    assert summary["change_direction"] == "declined"
+    assert summary["metric_deltas"]["pass_at_1"] == -0.5
+
+
+def test_regressions_still_require_a_matching_configuration():
+    runs = _group_into_runs([
+        _record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00", pass_at_1=0.9, passed=4),
+        _record(workflow_run_id=2, timestamp="2026-10-10T00:00:00+00:00", agent_model="different",
+                pass_at_1=0.1, passed=0),
+    ])
+    assert _find_regressions(runs) == []
 
 
 def test_latest_changes_do_not_skip_over_a_missing_score():
@@ -406,7 +414,11 @@ def test_configuration_changes_are_not_regressions(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
                _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]
     assert _find_regressions(_group_into_runs(history)) == []
-    assert _summarize_suites(_group_into_runs(history))[0]["delta"] is None
+    # The score change stays visible, labelled with the setting that differs.
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["delta"] == pytest.approx(-0.9)
+    assert summary["changed_fields"] == [field]
+    assert summary["comparison_status"] == "Configuration changed"
 
 
 def test_unknown_configuration_is_not_a_regression():

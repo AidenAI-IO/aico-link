@@ -49,6 +49,36 @@ def _change(current: float | None, previous: float | None) -> float | None:
     return current - previous if current is not None and previous is not None else None
 
 
+# Settings that explain a score change, in reading order; hashes are shortened.
+CONFIG_LABELS = {
+    "agent_model": "agent model", "judge_model": "judge model",
+    "judge_prompt_version": "judge prompt", "suite_sha256": "suite",
+    "workload_sha256": "workload", "metrics_k": "k", "target_platform": "platform",
+}
+
+
+def _config_value(record: dict[str, Any], field: str) -> str:
+    value = record.get(field)
+    text = "—" if value in (None, "") else str(value)
+    return text[:10] if field.endswith("_sha256") and text != "—" else text
+
+
+def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """List settings whose latest value differs between the two windows."""
+    if not current or not previous:
+        return []
+    def latest(records: list[dict[str, Any]]) -> dict[str, Any]:
+        return max(records, key=lambda record: parse_timestamp(record["timestamp"]))
+    now, before = latest(current), latest(previous)
+    return [{"field": label, "previous": _config_value(before, field), "current": _config_value(now, field)}
+            for field, label in CONFIG_LABELS.items()
+            if _config_value(before, field) != _config_value(now, field)]
+
+
+def describe_config_changes(changes: list[dict[str, str]]) -> str:
+    return "; ".join(f"{c['field']}: {c['previous']} → {c['current']}" for c in changes)
+
+
 def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any]:
     """Summarize the last seven days in UTC and their change from the seven before.
 
@@ -64,9 +94,11 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     suites = []
     for name, group in _by_suite(current).items():
         totals = _totals(group)
-        before = _totals(previous_by_suite.get(name, []))["pass_at_1"]
+        prior = previous_by_suite.get(name, [])
+        before = _totals(prior)["pass_at_1"]
         suites.append({"suite": name, **totals, "previous_pass_at_1": before,
-                       "change": _change(totals["pass_at_1"], before)})
+                       "change": _change(totals["pass_at_1"], before),
+                       "config_changes": _config_changes(group, prior)})
     # Weakest suites first; unknown rates last.
     suites.sort(key=lambda s: (s["pass_at_1"] is None, s["pass_at_1"] or 0.0, s["suite"]))
     totals, previous_totals = _totals(current), _totals(previous)
@@ -107,16 +139,18 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
-        "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.", "",
-        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Cost (USD) |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
+        "Configuration changes list settings that differ between the two windows' latest runs.", "",
+        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
     ]
     for suite in report["suites"]:
         lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
                      f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_pp(suite['change'])} | "
+                     f"{_cell(describe_config_changes(suite.get('config_changes') or [])) or '—'} | "
                      f"{_resources(suite)[0]} |")
     if not report["suites"]:
-        lines.append("| No benchmark runs in this window | | | — | — | — | — |")
+        lines.append("| No benchmark runs in this window | | | — | — | — | — | — |")
     lines.append("")
     if warnings:
         lines.extend(["### Data availability", "", *[f"- {_cell(w)}" for w in warnings], ""])
