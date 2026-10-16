@@ -89,7 +89,7 @@ func (f *fakeStorageOps) Unmount(mountPoint string, lazy bool) error {
 	if lazy {
 		f.lazyUnmnts++
 	}
-	if f.unmountErr != nil && !lazy && !errors.Is(f.unmountErr, errStorageFlush) {
+	if f.unmountErr != nil && !lazy && !errors.Is(f.unmountErr, ErrStorageFlush) {
 		return f.unmountErr // mount point busy: the mount survives
 	}
 	f.mounted = false

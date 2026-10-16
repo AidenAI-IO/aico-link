@@ -159,7 +159,7 @@ type storageSysOps interface {
 	// Prepare runs fsck, mounts dev at mountPoint read-write, and probe-writes.
 	Prepare(dev, mountPoint string) error
 	// Unmount detaches mountPoint; lazy detach is used for forced removal.
-	// errStorageFlush means detachment succeeded after a failed flush.
+	// ErrStorageFlush means detachment succeeded after a failed flush.
 	Unmount(mountPoint string, lazy bool) error
 	// IsMounted reports whether mountPoint currently has a filesystem mounted.
 	IsMounted(mountPoint string) bool
@@ -342,7 +342,7 @@ func (m *StorageManager) Reconfigure(cfg StorageConfig) error {
 		return fmt.Errorf("cannot change the storage device or mount point while %s is in progress", operation)
 	}
 	if identityChanged && m.card.Mounted {
-		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, errStorageFlush) {
+		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, ErrStorageFlush) {
 			m.mu.Unlock()
 			return fmt.Errorf("cannot apply storage config: %w", err)
 		}
@@ -404,6 +404,7 @@ func (m *StorageManager) Status() StorageStatus {
 
 // SafeEject syncs and unmounts the card so it can be pulled. The card is not
 // remounted until it is physically removed and reinserted.
+// ErrStorageFlush reports successful detachment with a warning about unsaved data.
 func (m *StorageManager) SafeEject() error {
 	if m == nil || m.mirrorOnly {
 		return fmt.Errorf("storage hardware is owned by Config Web")
@@ -436,7 +437,7 @@ func (m *StorageManager) SafeEject() error {
 		return fmt.Errorf("no mounted card to eject")
 	}
 	err := m.unmountLocked(false, "")
-	if err != nil && !errors.Is(err, errStorageFlush) {
+	if err != nil && !errors.Is(err, ErrStorageFlush) {
 		return fmt.Errorf("cannot eject: %w (close any shell or process using %s and retry)", err, m.cfg.MountPointOrDefault())
 	}
 	m.ejected = true
@@ -494,7 +495,7 @@ func (m *StorageManager) StartFormat(fs, confirm string) error {
 		return fmt.Errorf("no card present")
 	}
 	if m.card.Mounted {
-		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, errStorageFlush) {
+		if err := m.unmountLocked(false, ""); err != nil && !errors.Is(err, ErrStorageFlush) {
 			return fmt.Errorf("cannot format: %w (close any shell or process using %s and retry)", err, m.cfg.MountPointOrDefault())
 		}
 	}
@@ -1379,14 +1380,14 @@ func (m *StorageManager) tryMountLocked() {
 // and an error is returned — marking it unmounted here would desynchronize
 // state from reality and send the poll loop into mount/EBUSY churn. Lazy
 // unmounts are used when the card is physically gone; their failures cannot
-// leave a working mount behind, so state is cleared regardless. errStorageFlush
+// leave a working mount behind, so state is cleared regardless. ErrStorageFlush
 // reports successful detachment after a failed flush; clear state and let the
 // caller decide whether that warning permits its operation.
 func (m *StorageManager) unmountLocked(lazy bool, reason string) error {
 	mountPoint := m.cfg.MountPointOrDefault()
 	var flushWarning error
 	if err := m.ops.Unmount(mountPoint, lazy); err != nil {
-		if !lazy && errors.Is(err, errStorageFlush) {
+		if !lazy && errors.Is(err, ErrStorageFlush) {
 			flushWarning = err
 			m.lastWarning = fmt.Sprintf("Card was detached, but pending writes may not have been saved: %v", err)
 			if reason == "" {
@@ -1597,10 +1598,11 @@ func (o *realStorageOps) CardIsBlank() bool {
 	return bytes.Equal(buf, make([]byte, len(buf)))
 }
 
-var (
-	errStorageIO    = errors.New("card I/O failure")
-	errStorageFlush = errors.New("card detached after flush failure")
-)
+var errStorageIO = errors.New("card I/O failure")
+
+// ErrStorageFlush means the card was detached, but pending writes may not have
+// been saved. Callers should report a completed eject with a data-loss warning.
+var ErrStorageFlush = errors.New("card detached after flush failure")
 
 // Kill checker subprocesses too: fsck starts a filesystem-specific child.
 func runStorageCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
@@ -1758,7 +1760,7 @@ func (o *realStorageOps) Unmount(mountPoint string, lazy bool) error {
 		return fmt.Errorf("umount %s: %w: %s", mountPoint, err, strings.TrimSpace(string(out)))
 	}
 	if flushErr != nil {
-		return fmt.Errorf("%w: %w", errStorageFlush, flushErr)
+		return fmt.Errorf("%w: %w", ErrStorageFlush, flushErr)
 	}
 	return nil
 }

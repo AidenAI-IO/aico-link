@@ -30,6 +30,7 @@ type fakeStorageController struct {
 	reconfigured     agent.StorageConfig
 	reconfigureCalls int
 	reconfigureError error
+	ejectError       error
 }
 
 type fakeStorageSnapshotLease struct {
@@ -49,8 +50,12 @@ func (f *fakeStorageController) Reconfigure(cfg agent.StorageConfig) error {
 	return f.reconfigureError
 }
 func (f *fakeStorageController) SafeEject() error {
+	if f.ejectError != nil && !errors.Is(f.ejectError, agent.ErrStorageFlush) {
+		return f.ejectError
+	}
 	f.status.Card.Mounted = false
-	return nil
+	f.status.EffectiveMode = agent.StorageModeEMMCOnly
+	return f.ejectError
 }
 func (f *fakeStorageController) StartFormat(fs, confirm string) error {
 	if confirm != agent.StorageFormatConfirmToken {

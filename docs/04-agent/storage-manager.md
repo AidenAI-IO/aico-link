@@ -117,10 +117,16 @@ is still attempted so a failing card can be detached or manually reformatted.
 After successful detachment with a flush error, safe eject reports that pending
 writes may not have been saved and keeps the eject latch set. Formatting and
 reconfiguration may proceed once detachment succeeds.
+The eject endpoint returns HTTP 200 after successful detachment, adding
+`warning_code: "storage_flush_failed"` when that eject encountered a flush
+failure. The page shows a localized removal/data-loss warning. Actual eject
+failures return HTTP 409.
 An unmount failure keeps the mounted state and blocks formatting.
 `last_warning` in storage status retains the most recent flush warning for the
 manager's lifetime, including across reconfiguration and remounting. The state
 mirror carries the same warning as `LAST_WARNING` for read-only consumers.
+The page also displays a localized reminder while this historical warning is
+present; it does not mark a later successful eject as having failed to flush.
 
 Manual formatting is destructive: it rewrites the whole card with a fresh MBR,
 one partition, and a new filesystem labeled `AIDEN`. Supported filesystems are

@@ -233,8 +233,12 @@ export async function storagePage(context) {
     });
     if (!confirmed) return;
     try {
-      await request('/api/storage/eject', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-      toast(msg('storage.ejected', '存储卡已弹出，可以安全取出。'));
+      const result = await request('/api/storage/eject', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+      if (result.warning_code === 'storage_flush_failed') {
+        toast(msg('storage.ejected_with_warning', '存储卡已弹出，可以取出；部分待写入数据可能未保存。'), {durationMs: 6000});
+      } else {
+        toast(msg('storage.ejected', '存储卡已弹出，可以安全取出。'));
+      }
     } catch (error) {
       toast(error && error.message ? error.message : resolve(msg('storage.eject_failed', '弹出存储卡失败。')));
     }
@@ -359,6 +363,9 @@ export async function storagePage(context) {
             el('div', {class: 'ds-button-pair__item'}, [formatButton]),
             el('div', {class: 'ds-button-pair__item'}, [ejectButton]),
           ]),
+          status.last_warning
+            ? text(msg('storage.last_flush_warning', '此前存储卡同步失败，部分待写入数据可能未保存。'), 'ds-card__note ds-card__note--danger')
+            : null,
         ],
       }),
       fullBackupGroup(),
