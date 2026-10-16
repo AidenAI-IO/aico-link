@@ -59,6 +59,17 @@ and `ble_service.log` repeats `register BLE advertisement: Failed to register
 advertisement`. The board is then invisible to the app. A cleanup failure is
 logged to `ble_service.log` and does not block startup.
 
+The Wake service is registered at fixed GATT handles: service `0x0013`, Wake
+value `0x0015`, which is where a fresh `bluetoothd` places it. iOS caches GATT
+handles per bond, while BlueZ never reuses handles freed by an earlier
+`RegisterApplication`, so automatic allocation would move the Wake
+characteristic on every backend retry or restart. A bonded iPhone then keeps
+reading the old handle, `btmon` shows `Read Request` answered with
+`Invalid Handle (0x01)`, and the app reports that pairing was cancelled or
+did not finish. If BlueZ rejects the fixed handles, `ble_service.log` records
+`BLE GATT pinned handles rejected` and registration falls back to automatic
+allocation.
+
 ## Pairing and Bonding
 
 The advertised name is derived from the configured base name and the final
