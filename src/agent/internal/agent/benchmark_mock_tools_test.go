@@ -53,7 +53,7 @@ func TestBenchmarkMockToolsPreserveSchemasAndRejectFixtureFailures(t *testing.T)
 	native := mockPolicyTestTool{"touch_gesture"}
 	tools := benchmarkMockTools(cfg, []langtools.Tool{native, mockPolicyTestTool{"shell"}})
 	wrapped := tools[0].(*benchmarkMockTool)
-	if !reflect.DeepEqual(wrapped.ArgsSchema(), native.ArgsSchema()) || wrapped.Description() != native.Description() {
+	if !reflect.DeepEqual(wrapped.ArgsSchema(), native.ArgsSchema()) || wrapped.Description() != native.Description()+"\n\n"+benchmarkMockExecutionDescription {
 		t.Fatal("model schema changed")
 	}
 	if _, ok := tools[1].(*benchmarkMockTool); ok {
@@ -66,6 +66,23 @@ func TestBenchmarkMockToolsPreserveSchemasAndRejectFixtureFailures(t *testing.T)
 	fail = true
 	if output, err := wrapped.Call(context.Background(), input); err != nil || output == `{"ok":true}` {
 		t.Fatalf("fixture error swallowed: %s %v", output, err)
+	}
+}
+
+func TestBenchmarkMockToolsDoNotPromiseNativePostActionScreenshots(t *testing.T) {
+	base := mockPolicyTestTool{"touch_gesture"}
+	native := newPostActionScreenshotTool(base, nil, 0)
+	cfg := Config{EnvironmentBridge: EnvironmentBridgeConfig{Enabled: true, Endpoint: "http://fixture"}, Benchmark: BenchmarkConfig{Token: "token", MockTools: true}}
+	wrapped := benchmarkMockTools(cfg, []langtools.Tool{native})[0]
+	if wrapped.Description() != base.Description()+"\n\n"+benchmarkMockExecutionDescription {
+		t.Fatalf("scripted action still promises native screenshot behavior: %s", wrapped.Description())
+	}
+	if !reflect.DeepEqual(wrapped.(structuredInputTool).ArgsSchema(), base.ArgsSchema()) {
+		t.Fatal("base action schema changed")
+	}
+	cfg.Benchmark.MockTools = false
+	if got := benchmarkMockTools(cfg, []langtools.Tool{native})[0]; got != native {
+		t.Fatal("real-device tool lost its post-action screenshot wrapper")
 	}
 }
 

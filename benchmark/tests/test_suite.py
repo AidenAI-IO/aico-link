@@ -305,6 +305,28 @@ def test_adb_android_basic_suite_loads_device_operation_tasks():
         assert by_id[task_id].hard_assertions.min_tool_calls >= 2
 
 
+@pytest.mark.parametrize("task_id,tool,tool_input", [
+    ("swipe_navigation", "quick_action", {"action": "app_drawer"}),
+    ("settings_check_wifi", "open_app", {"app": "Settings"}),
+    ("clock_count_alarms", "open_app", {"app": "Clock"}),
+])
+def test_mobilegym_basic_accepts_equivalent_navigation_tools(task_id, tool, tool_input):
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "mobilegym_basic.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    trace = Trace(
+        tool_calls=[ToolCall(step=1, tool=tool, input=tool_input)],
+        final_response="Task completed", total_tool_calls=1, total_duration_ms=100,
+    )
+    # Outcome correctness is checked by the suite's unchanged visual rubrics.
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls = []
+    trace.total_tool_calls = 0
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+
 def test_quick_action_suite_marks_non_android_action_tasks():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "quick_action_v1.json"
     suite = load_suite(suite_path)

@@ -133,6 +133,8 @@ Scripted suites explicitly enable `--benchmark-mock-tools` on their isolated
 workers. This mode requires a benchmark token and an environment bridge.
 The Agent retains its native tool schemas and runtime availability filtering;
 only device-tool execution is sent to the fixture's `/api/tools/<name>` endpoint.
+Mock tool descriptions explicitly disclose that native execution and automatic
+screenshots do not run. Screenshots remain available through the screenshot tool.
 Enabled FGS fixtures provide a fresh heartbeat on each status read, modeling an
 actively polling background service. Explicit `fgs_bridge_updated_at` values
 are preserved so fixtures can also test stale or missing heartbeat rejection.
@@ -146,7 +148,8 @@ scripted click does not generate a synthetic UI transition or a post-action
 screenshot. Coordinate rubrics and required final responses still apply.
 
 These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
-so they do not cover the BLE Wake-specific allowlist or runtime tool filtering.
+so they do not cover live BLE Wake capability discovery or delivery. Platform
+and Phone Bridge availability filtering still use the scripted status.
 
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the

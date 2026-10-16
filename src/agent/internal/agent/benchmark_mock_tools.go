@@ -25,6 +25,11 @@ func benchmarkMockTools(cfg Config, tools []langtools.Tool) []langtools.Tool {
 		result[i] = tool
 		switch tool.Name() {
 		case "touch_gesture", "keyboard_tap", "mouse_move", "mouse_scroll", "quick_action", "enter_text", "open_app", "open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification":
+			// The scripted call bypasses this decorator, so do not advertise its
+			// automatic screenshot and stability checks to the model.
+			if action, ok := tool.(*postActionScreenshotTool); ok {
+				tool = action.inner
+			}
 			result[i] = &benchmarkMockTool{Tool: tool, endpoint: strings.TrimRight(cfg.EnvironmentBridge.Endpoint, "/"), taskID: cfg.EnvironmentBridge.BenchmarkTaskID}
 		}
 	}
@@ -35,6 +40,12 @@ type benchmarkMockTool struct {
 	langtools.Tool
 	endpoint string
 	taskID   string
+}
+
+const benchmarkMockExecutionDescription = "In this scripted benchmark, execution returns only the configured fixture result. Native device execution, internal recovery, automatic post-action screenshots, and screen-stability checks described above do not run. Call screenshot explicitly if another image is needed."
+
+func (t *benchmarkMockTool) Description() string {
+	return t.Tool.Description() + "\n\n" + benchmarkMockExecutionDescription
 }
 
 func (t *benchmarkMockTool) ArgsSchema() map[string]any {

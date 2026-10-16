@@ -110,6 +110,13 @@ def test_mock_environment_returns_scripted_tool_result_and_updates_screen():
         )
         assert json.loads(opened["output"])["ok"] is True
 
+        missing_focus = _json_request(
+            f"{base_url}/api/tools/enter_text",
+            "POST",
+            {"input": json.dumps({"text": "+1 202-555-0147"})},
+        )
+        assert missing_focus["is_error"] is True
+
         entered = _json_request(
             f"{base_url}/api/tools/enter_text",
             "POST",
