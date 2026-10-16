@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"unicode"
 
 	"aiden-agent/internal/agent/screen"
 	"aiden-agent/internal/agent/screenprovider"
@@ -121,5 +122,26 @@ func TestCoordinateDebugHTMLUsesProviderScreenshot(t *testing.T) {
 	}
 	if strings.Contains(coordinateDebugHTML, "/api/screenshot.jpg") {
 		t.Fatal("coordinate debug page should not call /api/screenshot.jpg")
+	}
+}
+
+func TestCoordinateDebugHTMLMatchesChatThemeAndLanguage(t *testing.T) {
+	for _, expected := range []string{
+		`<html lang="en">`,
+		`href="/web-ui/styles.css"`,
+		`class="topbar"`,
+		`class="topbar-title"`,
+		`class="new-chat-btn" href="/"`,
+		`@media (max-width: 760px)`,
+		`Capture device screen`,
+		`Enter valid coordinates`,
+		`Action failed:`,
+	} {
+		if !strings.Contains(coordinateDebugHTML, expected) {
+			t.Errorf("coordinate debug page missing %q", expected)
+		}
+	}
+	if strings.IndexFunc(coordinateDebugHTML, func(r rune) bool { return unicode.Is(unicode.Han, r) }) != -1 {
+		t.Error("coordinate debug page still contains untranslated Chinese text")
 	}
 }

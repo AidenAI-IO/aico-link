@@ -5,102 +5,89 @@ package agent
 // POST /api/providers/screenshot (or a local upload) and maps clicks to the
 // agent's 0-1000 normalized scale used by the HID tools.
 const coordinateDebugHTML = `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>归一化坐标调试工具</title>
+<title>Coordinate Debug · Aiden Agent</title>
+<link rel="stylesheet" href="/web-ui/styles.css">
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f1ede2; color: #1e241d; padding: 20px; }
-.container { max-width: 1400px; margin: 0 auto; background: rgba(255,251,245,0.92); border-radius: 20px; box-shadow: 0 12px 26px rgba(43,47,40,0.08); padding: 30px; }
-h1 { color: #155646; margin-bottom: 8px; font-size: 26px; }
-.back-link { display: inline-block; margin-bottom: 20px; color: #1f7a63; text-decoration: none; font-size: 14px; }
-.back-link:hover { text-decoration: underline; }
-.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 24px; }
-.control-section { background: #efe7da; padding: 20px; border-radius: 14px; }
-h2 { font-size: 17px; color: #43493d; margin-bottom: 14px; }
-.upload-area { border: 2px dashed #c9bfae; border-radius: 12px; padding: 26px; text-align: center; cursor: pointer; transition: all 0.2s; margin-bottom: 14px; }
-.upload-area:hover { border-color: #1f7a63; background: #e7f0ea; }
-.upload-area.drag-over { border-color: #1f7a63; background: #dcebe2; }
-input[type="file"] { display: none; }
-.input-group { margin-bottom: 14px; }
-label { display: block; font-size: 13px; color: #697063; margin-bottom: 5px; }
-input[type="number"], select { width: 100%; padding: 10px; border: 1px solid #d8cfbf; border-radius: 8px; font-size: 14px; background: #fffdf8; color: #1e241d; }
-.btn { width: 100%; padding: 12px; background: #1f7a63; color: #fff; border: none; border-radius: 8px; font-size: 15px; cursor: pointer; transition: background 0.2s; margin-bottom: 10px; }
-.btn:hover { background: #155646; }
-.btn:disabled { background: #b9c2b6; cursor: not-allowed; }
-.btn-clear { background: #be4334; }
-.btn-clear:hover { background: #9d362a; }
-.checkbox-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; color: #43493d; }
-.status-text { font-size: 13px; color: #697063; margin-top: 6px; min-height: 18px; }
-.canvas-container { position: relative; display: inline-block; margin: 16px auto; max-width: 100%; }
-canvas { border: 2px solid #1f7a63; border-radius: 10px; cursor: crosshair; max-width: 100%; height: auto; display: block; }
-.info-panel { background: #e7f0ea; padding: 16px; border-radius: 12px; margin-top: 16px; }
-.info-item { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-.info-label { font-weight: 600; color: #155646; }
-.info-value { font-family: "Courier New", monospace; color: #1e241d; }
+.debug-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 1px; min-height: calc(100vh - 64px); background: var(--line); }
+.debug-controls { display: flex; flex-direction: column; gap: 12px; padding: 16px; background: var(--surface-soft); }
+.debug-workspace { min-width: 0; padding: 20px; background: var(--surface-code); }
+.debug-card { padding: 16px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel); }
+.debug-card h2 { margin-bottom: 14px; color: var(--muted-strong); font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; }
+.debug-intro { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
+.debug-upload { margin-top: 12px; padding: 22px 12px; border: 1px dashed var(--line); border-radius: var(--radius-md); text-align: center; cursor: pointer; color: var(--muted-strong); font-size: 13px; }
+.debug-upload:hover, .debug-upload.drag-over, .debug-upload:focus-visible { border-color: var(--accent); color: var(--accent); background: var(--surface-soft); }
+.debug-hint { margin-top: 7px; color: var(--muted); font-size: 12px; }
+#fileInput { display: none; }
+.debug-field { margin-bottom: 12px; }
+.debug-field label { display: block; margin-bottom: 5px; color: var(--muted-strong); font-size: 12px; }
+.debug-field input, .debug-field select { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-strong); color: var(--text); }
+.debug-field input:focus-visible, .debug-field select:focus-visible, .debug-upload:focus-visible, .debug-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.debug-check { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted-strong); font-size: 13px; }
+.debug-check input { accent-color: var(--accent); }
+.debug-button { width: 100%; margin-bottom: 8px; padding: 9px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--panel-strong); color: var(--text); cursor: pointer; font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.debug-button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.debug-button.primary { background: var(--accent); border-color: var(--accent); color: var(--bg); }
+.debug-button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--bg); }
+.debug-button:disabled { opacity: .5; cursor: not-allowed; }
+.debug-status { min-height: 18px; margin-top: 4px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.debug-canvas { display: flex; justify-content: center; margin-top: 16px; }
+.debug-canvas canvas { display: block; max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius-md); cursor: crosshair; }
+.debug-info { margin-top: 16px; }
+.debug-info-item { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.debug-info-label { color: var(--muted); }
+.debug-info-value { color: var(--text); font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; overflow-wrap: anywhere; }
+@media (max-width: 760px) { .debug-layout { grid-template-columns: 1fr; } .debug-workspace { padding: 16px; } }
 </style>
 </head>
 <body>
-<div class="container">
-<h1>🎯 归一化坐标调试工具</h1>
-<a class="back-link" href="/">← 返回 Aiden Agent</a>
-
-<div class="controls">
-<div class="control-section">
-<h2>📤 加载截图</h2>
-<button class="btn" id="loadDeviceBtn">📷 从设备抓取当前画面</button>
-<div class="checkbox-row"><input type="checkbox" id="cropBlackBars" checked><label for="cropBlackBars" style="margin:0;">裁剪黑边</label></div>
-<div class="checkbox-row"><input type="checkbox" id="autoRefresh"><label for="autoRefresh" style="margin:0;">自动刷新 (2s)</label></div>
-<div class="status-text" id="deviceStatus"></div>
-<div class="upload-area" id="uploadArea">
-<p>📁 点击或拖拽图片到此处</p>
-<p style="font-size:12px;color:#999;margin-top:8px;">也可 Ctrl/Cmd+V 粘贴图片</p>
+<header class="topbar">
+<div class="topbar-title"><span class="brand-dot" aria-hidden="true"></span><div><h1>Coordinate Debug</h1><span class="topbar-subtitle">WORKSPACE</span></div></div>
+<a class="new-chat-btn" href="/" style="text-decoration:none;">Back to chat</a>
+</header>
+<main class="debug-layout">
+<aside class="debug-controls" aria-label="Coordinate controls">
+<section class="debug-card">
+<h2>Screenshot</h2>
+<button class="debug-button primary" id="loadDeviceBtn">Capture device screen</button>
+<label class="debug-check"><input type="checkbox" id="cropBlackBars" checked> Crop black bars</label>
+<label class="debug-check"><input type="checkbox" id="autoRefresh"> Auto-refresh every 2 seconds</label>
+<div class="debug-status" id="deviceStatus" role="status"></div>
+<div class="debug-upload" id="uploadArea" role="button" tabindex="0" aria-label="Upload a screenshot">
+<p>Click or drop an image here</p>
+<p class="debug-hint">Or paste with Ctrl/Cmd+V</p>
 </div>
 <input type="file" id="fileInput" accept="image/*">
+</section>
+<section class="debug-card">
+<h2>Normalized coordinates · 0–1000</h2>
+<div class="debug-field"><label for="coordX">X coordinate</label><input type="number" id="coordX" min="0" max="1000" placeholder="0–1000"></div>
+<div class="debug-field"><label for="coordY">Y coordinate</label><input type="number" id="coordY" min="0" max="1000" placeholder="0–1000"></div>
+<div class="debug-field"><label for="tapType">Action</label><select id="tapType"><option value="tap">Tap</option><option value="double_tap">Double tap</option><option value="long_press">Long press</option></select></div>
+<button class="debug-button" id="showCoordBtn" disabled>Show marker</button>
+<button class="debug-button primary" id="tapCoordBtn" disabled>Send action</button>
+<button class="debug-button" id="clearBtn" disabled>Clear marker</button>
+<div class="debug-status" id="tapStatus" role="status"></div>
+</section>
+</aside>
+<section class="debug-workspace" aria-label="Screenshot preview">
+<p class="debug-intro">Capture or upload a screenshot, then click it to inspect normalized coordinates.</p>
+<div id="canvasWrapper" style="display:none;"><div class="debug-canvas"><canvas id="canvas" aria-label="Device screenshot"></canvas></div></div>
+<div class="debug-card debug-info" id="infoPanel" style="display:none;">
+<h2>Capture details</h2>
+<div class="debug-info-item"><span class="debug-info-label">Image size</span><span class="debug-info-value" id="imageSize">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">Original screen size</span><span class="debug-info-value" id="originalScreenSize">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">Capture backend</span><span class="debug-info-value" id="captureBackend">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">ADB device</span><span class="debug-info-value" id="adbDeviceInfo">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">Clicked pixel</span><span class="debug-info-value" id="clickPixel">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">Normalized coordinates</span><span class="debug-info-value" id="normalizedCoord">-</span></div>
+<div class="debug-info-item"><span class="debug-info-label">Marker pixel</span><span class="debug-info-value" id="markerPixel">-</span></div>
 </div>
-
-<div class="control-section">
-<h2>📍 输入归一化坐标 (0-1000)</h2>
-<div class="input-group">
-<label for="coordX">X 坐标</label>
-<input type="number" id="coordX" min="0" max="1000" placeholder="0 - 1000">
-</div>
-<div class="input-group">
-<label for="coordY">Y 坐标</label>
-<input type="number" id="coordY" min="0" max="1000" placeholder="0 - 1000">
-</div>
-<div class="input-group">
-<label for="tapType">点击类型</label>
-<select id="tapType">
-<option value="tap">tap</option>
-<option value="double_tap">double_tap</option>
-<option value="long_press">long_press</option>
-</select>
-</div>
-<button class="btn" id="showCoordBtn" disabled>显示坐标位置</button>
-<button class="btn" id="tapCoordBtn" disabled>触发点击</button>
-<button class="btn btn-clear" id="clearBtn" disabled>清除标记</button>
-<div class="status-text" id="tapStatus"></div>
-</div>
-</div>
-
-<div id="canvasWrapper" style="text-align:center;display:none;">
-<div class="canvas-container"><canvas id="canvas"></canvas></div>
-</div>
-
-<div class="info-panel" id="infoPanel" style="display:none;">
-<h2>📊 当前信息</h2>
-<div class="info-item"><span class="info-label">图片尺寸:</span><span class="info-value" id="imageSize">-</span></div>
-<div class="info-item"><span class="info-label">原始屏幕尺寸:</span><span class="info-value" id="originalScreenSize">-</span></div>
-<div class="info-item"><span class="info-label">截图来源:</span><span class="info-value" id="captureBackend">-</span></div>
-<div class="info-item"><span class="info-label">ADB 设备:</span><span class="info-value" id="adbDeviceInfo">-</span></div>
-<div class="info-item"><span class="info-label">点击位置 (像素):</span><span class="info-value" id="clickPixel">-</span></div>
-<div class="info-item"><span class="info-label">归一化坐标:</span><span class="info-value" id="normalizedCoord">-</span></div>
-<div class="info-item"><span class="info-label">标记位置 (像素):</span><span class="info-value" id="markerPixel">-</span></div>
-</div>
-</div>
+</section>
+</main>
 <script>
 let currentImage = null;
 let currentScreenshotMeta = null;
@@ -265,6 +252,9 @@ function sourcePixelToImagePixel(pixelX, pixelY) {
 }
 
 uploadArea.addEventListener('click', () => fileInput.click());
+uploadArea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); }
+});
 uploadArea.addEventListener('dragover', (e) => { e.preventDefault(); uploadArea.classList.add('drag-over'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag-over'));
 uploadArea.addEventListener('drop', (e) => {
@@ -306,7 +296,7 @@ async function captureFromDevice() {
     if (captureInFlight) return;
     captureInFlight = true;
     loadDeviceBtn.disabled = true;
-    deviceStatus.textContent = '抓取中...';
+    deviceStatus.textContent = 'Capturing...';
     try {
         const res = await fetch('/api/providers/screenshot', {
             method: 'POST',
@@ -322,19 +312,19 @@ async function captureFromDevice() {
         const body = await res.json().catch(() => null);
         if (!res.ok || !body || !body.ok) {
             const message = (body && body.error && body.error.message) || res.statusText || String(res.status);
-            deviceStatus.textContent = '抓取失败: ' + message;
+            deviceStatus.textContent = 'Capture failed: ' + message;
             return;
         }
         const data = body.data || {};
         if (!data.image) {
-            deviceStatus.textContent = '抓取失败: 响应没有图像';
+            deviceStatus.textContent = 'Capture failed: no image in response';
             return;
         }
         const meta = screenshotMetaFromProvider(data.meta || {}, data.capture_info || {});
         const format = (data.meta && data.meta.pixel_format === 'png') ? 'png' : 'jpeg';
-        await loadImageFromUrl('data:image/' + format + ';base64,' + data.image, '设备画面已加载', meta);
+        await loadImageFromUrl('data:image/' + format + ';base64,' + data.image, 'Device screen loaded', meta);
     } catch (e) {
-        deviceStatus.textContent = '请求失败: ' + e.message;
+        deviceStatus.textContent = 'Request failed: ' + e.message;
     } finally {
         captureInFlight = false;
         loadDeviceBtn.disabled = false;
@@ -348,11 +338,11 @@ autoRefresh.addEventListener('change', () => {
 });
 
 function handleFile(file) {
-    if (!file.type.startsWith('image/')) { alert('请选择图片文件！'); return; }
+    if (!file.type.startsWith('image/')) { alert('Choose an image file.'); return; }
     const reader = new FileReader();
     reader.onload = async (e) => {
         try {
-            await loadImageFromUrl(e.target.result, '本地图片已加载');
+            await loadImageFromUrl(e.target.result, 'Local image loaded');
         } catch (_) {}
     };
     reader.readAsDataURL(file);
@@ -376,8 +366,8 @@ function loadImageFromUrl(url, statusText, meta) {
             resolve(img);
         };
         img.onerror = () => {
-            deviceStatus.textContent = '图片加载失败';
-            reject(new Error('图片加载失败'));
+            deviceStatus.textContent = 'Image could not be loaded';
+            reject(new Error('Image could not be loaded'));
         };
         img.src = url;
     });
@@ -436,7 +426,7 @@ function showNormalizedMarker(x, y) {
 showCoordBtn.addEventListener('click', () => {
     const point = getNormalizedInputs();
     if (!point) {
-        alert('请输入有效的坐标值 (0-1000)！');
+        alert('Enter valid coordinates (0–1000).');
         return;
     }
     showNormalizedMarker(point.x, point.y);
@@ -445,12 +435,12 @@ showCoordBtn.addEventListener('click', () => {
 tapCoordBtn.addEventListener('click', async () => {
     const point = getNormalizedInputs();
     if (!point) {
-        alert('请输入有效的坐标值 (0-1000)！');
+        alert('Enter valid coordinates (0–1000).');
         return;
     }
     tapInFlight = true;
     setCoordinateActionsEnabled(true);
-    tapStatus.textContent = '点击执行中...';
+    tapStatus.textContent = 'Sending action...';
     try {
         showNormalizedMarker(point.x, point.y);
         const res = await fetch('/api/coordinate-debug/tap', {
@@ -469,18 +459,18 @@ tapCoordBtn.addEventListener('click', async () => {
             payload = JSON.parse(bodyText);
         } catch (_) {}
         if (!res.ok) {
-            tapStatus.textContent = payload && payload.error ? '点击失败: ' + payload.error : '点击失败: ' + bodyText;
+            tapStatus.textContent = payload && payload.error ? 'Action failed: ' + payload.error : 'Action failed: ' + bodyText;
             return;
         }
         if (!payload || !payload.ok || !payload.screenshot || !payload.screenshot.data) {
-            tapStatus.textContent = '点击失败: 返回结果不完整';
+            tapStatus.textContent = 'Action failed: incomplete response';
             return;
         }
-        await loadImageFromScreenshotResult(payload.screenshot, '点击后画面已刷新');
+        await loadImageFromScreenshotResult(payload.screenshot, 'Screen refreshed after action');
         showNormalizedMarker(point.x, point.y);
-        tapStatus.textContent = '已触发' + tapType.options[tapType.selectedIndex].text + '，画面已刷新';
+        tapStatus.textContent = tapType.options[tapType.selectedIndex].text + ' sent; screen refreshed';
     } catch (e) {
-        tapStatus.textContent = '点击失败: ' + e.message;
+        tapStatus.textContent = 'Action failed: ' + e.message;
     } finally {
         tapInFlight = false;
         setCoordinateActionsEnabled(!!currentImage);
@@ -499,14 +489,14 @@ clearBtn.addEventListener('click', () => {
 
 function showMarker(pixelX, pixelY) {
     drawImage();
-    ctx.strokeStyle = '#be4334';
+    ctx.strokeStyle = '#f18a8a';
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.moveTo(pixelX - 15, pixelY); ctx.lineTo(pixelX + 15, pixelY);
     ctx.moveTo(pixelX, pixelY - 15); ctx.lineTo(pixelX, pixelY + 15);
     ctx.stroke();
     ctx.beginPath(); ctx.arc(pixelX, pixelY, 10, 0, 2 * Math.PI); ctx.stroke();
-    ctx.fillStyle = '#be4334';
+    ctx.fillStyle = '#f18a8a';
     ctx.beginPath(); ctx.arc(pixelX, pixelY, 3, 0, 2 * Math.PI); ctx.fill();
     document.getElementById('markerPixel').textContent = 'X: ' + pixelX + ', Y: ' + pixelY;
 }
@@ -528,7 +518,6 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && !clearBtn.disabled) clearBtn.click();
 });
 
-console.log('🎯 归一化坐标调试工具已加载');
 </script>
 </body>
 </html>
