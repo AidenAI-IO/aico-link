@@ -165,7 +165,7 @@
       },
       "rubric": [
         {"id": "queried_contact", "check": "Calls bridge_contacts with action=query and query=Biden."},
-        {"id": "searched_for_notes", "check": "Calls open_app because Notes and its icon are unavailable."},
+        {"id": "searched_for_notes", "check": "Calls open_app to launch Notes when it is not already open and its icon is not visible. The app is installed and can be launched; app unavailability is not required."},
         {"id": "entered_number", "check": "Calls enter_text with the returned number."}
       ],
       "hard_assertions": {

@@ -7,6 +7,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -483,6 +484,14 @@ def test_phone_bridge_proxy_status_uses_current_fixture_and_native_shape(tmp_pat
         assert status["platform"] == "android"
         assert status["fgs_bridge_enabled"] is True
         assert status["pip_bridge_enabled"] is False
+        heartbeat = datetime.fromisoformat(status["fgs_bridge_updated_at"])
+        assert 0 <= (datetime.now(timezone.utc) - heartbeat).total_seconds() < 15
+        assert "fgs_bridge_updated_at" not in android.phone_bridge
+        # An explicit stale heartbeat must still exercise the runtime's gate.
+        android.phone_bridge["fgs_bridge_updated_at"] = "2000-01-01T00:00:00+00:00"
+        server.activate(android)
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["fgs_bridge_updated_at"] == "2000-01-01T00:00:00+00:00"
         with pytest.raises(urllib.error.HTTPError) as exc:
             _json_request(url.replace(server.base_path, "") + "/api/phone-bridge/status")
         assert exc.value.code == 404

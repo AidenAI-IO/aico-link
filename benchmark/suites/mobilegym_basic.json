@@ -33,9 +33,8 @@
       ],
       "hard_assertions": {
         "must_complete_within_sec": 120,
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "required_tools": [
-          "screenshot",
           "touch_gesture"
         ]
       },
@@ -62,9 +61,8 @@
       ],
       "hard_assertions": {
         "must_complete_within_sec": 120,
-        "min_tool_calls": 3,
+        "min_tool_calls": 1,
         "required_tools": [
-          "screenshot",
           "touch_gesture"
         ]
       },
@@ -86,14 +84,13 @@
         },
         {
           "id": "took_screenshot",
-          "description": "在应用抽屉打开后进行了截图"
+          "description": "Captures the opened app drawer, either in the automatic post-action screenshot or through a separate screenshot call."
         }
       ],
       "hard_assertions": {
         "must_complete_within_sec": 60,
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "required_tools": [
-          "screenshot",
           "touch_gesture"
         ]
       },

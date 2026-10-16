@@ -6,6 +6,7 @@ import json
 import secrets
 import threading
 import urllib.parse
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,13 @@ def _handler_for(server: MockEnvironmentServer):
                         **server.spec.phone_bridge,
                         "platform": server.spec.platform,
                     }
+                    # An enabled scripted FGS models an actively polling service.
+                    # Preserve explicit timestamps (including stale/null fixtures).
+                    if status.get("fgs_bridge_enabled"):
+                        status.setdefault(
+                            "fgs_bridge_updated_at",
+                            datetime.now(timezone.utc).isoformat(),
+                        )
                 self._json(200, status)
                 return
             if path == "/api/concurrent":

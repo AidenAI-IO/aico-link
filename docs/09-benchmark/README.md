@@ -133,6 +133,9 @@ Scripted suites explicitly enable `--benchmark-mock-tools` on their isolated
 workers. This mode requires a benchmark token and an environment bridge.
 The Agent retains its native tool schemas and runtime availability filtering;
 only device-tool execution is sent to the fixture's `/api/tools/<name>` endpoint.
+Enabled FGS fixtures provide a fresh heartbeat on each status read, modeling an
+actively polling background service. Explicit `fgs_bridge_updated_at` values
+are preserved so fixtures can also test stale or missing heartbeat rejection.
 The mock also serves the native `/api/phone-bridge/status` object so PiP, FGS,
 and Dynamic Island capabilities reflect the active fixture. Real-device and
 MobileGym suites use normal provider and command transports. Mock policy runs
