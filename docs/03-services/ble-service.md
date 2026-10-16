@@ -48,6 +48,17 @@ the same initialization sequence before restarting BlueZ:
 
 This preserves the iPhone bond across reboot and firmware rootfs replacement.
 
+Before `ble_service` starts, `aiden-bluetooth-clear-adv` waits up to 10 seconds
+for `hci0` to come up, then disables and clears every extended advertising set
+in the controller. A warm reboot reuses the running AIC8800 firmware
+(`fw_state=reused`), and the controller keeps the previous boot's advertising
+set across HCI Reset. Without the cleanup, the controller rejects
+`LE Set Extended Advertising Parameters` with `Command Disallowed (0x0c)`,
+`bluetoothd` logs `Failed to add advertisement: Busy (0x0a)` every two seconds,
+and `ble_service.log` repeats `register BLE advertisement: Failed to register
+advertisement`. The board is then invisible to the app. A cleanup failure is
+logged to `ble_service.log` and does not block startup.
+
 ## Pairing and Bonding
 
 The advertised name is derived from the configured base name and the final

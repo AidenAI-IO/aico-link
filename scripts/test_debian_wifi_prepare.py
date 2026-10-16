@@ -260,5 +260,55 @@ class BluetoothPrepareTest(StartupFixture):
                 self.assertIn("firmware is not ready", result.stderr)
 
 
+class BluetoothClearAdvertisingTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        (self.bin / "hciconfig").write_text(
+            '#!/bin/sh\n[ -f "$FIXTURE/up" ] && echo "\tUP RUNNING " || echo "\tDOWN "\n')
+        # Reply like hcitool: a Command Complete line ending in the status byte.
+        (self.bin / "hcitool").write_text(
+            '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE/commands"\n'
+            'printf "> HCI Event: 0x0e plen 4\\n  05 39 20 %s\\n" "${HCI_STATUS:-00}"\n')
+        (self.bin / "sleep").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$FIXTURE/sleeps"\n')
+        for name in ("hciconfig", "hcitool", "sleep"):
+            (self.bin / name).chmod(0o755)
+
+    def run_helper(self, **extra_env):
+        return subprocess.run(["sh", str(HELPERS / "aiden-bluetooth-clear-adv")],
+                              text=True, capture_output=True,
+                              env={**os.environ, "PATH": str(self.bin) + ":" + os.environ["PATH"],
+                                   "FIXTURE": str(self.root), **extra_env}, timeout=15)
+
+    def commands(self):
+        path = self.root / "commands"
+        return path.read_text().splitlines() if path.exists() else []
+
+    def test_disables_then_clears_every_set(self):
+        (self.root / "up").touch()
+        result = self.run_helper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.commands(), ["-i hci0 cmd 0x08 0x0039 0x00 0x00",
+                                           "-i hci0 cmd 0x08 0x003d"])
+        self.assertEqual(result.stderr, "")
+
+    def test_controller_rejection_does_not_block_startup(self):
+        (self.root / "up").touch()
+        result = self.run_helper(HCI_STATUS="0c")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(len(self.commands()), 2)
+        self.assertIn("returned status 0c", result.stderr)
+
+    def test_down_adapter_is_skipped_after_timeout(self):
+        result = self.run_helper()
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(self.commands(), [])
+        self.assertEqual(len((self.root / "sleeps").read_text().splitlines()), 10)
+        self.assertIn("hci0 is not up", result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
