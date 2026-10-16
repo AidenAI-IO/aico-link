@@ -272,6 +272,9 @@ class BluetoothClearAdvertisingTest(unittest.TestCase):
         # Reply like hcitool: a Command Complete line ending in the status byte.
         (self.bin / "hcitool").write_text(
             '#!/bin/sh\nprintf "%s\\n" "$*" >> "$FIXTURE/commands"\n'
+            # The command echo ends in its own parameters, which look like a status.
+            'printf "< HCI Command: ogf 0x08 plen 2\\n  00 00\\n"\n'
+            '[ -n "$HCI_NO_EVENT" ] && exit 1\n'
             'printf "> HCI Event: 0x0e plen 4\\n  05 39 20 %s\\n" "${HCI_STATUS:-00}"\n')
         (self.bin / "sleep").write_text('#!/bin/sh\nprintf "%s\\n" "$1" >> "$FIXTURE/sleeps"\n')
         for name in ("hciconfig", "hcitool", "sleep"):
@@ -301,6 +304,13 @@ class BluetoothClearAdvertisingTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(len(self.commands()), 2)
         self.assertIn("returned status 0c", result.stderr)
+
+    def test_missing_event_is_not_read_as_success(self):
+        (self.root / "up").touch()
+        result = self.run_helper(HCI_NO_EVENT="1")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("disabling advertising sets returned status none", result.stderr)
+        self.assertIn("clearing advertising sets returned status none", result.stderr)
 
     def test_down_adapter_is_skipped_after_timeout(self):
         result = self.run_helper()

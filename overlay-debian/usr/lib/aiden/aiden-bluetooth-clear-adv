@@ -16,17 +16,20 @@ until hciconfig hci0 2>/dev/null | grep -q 'UP RUNNING'; do
     elapsed=$((elapsed + 1))
 done
 
-# Print the HCI status byte, the last byte of the Command Complete event.
+# Print the HCI status byte: the last byte of the line after the Command
+# Complete event header. Without an event this prints nothing, so the echoed
+# command parameters are never mistaken for a status.
 hci_status() {
-    hcitool -i hci0 cmd "$@" 2>/dev/null | tail -n 1 | awk '{ print $NF }'
+    hcitool -i hci0 cmd "$@" 2>&1 \
+        | awk '/^> HCI Event/ { if ((getline line) > 0) { n = split(line, f, " "); s = f[n] } } END { print s }'
 }
 
 # LE Set Extended Advertising Enable: disable all sets.
-status=$(hci_status 0x08 0x0039 0x00 0x00 || true)
+status=$(hci_status 0x08 0x0039 0x00 0x00)
 [ "${status}" = "00" ] \
     || echo "disabling advertising sets returned status ${status:-none}" >&2
 # LE Clear Advertising Sets.
-status=$(hci_status 0x08 0x003d || true)
+status=$(hci_status 0x08 0x003d)
 [ "${status}" = "00" ] \
     || echo "clearing advertising sets returned status ${status:-none}" >&2
 exit 0

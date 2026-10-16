@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"os"
+	"os/exec"
 	"os/signal"
 	"syscall"
 	"time"
@@ -17,6 +19,10 @@ func main() {
 	deviceName := flag.String("device-name", "Aiden", "BLE advertised device name")
 	eventCapacity := flag.Int("event-capacity", 512, "maximum in-memory ANCS events")
 	pairingWindow := flag.Duration("pairing-window", 5*time.Minute, "first-device BLE pairing window")
+	clearAdvHelper := flag.String(
+		"clear-adv-helper", "/usr/lib/aiden/aiden-bluetooth-clear-adv",
+		"helper that clears stale controller advertising sets; empty disables it",
+	)
 	flag.Parse()
 	if *eventCapacity <= 0 {
 		logging.Fatalf("ble_service", "startup", "event-capacity must be positive")
@@ -42,6 +48,12 @@ func main() {
 			break
 		}
 		logging.Warnf("ble_service", "main", "BlueZ backend stopped: %v", err)
+		// The unit's ExecStartPre clears stale sets once, but this loop never
+		// exits, so a cleanup that was skipped or came too early would leave
+		// the board invisible. Clear again before every retry that needs it.
+		if errors.Is(err, ble.ErrAdvertisementRegistration) {
+			clearAdvertisingSets(ctx, *clearAdvHelper)
+		}
 		timer := time.NewTimer(2 * time.Second)
 		select {
 		case <-ctx.Done():
@@ -52,4 +64,19 @@ func main() {
 		}
 	}
 	logging.Infof("ble_service", "main", "ble_service stopped")
+}
+
+func clearAdvertisingSets(ctx context.Context, helper string) {
+	if helper == "" {
+		return
+	}
+	if _, err := os.Stat(helper); err != nil {
+		return
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	output, err := exec.CommandContext(runCtx, helper).CombinedOutput()
+	if err != nil || len(output) > 0 {
+		logging.Warnf("ble_service", "main", "clear advertising sets: err=%v output=%q", err, output)
+	}
 }

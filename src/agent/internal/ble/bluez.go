@@ -44,6 +44,12 @@ const (
 	blueZRootPath     = dbus.ObjectPath("/")
 )
 
+// ErrAdvertisementRegistration marks a backend start that failed because the
+// controller rejected the advertising set. After a warm reboot that is usually
+// a set left over from the previous boot, which the caller can clear before
+// the next attempt.
+var ErrAdvertisementRegistration = errors.New("register BLE advertisement")
+
 // iOS caches GATT handles per bond. Auto-allocated handles grow on every
 // RegisterApplication within one bluetoothd lifetime, so a backend retry or
 // restart moves the Wake characteristic and a bonded iPhone keeps reading the
@@ -613,7 +619,7 @@ func (b *blueZBackend) setAdvertising(enabled bool) error {
 			options,
 		).Err
 		if err != nil {
-			return fmt.Errorf("register BLE advertisement: %w", err)
+			return fmt.Errorf("%w: %w", ErrAdvertisementRegistration, err)
 		}
 	} else {
 		err = callWithTimeout(

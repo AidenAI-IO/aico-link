@@ -57,7 +57,11 @@ set across HCI Reset. Without the cleanup, the controller rejects
 `bluetoothd` logs `Failed to add advertisement: Busy (0x0a)` every two seconds,
 and `ble_service.log` repeats `register BLE advertisement: Failed to register
 advertisement`. The board is then invisible to the app. A cleanup failure is
-logged to `ble_service.log` and does not block startup.
+logged to `ble_service.log` and does not block startup. Because `ble_service`
+retries its backend in-process and never exits on this error, it also runs the
+helper again before each retry that failed to register the advertisement, so a
+cleanup skipped at unit start (for example, `hci0` not up within 10 seconds)
+still recovers.
 
 The Wake service is registered at fixed GATT handles: service `0x0013`, Wake
 value `0x0015`, which is where a fresh `bluetoothd` places it. iOS caches GATT
