@@ -43,7 +43,8 @@ removal. When a card appears, it:
 2. Identifies the filesystem and runs `fsck.<type> -p` with a 60-second deadline.
    An unknown filesystem or missing checker falls back to the mount/probe gate.
    Corrected-error and reboot-recommended statuses (0–3 for ext4/exFAT) proceed
-   to that gate. FAT accepts 0/1; its usage/internal errors (2/3) reject the card.
+   to that gate. FAT accepts only statuses 0/1; status 2 (usage error) and higher
+   statuses reject the card.
    I/O failures, uncorrected errors, and other checker failures reject the card.
 3. Mounts the card read-write at the configured mount point.
 4. Verifies the mount with a unique probe file, `fsync`, and readback. Existing
