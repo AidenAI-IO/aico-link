@@ -25,6 +25,7 @@ fi
 bash -n \
     "${SYSTEM_DIR}/build.sh" \
     "${SYSTEM_DIR}/audit-bsp.sh" \
+    "${SYSTEM_DIR}/audit-tf-dtb.sh" \
     "${SYSTEM_DIR}/container-build-rootfs.sh" \
     "${SYSTEM_DIR}/container-assemble-images.sh" \
     "${SYSTEM_DIR}/container-install-ota-config.sh" \
@@ -130,7 +131,7 @@ grep -Eq '^[[:space:]]*debootstrap \\' \
 for package in \
     systemd-sysv udev dbus kmod libpam-systemd openssh-server sudo adb iproute2 iputils-arping \
     wpasupplicant bluez systemd-resolved systemd-timesyncd dnsmasq-base \
-    e2fsprogs util-linux-extra v4l-utils libdrm2 python3 python3-pip; do
+    e2fsprogs dosfstools exfatprogs util-linux-extra v4l-utils libdrm2 python3 python3-pip; do
     grep -qx "${package}" "${SYSTEM_DIR}/packages.list" \
         || fail "production package list is missing ${package}"
 done

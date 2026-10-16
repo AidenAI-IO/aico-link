@@ -63,7 +63,7 @@ const (
 	defaultLogLevel                        = "info"
 	defaultNotificationMemoryRetentionDays = 14
 	defaultStorageMountPoint               = "/mnt/sdcard"
-	defaultStorageDevice                   = "mmcblk2"
+	defaultStorageDevice                   = "auto"
 	defaultStorageMinCardFreeMB            = 64
 	// Migration watermarks: start when eMMC free space drops below 10%,
 	// stop once it is back at or above 50%.

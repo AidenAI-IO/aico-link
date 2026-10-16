@@ -73,7 +73,7 @@ audit_packages() {
     for package in \
         systemd-sysv udev dbus kmod libpam-systemd openssh-server sudo adb \
         iproute2 iputils-arping wpasupplicant bluez systemd-resolved \
-        systemd-timesyncd dnsmasq-base e2fsprogs util-linux-extra v4l-utils libdrm2; do
+        systemd-timesyncd dnsmasq-base e2fsprogs dosfstools exfatprogs util-linux-extra v4l-utils libdrm2; do
         awk -F '\t' -v package="${package}" \
             'NR > 1 && ($1 == package || $1 == package ":armhf") {found=1} END {exit !found}' \
             "${OUTPUT_DIR}/packages.txt" \
@@ -329,6 +329,11 @@ audit_rootfs() {
 
 audit_platform_files() {
     local actual expected library expected_sha actual_sha
+    local storage_tool
+    for storage_tool in mkfs.vfat fsck.vfat mkfs.ext4 e2fsck mkfs.exfat fsck.exfat; do
+        test -x "${ROOTFS_MOUNT}/usr/sbin/${storage_tool}" \
+            || fail "storage tool is missing or not executable: ${storage_tool}"
+    done
     test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-dynamic-keyboard" \
         || fail "dynamic keyboard helper is missing"
     (cd "${ROOTFS_MOUNT}" && sha256sum -c "${OUTPUT_DIR}/platform-files.sha256") \
@@ -450,6 +455,8 @@ audit_boot() {
         "${dumpimage}" -i "${boot}" -T flat_dt -p 0 -o "${fdt}" unused \
             >>"${OUTPUT_DIR}/boot-fit-audit.txt"
         bootargs=$(fdtget -t s "${fdt}" /chosen bootargs)
+        bash "${REPO_ROOT}/scripts/debian-system/audit-tf-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/boot-fit-audit.txt"
         grep -qw "root=PARTLABEL=${root_label}" <<<"${bootargs}" \
             || fail "${boot} has the wrong root PARTLABEL"
         grep -qw "aiden.slot_suffix=${suffix}" <<<"${bootargs}" \

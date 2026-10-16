@@ -119,6 +119,8 @@ audit_boot() {
         cmp "${kernel}" "${KERNEL_IMAGE}"
         bootargs=$(fdtget -t s "${fdt}" /chosen bootargs)
         model=$(fdtget -t s "${fdt}" / model)
+        bash "${SCRIPT_DIR}/audit-tf-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
         fiq_status=$(fdtget -t s "${fdt}" /fiq-debugger status)
         fiq_serial_id=$(fdtget -t u "${fdt}" /fiq-debugger rockchip,serial-id)
         [ "${model}" = "${EXPECTED_MODEL}" ] \
@@ -222,6 +224,7 @@ write_hashes() {
         sha256sum \
             scripts/debian-system/build.sh \
             scripts/debian-system/audit-bsp.sh \
+            scripts/debian-system/audit-tf-dtb.sh \
             scripts/debian-system/canonicalize-bsp.py \
             scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
             scripts/debian-system/debian-system.config

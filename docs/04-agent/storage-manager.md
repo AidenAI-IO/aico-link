@@ -40,18 +40,28 @@ removal. When a card appears, it:
 
 1. Prefers the first partition, falling back to the whole device when there is
    no partition.
-2. Runs a best-effort `fsck`.
+2. Identifies the filesystem and runs `fsck.<type> -p` with a 60-second deadline.
+   An unknown filesystem or missing checker falls back to the mount/probe gate.
+   Corrected-error and reboot-recommended statuses (0–3 for ext4/exFAT) proceed
+   to that gate. FAT accepts only statuses 0/1; status 2 (usage error) and higher
+   statuses reject the card.
+   I/O failures, uncorrected errors, and other checker failures reject the card.
 3. Mounts the card read-write at the configured mount point.
-4. Verifies the mount with a probe write.
+4. Verifies the mount with a unique probe file, `fsync`, and readback. Existing
+   mounts must belong to the requested device. Read-only mounts are unhealthy.
 5. Attempts to reject a card with less than the configured minimum free space
    by unmounting it. If a busy filesystem cannot be unmounted, the manager
    keeps the card mounted and reports it as usable rather than recording a false
    unmounted state.
 
-The default mount point is `/mnt/sdcard`, the default block device base name is
-`mmcblk2`, and the default minimum free space is 64 MB. A card normally becomes
-usable only after it passes the mount and write checks; the busy-unmount case
-above is the exception to the minimum-free-space rejection.
+The default mount point is `/mnt/sdcard`, the default device setting is `auto`,
+and the default minimum free space is 64 MiB. Discovery selects exactly one
+`/sys/block/mmcblk*/device/type` with value `SD`; it excludes eMMC (`MMC`) and
+Wi-Fi (`SDIO`). It does not rely on the kernel's `removable` flag. Aiden SCH v1
+uses `mmcblk1`; older Pico Zero configurations can use `mmcblk2`. An explicit
+device override is preserved; ambiguous discovery requires an override.
+A card normally becomes usable only after it passes the mount and write checks;
+the busy-unmount case above is the exception to the minimum-free-space rejection.
 
 | Effective mode | JSON value | Condition |
 | --- | --- | --- |
@@ -60,7 +70,9 @@ above is the exception to the minimum-free-space rejection.
 
 A positively identified blank card is automatically formatted as FAT32 once per
 insertion. Cards with an existing but unsupported, damaged, or otherwise
-unmountable filesystem are never automatically erased.
+unmountable filesystem are never automatically erased. Blank detection also
+requires a successful low-level signature check and zeroed initial sectors;
+failed reads and I/O failures never trigger automatic formatting.
 
 The manager mirrors card, format, migration, and effective-mode state to
 `/run/aiden/storage.state` for the Agent and other device services. This state
@@ -82,7 +94,9 @@ Keeping new writes on eMMC avoids making active recording depend on removable
 media. When the SD tier is available and eMMC free space falls below the start
 watermark, the manager migrates older audio archives to the SD card, oldest
 first. It stops after eMMC reaches the stop watermark, no eligible files remain,
-the card becomes unavailable, or an eject or format operation cancels the run.
+the card becomes unavailable, the next copy would cross the configured SD free
+space reserve, or an eject or format operation cancels the run. Capacity errors
+stop the run and retain the source file on eMMC.
 
 The default migration watermarks are:
 
@@ -98,7 +112,15 @@ both copies may exist. Failed or exhausted runs use a ten-minute retry cooldown.
 
 Safe eject cancels any active migration, syncs and unmounts the card, and latches
 the card as ejected. It is not mounted again until it is physically removed and
-reinserted.
+reinserted. If sync reports a writeback error, the failure is logged and unmount
+is still attempted so a failing card can be detached or manually reformatted.
+After successful detachment with a flush error, safe eject reports that pending
+writes may not have been saved and keeps the eject latch set. Formatting and
+reconfiguration may proceed once detachment succeeds.
+An unmount failure keeps the mounted state and blocks formatting.
+`last_warning` in storage status retains the most recent flush warning for the
+manager's lifetime, including across reconfiguration and remounting. The state
+mirror carries the same warning as `LAST_WARNING` for read-only consumers.
 
 Manual formatting is destructive: it rewrites the whole card with a fresh MBR,
 one partition, and a new filesystem labeled `AIDEN`. Supported filesystems are
@@ -106,6 +128,20 @@ FAT32, ext4, and exFAT. Formatting runs asynchronously. After `FormatDisk`
 succeeds, the manager attempts to mount the new filesystem; check `card.mounted`
 and `effective_mode` to confirm that dual-storage mode was restored, because the
 post-format mount can still fail.
+
+The formatter resolves the required `mkfs` executable before changing the MBR.
+FAT32 uses `mkfs.vfat -F 32`. Debian includes `dosfstools`, `e2fsprogs`, and
+`exfatprogs`; the image audit checks their formatting and checking executables.
+Mount/unmount/sync commands have 15-second deadlines, signature probes have
+3-second deadlines per invocation, and formatting has a 5-minute deadline.
+Kernel I/O in uninterruptible sleep can still exceed a userspace deadline.
+Storage events and rejection reasons are logged to the Config Web journal.
+Mounted cards also receive a synced write/readback probe every 30 seconds.
+Health I/O runs outside the status lock; an I/O or read-only failure detaches the
+SD tier and prevents repeated mount attempts until reinsertion. A full card or
+exhausted quota stays mounted, reports the capacity problem, and pauses migration
+so existing files remain readable and can be removed to recover space. A later
+successful probe clears the capacity reason without requiring reinsertion.
 
 ### StorageManager HTTP API
 
@@ -130,7 +166,7 @@ Example response:
   "card": {
     "present": true,
     "mounted": true,
-    "device": "/dev/mmcblk2p1",
+    "device": "/dev/mmcblk1p1",
     "total_bytes": 68719476736,
     "free_bytes": 64424509440
   },
@@ -184,7 +220,7 @@ result. Invalid requests return HTTP 400.
 ~~~toml
 [storage_settings.storage]
 mount_point = "/mnt/sdcard"
-device = "mmcblk2"
+device = "auto" # Or an explicit mmcblk1/mmcblk2 override
 min_card_free_mb = 64
 migrate_start_free_pct = 10
 migrate_stop_free_pct = 50

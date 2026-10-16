@@ -39,6 +39,13 @@ needed:
 make check-production
 ```
 
+The quick and full profiles compile and audit the TF card device tree from
+`pico-sdk`, so initialize that submodule before running either profile:
+
+```bash
+git submodule update --init --depth=1 pico-sdk
+```
+
 Full hardware targets depend on Rockchip/Luckfox armhf libraries. Use the Debian
 cross-compilation workflow for device-runnable artifacts.
 

@@ -342,7 +342,7 @@ provider = "minimax-main"
 # eMMC only. StorageMonitor independently protects the persistent data root.
 [storage_settings.storage]
 # mount_point = "/mnt/sdcard"       # Where a usable card is mounted
-# device = "mmcblk2"                # SD card block device base name
+# device = "auto"                   # Discover SD card; set mmcblk1/mmcblk2 to override
 # min_card_free_mb = 64             # Cards with less free space are rejected
 # migrate_start_free_pct = 10       # Start migrating below this eMMC free %
 # migrate_stop_free_pct = 50        # Stop once eMMC free % reaches this

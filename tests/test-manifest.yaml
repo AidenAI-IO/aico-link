@@ -166,6 +166,20 @@ suites:
     required: true
     timeout_seconds: 30
 
+  - name: tf-card-dtb
+    class: deterministic
+    paths: [pico-sdk, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]
+    command: |
+      python3 pico-sdk/project/scripts/test_aiden_custom_dts.py AidenCustomBoardTest.test_tf_card_on_sdmmc0
+      bash scripts/test_tf_dtb.sh
+    quick: true
+    dependencies: [bash, python3, gcc, dtc, fdtget, fdtput]
+    required_inputs:
+      - pico-sdk/project/scripts/test_aiden_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+    required: true
+    timeout_seconds: 60
+
   - name: script-contracts
     class: deterministic
     paths: [scripts, .github/workflows, tests]

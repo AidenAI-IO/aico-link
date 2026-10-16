@@ -32,6 +32,7 @@ util-linux
 util-linux-extra
 e2fsprogs
 dosfstools
+exfatprogs
 rsync
 ethtool
 usbutils
