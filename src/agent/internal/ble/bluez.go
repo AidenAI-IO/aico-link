@@ -44,6 +44,23 @@ const (
 	blueZRootPath     = dbus.ObjectPath("/")
 )
 
+// ErrAdvertisementRegistration marks a backend start that failed because the
+// controller rejected the advertising set. After a warm reboot that is usually
+// a set left over from the previous boot, which the caller can clear before
+// the next attempt.
+var ErrAdvertisementRegistration = errors.New("register BLE advertisement")
+
+// iOS caches GATT handles per bond. Auto-allocated handles grow on every
+// RegisterApplication within one bluetoothd lifetime, so a backend retry or
+// restart moves the Wake characteristic and a bonded iPhone keeps reading the
+// stale handle (ATT Invalid Handle). Pin the Wake service where a fresh
+// bluetoothd places it, right after GAP, GATT and Device Information, so
+// phones bonded on a normal boot keep a valid cache.
+const (
+	wakeServiceHandle   uint16 = 0x0013
+	wakeCharValueHandle uint16 = 0x0015
+)
+
 type managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
 
 type ancsPaths struct {
@@ -339,6 +356,8 @@ func (b *blueZBackend) exportObjects() error {
 			"UUID":            {Value: WakeServiceUUID, Emit: prop.EmitConst},
 			"Primary":         {Value: true, Emit: prop.EmitConst},
 			"Characteristics": {Value: []dbus.ObjectPath{wakeCharPath}, Emit: prop.EmitConst},
+			// BlueZ writes the allocated handle back when this is zero.
+			"Handle": {Value: wakeServiceHandle, Writable: true, Emit: prop.EmitFalse},
 		},
 	}, &struct{}{})
 	if err != nil {
@@ -350,6 +369,8 @@ func (b *blueZBackend) exportObjects() error {
 		blueZGattCharInterface: {
 			"UUID":    {Value: WakeCharacteristicUUID, Emit: prop.EmitConst},
 			"Service": {Value: wakeServicePath, Emit: prop.EmitConst},
+			// The value handle; BlueZ places the declaration one below it.
+			"Handle": {Value: wakeCharValueHandle, Writable: true, Emit: prop.EmitFalse},
 			// Keep the pairing probe encrypted, but use a standard notification
 			// subscription. BlueZ 5.65 on the board rejects encrypt-notify CCCD
 			// writes even for the bonded phone; Wake carries only a poll hint.
@@ -545,16 +566,39 @@ func (b *blueZBackend) registerAgent() error {
 }
 
 func (b *blueZBackend) registerGatt() error {
+	err := b.callRegisterApplication()
+	if err == nil {
+		return nil
+	}
+	// A BlueZ whose built-in services outgrow the pinned range rejects the
+	// whole application. Keep BLE working with automatic allocation.
+	logging.Warnf(
+		"ble_service", "bluez",
+		"BLE GATT pinned handles rejected, using automatic allocation: %v", err,
+	)
+	b.setGattHandles(0)
+	if err := b.callRegisterApplication(); err != nil {
+		return fmt.Errorf("register BLE GATT application: %w", err)
+	}
+	return nil
+}
+
+func (b *blueZBackend) callRegisterApplication() error {
 	options := map[string]dbus.Variant{}
-	if err := callWithTimeout(
+	return callWithTimeout(
 		b.conn.Object(BlueZBusName, b.adapter),
 		blueZGattManagerInterface+".RegisterApplication",
 		applicationPath,
 		options,
-	).Err; err != nil {
-		return fmt.Errorf("register BLE GATT application: %w", err)
+	).Err
+}
+
+func (b *blueZBackend) setGattHandles(handle uint16) {
+	for _, object := range b.gattObjects {
+		if _, err := object.properties.Get(object.interfaceName, "Handle"); err == nil {
+			object.properties.SetMust(object.interfaceName, "Handle", handle)
+		}
 	}
-	return nil
 }
 
 func (b *blueZBackend) setAdvertising(enabled bool) error {
@@ -575,7 +619,7 @@ func (b *blueZBackend) setAdvertising(enabled bool) error {
 			options,
 		).Err
 		if err != nil {
-			return fmt.Errorf("register BLE advertisement: %w", err)
+			return fmt.Errorf("%w: %w", ErrAdvertisementRegistration, err)
 		}
 	} else {
 		err = callWithTimeout(

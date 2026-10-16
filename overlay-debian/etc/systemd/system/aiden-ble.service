@@ -14,6 +14,7 @@ EnvironmentFile=/run/aiden/system.env
 ExecCondition=/usr/lib/aiden/aiden-feature-enabled ENABLE_BLE_SERVICE
 RuntimeDirectory=ble_service
 LogsDirectory=ble_service
+ExecStartPre=/usr/lib/aiden/aiden-bluetooth-clear-adv
 ExecStart=/usr/lib/aiden/ble_service --socket ${SOCKET_PATH} --device-name ${DEVICE_NAME} --event-capacity ${EVENT_CAPACITY} --pairing-window ${PAIRING_WINDOW_SECONDS}s
 Restart=on-failure
 RestartSec=2s

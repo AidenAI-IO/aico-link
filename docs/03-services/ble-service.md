@@ -48,6 +48,32 @@ the same initialization sequence before restarting BlueZ:
 
 This preserves the iPhone bond across reboot and firmware rootfs replacement.
 
+Before `ble_service` starts, `aiden-bluetooth-clear-adv` waits up to 10 seconds
+for `hci0` to come up, then disables and clears every extended advertising set
+in the controller. A warm reboot reuses the running AIC8800 firmware
+(`fw_state=reused`), and the controller keeps the previous boot's advertising
+set across HCI Reset. Without the cleanup, the controller rejects
+`LE Set Extended Advertising Parameters` with `Command Disallowed (0x0c)`,
+`bluetoothd` logs `Failed to add advertisement: Busy (0x0a)` every two seconds,
+and `ble_service.log` repeats `register BLE advertisement: Failed to register
+advertisement`. The board is then invisible to the app. A cleanup failure is
+logged to `ble_service.log` and does not block startup. Because `ble_service`
+retries its backend in-process and never exits on this error, it also runs the
+helper again before each retry that failed to register the advertisement, so a
+cleanup skipped at unit start (for example, `hci0` not up within 10 seconds)
+still recovers.
+
+The Wake service is registered at fixed GATT handles: service `0x0013`, Wake
+value `0x0015`, which is where a fresh `bluetoothd` places it. iOS caches GATT
+handles per bond, while BlueZ never reuses handles freed by an earlier
+`RegisterApplication`, so automatic allocation would move the Wake
+characteristic on every backend retry or restart. A bonded iPhone then keeps
+reading the old handle, `btmon` shows `Read Request` answered with
+`Invalid Handle (0x01)`, and the app reports that pairing was cancelled or
+did not finish. If BlueZ rejects the fixed handles, `ble_service.log` records
+`BLE GATT pinned handles rejected` and registration falls back to automatic
+allocation.
+
 ## Pairing and Bonding
 
 The advertised name is derived from the configured base name and the final
