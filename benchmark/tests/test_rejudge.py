@@ -53,6 +53,24 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
             assert judged == []
 
 
+def test_rejudge_preserves_judge_free_rows_before_artifact_checks(tmp_path: Path, monkeypatch):
+    attempt = tmp_path / "tasks" / "zero_rubric" / "attempt_1"
+    attempt.mkdir(parents=True)
+    (attempt / "trace.json").write_text('{"final_response":"Done"}')
+    row = {
+        "task_id": "zero_rubric", "attempt": 1, "status": "passed",
+        "rubric_spec": [], "rubric_total": 0,
+        "metrics": {"success": True, "quality_score": 1.0, "post_screenshot_file": True},
+    }
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+    monkeypatch.setattr(rejudge, "judge_task", lambda **kw: judged.append(kw))
+    rejudge.rejudge_run(tmp_path, "model", "https://judge/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert result == row
+    assert judged == []
+
+
 def test_rejudge_uses_latest_legacy_step_screenshot_when_post_missing(tmp_path: Path, monkeypatch):
     run_dir = tmp_path / "run"
     attempt_dir = run_dir / "tasks" / "task-1"

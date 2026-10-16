@@ -288,8 +288,12 @@ def _per_task_setup_seed_memory(client: AgentClient, setup: dict[str, Any]) -> N
         memory = dict(memory)
         if "expires_in_sec" in memory:
             seconds = memory.pop("expires_in_sec")
-            if type(seconds) is not int or seconds <= 0 or "expires_at" in memory:
-                raise ResetError("seed_memory expires_in_sec must be a positive integer and cannot accompany expires_at")
+            # One year bounds fixture lifetimes and keeps the datetime arithmetic in range.
+            if type(seconds) is not int or not 0 < seconds <= 365 * 86400 or "expires_at" in memory:
+                raise ResetError(
+                    f"seed_memory expires_in_sec must be an integer in (0, 31536000] "
+                    f"and cannot accompany expires_at, got {seconds!r}"
+                )
             memory["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
         try:
             client.seed_memory(memory, timeout=timeout)

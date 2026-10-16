@@ -30,6 +30,7 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
         elif mtype == "tool_result" and pending is not None:
             raw = msg.get("content", "")
             content = _safe_loads(raw)
+            pending["is_error"] = bool(msg.get("is_error") or msg.get("tool_error") is not None)
             if isinstance(content, dict) and content.get("data"):
                 pending["has_screenshot"] = True
             elif isinstance(raw, str) and "screenshot observation" in raw.lower():
@@ -48,6 +49,26 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
         total_tool_calls=len(tool_calls),
         total_duration_ms=0,
     )
+
+
+def mark_failed_tool_calls(trace: Trace, episode: dict[str, Any] | None) -> None:
+    """Copy episode tool-result error flags onto the history-derived trace.
+
+    Public history omits error status, while the episode records it for every
+    result. Results pair with calls in order; a name mismatch leaves the trace
+    unchanged rather than guessing.
+    """
+    events = episode.get("events") if isinstance(episode, dict) else None
+    if not isinstance(events, list):
+        return
+    results = [e for e in events if isinstance(e, dict) and e.get("type") == "tool_result"]
+    if len(results) != len(trace.tool_calls):
+        return
+    if any(str(r.get("tool_name") or "") != tc.tool for r, tc in zip(results, trace.tool_calls)):
+        return
+    for result, tool_call in zip(results, trace.tool_calls):
+        if result.get("is_error") or result.get("tool_error") is not None:
+            tool_call.is_error = True
 
 
 def trace_has_skill_read(trace: Trace, skill_name: str) -> bool:

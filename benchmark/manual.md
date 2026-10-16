@@ -265,10 +265,15 @@ the expected value. The same matcher works in mock responses and
 For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
 either bound may be omitted.
 
+A required call is satisfied only by a call whose result was not an error; the
+runner reads per-call error status from the recorded episode. Set
+`"first_attempt": true` on a `required_tool_calls` entry when only the next call
+to that tool counts, so a later retry cannot satisfy a missed first attempt.
+
 A task may leave `rubric` empty when `hard_assertions.required_tool_calls`
 fully decides it. Such a task is scored without the judge. The perception suite
-uses this to check each tap's normalized coordinates against the target's
-bounds.
+uses this to check the first tap's normalized coordinates against the target's
+bounds; later calls on the static frame do not affect the score.
 
 `enter_text` has its own internal decision chain in the real Go tool:
 

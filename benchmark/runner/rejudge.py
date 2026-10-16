@@ -32,6 +32,10 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
         ):
             new_results.append(row)
             continue
+        # Judge-free tasks are decided by recorded assertions; keep them as-is.
+        if row.get("rubric_total") == 0:
+            new_results.append(row)
+            continue
         td = run_dir / "tasks" / row["task_id"]
         attempt_dir = td / f"attempt_{row['attempt']}" if (td / f"attempt_{row['attempt']}").exists() else td
         pre = attempt_dir / "pre.jpg"
@@ -52,10 +56,6 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
             continue
         rubric = [RubricItem(id=r["id"], check=r["check"]) for r in row.get("rubric_spec", [])]
         if not rubric:
-            # Judge-free tasks are decided by recorded assertions; keep them as-is.
-            if row.get("rubric_total") == 0:
-                new_results.append(row)
-                continue
             row["status"] = "judge_error"
             row["metrics"] = {**row.get("metrics", {}), "rejudge_error": "missing rubric_spec"}
             new_results.append(row)

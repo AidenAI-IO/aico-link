@@ -26,7 +26,6 @@
       "rubric": [],
       "hard_assertions": {
         "min_tool_calls": 1,
-        "max_tool_calls": 5,
         "must_complete_within_sec": 120,
         "response_required": false,
         "required_tool_calls": [
@@ -44,7 +43,8 @@
                   "$lte": 560
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       }
@@ -53,7 +53,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the 'X' close button on the advertisement banner at the bottom of the screen and tap it to dismiss the ad.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -72,7 +71,8 @@
                   "$lte": 898
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -98,7 +98,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the menu icon (three dots) located in the top-right corner of the chat interface and tap it to open the chat details.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -117,7 +116,8 @@
                   "$lte": 97
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -143,7 +143,6 @@
       "category": "perception",
       "description_for_judge": "The agent should tap the circular refresh icon located in the bottom navigation bar to reload the page.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -162,7 +161,8 @@
                   "$lte": 948
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -188,7 +188,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the '从相册选择' (Select from Album) button in the bottom modal and tap it.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -207,7 +206,8 @@
                   "$lte": 734
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -233,7 +233,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the search icon located in the top-right corner of the screen and click it to initiate a search.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -252,7 +251,8 @@
                   "$lte": 111
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -278,7 +278,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the 'Scan' icon located in the top right corner of the screen (next to the 'Edit' button) and tap it to initiate the scanning function.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -297,7 +296,8 @@
                   "$lte": 115
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -323,7 +323,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the close button (X) for the advertisement banner located below the navigation tabs and tap it to dismiss the ad.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -342,7 +341,8 @@
                   "$lte": 551
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -368,7 +368,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the '...' icon located in the top right corner of the chat header and tap it to access chat details.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -387,7 +386,8 @@
                   "$lte": 101
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -413,7 +413,6 @@
       "category": "perception",
       "description_for_judge": "The agent should tap the selection checkbox located in the top-right corner of the first image in the grid (the top-left image showing food).",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -432,7 +431,8 @@
                   "$lte": 227
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -458,7 +458,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the '跳过广告' (Skip Ad) button located in the top right corner of the screen and click it to dismiss the advertisement.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -477,7 +476,8 @@
                   "$lte": 67
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },
@@ -503,7 +503,6 @@
       "category": "perception",
       "description_for_judge": "The agent should identify the notification banner at the bottom of the screen and click the 'X' button to dismiss it.",
       "hard_assertions": {
-        "max_tool_calls": 5,
         "min_tool_calls": 1,
         "must_complete_within_sec": 120,
         "response_required": false,
@@ -522,7 +521,8 @@
                   "$lte": 884
                 }
               }
-            }
+            },
+            "first_attempt": true
           }
         ]
       },

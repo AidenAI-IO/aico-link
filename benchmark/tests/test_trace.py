@@ -72,6 +72,47 @@ def test_extract_trace_keeps_tool_call_without_result_before_next_call():
     assert trace.total_tool_calls == 2
 
 
+def test_extract_trace_captures_tool_error_status():
+    history = [
+        {"type": "tool_call", "tool_name": "bridge_contacts", "tool_input": '{"action":"query"}'},
+        {"type": "tool_result", "tool_name": "bridge_contacts", "content": "Error: permission denied", "is_error": True},
+        {"type": "tool_call", "tool_name": "screenshot", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "screenshot", "content": "timeout", "tool_error": {"code": "timeout"}},
+        {"type": "tool_call", "tool_name": "enter_text", "tool_input": '{"text":"test"}'},
+        {"type": "tool_result", "tool_name": "enter_text", "content": '{"ok":true}'},
+        {"type": "assistant", "content": "Entered text after error"},
+    ]
+    trace = extract_trace(history)
+    assert [tc.is_error for tc in trace.tool_calls] == [True, True, False]
+
+
+def test_mark_failed_tool_calls_uses_episode_result_flags():
+    from runner.trace import mark_failed_tool_calls
+
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": "ok"},
+        {"type": "tool_call", "tool_name": "open_app", "tool_input": '{"app":"Settings"}'},
+        {"type": "tool_result", "tool_name": "open_app", "content": "no mock response configured"},
+    ]
+    episode = {"events": [
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture"},
+        {"type": "tool_call", "tool_name": "open_app"},
+        {"type": "tool_result", "tool_name": "open_app", "is_error": True},
+    ]}
+    trace = extract_trace(history)
+    mark_failed_tool_calls(trace, episode)
+    assert [tc.is_error for tc in trace.tool_calls] == [False, True]
+
+    # A misaligned episode is ignored instead of flagging the wrong call.
+    trace = extract_trace(history)
+    mark_failed_tool_calls(trace, {"events": episode["events"][1:2]})
+    assert [tc.is_error for tc in trace.tool_calls] == [False, False]
+    mark_failed_tool_calls(trace, None)
+    assert [tc.is_error for tc in trace.tool_calls] == [False, False]
+
+
 def test_trace_has_skill_read_detects_matching_tool_call():
     trace = Trace(
         tool_calls=[

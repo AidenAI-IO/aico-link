@@ -8,6 +8,7 @@ class ToolCall:
     tool: str
     input: dict[str, Any]
     has_screenshot: bool = False
+    is_error: bool = False
 
 @dc.dataclass
 class Trace:

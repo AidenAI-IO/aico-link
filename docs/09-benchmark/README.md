@@ -171,11 +171,12 @@ suites test their modeled policy and tool selection, not OS integration.
 
 ### Time-independent memory fixtures
 
-A `seed_memory` item may set `expires_in_sec` to a positive integer. The
-runner resolves it to an absolute `expires_at` immediately before each attempt,
-without changing the suite snapshot. Do not specify both fields. Notification
-mutation fixtures use a one-day lifetime so they do not expire as the calendar
-advances. Keep absolute timestamps only for tests that intentionally model expiry.
+A `seed_memory` item may set `expires_in_sec` to a positive integer of at most
+one year (31536000 seconds). The runner resolves it to an absolute `expires_at`
+immediately before each attempt, without changing the suite snapshot. Do not
+specify both fields. Notification mutation fixtures use a one-day lifetime so
+they do not expire as the calendar advances. Keep absolute timestamps only for
+tests that intentionally model expiry.
 
 An inline recall result with `results: null` is a completed empty result, matching
 Go's nil-slice JSON encoding. Expected IDs missing from that result are an eligible

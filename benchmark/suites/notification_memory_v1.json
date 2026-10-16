@@ -16,7 +16,7 @@
         },
         {
           "id": "preserves_delivery_time",
-          "check": "The final answer says the package is expected tomorrow."
+          "check": "The final answer gives the expected arrival as the day after the notification was received: either 'tomorrow' relative to the notification or the recalled date 2026-08-22."
         },
         {
           "id": "does_not_invent",
@@ -449,7 +449,7 @@
         },
         {
           "id": "uses_promoted_scope",
-          "check": "The recalled rule is a long-term memory, not the temporary source record."
+          "check": "The recall_memory result used for the answer is the long-term rule, not the temporary source record tmp_promote_delivery. Setup performs the promotion; the agent only needs to recall it."
         }
       ],
       "hard_assertions": {

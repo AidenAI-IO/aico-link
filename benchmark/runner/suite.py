@@ -54,6 +54,8 @@ class TraceObservationSpec:
 class RequiredToolCallSpec:
     tool: str
     input_contains: dict[str, Any] = dc.field(default_factory=dict)
+    # Only the first remaining call to this tool may satisfy the requirement.
+    first_attempt: bool = False
 
 @dc.dataclass
 class HardAssertions:
@@ -771,7 +773,12 @@ def _required_tool_call_assertions(raw: Any, task_id: str) -> list[RequiredToolC
             raise SuiteValidationError(
                 f"task {task_id}: required_tool_calls[{index}].input_contains must be an object"
             )
-        out.append(RequiredToolCallSpec(tool=tool, input_contains=input_contains))
+        first_attempt = item.get("first_attempt", False)
+        if not isinstance(first_attempt, bool):
+            raise SuiteValidationError(
+                f"task {task_id}: required_tool_calls[{index}].first_attempt must be boolean"
+            )
+        out.append(RequiredToolCallSpec(tool=tool, input_contains=input_contains, first_attempt=first_attempt))
     return out
 
 

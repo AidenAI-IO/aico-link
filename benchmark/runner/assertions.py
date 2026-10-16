@@ -164,8 +164,11 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             tc = trace.tool_calls[trace_index]
             if tc.tool != requirement.tool:
                 continue
-            if dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
+            # A failed call is an attempt, not the required action.
+            if not tc.is_error and dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
                 matched_index = trace_index
+                break
+            if requirement.first_attempt:
                 break
         if matched_index is None:
             missing_tool_calls = list(spec.required_tool_calls[req_index:])
