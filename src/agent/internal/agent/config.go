@@ -176,7 +176,7 @@ func (c StorageConfig) MountPointOrDefault() string {
 	return path
 }
 
-// DeviceOrDefault returns Device if non-empty, else "mmcblk2".
+// DeviceOrDefault returns Device if non-empty, else "auto" (discover an SD card).
 func (c StorageConfig) DeviceOrDefault() string {
 	dev := strings.TrimSpace(c.Device)
 	if dev == "" {

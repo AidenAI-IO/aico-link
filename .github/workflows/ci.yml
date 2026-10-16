@@ -47,8 +47,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Fetch benchmark test fixture submodule
-        run: git submodule update --init --depth=1 benchmark/mobilegym/vendor/mobilegym
+      - name: Fetch SDK and benchmark test fixtures
+        run: git submodule update --init --depth=1 pico-sdk benchmark/mobilegym/vendor/mobilegym
       - uses: docker/setup-buildx-action@v3
       - name: Build Docker test image and update persistent cache
         if: ${{ github.event_name == 'push' }}

@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,6 +15,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"aiden-agent/internal/logging"
 )
 
 // StorageMode reports which storage tiers are currently available. The mode
@@ -184,18 +188,19 @@ type StorageManager struct {
 	emmcRoot     string
 	pollInterval time.Duration
 
-	mu             sync.Mutex
-	card           StorageCardStatus
-	lastEffective  StorageMode
-	ejected        bool // safe-eject latch; cleared when the card is removed
-	mountFailed    bool // avoid retrying a failing mount every tick
-	presenceRaw    bool
-	presenceCount  int
-	subscribers    []chan StorageEvent
-	stateWriteErr  bool             // log the mirror-write failure only once
-	formatJob      StorageFormatJob // async format task state
-	autoFormatDone bool             // one auto-format attempt per insertion
-	mounting       bool             // a mount attempt runs ops.Prepare off m.mu
+	mu              sync.Mutex
+	card            StorageCardStatus
+	lastEffective   StorageMode
+	ejected         bool // safe-eject latch; cleared when the card is removed
+	mountFailed     bool // avoid retrying a failing mount every tick
+	presenceRaw     bool
+	presenceCount   int
+	subscribers     []chan StorageEvent
+	stateWriteErr   bool             // log the mirror-write failure only once
+	formatJob       StorageFormatJob // async format task state
+	autoFormatDone  bool             // one auto-format attempt per insertion
+	mounting        bool             // a mount attempt runs ops.Prepare off m.mu
+	lastHealthProbe time.Time
 
 	migration        StorageMigrationJob
 	migrationCancel  chan struct{} // non-nil while a migration run is active
@@ -1208,6 +1213,7 @@ func (m *StorageManager) tick() {
 		m.ejected = false
 		m.mountFailed = false
 		m.autoFormatDone = false
+		m.lastHealthProbe = time.Time{}
 		m.tryMountLocked()
 	case !present && m.card.Present:
 		m.requestMigrationCancelLocked("card removed")
@@ -1219,11 +1225,34 @@ func (m *StorageManager) tick() {
 		m.mountFailed = false
 		m.autoFormatDone = false
 	case present && m.card.Mounted:
-		if !m.ops.Healthy(m.cfg.MountPointOrDefault()) {
+		mountPoint := m.cfg.MountPointOrDefault()
+		probeDue := time.Since(m.lastHealthProbe) >= 30*time.Second
+		m.mounting = true // keep exclusive operations away during health I/O
+		m.mu.Unlock()
+		healthy := m.ops.Healthy(mountPoint)
+		var probeErr error
+		if healthy && probeDue {
+			if verifier, ok := m.ops.(interface{ VerifyWritable(string) error }); ok {
+				probeErr = verifier.VerifyWritable(mountPoint)
+				healthy = probeErr == nil
+			}
+		}
+		free, total, spaceErr := m.ops.SpaceInfo(mountPoint)
+		m.mu.Lock()
+		m.mounting = false
+		if probeDue {
+			m.lastHealthProbe = time.Now()
+		}
+		if !healthy {
 			m.requestMigrationCancelLocked("card unresponsive")
-			m.unmountLocked(true, "card unresponsive (removed or IO failure)")
-		} else {
-			m.refreshSpaceLocked()
+			reason := "card unresponsive or read-only"
+			if probeErr != nil {
+				reason = fmt.Sprintf("card write/sync probe failed: %v", probeErr)
+			}
+			m.unmountLocked(true, reason)
+			m.mountFailed = true
+		} else if spaceErr == nil {
+			m.card.FreeBytes, m.card.TotalBytes = free, total
 		}
 	case present && !m.card.Mounted:
 		// Card sitting idle: mount unless safe-ejected or known bad.
@@ -1237,7 +1266,7 @@ func (m *StorageManager) tick() {
 
 // tryMountLocked runs the usability gate and mounts. Caller holds m.mu.
 //
-// ops.Prepare shells out to fsck and mount with no timeout, so running it
+// ops.Prepare shells out to fsck and mount, so running it
 // under m.mu would freeze Status/EffectiveMode/ReadRoots/CleanupRoots for the
 // duration. It is instead released across the Prepare call — guarded by the
 // m.mounting latch (checked in tick) so no second tick launches a concurrent
@@ -1255,6 +1284,7 @@ func (m *StorageManager) tryMountLocked() {
 	m.mounting = true
 	m.mu.Unlock()
 	err := m.ops.Prepare(dev, mountPoint)
+	blank := err != nil && !errors.Is(err, errStorageIO) && !errors.Is(err, syscall.EIO) && !errors.Is(err, context.DeadlineExceeded) && m.ops.CardIsBlank()
 	m.mu.Lock()
 	m.mounting = false
 
@@ -1279,7 +1309,7 @@ func (m *StorageManager) tryMountLocked() {
 		// is auto-formatted FAT32 and mounted. Cards with unreadable but
 		// recognizable content are never touched — the user decides in the
 		// portal. One attempt per insertion.
-		if !m.autoFormatDone && m.formatJob.Status != StorageFormatRunning && m.ops.CardIsBlank() {
+		if !m.autoFormatDone && m.formatJob.Status != StorageFormatRunning && blank {
 			m.autoFormatDone = true
 			m.card.Reason = "blank card detected; formatting as FAT32"
 			m.formatJob = StorageFormatJob{Status: StorageFormatRunning, FS: StorageFormatFAT32, Auto: true, StartedAt: time.Now()}
@@ -1288,7 +1318,7 @@ func (m *StorageManager) tryMountLocked() {
 			go m.runFormatJob(StorageFormatFAT32)
 			return
 		}
-		m.logf("[storage] card %s failed the usability gate: %v", dev, err)
+		m.warnf("[storage] card %s failed the usability gate: %v", dev, err)
 		return
 	}
 	m.card.Mounted = true
@@ -1413,25 +1443,57 @@ func (m *StorageManager) writeStateFileLocked() {
 func (m *StorageManager) logf(format string, args ...interface{}) {
 	if m.logger != nil {
 		m.logger.Info(format, args...)
+	} else {
+		logging.Infof("config_web", "storage", format, args...)
 	}
 }
 
 func (m *StorageManager) warnf(format string, args ...interface{}) {
 	if m.logger != nil {
 		m.logger.Warn(format, args...)
+	} else {
+		logging.Warnf("config_web", "storage", format, args...)
 	}
 }
 
 // realStorageOps implements storageSysOps against the device.
 type realStorageOps struct {
 	mu     sync.RWMutex
-	device string // block device base name, e.g. "mmcblk2"
+	device string // "auto" or an explicit block device base name
 }
 
 func (o *realStorageOps) currentDevice() string {
 	o.mu.RLock()
 	defer o.mu.RUnlock()
+	if o.device == "auto" || o.device == "" {
+		return discoverSDCard("/sys/block")
+	}
 	return o.device
+}
+
+// MMC numbering differs between boards. The card type, unlike the removable
+// flag, reliably separates an SD card from eMMC and SDIO Wi-Fi. Fail closed if
+// more than one SD card is present; an explicit device is then required.
+func discoverSDCard(sysBlock string) string {
+	entries, err := os.ReadDir(sysBlock)
+	if err != nil {
+		return ""
+	}
+	device := ""
+	for _, entry := range entries {
+		if !strings.HasPrefix(entry.Name(), "mmcblk") {
+			continue
+		}
+		cardType, err := os.ReadFile(filepath.Join(sysBlock, entry.Name(), "device", "type"))
+		if err != nil || strings.TrimSpace(string(cardType)) != "SD" {
+			continue
+		}
+		if device != "" {
+			return ""
+		}
+		device = entry.Name()
+	}
+	return device
 }
 
 func (o *realStorageOps) setDevice(device string) {
@@ -1444,6 +1506,9 @@ func (o *realStorageOps) setDevice(device string) {
 // partition; cards formatted without a partition table use the whole device.
 func (o *realStorageOps) CardDevice() (string, bool) {
 	device := o.currentDevice()
+	if device == "" {
+		return "", false
+	}
 	sysPath := filepath.Join("/sys/block", device)
 	if _, err := os.Stat(sysPath); err != nil {
 		return "", false
@@ -1462,16 +1527,18 @@ func (o *realStorageOps) CardDevice() (string, bool) {
 // we could positively identify as empty.
 func (o *realStorageOps) CardIsBlank() bool {
 	device := o.currentDevice()
+	if device == "" {
+		return false
+	}
 	sysPath := filepath.Join("/sys/block", device)
 	if _, err := os.Stat(filepath.Join(sysPath, device+"p1")); err == nil {
 		return false // kernel sees a partition table
 	}
 	dev := "/dev/" + device
-	if fs, pt := probeBlkid(dev); fs != "" || pt != "" {
-		return false // a filesystem or partition-table signature exists
+	if !storageSignatureAbsent(dev) {
+		return false // a signature exists, or probing could not verify absence
 	}
-	// blkid found nothing (or is unavailable): double-check the raw MBR/GPT
-	// signatures before declaring the card blank.
+	// Double-check raw contents before declaring the card blank.
 	f, err := os.Open(dev)
 	if err != nil {
 		return false
@@ -1487,11 +1554,61 @@ func (o *realStorageOps) CardIsBlank() bool {
 	if string(buf[512:520]) == "EFI PART" {
 		return false // GPT header at LBA 1
 	}
-	return true
+	return bytes.Equal(buf, make([]byte, len(buf)))
 }
 
-// Prepare runs the usability gate: best-effort fsck, read-write mount, and a
-// probe write. Never formats.
+var errStorageIO = errors.New("card I/O failure")
+
+// Kill checker subprocesses too: fsck starts a filesystem-specific child.
+func runStorageCommand(timeout time.Duration, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = time.Second
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return out, fmt.Errorf("%s timed out after %s: %w", name, timeout, ctx.Err())
+	}
+	return out, err
+}
+
+func storageIOError(out []byte, err error) bool {
+	message := strings.ToLower(string(out))
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, syscall.EIO) ||
+		strings.Contains(message, "input/output error") || strings.Contains(message, "i/o error")
+}
+
+func storageWriteProbe(mountPoint string) error {
+	f, err := os.CreateTemp(mountPoint, ".aiden-write-probe-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	data := []byte("aiden-storage-probe\n")
+	if _, err := f.Write(data); err != nil {
+		return fmt.Errorf("write probe: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync probe: %w", err)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	readback := make([]byte, len(data))
+	if _, err := io.ReadFull(f, readback); err != nil {
+		return fmt.Errorf("read probe: %w", err)
+	}
+	if !bytes.Equal(readback, data) {
+		return fmt.Errorf("probe readback mismatch: %w", errStorageIO)
+	}
+	return f.Close()
+}
+
+// Prepare checks the filesystem, mounts read-write, and verifies a synced
+// probe write and readback. Never formats.
 func (o *realStorageOps) Prepare(dev, mountPoint string) error {
 	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
 		return fmt.Errorf("create mount point: %w", err)
@@ -1501,20 +1618,35 @@ func (o *realStorageOps) Prepare(dev, mountPoint string) error {
 	// mount of the same device fails with EBUSY. The probe write below still
 	// validates the adopted mount.
 	if o.IsMounted(mountPoint) {
-		probe := filepath.Join(mountPoint, ".aiden-write-probe")
-		if err := os.WriteFile(probe, []byte("ok"), 0o644); err != nil {
+		if source, _ := storageMount(mountPoint); source != dev {
+			return fmt.Errorf("mount point %s belongs to %s, expected %s", mountPoint, source, dev)
+		}
+		if err := storageWriteProbe(mountPoint); err != nil {
 			return fmt.Errorf("existing mount at %s is not writable: %w", mountPoint, err)
 		}
-		_ = os.Remove(probe)
 		return nil
 	}
-	// fsck is advisory: a missing or failing checker must not reject the
-	// card; the mount plus probe write below are the authoritative gate.
-	_ = exec.Command("fsck", "-p", dev).Run()
+	// A missing checker can fall back to mount/probe. Uncorrected filesystem
+	// errors and operational failures must be reported before mounting.
+	if out, err := runStorageCommand(60*time.Second, "fsck", "-p", dev); err != nil && !errors.Is(err, exec.ErrNotFound) {
+		var exit *exec.ExitError
+		if storageIOError(out, err) {
+			return fmt.Errorf("fsck %s: %w: %v: %s", dev, errStorageIO, err, strings.TrimSpace(string(out)))
+		}
+		if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+			return fmt.Errorf("fsck %s: %w: %s", dev, err, strings.TrimSpace(string(out)))
+		}
+	}
 	// ext4 gets a tighter journal commit; other filesystems reject those
 	// options, so retry with the portable set.
-	if out, err := exec.Command("mount", "-o", "noatime,errors=remount-ro,commit=2", dev, mountPoint).CombinedOutput(); err != nil {
-		if out2, err2 := exec.Command("mount", "-o", "noatime", dev, mountPoint).CombinedOutput(); err2 != nil {
+	if out, err := runStorageCommand(15*time.Second, "mount", "-o", "noatime,errors=remount-ro,commit=2", dev, mountPoint); err != nil {
+		if storageIOError(out, err) {
+			return fmt.Errorf("mount %s: %w: %v: %s", dev, errStorageIO, err, strings.TrimSpace(string(out)))
+		}
+		if out2, err2 := runStorageCommand(15*time.Second, "mount", "-o", "noatime", dev, mountPoint); err2 != nil {
+			if storageIOError(out2, err2) {
+				return fmt.Errorf("mount %s: %w: %v: %s", dev, errStorageIO, err2, strings.TrimSpace(string(out2)))
+			}
 			// An unmountable card usually means a filesystem this kernel has
 			// no driver for (APFS, HFS+, NTFS, ...) or a partition table with
 			// every partition deleted (Windows "delete volume"). Name the
@@ -1530,12 +1662,10 @@ func (o *realStorageOps) Prepare(dev, mountPoint string) error {
 			return fmt.Errorf("mount %s: %v: %s / %v: %s", dev, err, strings.TrimSpace(string(out)), err2, strings.TrimSpace(string(out2)))
 		}
 	}
-	probe := filepath.Join(mountPoint, ".aiden-write-probe")
-	if err := os.WriteFile(probe, []byte("ok"), 0o644); err != nil {
-		_ = exec.Command("umount", mountPoint).Run()
+	if err := storageWriteProbe(mountPoint); err != nil {
+		_, _ = runStorageCommand(15*time.Second, "umount", mountPoint)
 		return fmt.Errorf("card is not writable: %w", err)
 	}
-	_ = os.Remove(probe)
 	return nil
 }
 
@@ -1543,37 +1673,51 @@ func (o *realStorageOps) Unmount(mountPoint string, lazy bool) error {
 	if !o.IsMounted(mountPoint) {
 		return nil
 	}
-	_ = exec.Command("sync").Run()
+	if !lazy {
+		if out, err := runStorageCommand(15*time.Second, "sync", "-f", mountPoint); err != nil {
+			return fmt.Errorf("sync %s: %w: %s", mountPoint, err, strings.TrimSpace(string(out)))
+		}
+	}
 	args := []string{mountPoint}
 	if lazy {
 		args = []string{"-l", mountPoint}
 	}
-	if out, err := exec.Command("umount", args...).CombinedOutput(); err != nil {
+	if out, err := runStorageCommand(15*time.Second, "umount", args...); err != nil {
 		return fmt.Errorf("umount %s: %v: %s", mountPoint, err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
 
 func (o *realStorageOps) IsMounted(mountPoint string) bool {
+	source, _ := storageMount(mountPoint)
+	return source != ""
+}
+
+func storageMount(mountPoint string) (source, options string) {
 	data, err := os.ReadFile("/proc/self/mounts")
 	if err != nil {
-		return false
+		return "", ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 2 && fields[1] == mountPoint {
-			return true
+		if len(fields) >= 4 && unescapeMountInfoField(fields[1]) == mountPoint {
+			return unescapeMountInfoField(fields[0]), fields[3]
 		}
 	}
-	return false
+	return "", ""
 }
 
 func (o *realStorageOps) Healthy(mountPoint string) bool {
-	if !o.IsMounted(mountPoint) {
+	source, options := storageMount(mountPoint)
+	if source == "" || !strings.Contains(","+options+",", ",rw,") {
 		return false
 	}
 	var st syscall.Statfs_t
-	return syscall.Statfs(mountPoint, &st) == nil
+	return syscall.Statfs(mountPoint, &st) == nil && st.Flags&1 == 0 // ST_RDONLY
+}
+
+func (o *realStorageOps) VerifyWritable(mountPoint string) error {
+	return storageWriteProbe(mountPoint)
 }
 
 func (o *realStorageOps) SnapshotIdentity(ctx context.Context, device, mountPoint string) (string, string, error) {
@@ -1671,6 +1815,16 @@ func (o *realStorageOps) FormatDisk(fs string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Resolve mkfs before opening the card or rewriting its partition table.
+	tool, args, err := storageFormatCommand(fs)
+	if err != nil {
+		return "", err
+	}
+	if device == "" {
+		return "", fmt.Errorf("no unambiguous SD card is present")
+	}
+	// Keep every step on the same device if discovery changes during the job.
+	o = &realStorageOps{device: device}
 	totalSectors, err := o.deviceSectors()
 	if err != nil {
 		return "", err
@@ -1690,7 +1844,9 @@ func (o *realStorageOps) FormatDisk(fs string) (string, error) {
 	if err := o.waitNoMounts(5 * time.Second); err != nil {
 		return "", err
 	}
-	_ = exec.Command("sync").Run()
+	if out, err := runStorageCommand(15*time.Second, "sync"); err != nil {
+		return "", fmt.Errorf("sync before format: %w: %s", err, strings.TrimSpace(string(out)))
+	}
 	time.Sleep(300 * time.Millisecond)
 
 	f, err := os.OpenFile(base, os.O_WRONLY, 0)
@@ -1731,21 +1887,30 @@ func (o *realStorageOps) FormatDisk(fs string) (string, error) {
 		return "", fmt.Errorf("partition %s did not appear: %w", part, err)
 	}
 
-	var cmd *exec.Cmd
-	switch fs {
-	case StorageFormatFAT32:
-		// mkfs.vfat from the SDK-bundled dosfstools creates FAT32 volumes.
-		cmd = exec.Command("mkfs.vfat", "-n", storageVolumeLabel, part)
-	case StorageFormatExt4:
-		cmd = exec.Command("mkfs.ext4", "-F", "-L", storageVolumeLabel, part)
-	case StorageFormatExFAT:
-		// mkfs.exfat from the SDK-bundled exfatprogs.
-		cmd = exec.Command("mkfs.exfat", "-L", storageVolumeLabel, part)
-	}
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("%s %s: %v: %s", cmd.Path, part, err, strings.TrimSpace(string(out)))
+	if out, err := runStorageCommand(5*time.Minute, tool, append(args, part)...); err != nil {
+		return "", fmt.Errorf("%s %s: %w: %s", tool, part, err, strings.TrimSpace(string(out)))
 	}
 	return part, nil
+}
+
+func storageFormatCommand(fs string) (string, []string, error) {
+	var tool string
+	var args []string
+	switch fs {
+	case StorageFormatFAT32:
+		tool, args = "mkfs.vfat", []string{"-F", "32", "-n", storageVolumeLabel}
+	case StorageFormatExt4:
+		tool, args = "mkfs.ext4", []string{"-F", "-L", storageVolumeLabel}
+	case StorageFormatExFAT:
+		tool, args = "mkfs.exfat", []string{"-L", storageVolumeLabel}
+	default:
+		return "", nil, fmt.Errorf("unsupported filesystem %q", fs)
+	}
+	path, err := exec.LookPath(tool)
+	if err != nil {
+		return "", nil, fmt.Errorf("required formatting tool %s is unavailable: %w", tool, err)
+	}
+	return path, args, nil
 }
 
 // blkidCandidates lists probe binaries in preference order. The device PATH
@@ -1755,6 +1920,24 @@ func (o *realStorageOps) FormatDisk(fs string) (string, error) {
 // low-level probing, so it must be tried first.
 var blkidCandidates = []string{"/usr/sbin/blkid", "/sbin/blkid", "blkid"}
 
+func storageSignatureAbsent(dev string) bool {
+	for _, bin := range blkidCandidates {
+		out, err := runStorageCommand(3*time.Second, bin, "-p", dev)
+		if errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		return blkidReportsNoSignature(out, err)
+	}
+	return false
+}
+
+func blkidReportsNoSignature(out []byte, err error) bool {
+	// util-linux low-level probing exits 2 when it found no signature. Exit
+	// 0 with empty output is not evidence (some BusyBox probes behave so).
+	var exit *exec.ExitError
+	return len(bytes.TrimSpace(out)) == 0 && errors.As(err, &exit) && exit.ExitCode() == 2
+}
+
 // probeBlkid asks blkid what the device carries: a filesystem signature
 // (TYPE) and/or a partition table (PTTYPE, e.g. a card whose volumes were
 // deleted on a PC). Plain blkid may print nothing for a bare partition
@@ -1763,7 +1946,7 @@ var blkidCandidates = []string{"/usr/sbin/blkid", "/sbin/blkid", "blkid"}
 func probeBlkid(dev string) (fsType, ptType string) {
 	for _, bin := range blkidCandidates {
 		for _, args := range [][]string{{dev}, {"-p", dev}} {
-			out, err := exec.Command(bin, args...).CombinedOutput()
+			out, err := runStorageCommand(3*time.Second, bin, args...)
 			if err != nil {
 				continue
 			}
