@@ -56,6 +56,15 @@ func TestBenchmarkMockToolsPreserveSchemasAndRejectFixtureFailures(t *testing.T)
 	if _, ok := tools[1].(*benchmarkMockTool); ok {
 		t.Fatal("shell must execute normally")
 	}
+	for name, mocked := range map[string]bool{
+		"keyboard_tap": true, "quick_action": true, "open_url": true, "bridge_notification": true,
+		"screenshot": false, "wait_for_stable_screen": false, "recall_memory": false,
+	} {
+		_, ok := benchmarkMockTools(cfg, []langtools.Tool{mockPolicyTestTool{name}})[0].(*benchmarkMockTool)
+		if ok != mocked {
+			t.Errorf("%s mocked=%v, want %v", name, ok, mocked)
+		}
+	}
 	input := `{"type":"tap","point":{"x":180,"y":310}}`
 	if output, err := wrapped.Call(context.Background(), input); err != nil || output != `{"ok":true}` {
 		t.Fatalf("output=%s err=%v", output, err)

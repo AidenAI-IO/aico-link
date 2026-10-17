@@ -69,8 +69,11 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
 
     Public history omits error status and records the model's raw arguments.
     The episode records each result's error status and, when the model uses
-    pixel coordinates, the normalized arguments the device received. Results
-    pair with calls in order; a count or name mismatch leaves the trace as-is.
+    pixel coordinates, the normalized arguments the device received. A result
+    whose tool_error marks action_completed means the device action succeeded
+    and only post-action verification failed, so the call still counts as
+    executed. Results pair with calls in order; a count or name mismatch leaves
+    the trace as-is.
     """
     events = episode.get("events") if isinstance(episode, dict) else None
     if not isinstance(events, list):
@@ -99,7 +102,13 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
     if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
         return
     for (result, normalized), tool_call in zip(results, completed):
-        if result.get("is_error") or result.get("tool_error") is not None:
+        tool_error = result.get("tool_error")
+        details = tool_error.get("details") if isinstance(tool_error, dict) else None
+        if isinstance(details, dict) and details.get("action_completed") is True:
+            # The device action succeeded; only post-action verification
+            # (stable-screen wait or screenshot) failed.
+            tool_call.is_error = False
+        elif result.get("is_error") or tool_error is not None:
             tool_call.is_error = True
         if normalized is not None:
             tool_call.input = normalized

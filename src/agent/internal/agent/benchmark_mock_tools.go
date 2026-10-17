@@ -25,8 +25,10 @@ func benchmarkMockTools(cfg Config, tools []langtools.Tool) []langtools.Tool {
 	result := make([]langtools.Tool, len(tools))
 	for i, tool := range tools {
 		result[i] = tool
-		switch tool.Name() {
-		case "touch_gesture", "keyboard_tap", "mouse_move", "mouse_scroll", "quick_action", "enter_text", "open_app", "open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification":
+		// Device-facing tools are the input and bridge categories; a new device
+		// tool joins the mock automatically when its spec declares one of them.
+		switch builtInToolSpecMetadata[tool.Name()].Category {
+		case "input", "bridge":
 			if action, ok := tool.(*postActionScreenshotTool); ok {
 				decorated := *action
 				decorated.inner = &benchmarkMockTool{Tool: action.inner, endpoint: endpoint, taskID: cfg.EnvironmentBridge.BenchmarkTaskID}

@@ -126,6 +126,31 @@ def test_apply_episode_tool_evidence_uses_episode_result_flags():
     assert [tc.is_error for tc in trace.tool_calls] == [False, False]
 
 
+def test_post_action_verification_failure_still_counts_as_executed():
+    from runner.trace import apply_episode_tool_evidence
+
+    # The tap reached the device; only the stable-screen wait afterwards failed.
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap","point":{"x":845,"y":477}}'},
+        {"type": "tool_result", "tool_name": "touch_gesture",
+         "content": "touch_gesture completed with output \"ok\", but stable-screen wait failed"},
+    ]
+    episode = {"events": [
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture", "is_error": True,
+         "tool_error": {"code": "tool_execution_failed", "details": {"action_completed": True}}},
+    ]}
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].is_error is False
+
+    # Without that marker, the device action itself failed.
+    episode["events"][1]["tool_error"] = {"code": "tool_execution_failed"}
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].is_error is True
+
+
 def test_perception_scores_normalized_coordinates_from_pixel_model_episode():
     # A pixel-coordinate model taps Settings on a 1179x2556 screenshot. History keeps
     # the raw pixels; the device received the normalized point recorded in the episode.
