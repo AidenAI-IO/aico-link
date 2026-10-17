@@ -536,6 +536,8 @@ def test_run_manifest_records_agent_model(monkeypatch, tmp_path, capsys):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["agent_model"] == "qwen3.6-35b"
     assert manifest["judge_config"] is None
+    from runner.judge import JUDGE_PROMPT_VERSION
+    assert manifest["judge_prompt_version"] == JUDGE_PROMPT_VERSION
     assert manifest["suite_snapshot_path"] == "suite.json"
     assert (manifest_path.parent / "suite.json").read_bytes() == original_suite
 
