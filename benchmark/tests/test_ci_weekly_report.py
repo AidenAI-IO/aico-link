@@ -139,7 +139,23 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     assert capability_of("unlisted_v1") == "Other"
     markdown = render_weekly(report, [])
     assert "### By capability" in markdown
-    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+    # Tasks: one 8-task run per suite; Runs: distinct timestamps; Attempts: every run summed.
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+
+
+def test_capability_counts_separate_tasks_from_repetitions():
+    # Two suites, each run in the same three workflow runs.
+    runs = [("2026-10-10T00:00:00+00:00", "1"), ("2026-10-11T00:00:00+00:00", "2"),
+            ("2026-10-12T00:00:00+00:00", "3")]
+    report = summarize_weekly([
+        _record(timestamp, suite=suite, workflow_run_id=run, eligible_tasks=size, passed=size)
+        for timestamp, run in runs for suite, size in (("memory_v1", 16), ("quick_capture_v1", 10))
+    ], end=END)
+    memory = report["capabilities"][0]
+    assert memory["task_count"] == 26
+    assert memory["run_count"] == 3
+    assert memory["eligible_tasks"] == 78
+    assert "| Memory | memory_v1, quick_capture_v1 | 26 | 3 | 78 | 100.0% |" in render_weekly(report, [])
 
 
 def test_every_ci_suite_has_a_capability():

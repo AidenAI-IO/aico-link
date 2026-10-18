@@ -119,10 +119,12 @@ def test_button_opens_the_dashboard():
 def test_card_leads_with_capability_rates():
     data = _data()
     data["weekly"]["capabilities"] = [
-        {"capability": "Memory", "pass_at_1": 0.75, "passed": 12, "eligible_tasks": 16, "change": 0.25},
-        {"capability": "Visual grounding", "pass_at_1": 0.5, "passed": 6, "eligible_tasks": 12, "change": None},
+        {"capability": "Memory", "pass_at_1": 0.75, "passed": 12, "eligible_tasks": 16,
+         "task_count": 8, "run_count": 2, "change": 0.25},
+        {"capability": "Visual grounding", "pass_at_1": 0.5, "passed": 6, "eligible_tasks": 12,
+         "task_count": 12, "run_count": 1, "change": None},
     ]
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (12/16)" in text
-    assert "**Visual grounding**: 50.0% (6/12)" in text
+    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks × 2 runs, 12/16 passed)" in text
+    assert "**Visual grounding**: 50.0% (12 tasks × 1 run, 6/12 passed)" in text
     assert text.index("**Memory**") < text.index("memory: 50.0%")

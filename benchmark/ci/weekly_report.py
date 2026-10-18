@@ -25,11 +25,20 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     measured = [r for r in records if not r.get("missing_metrics")
                 and r.get("eligible_tasks") is not None and r.get("passed") is not None]
     eligible = sum(r["eligible_tasks"] for r in measured)
+    # eligible_tasks sums every run in the window. task_count is the distinct
+    # task count (each suite's latest run) and run_count the workflow runs, so
+    # readers can tell many tasks from many repetitions.
+    latest: dict[str, dict[str, Any]] = {}
+    for r in measured:
+        if r["suite"] not in latest or parse_timestamp(r["timestamp"]) > parse_timestamp(latest[r["suite"]]["timestamp"]):
+            latest[r["suite"]] = r
     return {
         "suite_runs": len(records),
         "measured_suite_runs": len(measured),
         "tasks": sum(r["tasks"] for r in measured),
         "eligible_tasks": eligible,
+        "task_count": sum(r["eligible_tasks"] for r in latest.values()),
+        "run_count": len({r.get("workflow_run_id") or r.get("run_id") or r["timestamp"] for r in measured}),
         "passed": sum(r["passed"] for r in measured),
         "pass_at_1": sum(r["passed"] for r in measured) / eligible if eligible else None,
         # Missing cost/token measurements must not silently become zero.
@@ -189,9 +198,10 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
         "Configuration changes list settings that differ between the two windows' latest runs.", "",
         "### By capability", "",
-        "| Capability | Suites | Eligible tasks | pass@1 | Previous 7 days | Change |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
-        *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['eligible_tasks']:.0f} | "
+        "| Capability | Suites | Tasks | Runs | Attempts | pass@1 | Previous 7 days | Change |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
+          f"{c['run_count']} | {c['eligible_tasks']:.0f} | "
           f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} |"
           for c in report.get("capabilities", [])],
         "", "### By suite", "",
