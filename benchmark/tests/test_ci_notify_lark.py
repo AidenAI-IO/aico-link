@@ -125,6 +125,6 @@ def test_card_leads_with_capability_rates():
          "task_count": 12, "run_count": 1, "change": None},
     ]
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks × 2 runs, 12/16 passed)" in text
-    assert "**Visual grounding**: 50.0% (12 tasks × 1 run, 6/12 passed)" in text
+    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks, 2 runs, 12/16 eligible first attempts passed)" in text
+    assert "**Visual grounding**: 50.0% (12 tasks, 1 run, 6/12 eligible first attempts passed)" in text
     assert text.index("**Memory**") < text.index("memory: 50.0%")

@@ -1265,7 +1265,8 @@ details; missing outputs do not imply that all tasks passed.
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
 Regressions require the same branch, suite hash, workload hash, metrics schema,
 `k`, agent model, judge provider/model/prompt version, platform, and active
-skills. Runs missing configuration metadata are excluded from comparisons.
+skills. Runs missing configuration metadata are still compared and labelled
+"Configuration unverified", but they never trigger regression alerts.
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the

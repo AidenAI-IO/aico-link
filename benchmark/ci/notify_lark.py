@@ -65,8 +65,8 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
             header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
             if cap.get("eligible_tasks"):
                 runs = cap["run_count"]
-                header += (f" ({cap['task_count']:.0f} tasks × {runs} run{'s' if runs != 1 else ''},"
-                           f" {cap['passed']:.0f}/{cap['eligible_tasks']:.0f} passed)")
+                header += (f" ({cap['task_count']:.0f} tasks, {runs} run{'s' if runs != 1 else ''},"
+                           f" {cap['passed']:.0f}/{cap['eligible_tasks']:.0f} eligible first attempts passed)")
             lines.append(header)
         elements.append({"tag": "markdown", "content": "\n".join(lines)})
 

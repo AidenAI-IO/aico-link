@@ -139,7 +139,7 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     assert capability_of("unlisted_v1") == "Other"
     markdown = render_weekly(report, [])
     assert "### By capability" in markdown
-    # Tasks: one 8-task run per suite; Runs: distinct timestamps; Attempts: every run summed.
+    # Tasks: latest eligible count per suite; first attempts: every run summed.
     assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
 
 
@@ -156,6 +156,27 @@ def test_capability_counts_separate_tasks_from_repetitions():
     assert memory["run_count"] == 3
     assert memory["eligible_tasks"] == 78
     assert "| Memory | memory_v1, quick_capture_v1 | 26 | 3 | 78 | 100.0% |" in render_weekly(report, [])
+
+
+def test_capability_run_count_distinguishes_workflow_reruns_and_groups_suites():
+    report = summarize_weekly([
+        _record(f"2026-10-{10 + attempt}T00:00:00+00:00", suite=suite,
+                workflow_run_id="123", workflow_run_attempt=attempt)
+        for attempt in (1, 2) for suite in ("memory_v1", "quick_capture_v1")
+    ], end=END)
+    memory = report["capabilities"][0]
+    assert memory["run_count"] == 2
+    assert memory["eligible_tasks"] == 32
+    assert memory["task_count"] == 16
+
+
+def test_capability_table_labels_first_attempt_denominator_when_k_exceeds_one():
+    report = summarize_weekly([
+        _record(suite="memory_v1", metrics_k=3, total_attempts=30, eligible_attempts=24)
+    ], end=END)
+    markdown = render_weekly(report, [])
+    assert "| Runs | Eligible first attempts |" in markdown
+    assert "| Memory | memory_v1 | 8 | 1 | 8 | 50.0% |" in markdown
 
 
 def test_every_ci_suite_has_a_capability():

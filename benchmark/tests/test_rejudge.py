@@ -53,6 +53,45 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
             assert judged == []
 
 
+@pytest.mark.parametrize("required_calls,evidence,should_judge", [
+    (True, "unavailable", False),
+    (True, "applied", True),
+    (None, "unavailable", True),
+])
+def test_rejudge_preserves_unverified_required_calls(
+    tmp_path: Path, monkeypatch, required_calls, evidence, should_judge
+):
+    attempt = tmp_path / "tasks" / "task" / "attempt_1"
+    attempt.mkdir(parents=True)
+    (attempt / "trace.json").write_text('{"final_response":"done"}')
+    row = {
+        "task_id": "task", "attempt": 1, "status": "judge_error",
+        "rubric_spec": [{"id": "ok", "check": "Completed"}], "rubric_total": 1,
+        "hard_assertions": {"required_tool_calls": required_calls},
+        "hard_assertion_failures": [],
+        "metrics": {"episode_tool_evidence": evidence, "success": None,
+                    "agent_eligible": False, "quality_score": None,
+                    "failure_class": "evaluation", "first_failure_stage": "evaluation",
+                    "judge_error": "Evidence or judge unavailable"},
+    }
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs)
+        return type("Verdict", (), {"verdicts": [RubricVerdict("ok", "yes", "Completed")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert bool(judged) is should_judge
+    if should_judge:
+        assert result["status"] == "passed"
+        assert result["metrics"]["agent_eligible"] is True
+    else:
+        assert result == row
+
+
 def test_rejudge_preserves_judge_free_rows_before_artifact_checks(tmp_path: Path, monkeypatch):
     attempt = tmp_path / "tasks" / "zero_rubric" / "attempt_1"
     attempt.mkdir(parents=True)
