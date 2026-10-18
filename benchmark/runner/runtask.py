@@ -279,10 +279,11 @@ def evaluate_task_history(
         base.hard_assertions.expected_recalled_memory = recall_outcome.passed
     execution_error = bool(base.metrics.get("agent_error"))
     # Without episode evidence, required-call matching compared unverified error
-    # status and raw (possibly pixel) arguments, so its failure is not the agent's.
+    # status and raw (possibly pixel) arguments, so neither its pass nor its
+    # failure measures the agent. Other failed assertions still count.
     unverified_required_calls = (
         not episode_evidence_applied
-        and outcome.results.required_tool_calls is False
+        and outcome.results.required_tool_calls is not None
         and not execution_error
         and not timed_out
         and all(f.id == "required_tool_calls" for f in base.hard_assertion_failures)

@@ -1728,6 +1728,24 @@ def test_unverifiable_required_calls_are_evaluation_errors_not_agent_failures(tm
     assert result.metrics["agent_eligible"] is False
     assert result.metrics["failure_class"] == "evaluation"
 
+    # A raw input that happens to match is not verified either.
+    history[0]["tool_input"] = '{"type":"tap","point":{"x":836,"y":478}}'
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "b",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=None,
+    )
+    assert result.status == "judge_error"
+    assert result.metrics["agent_eligible"] is False
+
+    # Other failed assertions remain agent failures.
+    task.hard_assertions.forbidden_tools = ["touch_gesture"]
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "c",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=None,
+    )
+    assert result.status == "failed"
+    assert result.metrics["failure_class"] == "agent"
+
 
 def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
     from runner.runtask import evaluate_task_history
