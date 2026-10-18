@@ -80,6 +80,36 @@ def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]
             if _config_value(before, field) != _config_value(now, field)]
 
 
+# Capability measured by each suite, in report order. Groups separate abilities
+# that move independently, such as memory recall and device operation.
+CAPABILITY_SUITES = {
+    "Memory": ("memory_v1", "episode_memory_v1", "notification_memory_v1",
+               "personamem_lt_recall_v1", "quick_capture_v1"),
+    "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),
+    "Tool use": ("shell_utility_v1",),
+    "Visual grounding": ("perception_v1",),
+    "Device policy (scripted)": ("aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
+    "UI operation (simulator)": ("mobilegym_basic", "mobilegym_scroll_regression",
+                                 "mobilegym_scroll_sweep", "phone_control_v1"),
+    "Real device": ("adb_android_basic", "app_workflow_v1", "episode_memory_before_v1",
+                    "episode_memory_after_v1", "episode_memory_legacy_v1", "quick_action_v1",
+                    "skill_discovery_v1", "vphone_ios_basic", "aiden_app_connection_capabilities_v1"),
+}
+OTHER_CAPABILITY = "Other"
+_CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
+
+
+def capability_of(suite: str) -> str:
+    return _CAPABILITY_BY_SUITE.get(suite, OTHER_CAPABILITY)
+
+
+def _by_capability(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        groups.setdefault(capability_of(record["suite"]), []).append(record)
+    return groups
+
+
 def describe_config_changes(changes: list[dict[str, str]]) -> str:
     return "; ".join(f"{c['field']}: {c['previous']} → {c['current']}" for c in changes)
 
@@ -106,10 +136,22 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
                        "config_changes": _config_changes(group, prior)})
     # Weakest suites first; unknown rates last.
     suites.sort(key=lambda s: (s["pass_at_1"] is None, s["pass_at_1"] or 0.0, s["suite"]))
+    previous_by_capability = _by_capability(previous)
+    capabilities = []
+    current_by_capability = _by_capability(current)
+    order = [*CAPABILITY_SUITES, OTHER_CAPABILITY]
+    for name in sorted(current_by_capability, key=order.index):
+        group = current_by_capability[name]
+        totals = _totals(group)
+        before = _totals(previous_by_capability.get(name, []))["pass_at_1"]
+        capabilities.append({"capability": name, **totals, "previous_pass_at_1": before,
+                             "change": _change(totals["pass_at_1"], before),
+                             "suites": sorted({r["suite"] for r in group})})
     totals, previous_totals = _totals(current), _totals(previous)
     return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
             "totals": totals, "previous_totals": previous_totals,
-            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]), "suites": suites}
+            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]),
+            "capabilities": capabilities, "suites": suites}
 
 
 def _pct(value: float | None) -> str:
@@ -146,6 +188,13 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
         "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
         "Configuration changes list settings that differ between the two windows' latest runs.", "",
+        "### By capability", "",
+        "| Capability | Suites | Eligible tasks | pass@1 | Previous 7 days | Change |",
+        "| --- | --- | ---: | ---: | ---: | ---: |",
+        *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['eligible_tasks']:.0f} | "
+          f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} |"
+          for c in report.get("capabilities", [])],
+        "", "### By suite", "",
         "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
         "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
     ]

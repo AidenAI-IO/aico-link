@@ -119,3 +119,35 @@ def test_config_changes_cover_every_comparison_setting():
     ], end=END)
     fields = [c["field"] for c in report["suites"][0]["config_changes"]]
     assert fields == ["judge provider", "skills"]
+
+
+def test_capabilities_group_suites_and_compare_with_the_previous_week():
+    from ci.weekly_report import capability_of
+
+    report = summarize_weekly([
+        _record(suite="memory_v1", passed=8), _record(suite="quick_capture_v1", passed=4),
+        _record(suite="perception_v1", passed=6), _record(suite="unlisted_v1", passed=2),
+        _record("2026-10-01T00:00:00+00:00", suite="memory_v1", passed=4),
+    ], end=END)
+    caps = {c["capability"]: c for c in report["capabilities"]}
+    # Order follows CAPABILITY_SUITES, with unmapped suites last.
+    assert [c["capability"] for c in report["capabilities"]] == ["Memory", "Visual grounding", "Other"]
+    assert caps["Memory"]["suites"] == ["memory_v1", "quick_capture_v1"]
+    assert caps["Memory"]["pass_at_1"] == pytest.approx(12 / 16)
+    assert caps["Memory"]["change"] == pytest.approx(12 / 16 - 4 / 8)
+    assert caps["Visual grounding"]["change"] is None
+    assert capability_of("unlisted_v1") == "Other"
+    markdown = render_weekly(report, [])
+    assert "### By capability" in markdown
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+
+
+def test_every_ci_suite_has_a_capability():
+    import json
+    from pathlib import Path
+    from ci.weekly_report import OTHER_CAPABILITY, capability_of
+
+    root = Path(__file__).resolve().parents[1]
+    for case in json.loads((root / "ci" / "suites.json").read_text())["cases"]:
+        name = json.loads((root / case["suite"]).read_text())["name"]
+        assert capability_of(name) != OTHER_CAPABILITY, case["id"]

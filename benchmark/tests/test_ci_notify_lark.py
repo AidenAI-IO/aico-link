@@ -114,3 +114,15 @@ def test_button_opens_the_dashboard():
     card = _build_card(_data(), "https://example.com/d.html")
     action = next(e for e in card["elements"] if e.get("tag") == "action")
     assert action["actions"][0]["url"] == "https://example.com/d.html"
+
+
+def test_card_leads_with_capability_rates():
+    data = _data()
+    data["weekly"]["capabilities"] = [
+        {"capability": "Memory", "pass_at_1": 0.75, "passed": 12, "eligible_tasks": 16, "change": 0.25},
+        {"capability": "Visual grounding", "pass_at_1": 0.5, "passed": 6, "eligible_tasks": 12, "change": None},
+    ]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (12/16)" in text
+    assert "**Visual grounding**: 50.0% (6/12)" in text
+    assert text.index("**Memory**") < text.index("memory: 50.0%")

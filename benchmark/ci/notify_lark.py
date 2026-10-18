@@ -57,8 +57,20 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         {"tag": "markdown", "content": overview},
     ]
 
+    # Group suites by capability so related changes surface together.
+    capabilities = weekly.get("capabilities", [])
+    if capabilities:
+        lines = []
+        for cap in capabilities:
+            header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
+            if cap.get("eligible_tasks"):
+                header += f" ({cap['passed']:.0f}/{cap['eligible_tasks']:.0f})"
+            lines.append(header)
+        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+
+    suites = weekly["suites"]
     if suites:
-        # Weekly totals per dataset, weakest first, so datasets needing attention lead.
+        # Weakest suites first, so those needing attention lead.
         lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}{_format_change(s['change'])}"
                  + (f" ({s['passed']:.0f}/{s['eligible_tasks']:.0f}, {s['suite_runs']} run{'s' if s['suite_runs'] != 1 else ''})"
                     if s["eligible_tasks"] else "")
