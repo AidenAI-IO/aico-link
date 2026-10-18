@@ -110,3 +110,12 @@ def test_cost_preserves_free_calls_and_small_billed_amounts():
     assert "| 0 | 200 |" in render_weekly(report, [])
     report = summarize_weekly([_record(cost_usd_sum=0.00000012)], end=END)
     assert "1.2e-07" in render_weekly(report, [])
+
+
+def test_config_changes_cover_every_comparison_setting():
+    report = summarize_weekly([
+        _record(judge_provider="b", active_skills=["device-operator"]),
+        _record("2026-10-01T00:00:00+00:00", judge_provider="a", active_skills=[]),
+    ], end=END)
+    fields = [c["field"] for c in report["suites"][0]["config_changes"]]
+    assert fields == ["judge provider", "skills"]

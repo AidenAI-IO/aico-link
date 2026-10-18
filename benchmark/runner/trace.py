@@ -64,7 +64,7 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
     )
 
 
-def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) -> None:
+def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) -> bool:
     """Apply episode-only tool evidence to the history-derived trace.
 
     Public history omits error status and records the model's raw arguments.
@@ -74,10 +74,16 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
     and only post-action verification failed, so the call still counts as
     executed. Results pair with calls in order; a count or name mismatch leaves
     the trace as-is.
+
+    Returns whether the trace now carries episode evidence for every completed
+    call. False means error status and device-facing arguments are unverified.
     """
+    completed = [tc for tc in trace.tool_calls if tc.has_result]
+    if not completed:
+        return True
     events = episode.get("events") if isinstance(episode, dict) else None
     if not isinstance(events, list):
-        return
+        return False
     results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
     mapping: tuple[str, dict[str, Any]] | None = None
     for event in events:
@@ -96,11 +102,10 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
             mapping = None
     # Only calls whose result reached history can pair with episode results; a
     # trailing unfinished call must not discard evidence for completed ones.
-    completed = [tc for tc in trace.tool_calls if tc.has_result]
     if len(results) != len(completed):
-        return
+        return False
     if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
-        return
+        return False
     for (result, normalized), tool_call in zip(results, completed):
         tool_error = result.get("tool_error")
         details = tool_error.get("details") if isinstance(tool_error, dict) else None
@@ -112,6 +117,7 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
             tool_call.is_error = True
         if normalized is not None:
             tool_call.input = normalized
+    return True
 
 
 def trace_has_skill_read(trace: Trace, skill_name: str) -> bool:

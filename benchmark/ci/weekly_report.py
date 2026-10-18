@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ci.fetch_langfuse_history import parse_timestamp
+from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp
 
 
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
@@ -52,13 +52,18 @@ def _change(current: float | None, previous: float | None) -> float | None:
 # Settings that explain a score change, in reading order; hashes are shortened.
 CONFIG_LABELS = {
     "agent_model": "agent model", "judge_model": "judge model",
-    "judge_prompt_version": "judge prompt", "suite_sha256": "suite",
-    "workload_sha256": "workload", "metrics_k": "k", "target_platform": "platform",
+    "judge_prompt_version": "judge prompt", "judge_provider": "judge provider",
+    "suite_sha256": "suite", "workload_sha256": "workload",
+    "metrics_schema_version": "metrics schema", "metrics_k": "k",
+    "target_platform": "platform", "active_skills": "skills", "git_branch": "branch",
 }
+assert sorted(CONFIG_LABELS) == sorted(COMPARISON_FIELDS)
 
 
 def _config_value(record: dict[str, Any], field: str) -> str:
     value = record.get(field)
+    if isinstance(value, list):
+        value = ", ".join(str(item) for item in value)
     text = "—" if value in (None, "") else str(value)
     return text[:10] if field.endswith("_sha256") and text != "—" else text
 

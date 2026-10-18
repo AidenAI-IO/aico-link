@@ -310,6 +310,20 @@ const configValue = (run, field) => {
 };
 const configChangeText = s => (s.changed_fields || []).map(field =>
   `${configLabel(field)}: ${configValue(s.previous, field)} → ${configValue(s.latest, field)}`).join("; ");
+// Overview label for comparisons whose configurations differ or cannot be confirmed.
+const comparisonLabel = s => s.comparison_status === "Configuration changed"
+  ? `<span class="config-change">Config changed · ${esc(configChangeText(s))}</span>`
+  : s.comparison_status === "Configuration unverified"
+    ? '<span class="config-change">Config unverified · settings incomplete</span>' : "";
+const comparisonExplanations = {
+  "Comparable": "Comparable. Both runs used the same configuration.",
+  "No baseline": "No baseline. This dataset has no previous run in the last 7 days.",
+  "Missing scores": "Missing scores. One of the runs lacks a measured rate, so the change is unavailable.",
+  "Configuration unverified": "Configuration unverified. A run is missing configuration metadata, so settings cannot be confirmed to match; the change is shown but regression alerts skip it. This is not a task failure.",
+};
+const comparisonExplanation = s => s.comparison_status === "Configuration changed"
+  ? `Configuration changed: ${configChangeText(s)}. The change compares runs with different settings; highlighted values differ.`
+  : comparisonExplanations[s.comparison_status] || s.comparison_status;
 const overviewRows = datasets.map((s, index) => ({ ...s, index }))
   .sort((a, b) => Number(["declined", "mixed"].includes(b.change_direction)) - Number(["declined", "mixed"].includes(a.change_direction)) ||
     Math.max(...Object.values(b.metric_deltas).map(v => Math.abs(v || 0))) - Math.max(...Object.values(a.metric_deltas).map(v => Math.abs(v || 0))));
@@ -354,7 +368,7 @@ el("suites").innerHTML = `
   (datasets.length ? overviewRows.map(s => {
     const details = s.latest.failure_details || [];
     const detailLabel = details.length ? `${details.length} failed / excluded` : s.latest.failure_details_status === "available" ? "No failures" : "Details unavailable";
-    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button>${s.comparison_status === "Configuration changed" ? `<span class="config-change">Config changed · ${esc(configChangeText(s))}</span>` : ""}<div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
+    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button>${comparisonLabel(s)}<div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
       ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
       <td class="n">${overviewMeasure(s, "tool_calls", "mean", 1, "calls")}</td>
       <td class="n">${overviewMeasure(s, "llm_calls", "mean", 1, "calls")}</td>
@@ -383,9 +397,7 @@ function selectDataset(index) {
     <span class="delta ${deltaClass(selected.metric_deltas[metric.key])}">${deltaLabel(selected.metric_deltas[metric.key])}</span>
   </div>`).join("") + `<div><div class="num" style="font-size:15px;padding-top:10px">${commitLink(latest.commit_sha)}</div>
     <div class="cap">Latest commit · k=${esc(latest.metrics_k)}</div></div>`;
-  el("comparison-details").textContent = selected.comparison_status === "Configuration changed"
-    ? `Configuration changed: ${configChangeText(selected)}. The change compares runs with different settings; highlighted values differ.`
-    : `${selected.comparison_status}. Missing metadata or reported local Git changes make the configuration unverified; this is not a task failure.`;
+  el("comparison-details").textContent = comparisonExplanation(selected);
   const detailRuns = [["Latest", latest], ["Previous", selected.previous]].filter(([label, run]) => run);
   const changed = new Set(selected.changed_fields || []);
   el("run-details").className = "config-diff";

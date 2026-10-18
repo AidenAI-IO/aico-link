@@ -1884,3 +1884,30 @@ def test_aiden_app_connection_capabilities_suite_covers_real_proxy_contract():
         "sound": False,
         "badge": 1,
     }
+
+
+@pytest.mark.parametrize("bounds, message", [
+    ({"$gte": "746"}, "must be a finite number"),
+    ({"$lte": None}, "must be a finite number"),
+    ({"$gte": True}, "must be a finite number"),
+    ({"$gte": 10, "$lte": 5}, "must not exceed"),
+])
+def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bounds, message):
+    task = {
+        "id": "t", "category": "perception", "prompt": "Tap", "rubric": [],
+        "hard_assertions": {"required_tool_calls": [
+            {"tool": "touch_gesture", "input_contains": {"point": {"x": bounds}}},
+        ]},
+    }
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps({"name": "s", "tasks": [task]}))
+    with pytest.raises(SuiteValidationError, match=message):
+        load_suite(path)
+    # Mock fixture matchers use the same validation.
+    task["hard_assertions"]["required_tool_calls"][0]["input_contains"] = {"type": "tap"}
+    task["mock_environment"] = {"platform": "ios", "phone_bridge": {}, "tools": {
+        "touch_gesture": {"input_contains": {"point": {"y": bounds}}, "output": {"ok": True}},
+    }}
+    path.write_text(json.dumps({"name": "s", "tasks": [task]}))
+    with pytest.raises(SuiteValidationError, match=message):
+        load_suite(path)
