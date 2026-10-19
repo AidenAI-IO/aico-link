@@ -44,9 +44,13 @@ class HistoryResult:
 
 
 def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
-    """Require a known workload/configuration before claiming a regression."""
+    """Require a known workload/configuration before claiming a regression.
+
+    target_platform is compared but not required: isolated suites run without a
+    device and legitimately record none.
+    """
     required = ("git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
-                "metrics_k", "agent_model", "target_platform")
+                "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)

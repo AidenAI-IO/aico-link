@@ -25,7 +25,7 @@ from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerd
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
 from runner.reset import ResetError, SetupAssertionError, assert_memory_results, read_memory_results
 from runner.suite import Suite, TaskSpec, effective_mock_environment
-from runner.trace import extract_trace, tool_result_evidence, human_handoff_requested
+from runner.trace import extract_trace, apply_episode_tool_evidence, tool_result_evidence, human_handoff_requested
 from runner.report import now_iso
 
 
@@ -175,6 +175,8 @@ def evaluate_task_history(
             encoding="utf-8",
         )
     trace = extract_trace(history)
+    episode_evidence_applied = apply_episode_tool_evidence(trace, episode)
+    base.metrics["episode_tool_evidence"] = "applied" if episode_evidence_applied else "unavailable"
     handoff = human_handoff_requested(history)
     base.metrics["human_handoff_requested"] = handoff
     if episode and isinstance(episode.get("outcome"), dict):
@@ -276,6 +278,23 @@ def evaluate_task_history(
     if recall_outcome is not None:
         base.hard_assertions.expected_recalled_memory = recall_outcome.passed
     execution_error = bool(base.metrics.get("agent_error"))
+    # Without episode evidence, required-call matching compared unverified error
+    # status and raw (possibly pixel) arguments, so neither its pass nor its
+    # failure measures the agent. Other failed assertions still count.
+    unverified_required_calls = (
+        not episode_evidence_applied
+        and outcome.results.required_tool_calls is not None
+        and not execution_error
+        and not timed_out
+        and all(f.id == "required_tool_calls" for f in base.hard_assertion_failures)
+    )
+    if unverified_required_calls:
+        base.status = "judge_error"
+        base.metrics["judge_error"] = "Episode tool evidence is unavailable; required tool calls could not be verified."
+        base.metrics["quality_score"] = None
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="evaluation", stage="evaluation")
+        base.finished_at = now_iso()
+        return base
     if execution_error or not outcome.all_passed:
         base.status = "timeout" if timed_out else "failed"
         execution_started = (
@@ -367,7 +386,8 @@ def evaluate_task_history(
             _set_outcome_metrics(base, success=False, eligible=True, failure_class="agent", stage="unknown")
             base.finished_at = now_iso()
             return base
-    if judge_cfg is None:
+    # Tasks without a rubric are fully decided by their deterministic assertions.
+    if judge_cfg is None or not task.rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)

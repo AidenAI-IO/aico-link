@@ -1694,3 +1694,72 @@ def test_handoff_is_not_a_global_failure_policy(tmp_path):
         artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None, run_id="run", history=history, timed_out=False)
     assert result.metrics["human_handoff_requested"] is True
     assert result.status == "passed"
+
+
+def _required_tap_task(tmp_path: Path):
+    from runner.suite import RequiredToolCallSpec
+
+    suite = Suite(name="s", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "s.json")
+    task = TaskSpec(
+        id="tap", category="perception", description_for_judge="Tap.", prompt="Tap", rubric=[],
+        hard_assertions=HardAssertions(min_tool_calls=1, response_required=False, required_tool_calls=[
+            RequiredToolCallSpec(tool="touch_gesture", input_contains={
+                "type": "tap", "point": {"x": {"$gte": 700, "$lte": 900}}}, first_attempt=True),
+        ]),
+    )
+    # A pixel-coordinate model: history keeps the raw pixels.
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap","point":{"x":985,"y":1222}}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": true}'},
+    ]
+    return suite, task, history
+
+
+def test_unverifiable_required_calls_are_evaluation_errors_not_agent_failures(tmp_path: Path):
+    from runner.runtask import evaluate_task_history
+
+    suite, task, history = _required_tap_task(tmp_path)
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "a",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=None,
+    )
+    assert result.status == "judge_error"
+    assert result.metrics["episode_tool_evidence"] == "unavailable"
+    assert result.metrics["agent_eligible"] is False
+    assert result.metrics["failure_class"] == "evaluation"
+
+    # A raw input that happens to match is not verified either.
+    history[0]["tool_input"] = '{"type":"tap","point":{"x":836,"y":478}}'
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "b",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=None,
+    )
+    assert result.status == "judge_error"
+    assert result.metrics["agent_eligible"] is False
+
+    # Other failed assertions remain agent failures.
+    task.hard_assertions.forbidden_tools = ["touch_gesture"]
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "c",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=None,
+    )
+    assert result.status == "failed"
+    assert result.metrics["failure_class"] == "agent"
+
+
+def test_required_calls_use_episode_evidence_when_it_aligns(tmp_path: Path):
+    from runner.runtask import evaluate_task_history
+
+    suite, task, history = _required_tap_task(tmp_path)
+    episode = {"events": [
+        {"type": "visual_coordinate_mapping", "metadata": {
+            "tool": "touch_gesture", "normalized_input": {"type": "tap", "point": {"x": 836, "y": 478}}}},
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture"},
+    ]}
+    result = evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1, artifact_dir=tmp_path / "a",
+        judge_cfg=None, judge_cache_dir=None, run_id="r", timed_out=False, metrics={}, episode=episode,
+    )
+    assert result.status == "passed"
+    assert result.metrics["episode_tool_evidence"] == "applied"

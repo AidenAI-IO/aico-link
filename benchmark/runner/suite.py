@@ -2,6 +2,7 @@ from __future__ import annotations
 import dataclasses as dc
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 from typing import Any
@@ -54,6 +55,8 @@ class TraceObservationSpec:
 class RequiredToolCallSpec:
     tool: str
     input_contains: dict[str, Any] = dc.field(default_factory=dict)
+    # Only the first remaining call to this tool may satisfy the requirement.
+    first_attempt: bool = False
 
 @dc.dataclass
 class HardAssertions:
@@ -178,8 +181,6 @@ def load_suite(path: Path) -> Suite:
         if cat not in VALID_CATEGORIES:
             raise SuiteValidationError(f"task {tid}: invalid category {cat!r}")
         rubric_raw = raw.get("rubric") or []
-        if not rubric_raw:
-            raise SuiteValidationError(f"task {tid}: empty rubric")
         rubric: list[RubricItem] = []
         for r in rubric_raw:
             if not isinstance(r, dict):
@@ -189,6 +190,9 @@ def load_suite(path: Path) -> Suite:
                 raise SuiteValidationError(f"task {tid}: rubric items require id and check")
             rubric.append(RubricItem(id=r["id"], check=check))
         ha = raw.get("hard_assertions") or {}
+        # A task may omit the judge only when deterministic call checks decide it.
+        if not rubric_raw and not ha.get("required_tool_calls"):
+            raise SuiteValidationError(f"task {tid}: empty rubric requires hard_assertions.required_tool_calls")
         # Validate hard_assertions types
         rr = ha.get("response_required", True)
         if isinstance(rr, str):
@@ -747,6 +751,25 @@ def _platform_list(raw: Any, task_id: str) -> list[str]:
     return out
 
 
+def _validate_matcher_bounds(value: Any, path: str) -> None:
+    """Reject {"$gte"/"$lte"} bounds that are not numbers or that cross."""
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _validate_matcher_bounds(item, f"{path}[{index}]")
+        return
+    if not isinstance(value, dict):
+        return
+    if value and set(value) <= {"$gte", "$lte"}:
+        for key, bound in value.items():
+            if isinstance(bound, bool) or not isinstance(bound, (int, float)) or not math.isfinite(bound):
+                raise SuiteValidationError(f"{path}.{key} must be a finite number")
+        if "$gte" in value and "$lte" in value and value["$gte"] > value["$lte"]:
+            raise SuiteValidationError(f"{path}: $gte must not exceed $lte")
+        return
+    for key, item in value.items():
+        _validate_matcher_bounds(item, f"{path}.{key}")
+
+
 def _required_tool_call_assertions(raw: Any, task_id: str) -> list[RequiredToolCallSpec]:
     if raw is None:
         return []
@@ -770,7 +793,13 @@ def _required_tool_call_assertions(raw: Any, task_id: str) -> list[RequiredToolC
             raise SuiteValidationError(
                 f"task {task_id}: required_tool_calls[{index}].input_contains must be an object"
             )
-        out.append(RequiredToolCallSpec(tool=tool, input_contains=input_contains))
+        _validate_matcher_bounds(input_contains, f"task {task_id}: required_tool_calls[{index}].input_contains")
+        first_attempt = item.get("first_attempt", False)
+        if not isinstance(first_attempt, bool):
+            raise SuiteValidationError(
+                f"task {task_id}: required_tool_calls[{index}].first_attempt must be boolean"
+            )
+        out.append(RequiredToolCallSpec(tool=tool, input_contains=input_contains, first_attempt=first_attempt))
     return out
 
 
@@ -883,6 +912,7 @@ def _parse_mock_tool_response(raw: Any, path: str) -> MockToolResponseSpec:
     input_contains = raw.get("input_contains") or {}
     if not isinstance(input_contains, dict):
         raise SuiteValidationError(f"{path}.input_contains must be an object")
+    _validate_matcher_bounds(input_contains, f"{path}.input_contains")
     screen_contains = raw.get("screen_contains", "")
     if not isinstance(screen_contains, str):
         raise SuiteValidationError(f"{path}.screen_contains must be a string")

@@ -536,6 +536,8 @@ def test_run_manifest_records_agent_model(monkeypatch, tmp_path, capsys):
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["agent_model"] == "qwen3.6-35b"
     assert manifest["judge_config"] is None
+    from runner.judge import JUDGE_PROMPT_VERSION
+    assert manifest["judge_prompt_version"] == JUDGE_PROMPT_VERSION
     assert manifest["suite_snapshot_path"] == "suite.json"
     assert (manifest_path.parent / "suite.json").read_bytes() == original_suite
 
@@ -1601,6 +1603,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
         key: value for key, value in phone_state.items() if key != "platform"
     }
     assert captured["benchmark_token"] == "mock-token"
+    assert captured["daemon_kwargs"]["benchmark_mock_tools"] is True
     assert captured["job"].endpoint.startswith("http://127.0.0.1:")
     assert captured["job"].docker_endpoint.startswith(
         "http://host.docker.internal:"

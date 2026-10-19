@@ -72,6 +72,127 @@ def test_extract_trace_keeps_tool_call_without_result_before_next_call():
     assert trace.total_tool_calls == 2
 
 
+def test_extract_trace_captures_tool_error_status():
+    history = [
+        {"type": "tool_call", "tool_name": "bridge_contacts", "tool_input": '{"action":"query"}'},
+        {"type": "tool_result", "tool_name": "bridge_contacts", "content": "Error: permission denied", "is_error": True},
+        {"type": "tool_call", "tool_name": "screenshot", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "screenshot", "content": "timeout", "tool_error": {"code": "timeout"}},
+        {"type": "tool_call", "tool_name": "enter_text", "tool_input": '{"text":"test"}'},
+        {"type": "tool_result", "tool_name": "enter_text", "content": '{"ok":true}'},
+        {"type": "assistant", "content": "Entered text after error"},
+    ]
+    trace = extract_trace(history)
+    assert [tc.is_error for tc in trace.tool_calls] == [True, True, False]
+
+
+def test_extract_trace_reads_failed_payload_and_missing_results():
+    history = [
+        {"type": "tool_call", "tool_name": "bridge_contacts", "tool_input": '{"action":"query"}'},
+        {"type": "tool_result", "tool_name": "bridge_contacts", "content": '{"ok": false, "error": "denied"}'},
+        {"type": "tool_call", "tool_name": "enter_text", "tool_input": '{"text":"x"}'},
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+    ]
+    trace = extract_trace(history)
+    # An ok:false payload fails like an error flag; calls without a result stay unfinished.
+    assert [tc.is_error for tc in trace.tool_calls] == [True, False, False]
+    assert [tc.has_result for tc in trace.tool_calls] == [True, False, False]
+
+
+def test_apply_episode_tool_evidence_uses_episode_result_flags():
+    from runner.trace import apply_episode_tool_evidence
+
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": "ok"},
+        {"type": "tool_call", "tool_name": "open_app", "tool_input": '{"app":"Settings"}'},
+        {"type": "tool_result", "tool_name": "open_app", "content": "no mock response configured"},
+    ]
+    episode = {"events": [
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture"},
+        {"type": "tool_call", "tool_name": "open_app"},
+        {"type": "tool_result", "tool_name": "open_app", "is_error": True},
+    ]}
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert [tc.is_error for tc in trace.tool_calls] == [False, True]
+
+    # A misaligned episode is ignored instead of flagging the wrong call.
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, {"events": episode["events"][1:2]})
+    assert [tc.is_error for tc in trace.tool_calls] == [False, False]
+    apply_episode_tool_evidence(trace, None)
+    assert [tc.is_error for tc in trace.tool_calls] == [False, False]
+
+
+def test_post_action_verification_failure_still_counts_as_executed():
+    from runner.trace import apply_episode_tool_evidence
+
+    # The tap reached the device; only the stable-screen wait afterwards failed.
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap","point":{"x":845,"y":477}}'},
+        {"type": "tool_result", "tool_name": "touch_gesture",
+         "content": "touch_gesture completed with output \"ok\", but stable-screen wait failed"},
+    ]
+    episode = {"events": [
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture", "is_error": True,
+         "tool_error": {"code": "tool_execution_failed", "details": {"action_completed": True}}},
+    ]}
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].is_error is False
+
+    # Without that marker, the device action itself failed.
+    episode["events"][1]["tool_error"] = {"code": "tool_execution_failed"}
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].is_error is True
+
+
+def test_perception_scores_normalized_coordinates_from_pixel_model_episode():
+    # A pixel-coordinate model taps Settings on a 1179x2556 screenshot. History keeps
+    # the raw pixels; the device received the normalized point recorded in the episode.
+    from pathlib import Path
+
+    from runner.assertions import evaluate_hard_assertions
+    from runner.suite import load_suite
+    from runner.trace import apply_episode_tool_evidence
+
+    pixel = '{"type":"tap","point":{"x":996,"y":1219}}'
+    normalized = {"type": "tap", "point": {"x": 845.5, "y": 477.1}}
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": pixel},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": true}'},
+    ]
+    episode = {"events": [
+        {"type": "visual_coordinate_mapping", "metadata": {
+            "tool": "touch_gesture", "image_width": 1179, "image_height": 2556,
+            "pixel_input": json.loads(pixel), "normalized_input": normalized,
+        }},
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": pixel},
+        {"type": "tool_result", "tool_name": "touch_gesture"},
+    ]}
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "perception" / "perception_v1.json")
+    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
+
+    raw = extract_trace(history)
+    assert evaluate_hard_assertions(raw, task.hard_assertions, timed_out=False).all_passed is False
+    trace = extract_trace(history)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].input == normalized
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed is True
+
+    # A trailing call still running when history was captured keeps the earlier evidence.
+    pending = history + [{"type": "tool_call", "tool_name": "touch_gesture", "tool_input": pixel}]
+    trace = extract_trace(pending)
+    apply_episode_tool_evidence(trace, episode)
+    assert trace.tool_calls[0].input == normalized
+    assert trace.tool_calls[1].has_result is False
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed is True
+
+
 def test_trace_has_skill_read_detects_matching_tool_call():
     trace = Trace(
         tool_calls=[

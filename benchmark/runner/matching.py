@@ -20,5 +20,10 @@ def value_matches(actual: Any, expected: Any) -> bool:
             if isinstance(actual, list):
                 return any(value_matches(item, needle) for item in actual)
             return False
+        if expected and set(expected) <= {"$gte", "$lte"}:
+            # Inclusive numeric bounds, e.g. a normalized tap coordinate band.
+            if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+                return False
+            return expected.get("$gte", actual) <= actual <= expected.get("$lte", actual)
         return isinstance(actual, dict) and dict_contains(actual, expected)
     return actual == expected

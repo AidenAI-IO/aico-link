@@ -388,3 +388,13 @@ def test_local_preparation_logs_are_not_treated_as_failed_suite_runs(tmp_path):
     warnings = []
     assert history._read_local_runs(tmp_path, "ci-123-1", None, warnings) == []
     assert not warnings
+
+
+def test_comparison_key_accepts_isolated_runs_without_a_target_platform():
+    record = {"git_branch": "main", "suite_sha256": "s", "workload_sha256": "w",
+              "metrics_schema_version": "p0-v1", "metrics_k": "1", "agent_model": "m",
+              "target_platform": None}
+    assert history.comparison_key(record) is not None
+    # The platform still separates configurations when it is recorded.
+    assert history.comparison_key(record) != history.comparison_key({**record, "target_platform": "ios"})
+    assert history.comparison_key({**record, "agent_model": ""}) is None
