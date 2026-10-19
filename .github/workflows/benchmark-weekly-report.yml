@@ -7,9 +7,9 @@ on:
   workflow_dispatch:
     inputs:
       branch_filter:
-        description: Benchmark branch to include in the report
-        required: true
-        default: main
+        description: Optional benchmark branch filter (leave empty for all branches)
+        required: false
+        default: ''
         type: string
 
 permissions:
@@ -60,7 +60,7 @@ jobs:
       - name: Generate weekly report
         working-directory: benchmark
         env:
-          REPORT_BRANCH: ${{ inputs.branch_filter || 'main' }}
+          REPORT_BRANCH: ${{ inputs.branch_filter || '' }}
         run: |
           set -euo pipefail
           uv run python -m ci.generate_dashboard \

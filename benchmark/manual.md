@@ -1272,10 +1272,11 @@ Runs missing configuration metadata are still compared and labelled
 "Configuration unverified".
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
-suite's results. Scheduled reports use `main`; manual runs accept a
-`branch_filter` input to inspect another branch, including unmerged benchmark
-changes. The workflow publishes the selected branch's report and sends its
-Lark notification using the configured webhook.
+suite's results. Scheduled and manual reports include all branches by default.
+Manual runs accept an optional `branch_filter` input to restrict the data to one
+branch. The workflow's selected Git ref determines which report code runs; it
+does not restrict the historical data. The workflow publishes the report and
+sends its Lark notification using the configured webhook.
 
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
