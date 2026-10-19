@@ -297,12 +297,14 @@ func TestAppSearchOpenFlowCanBeReused(t *testing.T) {
 	entryTool.SetDeviceTypeFunc(hw.deviceTypeFn)
 	called := 0
 	result, err := runAppSearchOpenFlow(context.Background(), appSearchOpenFlowConfig{
-		hw:         hw,
-		vision:     vision,
-		platform:   "android",
-		searchTerm: "Aiden",
-		entryTool:  entryTool,
-		sleep:      testNoWaitSleep,
+		hw:                hw,
+		vision:            vision,
+		platform:          "android",
+		searchTerm:        "Aiden",
+		entryTool:         entryTool,
+		sleep:             testNoWaitSleep,
+		checkSearchOpenFn: androidSearchAlwaysOpen,
+		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(context.Context, screenshotResult, string) (bridgeSearchResult, error) {
 			called++
 			return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 200}, Label: "Aiden"}, nil
@@ -320,7 +322,8 @@ func TestAppSearchOpenFlowCanBeReused(t *testing.T) {
 	if called != 1 {
 		t.Fatalf("findAppTapFn calls=%d", called)
 	}
-	if len(quick.calls) != 1 || len(keyboardText.calls) != 2 || len(touch.calls) != 1 {
+	// Android opens search with Home and a swipe instead of quick_action.
+	if len(quick.calls) != 0 || len(keyboardText.calls) != 2 || len(touch.calls) != 2 {
 		t.Fatalf("unexpected tool calls: quick=%v keyboard=%v touch=%v", quick.calls, keyboardText.calls, touch.calls)
 	}
 }
@@ -376,11 +379,12 @@ func TestSearchLaunchAppUsesRuntimeAndroidPlatformBeforeIOSFallback(t *testing.T
 	quick := &recordingTextInputTool{name: "quick_action", out: "ok"}
 	touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
 	keyboardText := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
 	hw := &textInputHardwareDeps{
 		quickAction:  quick,
 		touchGesture: touch,
 		keyboardText: keyboardText,
-		keyboardTap:  textInputStubTool{name: "keyboard_tap", out: "ok"},
+		keyboardTap:  keys,
 		screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
 	}
 	tool := &appSearchOpenTool{
@@ -389,6 +393,8 @@ func TestSearchLaunchAppUsesRuntimeAndroidPlatformBeforeIOSFallback(t *testing.T
 		entryTool:            &EnterTextTool{engine: newFastTextInputEngine(*hw, vision)},
 		sleep:                testNoWaitSleep,
 		iosKeyboardIsolation: newTestIOSKeyboardIsolationController(&[]string{}),
+		checkSearchOpenFn:    androidSearchAlwaysOpen,
+		searchEntries:        &androidSearchEntryStore{},
 		findAppTapFn: func(context.Context, screenshotResult, string) (bridgeSearchResult, error) {
 			return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 200}, Label: "WeChat"}, nil
 		},
@@ -412,18 +418,34 @@ func TestSearchLaunchAppUsesRuntimeAndroidPlatformBeforeIOSFallback(t *testing.T
 	if !result.OK {
 		t.Fatalf("Call() output = %s, want ok", out)
 	}
-	if len(quick.calls) != 1 {
-		t.Fatalf("quick_action calls = %v, want one", quick.calls)
+	// The runtime Android device type wins over the iOS isolation fallback, so
+	// search opens with the Android entry instead of iOS Spotlight.
+	if len(quick.calls) != 0 {
+		t.Fatalf("quick_action calls = %v, want none on Android", quick.calls)
 	}
-	var quickPayload map[string]any
-	if err := json.Unmarshal([]byte(quick.calls[0]), &quickPayload); err != nil {
-		t.Fatalf("decode quick_action input: %v", err)
+	if tapped := tappedKeys(t, keys); len(tapped) == 0 || !reflect.DeepEqual(tapped[0], []string{"KEYCODE_HOME"}) {
+		t.Fatalf("keyboard_tap = %v, want the Android search entry to start with Home", tapped)
 	}
-	if quickPayload["action"] != "spotlight_search" {
-		t.Fatalf("quick_action action = %#v, want spotlight_search", quickPayload["action"])
+}
+
+func TestTypeQuickSearchQuerySkipsAndroid(t *testing.T) {
+	// Android IMEs drop the pending pinyin on a language switch instead of
+	// committing it, so Android search must use exact entry.
+	vision := &plannedTextInputVision{
+		stubTextInputVision: &stubTextInputVision{},
+		plans:               map[string][]string{"小红书": {"xiao", "hong", "shu"}},
 	}
-	if _, ok := quickPayload["platform"]; ok {
-		t.Fatalf("quick_action input = %#v, want platform omitted", quickPayload)
+	keys := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
+	keyboardText := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+	hw := &textInputHardwareDeps{keyboardText: keyboardText, keyboardTap: keys}
+	cfg := appSearchOpenFlowConfig{hw: hw, vision: vision, platform: "android", sleep: testNoWaitSleep}
+
+	quick, err := typeQuickSearchQuery(context.Background(), cfg, "小红书")
+	if err != nil || quick {
+		t.Fatalf("typeQuickSearchQuery() = %v, %v; want false, nil on Android", quick, err)
+	}
+	if len(keys.calls) != 0 || len(keyboardText.calls) != 0 {
+		t.Fatalf("unexpected input on Android: keyboard_tap=%v keyboard_text=%v", keys.calls, keyboardText.calls)
 	}
 }
 
@@ -487,58 +509,6 @@ func TestSearchLaunchAppUsesRealQuickActionDeviceType(t *testing.T) {
 		}
 		assertKeyboardReport(t, reports[0], hidModifierMap["meta"], hidKeyboardMap["space"], "Cmd+Space")
 		assertReleaseReport(t, reports[1], "release after Cmd+Space")
-	})
-
-	t.Run("android reserved catalog result", func(t *testing.T) {
-		vision := &stubTextInputVision{}
-		keyboardTap := &recordingTextInputTool{name: "keyboard_tap", out: "ok"}
-		touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
-		keyboardText := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
-		quick := &QuickActionTool{}
-		hw := &textInputHardwareDeps{
-			quickAction:  quick,
-			touchGesture: touch,
-			keyboardText: keyboardText,
-			keyboardTap:  keyboardTap,
-			screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
-		}
-		tool := &appSearchOpenTool{
-			hw:        hw,
-			vision:    vision,
-			entryTool: &EnterTextTool{engine: newFastTextInputEngine(*hw, vision)},
-			sleep:     testNoWaitSleep,
-			findAppTapFn: func(context.Context, screenshotResult, string) (bridgeSearchResult, error) {
-				t.Fatal("findAppTapFn should not run after reserved quick_action")
-				return bridgeSearchResult{}, nil
-			},
-			confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
-				t.Fatal("confirmAppOpenFn should not run after reserved quick_action")
-				return bridgeAppOpenResult{}, nil
-			},
-		}
-		toolSet := &ToolSet{tools: map[string]langtools.Tool{"quick_action": quick}, searchOpenTool: tool}
-		toolSet.SetRuntimeDeviceTypeFn(func() string { return "Android" })
-
-		out, err := tool.Call(context.Background(), `{"app":"WeChat"}`)
-		if err != nil {
-			t.Fatalf("Call() error = %v", err)
-		}
-		var result struct {
-			OK    bool   `json:"ok"`
-			Error string `json:"error"`
-		}
-		if err := json.Unmarshal([]byte(out), &result); err != nil {
-			t.Fatalf("decode Call() output: %v: %s", err, out)
-		}
-		if result.OK {
-			t.Fatalf("Call() output = %s, want ok=false", out)
-		}
-		if !strings.Contains(result.Error, "spotlight_search is not available on all android phones") {
-			t.Fatalf("Call() error = %q, want catalogued Android reserved result", result.Error)
-		}
-		if len(keyboardTap.calls) != 0 || len(touch.calls) != 0 || len(keyboardText.calls) != 0 {
-			t.Fatalf("unexpected subtool calls after reserved quick_action: keyboard=%v touch=%v text=%v", keyboardTap.calls, touch.calls, keyboardText.calls)
-		}
 	})
 }
 
@@ -616,12 +586,14 @@ func TestAppSearchOpenFlowFallsBackToShorterTerm(t *testing.T) {
 	entryTool.SetDeviceTypeFunc(hw.deviceTypeFn)
 	terms := []string{}
 	result, err := runAppSearchOpenFlow(context.Background(), appSearchOpenFlowConfig{
-		hw:         hw,
-		vision:     vision,
-		platform:   "android",
-		searchTerm: "Aiden Bridge",
-		entryTool:  entryTool,
-		sleep:      testNoWaitSleep,
+		hw:                hw,
+		vision:            vision,
+		platform:          "android",
+		searchTerm:        "Aiden Bridge",
+		entryTool:         entryTool,
+		sleep:             testNoWaitSleep,
+		checkSearchOpenFn: androidSearchAlwaysOpen,
+		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
 			terms = append(terms, term)
 			if term == "Aiden" {
@@ -662,12 +634,14 @@ func TestAppSearchOpenFlowRechecksSameTermBeforeFallback(t *testing.T) {
 	terms := []string{}
 	findCalls := 0
 	result, err := runAppSearchOpenFlow(context.Background(), appSearchOpenFlowConfig{
-		hw:         hw,
-		vision:     vision,
-		platform:   "android",
-		searchTerm: "Aiden Bridge",
-		entryTool:  entryTool,
-		sleep:      testNoWaitSleep,
+		hw:                hw,
+		vision:            vision,
+		platform:          "android",
+		searchTerm:        "Aiden Bridge",
+		entryTool:         entryTool,
+		sleep:             testNoWaitSleep,
+		checkSearchOpenFn: androidSearchAlwaysOpen,
+		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
 			terms = append(terms, term)
 			if term == "Aiden Bridge" {
@@ -695,8 +669,8 @@ func TestAppSearchOpenFlowRechecksSameTermBeforeFallback(t *testing.T) {
 	if len(keyboardText.calls) != 3 {
 		t.Fatalf("expected probe followed by the two ASCII query parts, got keyboard_text calls=%v", keyboardText.calls)
 	}
-	if len(touch.calls) != 1 {
-		t.Fatalf("touch_gesture calls=%v", touch.calls)
+	if len(touch.calls) != 2 {
+		t.Fatalf("touch_gesture calls=%v, want the search swipe and one result tap", touch.calls)
 	}
 }
 

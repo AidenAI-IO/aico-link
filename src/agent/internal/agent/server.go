@@ -464,6 +464,7 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		s.episodeStore = NewTaskEpisodeStore(filepath.Join(s.userFilesMemoryDir, "episodes"))
 	}
 	loadQuickActionsForConfig(runtime.ConfigSnapshot().ConfigDir, runtime.logger)
+	configureAndroidSearchEntryStore(runtime.ConfigSnapshot().ConfigDir)
 	s.quickCapture = newServerQuickCapture(runtime, s.screenCaptureClient)
 	runtime.toolSnapshot().RegisterPhoneBridge(s.bridge)
 	// Initialize speech clients if configured.
