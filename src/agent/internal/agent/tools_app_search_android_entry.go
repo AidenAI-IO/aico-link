@@ -225,18 +225,19 @@ func checkAndroidSearchOpen(ctx context.Context, cfg appSearchOpenFlowConfig, en
 
 func buildAndroidSearchCheckPrompt() string {
 	return strings.TrimSpace(`Analyze this Android phone screenshot taken right after trying to open the launcher's app search.
-Decide whether a search input is open and ready for typing an app name.
+Decide whether the launcher or system app search page is showing.
 Return JSON only:
 {
   "search_open": true,
   "search_field": {"x": 500, "y": 80},
-  "reason": "launcher search page with active input"
+  "reason": "launcher search page is showing"
 }
 
 Rules:
-- search_open=true only when a launcher or system search page is showing with its search input active: a text cursor, a highlighted or expanded search field, or a search page listing apps or suggestions. A hardware keyboard is connected, so the on-screen keyboard may be hidden.
-- search_open=false for the notification shade or quick settings, the plain home screen, an app drawer whose search field is not active, a web browser, or any other app.
-- search_field: when search_open=false but an inactive app search field is visible, such as the search bar at the top of an app drawer, give its center in normalized 0-1000 coordinates. Otherwise return null.
+- search_open=true whenever a launcher or system app search page is showing: a dedicated page built around a search field, usually with app suggestions, recent searches, or an empty results area. Showing the page means the entry worked.
+- Judge from the page itself. Do not look for a text cursor, a highlighted field, or an on-screen keyboard: a hardware keyboard is connected, which hides the on-screen keyboard on many phones. Tips, info cards, or banners on the search page do not change the answer.
+- search_open=false for the notification shade or quick settings, the home screen (including a search widget on it), an app drawer that still shows its app grid, a web browser, or any other app.
+- search_field: when search_open=false but an app search bar is visible, such as the search bar at the top of an app drawer, give its center in normalized 0-1000 coordinates. Otherwise return null.
 - Keep reason short and concrete.`)
 }
 
