@@ -38,7 +38,7 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
             continue
         # Semantic rejudging cannot recover missing execution evidence.
         if (
-            metrics.get("episode_tool_evidence") == "unavailable"
+            metrics.get("episode_tool_evidence") != "applied"
             and (row.get("hard_assertions") or {}).get("required_tool_calls") is not None
         ):
             new_results.append(row)

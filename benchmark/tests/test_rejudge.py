@@ -56,7 +56,9 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
 @pytest.mark.parametrize("required_calls,evidence,should_judge", [
     (True, "unavailable", False),
     (True, "applied", True),
+    (True, None, False),
     (None, "unavailable", True),
+    (None, None, True),
 ])
 def test_rejudge_preserves_unverified_required_calls(
     tmp_path: Path, monkeypatch, required_calls, evidence, should_judge
@@ -74,6 +76,8 @@ def test_rejudge_preserves_unverified_required_calls(
                     "failure_class": "evaluation", "first_failure_stage": "evaluation",
                     "judge_error": "Evidence or judge unavailable"},
     }
+    if evidence is None:
+        row["metrics"].pop("episode_tool_evidence")
     (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
     judged = []
 
