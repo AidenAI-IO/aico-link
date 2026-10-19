@@ -131,3 +131,11 @@ def test_card_leads_with_capability_rates():
     assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks, 2 runs, 12/16 eligible first attempts passed)" in text
     assert "**Visual grounding**: 50.0% (12 tasks, 1 run, 6/12 eligible first attempts passed)" in text
     assert text.index("**Memory**") < text.index("memory: 50.0%")
+
+
+def test_card_labels_skill_discovery_as_a_diagnostic_observation():
+    data = _data()
+    data["weekly"]["diagnostics"] = [{"suite": "skill_discovery_v1", "rate": 0.25, "change": -0.25}]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "**Diagnostics** (skill read observation, not task pass@1)" in text
+    assert "skill_discovery_v1: skill read 25.0% <font color='red'>-25.0pp</font>" in text

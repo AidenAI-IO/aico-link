@@ -1232,13 +1232,44 @@ the same coverage for historical points. Distributions include measured eligible
 attempts, including failures. Zero samples produce missing points; measured
 zeros remain zero.
 
-Latest results and Weekly trends share capability filters using the same
-classification as the weekly notification card (Memory, Tool use, and other
-capabilities represented in the report). The selected capability filters the
+Latest results and Weekly trends share **test area** filters with the weekly
+notification card. Areas describe the primary test objective, not whether tools
+were called or which environment executed the task:
+
+| Test area | Suites | Primary objective |
+| --- | --- | --- |
+| Memory | `memory_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
+| Experience reflection | `episode_reflection_v1`, `episode_reflection_v2` | Extract evidence-backed lessons |
+| Visual grounding | `perception_v1` | Identify and locate visual targets |
+| UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |
+| Device integration | `aiden_app_connection_capabilities_v1`, `aiden_app_phone_bridge_data_policy_v1`, `aiden_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
+| Shell utilities | `shell_utility_v1` | Time, timezone, and deterministic shell calculations |
+
+Many areas exercise tool calls. Shell utilities does not represent general tool
+use proficiency. Each suite belongs to one area; unknown suites appear in Other.
+The internal JSON keys `capabilities` and `capability` are retained for existing
+report consumers, and now describe these test areas.
+
+**Diagnostics** is separate. `skill_discovery_v1` reports the observed
+`device-operator` skill read rate from measured attempts, with missing observations
+shown as unavailable. Its UI task pass@1 remains accessible in dataset trends,
+and is explicitly not a skill discovery score. Diagnostic suites are excluded
+from weekly overall and test-area pass rates.
+
+Execution environment is separate run metadata, shown with the latest run and
+in Run details. Labels include Scripted, Simulator (MobileGym), Isolated, ADB
+device, External device, and Mixed. External and ADB connections alone do not
+prove physical hardware. Scripted/Mixed labels use the selected tasks' mock
+configuration; CI records its selected execution environment for other tasks.
+Historical records without this metadata show Unknown; environments are never
+inferred from suite names. A suite can appear in the same area across different
+execution environments.
+
+The selected area filters the
 overview, failure details, and trends dataset selector, and persists across tab
-changes. Unknown datasets appear under Other. Selecting a capability retains
+changes. Selecting an area retains
 the current dataset if it matches, otherwise selects the most recently run
-dataset in that capability. Select All to show every dataset. Per-dataset score
+dataset in that area. Select All to show every dataset. Per-dataset score
 changes remain visible in the overview.
 
 Metric definitions are expandable, and charts without measurements use a compact

@@ -17,6 +17,20 @@ import runner.suite as suite_module
 import runner.webui as webui
 
 
+def test_execution_environment_uses_selected_tasks_and_explicit_run_context(monkeypatch):
+    from types import SimpleNamespace
+    mocked = SimpleNamespace(id="mock", mock_environment={"tools": {}})
+    live = SimpleNamespace(id="live", mock_environment=None)
+    suite = SimpleNamespace(tasks=[mocked, live], mock_environment=None)
+    monkeypatch.setenv("BENCHMARK_EXECUTION_ENVIRONMENT", "mobilegym")
+    assert main._execution_environment(suite, ["mock"]) == "scripted"
+    assert main._execution_environment(suite, ["live"]) == "mobilegym"
+    assert main._execution_environment(suite, ["mock", "live"]) == "mixed"
+    assert main._execution_environment(suite, []) == "mixed"
+    monkeypatch.delenv("BENCHMARK_EXECUTION_ENVIRONMENT")
+    assert main._execution_environment(suite, ["live"]) is None
+
+
 class FakeClockClient:
     def __init__(self, years):
         self.years = list(years)

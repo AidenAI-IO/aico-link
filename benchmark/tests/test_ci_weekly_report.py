@@ -138,7 +138,7 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     assert caps["Visual grounding"]["change"] is None
     assert capability_of("unlisted_v1") == "Other"
     markdown = render_weekly(report, [])
-    assert "### By capability" in markdown
+    assert "### By test area" in markdown
     # Tasks: latest eligible count per suite; first attempts: every run summed.
     assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
 
@@ -188,3 +188,65 @@ def test_every_ci_suite_has_a_capability():
     for case in json.loads((root / "ci" / "suites.json").read_text())["cases"]:
         name = json.loads((root / case["suite"]).read_text())["name"]
         assert capability_of(name) != OTHER_CAPABILITY, case["id"]
+
+
+@pytest.mark.parametrize("suite,area", [
+    ("shell_utility_v1", "Shell utilities"),
+    ("episode_memory_before_v1", "Memory"), ("episode_memory_after_v1", "Memory"),
+    ("episode_memory_legacy_v1", "Memory"), ("adb_android_basic", "UI operation"),
+    ("vphone_ios_basic", "UI operation"), ("app_workflow_v1", "UI operation"),
+    ("quick_action_v1", "UI operation"), ("phone_control_v1", "UI operation"),
+    ("mobilegym_basic", "UI operation"),
+    ("aiden_app_connection_capabilities_v1", "Device integration"),
+    ("aiden_app_phone_bridge_data_policy_v1", "Device integration"),
+    ("aiden_app_notes_entry_policy_v1", "Device integration"),
+    ("skill_discovery_v1", "Diagnostics"),
+])
+def test_areas_follow_test_objectives_instead_of_tools_or_environments(suite, area):
+    from ci.weekly_report import capability_of
+    assert capability_of(suite) == area
+
+
+def test_all_suite_files_are_classified_once():
+    import json
+    from pathlib import Path
+    from ci.weekly_report import CAPABILITY_SUITES, DIAGNOSTIC_SUITES
+
+    mapped = [suite for suites in CAPABILITY_SUITES.values() for suite in suites] + list(DIAGNOSTIC_SUITES)
+    names = {json.loads(p.read_text())["name"] for p in (Path(__file__).resolve().parents[1] / "suites").rglob("*.json")}
+    assert len(mapped) == len(set(mapped))
+    assert set(mapped) == names
+
+
+def test_diagnostics_use_observations_and_do_not_inflate_scored_results():
+    report = summarize_weekly([
+        _record(suite="memory_v1", passed=4),
+        _record(suite="skill_discovery_v1", passed=8, skill_discovery={"read": 1, "observed": 4}),
+        _record("2026-10-01T00:00:00+00:00", suite="skill_discovery_v1",
+                skill_discovery={"read": 0, "observed": 4}),
+    ], end=END)
+    assert report["totals"]["pass_at_1"] == 0.5
+    assert report["totals"]["suite_runs"] == 1
+    assert [c["capability"] for c in report["capabilities"]] == ["Memory"]
+    assert [s["suite"] for s in report["suites"]] == ["memory_v1"]
+    assert report["diagnostics"] == [{"suite": "skill_discovery_v1", "read": 1, "observed": 4,
+                                      "rate": 0.25, "change": 0.25}]
+    markdown = render_weekly(report, [])
+    assert "### Diagnostics" in markdown and "skill read 25.0%" in markdown
+
+
+@pytest.mark.parametrize("observation", [None, {}, {"read": 5, "observed": 4}])
+def test_missing_or_invalid_diagnostic_observations_remain_unknown(observation):
+    report = summarize_weekly([
+        _record(suite="skill_discovery_v1", passed=8, skill_discovery=observation)
+    ], end=END)
+    assert report["diagnostics"][0]["rate"] is None
+    assert "observation data unavailable" in render_weekly(report, [])
+
+
+def test_environment_is_independent_of_suite_objective():
+    from ci.weekly_report import capability_of, environment_of
+    assert capability_of("phone_control_v1") == "UI operation"
+    assert environment_of({"suite": "phone_control_v1", "execution_environment": "mobilegym"}) == "Simulator"
+    assert environment_of({"suite": "phone_control_v1", "execution_environment": "external"}) == "External device"
+    assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"

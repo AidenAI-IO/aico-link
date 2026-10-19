@@ -125,6 +125,20 @@ def test_batched_scores_are_assigned_to_their_experiment():
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
 
 
+def test_environment_and_diagnostic_observations_survive_history_fetch():
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([_experiment(execution_environment="mobilegym")])
+        assert "observations.skill_read_device_operator.observed_tasks" in request.url.params["name"]
+        return _response(_metrics() + [
+            _score("observations.skill_read_device_operator.passed_tasks", 0),
+            _score("observations.skill_read_device_operator.observed_tasks", 4),
+        ])
+    record = history.fetch_benchmark_history(client=_client(handler), now=NOW).records[0]
+    assert record["execution_environment"] == "mobilegym"
+    assert record["skill_discovery"] == {"read": 0, "observed": 4}
+
+
 @pytest.mark.parametrize("metadata", [{"aiden_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
 def test_filter_does_not_include_nonbenchmark_or_unknown_branches(metadata):
     def handler(request):

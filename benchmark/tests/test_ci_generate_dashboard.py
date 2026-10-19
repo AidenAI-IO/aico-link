@@ -424,7 +424,9 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         _k_record(suite="episode_memory_v1"),
         _k_record(suite="episode_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
                   judge_prompt_version="v3", git_branch='<img src=x>'),
-        _k_record(suite="shell_utility_v1"),
+        _k_record(suite="shell_utility_v1", execution_environment="isolated"),
+        _k_record(suite="skill_discovery_v1", execution_environment="external",
+                  skill_discovery={"read": 1, "observed": 4}),
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
@@ -536,9 +538,12 @@ const differingValues = structuredClone(memoryComparisons);
 differingValues[1].latest.judge_prompt_version = 'v4';
 assert.deepEqual(configurationGroups(differingValues)[0].common, ['git_branch']);
 assert.deepEqual(configurationGroups([]), []);
-assert.deepEqual(DATA.capabilities, ['Memory', 'Tool use', 'Other']);
+assert.deepEqual(DATA.capabilities, ['Memory', 'Shell utilities', 'Diagnostics', 'Other']);
+assert(!overviewHTML.includes('skill_discovery_v1'));
+assert(el('diagnostic-results').innerHTML.includes('Skill read: 25.0%'));
+assert(datasets.find(s => s.suite === 'skill_discovery_v1').latest.environment_label === 'External device');
 assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
-assert.deepEqual(namesForFilter('Tool use'), ['shell_utility_v1']);
+assert.deepEqual(namesForFilter('Shell utilities'), ['shell_utility_v1']);
 assert(namesForFilter('Other').includes('other'));
 assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);
 const rows = datasets.flatMap((s, i) => [
@@ -571,9 +576,10 @@ assert.equal(el('failure-dataset-' + memoryIndex).open, true);
 clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
 assert(rows.every(row => !row.hidden));
-clickFilter('trend-capabilities', 'Tool use');
+clickFilter('trend-capabilities', 'Shell utilities');
 assert(el('configuration-context').hidden);
 assert.equal(selected.suite, 'shell_utility_v1');
+assert(el('dataset-context').textContent.includes('Isolated'));
 assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));
 assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 1);
 clickFilter('change-summary', 'Other');
@@ -581,5 +587,12 @@ assert.equal(selected.suite, 'other');
 assert(!el('dataset-select').innerHTML.includes('<img'));
 assert(el('dataset-select').innerHTML.includes('&lt;img'));
 assert.equal(el('suites').innerHTML, overviewHTML);
+clickFilter('change-summary', 'Diagnostics');
+assert.equal(selected.suite, 'skill_discovery_v1');
+assert(el('dataset-context').textContent.includes('not skill discovery'));
+assert(el('latest').innerHTML.includes('Skill read observation'));
+assert.equal(skillReadRate({skill_discovery:{read:0,observed:4}}),0);
+assert.equal(skillReadRate({skill_discovery:{read:2,observed:1}}),null);
+assert.equal(skillReadRate({}),null);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

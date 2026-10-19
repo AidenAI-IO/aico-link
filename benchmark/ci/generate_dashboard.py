@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import CAPABILITY_SUITES, OTHER_CAPABILITY, capability_of, summarize_weekly, render_weekly
+from ci.weekly_report import AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, summarize_weekly, render_weekly
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
@@ -143,6 +143,9 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "commit_sha": record.get("commit_sha") or "unknown",
             "run_id": record.get("run_id"),
             "experiment_id": record.get("experiment_id"),
+            "execution_environment": record.get("execution_environment"),
+            "environment_label": environment_of(record),
+            "skill_discovery": record.get("skill_discovery") or {},
             "tasks": tasks,
             "passed": passed,
             "eligible_tasks": eligible,
@@ -210,7 +213,7 @@ def _changed_fields(latest: dict[str, Any], previous: dict[str, Any] | None) -> 
 _CONFIG_ORDER = (
     "agent_model", "judge_model", "judge_prompt_version", "judge_provider", "suite_sha256",
     "workload_sha256", "metrics_schema_version", "metrics_k", "target_platform",
-    "active_skills", "git_branch",
+    "active_skills", "git_branch", "execution_environment",
 )
 assert sorted(_CONFIG_ORDER) == sorted(COMPARISON_FIELDS)
 
@@ -261,6 +264,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         summaries.append({
             "suite": name,
             "capability": capability_of(name),
+            "diagnostic": name in DIAGNOSTIC_SUITES,
             "latest": latest,
             "previous": previous,
             "metric_deltas": metric_deltas,
@@ -331,7 +335,7 @@ def _render_html(
         "repo": repo,
         "runs": runs,
         "suites": suites,
-        "capabilities": [name for name in (*CAPABILITY_SUITES, OTHER_CAPABILITY)
+        "capabilities": [name for name in AREA_ORDER
                          if any(suite["capability"] == name for suite in suites)],
         "warnings": display_warnings,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:

@@ -479,6 +479,10 @@ def _write_run(
 
 def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     run_dir = _write_run(tmp_path)
+    manifest_path = run_dir / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["execution_environment"] = "scripted"
+    manifest_path.write_text(json.dumps(manifest))
     client = FakeLangfuse()
 
     published = publish_run(run_dir, client=client)
@@ -487,6 +491,7 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     assert published.item_count == 1
     assert published.dataset_run_url == "http://langfuse.local/dataset-run-1"
     assert published.dataset_name == "aiden-benchmark:smoke_suite"
+    assert client.experiment["metadata"]["execution_environment"] == "scripted"
     assert client.items[0].input == {
         "task_id": "task-a",
         "attempt": 1,

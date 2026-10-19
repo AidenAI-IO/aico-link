@@ -1225,6 +1225,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "judge_model": judge.get("model"),
         "judge_prompt_version": manifest.get("judge_prompt_version"),
         "target_platform": manifest.get("target_platform"),
+        "execution_environment": manifest.get("execution_environment"),
         "selected_task_ids": manifest.get("selected_task_ids"),
         "active_skills": manifest.get("active_skills"),
     }
