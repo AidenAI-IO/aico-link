@@ -32,6 +32,17 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
         ):
             new_results.append(row)
             continue
+        # Judge-free tasks are decided by recorded assertions; keep them as-is.
+        if row.get("rubric_total") == 0:
+            new_results.append(row)
+            continue
+        # Semantic rejudging cannot recover missing execution evidence.
+        if (
+            metrics.get("episode_tool_evidence") != "applied"
+            and (row.get("hard_assertions") or {}).get("required_tool_calls") is not None
+        ):
+            new_results.append(row)
+            continue
         td = run_dir / "tasks" / row["task_id"]
         attempt_dir = td / f"attempt_{row['attempt']}" if (td / f"attempt_{row['attempt']}").exists() else td
         pre = attempt_dir / "pre.jpg"

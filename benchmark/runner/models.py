@@ -8,6 +8,9 @@ class ToolCall:
     tool: str
     input: dict[str, Any]
     has_screenshot: bool = False
+    is_error: bool = False
+    # False when history recorded the call but no result for it.
+    has_result: bool = True
 
 @dc.dataclass
 class Trace:

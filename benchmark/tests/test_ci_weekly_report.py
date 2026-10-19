@@ -75,6 +75,21 @@ def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days()
     assert "gone" not in suites
     assert report["change"] == pytest.approx(12 / 24 - 8 / 16)
     assert "+25.0 pp" in render_weekly(report, [])
+    assert suites["memory"]["config_changes"] == []
+
+
+def test_changes_name_settings_that_differ_between_the_windows():
+    report = summarize_weekly([
+        _record(passed=2, agent_model="anthropic/new", judge_prompt_version="v3"),
+        _record("2026-10-01T00:00:00+00:00", passed=6, judge_prompt_version="v2"),
+    ], end=END)
+    suite = report["suites"][0]
+    assert suite["change"] == pytest.approx(-0.5)
+    assert suite["config_changes"] == [
+        {"field": "agent model", "previous": "model", "current": "anthropic/new"},
+        {"field": "judge prompt", "previous": "v2", "current": "v3"},
+    ]
+    assert "agent model: model → anthropic/new; judge prompt: v2 → v3" in render_weekly(report, [])
 
 
 def test_empty_window_is_reported_explicitly():
@@ -95,3 +110,81 @@ def test_cost_preserves_free_calls_and_small_billed_amounts():
     assert "| 0 | 200 |" in render_weekly(report, [])
     report = summarize_weekly([_record(cost_usd_sum=0.00000012)], end=END)
     assert "1.2e-07" in render_weekly(report, [])
+
+
+def test_config_changes_cover_every_comparison_setting():
+    report = summarize_weekly([
+        _record(judge_provider="b", active_skills=["device-operator"]),
+        _record("2026-10-01T00:00:00+00:00", judge_provider="a", active_skills=[]),
+    ], end=END)
+    fields = [c["field"] for c in report["suites"][0]["config_changes"]]
+    assert fields == ["judge provider", "skills"]
+
+
+def test_capabilities_group_suites_and_compare_with_the_previous_week():
+    from ci.weekly_report import capability_of
+
+    report = summarize_weekly([
+        _record(suite="memory_v1", passed=8), _record(suite="quick_capture_v1", passed=4),
+        _record(suite="perception_v1", passed=6), _record(suite="unlisted_v1", passed=2),
+        _record("2026-10-01T00:00:00+00:00", suite="memory_v1", passed=4),
+    ], end=END)
+    caps = {c["capability"]: c for c in report["capabilities"]}
+    # Order follows CAPABILITY_SUITES, with unmapped suites last.
+    assert [c["capability"] for c in report["capabilities"]] == ["Memory", "Visual grounding", "Other"]
+    assert caps["Memory"]["suites"] == ["memory_v1", "quick_capture_v1"]
+    assert caps["Memory"]["pass_at_1"] == pytest.approx(12 / 16)
+    assert caps["Memory"]["change"] == pytest.approx(12 / 16 - 4 / 8)
+    assert caps["Visual grounding"]["change"] is None
+    assert capability_of("unlisted_v1") == "Other"
+    markdown = render_weekly(report, [])
+    assert "### By capability" in markdown
+    # Tasks: latest eligible count per suite; first attempts: every run summed.
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+
+
+def test_capability_counts_separate_tasks_from_repetitions():
+    # Two suites, each run in the same three workflow runs.
+    runs = [("2026-10-10T00:00:00+00:00", "1"), ("2026-10-11T00:00:00+00:00", "2"),
+            ("2026-10-12T00:00:00+00:00", "3")]
+    report = summarize_weekly([
+        _record(timestamp, suite=suite, workflow_run_id=run, eligible_tasks=size, passed=size)
+        for timestamp, run in runs for suite, size in (("memory_v1", 16), ("quick_capture_v1", 10))
+    ], end=END)
+    memory = report["capabilities"][0]
+    assert memory["task_count"] == 26
+    assert memory["run_count"] == 3
+    assert memory["eligible_tasks"] == 78
+    assert "| Memory | memory_v1, quick_capture_v1 | 26 | 3 | 78 | 100.0% |" in render_weekly(report, [])
+
+
+def test_capability_run_count_distinguishes_workflow_reruns_and_groups_suites():
+    report = summarize_weekly([
+        _record(f"2026-10-{10 + attempt}T00:00:00+00:00", suite=suite,
+                workflow_run_id="123", workflow_run_attempt=attempt)
+        for attempt in (1, 2) for suite in ("memory_v1", "quick_capture_v1")
+    ], end=END)
+    memory = report["capabilities"][0]
+    assert memory["run_count"] == 2
+    assert memory["eligible_tasks"] == 32
+    assert memory["task_count"] == 16
+
+
+def test_capability_table_labels_first_attempt_denominator_when_k_exceeds_one():
+    report = summarize_weekly([
+        _record(suite="memory_v1", metrics_k=3, total_attempts=30, eligible_attempts=24)
+    ], end=END)
+    markdown = render_weekly(report, [])
+    assert "| Runs | Eligible first attempts |" in markdown
+    assert "| Memory | memory_v1 | 8 | 1 | 8 | 50.0% |" in markdown
+
+
+def test_every_ci_suite_has_a_capability():
+    import json
+    from pathlib import Path
+    from ci.weekly_report import OTHER_CAPABILITY, capability_of
+
+    root = Path(__file__).resolve().parents[1]
+    for case in json.loads((root / "ci" / "suites.json").read_text())["cases"]:
+        name = json.loads((root / case["suite"]).read_text())["name"]
+        assert capability_of(name) != OTHER_CAPABILITY, case["id"]

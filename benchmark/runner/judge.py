@@ -13,7 +13,7 @@ from typing import Any
 from runner.models import RubricVerdict
 from runner.suite import RubricItem
 
-JUDGE_PROMPT_VERSION = "v2"
+JUDGE_PROMPT_VERSION = "v3"
 DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_JUDGE_API_KEY_ENV = "AIDEN_BENCHMARK_JUDGE_API_KEY"
 JUDGE_USER_AGENT = "aiden-benchmark/1.0"
@@ -49,7 +49,12 @@ grounded in the screenshots/trace/response. Do not be lenient. If evidence
 does not clearly show the required state, answer "no".
 A tool call is an attempt, not proof of execution. Check its result: errors,
 is_error=true, and ok=false are failures. Never credit a failed call as a
-successfully performed action. The final reply alone is not proof of success.
+successfully performed action. For device execution, the final reply alone is not
+proof of success. For knowledge, classification, or confirmation tasks, evaluate
+the requested answer itself; do not invent a requirement to execute an action.
+Judge only the stated rubric. Accept semantically equivalent formats unless an
+exact format is explicitly required. A requested option-only answer needs no
+extra explanation.
 
 RUBRIC:
 {rubric_lines}

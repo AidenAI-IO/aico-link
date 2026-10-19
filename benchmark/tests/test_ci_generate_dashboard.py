@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
+from ci.fetch_langfuse_history import COMPARISON_FIELDS
 from ci.generate_dashboard import (
-    _find_regressions,
     _group_into_runs,
     _summarize_suites,
     generate_dashboard,
@@ -26,6 +26,7 @@ def _record(**overrides):
         "tasks": 4,
         "workflow_run_attempt": 1,
         "suite_sha256": "suite-v1",
+        "judge_prompt_version": "v2",
         "workload_sha256": "tasks-v1",
         "metrics_schema_version": "p0-v1",
         "metrics_k": "1",
@@ -132,53 +133,6 @@ def test_k_rates_remain_unknown_when_no_eligible_tasks():
     assert run["pass_pow_k_eligible_tasks"] == 0
 
 
-def test_find_regressions_reports_drops_at_or_past_the_threshold() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00",
-                commit_sha="old", suite="dropped", pass_at_1=0.9, tasks=10, passed=9),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00",
-                commit_sha="new", suite="dropped", pass_at_1=0.5, tasks=10, passed=5),
-    ]
-
-    regressions = _find_regressions(_group_into_runs(history))
-
-    assert len(regressions) == 1
-    assert regressions[0]["suite"] == "dropped"
-    assert regressions[0]["previous"] == 0.9
-    assert regressions[0]["current"] == 0.5
-    assert regressions[0]["previous_commit_sha"] == "old"
-    assert regressions[0]["commit_sha"] == "new"
-
-
-def test_find_regressions_ignores_noise_improvements_and_new_suites() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="noise", pass_at_1=0.80),
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="better", pass_at_1=0.50),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="noise", pass_at_1=0.78),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="better", pass_at_1=0.90),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="brand_new", pass_at_1=0.10),
-    ]
-
-    assert _find_regressions(_group_into_runs(history)) == []
-
-
-def test_find_regressions_needs_two_runs() -> None:
-    assert _find_regressions(_group_into_runs([_record()])) == []
-
-
-def test_find_regressions_orders_largest_drop_first() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="mild", pass_at_1=0.9),
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="severe", pass_at_1=0.9),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="mild", pass_at_1=0.8),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="severe", pass_at_1=0.2),
-    ]
-
-    regressions = _find_regressions(_group_into_runs(history))
-
-    assert [item["suite"] for item in regressions] == ["severe", "mild"]
-
-
 def test_summarize_suites_puts_the_weakest_suite_first_and_keeps_its_series() -> None:
     history = [
         _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="strong", pass_at_1=0.95),
@@ -275,7 +229,8 @@ def test_generate_dashboard_writes_data_and_reports_every_metric(tmp_path: Path)
     payload = json.loads(data_output.read_text(encoding="utf-8"))
     assert len(payload["runs"]) == 2
     assert payload["repo"] == "owner/repo"
-    assert [item["suite"] for item in payload["regressions"]] == ["memory_v1"]
+    assert "regressions" not in payload
+    assert payload["suites"][0]["delta"] == pytest.approx(-0.5)
 
     html = output.read_text(encoding="utf-8")
     assert "owner/repo" in html
@@ -333,9 +288,9 @@ def test_data_availability_uses_display_window_but_retains_api_errors(tmp_path):
     ({"pass_at_1": 0.25, "passed": 1}, "declined", "Comparable"),
     ({"pass_at_1": 0.75, "passed": 3, "pass_pow_k": 0}, "mixed", "Comparable"),
     ({}, "unchanged", "Comparable"),
-    # Unmatched configurations never produce a direction, even when rates move.
-    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "unavailable", "Configuration unverified"),
-    ({"pass_pow_k": 0, "agent_model": "different"}, "unavailable", "Configuration changed"),
+    # A configuration change still shows the score change and names what differs.
+    ({"pass_at_1": 0.75, "passed": 3, "git_branch": None}, "improved", "Configuration unverified"),
+    ({"pass_pow_k": 0, "agent_model": "different"}, "declined", "Configuration changed"),
 ])
 def test_latest_changes_include_all_metrics_and_label_comparability(overrides, direction, status):
     summary = _summarize_suites(_group_into_runs([
@@ -344,24 +299,21 @@ def test_latest_changes_include_all_metrics_and_label_comparability(overrides, d
     ]))[0]
     assert summary["change_direction"] == direction
     assert summary["comparison_status"] == status
-    if status == "Comparable":
-        assert summary["previous"]["workflow_run_id"] == 1
-    else:
-        assert summary["previous"] is None
-        assert summary["delta"] is None
-        assert all(value is None for value in summary["metric_deltas"].values())
+    assert summary["previous"]["workflow_run_id"] == 1
+    assert summary["changed_fields"] == [field for field in overrides if field in COMPARISON_FIELDS]
 
 
-def test_latest_changes_skip_runs_with_a_different_configuration():
+def test_latest_changes_compare_the_previous_run_and_name_changed_settings():
     summary = _summarize_suites(_group_into_runs([
         _k_record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00"),
         _k_record(workflow_run_id=2, timestamp="2026-10-10T00:00:00+00:00", agent_model="different",
-                  pass_at_1=0.0, passed=0),
-        _k_record(workflow_run_id=3, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.75, passed=3),
+                  judge_prompt_version="v3", pass_at_1=0.0, passed=0),
     ]))[0]
     assert summary["previous"]["workflow_run_id"] == 1
-    assert summary["comparison_status"] == "Comparable"
-    assert summary["change_direction"] == "improved"
+    assert summary["comparison_status"] == "Configuration changed"
+    assert summary["changed_fields"] == ["agent_model", "judge_prompt_version"]
+    assert summary["change_direction"] == "declined"
+    assert summary["metric_deltas"]["pass_at_1"] == -0.5
 
 
 def test_latest_changes_do_not_skip_over_a_missing_score():
@@ -402,24 +354,31 @@ def test_workflow_attempts_are_separate():
 
 @pytest.mark.parametrize("field", ["agent_model", "suite_sha256", "workload_sha256",
     "metrics_k", "judge_model", "git_branch", "target_platform", "active_skills"])
-def test_configuration_changes_are_not_regressions(field):
+def test_configuration_changes_keep_inline_deltas(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
                _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]
-    assert _find_regressions(_group_into_runs(history)) == []
-    assert _summarize_suites(_group_into_runs(history))[0]["delta"] is None
+    # The score change stays visible, labelled with the setting that differs.
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["delta"] == pytest.approx(-0.9)
+    assert summary["changed_fields"] == [field]
+    assert summary["comparison_status"] == "Configuration changed"
 
 
-def test_unknown_configuration_is_not_a_regression():
+def test_unknown_configuration_keeps_inline_delta():
     history = [_record(workflow_run_id=1, pass_at_1=1.0, workload_sha256=None),
                _record(workflow_run_id=2, pass_at_1=0.1, workload_sha256=None)]
-    assert _find_regressions(_group_into_runs(history)) == []
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["comparison_status"] == "Configuration unverified"
+    assert summary["delta"] == pytest.approx(-0.9)
 
 
 def test_runs_reporting_git_changes_remain_comparable():
     # CI checks out fresh, so the runner's git_dirty flag does not change the configuration.
     history = [_record(workflow_run_id=1, pass_at_1=1.0, git_dirty=True),
                _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.5, git_dirty=True)]
-    assert [r["suite"] for r in _find_regressions(_group_into_runs(history))] == ["memory_v1"]
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["comparison_status"] == "Comparable"
+    assert summary["delta"] == -0.5
 
 
 def test_data_snapshot_can_be_reused_by_cli(tmp_path):
@@ -459,6 +418,9 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
                   failure_details_expected=4),
         _k_record(suite="partial_stages", eligible_failures=2,
                   failure_stages={"tool_execution": 1}, failure_stage_coverage=0.5),
+        _k_record(suite="memory_v1"),
+        _k_record(suite="episode_memory_v1"),
+        _k_record(suite="shell_utility_v1"),
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
@@ -472,7 +434,10 @@ global.document = {
   documentElement: {},
   querySelectorAll: () => [],
   getElementById: id => {
-    if (!elements.has(id)) elements.set(id, {style: {}, addEventListener() {}});
+    if (!elements.has(id)) elements.set(id, {style: {}, listeners: {},
+      addEventListener(event, callback) { this.listeners[event] = callback; },
+      setAttribute(name, value) { this[name] = value; },
+      focus() {}, scrollIntoView() {}, querySelector() { return {focus() {}}; }});
     return elements.get(id);
   }
 };
@@ -540,15 +505,50 @@ if (detailHTML.includes('Failure details unavailable · Details unavailable')) p
 if (!safeLink('https://langfuse.test/traces/a?x=1&y=2', 'Open trace').includes('&amp;')) process.exit(35);
 const namesForFilter = filter => matchingDatasetIndices(filter).map(i => datasets[i].suite);
 if (namesForFilter('all').length !== datasets.length) process.exit(39);
-if (namesForFilter('failures').includes('no_failures') || namesForFilter('unavailable').includes('no_failures')) process.exit(40);
-if (!namesForFilter('failures').includes('partial_stages')) process.exit(41);
-if (!namesForFilter('unavailable').includes('other')) process.exit(42);
-activeFilter = 'improved';
-applyDatasetFilters();
-if (el('overview-empty').hidden || el('failures-empty').hidden) process.exit(43);
-clearDatasetFilters();
-if (!el('overview-empty').hidden || !el('failures-empty').hidden) process.exit(44);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
+const assert = require('node:assert/strict');
+assert.deepEqual(DATA.capabilities, ['Memory', 'Tool use', 'Other']);
+assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
+assert.deepEqual(namesForFilter('Tool use'), ['shell_utility_v1']);
+assert(namesForFilter('Other').includes('other'));
+assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);
+const rows = datasets.flatMap((s, i) => [
+  {dataset: {filterDataset: String(i)}}, {dataset: {filterDataset: String(i)}},
+]);
+const buttons = capabilityControls.flatMap(() => datasetFilters.map(f => ({
+  dataset: {filter: f.id}, setAttribute(name, value) { this[name] = value; },
+})));
+document.querySelectorAll = selector => selector === '[data-filter-dataset]' ? rows
+  : selector === 'button[data-filter]' ? buttons : [];
+const clickFilter = (control, capability) => el(control).listeners.click({
+  target: {closest: () => ({dataset: {filter: capability}})},
+});
+clickFilter('change-summary', 'Memory');
+assert.equal(selected.capability, 'Memory');
+assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 2);
+assert(!el('dataset-select').innerHTML.includes('shell_utility_v1'));
+assert(rows.every(row => row.hidden === (datasets[Number(row.dataset.filterDataset)].capability !== 'Memory')));
+assert(buttons.every(button => button['aria-pressed'] === String(button.dataset.filter === 'Memory')));
+const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
+openDataset(memoryIndex);
+assert.equal(activeFilter, 'Memory');
+assert.equal(el('view-trends').hidden, false);
+openFailures(memoryIndex);
+assert.equal(activeFilter, 'Memory');
+assert.equal(el('view-latest').hidden, false);
+assert.equal(el('failure-dataset-' + memoryIndex).open, true);
+clickFilter('trend-capabilities', 'all');
+assert.equal(selected.suite, 'memory_v1');
+assert(rows.every(row => !row.hidden));
+clickFilter('trend-capabilities', 'Tool use');
+assert.equal(selected.suite, 'shell_utility_v1');
+assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));
+assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 1);
+clickFilter('change-summary', 'Other');
+assert.equal(selected.suite, 'other');
+assert(!el('dataset-select').innerHTML.includes('<img'));
+assert(el('dataset-select').innerHTML.includes('&lt;img'));
+assert.equal(el('suites').innerHTML, overviewHTML);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

@@ -79,6 +79,7 @@ func main() {
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
+		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
 	flag.Parse()
@@ -143,6 +144,13 @@ func main() {
 			_ = logging.LogEvent(logging.Error, "agent", "startup", "benchmark_token_empty")
 			os.Exit(1)
 		}
+	}
+	if *benchmarkMockTools {
+		if cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled || cfg.EnvironmentBridge.Endpoint == "" {
+			fmt.Fprintln(os.Stderr, "benchmark-mock-tools requires benchmark-token-file and environment-bridge-mode with an endpoint")
+			os.Exit(1)
+		}
+		cfg.Benchmark.MockTools = true
 	}
 	proxyConfig := agent.ProxyConfigFromEnvironment()
 	if err := proxyConfig.Validate(); err != nil {

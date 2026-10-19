@@ -1,5 +1,6 @@
 from __future__ import annotations
 import json
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.request
 from typing import Any
@@ -284,6 +285,16 @@ def _per_task_setup_seed_memory(client: AgentClient, setup: dict[str, Any]) -> N
             raise ResetError(f"seed_memory memories[{index}] missing required 'id'")
         if not isinstance(memory.get("content"), str) or not memory["content"].strip():
             raise ResetError(f"seed_memory memories[{index}] (id={memory_id!r}) missing required 'content'")
+        memory = dict(memory)
+        if "expires_in_sec" in memory:
+            seconds = memory.pop("expires_in_sec")
+            # One year bounds fixture lifetimes and keeps the datetime arithmetic in range.
+            if type(seconds) is not int or not 0 < seconds <= 365 * 86400 or "expires_at" in memory:
+                raise ResetError(
+                    f"seed_memory expires_in_sec must be an integer in (0, 31536000] "
+                    f"and cannot accompany expires_at, got {seconds!r}"
+                )
+            memory["expires_at"] = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
         try:
             client.seed_memory(memory, timeout=timeout)
         except AgentTimeoutError as e:

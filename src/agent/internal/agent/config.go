@@ -30,6 +30,8 @@ type EnvironmentBridgeConfig struct {
 }
 
 type BenchmarkConfig struct {
+	MockTools bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+
 	Token string `toml:"-"` // Only set via benchmark runner CLI flags, never from config file
 }
 

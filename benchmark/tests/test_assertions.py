@@ -686,3 +686,162 @@ def test_expected_recalled_memory_ids_uses_partial_aggregate_as_negative_episode
     assert result.passed is False
     assert result.recalled_memory_ids == []
     assert result.evidence_source == "episode"
+
+
+def test_null_device_recall_is_complete_negative_evidence():
+    history = [
+        {"type": "tool_call", "tool_name": "recall_device_memory", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "recall_device_memory", "content": '{"results":null}'},
+    ]
+    result = assertions.evaluate_expected_recalled_memory_ids(
+        history, ["expected-procedure"], recall_tool="recall_device_memory",
+        require_inline_recall=True, episode={"retrieved_memory_refs": ["expected-procedure"]},
+    )
+    assert result.passed is False
+    assert result.evidence_source == "inline"
+    assert result.recalled_memory_ids == []
+
+
+def test_value_matches_numeric_range():
+    from runner.matching import value_matches
+    assert value_matches(50, {"$gte": 10, "$lte": 100})
+    assert value_matches(10, {"$gte": 10, "$lte": 100})
+    assert value_matches(100, {"$gte": 10, "$lte": 100})
+    assert not value_matches(9, {"$gte": 10, "$lte": 100})
+    assert not value_matches(101, {"$gte": 10, "$lte": 100})
+    assert value_matches(50, {"$gte": 10})
+    assert value_matches(50, {"$lte": 100})
+    assert not value_matches("50", {"$gte": 10})
+    assert not value_matches(True, {"$gte": 0})
+
+
+def test_dict_contains_with_nested_range():
+    from runner.matching import dict_contains
+    assert dict_contains(
+        {"point": {"x": 840, "y": 500}},
+        {"point": {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}}
+    )
+    assert not dict_contains(
+        {"point": {"x": 700, "y": 500}},
+        {"point": {"x": {"$gte": 746, "$lte": 930}}}
+    )
+
+
+def test_required_tool_calls_with_coordinate_range():
+    trace = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 840, "y": 500}})
+        ],
+        final_response="Tapped Settings",
+        total_tool_calls=1,
+        total_duration_ms=100,
+    )
+    spec = HardAssertions(
+        required_tool_calls=[
+            RequiredToolCallSpec(
+                tool="touch_gesture",
+                input_contains={
+                    "type": "tap",
+                    "point": {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}
+                }
+            )
+        ]
+    )
+    out = evaluate_hard_assertions(trace, spec, timed_out=False)
+    assert out.all_passed is True
+
+    trace_out_of_range = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 500, "y": 500}})
+        ],
+        final_response="Tapped wrong target",
+        total_tool_calls=1,
+        total_duration_ms=100,
+    )
+    out = evaluate_hard_assertions(trace_out_of_range, spec, timed_out=False)
+    assert out.all_passed is False
+    assert out.results.required_tool_calls is False
+
+
+def test_required_tool_calls_reject_failed_attempts():
+    spec = HardAssertions(
+        required_tool_calls=[
+            RequiredToolCallSpec(tool="bridge_contacts", input_contains={"action": "query"}),
+            RequiredToolCallSpec(tool="enter_text", input_contains={"text": {"$contains": "+1"}})
+        ]
+    )
+    trace_failed_first_call = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="bridge_contacts", input={"action": "query"}, is_error=True),
+            ToolCall(step=2, tool="bridge_contacts", input={"action": "query"}, is_error=False),
+            ToolCall(step=3, tool="enter_text", input={"text": "+1 202-555-0147"}, is_error=False),
+        ],
+        final_response="Entered contact number",
+        total_tool_calls=3,
+        total_duration_ms=150,
+    )
+    out = evaluate_hard_assertions(trace_failed_first_call, spec, timed_out=False)
+    assert out.all_passed is True
+    trace_all_failed = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="bridge_contacts", input={"action": "query"}, is_error=True),
+            ToolCall(step=2, tool="enter_text", input={"text": "+1 202-555-0147"}, is_error=False),
+        ],
+        final_response="Attempted query",
+        total_tool_calls=2,
+        total_duration_ms=100,
+    )
+    out = evaluate_hard_assertions(trace_all_failed, spec, timed_out=False)
+    assert out.all_passed is False
+    assert out.results.required_tool_calls is False
+
+
+def test_required_tool_calls_reject_unfinished_and_failed_payload_calls():
+    from runner.trace import extract_trace
+
+    spec = HardAssertions(
+        required_tool_calls=[RequiredToolCallSpec(tool="touch_gesture", input_contains={"type": "tap"})]
+    )
+    unfinished = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+    ])
+    assert evaluate_hard_assertions(unfinished, spec, timed_out=False).results.required_tool_calls is False
+    failed_payload = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": false}'},
+    ])
+    assert evaluate_hard_assertions(failed_payload, spec, timed_out=False).results.required_tool_calls is False
+    completed = extract_trace([
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": '{"ok": true}'},
+    ])
+    assert evaluate_hard_assertions(completed, spec, timed_out=False).results.required_tool_calls is True
+
+
+def test_required_tool_calls_first_attempt_only():
+    spec = HardAssertions(
+        required_tool_calls=[
+            RequiredToolCallSpec(tool="touch_gesture", input_contains={"type": "tap", "point": {"x": 100, "y": 200}}, first_attempt=True)
+        ]
+    )
+    trace_correct_first = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 100, "y": 200}}),
+        ],
+        final_response="Tapped target",
+        total_tool_calls=1,
+        total_duration_ms=50,
+    )
+    assert evaluate_hard_assertions(trace_correct_first, spec, timed_out=False).all_passed is True
+    trace_wrong_then_right = Trace(
+        tool_calls=[
+            ToolCall(step=1, tool="touch_gesture", input={"type": "tap", "point": {"x": 50, "y": 50}}),
+            ToolCall(step=2, tool="touch_gesture", input={"type": "tap", "point": {"x": 100, "y": 200}}),
+        ],
+        final_response="Retried tap",
+        total_tool_calls=2,
+        total_duration_ms=100,
+    )
+    out = evaluate_hard_assertions(trace_wrong_then_right, spec, timed_out=False)
+    assert out.all_passed is False
+    assert out.results.required_tool_calls is False

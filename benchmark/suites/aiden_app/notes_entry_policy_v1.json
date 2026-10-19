@@ -42,7 +42,7 @@
       },
       "rubric": [
         {"id": "queried_contact", "check": "Calls bridge_contacts with action=query and query=Biden."},
-        {"id": "did_not_reopen", "check": "Does not call search_launch_app or bridge_open_app because Notes is already open."},
+        {"id": "did_not_reopen", "check": "Does not call open_app or bridge_open_app because Notes is already open."},
         {"id": "entered_number", "check": "Calls enter_text with the returned number."}
       ],
       "hard_assertions": {
@@ -50,7 +50,7 @@
         "max_tool_calls": 8,
         "must_complete_within_sec": 180,
         "required_tools": ["bridge_contacts", "enter_text"],
-        "forbidden_tools": ["search_launch_app", "bridge_open_app", "bridge_clipboard"],
+        "forbidden_tools": ["open_app", "bridge_open_app", "bridge_clipboard"],
         "required_tool_calls": [
           {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Biden"}},
           {
@@ -112,7 +112,7 @@
         "max_tool_calls": 10,
         "must_complete_within_sec": 180,
         "required_tools": ["bridge_contacts", "touch_gesture", "enter_text"],
-        "forbidden_tools": ["search_launch_app", "bridge_open_app", "bridge_clipboard"],
+        "forbidden_tools": ["open_app", "bridge_open_app", "bridge_clipboard"],
         "required_tool_calls": [
           {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Biden"}},
           {"tool": "touch_gesture", "input_contains": {"type": "tap", "point": {"x": 180, "y": 310}}},
@@ -123,7 +123,7 @@
     {
       "id": "ios_pip_notes_icon_missing",
       "category": "multi_step",
-      "description_for_judge": "Neither Notes nor its icon is visible. Query Biden, use search_launch_app, and enter the returned number.",
+      "description_for_judge": "Neither Notes nor its icon is visible. Query Biden, use open_app, and enter the returned number.",
       "prompt": "测试环境状态：当前是 iPhone 主界面，画面中没有打开的备忘录，也看不到备忘录图标。Aiden App 在后台，iOS PiP Bridge 已开启。请查询通讯录中 Biden 的手机号，并将查询到的完整号码写入 Apple 备忘录。",
       "mock_environment": {
         "platform": "ios",
@@ -145,7 +145,7 @@
               "contacts": [{"id": "biden", "name": "Biden", "phone_numbers": ["+1 202-555-0147"]}]
             }
           },
-          "search_launch_app": [
+          "open_app": [
             {
               "input_contains": {"app": "备忘录"},
               "output": {"ok": true, "target": "备忘录"},
@@ -158,7 +158,7 @@
             }
           ],
           "enter_text": {
-            "input_contains": {"text": {"$contains": "+1 202-555-0147"}},
+            "input_contains": {"text": {"$contains": "+1 202-555-0147"}, "focus": {}},
             "screen_contains": "Apple Notes is open",
             "output": {"ok": true},
             "screen_text": "Apple Notes contains Biden phone number: +1 202-555-0147"
@@ -167,18 +167,18 @@
       },
       "rubric": [
         {"id": "queried_contact", "check": "Calls bridge_contacts with action=query and query=Biden."},
-        {"id": "searched_for_notes", "check": "Calls search_launch_app because Notes and its icon are unavailable."},
+        {"id": "searched_for_notes", "check": "Calls open_app to launch Notes when it is not already open and its icon is not visible. The app is installed and can be launched; app unavailability is not required."},
         {"id": "entered_number", "check": "Calls enter_text with the returned number."}
       ],
       "hard_assertions": {
         "min_tool_calls": 3,
         "max_tool_calls": 12,
         "must_complete_within_sec": 180,
-        "required_tools": ["bridge_contacts", "search_launch_app", "enter_text"],
+        "required_tools": ["bridge_contacts", "open_app", "enter_text"],
         "forbidden_tools": ["bridge_open_app", "bridge_clipboard"],
         "required_tool_calls": [
           {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Biden"}},
-          {"tool": "search_launch_app"},
+          {"tool": "open_app"},
           {"tool": "enter_text", "input_contains": {"text": {"$contains": "+1 202-555-0147"}}}
         ]
       }
