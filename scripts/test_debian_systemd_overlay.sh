@@ -298,7 +298,7 @@ grep -q 'networkctl reconfigure' "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
 if grep -qE 'dhcpcd|dhclient' "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"; then
     fail "Wi-Fi guard takes DHCP ownership from networkd"
 fi
-grep -Fqx 'insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1' \
+grep -Fqx 'insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"' \
     "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
 grep -Fqx 'he_on=${AIDEN_WIFI_HE:-0}' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
 grep -Fq 'stage=begin he_on=${he_on}' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"

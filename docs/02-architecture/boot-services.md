@@ -200,6 +200,37 @@ Set `AIDEN_WIFI_HE=1` in `/etc/aiden_boot.conf` to test HE with another firmware
 or AP. The parameter applies on module load, so reboot to apply it; restarting
 the driver service alone does not reload an already loaded module.
 
+The Aiden image sets `AIDEN_WIFI_LOW_POWER=1`. The matching AIC8800D80 driver
+receives `lp_on=1` and requests firmware low-power level 1 when a station
+interface opens, after firmware startup. Normal packet delivery stays enabled;
+this does not enable the vendor's suspend packet filter, cut module power, or
+configure Wi-Fi as a system wake source. The ordinary `ps_on` parameter remains
+enabled independently. This setting requires the updated driver module and
+loader together. Reboot after changing `AIDEN_WIFI_LOW_POWER`; set it to `0` to
+remove the automatic request. Reloading only `aic8800_fdrv` is unsupported with
+the current retained BSP binding and can leave Wi-Fi unavailable.
+
+For a temporary comparison on the RV1106, use the vendor command over serial:
+
+```bash
+# Request low-power level 1, keeping packet filtering disabled.
+iw dev wlan0 vendor send 0x001a11 0x1018 \
+    0x08 0x00 0x06 0x00 0x00 0x00 0x00 0x00
+
+# Request level 0 again, keeping packet filtering disabled.
+iw dev wlan0 vendor send 0x001a11 0x1018 \
+    0x08 0x00 0x06 0x00 0x01 0x00 0x00 0x00
+```
+
+The payload is one little-endian netlink attribute: length 8, type 6, and a
+32-bit latency-mode value. Value 0 requests low-power operation; value 1 requests
+level 0. The command requires an open station interface. Its return code reports
+submission errors; check the kernel log for the separate firmware confirmation.
+`/sys/module/aic8800_fdrv/parameters/lp_on` reports the startup policy, not live
+sleep residency or a later runtime override. Measure board power separately,
+with the same traffic, services, and suspend state for both readings. This
+Wi-Fi control does not enable Bluetooth's separate vendor low-power mode.
+
 `aiden-wlan-guard.service` checks the Wi-Fi gateway every 10 seconds. It accepts
 either an ICMP response or a fresh ARP reply, so an AP filtering ping does not
 trigger repeated disconnects. After five failed checks it reassociates, then

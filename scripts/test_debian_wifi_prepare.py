@@ -237,6 +237,20 @@ class WifiDriverTest(StartupFixture):
         self.assertEqual(self.sysfs_snapshot(), before)
         self.assertEqual(self.load_names(), [])
 
+    def test_invalid_low_power_does_not_touch_hardware(self):
+        before = self.sysfs_snapshot()
+        result = self.run_driver(AIDEN_WIFI_LOW_POWER="invalid")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("invalid-lp_on", result.stderr)
+        self.assertEqual(self.sysfs_snapshot(), before)
+        self.assertEqual(self.load_names(), [])
+
+    def test_low_power_option_reaches_module_loader(self):
+        result = self.run_driver(AIDEN_WIFI_LOW_POWER="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("params=he_on=0 custregd=1 lp_on=1", result.stderr)
+        self.assertEqual(self.control.read_text(), "auto\n")
+
 
 class BluetoothPrepareTest(StartupFixture):
     def test_shared_firmware_ready_without_fdrv_presence(self):

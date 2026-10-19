@@ -88,6 +88,27 @@ building an image, verify the runtime with:
 Runtime-installed packages stay under `/userdata`; see
 [Persistent Python Packages](../04-agent/python-packages.md).
 
+## Suspend Power Measurements
+
+The Debian board configuration includes `rv1106-pm.config` to enable system
+suspend. After booting a kernel built with this fragment, check the available
+states with `cat /sys/power/state` and `cat /sys/power/mem_sleep`.
+
+For a suspend-to-idle (`s2idle`) measurement, run these commands as root:
+
+```bash
+echo s2idle > /sys/power/mem_sleep
+sync
+echo mem > /sys/power/state
+```
+
+The SSH connection may stop responding while the board is suspended. UART5 is
+declared as a wake source for the MCU link, but wake delivery and whole-board
+power consumption still require hardware validation. The MCU's periodic status
+queries must be coordinated with sleep before relying on UART wake in normal
+operation. For a measurement without automatic resume, disable unwanted wake
+sources first and keep a physical reset or power-cycle path available.
+
 ## Flashing the Firmware
 
 > You need to connect the Luckfox Pico Zero's onboard USB-C port to a computer. There are several flashing methods; for the complete instructions, refer to the [Luckfox Pico Zero official flashing guide](https://wiki.luckfox.com/zh/Luckfox-Pico-Zero/Flash-image/).
