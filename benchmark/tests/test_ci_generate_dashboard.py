@@ -419,7 +419,11 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         _k_record(suite="partial_stages", eligible_failures=2,
                   failure_stages={"tool_execution": 1}, failure_stage_coverage=0.5),
         _k_record(suite="memory_v1"),
+        _k_record(suite="memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+                  judge_prompt_version="v3", git_branch='<img src=x>', suite_sha256="memory-v2"),
         _k_record(suite="episode_memory_v1"),
+        _k_record(suite="episode_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+                  judge_prompt_version="v3", git_branch='<img src=x>'),
         _k_record(suite="shell_utility_v1"),
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
@@ -508,6 +512,30 @@ if (namesForFilter('all').length !== datasets.length) process.exit(39);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
 const assert = require('node:assert/strict');
+assert(!overviewHTML.includes('Config changed') && !overviewHTML.includes('Config unverified'));
+const memoryComparisons = datasets.filter(s => s.capability === 'Memory');
+const grouped = configurationGroups(memoryComparisons);
+assert.equal(grouped.length, 1);
+assert.equal(grouped[0].datasets.length, 2);
+assert.deepEqual(grouped[0].common, ['judge_prompt_version', 'git_branch']);
+const contextHTML = el('configuration-groups').innerHTML;
+assert.equal((contextHTML.match(/Judge prompt: v2 → v3/g) || []).length, 1);
+assert(contextHTML.includes('1 dataset has additional configuration differences'));
+assert(contextHTML.includes('&lt;img src=x&gt;') && !contextHTML.includes('<img'));
+assert(!el('configuration-context').hidden);
+const differentAttempt = structuredClone(memoryComparisons);
+differentAttempt[1].latest.workflow_run_attempt = 2;
+assert.equal(configurationGroups(differentAttempt).length, 2);
+const differentBaseline = structuredClone(memoryComparisons);
+differentBaseline[1].previous.workflow_run_id = 99;
+assert.equal(configurationGroups(differentBaseline).length, 2);
+const unknownIdentity = structuredClone(memoryComparisons);
+unknownIdentity.forEach(s => { s.latest.workflow_run_id = null; });
+assert.equal(configurationGroups(unknownIdentity).length, 2);
+const differingValues = structuredClone(memoryComparisons);
+differingValues[1].latest.judge_prompt_version = 'v4';
+assert.deepEqual(configurationGroups(differingValues)[0].common, ['git_branch']);
+assert.deepEqual(configurationGroups([]), []);
 assert.deepEqual(DATA.capabilities, ['Memory', 'Tool use', 'Other']);
 assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
 assert.deepEqual(namesForFilter('Tool use'), ['shell_utility_v1']);
@@ -532,6 +560,8 @@ assert(rows.every(row => row.hidden === (datasets[Number(row.dataset.filterDatas
 assert(buttons.every(button => button['aria-pressed'] === String(button.dataset.filter === 'Memory')));
 const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
 openDataset(memoryIndex);
+assert(el('comparison-details').textContent.includes('Judge prompt: v2 → v3'));
+assert(el('run-details').innerHTML.includes('memory-v2'));
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-trends').hidden, false);
 openFailures(memoryIndex);
@@ -542,6 +572,7 @@ clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
 assert(rows.every(row => !row.hidden));
 clickFilter('trend-capabilities', 'Tool use');
+assert(el('configuration-context').hidden);
 assert.equal(selected.suite, 'shell_utility_v1');
 assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));
 assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 1);
