@@ -96,11 +96,12 @@ def test_cost_is_shown_only_when_known():
     assert "$1.250" in _text(_build_card(data, "https://example.com/d.html"))
 
 
-def test_regressions_are_listed_and_turn_the_header_red():
+def test_legacy_regression_data_does_not_add_a_separate_alert():
     data = _data(regressions=[{"suite": "memory", "previous": 0.8, "current": 0.5}])
     card = _build_card(data, "https://example.com/d.html")
-    assert "memory: 80.0% → 50.0%" in _text(card)
-    assert card["header"]["template"] == "red"
+    assert "Regressions" not in _text(card)
+    assert "80.0% → 50.0%" not in _text(card)
+    assert card["header"]["template"] == "blue"
     assert _build_card(_data(), "https://example.com/d.html")["header"]["template"] == "blue"
 
 

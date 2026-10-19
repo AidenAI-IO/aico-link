@@ -6,7 +6,6 @@ import pytest
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS
 from ci.generate_dashboard import (
-    _find_regressions,
     _group_into_runs,
     _summarize_suites,
     generate_dashboard,
@@ -134,53 +133,6 @@ def test_k_rates_remain_unknown_when_no_eligible_tasks():
     assert run["pass_pow_k_eligible_tasks"] == 0
 
 
-def test_find_regressions_reports_drops_at_or_past_the_threshold() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00",
-                commit_sha="old", suite="dropped", pass_at_1=0.9, tasks=10, passed=9),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00",
-                commit_sha="new", suite="dropped", pass_at_1=0.5, tasks=10, passed=5),
-    ]
-
-    regressions = _find_regressions(_group_into_runs(history))
-
-    assert len(regressions) == 1
-    assert regressions[0]["suite"] == "dropped"
-    assert regressions[0]["previous"] == 0.9
-    assert regressions[0]["current"] == 0.5
-    assert regressions[0]["previous_commit_sha"] == "old"
-    assert regressions[0]["commit_sha"] == "new"
-
-
-def test_find_regressions_ignores_noise_improvements_and_new_suites() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="noise", pass_at_1=0.80),
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="better", pass_at_1=0.50),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="noise", pass_at_1=0.78),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="better", pass_at_1=0.90),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="brand_new", pass_at_1=0.10),
-    ]
-
-    assert _find_regressions(_group_into_runs(history)) == []
-
-
-def test_find_regressions_needs_two_runs() -> None:
-    assert _find_regressions(_group_into_runs([_record()])) == []
-
-
-def test_find_regressions_orders_largest_drop_first() -> None:
-    history = [
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="mild", pass_at_1=0.9),
-        _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="severe", pass_at_1=0.9),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="mild", pass_at_1=0.8),
-        _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", suite="severe", pass_at_1=0.2),
-    ]
-
-    regressions = _find_regressions(_group_into_runs(history))
-
-    assert [item["suite"] for item in regressions] == ["severe", "mild"]
-
-
 def test_summarize_suites_puts_the_weakest_suite_first_and_keeps_its_series() -> None:
     history = [
         _record(workflow_run_id=1, timestamp="2026-10-10T00:00:00+00:00", suite="strong", pass_at_1=0.95),
@@ -277,7 +229,8 @@ def test_generate_dashboard_writes_data_and_reports_every_metric(tmp_path: Path)
     payload = json.loads(data_output.read_text(encoding="utf-8"))
     assert len(payload["runs"]) == 2
     assert payload["repo"] == "owner/repo"
-    assert [item["suite"] for item in payload["regressions"]] == ["memory_v1"]
+    assert "regressions" not in payload
+    assert payload["suites"][0]["delta"] == pytest.approx(-0.5)
 
     html = output.read_text(encoding="utf-8")
     assert "owner/repo" in html
@@ -363,15 +316,6 @@ def test_latest_changes_compare_the_previous_run_and_name_changed_settings():
     assert summary["metric_deltas"]["pass_at_1"] == -0.5
 
 
-def test_regressions_still_require_a_matching_configuration():
-    runs = _group_into_runs([
-        _record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00", pass_at_1=0.9, passed=4),
-        _record(workflow_run_id=2, timestamp="2026-10-10T00:00:00+00:00", agent_model="different",
-                pass_at_1=0.1, passed=0),
-    ])
-    assert _find_regressions(runs) == []
-
-
 def test_latest_changes_do_not_skip_over_a_missing_score():
     summary = _summarize_suites(_group_into_runs([
         _record(workflow_run_id=1, timestamp="2026-10-09T00:00:00+00:00"),
@@ -410,10 +354,9 @@ def test_workflow_attempts_are_separate():
 
 @pytest.mark.parametrize("field", ["agent_model", "suite_sha256", "workload_sha256",
     "metrics_k", "judge_model", "git_branch", "target_platform", "active_skills"])
-def test_configuration_changes_are_not_regressions(field):
+def test_configuration_changes_keep_inline_deltas(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
                _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]
-    assert _find_regressions(_group_into_runs(history)) == []
     # The score change stays visible, labelled with the setting that differs.
     summary = _summarize_suites(_group_into_runs(history))[0]
     assert summary["delta"] == pytest.approx(-0.9)
@@ -421,17 +364,21 @@ def test_configuration_changes_are_not_regressions(field):
     assert summary["comparison_status"] == "Configuration changed"
 
 
-def test_unknown_configuration_is_not_a_regression():
+def test_unknown_configuration_keeps_inline_delta():
     history = [_record(workflow_run_id=1, pass_at_1=1.0, workload_sha256=None),
                _record(workflow_run_id=2, pass_at_1=0.1, workload_sha256=None)]
-    assert _find_regressions(_group_into_runs(history)) == []
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["comparison_status"] == "Configuration unverified"
+    assert summary["delta"] == pytest.approx(-0.9)
 
 
 def test_runs_reporting_git_changes_remain_comparable():
     # CI checks out fresh, so the runner's git_dirty flag does not change the configuration.
     history = [_record(workflow_run_id=1, pass_at_1=1.0, git_dirty=True),
                _record(workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00", pass_at_1=0.5, git_dirty=True)]
-    assert [r["suite"] for r in _find_regressions(_group_into_runs(history))] == ["memory_v1"]
+    summary = _summarize_suites(_group_into_runs(history))[0]
+    assert summary["comparison_status"] == "Comparable"
+    assert summary["delta"] == -0.5
 
 
 def test_data_snapshot_can_be_reused_by_cli(tmp_path):

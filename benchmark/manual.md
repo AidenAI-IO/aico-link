@@ -1182,8 +1182,8 @@ Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
 last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
 over the week with its change from the previous seven days (green up, red down)
-and any settings that differ between the two weeks' latest runs, flags
-configuration-matched regressions, and links to the dashboard. Historical data comes
+and any settings that differ between the two weeks' latest runs, and links to
+the dashboard. Historical data comes
 from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
 downloaded.
 
@@ -1217,8 +1217,7 @@ appear first. Missing scores or a missing previous run show as unavailable.
 The comparison always uses the previous run, even when its configuration
 differs; such a row lists each changed setting as `old → new` (for example the
 agent model, judge prompt version, or suite hash), so a score change can be read
-together with its likely cause. Regression alerts still require a matching
-configuration. Expand **Run details** in Weekly trends to compare every
+together with its likely cause. Expand **Run details** in Weekly trends to compare every
 configuration setting of the latest two runs side by side, with changed values
 highlighted. Run history also shows each run's agent model and judge.
 
@@ -1263,10 +1262,9 @@ Inspected/expected attempt counts distinguish complete, partial, and unavailable
 details; missing outputs do not imply that all tasks passed.
 
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
-Regressions require the same branch, suite hash, workload hash, metrics schema,
-`k`, agent model, judge provider/model/prompt version, platform, and active
-skills. Runs missing configuration metadata are still compared and labelled
-"Configuration unverified", but they never trigger regression alerts.
+Score changes appear beside each dataset with configuration differences noted.
+Runs missing configuration metadata are still compared and labelled
+"Configuration unverified".
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
 suite's results. Scheduled reports use `main`; manual runs accept a

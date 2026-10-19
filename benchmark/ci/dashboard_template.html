@@ -319,7 +319,7 @@ const comparisonExplanations = {
   "Comparable": "Comparable. Both runs used the same configuration.",
   "No baseline": "No baseline. This dataset has no previous run in the last 7 days.",
   "Missing scores": "Missing scores. One of the runs lacks a measured rate, so the change is unavailable.",
-  "Configuration unverified": "Configuration unverified. A run is missing configuration metadata, so settings cannot be confirmed to match; the change is shown but regression alerts skip it. This is not a task failure.",
+  "Configuration unverified": "Configuration unverified. A run is missing configuration metadata, so settings cannot be confirmed to match; the change is shown with incomplete configuration context. This is not a task failure.",
 };
 const comparisonExplanation = s => s.comparison_status === "Configuration changed"
   ? `Configuration changed: ${configChangeText(s)}. The change compares runs with different settings; highlighted values differ.`
@@ -355,7 +355,7 @@ function clearDatasetFilters() {
 const unverified = datasets.filter(s => s.comparison_status === "Configuration unverified").length;
 const changedConfig = datasets.filter(s => s.comparison_status === "Configuration changed").length;
 el("comparison-note").textContent = unverified || changedConfig
-  ? `Changes compare each dataset with its previous run: ${changedConfig} with changed configurations; ${unverified} with unverified configurations. Changed datasets list what differs; open Run details to see both runs. Regression alerts only use matching configurations.`
+  ? `Changes compare each dataset with its previous run: ${changedConfig} with changed configurations; ${unverified} with unverified configurations. Changed datasets list what differs; open Run details to see both runs.`
   : "Changes compare each dataset with its previous run. Missing scores or a previous run leave the change unavailable.";
 el("dataset-select").innerHTML = datasets.length
   ? datasets.map((s, i) => `<option value="${i}">${esc(s.suite)}</option>`).join("")

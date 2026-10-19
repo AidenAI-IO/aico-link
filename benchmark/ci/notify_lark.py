@@ -45,7 +45,6 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     weekly = data["weekly"]
     suites = weekly["suites"]
     week = weekly["totals"]
-    regressions = data.get("regressions", [])
 
     overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
                 f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly['change'])}"
@@ -82,12 +81,6 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         elements += [{"tag": "hr"},
                      {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]
 
-    if regressions:
-        lines = [f"<font color='red'>{r['suite']}: {_format_rate(r['previous'])} → {_format_rate(r['current'])}</font>"
-                 for r in regressions]
-        elements += [{"tag": "hr"},
-                     {"tag": "markdown", "content": "**Regressions** (same configuration)\n" + "\n".join(lines)}]
-
     if data.get("warnings"):
         elements.append({"tag": "markdown", "content": "⚠️ Some data is incomplete; see the dashboard."})
 
@@ -104,7 +97,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "template": "red" if regressions else "blue",
+            "template": "blue",
             "title": {"tag": "plain_text", "content": "Benchmark Weekly Report"},
         },
         "elements": elements,

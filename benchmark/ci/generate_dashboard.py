@@ -14,11 +14,6 @@ from ci.weekly_report import summarize_weekly, render_weekly
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
-# A suite whose pass@1 drops by at least this much against its own previous run
-# is called out as a regression. Benchmarks are noisy, so a threshold below this
-# would flag ordinary run-to-run variance.
-REGRESSION_THRESHOLD = 0.05
-
 # Plain HTML (no Python format braces); the JSON payload replaces one marker.
 _TEMPLATE_PATH = Path(__file__).with_name("dashboard_template.html")
 
@@ -48,7 +43,6 @@ def generate_dashboard(
                        if (stamp := parse_timestamp(record.get("timestamp"))) is not None
                        and display_start <= stamp < report_end]
     runs = _group_into_runs(display_history)
-    regressions = _find_regressions(runs)
     suites = _summarize_suites(runs)
     warnings = warnings or []
     weekly = summarize_weekly(history, end=report_end)
@@ -70,7 +64,6 @@ def generate_dashboard(
                     "repo": repo,
                     "runs": runs,
                     "suites": compact_suites,
-                    "regressions": regressions,
                     "history": history,
                     "warnings": warnings,
                     "weekly": weekly,
@@ -82,7 +75,7 @@ def generate_dashboard(
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(
-        _render_html(runs=runs, suites=suites, regressions=regressions, repo=repo,
+        _render_html(runs=runs, suites=suites, repo=repo,
                      warnings=warnings, report_end=report_end),
         encoding="utf-8",
     )
@@ -94,11 +87,6 @@ def generate_dashboard(
         print(f"  Latest: {latest['commit_sha'][:8]} on {latest['git_branch']}")
         print(f"    pass@1 {_percent(latest['pass_at_1'])}"
               f" ({latest['passed']}/{latest['eligible_tasks']} eligible first attempts)")
-    if regressions:
-        print(f"  Regressions: {len(regressions)}")
-        for item in regressions:
-            print(f"    {item['suite']}: {_percent(item['previous'])}"
-                  f" -> {_percent(item['current'])}")
 
 
 def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -253,8 +241,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         points.sort(key=lambda point: point["timestamp"] or "")
         latest = points[-1]
         # Compare with the immediately previous run even when its configuration
-        # differs; the changed fields explain the delta. Regression alerts still
-        # require a matching configuration.
+        # differs; the changed fields explain the delta.
         previous = points[-2] if len(points) > 1 else None
         changed_fields = _changed_fields(latest, previous)
         metric_deltas = {metric: _delta(latest.get(metric), previous.get(metric) if previous else None)
@@ -292,48 +279,6 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return summaries
 
 
-def _find_regressions(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Find suites whose pass@1 fell meaningfully in the most recent run.
-
-    Args:
-        runs: Workflow runs, sorted oldest first
-
-    Returns:
-        Regressions, largest drop first
-    """
-    if len(runs) < 2:
-        return []
-
-    latest = runs[-1]
-
-    regressions = []
-    for suite in latest["suites"]:
-        current = suite["pass_at_1"]
-        previous = next((run for run in reversed(runs[:-1]) if any(
-            candidate["suite"] == suite["suite"] and suite["comparison_key"] is not None
-            and candidate["comparison_key"] == suite["comparison_key"] for candidate in run["suites"])), None)
-        prior = next((candidate["pass_at_1"] for candidate in previous["suites"]
-                      if candidate["suite"] == suite["suite"] and candidate["comparison_key"] == suite["comparison_key"]), None) if previous else None
-        if current is None or prior is None:
-            continue
-        if prior - current >= REGRESSION_THRESHOLD - 1e-12:
-            regressions.append({
-                "suite": suite["suite"],
-                "current": current,
-                "previous": prior,
-                "delta": current - prior,
-                "passed": suite["passed"],
-                "tasks": suite["tasks"],
-                "eligible_tasks": suite["eligible_tasks"],
-                "commit_sha": latest["commit_sha"],
-                "previous_commit_sha": previous["commit_sha"],
-            })
-
-    regressions.sort(key=lambda item: item["delta"])
-    return regressions
-
-
 def _delta(current: float | None, previous: float | None) -> float | None:
     """Return current minus previous when both values are known."""
     if current is None or previous is None:
@@ -352,7 +297,6 @@ def _render_html(
     *,
     runs: list[dict[str, Any]],
     suites: list[dict[str, Any]],
-    regressions: list[dict[str, Any]],
     repo: str,
     warnings: list[str],
     report_end: datetime | None = None,
@@ -367,7 +311,6 @@ def _render_html(
     Args:
         runs: Workflow runs, sorted oldest first
         suites: Per-suite summaries
-        regressions: Detected regressions
         repo: GitHub repository ("owner/repo") for commit links
 
     Returns:
@@ -387,7 +330,6 @@ def _render_html(
         "repo": repo,
         "runs": runs,
         "suites": suites,
-        "regressions": regressions,
         "warnings": display_warnings,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:
                                ("latency", "timings", "calls", "reliability", "tokens", "cost").index(spec["id"])),
