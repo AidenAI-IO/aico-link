@@ -24,6 +24,33 @@ configuration again. An absent input returns `ENOLCK` rather than a
 successful fallback VGA timing. Without a plugin GPIO, failed training
 retries autonomously with a ten-second delay.
 
+## Receiver recovery
+
+RK628F can raise vertical-active-line interrupts while its measurement
+settles even though the HDMI clock, all three data channels, and decoded
+1080p60 mode remain stable. The driver debounces these interrupts for 100 ms
+and compares the input with the last configured timings and color metadata.
+Channel-lock checks retry over 80 ms so a brief lock-status drop does not
+reset an otherwise unchanged input; persistent lock loss still retrains it.
+Unchanged input, allowing 0.1% pixel-clock measurement variation, keeps the
+current stream running. Link loss or a real mode/color change still stops
+the stream and retrains the receiver. Timing queries cannot replace the
+configured comparison baseline during the debounce interval.
+
+The parent HDMI interrupt stays masked during recovery and leaf-mask
+updates. This prevents a pending interrupt from monopolizing I2C while the
+recovery worker holds its configuration mutex. CSI interrupt routing is
+preserved. A shared mutex serializes the threaded HDMI handler with mask
+updates. `VIDIOC_QUERY_DV_TIMINGS` returns `EAGAIN` while configuration is busy
+and `ENOLCK` when no signal is available.
+
+On an affected image, the frame service can remain `RECOVERING` with
+`latest_seq=0`, `frame_age_ms=0`, and `last_error=open failed`. Here a zero
+frame age means that no frame timestamp exists. Check
+`/var/log/frame_service/frame_service.log` and the RK628 kernel log for
+repeated receiver resets. Display enumeration alone does not establish that
+capture is working.
+
 ## Hardware verification
 
 Check all of the following with the connected host awake:
@@ -46,7 +73,8 @@ Host display enumeration alone verifies HPD/DDC, not pixel transport.
 A sleeping host can keep its display enumerated while transmitting no
 video clock. The driver must report no signal in that condition.
 
-The SDK BSP build and audit compile the hardware driver. Also run
-`bash scripts/test_rk628d_driver.sh` (the legacy filename is retained)
-for the board/EDID integration contract, followed by the required Docker
-`make check` and `make check-full` profiles.
+The SDK BSP build and audit compile the hardware driver. The Docker suite
+`bash scripts/run_tests_in_docker.sh --suite rk628-recovery` exercises the
+production recovery functions with simulated registers and checks the
+board/EDID integration contract. Run the required local `make check` profile
+after changes; CI runs `make check-full`.

@@ -180,6 +180,19 @@ suites:
     required: true
     timeout_seconds: 60
 
+  - name: rk628-recovery
+    class: deterministic
+    paths: [pico-sdk, tests/test_rk628_recovery.py, scripts/test_rk628d_driver.sh]
+    command: |
+      python3 tests/test_rk628_recovery.py
+      bash scripts/test_rk628d_driver.sh
+    quick: true
+    dependencies: [python3, gcc, bash]
+    required_inputs:
+      - pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/rk628_csi_v4l2.c
+    required: true
+    timeout_seconds: 60
+
   - name: script-contracts
     class: deterministic
     paths: [scripts, .github/workflows, tests]

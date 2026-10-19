@@ -133,7 +133,7 @@ require_pattern 'v4l2_ctrl_s_ctrl\(csi->link_freq, index\);' "$DRIVER" \
     "link frequency updates must take the V4L2 handler lock"
 require_pattern '\.set_edid = rk628_csi_set_edid,' "$DRIVER" \
     "userspace EDID updates must restart RK628F receiver configuration"
-require_pattern 'return -ENOLCK;' "$DRIVER" \
+require_pattern '(return|ret =) -ENOLCK;' "$DRIVER" \
     "no signal must not be reported as a locked fallback VGA source"
 require_pattern 'rk628_is_avi_ready\(csi->rk628, &csi->avi_rcv_rdy\)' "$DRIVER" \
     "RK628 CSI setup must observe live AVI readiness changes"
