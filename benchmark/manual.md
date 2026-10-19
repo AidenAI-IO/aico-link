@@ -1216,9 +1216,11 @@ The overview table compares each dataset's newest two runs across pass@1,
 pass@k, and pass^k, highlighting increases and decreases. Changed datasets
 appear first. Missing scores or a missing previous run show as unavailable.
 The comparison always uses the previous run, even when its configuration
-differs; such a row lists each changed setting as `old → new` (for example the
-agent model, judge prompt version, or suite hash), so a score change can be read
-together with its likely cause. Expand **Run details** in Weekly trends to compare every
+differs. **Configuration context** above the table is collapsed by default and
+groups the visible datasets by the pair of workflow runs being compared,
+including rerun attempts. Shared changes appear once per group; dataset-specific
+differences and incomplete metadata are counted. Incomplete run identities stay
+separate. Dataset rows focus on scores and changes. Expand **Run details** in Weekly trends to compare every
 configuration setting of the latest two runs side by side, with changed values
 highlighted. Run history also shows each run's agent model and judge.
 
