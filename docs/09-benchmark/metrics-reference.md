@@ -107,7 +107,7 @@ inclusion in capability denominators; `success` records the outcome value.
 | Failure class | Current interpretation |
 | --- | --- |
 | `agent` | Eligible assertion/rubric/answer failure or ordinary timeout with execution evidence; audit the evaluator before concluding the model is wrong. |
-| `environment` | Primarily setup assertion failures, initialization failures with consolidation evidence, or missing setup memory IDs; does not capture every environment incident. |
+| `environment` | Fixture assertion failures, initialization failures with consolidation evidence, or missing setup memory IDs; does not capture every environment incident. |
 | `evaluation` | Judge failure or unavailable evidence needed to evaluate the attempt. |
 | `skipped` | Coarse fallback for skips, preparation failures, and outer exceptions; inspect `metrics.error` and logs for the actual cause. |
 | `unknown` | Insufficient classification evidence, for example chat request errors; can be eligible or ineligible. |
@@ -122,7 +122,8 @@ inclusion in capability denominators; `success` records the outcome value.
 | Chat error with execution evidence | `failed` | `unknown` | false | true |
 | Chat error without execution evidence | `failed` | `unknown` | null | false |
 | Agent not ready, input screenshot missing, ordinary setup error | `skipped` | `skipped` | null | false |
-| Setup assertion or specific consolidation initialization failure | `failed` | `environment` | false | false |
+| Fixture assertion or specific consolidation initialization failure | `failed` | `environment` | false | false |
+| Behavior assertion in a setup step with `evaluate: true` | `failed` | `agent` | false | true |
 | Judge or required evidence unavailable | `judge_error` | `evaluation` | null | false |
 
 Thus `status=skipped` and `failure_class=skipped` describe the same attempt on

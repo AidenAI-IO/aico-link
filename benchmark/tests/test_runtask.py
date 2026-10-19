@@ -201,7 +201,9 @@ def test_run_one_task_marks_setup_assertion_as_failed(tmp_path: Path, monkeypatc
 
     assert result.status == "failed"
     assert result.metrics["error"] == "setup assertion: expected revision 2"
-    assert result.metrics["failure_event_ref"] is None
+    assert result.metrics["failure_event_ref"] == "setup_failure.json"
+    assert result.metrics["agent_eligible"] is False
+    assert result.metrics["failure_class"] == "environment"
 
 
 def test_run_one_task_does_not_count_pre_execution_agent_error_as_agent_failure(

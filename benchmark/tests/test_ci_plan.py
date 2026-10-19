@@ -438,7 +438,13 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     assert "auto-agent-setup.log" in artifact_paths
     task_paths = [path for path in artifact_paths.splitlines() if "/tasks/" in path]
     assert task_paths
-    assert all(path.endswith(("/tasks/**/trace.json", "/tasks/**/history.json", "/tasks/**/episode.json")) for path in task_paths)
+    allowed_task_artifacts = (
+        "/tasks/**/trace.json", "/tasks/**/history.json", "/tasks/**/episode.json",
+        "/tasks/**/setup.json", "/tasks/**/setup_failure.json", "/tasks/**/consolidation.json",
+    )
+    assert all(path.endswith(allowed_task_artifacts) for path in task_paths)
+    for artifact in allowed_task_artifacts:
+        assert sum(path.endswith(artifact) for path in task_paths) == 2  # primary and retry upload
     assert "id: upload_benchmark_artifacts" in workflow
     assert "steps.upload_benchmark_artifacts.outcome == 'failure'" in workflow
     assert "overwrite: true" in workflow

@@ -11,7 +11,7 @@ from runner.agent_client import (
     AgentTimeoutError,
 )
 from runner.environment_endpoint import EnvironmentEndpoint
-from runner.suite import SETUP_KEYS, SuiteValidationError, validate_assert_memory_setup
+from runner.suite import SETUP_KEYS, SuiteValidationError, validate_assert_memory_setup, validate_setup_evaluation
 
 
 class ResetError(RuntimeError):
@@ -20,6 +20,8 @@ class ResetError(RuntimeError):
 
 class SetupAssertionError(ResetError):
     """A setup assertion observed a benchmark capability mismatch."""
+
+    agent_eligible: bool = False
 
 
 STALE_ADB_OWNER_LEASE_STATES = {"expired", "abandoned"}
@@ -145,6 +147,32 @@ def per_task_setup(
     prompt_prefix: str = "",
     consolidation_expectation: Any = None,
 ) -> dict[str, Any] | None:
+    if isinstance(setup, dict):
+        try:
+            validate_setup_evaluation(setup)
+        except SuiteValidationError as e:
+            raise ResetError(str(e)) from e
+    try:
+        return _per_task_setup(
+            client, setup, prompt_prefix=prompt_prefix,
+            consolidation_expectation=consolidation_expectation,
+        )
+    except SetupAssertionError as e:
+        # Only explicit behavior assertions are scoreable. Seeding, transport,
+        # and evidence-read failures remain ResetError even in evaluated steps.
+        if isinstance(setup, dict):
+            e.agent_eligible = setup.get("evaluate", False)
+            e.setup_step = setup
+        raise
+
+
+def _per_task_setup(
+    client: AgentClient,
+    setup: dict[str, Any] | list[dict[str, Any]] | None,
+    *,
+    prompt_prefix: str = "",
+    consolidation_expectation: Any = None,
+) -> dict[str, Any] | None:
     if setup is None:
         return
     if isinstance(setup, list):
@@ -188,10 +216,10 @@ def per_task_setup(
                     result is None or index == expectation_index
                 ):
                     result = item_result
-            except SetupAssertionError as e:
-                raise SetupAssertionError(f"setup[{index}] failed: {e}") from e
             except ResetError as e:
-                raise ResetError(f"setup[{index}] failed: {e}") from e
+                # Preserve classification and captured evidence through sequences.
+                e.args = (f"setup[{index}] failed: {e}",)
+                raise
         return result
     if not isinstance(setup, dict):
         raise ResetError(f"setup must be an object or an array: {setup!r}")
@@ -401,6 +429,8 @@ def _per_task_setup_seed_episode(
         result = client.process_episode_memory(episode_id, timeout=timeout)
     except AgentTimeoutError as e:
         raise ResetError(f"episode memory consolidation timed out for {episode_id!r}: {e}") from e
+    except AgentSemanticError as e:
+        raise SetupAssertionError(f"episode memory consolidation failed for {episode_id!r}: {e}") from e
     except AgentRequestError as e:
         raise ResetError(f"episode memory consolidation failed for {episode_id!r}: {e}") from e
     expectation = setup.get("consolidation_expectation")
@@ -408,7 +438,7 @@ def _per_task_setup_seed_episode(
         expectation = vars(consolidation_expectation)
 
     def fail(message: str) -> None:
-        error = ResetError(message)
+        error = SetupAssertionError(message)
         error.consolidation = result
         raise error
 
@@ -433,7 +463,7 @@ def _validate_consolidation_result(
     expectation: dict[str, Any] | None,
 ) -> None:
     def fail(message: str) -> None:
-        error = ResetError(message)
+        error = SetupAssertionError(message)
         error.consolidation = result
         raise error
 
@@ -487,13 +517,13 @@ def _validate_consolidated_memory_content(
     memory_ids = result.get("memory_ids")
     if not isinstance(memory_ids, list) or not memory_ids:
         if required_substrings or required_types or required_scope:
-            error = ResetError(f"episode memory consolidation for {episode_id!r} produced no device memory for the required content/type/scope contract")
+            error = SetupAssertionError(f"episode memory consolidation for {episode_id!r} produced no device memory for the required content/type/scope contract")
             error.consolidation = result
             raise error
         return
 
-    def fail(message: str) -> None:
-        error = ResetError(message)
+    def fail(message: str, *, evidence_unavailable: bool = False) -> None:
+        error = ResetError(message) if evidence_unavailable else SetupAssertionError(message)
         error.consolidation = result
         raise error
 
@@ -502,18 +532,21 @@ def _validate_consolidated_memory_content(
         try:
             recalled = client.invoke_tool("recall_device_memory", {"terms": [memory_id], "limit": 5}, timeout=timeout)
         except (AgentTimeoutError, AgentRequestError) as exc:
-            fail(f"episode memory consolidation for {episode_id!r} could not inspect memory {memory_id!r}: {exc}")
+            fail(f"episode memory consolidation for {episode_id!r} could not inspect memory {memory_id!r}: {exc}", evidence_unavailable=True)
         if recalled.is_error:
-            fail(f"episode memory consolidation for {episode_id!r} could not inspect memory {memory_id!r}")
+            fail(f"episode memory consolidation for {episode_id!r} could not inspect memory {memory_id!r}", evidence_unavailable=True)
         try:
             payload = json.loads(recalled.output)
         except (TypeError, json.JSONDecodeError) as exc:
-            fail(f"episode memory consolidation for {episode_id!r} returned invalid recall output for memory {memory_id!r}: {exc}")
+            fail(f"episode memory consolidation for {episode_id!r} returned invalid recall output for memory {memory_id!r}: {exc}", evidence_unavailable=True)
         matches = payload.get("results") if isinstance(payload, dict) else None
+        if matches is not None and (not isinstance(matches, list) or not all(isinstance(item, dict) for item in matches)):
+            fail(f"episode memory consolidation for {episode_id!r} returned invalid recall results", evidence_unavailable=True)
         exact = next((item for item in matches or [] if isinstance(item, dict) and item.get("id") == memory_id), None)
         if exact is None:
             fail(f"episode memory consolidation for {episode_id!r} could not recall generated memory {memory_id!r}")
         generated.append(exact)
+    result["inspected_memories"] = generated
     serialized = json.dumps(generated, ensure_ascii=False).casefold()
     leaked = [value for value in forbidden if value.casefold() in serialized]
     if leaked:
@@ -575,6 +608,20 @@ def _per_task_setup_seed_notification(client: AgentClient, setup: dict[str, Any]
         ) from e
     except AgentRequestError as e:
         raise ResetError(f"notification memory processing failed: {e}") from e
+    try:
+        _validate_notification_consolidation(client, setup, result, context_ids, timeout)
+    except SetupAssertionError as e:
+        e.consolidation = result
+        raise
+
+
+def _validate_notification_consolidation(
+    client: AgentClient,
+    setup: dict[str, Any],
+    result: dict[str, Any],
+    context_ids: list[Any],
+    timeout: int,
+) -> None:
     expected_cursor = str(context_ids[-1]).strip() if context_ids else ""
     cursor = str(result.get("memory_cursor") or "").strip()
     if expected_cursor and cursor != expected_cursor:
@@ -643,7 +690,12 @@ def _per_task_setup_seed_notification(client: AgentClient, setup: dict[str, Any]
 
 
 def _per_task_setup_assert_memory(client: AgentClient, setup: dict[str, Any]) -> None:
-    assert_memory_results(read_memory_results(client, setup), setup)
+    results = read_memory_results(client, setup)
+    try:
+        assert_memory_results(results, setup)
+    except SetupAssertionError as e:
+        e.memory_state = results
+        raise
 
 
 def read_memory_results(client: AgentClient, setup: dict[str, Any]) -> list[dict[str, Any]]:
