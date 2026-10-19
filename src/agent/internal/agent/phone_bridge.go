@@ -1011,6 +1011,18 @@ func (pb *PhoneBridge) applyHIDConnectionStateLocked(connected, known bool) {
 	pb.screenCacheAt = time.Time{}
 }
 
+// HIDConnectionPhoneID returns the phone last identified on the current USB HID
+// connection. Unlike the Phone Bridge phone_id it outlives a WebSocket
+// disconnect and clears only when HID disconnects.
+func (pb *PhoneBridge) HIDConnectionPhoneID() string {
+	if pb == nil {
+		return ""
+	}
+	pb.mu.Lock()
+	defer pb.mu.Unlock()
+	return pb.hidConnectionPhone
+}
+
 func (pb *PhoneBridge) updateHIDConnectionPhoneLocked(phoneID string) {
 	phoneID = strings.TrimSpace(phoneID)
 	if phoneID == "" || !pb.hidConnectionKnown || !pb.hidConnected {

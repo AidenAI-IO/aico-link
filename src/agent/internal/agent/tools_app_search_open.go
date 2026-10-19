@@ -53,6 +53,8 @@ type appSearchOpenTool struct {
 	sleep                func(context.Context, time.Duration) error
 	iosKeyboardIsolation *iosKeyboardIsolationController
 	exactEntryOnly       bool
+	checkSearchOpenFn    func(context.Context, screenshotResult) (androidSearchCheck, error)
+	searchEntries        *androidSearchEntryStore
 }
 
 type appSearchOpenArgs struct {
@@ -127,6 +129,10 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 		launchDelay:      t.launchDelay,
 		sleep:            t.sleep,
 		exactEntryOnly:   t.exactEntryOnly,
+		// Android search entries are remembered per connected phone.
+		phoneIDFn:         t.connectedPhoneID,
+		checkSearchOpenFn: t.checkSearchOpenFn,
+		searchEntries:     t.searchEntries,
 	})
 	if err != nil {
 		logging.Infof("agent", "app_search", "open finished target=%q ok=false error=%q steps=%q", args.App, err.Error(), result.Steps)
@@ -146,6 +152,15 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 		output["ok"] = false
 	}
 	return jsonString(output), nil
+}
+
+// connectedPhoneID identifies the phone on the board's USB link. It survives a
+// Phone Bridge disconnect, which is when the search flow runs.
+func (t *appSearchOpenTool) connectedPhoneID() string {
+	if t == nil || t.entryTool == nil || t.entryTool.bridgeTool == nil {
+		return ""
+	}
+	return t.entryTool.bridgeTool.currentBridge().HIDConnectionPhoneID()
 }
 
 func (t *appSearchOpenTool) searchTerm(app string) string {
@@ -170,6 +185,11 @@ type appSearchOpenFlowConfig struct {
 	sleep            func(context.Context, time.Duration) error
 	// exactEntryOnly skips the quick pinyin query (tests of exact entry).
 	exactEntryOnly bool
+	// phoneIDFn, checkSearchOpenFn and searchEntries drive the Android search
+	// entry; see openAndroidSystemSearch.
+	phoneIDFn         func() string
+	checkSearchOpenFn func(context.Context, screenshotResult) (androidSearchCheck, error)
+	searchEntries     *androidSearchEntryStore
 }
 
 type appSearchOpenFlowResult struct {
@@ -213,11 +233,25 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		}
 		return interpretTextInputToolOutput(out)
 	}
-	if err := callQuickAction("spotlight_search"); err != nil {
-		return result, err
-	}
-	steps = append(steps, "opened system search")
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+	platform := cfg.platform
+	if platform == "" {
+		platform = cfg.entryTool.platform()
+	}
+	if platform == "android" {
+		entry, err := openAndroidSystemSearch(ctx, cfg, engine)
+		result.VLMCalls += entry.vlmCalls
+		steps = append(steps, entry.steps...)
+		if err != nil {
+			result.Steps = steps
+			return result, err
+		}
+	} else {
+		if err := callQuickAction("spotlight_search"); err != nil {
+			return result, err
+		}
+		steps = append(steps, "opened system search")
+	}
 	isolation := iosKeyboardIsolationControllerFromContext(ctx)
 	type searchAttempt struct {
 		term       string

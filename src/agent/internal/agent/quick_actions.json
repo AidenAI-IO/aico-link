@@ -293,8 +293,12 @@
           ]
         },
         "android": {
-          "status": "reserved",
-          "note": "spotlight_search is not available on all android phones"
+          "status": "active",
+          "steps": [
+            { "tool": "keyboard_tap", "input": { "keys": ["KEYCODE_HOME"] }, "delay_ms_after": 700 },
+            { "tool": "touch_gesture", "input": { "type": "swipe", "start": { "x": 500, "y": 400 }, "end": { "x": 500, "y": 750 }, "speed": 2500 }, "delay_ms_after": 600 }
+          ],
+          "note": "Home, then swipe down mid-screen to open launcher global search (verified on nubia; KEYCODE_SEARCH, KEYCODE_ALL_APPS and Meta are no-ops on drawerless launchers)"
         },
         "mac": {
           "status": "active",
