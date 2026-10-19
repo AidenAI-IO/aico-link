@@ -52,8 +52,8 @@ def test_card_summarizes_the_last_week():
 
 def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "memory: 50.0% (2/4, 2 runs)" in text
-    assert "perception: 90.0% (9/10, 1 run)" in text
+    assert "memory: 50.0%" in text.splitlines()
+    assert "perception: 90.0%" in text.splitlines()
     assert text.index("memory") < text.index("perception")
 
 
@@ -64,22 +64,24 @@ def test_changes_from_the_previous_week_are_colored_by_direction():
                                 _suite("flat", 0.5, 5, 10, change=0.0004), _suite("new", 0.5, 5, 10)]
     text = _text(_build_card(data, "https://example.com/d.html"))
     assert "75.0% <font color='red'>-5.0pp</font> (18/24" in text
-    assert "up: 90.0% <font color='green'>+10.0pp</font> (9/10, 1 run)" in text
+    assert "up: 90.0% <font color='green'>+10.0pp</font>" in text.splitlines()
     assert "down: 40.0% <font color='red'>-20.0pp</font>" in text
     assert "flat: 50.0% <font color='grey'>±0.0pp</font>" in text
     # Without a previous-week rate, no change is shown.
-    assert "new: 50.0% (5/10, 1 run)" in text
+    assert "new: 50.0%" in text.splitlines()
     assert "Config changed" not in text
 
 
-def test_changed_settings_are_listed_under_the_dataset():
+def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
     data = _data()
     suite = _suite("perception", 0.75, 9, 12, change=-0.08)
     suite["config_changes"] = [{"field": "agent model", "previous": "google/a", "current": "anthropic/b"}]
     data["weekly"]["suites"] = [suite]
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "perception: 75.0% <font color='red'>-8.0pp</font> (9/12, 1 run)\n" \
-           "  <font color='grey'>Config changed · agent model: google/a → anthropic/b</font>" in text
+    assert "perception: 75.0% <font color='red'>-8.0pp</font>" in text.splitlines()
+    assert "Config changed" not in text
+    assert "google/a" not in text and "anthropic/b" not in text
+    assert "9/12" not in text and "1 run" not in text
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():
