@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import summarize_weekly, render_weekly
+from ci.weekly_report import CAPABILITY_SUITES, OTHER_CAPABILITY, capability_of, summarize_weekly, render_weekly
 from ci.dashboard_metrics import METRIC_CHARTS
 
 
@@ -260,6 +260,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         summaries.append({
             "suite": name,
+            "capability": capability_of(name),
             "latest": latest,
             "previous": previous,
             "metric_deltas": metric_deltas,
@@ -330,6 +331,8 @@ def _render_html(
         "repo": repo,
         "runs": runs,
         "suites": suites,
+        "capabilities": [name for name in (*CAPABILITY_SUITES, OTHER_CAPABILITY)
+                         if any(suite["capability"] == name for suite in suites)],
         "warnings": display_warnings,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:
                                ("latency", "timings", "calls", "reliability", "tokens", "cost").index(spec["id"])),

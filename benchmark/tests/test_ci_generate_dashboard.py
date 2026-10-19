@@ -418,6 +418,9 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
                   failure_details_expected=4),
         _k_record(suite="partial_stages", eligible_failures=2,
                   failure_stages={"tool_execution": 1}, failure_stage_coverage=0.5),
+        _k_record(suite="memory_v1"),
+        _k_record(suite="episode_memory_v1"),
+        _k_record(suite="shell_utility_v1"),
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
@@ -431,7 +434,10 @@ global.document = {
   documentElement: {},
   querySelectorAll: () => [],
   getElementById: id => {
-    if (!elements.has(id)) elements.set(id, {style: {}, addEventListener() {}});
+    if (!elements.has(id)) elements.set(id, {style: {}, listeners: {},
+      addEventListener(event, callback) { this.listeners[event] = callback; },
+      setAttribute(name, value) { this[name] = value; },
+      focus() {}, scrollIntoView() {}, querySelector() { return {focus() {}}; }});
     return elements.get(id);
   }
 };
@@ -499,15 +505,50 @@ if (detailHTML.includes('Failure details unavailable · Details unavailable')) p
 if (!safeLink('https://langfuse.test/traces/a?x=1&y=2', 'Open trace').includes('&amp;')) process.exit(35);
 const namesForFilter = filter => matchingDatasetIndices(filter).map(i => datasets[i].suite);
 if (namesForFilter('all').length !== datasets.length) process.exit(39);
-if (namesForFilter('failures').includes('no_failures') || namesForFilter('unavailable').includes('no_failures')) process.exit(40);
-if (!namesForFilter('failures').includes('partial_stages')) process.exit(41);
-if (!namesForFilter('unavailable').includes('other')) process.exit(42);
-activeFilter = 'improved';
-applyDatasetFilters();
-if (el('overview-empty').hidden || el('failures-empty').hidden) process.exit(43);
-clearDatasetFilters();
-if (!el('overview-empty').hidden || !el('failures-empty').hidden) process.exit(44);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
+const assert = require('node:assert/strict');
+assert.deepEqual(DATA.capabilities, ['Memory', 'Tool use', 'Other']);
+assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
+assert.deepEqual(namesForFilter('Tool use'), ['shell_utility_v1']);
+assert(namesForFilter('Other').includes('other'));
+assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);
+const rows = datasets.flatMap((s, i) => [
+  {dataset: {filterDataset: String(i)}}, {dataset: {filterDataset: String(i)}},
+]);
+const buttons = capabilityControls.flatMap(() => datasetFilters.map(f => ({
+  dataset: {filter: f.id}, setAttribute(name, value) { this[name] = value; },
+})));
+document.querySelectorAll = selector => selector === '[data-filter-dataset]' ? rows
+  : selector === 'button[data-filter]' ? buttons : [];
+const clickFilter = (control, capability) => el(control).listeners.click({
+  target: {closest: () => ({dataset: {filter: capability}})},
+});
+clickFilter('change-summary', 'Memory');
+assert.equal(selected.capability, 'Memory');
+assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 2);
+assert(!el('dataset-select').innerHTML.includes('shell_utility_v1'));
+assert(rows.every(row => row.hidden === (datasets[Number(row.dataset.filterDataset)].capability !== 'Memory')));
+assert(buttons.every(button => button['aria-pressed'] === String(button.dataset.filter === 'Memory')));
+const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
+openDataset(memoryIndex);
+assert.equal(activeFilter, 'Memory');
+assert.equal(el('view-trends').hidden, false);
+openFailures(memoryIndex);
+assert.equal(activeFilter, 'Memory');
+assert.equal(el('view-latest').hidden, false);
+assert.equal(el('failure-dataset-' + memoryIndex).open, true);
+clickFilter('trend-capabilities', 'all');
+assert.equal(selected.suite, 'memory_v1');
+assert(rows.every(row => !row.hidden));
+clickFilter('trend-capabilities', 'Tool use');
+assert.equal(selected.suite, 'shell_utility_v1');
+assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));
+assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 1);
+clickFilter('change-summary', 'Other');
+assert.equal(selected.suite, 'other');
+assert(!el('dataset-select').innerHTML.includes('<img'));
+assert(el('dataset-select').innerHTML.includes('&lt;img'));
+assert.equal(el('suites').innerHTML, overviewHTML);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

@@ -161,7 +161,7 @@
   <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
   <div class="panel" id="overview-panel"><h2>Dataset overview · latest results</h2><p id="latest-run-note" class="empty"></p>
     <p class="empty">Compare each dataset with its previous run. Open failure details to inspect tasks, or view trends to investigate changes.</p>
-    <div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets"></div>
+    <div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets by capability"></div>
     <p class="empty" id="filter-count" role="status" aria-live="polite"></p>
     <details class="reading-notes"><summary id="reading-notes-label">How to read these results</summary><p id="comparison-note"></p><p>Calls and task time include measured eligible attempts, including failures. n = measured / eligible attempts. Changes use the previous run within the last 7 days.</p><div id="availability"></div></details>
     <div class="scroll"><table id="suites"></table></div><p class="empty" id="overview-empty" hidden>No datasets match this filter. Select All to show all datasets.</p>
@@ -175,6 +175,7 @@
   <section id="view-trends" role="tabpanel" aria-labelledby="tab-trends" hidden>
   <div class="panel" id="dataset-panel">
     <div class="section-actions"><h2>Dataset trends</h2><button class="action" id="selected-failures" type="button">View latest failure details →</button></div>
+    <div id="trend-capabilities" class="filters" role="group" aria-label="Filter dataset trends by capability"></div>
     <div class="toolbar"><label for="dataset-select">Dataset</label><select id="dataset-select" aria-label="Dataset"></select></div>
     <div class="empty" id="dataset-context"></div>
     <nav class="metric-nav" aria-label="Jump to metric"><a href="#dataset-panel">Pass rates</a><a href="#measurement-panel-latency">Latency</a><a href="#measurement-panel-timings">Timings</a><a href="#measurement-panel-calls">Tool &amp; LLM calls</a><a href="#measurement-panel-reliability">Reliability</a><a href="#measurement-panel-tokens">Tokens</a><a href="#measurement-panel-cost">Cost</a><a href="#history-panel">Run history</a></nav>
@@ -329,13 +330,15 @@ const overviewRows = datasets.map((s, index) => ({ ...s, index }))
     Math.max(...Object.values(b.metric_deltas).map(v => Math.abs(v || 0))) - Math.max(...Object.values(a.metric_deltas).map(v => Math.abs(v || 0))));
 const datasetFilters = [
   {id: "all", label: "All", matches: () => true},
-  {id: "declined", label: "Declined / mixed", matches: s => ["declined", "mixed"].includes(s.change_direction)},
-  {id: "improved", label: "Improved", matches: s => s.change_direction === "improved"},
-  {id: "failures", label: "Failed / excluded attempts", matches: s => (s.latest.failure_details || []).length > 0 || s.latest.eligible_failures > 0},
-  {id: "unavailable", label: "Incomplete data", matches: s => s.latest.metrics_complete === false || s.latest.failure_details_status !== "available"},
+  ...DATA.capabilities.map(capability => ({
+    id: capability, label: capability, matches: s => s.capability === capability,
+  })),
 ];
 let activeFilter = "all";
-el("change-summary").innerHTML = datasetFilters.map(filter => `<button type="button" class="action" data-filter="${filter.id}" aria-pressed="${filter.id === activeFilter}">${filter.label} · ${datasets.filter(filter.matches).length}</button>`).join("");
+const capabilityControls = ["change-summary", "trend-capabilities"];
+for (const id of capabilityControls) {
+  el(id).innerHTML = datasetFilters.map(filter => `<button type="button" class="action" data-filter="${esc(filter.id)}" aria-pressed="${filter.id === activeFilter}">${esc(filter.label)} · ${datasets.filter(filter.matches).length}</button>`).join("");
+}
 function matchingDatasetIndices(filterId) {
   const matches = (datasetFilters.find(filter => filter.id === filterId) || datasetFilters[0]).matches;
   return datasets.flatMap((dataset, index) => matches(dataset) ? [index] : []);
@@ -347,20 +350,21 @@ function applyDatasetFilters() {
   el("filter-count").textContent = `${indices.length} of ${datasets.length} datasets · Declined and mixed changes appear first`;
   el("overview-empty").hidden = indices.length > 0;
   el("failures-empty").hidden = indices.length > 0;
-}
-function clearDatasetFilters() {
-  activeFilter = "all";
-  applyDatasetFilters();
+  el("dataset-select").innerHTML = indices.length
+    ? indices.map(i => `<option value="${i}">${esc(datasets[i].suite)}</option>`).join("")
+    : '<option value="">No datasets available</option>';
+  el("dataset-select").disabled = !indices.length;
+  // Retain the current dataset when possible, otherwise use the newest match.
+  const current = datasets.indexOf(selected);
+  const newest = indices.reduce((best, i) => best === undefined ||
+    datasets[i].latest.timestamp > datasets[best].latest.timestamp ? i : best, undefined);
+  selectDataset(indices.includes(current) ? current : newest);
 }
 const unverified = datasets.filter(s => s.comparison_status === "Configuration unverified").length;
 const changedConfig = datasets.filter(s => s.comparison_status === "Configuration changed").length;
 el("comparison-note").textContent = unverified || changedConfig
   ? `Changes compare each dataset with its previous run: ${changedConfig} with changed configurations; ${unverified} with unverified configurations. Changed datasets list what differs; open Run details to see both runs.`
   : "Changes compare each dataset with its previous run. Missing scores or a previous run leave the change unavailable.";
-el("dataset-select").innerHTML = datasets.length
-  ? datasets.map((s, i) => `<option value="${i}">${esc(s.suite)}</option>`).join("")
-  : '<option value="">No datasets available</option>';
-el("dataset-select").disabled = !datasets.length;
 
 el("suites").innerHTML = `
   <thead><tr><th>Dataset</th><th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th>
@@ -379,6 +383,7 @@ el("suites").innerHTML = `
 function selectDataset(index) {
   selected = datasets[index];
   if (!selected) {
+    el("selected-failures").disabled = true;
     el("dataset-context").textContent = "No dataset history is available.";
     el("latest").innerHTML = '<div class="empty">Nothing to show yet.</div>';
     el("history").innerHTML = '<tr><td class="empty">No runs.</td></tr>';
@@ -391,7 +396,7 @@ function selectDataset(index) {
   });
   const points = selected.points;
   const latest = selected.latest;
-  el("dataset-context").textContent = `${selected.suite} · ${points.length} runs · ${when(points[0].timestamp)} — ${when(latest.timestamp)}`;
+  el("dataset-context").textContent = `${selected.capability} · ${selected.suite} · ${points.length} runs · ${when(points[0].timestamp)} — ${when(latest.timestamp)}`;
   el("latest").innerHTML = metrics.map(metric => `<div>
     <div class="num">${pct(latest[metric.key])}</div><div class="cap">Latest ${metric.label}</div>
     <span class="delta ${deltaClass(selected.metric_deltas[metric.key])}">${deltaLabel(selected.metric_deltas[metric.key])}</span>
@@ -545,7 +550,6 @@ function openDataset(index) {
 function openFailures(index) {
   if (!datasets[index]) return;
   selectDataset(index);
-  clearDatasetFilters();
   showView("latest");
   const detail = el("failure-dataset-" + index);
   detail.open = true;
@@ -569,17 +573,15 @@ el("back-overview").addEventListener("click", () => {
   el("change-summary").querySelector('button[aria-pressed="true"]').focus({ preventScroll: true });
   el("overview-panel").scrollIntoView({ block: "start" });
 });
-el("change-summary").addEventListener("click", event => {
-  const button = event.target.closest("button[data-filter]");
-  if (button) { activeFilter = button.dataset.filter; applyDatasetFilters(); }
-});
+for (const id of capabilityControls) {
+  el(id).addEventListener("click", event => {
+    const button = event.target.closest("button[data-filter]");
+    if (button) { activeFilter = button.dataset.filter; applyDatasetFilters(); }
+  });
+}
 document.querySelectorAll('.metric-nav a[href="#history-panel"]').forEach(link => link.addEventListener("click", () => { el("history-panel").open = true; }));
 el("chart-unavailable").hidden = typeof Chart !== "undefined";
 applyDatasetFilters();
-// Start with the most recently run dataset, not a pooled workflow rate.
-const initial = datasets.reduce((best, dataset, i) =>
-  dataset.latest.timestamp > datasets[best].latest.timestamp ? i : best, 0);
-selectDataset(initial);
 
 </script>
 </body>

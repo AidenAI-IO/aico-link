@@ -1229,9 +1229,14 @@ the same coverage for historical points. Distributions include measured eligible
 attempts, including failures. Zero samples produce missing points; measured
 zeros remain zero.
 
-Latest results supports filters for declined/mixed scores, improvements,
-failed/excluded attempts, and incomplete data. Filters apply to both the
-overview and failure details.
+Latest results and Weekly trends share capability filters using the same
+classification as the weekly notification card (Memory, Tool use, and other
+capabilities represented in the report). The selected capability filters the
+overview, failure details, and trends dataset selector, and persists across tab
+changes. Unknown datasets appear under Other. Selecting a capability retains
+the current dataset if it matches, otherwise selects the most recently run
+dataset in that capability. Select All to show every dataset. Per-dataset score
+changes remain visible in the overview.
 
 Metric definitions are expandable, and charts without measurements use a compact
 unavailable state while retaining latest values and sample coverage. Reading
