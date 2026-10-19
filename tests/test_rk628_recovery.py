@@ -23,6 +23,14 @@ typedef uint32_t u32;
 typedef uint8_t u8;
 #define BIT(n) (1U << (n))
 #define RK628F_VERSION 1
+#define CSI_MODE 1
+#define DSI_MODE 2
+#define LOCK_OK 0
+#define LOCK_FAIL 1
+#define LOCK_RESET 2
+#define CED_OK 0
+#define CED_ERR 1
+#define CED_FULL 2
 #define HDMI_RX_SCDC_REGS1 0x30824
 #define HDMI_RX_MD_HT1 0x3014c
 #define HDMI_RX_MD_VTL 0x30170
@@ -50,6 +58,9 @@ typedef uint8_t u8;
 #define RK_HDMIRX_V4L2_EVENT_SIGNAL_LOST 1
 #define SW_I2S_DATA_OEN_MASK BIT(10)
 #define SW_I2S_DATA_OEN(n) ((n) << 10)
+#define HDMI_RX_PDEC_CTRL 0x30300
+#define GCPFORCE_CLRAVMUTE_MASK BIT(2)
+#define GCPFORCE_CLRAVMUTE(n) ((n) << 2)
 struct v4l2_bt_timings {
     u32 width, height, hfrontporch, hsync, hbackporch;
     u32 vfrontporch, vsync, vbackporch;
@@ -61,7 +72,7 @@ struct v4l2_event { int type; };
 struct work_struct { int unused; };
 struct delayed_work { struct work_struct work; };
 struct rk628 {
-    int version;
+    int version, tx_mode;
     u8 color_format, color_range, color_space;
     bool force_eq;
 };
@@ -72,7 +83,9 @@ struct rk628_csi {
     struct v4l2_dv_timings configured_timings;
     u8 configured_format, configured_range, configured_space;
     int confctl_mutex, irq_mutex;
-    bool nosignal, avi_rcv_rdy, vid_ints_en;
+    int lock_fail_time;
+    void *plugin_det_gpio;
+    bool nosignal, avi_rcv_rdy, vid_ints_en, is_streaming;
     struct delayed_work delayed_work_res_change, delayed_work_enable_hotplug;
     void *audio_info;
     struct { bool enable; } hdcp;
@@ -82,16 +95,20 @@ static struct rk628_csi csi;
 static struct v4l2_dv_timings next_timings;
 static u8 next_format, next_range, next_space;
 static int debug, rk628_csi_timings_cap, timing_error, read_error;
-static int timing_reads, status_reads, stops, resets, scheduled, events;
-static bool plugged, valid_timings;
+static int timing_reads, status_reads, starts, stops, resets, scheduled, events;
+static int phy_result, ced_result, ced_reads;
+static bool plugged, valid_timings, stream_start_fails, stream_loses_signal;
 static u32 lock_status[16], parent_mask, writes[64], values[64];
 static unsigned int write_count;
 static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
 #define container_of(ptr, type, member) ((type *)((char *)(ptr) - offsetof(type, member)))
 #define to_delayed_work(ptr) container_of(ptr, struct delayed_work, work)
 #define v4l2_dbg(...) ((void)0)
+#define v4l2_info(...) ((void)0)
+#define v4l2_err(...) ((void)0)
 #define v4l2_print_dv_timings(...) ((void)0)
 #define usleep_range(...) ((void)0)
+#define msleep(...) ((void)0)
 #define msecs_to_jiffies(n) (n)
 #define div_u64(n, d) ((n) / (d))
 #define tx_5v_power_present(sd) plugged
@@ -102,15 +119,35 @@ static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
 #define rk628_hdmirx_set_hdcp(...) ((void)0)
 #define rk628_hdmirx_controller_setup(...) ((void)0)
 #define rk628_hdmirx_hpd_ctrl(...) ((void)0)
-#define rk628_hdmirx_config_all(...) ((void)0)
+#define rk628_hdmirx_phy_setup(...) phy_result
+#define rk628_hdmirx_plugout(sd) (to_csi(sd)->nosignal = true)
 #define rk628_hdmirx_inno_phy_power_off(...) ((void)0)
 #define rk628_hdmirx_verisyno_phy_power_off(...) ((void)0)
 #define rk628_csi_hdmirx_reset(...) (++resets)
 #define rk628_i2c_update_bits(...) ((void)0)
-#define rk628_csi_format_change(...) ((void)0)
+#define rk628_csi_format_change(...) LOCK_OK
+#define rk628_hdmirx_vid_enable(...) ((void)0)
+#define rk628_csi_enable_csi_interrupts(...) ((void)0)
+#define rk628_mipi_txdata_reset(...) ((void)0)
 #define schedule_delayed_work(...) (++scheduled)
 #define v4l2_event_queue(...) (++events)
-static void enable_stream(struct v4l2_subdev *sd, bool en) { if (!en) ++stops; }
+static void enable_csitx(struct v4l2_subdev *sd) {
+    assert(csi.confctl_mutex);
+    ++starts;
+    csi.is_streaming = !stream_start_fails;
+    if (stream_loses_signal) csi.nosignal = true;
+}
+static void rk628_csi_disable_stream(struct v4l2_subdev *sd) {
+    assert(csi.confctl_mutex);
+    ++stops;
+    csi.is_streaming = false;
+}
+#define enable_dsitx enable_csitx
+#define rk628_disable_dsitx rk628_csi_disable_stream
+static int rk628_hdmirx_scdc_ced_err(struct rk628 *rk) {
+    /* A second observation can be clear after the first updated CED state. */
+    return ++ced_reads == 1 ? ced_result : CED_OK;
+}
 static bool mutex_trylock(int *lock) { if (*lock) return false; *lock = 1; return true; }
 static void mutex_lock(int *lock) { assert(mutex_trylock(lock)); }
 static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
@@ -159,6 +196,8 @@ static bool v4l2_match_dv_timings(const struct v4l2_dv_timings *a,
     return !memcmp(&x, &y, sizeof(x)) && delta <= tolerance;
 }
 static void rk628_csi_enable_interrupts(struct v4l2_subdev *, bool);
+static void enable_stream(struct v4l2_subdev *, bool);
+static bool rk628_csi_rx_locked(struct v4l2_subdev *);
 """
 
 CASES = r"""
@@ -167,6 +206,7 @@ static void reset_fixture(void) {
     memset(&csi, 0, sizeof(csi));
     memset(&next_timings, 0, sizeof(next_timings));
     chip.version = RK628F_VERSION;
+    chip.tx_mode = CSI_MODE;
     csi.rk628 = &chip;
     csi.sd.devnode = &csi;
     csi.src_timings.bt.width = 1920;
@@ -176,7 +216,11 @@ static void reset_fixture(void) {
     csi.configured_timings = csi.src_timings;
     next_format = next_range = next_space = 0;
     timing_error = read_error = timing_reads = status_reads = 0;
-    stops = resets = scheduled = events = 0;
+    starts = stops = resets = scheduled = events = 0;
+    phy_result = LOCK_OK;
+    ced_result = CED_OK;
+    ced_reads = 0;
+    stream_start_fails = stream_loses_signal = false;
     plugged = valid_timings = true;
     for (unsigned int i = 0; i < 16; ++i) lock_status[i] = 0xf00;
     parent_mask = BIT(6) | BIT(9);
@@ -184,6 +228,25 @@ static void reset_fixture(void) {
 }
 int main(void) {
     struct v4l2_dv_timings out;
+    /* Updating the CED baseline must not suppress a required training retry. */
+    reset_fixture();
+    csi.nosignal = true;
+    rk628_hdmirx_config_all(&csi.sd);
+    assert(ced_reads == 1 && !csi.nosignal && !resets && !scheduled);
+    reset_fixture();
+    csi.nosignal = true;
+    ced_result = CED_ERR;
+    rk628_hdmirx_config_all(&csi.sd);
+    assert(ced_reads == 1 && csi.nosignal && resets == 1 && scheduled == 1);
+    reset_fixture();
+    csi.nosignal = true;
+    ced_result = CED_FULL;
+    rk628_hdmirx_config_all(&csi.sd);
+    assert(ced_reads == 1 && csi.nosignal && resets == 1 && scheduled == 1);
+    reset_fixture();
+    phy_result = LOCK_FAIL;
+    rk628_hdmirx_config_all(&csi.sd);
+    assert(ced_reads == 1 && csi.nosignal && csi.lock_fail_time == 1 && scheduled == 1);
     reset_fixture();
     next_timings.bt.pixelclock += 3750;
     assert(!rk628_check_resulotion_change(&csi.sd));
@@ -271,10 +334,157 @@ int main(void) {
     assert(out.bt.width == 1920 && out.bt.height == 1080 && !csi.confctl_mutex);
     valid_timings = false;
     assert(rk628_csi_query_dv_timings(&csi.sd, &out) == -ERANGE);
-    puts("PASS: RK628 recovery, IRQ ordering and nonblocking timing queries");
+
+    /* STREAMON must hold the recovery mutex and report readiness failures. */
+    /* Historical idle errors must not retune a currently locked receiver. */
+    for (int error = CED_ERR; error <= CED_FULL; ++error) {
+        reset_fixture();
+        ced_result = error;
+        chip.force_eq = true;
+        assert(!rk628_csi_s_stream(&csi.sd, 1));
+        assert(!ced_reads && starts == 1 && !stops && csi.is_streaming);
+        assert(!csi.nosignal && !resets && !scheduled && chip.force_eq);
+        assert(!csi.confctl_mutex);
+    }
+    reset_fixture();
+    for (unsigned int i = 0; i < 16; ++i) lock_status[i] = 0x100;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
+    assert(!starts && stops == 1 && resets == 1 && scheduled == 1 && csi.nosignal);
+    reset_fixture();
+    lock_status[0] = 0x100;
+    assert(!rk628_csi_s_stream(&csi.sd, 1));
+    assert(starts == 1 && status_reads == 2 && !resets);
+    reset_fixture();
+    csi.nosignal = true;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -ENOLCK);
+    assert(!starts && !csi.confctl_mutex);
+    reset_fixture();
+    plugged = false;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -ENOLCK);
+    assert(!starts && !csi.confctl_mutex);
+    reset_fixture();
+    stream_start_fails = true;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
+    assert(starts == 1 && stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
+    reset_fixture();
+    stream_loses_signal = true;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
+    assert(stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
+    reset_fixture();
+    assert(!rk628_csi_s_stream(&csi.sd, 1));
+    assert(starts == 1 && csi.is_streaming && !csi.confctl_mutex);
+    csi.nosignal = true;
+    assert(!rk628_csi_s_stream(&csi.sd, 0));
+    assert(stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
+    puts("PASS: RK628 recovery, IRQ ordering, timing queries and stream readiness");
     return 0;
 }
 """
+
+
+PHY_PRELUDE = r"""
+#include <assert.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
+typedef uint32_t u32;
+#define RK628F_VERSION 1
+#define LOCK_OK 0
+#define LOCK_FAIL 1
+#define LOCK_RESET 2
+#define CED_OK 0
+#define CED_ERR 1
+#define CED_FULL 2
+#define RXPHY_CFG_MAX_TIMES 5
+#define RXPHY_CFG_MAX_TIMES_DYNAMIC_EQ 10
+#define HDMI_RX_MD_HACT_PX 0
+#define HDMI_RX_MD_VAL 1
+#define HDMI_RX_MD_HT1 2
+#define HDMI_RX_MD_VTL 3
+#define HDMI_RX_SCDC_REGS1 4
+#define HDMI_RX_PDEC_STS 5
+#define DVI_DET 1
+struct v4l2_subdev { int unused; };
+struct rk628 { int version; bool dynamic_eq, force_eq; };
+struct rk628_csi { struct rk628 *rk628; };
+static struct rk628 chip;
+static struct rk628_csi csi = { &chip };
+static int attempts, ced_reads, error_read, ced_error;
+static bool persistent_error, plugged;
+static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
+#define v4l2_dbg(...) ((void)0)
+#define v4l2_info(...) ((void)0)
+#define v4l2_err(...) ((void)0)
+#define dev_info(...) ((void)0)
+#define msleep(...) ((void)0)
+#define tx_5v_power_present(sd) plugged
+#define rk628_rcv_supported_res(...) true
+#define rk628_hdmirx_set_preset_eq(...) ((void)0)
+#define rk628_hdmirx_phy_prepclk_cfg(...) ((void)0)
+#define rk628_hdmirx_inno_phy_power_on(...) (++attempts, 0)
+#define rk628_hdmirx_verisyno_phy_power_on(...) (++attempts)
+static int rk628_i2c_read(struct rk628 *rk, u32 reg, u32 *out) {
+    const u32 values[] = {1920, 1080, 2200U << 16, 1125, 0xf00, 0};
+    *out = values[reg];
+    return 0;
+}
+static int rk628_hdmirx_scdc_ced_err(struct rk628 *rk) {
+    ++ced_reads;
+    if (ced_reads == error_read || persistent_error) {
+        rk->force_eq = rk->dynamic_eq;
+        return ced_error;
+    }
+    rk->force_eq = false;
+    return CED_OK;
+}
+static void reset_fixture(void) {
+    chip.version = RK628F_VERSION;
+    chip.dynamic_eq = true;
+    chip.force_eq = false;
+    plugged = true;
+    persistent_error = false;
+    attempts = ced_reads = error_read = 0;
+    ced_error = CED_ERR;
+}
+"""
+
+PHY_CASES = r"""
+int main(void) {
+    struct v4l2_subdev sd;
+    reset_fixture();
+    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && attempts == 1);
+    /* A clean later counter observation must not hide an earlier retune. */
+    for (int sample = 1; sample <= 2; ++sample) {
+        reset_fixture();
+        error_read = sample;
+        assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && attempts == 2);
+        reset_fixture();
+        error_read = sample;
+        ced_error = CED_FULL;
+        assert(rk628_hdmirx_phy_setup(&sd) == LOCK_RESET && attempts == 1);
+    }
+    reset_fixture();
+    persistent_error = true;
+    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_FAIL);
+    assert(attempts == RXPHY_CFG_MAX_TIMES_DYNAMIC_EQ);
+    reset_fixture();
+    chip.force_eq = true;
+    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && ced_reads == 2);
+    reset_fixture();
+    plugged = false;
+    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_FAIL && attempts == 1);
+    puts("PASS: RK628 PHY retries preserve equalizer errors");
+    return 0;
+}
+"""
+
+
+def extract_function(source, name):
+    match = re.search(r"^static (?:bool|int|void) " + name + r"\([^;]*?\)\n\{.*?^\}",
+                      source, re.MULTILINE | re.DOTALL)
+    if not match:
+        raise AssertionError(f"Production function not found: {name}")
+    return match.group()
 
 
 def main():
@@ -284,23 +494,26 @@ def main():
         "rk628_csi_clear_hdmirx_interrupts",
         "rk628_csi_enable_interrupts_locked",
         "rk628_csi_enable_interrupts",
+        "enable_stream",
+        "rk628_hdmirx_config_all",
         "rk628_csi_rx_locked",
         "rk628_check_resulotion_change",
         "rk628_delayed_work_res_change",
         "rk628_csi_query_dv_timings",
+        "rk628_csi_s_stream",
     ):
-        match = re.search(r"^static (?:bool|int|void) " + name + r"\([^;]*?\)\n\{.*?^\}",
-                          source, re.MULTILINE | re.DOTALL)
-        if not match:
-            raise AssertionError(f"Production function not found: {name}")
-        functions.append(match.group())
+        functions.append(extract_function(source, name))
     with tempfile.TemporaryDirectory(prefix="rk628-recovery-") as directory:
-        harness = Path(directory) / "recovery.c"
-        binary = Path(directory) / "recovery"
-        harness.write_text(PRELUDE + "\n".join(functions) + CASES)
-        subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Werror",
-                        str(harness), "-o", str(binary)], check=True)
-        subprocess.run([str(binary)], check=True, timeout=10)
+        for name, body in (
+            ("recovery", PRELUDE + "\n".join(functions) + CASES),
+            ("phy", PHY_PRELUDE + extract_function(source, "rk628_hdmirx_phy_setup") + PHY_CASES),
+        ):
+            harness = Path(directory) / (name + ".c")
+            binary = Path(directory) / name
+            harness.write_text(body)
+            subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Werror",
+                            str(harness), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=10)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,26 @@ retries autonomously with a ten-second delay.
 
 ## Receiver recovery
 
+The board enables the upstream `dynamic-eq` receiver option. Without it, a
+phone source can retain a valid HDMI clock and AVI mode while TMDS character
+errors accumulate and the data channels repeatedly lose lock. The receiver
+then retrains with the same equalization setting. Dynamic equalization
+enables character-error monitoring and retunes the receiver when errors
+increase. Initial tuning can still cause a temporary recovery; persistent
+errors require investigating the Type-C bridge and receiver path; the counters
+alone do not identify which component caused them.
+Configuration uses one character-error observation for its readiness and
+retry decisions, preserving the retry when that observation updates the
+counter baseline and equalizer.
+Stream start checks live receiver locks without sampling character-error
+counters. That sample can retune the equalizer based on errors accumulated
+during a long idle, disrupting a currently locked input and producing a
+truncated frame followed by no frames. Equalizer changes stay in receiver
+training; persistent lock loss at stream start schedules that training again.
+PHY setup likewise retries an attempt that changed the equalizer even if a
+subsequent counter observation is clean, and reports saturated counters from
+either observation as requiring a receiver reset.
+
 RK628F can raise vertical-active-line interrupts while its measurement
 settles even though the HDMI clock, all three data channels, and decoded
 1080p60 mode remain stable. The driver debounces these interrupts for 100 ms
@@ -43,6 +63,12 @@ recovery worker holds its configuration mutex. CSI interrupt routing is
 preserved. A shared mutex serializes the threaded HDMI handler with mask
 updates. `VIDIOC_QUERY_DV_TIMINGS` returns `EAGAIN` while configuration is busy
 and `ENOLCK` when no signal is available.
+
+Stream start/stop and format-readiness checks share the receiver configuration
+mutex so recovery cannot reset CSI halfway through a stream transition.
+`STREAMON` returns `ENOLCK` when the input is unavailable and `EAGAIN` when
+stream setup itself triggers recovery. A failed start disables CSI before
+returning the error, allowing the capture service to reopen the source.
 
 On an affected image, the frame service can remain `RECOVERING` with
 `latest_seq=0`, `frame_age_ms=0`, and `last_error=open failed`. Here a zero
