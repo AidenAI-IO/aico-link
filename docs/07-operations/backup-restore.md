@@ -57,7 +57,7 @@ The full-archive workflow is exposed through these routes:
 | `POST /api/restore/jobs` | Create a restore job for an uploaded archive. |
 | `GET /api/restore/jobs/{id}` | Read restore state and progress. |
 | `PUT /api/restore/jobs/{id}/chunks/{index}` | Upload an ordered archive chunk. Upload pauses with `restore_plan_required` when the parsed manifest requires a plan. |
-| `POST /api/restore/jobs/{id}/plan` | Parse the manifest and create the restore plan before remaining chunks are uploaded. |
+| `POST /api/restore/jobs/{id}/plan` | Parse the manifest and create the restore plan before remaining chunks are uploaded. A successful response reports `uploading_and_staging`, and the next chunk is accepted immediately; it reports `validating` when the whole archive was already uploaded. |
 | `POST /api/restore/jobs/{id}/validate` | Validate the complete archive, including compatibility and integrity. |
 | `POST /api/restore/jobs/{id}/apply` | Apply the validated restore transaction. |
 

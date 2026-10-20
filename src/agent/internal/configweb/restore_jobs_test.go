@@ -277,6 +277,9 @@ func TestRestoreMultiChunkPausesForPlanAndStreamsToStaging(t *testing.T) {
 	if planResp.Code != http.StatusOK {
 		t.Fatalf("plan status=%d body=%s", planResp.Code, planResp.Body.String())
 	}
+	if state := decodeJSON(t, planResp)["state"]; state != restoreJobUploading {
+		t.Fatalf("plan state=%v body=%s", state, planResp.Body.String())
+	}
 	if resp := client.chunk(2, chunks[2]); resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "chunk_out_of_order") {
 		t.Fatalf("out-of-order chunk status=%d body=%s", resp.Code, resp.Body.String())
 	}
@@ -317,6 +320,75 @@ func TestRestoreMultiChunkPausesForPlanAndStreamsToStaging(t *testing.T) {
 		if len(entries) != 0 {
 			t.Fatalf("transaction directories left behind: %d", len(entries))
 		}
+	}
+}
+
+// The plan response alone must make the job accept the next chunk.  No parser
+// goroutine runs here, which models the parser not yet being scheduled after
+// the plan was accepted, so the outcome cannot depend on scheduling.
+func TestRestorePlanResponseAcceptsChunksBeforeParserResumes(t *testing.T) {
+	source := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "agent/agent.toml"), testAgentConfig, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	archive, header := buildTestArchiveWithProtection(t, source, backup.ModeSameDevice, []backup.ComponentID{backup.ComponentAgentConfig}, "", true)
+	server := newRestoreTestServer(t, t.TempDir())
+	client := newRestoreClient(t, server)
+	if resp := client.create(archive, header, ""); resp.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	job, ok := server.restoreJobs.get(client.jobID)
+	if !ok {
+		t.Fatal("restore job not registered")
+	}
+	t.Cleanup(func() { server.abortRestore(job, "cancelled", context.Canceled) })
+	job.mu.Lock()
+	material := job.material
+	job.mu.Unlock()
+	stream, err := backup.NewArchiveStream(bytes.NewReader(archive), material)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := stream.ReadManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Where restoreParseLoop leaves a job once chunk 0 reached manifest.json.
+	job.mu.Lock()
+	job.manifest, job.manifestOK = manifest, true
+	job.state, job.phase = restoreJobAwaitingPlan, restoreJobAwaitingPlan
+	job.receivedChunkIndex = 1
+	job.mu.Unlock()
+
+	planResp := client.post("plan", map[string]any{"components": []string{"agent_config"}})
+	if planResp.Code != http.StatusOK {
+		t.Fatalf("plan status=%d body=%s", planResp.Code, planResp.Body.String())
+	}
+	if state := decodeJSON(t, planResp)["state"]; state != restoreJobUploading {
+		t.Fatalf("plan state=%v body=%s", state, planResp.Body.String())
+	}
+	persisted, err := os.ReadFile(filepath.Join(server.options.BackupJobStateDir, client.jobID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(persisted, &record); err != nil || record["state"] != restoreJobUploading {
+		t.Fatalf("persisted job=%s err=%v", persisted, err)
+	}
+	// Past the state gate, an out-of-order index is refused before the body is
+	// queued, so this needs no parser.
+	resp := client.chunk(2, archive)
+	if resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "chunk_out_of_order") {
+		t.Fatalf("chunk after plan status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if payload := decodeJSON(t, resp); payload["expected_index"] != float64(1) {
+		t.Fatalf("chunk after plan body=%s", resp.Body.String())
+	}
+	if resp := client.post("plan", map[string]any{"components": []string{"agent_config"}}); resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "restore_plan_unavailable") {
+		t.Fatalf("second plan status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
 
