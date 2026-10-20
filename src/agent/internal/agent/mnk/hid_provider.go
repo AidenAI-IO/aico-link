@@ -13,13 +13,12 @@ import (
 )
 
 // HIDProvider implements Provider interface for USB HID device control.
-// This bridges the MNK interface to the existing HID implementation in tools_hid.go.
 type HIDProvider struct {
 	// pointerDev is the HID device for pointer (mouse/touchscreen)
 	pointerDev Device
 
 	// pointerState tracks current pointer position
-	pointerState *pointerState
+	pointerState *PointerState
 
 	// touchscreen indicates if we're in touchscreen mode vs absolute mouse mode
 	touchscreen bool
@@ -81,7 +80,7 @@ func NewHIDProvider(pointerDev, keyboardDev, androidKeyboardDev Device, screenSt
 
 	return &HIDProvider{
 		pointerDev:             pointerDev,
-		pointerState:           &pointerState{},
+		pointerState:           &PointerState{},
 		touchscreen:            touchscreen,
 		keyboardDev:            keyboardDev,
 		androidKeyboardDev:     androidKeyboardDev,
@@ -759,10 +758,6 @@ func (p *HIDProvider) Scroll(ctx context.Context, scrollX, scrollY int) error {
 		return nil
 	})
 }
-
-// ============================================================================
-// Low-level HID primitives (delegating to existing tools_hid.go implementations)
-// ============================================================================
 
 // ============================================================================
 // Coordinate conversion and validation

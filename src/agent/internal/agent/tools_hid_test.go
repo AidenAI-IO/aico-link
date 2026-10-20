@@ -17,7 +17,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -780,11 +779,11 @@ func TestPointerCoordinateRejectsNonFiniteStringValues(t *testing.T) {
 	}
 }
 
-func testPointerController(dev *HIDDevice, state *pointerState) *pointerController {
+func testPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointerController {
 	return &pointerController{dev: dev, state: state}
 }
 
-func testTouchscreenPointerController(dev *HIDDevice, state *pointerState) *pointerController {
+func testTouchscreenPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointerController {
 	return &pointerController{dev: dev, state: state, touchscreen: true}
 }
 
@@ -795,7 +794,7 @@ type touchscreenReport struct {
 	y         uint16
 }
 
-func readTouchscreenReports(t *testing.T, dev *HIDDevice, path string) []touchscreenReport {
+func readTouchscreenReports(t *testing.T, dev *mnk.HIDDevice, path string) []touchscreenReport {
 	t.Helper()
 
 	dev.Close()
@@ -1507,143 +1506,6 @@ func (t *contextToolErrorStub) Call(ctx context.Context, input string) (string, 
 	return toolErrorString(t.toolErr), nil
 }
 
-func TestHIDDeviceWriteRetriesAfterEndpointShutdown(t *testing.T) {
-	first := &fakeHIDWriteCloser{writeErr: syscall.ESHUTDOWN}
-	second := &fakeHIDWriteCloser{}
-	openCount := 0
-
-	dev := &HIDDevice{
-		path: "fake-hid",
-		open: func(string) (io.WriteCloser, error) {
-			openCount++
-			if openCount == 1 {
-				return first, nil
-			}
-			return second, nil
-		},
-	}
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("Write returned error: %v", err)
-	}
-	if openCount != 2 {
-		t.Fatalf("openCount = %d, want 2", openCount)
-	}
-	if !first.closed {
-		t.Fatalf("expected first writer to be closed after retryable failure")
-	}
-	if second.writeCount != 1 {
-		t.Fatalf("second writer writeCount = %d, want 1", second.writeCount)
-	}
-}
-
-func TestHIDDeviceWriteReopensWhenDeviceNodeRecreated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hidg0")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("create test hid device: %v", err)
-	}
-	dev := NewHIDDevice(path)
-	dev.refreshState = ""
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("first Write returned error: %v", err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("remove test hid device: %v", err)
-	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("recreate test hid device: %v", err)
-	}
-
-	if err := dev.Write([]byte{4, 5, 6}); err != nil {
-		t.Fatalf("second Write returned error: %v", err)
-	}
-	dev.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read recreated test hid device: %v", err)
-	}
-	if string(data) != string([]byte{4, 5, 6}) {
-		t.Fatalf("recreated device data = %v, want only second report", data)
-	}
-}
-
-func TestHIDDeviceWriteReopensAfterWatchdogRefreshState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hidg0")
-	statePath := filepath.Join(dir, "aiden_usb_ecm_watchdog.state")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("create test hid device: %v", err)
-	}
-	dev := NewHIDDevice(path)
-	dev.refreshState = statePath
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("first Write returned error: %v", err)
-	}
-	if err := os.WriteFile(statePath, []byte("last_refresh_result=ok\n"), 0o600); err != nil {
-		t.Fatalf("write watchdog state: %v", err)
-	}
-	refreshTime := dev.openedAt.Add(time.Second)
-	if err := os.Chtimes(statePath, refreshTime, refreshTime); err != nil {
-		t.Fatalf("set watchdog state mtime: %v", err)
-	}
-
-	if err := dev.Write([]byte{4, 5, 6}); err != nil {
-		t.Fatalf("second Write returned error: %v", err)
-	}
-	dev.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read test hid device: %v", err)
-	}
-	if string(data) != string([]byte{4, 5, 6}) {
-		t.Fatalf("device data = %v, want second report after reopen", data)
-	}
-}
-
-func TestTriggerUSBCompositeRefreshUsesConfiguredCommand(t *testing.T) {
-	dir := t.TempDir()
-	commandPath := filepath.Join(dir, "usb-refresh")
-	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AIDEN_USB_REFRESH_TEST_ARGS\"\n"
-	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write refresh command: %v", err)
-	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
-	t.Setenv("AIDEN_USB_REFRESH_TEST_ARGS", argsPath)
-
-	if err := triggerUSBCompositeRefresh(""); err != nil {
-		t.Fatalf("triggerUSBCompositeRefresh returned error: %v", err)
-	}
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatalf("read refresh arguments: %v", err)
-	}
-	if string(args) != "refresh\n" {
-		t.Fatalf("refresh arguments = %q, want %q", args, "refresh\\n")
-	}
-}
-
-func TestHIDDeviceWriteReturnsNonRetryableError(t *testing.T) {
-	dev := &HIDDevice{
-		path: "fake-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return &fakeHIDWriteCloser{writeErr: errors.New("permission denied")}, nil
-		},
-	}
-
-	err := dev.Write([]byte{1})
-	if err == nil {
-		t.Fatal("expected write error")
-	}
-	if !strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestMouseScrollToolRejectsOutOfRangeDelta(t *testing.T) {
 	tool := &MouseScrollTool{}
 	ctx, _ := WithToolError(context.Background())
@@ -1707,7 +1569,7 @@ type mouseReport struct {
 	wheel   int8
 }
 
-func newTestHIDDevice(t *testing.T) (*HIDDevice, string) {
+func newTestHIDDevice(t *testing.T) (*mnk.HIDDevice, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -1718,7 +1580,7 @@ func newTestHIDDevice(t *testing.T) (*HIDDevice, string) {
 	}
 	f.Close()
 
-	return NewHIDDevice(path), path
+	return mnk.NewHIDDevice(path), path
 }
 
 func TestKeyboardTapSendsModifierOnly(t *testing.T) {
@@ -2202,7 +2064,7 @@ func TestKeyboardTapRejectsMixedAndroidExtensionChord(t *testing.T) {
 	}
 }
 
-func readMouseReports(t *testing.T, dev *HIDDevice, path string) []mouseReport {
+func readMouseReports(t *testing.T, dev *mnk.HIDDevice, path string) []mouseReport {
 	t.Helper()
 
 	dev.Close()
@@ -2275,21 +2137,18 @@ func (w *timestampedHIDWriter) writeTimes() []time.Time {
 	return out
 }
 
-func newTimedHIDDevice() (*HIDDevice, *timestampedHIDWriter) {
+func newTimedHIDDevice() (*mnk.HIDDevice, *timestampedHIDWriter) {
 	w := &timestampedHIDWriter{}
-	dev := &HIDDevice{
-		path: "timed-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return w, nil
-		},
-	}
+	dev := mnk.NewHIDDeviceWithOpener("timed-hid", func(string) (io.WriteCloser, error) {
+		return w, nil
+	})
 	return dev, w
 }
 
 func TestTapPointerHoldsBetweenPressAndRelease(t *testing.T) {
 	dev, w := newTimedHIDDevice()
 
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	if err := tapPointer(pc, 100, 200, 0x01); err != nil {
 		t.Fatalf("tapPointer error: %v", err)
 	}
@@ -2307,7 +2166,7 @@ func TestTapPointerHoldsBetweenPressAndRelease(t *testing.T) {
 func TestTapPointerSettlesCursorBeforePress(t *testing.T) {
 	dev, w := newTimedHIDDevice()
 
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	if err := tapPointer(pc, 100, 200, 0x01); err != nil {
 		t.Fatalf("tapPointer error: %v", err)
 	}
@@ -2712,16 +2571,13 @@ func TestTouchGestureDragStartAndReleaseTiming(t *testing.T) {
 func TestDragPointerReleasesOnMoveError(t *testing.T) {
 	failAfter := 3 // settle + press + first move = 3rd write fails
 	writer := &countingFailWriter{failAt: failAfter}
-	dev := &HIDDevice{
-		path: "fail-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return writer, nil
-		},
-	}
+	dev := mnk.NewHIDDeviceWithOpener("fail-hid", func(string) (io.WriteCloser, error) {
+		return writer, nil
+	})
 
 	start := resolvedPointerPoint{x: 100, y: 100}
 	end := resolvedPointerPoint{x: 200, y: 200}
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	err := dragPointer(pc, start, end, 0x01, 0, 0, 0, 3)
 	if err == nil {
 		t.Fatal("expected error from dragPointer")

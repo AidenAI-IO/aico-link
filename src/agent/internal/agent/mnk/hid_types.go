@@ -1,10 +1,12 @@
 package mnk
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"syscall"
@@ -14,9 +16,20 @@ import (
 )
 
 const (
-	defaultHIDWriteTimeout     = 750 * time.Millisecond
-	defaultHIDRefreshStatePath = "/run/aiden_usb_ecm_watchdog.state"
+	// defaultHIDWriteTimeout bounds each HID report write. Linux hidg writes can
+	// otherwise block forever when the USB host stops polling, which leaves the
+	// last successful pressed report active and prevents swipe release reports
+	// from being sent.
+	defaultHIDWriteTimeout = 750 * time.Millisecond
+
+	defaultHIDRefreshStatePath        = "/run/aiden_usb_ecm_watchdog.state"
+	defaultUSBCompositeRefreshCommand = "/usr/lib/aiden/aiden-usb-ecm-watchdog"
+	usbCompositeRefreshTimeout        = 10 * time.Second
 )
+
+// usbCompositeRebindDelay is how long ensureOpenLocked waits after a USB
+// composite refresh for the gadget to rebind and reach configured state.
+var usbCompositeRebindDelay = 2 * time.Second
 
 // HIDDevice manages a single HID device file with lazy open and auto-reopen.
 type HIDDevice struct {
@@ -29,26 +42,37 @@ type HIDDevice struct {
 	refreshState string
 }
 
-// NewHIDDevice creates a new HID device wrapper.
+// NewHIDDevice creates a lazily opened HID device for a hidg node.
 func NewHIDDevice(path string) *HIDDevice {
+	return NewHIDDeviceWithOpener(path, func(path string) (io.WriteCloser, error) {
+		return os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
+	})
+}
+
+// NewHIDDeviceWithOpener creates an HID device that opens path through open
+// instead of os.OpenFile, so callers can substitute an in-memory writer.
+func NewHIDDeviceWithOpener(path string, open func(string) (io.WriteCloser, error)) *HIDDevice {
 	return &HIDDevice{
 		path:         path,
+		open:         open,
 		writeTimeout: defaultHIDWriteTimeout,
 		refreshState: defaultHIDRefreshStatePath,
-		open: func(path string) (io.WriteCloser, error) {
-			return os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-		},
 	}
+}
+
+// Path returns the device node the HID device writes to.
+func (d *HIDDevice) Path() string {
+	return d.path
 }
 
 // Write sends a HID report to the device.
 func (d *HIDDevice) Write(data []byte) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.writeLocked(data, nil)
+	return d.writeLocked(data)
 }
 
-func (d *HIDDevice) writeLocked(data []byte, after func()) error {
+func (d *HIDDevice) writeLocked(data []byte) error {
 	if err := d.ensureOpenLocked(); err != nil {
 		return err
 	}
@@ -59,13 +83,10 @@ func (d *HIDDevice) writeLocked(data []byte, after func()) error {
 	n, err := d.writeOnceLocked(data)
 	if err != nil {
 		d.closeLocked()
-		if n <= 0 && hidShouldRetryWrite(err) {
+		if n == 0 && hidShouldRetryWrite(err) {
 			if reopenErr := d.ensureOpenLocked(); reopenErr == nil {
 				n2, retryErr := d.writeOnceLocked(data)
 				if retryErr == nil && n2 == len(data) {
-					if after != nil {
-						after()
-					}
 					return nil
 				}
 				d.closeLocked()
@@ -80,9 +101,6 @@ func (d *HIDDevice) writeLocked(data []byte, after func()) error {
 	if n != len(data) {
 		d.closeLocked()
 		return fmt.Errorf("write %s: short write (%d/%d bytes)", d.path, n, len(data))
-	}
-	if after != nil {
-		after()
 	}
 	// Sync to ensure data is flushed to USB gadget driver
 	if f, ok := d.file.(*os.File); ok {
@@ -164,7 +182,22 @@ func (d *HIDDevice) ensureOpenLocked() error {
 	}
 	f, err := opener(d.path)
 	if err != nil {
-		return fmt.Errorf("open %s: %w", d.path, err)
+		// ENXIO means the device node exists but the USB gadget function is not enabled
+		// (e.g. USB host suspended the connection). Try to trigger a USB composite refresh.
+		if errors.Is(err, syscall.ENXIO) {
+			refreshErr := triggerUSBCompositeRefresh()
+			if refreshErr == nil {
+				// Wait briefly for the gadget to rebind and reach configured state
+				time.Sleep(usbCompositeRebindDelay)
+				f, err = opener(d.path)
+			} else {
+				// Propagate watchdog refresh failure so it remains diagnosable
+				return fmt.Errorf("open %s: USB composite refresh failed: %w (original error: %v)", d.path, refreshErr, err)
+			}
+		}
+		if err != nil {
+			return fmt.Errorf("open %s: %w", d.path, err)
+		}
 	}
 	d.file = f
 	d.openedAt = time.Now()
@@ -201,7 +234,7 @@ func (d *HIDDevice) reopenStaleFileLocked() error {
 	}
 	pathInfo, err := os.Stat(d.path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
 		d.closeLocked()
@@ -210,6 +243,32 @@ func (d *HIDDevice) reopenStaleFileLocked() error {
 	if !os.SameFile(fdInfo, pathInfo) {
 		d.closeLocked()
 		return d.ensureOpenLocked()
+	}
+	return nil
+}
+
+func usbCompositeRefreshCommand() string {
+	if command := strings.TrimSpace(os.Getenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
+		return command
+	}
+	return defaultUSBCompositeRefreshCommand
+}
+
+func triggerUSBCompositeRefresh() error {
+	// Trigger the USB watchdog's refresh command to rebind the USB composite gadget.
+	// This is needed when the USB host suspends the connection or the gadget
+	// enters a stale state where HID device nodes exist but are not functional.
+	// Use a bounded timeout to prevent a hung watchdog from blocking HID recovery.
+	ctx, cancel := context.WithTimeout(context.Background(), usbCompositeRefreshTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, usbCompositeRefreshCommand(), "refresh")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("USB composite refresh timed out after %s (output: %s)", usbCompositeRefreshTimeout, string(output))
+		}
+		return fmt.Errorf("USB composite refresh failed: %w (output: %s)", err, string(output))
 	}
 	return nil
 }
@@ -233,15 +292,15 @@ func hidWriteWouldBlock(err error) bool {
 	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK)
 }
 
-// pointerState tracks the current pointer position.
-type pointerState struct {
+// PointerState tracks the last absolute pointer position written to a device.
+type PointerState struct {
 	mu    sync.Mutex
 	x     int
 	y     int
 	valid bool
 }
 
-func (s *pointerState) Update(x, y int) {
+func (s *PointerState) Update(x, y int) {
 	if s == nil {
 		return
 	}
@@ -252,7 +311,7 @@ func (s *pointerState) Update(x, y int) {
 	s.valid = true
 }
 
-func (s *pointerState) Current() (x, y int, ok bool) {
+func (s *PointerState) Current() (x, y int, ok bool) {
 	if s == nil {
 		return 0, 0, false
 	}

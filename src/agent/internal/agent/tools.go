@@ -142,8 +142,8 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		}
 	}
 
-	kbDev := NewHIDDevice(hidCfg.KeyboardDeviceOrDefault())
-	androidKbDev := NewHIDDevice(hidCfg.AndroidKeyboardDeviceOrDefault())
+	kbDev := mnk.NewHIDDevice(hidCfg.KeyboardDeviceOrDefault())
+	androidKbDev := mnk.NewHIDDevice(hidCfg.AndroidKeyboardDeviceOrDefault())
 	screen := toolOptions.screenState
 	if screen == nil {
 		screen = newToolScreenState()
