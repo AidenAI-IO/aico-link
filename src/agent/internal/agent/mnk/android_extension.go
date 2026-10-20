@@ -22,7 +22,9 @@ var absolutePointerModeExtensionReports = map[string]uint16{
 	"key_usage_brightness_down": 1 << 11,
 }
 
-const absolutePointerModeExtensionKeyList = "KEYCODE_VOLUME_MUTE, KEYCODE_VOLUME_UP, KEYCODE_VOLUME_DOWN, KEYCODE_MEDIA_PLAY_PAUSE, KEYCODE_MEDIA_STOP, KEYCODE_MEDIA_NEXT, KEYCODE_MEDIA_PREVIOUS, KEYCODE_MEDIA_REWIND, KEYCODE_MEDIA_FAST_FORWARD, KEYCODE_SCREENSHOT, KEYCODE_BRIGHTNESS_UP, KEYCODE_BRIGHTNESS_DOWN"
+// AbsolutePointerModeExtensionKeyList names the Android keys hid.usb2 exposes
+// when hid.pointer_mode is "absolute", for tool descriptions and errors.
+const AbsolutePointerModeExtensionKeyList = "KEYCODE_VOLUME_MUTE, KEYCODE_VOLUME_UP, KEYCODE_VOLUME_DOWN, KEYCODE_MEDIA_PLAY_PAUSE, KEYCODE_MEDIA_STOP, KEYCODE_MEDIA_NEXT, KEYCODE_MEDIA_PREVIOUS, KEYCODE_MEDIA_REWIND, KEYCODE_MEDIA_FAST_FORWARD, KEYCODE_SCREENSHOT, KEYCODE_BRIGHTNESS_UP, KEYCODE_BRIGHTNESS_DOWN"
 
 type androidKeyboardTapAlias struct {
 	Keycode           int

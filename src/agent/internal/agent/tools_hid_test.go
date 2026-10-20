@@ -1622,8 +1622,8 @@ func TestKeyboardTapSupportsAndroidBackAlias(t *testing.T) {
 	if len(data) != 4 {
 		t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 	}
-	if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap["android_back"] {
-		t.Fatalf("android back usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap["android_back"])
+	if got := uint16(data[0]) | uint16(data[1])<<8; got != 0x0224 {
+		t.Fatalf("android back usage = 0x%04x, want 0x%04x", got, 0x0224)
 	}
 	if data[2] != 0 || data[3] != 0 {
 		t.Fatalf("android back release = %v, want [0 0]", data[2:4])
@@ -1657,8 +1657,8 @@ func TestKeyboardTapSupportsAndroidVolumeAlias(t *testing.T) {
 	if len(data) != 4 {
 		t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 	}
-	if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap["volume_up"] {
-		t.Fatalf("android volume_up usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap["volume_up"])
+	if got := uint16(data[0]) | uint16(data[1])<<8; got != 0x00e9 {
+		t.Fatalf("android volume_up usage = 0x%04x, want 0x%04x", got, 0x00e9)
 	}
 }
 
@@ -1689,23 +1689,23 @@ func TestKeyboardTapSupportsAndroidAppSwitchAlias(t *testing.T) {
 	if len(data) != 4 {
 		t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 	}
-	if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap["app_switch"] {
-		t.Fatalf("android app_switch usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap["app_switch"])
+	if got := uint16(data[0]) | uint16(data[1])<<8; got != 0x029f {
+		t.Fatalf("android app_switch usage = 0x%04x, want 0x%04x", got, 0x029f)
 	}
 }
 
 func TestKeyboardTapSupportsAdditionalAndroidKeycodeAliases(t *testing.T) {
 	testCases := []struct {
-		input  string
-		mapKey string
+		input string
+		usage uint16
 	}{
-		{input: "KEYCODE_SLEEP", mapKey: "sleep"},
-		{input: "KEYCODE_MEDIA_PLAY_PAUSE", mapKey: "media_play_pause"},
-		{input: "KEYCODE_MEDIA_STOP", mapKey: "media_stop"},
-		{input: "KEYCODE_MEDIA_NEXT", mapKey: "media_next"},
-		{input: "KEYCODE_MEDIA_PREVIOUS", mapKey: "media_previous"},
-		{input: "KEYCODE_MEDIA_REWIND", mapKey: "media_rewind"},
-		{input: "KEYCODE_MEDIA_FAST_FORWARD", mapKey: "media_fast_forward"},
+		{input: "KEYCODE_SLEEP", usage: 0x0032},
+		{input: "KEYCODE_MEDIA_PLAY_PAUSE", usage: 0x00cd},
+		{input: "KEYCODE_MEDIA_STOP", usage: 0x00b7},
+		{input: "KEYCODE_MEDIA_NEXT", usage: 0x00b5},
+		{input: "KEYCODE_MEDIA_PREVIOUS", usage: 0x00b6},
+		{input: "KEYCODE_MEDIA_REWIND", usage: 0x00b4},
+		{input: "KEYCODE_MEDIA_FAST_FORWARD", usage: 0x00b3},
 	}
 
 	for _, tc := range testCases {
@@ -1736,8 +1736,8 @@ func TestKeyboardTapSupportsAdditionalAndroidKeycodeAliases(t *testing.T) {
 			if len(data) != 4 {
 				t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 			}
-			if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap[tc.mapKey] {
-				t.Fatalf("usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap[tc.mapKey])
+			if got := uint16(data[0]) | uint16(data[1])<<8; got != tc.usage {
+				t.Fatalf("usage = 0x%04x, want 0x%04x", got, tc.usage)
 			}
 		})
 	}
@@ -1745,24 +1745,24 @@ func TestKeyboardTapSupportsAdditionalAndroidKeycodeAliases(t *testing.T) {
 
 func TestKeyboardTapSupportsHIDBackedAndroidKeycodeAliases(t *testing.T) {
 	testCases := []struct {
-		input  string
-		mapKey string
+		input string
+		usage uint16
 	}{
-		{input: "KEYCODE_SCREENSHOT", mapKey: "screenshot"},
-		{input: "KEYCODE_SETTINGS", mapKey: "settings"},
-		{input: "KEYCODE_WINDOW", mapKey: "window"},
-		{input: "KEYCODE_BRIGHTNESS_UP", mapKey: "brightness_up"},
-		{input: "KEYCODE_BRIGHTNESS_DOWN", mapKey: "brightness_down"},
-		{input: "KEYCODE_DICTATE", mapKey: "dictate"},
-		{input: "KEYCODE_EMOJI_PICKER", mapKey: "emoji_picker"},
-		{input: "KEYCODE_MEDIA_AUDIO_TRACK", mapKey: "media_audio_track"},
-		{input: "KEYCODE_PROFILE_SWITCH", mapKey: "profile_switch"},
-		{input: "KEYCODE_NEW", mapKey: "new"},
-		{input: "KEYCODE_CLOSE", mapKey: "close"},
-		{input: "KEYCODE_PRINT", mapKey: "print"},
-		{input: "KEYCODE_LANGUAGE_SWITCH", mapKey: "language_switch"},
-		{input: "KEYCODE_REFRESH", mapKey: "refresh"},
-		{input: "KEYCODE_FULLSCREEN", mapKey: "fullscreen"},
+		{input: "KEYCODE_SCREENSHOT", usage: 0x0065},
+		{input: "KEYCODE_SETTINGS", usage: 0x019f},
+		{input: "KEYCODE_WINDOW", usage: 0x0067},
+		{input: "KEYCODE_BRIGHTNESS_UP", usage: 0x006f},
+		{input: "KEYCODE_BRIGHTNESS_DOWN", usage: 0x0070},
+		{input: "KEYCODE_DICTATE", usage: 0x00d8},
+		{input: "KEYCODE_EMOJI_PICKER", usage: 0x00d9},
+		{input: "KEYCODE_MEDIA_AUDIO_TRACK", usage: 0x0173},
+		{input: "KEYCODE_PROFILE_SWITCH", usage: 0x019c},
+		{input: "KEYCODE_NEW", usage: 0x0201},
+		{input: "KEYCODE_CLOSE", usage: 0x0203},
+		{input: "KEYCODE_PRINT", usage: 0x0208},
+		{input: "KEYCODE_LANGUAGE_SWITCH", usage: 0x029d},
+		{input: "KEYCODE_REFRESH", usage: 0x0227},
+		{input: "KEYCODE_FULLSCREEN", usage: 0x0232},
 	}
 
 	for _, tc := range testCases {
@@ -1793,8 +1793,8 @@ func TestKeyboardTapSupportsHIDBackedAndroidKeycodeAliases(t *testing.T) {
 			if len(data) != 4 {
 				t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 			}
-			if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap[tc.mapKey] {
-				t.Fatalf("usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap[tc.mapKey])
+			if got := uint16(data[0]) | uint16(data[1])<<8; got != tc.usage {
+				t.Fatalf("usage = 0x%04x, want 0x%04x", got, tc.usage)
 			}
 		})
 	}
@@ -1802,13 +1802,13 @@ func TestKeyboardTapSupportsHIDBackedAndroidKeycodeAliases(t *testing.T) {
 
 func TestKeyboardTapKeepsLegacyHIDUsageAliases(t *testing.T) {
 	testCases := []struct {
-		input  string
-		mapKey string
+		input string
+		usage uint16
 	}{
-		{input: "KEY_USAGE_SCREENSHOT", mapKey: "key_usage_screenshot"},
-		{input: "KEY_USAGE_SETTINGS", mapKey: "key_usage_settings"},
-		{input: "KEY_USAGE_LANGUAGE_SWITCH", mapKey: "key_usage_language_switch"},
-		{input: "KEY_USAGE_PRINT", mapKey: "key_usage_print"},
+		{input: "KEY_USAGE_SCREENSHOT", usage: 0x0065},
+		{input: "KEY_USAGE_SETTINGS", usage: 0x019f},
+		{input: "KEY_USAGE_LANGUAGE_SWITCH", usage: 0x029d},
+		{input: "KEY_USAGE_PRINT", usage: 0x0208},
 	}
 
 	for _, tc := range testCases {
@@ -1839,8 +1839,8 @@ func TestKeyboardTapKeepsLegacyHIDUsageAliases(t *testing.T) {
 			if len(data) != 4 {
 				t.Fatalf("report bytes = %d, want 4", len(data))
 			}
-			if got := uint16(data[0]) | uint16(data[1])<<8; got != androidExtensionUsageMap[tc.mapKey] {
-				t.Fatalf("usage = 0x%04x, want 0x%04x", got, androidExtensionUsageMap[tc.mapKey])
+			if got := uint16(data[0]) | uint16(data[1])<<8; got != tc.usage {
+				t.Fatalf("usage = 0x%04x, want 0x%04x", got, tc.usage)
 			}
 		})
 	}
@@ -1848,21 +1848,21 @@ func TestKeyboardTapKeepsLegacyHIDUsageAliases(t *testing.T) {
 
 func TestKeyboardTapAbsolutePointerModeAllowsMediaKeySubset(t *testing.T) {
 	testCases := []struct {
-		input  string
-		mapKey string
+		input string
+		usage uint16
 	}{
-		{input: "KEYCODE_VOLUME_MUTE", mapKey: "volume_mute"},
-		{input: "KEYCODE_VOLUME_UP", mapKey: "volume_up"},
-		{input: "KEYCODE_VOLUME_DOWN", mapKey: "volume_down"},
-		{input: "KEYCODE_MEDIA_PLAY_PAUSE", mapKey: "media_play_pause"},
-		{input: "KEYCODE_MEDIA_STOP", mapKey: "media_stop"},
-		{input: "KEYCODE_MEDIA_NEXT", mapKey: "media_next"},
-		{input: "KEYCODE_MEDIA_PREVIOUS", mapKey: "media_previous"},
-		{input: "KEYCODE_MEDIA_REWIND", mapKey: "media_rewind"},
-		{input: "KEYCODE_MEDIA_FAST_FORWARD", mapKey: "media_fast_forward"},
-		{input: "KEYCODE_SCREENSHOT", mapKey: "screenshot"},
-		{input: "KEYCODE_BRIGHTNESS_UP", mapKey: "brightness_up"},
-		{input: "KEYCODE_BRIGHTNESS_DOWN", mapKey: "brightness_down"},
+		{input: "KEYCODE_VOLUME_MUTE", usage: 0x0001},
+		{input: "KEYCODE_VOLUME_UP", usage: 0x0002},
+		{input: "KEYCODE_VOLUME_DOWN", usage: 0x0004},
+		{input: "KEYCODE_MEDIA_PLAY_PAUSE", usage: 0x0008},
+		{input: "KEYCODE_MEDIA_STOP", usage: 0x0010},
+		{input: "KEYCODE_MEDIA_NEXT", usage: 0x0020},
+		{input: "KEYCODE_MEDIA_PREVIOUS", usage: 0x0040},
+		{input: "KEYCODE_MEDIA_REWIND", usage: 0x0080},
+		{input: "KEYCODE_MEDIA_FAST_FORWARD", usage: 0x0100},
+		{input: "KEYCODE_SCREENSHOT", usage: 0x0200},
+		{input: "KEYCODE_BRIGHTNESS_UP", usage: 0x0400},
+		{input: "KEYCODE_BRIGHTNESS_DOWN", usage: 0x0800},
 	}
 
 	for _, tc := range testCases {
@@ -1893,8 +1893,8 @@ func TestKeyboardTapAbsolutePointerModeAllowsMediaKeySubset(t *testing.T) {
 			if len(data) != 4 {
 				t.Fatalf("report bytes = %d, want 4 (consumer usage + release)", len(data))
 			}
-			if got := uint16(data[0]) | uint16(data[1])<<8; got != absolutePointerModeExtensionReports[tc.mapKey] {
-				t.Fatalf("report mask = 0x%04x, want 0x%04x", got, absolutePointerModeExtensionReports[tc.mapKey])
+			if got := uint16(data[0]) | uint16(data[1])<<8; got != tc.usage {
+				t.Fatalf("report mask = 0x%04x, want 0x%04x", got, tc.usage)
 			}
 		})
 	}
@@ -1910,7 +1910,7 @@ func TestKeyboardTapAbsolutePointerModeRejectsAndroidNavigationKeys(t *testing.T
 	if err != nil {
 		t.Fatalf("Call returned error: %v", err)
 	}
-	if !strings.Contains(out, `hid.pointer_mode="touchscreen"`) || !strings.Contains(out, absolutePointerModeExtensionKeyList) {
+	if !strings.Contains(out, `hid.pointer_mode="touchscreen"`) || !strings.Contains(out, mnk.AbsolutePointerModeExtensionKeyList) {
 		t.Fatalf("output = %q, want absolute pointer mode allow-list error", out)
 	}
 	if got := ToolErrorFromContext(ctx); got == nil || got.Code != CodeInvalidArguments || got.Message != out {

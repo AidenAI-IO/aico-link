@@ -410,5 +410,8 @@ var androidExtensionUsageMap = map[string]uint16{
 	"key_usage_fullscreen":        0x0232,
 	"language_switch":             0x029d,
 	"key_usage_language_switch":   0x029d,
-	"app_switch":                  0x029f,
+	// AOSP Generic.kl checks HID usage codes before Linux scan codes.
+	// 0x0c01A2 is mapped to ALL_APPS, while 0x0c029F is mapped to
+	// RECENT_APPS / KEYCODE_APP_SWITCH.
+	"app_switch": 0x029f,
 }

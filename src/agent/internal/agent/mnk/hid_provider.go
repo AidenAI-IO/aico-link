@@ -1108,7 +1108,7 @@ func (p *HIDProvider) androidExtensionPressReport(key string, usage uint16) ([]b
 	// exposes a media/volume/brightness/screenshot subset.
 	report, ok := absolutePointerModeExtensionReports[key]
 	if !ok {
-		return nil, InvalidArgumentsf("android extension key is unavailable in the configured pointer mode: %q requires hid.pointer_mode=\"touchscreen\"; hid.pointer_mode=\"absolute\" only exposes these hid.usb2 keys: %s", key, absolutePointerModeExtensionKeyList)
+		return nil, InvalidArgumentsf("android extension key is unavailable in the configured pointer mode: %q requires hid.pointer_mode=\"touchscreen\"; hid.pointer_mode=\"absolute\" only exposes these hid.usb2 keys: %s", key, AbsolutePointerModeExtensionKeyList)
 	}
 	return []byte{byte(report), byte(report >> 8)}, nil
 }
