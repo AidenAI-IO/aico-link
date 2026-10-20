@@ -97,7 +97,7 @@ static struct v4l2_dv_timings next_timings;
 static u8 next_format, next_range, next_space;
 static int debug, rk628_csi_timings_cap, timing_error, read_error;
 static int timing_reads, status_reads, starts, stops, resets, scheduled, events;
-static int phy_result, ced_result, ced_reads;
+static int phy_result, ced_result, ced_reads, stream_start_error;
 static bool plugged, valid_timings, stream_start_fails, stream_loses_signal;
 static u32 lock_status[16], parent_mask, writes[64], values[64];
 static unsigned int write_count;
@@ -132,11 +132,13 @@ static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
 #define rk628_mipi_txdata_reset(...) ((void)0)
 #define schedule_delayed_work(...) (++scheduled)
 #define v4l2_event_queue(...) (++events)
-static void enable_csitx(struct v4l2_subdev *sd) {
+static int enable_csitx(struct v4l2_subdev *sd) {
     assert(csi.confctl_mutex);
     ++starts;
+    if (stream_start_error) return stream_start_error;
     csi.is_streaming = !stream_start_fails;
     if (stream_loses_signal) csi.nosignal = true;
+    return 0;
 }
 static void rk628_csi_disable_stream(struct v4l2_subdev *sd) {
     assert(csi.confctl_mutex);
@@ -197,7 +199,7 @@ static bool v4l2_match_dv_timings(const struct v4l2_dv_timings *a,
     return !memcmp(&x, &y, sizeof(x)) && delta <= tolerance;
 }
 static void rk628_csi_enable_interrupts(struct v4l2_subdev *, bool);
-static void enable_stream(struct v4l2_subdev *, bool);
+static int enable_stream(struct v4l2_subdev *, bool);
 """
 
 CASES = r"""
@@ -220,6 +222,7 @@ static void reset_fixture(void) {
     phy_result = LOCK_OK;
     ced_result = CED_OK;
     ced_reads = 0;
+    stream_start_error = 0;
     stream_start_fails = stream_loses_signal = false;
     plugged = valid_timings = true;
     for (unsigned int i = 0; i < 16; ++i) lock_status[i] = 0xf00;
@@ -359,6 +362,10 @@ int main(void) {
     assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
     assert(starts == 1 && stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
     reset_fixture();
+    stream_start_error = -ETIMEDOUT;
+    assert(rk628_csi_s_stream(&csi.sd, 1) == -ETIMEDOUT);
+    assert(starts == 1 && stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
+    reset_fixture();
     stream_loses_signal = true;
     assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
     assert(stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
@@ -382,6 +389,20 @@ def extract_function(source, name):
     return match.group()
 
 
+def register_definitions():
+    """Keep the CSI startup harness aligned with the driver's register macros."""
+    definitions = []
+    for name in ("rk628.h", "rk628_hdmirx.h"):
+        lines = iter((DRIVER.parent / name).read_text().splitlines())
+        for line in lines:
+            if not line.startswith("#define "):
+                continue
+            definitions.append(line)
+            while definitions[-1].endswith("\\"):
+                definitions.append(next(lines))
+    return "\n".join(definitions) + "\n"
+
+
 def main():
     source = DRIVER.read_text()
     functions = []
@@ -399,13 +420,23 @@ def main():
     ):
         functions.append(extract_function(source, name))
     with tempfile.TemporaryDirectory(prefix="rk628-recovery-") as directory:
-        harness = Path(directory) / "recovery.c"
-        binary = Path(directory) / "recovery"
-        harness.write_text(PRELUDE + "\n".join(functions) + CASES)
+        startup = (ROOT / "tests/rk628_csi_start_harness.c").read_text()
+        startup_functions = "\n".join(extract_function(source, name) for name in (
+            "mipi_dphy_power_on", "mipi_dphy_power_off",
+            "rk628_csi_disable_stream", "rk628_csi_set_csi", "enable_csitx",
+            "enable_stream", "rk628_csi_s_stream",
+        ))
+        startup = startup.replace("/* DRIVER_REGISTERS */", register_definitions())
+        startup = startup.replace("/* DRIVER_FUNCTIONS */", startup_functions)
         compiler = shlex.split(os.environ.get("CC", "gcc"))
-        subprocess.run([*compiler, "-std=c11", "-Werror",
-                        str(harness), "-o", str(binary)], check=True)
-        subprocess.run([str(binary)], check=True, timeout=10)
+        for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
+                           ("startup", startup)):
+            harness = Path(directory) / (name + ".c")
+            binary = Path(directory) / name
+            harness.write_text(body)
+            subprocess.run([*compiler, "-std=c11", "-Werror", "-I", str(DRIVER.parent),
+                            str(harness), "-o", str(binary)], check=True)
+            subprocess.run([str(binary)], check=True, timeout=10)
 
 
 if __name__ == "__main__":

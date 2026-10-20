@@ -60,6 +60,9 @@ mutex so recovery cannot reset CSI halfway through a stream transition.
 `STREAMON` returns `ENOLCK` when the input is unavailable and `EAGAIN` when
 stream setup itself triggers recovery. A failed start disables CSI before
 returning the error, allowing the capture service to reopen the source.
+CSI PHY lock and lane stop-state polling failures return their original error,
+such as `ETIMEDOUT` or an I2C error, through `STREAMON`. Failed setup leaves both
+the transmitter and PHY disabled instead of reporting a working stream.
 
 On an affected image, the frame service can remain `RECOVERING` with
 `latest_seq=0`, `frame_age_ms=0`, and `last_error=open failed`. Here a zero
