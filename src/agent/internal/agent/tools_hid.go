@@ -775,8 +775,8 @@ func (t *KeyboardTextTool) ArgsSchema() map[string]any {
 
 func keyboardTextUsesModifier(layout, text string) bool {
 	for _, ch := range text {
-		stroke, ok := keyboardLayoutKeyStroke(layout, byte(ch))
-		if ok && stroke.modifier != 0 {
+		stroke, ok := mnk.KeyboardLayoutKeyStroke(layout, byte(ch))
+		if ok && stroke.Modifier != 0 {
 			return true
 		}
 	}
@@ -818,13 +818,13 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 	typeText := func() error {
 		releaseReport := make([]byte, 8)
 		for _, ch := range text {
-			stroke, ok := keyboardLayoutKeyStroke(t.keyboardLayout, byte(ch))
+			stroke, ok := mnk.KeyboardLayoutKeyStroke(t.keyboardLayout, byte(ch))
 			if !ok {
 				continue
 			}
 			report := make([]byte, 8)
-			report[0] = stroke.modifier
-			report[2] = stroke.usage
+			report[0] = stroke.Modifier
+			report[2] = stroke.Usage
 			// Press then release immediately, same as keyboard_tap.
 			if err := t.dev.Write(report); err != nil {
 				return err
@@ -1553,7 +1553,7 @@ func unsupportedKeyboardTextRunes(layout, text string) []rune {
 			unsupported = append(unsupported, ch)
 			continue
 		}
-		if _, ok := keyboardLayoutKeyStroke(layout, byte(ch)); !ok {
+		if _, ok := mnk.KeyboardLayoutKeyStroke(layout, byte(ch)); !ok {
 			unsupported = append(unsupported, ch)
 		}
 	}
