@@ -206,12 +206,29 @@ export async function basicPage(context) {
     });
     // Do not use configValue(): false || fallback would treat "off" as unset.
     const gpioEnabled = snapshot?.config?.agent?.gpio_wakeup_enabled !== false;
+    let gpioSaving = false;
     const gpioToggle = switchControl({
       checked: gpioEnabled,
       label: msg('config.fields.agent.gpio_wakeup_enabled.label', '轻触唤醒'),
       onChange: async next => {
-        const outcome = await saver.change('agent.gpio_wakeup_enabled', {agent: {gpio_wakeup_enabled: next}});
-        if (outcome === 'invalid' || outcome === 'failed') setChecked(gpioToggle, !next);
+        // switchControl flips immediately; ignore overlapping taps until the
+        // save settles so an older response cannot paint a stale value.
+        if (gpioSaving) {
+          setChecked(gpioToggle, !next);
+          return;
+        }
+        gpioSaving = true;
+        gpioToggle.disabled = true;
+        try {
+          const outcome = await saver.change('agent.gpio_wakeup_enabled', {agent: {gpio_wakeup_enabled: next}});
+          if (outcome === 'invalid' || outcome === 'failed') setChecked(gpioToggle, !next);
+          else if (outcome === 'superseded') {
+            setChecked(gpioToggle, snapshot?.config?.agent?.gpio_wakeup_enabled !== false);
+          }
+        } finally {
+          gpioSaving = false;
+          gpioToggle.disabled = false;
+        }
       },
     });
     const tapWakeup = row({
