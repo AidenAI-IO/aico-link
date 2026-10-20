@@ -382,7 +382,8 @@ jobs:
           curl --connect-timeout 15 --max-time 60 -fsSL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip -o "$upload_dir/ossutil.zip"
           # SHA-256 of the pinned archive from the official Alibaba Cloud URL.
           echo "dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343  $upload_dir/ossutil.zip" | sha256sum -c -
-          unzip -q "$upload_dir/ossutil.zip" -d "$upload_dir"
+          # Python is installed above; self-hosted runners may not have unzip.
+          python3 -m zipfile -e "$upload_dir/ossutil.zip" "$upload_dir"
           ossutil="$upload_dir/ossutil-v1.7.19-linux-amd64/ossutil"
           chmod +x "$ossutil"
           # Bash's builtin printf keeps credentials out of process arguments.
