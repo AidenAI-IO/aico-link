@@ -17,7 +17,19 @@ The board retains its onboard 24 MHz oscillator, I2C4 M1 at 100 kHz,
 GPIO1_A0 power enable, GPIO1_A1 active-low reset, GPIO1_B1 interrupt,
 and four continuous-clock CSI lanes. HPD is controlled by the receiver
 driver, not a GPIO-high startup workaround. The built-in EDID matches
-`edid/hdmi_1080p60_cta.hex` and advertises 1080p60 only.
+`edid/hdmi_1080p30_cta.hex` and advertises 1080p30 only. The libaiden
+fallback uses the same EDID. This preserves 1920x1080 capture while limiting
+the HDMI pixel clock to 74.25 MHz. With the tested Android source, the
+onboard Type-C bridge path repeatedly lost all three data-channel locks at
+148.5 MHz, including with capture stopped and HPD held steady. Both 720p60
+and 1080p30 locked correctly at 74.25 MHz. This is a compatibility limit for
+the observed path; it does not establish which physical component causes
+the higher-rate instability.
+
+An EDID change can take the Android source about 30 seconds to finish
+renegotiating. A temporary zero pixel clock during that interval does not
+establish that the new mode is unsupported. Observe source display state
+and receiver lock before evaluating capture.
 
 Userspace EDID updates stop streaming, hold HPD low, and schedule receiver
 configuration again. An absent input returns `ENOLCK` rather than a
@@ -39,7 +51,7 @@ cable fault.
 
 RK628F can raise vertical-active-line interrupts while its measurement
 settles even though the HDMI clock, all three data channels, and decoded
-1080p60 mode remain stable. The driver debounces these interrupts for 100 ms
+input mode remain stable. The driver debounces these interrupts for 100 ms
 and compares the input with the last configured timings and color metadata.
 Channel-lock checks retry over 80 ms so a brief lock-status drop does not
 reset an otherwise unchanged input; persistent lock loss still retrains it.
@@ -65,7 +77,7 @@ updates. `VIDIOC_QUERY_DV_TIMINGS` returns `EAGAIN` while configuration is busy
 and `ENOLCK` when no signal is available.
 
 Routine timing queries select single or dual MIPI mode on every successful
-query. A 1080p60 input at about 148.5 MHz uses single MIPI mode. These selection
+query. The default 1080p30 input at about 74.25 MHz uses single MIPI mode. These selection
 messages are available at driver debug level 1; their repetition alone does
 not indicate receiver recovery or a capture failure.
 
@@ -102,7 +114,7 @@ receiver lock loss still needs to be evaluated independently.
 Check all of the following with the connected host awake:
 
 1. Kernel log reports `RK628F/H (20230321)`.
-2. The host enumerates `Linux FHD60` at 1920x1080, 60 Hz without a manual
+2. The host enumerates `Linux FHD30` at 1920x1080, 30 Hz without a manual
    HPD override.
 3. `v4l2-ctl -d /dev/v4l-subdev2 --query-dv-timings` returns locked,
    nonzero input timings. Discover the actual subdevice using

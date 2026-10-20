@@ -157,7 +157,7 @@ for cleanup in \
     fi
 done
 
-python3 - "$DRIVER" "$ROOT_DIR/edid/hdmi_1080p60_cta.hex" "$ROOT_DIR/src/aiden_sdk.cpp" <<'PY'
+python3 - "$DRIVER" "$ROOT_DIR/edid/hdmi_1080p30_cta.hex" "$ROOT_DIR/src/aiden_sdk.cpp" <<'PY'
 import pathlib
 import re
 import sys
@@ -167,11 +167,24 @@ fixture = bytes.fromhex(pathlib.Path(sys.argv[2]).read_text())
 sdk = pathlib.Path(sys.argv[3]).read_text()
 
 if len(fixture) != 256:
-    raise SystemExit("FAIL: HDMI 1080p60 EDID must contain two blocks")
+    raise SystemExit("FAIL: HDMI 1080p30 EDID must contain two blocks")
 if any(sum(fixture[offset:offset + 128]) % 256 for offset in range(0, len(fixture), 128)):
-    raise SystemExit("FAIL: every HDMI 1080p60 EDID block must have a valid checksum")
+    raise SystemExit("FAIL: every HDMI 1080p30 EDID block must have a valid checksum")
 if fixture[20] & 0x80 == 0 or fixture[126] != 1 or fixture[128] != 0x02:
     raise SystemExit("FAIL: RK628 EDID must describe a digital HDMI sink with one CTA extension")
+
+# Check the preferred detailed timing as well as the CTA mode. A stale
+# 148.5 MHz DTD would let sources bypass the lower-rate compatibility mode.
+dtd = fixture[54:72]
+pixel_clock = int.from_bytes(dtd[:2], "little") * 10000
+width = dtd[2] | ((dtd[4] & 0xf0) << 4)
+height = dtd[5] | ((dtd[7] & 0xf0) << 4)
+hblank = dtd[3] | ((dtd[4] & 0x0f) << 8)
+vblank = dtd[6] | ((dtd[7] & 0x0f) << 8)
+if (width, height, pixel_clock) != (1920, 1080, 74250000):
+    raise SystemExit("FAIL: preferred RK628 timing must be 1920x1080 at 74.25 MHz")
+if pixel_clock != 30 * (width + hblank) * (height + vblank):
+    raise SystemExit("FAIL: preferred RK628 timing must use a 30 Hz refresh rate")
 
 cta = fixture[128:]
 dtd_offset = cta[2]
@@ -191,8 +204,8 @@ while offset < dtd_offset:
         has_hdmi_vsdb = True
     offset += 1 + length
 
-if video_vics != [16] or not has_hdmi_vsdb:
-    raise SystemExit("FAIL: RK628 default EDID must advertise HDMI CTA VIC 16 (1080p60) only")
+if video_vics != [34] or not has_hdmi_vsdb:
+    raise SystemExit("FAIL: RK628 default EDID must advertise HDMI CTA VIC 34 (1080p30) only")
 
 
 def extract_edid(source, declaration, missing_message):
@@ -203,9 +216,9 @@ def extract_edid(source, declaration, missing_message):
 
 
 driver_edid = extract_edid(driver, r"static u8 edid_init_data\[\]", "FAIL: RK628 default EDID is missing")
-sdk_edid = extract_edid(sdk, r"static const uint8_t kDefaultHdmiEdid1080p60\[\]", "FAIL: libaiden default EDID is missing")
+sdk_edid = extract_edid(sdk, r"static const uint8_t kDefaultHdmiEdid1080p30\[\]", "FAIL: libaiden default EDID is missing")
 if driver_edid != fixture or sdk_edid != fixture:
-    raise SystemExit("FAIL: RK628 and libaiden must use the same 1080p60 EDID")
+    raise SystemExit("FAIL: RK628 and libaiden must use the same 1080p30 EDID")
 PY
 
 echo "PASS: RK628F driver integration contract"
