@@ -155,6 +155,12 @@ export async function basicPage(context) {
   });
   // What the rows show: the saved value, or a staged one awaiting a restart.
   const draft = saved();
+  // Do not use configValue(): false || fallback would treat "off" as unset.
+  const gpioSaved = () => snapshot?.config?.agent?.gpio_wakeup_enabled !== false;
+  // Keep pending GPIO state across render() so a device/keyboard choose()
+  // cannot reset the switch mid-save.
+  let gpioDraft = gpioSaved();
+  let gpioSaving = false;
   const body = el('div');
   const saver = createSaver(context, {
     title: msg('ui.nav_basic', '基础设置'),
@@ -163,6 +169,7 @@ export async function basicPage(context) {
     onSaved: payload => {
       snapshot.config = payload.config || snapshot.config;
       Object.assign(draft, saved());
+      if (!gpioSaving) gpioDraft = gpioSaved();
       render();
     },
   });
@@ -177,6 +184,22 @@ export async function basicPage(context) {
       render();
     }
   };
+
+  async function saveGpioWakeup(next) {
+    if (gpioSaving) return;
+    const previous = gpioDraft;
+    gpioDraft = next;
+    gpioSaving = true;
+    render();
+    try {
+      const outcome = await saver.change('agent.gpio_wakeup_enabled', {agent: {gpio_wakeup_enabled: next}});
+      if (outcome === 'invalid' || outcome === 'failed') gpioDraft = previous;
+      else gpioDraft = gpioSaved();
+    } finally {
+      gpioSaving = false;
+      render();
+    }
+  }
 
   function render() {
     const language = row({
@@ -204,33 +227,18 @@ export async function basicPage(context) {
         onSelect: choose('keyboardLayout', value => ({hid: {keyboard_layout: value}})),
       }),
     });
-    // Do not use configValue(): false || fallback would treat "off" as unset.
-    const gpioEnabled = snapshot?.config?.agent?.gpio_wakeup_enabled !== false;
-    let gpioSaving = false;
     const gpioToggle = switchControl({
-      checked: gpioEnabled,
+      checked: gpioDraft,
       label: msg('config.fields.agent.gpio_wakeup_enabled.label', '轻触唤醒'),
-      onChange: async next => {
-        // switchControl flips immediately; ignore overlapping taps until the
-        // save settles so an older response cannot paint a stale value.
+      onChange: next => {
         if (gpioSaving) {
-          setChecked(gpioToggle, !next);
+          setChecked(gpioToggle, gpioDraft);
           return;
         }
-        gpioSaving = true;
-        gpioToggle.disabled = true;
-        try {
-          const outcome = await saver.change('agent.gpio_wakeup_enabled', {agent: {gpio_wakeup_enabled: next}});
-          if (outcome === 'invalid' || outcome === 'failed') setChecked(gpioToggle, !next);
-          else if (outcome === 'superseded') {
-            setChecked(gpioToggle, snapshot?.config?.agent?.gpio_wakeup_enabled !== false);
-          }
-        } finally {
-          gpioSaving = false;
-          gpioToggle.disabled = false;
-        }
+        saveGpioWakeup(next);
       },
     });
+    if (gpioSaving) gpioToggle.disabled = true;
     const tapWakeup = row({
       label: msg('config.fields.agent.gpio_wakeup_enabled.label', '轻触唤醒'),
       description: msg('config.fields.agent.gpio_wakeup_enabled.help', '开启后，轻触按键可唤醒 Aiden。'),
