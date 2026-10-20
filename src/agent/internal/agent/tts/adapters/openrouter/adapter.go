@@ -14,7 +14,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +25,7 @@ const (
 	defaultEndpoint = "https://openrouter.ai/api/v1"
 	defaultModel    = "google/gemini-3.1-flash-tts-preview"
 	defaultVoice    = "alloy"
+	requestTimeout  = 30 * time.Second
 )
 
 func init() {
@@ -34,12 +34,12 @@ func init() {
 
 // Adapter is the OpenRouter TTS provider.
 type Adapter struct {
-	apiKey   string
-	model    string
-	voice    string
-	endpoint string
-	speed    float64
-	proxy    tts.ProxyConfig
+	apiKey     string
+	model      string
+	voice      string
+	endpoint   string
+	speed      float64
+	httpClient *http.Client
 }
 
 var _ tts.TTSProvider = (*Adapter)(nil)
@@ -66,12 +66,12 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 		speed = 1.0
 	}
 	return &Adapter{
-		apiKey:   cfg.APIKey,
-		model:    model,
-		voice:    voice,
-		endpoint: endpoint,
-		speed:    speed,
-		proxy:    cfg.Proxy,
+		apiKey:     cfg.APIKey,
+		model:      model,
+		voice:      voice,
+		endpoint:   endpoint,
+		speed:      speed,
+		httpClient: &http.Client{Transport: cfg.Proxy.Transport(), Timeout: requestTimeout},
 	}, nil
 }
 
@@ -91,39 +91,13 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	httpClient := http.DefaultClient
-	if a.proxy.AllProxy != "" || a.proxy.HTTPSProxy != "" || a.proxy.HTTPProxy != "" {
-		httpClient = buildProxyHTTPClient(a.proxy)
-	}
 	return &session{
 		ctx:        ctx,
 		adapter:    a,
 		sink:       sink,
-		httpClient: httpClient,
+		httpClient: a.httpClient,
 		textBuffer: new(bytes.Buffer),
 	}, nil
-}
-
-func buildProxyHTTPClient(p tts.ProxyConfig) *http.Client {
-	proxyURL := p.AllProxy
-	if proxyURL == "" {
-		proxyURL = p.HTTPSProxy
-	}
-	if proxyURL == "" {
-		proxyURL = p.HTTPProxy
-	}
-
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxyURL != "" {
-		transport.Proxy = func(_ *http.Request) (*url.URL, error) {
-			return url.Parse(proxyURL)
-		}
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
 }
 
 // defaultVoiceForModel returns a known-good voice for the given model.
