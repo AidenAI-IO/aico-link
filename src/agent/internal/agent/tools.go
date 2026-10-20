@@ -156,7 +156,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	pointer.iosKeyboardIsolation = iosKeyboardIsolation
 	var adbInput *ADBInputController
 	if hidCfg.InputBackendADB() {
-		adbInput = NewADBInputController(screen)
+		adbInput = NewADBInputController()
 	}
 
 	mnkProvider := toolOptions.mnkProvider

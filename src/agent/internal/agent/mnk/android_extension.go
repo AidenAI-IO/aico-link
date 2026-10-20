@@ -31,7 +31,10 @@ type androidKeyboardTapAlias struct {
 }
 
 // Android KEYCODE_* aliases map onto Consumer Control extension keys (or
-// explicit unsupported reasons). Kept separate from the usage table.
+// explicit unsupported reasons). Keep Android framework keycodes separate from
+// the generic HID usage table: they are routed through hid.usb2, which
+// advertises a Consumer Control interface instead of the boot keyboard report
+// used by hid.usb0.
 var androidKeyboardTapAliases = map[string]androidKeyboardTapAlias{
 	"keycode_call": {
 		Keycode:           5,
@@ -129,63 +132,66 @@ var androidKeyboardTapAliases = map[string]androidKeyboardTapAlias{
 		Keycode:     187,
 		Replacement: "app_switch",
 	},
-	"keycode_window": {
+	// HID-backed Android KeyEvent aliases. The API levels are from
+	// android.view.KeyEvent; replacements keep the existing Consumer Control
+	// usage values in androidExtensionUsageMap unchanged.
+	"keycode_window": { // API 11
 		Keycode:     171,
 		Replacement: "window",
 	},
-	"keycode_settings": {
+	"keycode_settings": { // API 11
 		Keycode:     176,
 		Replacement: "settings",
 	},
-	"keycode_language_switch": {
+	"keycode_language_switch": { // API 14
 		Keycode:     204,
 		Replacement: "language_switch",
 	},
-	"keycode_brightness_down": {
+	"keycode_brightness_down": { // API 18
 		Keycode:     220,
 		Replacement: "brightness_down",
 	},
-	"keycode_brightness_up": {
+	"keycode_brightness_up": { // API 18
 		Keycode:     221,
 		Replacement: "brightness_up",
 	},
-	"keycode_media_audio_track": {
+	"keycode_media_audio_track": { // API 19
 		Keycode:     222,
 		Replacement: "media_audio_track",
 	},
-	"keycode_refresh": {
+	"keycode_refresh": { // API 28
 		Keycode:     285,
 		Replacement: "refresh",
 	},
-	"keycode_profile_switch": {
+	"keycode_profile_switch": { // API 29
 		Keycode:     288,
 		Replacement: "profile_switch",
 	},
-	"keycode_emoji_picker": {
+	"keycode_emoji_picker": { // API 35
 		Keycode:     317,
 		Replacement: "emoji_picker",
 	},
-	"keycode_screenshot": {
+	"keycode_screenshot": { // API 35
 		Keycode:     318,
 		Replacement: "screenshot",
 	},
-	"keycode_dictate": {
+	"keycode_dictate": { // API 36
 		Keycode:     319,
 		Replacement: "dictate",
 	},
-	"keycode_new": {
+	"keycode_new": { // API 36
 		Keycode:     320,
 		Replacement: "new",
 	},
-	"keycode_close": {
+	"keycode_close": { // API 36
 		Keycode:     321,
 		Replacement: "close",
 	},
-	"keycode_print": {
+	"keycode_print": { // API 36
 		Keycode:     323,
 		Replacement: "print",
 	},
-	"keycode_fullscreen": {
+	"keycode_fullscreen": { // API 36
 		Keycode:     325,
 		Replacement: "fullscreen",
 	},

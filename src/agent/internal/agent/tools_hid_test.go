@@ -21,19 +21,6 @@ import (
 	"time"
 )
 
-func TestResolvePointerPositionNormalized(t *testing.T) {
-	x, y, err := resolvePointerPosition(nil, 500, 250)
-	if err != nil {
-		t.Fatalf("resolvePointerPosition returned error: %v", err)
-	}
-	if x != 16384 {
-		t.Fatalf("x = %d, want 16384", x)
-	}
-	if y != 8192 {
-		t.Fatalf("y = %d, want 8192", y)
-	}
-}
-
 func TestToolSetUpdateDeviceEnvironmentTracksPhoneScreenInfo(t *testing.T) {
 	tools := NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{})
 	env := &PhoneEnvironment{
@@ -163,12 +150,12 @@ func TestTouchGestureTouchscreenPrimesMappingBeforeNormalizedInput(t *testing.T)
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d", len(reports), 1+touchReleaseReportCount)
 	}
-	expectedX := scalePixelToAbsolute(711+(931.0/1000.0)*496, 1920)
-	expectedY := scalePixelToAbsolute((83.0/1000.0)*1079, 1080)
+	expectedX := frameAbsolute(711+(931.0/1000.0)*496, 1920)
+	expectedY := frameAbsolute((83.0/1000.0)*1079, 1080)
 	if reports[0].x != uint16(expectedX) || reports[0].y != uint16(expectedY) {
 		t.Fatalf("first report = (%d,%d), want (%d,%d)", reports[0].x, reports[0].y, expectedX, expectedY)
 	}
-	fallbackX, fallbackY := normalizedToAbsolutePoint(931, 83)
+	fallbackX, fallbackY := mnk.NormalizedToAbsolutePoint(931, 83)
 	if reports[0].x == uint16(fallbackX) && reports[0].y == uint16(fallbackY) {
 		t.Fatalf("first report used fallback coordinates (%d,%d)", reports[0].x, reports[0].y)
 	}
@@ -227,8 +214,8 @@ func TestTouchGestureTouchscreenKeepsFreshFullFrameMappingWhenPrimeWouldFail(t *
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d", len(reports), 1+touchReleaseReportCount)
 	}
-	expectedX := scalePixelToAbsolute((931.0/1000.0)*1919, 1920)
-	expectedY := scalePixelToAbsolute((83.0/1000.0)*1079, 1080)
+	expectedX := frameAbsolute((931.0/1000.0)*1919, 1920)
+	expectedY := frameAbsolute((83.0/1000.0)*1079, 1080)
 	if reports[0].x != uint16(expectedX) || reports[0].y != uint16(expectedY) {
 		t.Fatalf("first report = (%d,%d), want (%d,%d)", reports[0].x, reports[0].y, expectedX, expectedY)
 	}
@@ -357,15 +344,11 @@ func (r *recordingADBRunner) run(ctx context.Context, _ string, args ...string) 
 	return []byte(out), nil, nil
 }
 
-func newTestADBInputController(t *testing.T, screenState *screen.ScreenState, runner *recordingADBRunner) *ADBInputController {
+func newTestADBInputController(t *testing.T, runner *recordingADBRunner) *ADBInputController {
 	t.Helper()
 	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
 	t.Setenv("AIDEN_ADB_SERIAL", "serial123")
-	if screenState == nil {
-		screenState = &screen.ScreenState{}
-	}
 	return &ADBInputController{
-		screen: screenState,
 		client: NewADBScreenClient(),
 		runADB: runner.run,
 	}
@@ -410,18 +393,6 @@ func TestADBTouchGestureTapAutoRejectsOutOfRangeCoordinates(t *testing.T) {
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("adb commands = %#v, want no command for out-of-range normalized coordinates", runner.commands)
-	}
-}
-
-func TestPointerResolversRejectNonFiniteCoordinates(t *testing.T) {
-	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		if _, _, err := resolvePointerPositionForSurface(nil, false, value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
-			t.Fatalf("resolvePointerPositionForSurface(%v, 500) error = %v, want finite-coordinate error", value, err)
-		}
-		controller := &ADBInputController{}
-		if _, err := controller.ResolvePosition(context.Background(), value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
-			t.Fatalf("ResolvePosition(%v, 500) error = %v, want finite-coordinate error", value, err)
-		}
 	}
 }
 
@@ -573,7 +544,7 @@ func TestADBKeyboardTextUsesADBKeyboardBroadcastAndRestoresIME(t *testing.T) {
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(context.Background(), `{"text":"Hello!"}`)
 	if err != nil {
@@ -611,7 +582,7 @@ func TestADBKeyboardTextRestoresIMEAfterCallerContextCanceled(t *testing.T) {
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(ctx, `{"text":"Hello"}`)
 	if err != nil {
@@ -640,7 +611,7 @@ func TestADBKeyboardTextFallsBackToKeyEventsWhenADBKeyboardUnavailable(t *testin
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(context.Background(), `{"text":"A z!"}`)
 	if err != nil {
@@ -704,68 +675,6 @@ func TestADBMouseScrollUsesSwipeApproximation(t *testing.T) {
 	}
 }
 
-func TestParseADBWMSizePrefersOverrideSize(t *testing.T) {
-	size, ok := parseADBWMSize("Physical size: 1080x2400\nOverride size: 720x1600\n")
-	if !ok {
-		t.Fatal("parseADBWMSize ok = false")
-	}
-	if size.width != 720 || size.height != 1600 {
-		t.Fatalf("size = %+v, want 720x1600", size)
-	}
-}
-
-func TestResolvePointerPositionNormalizedUsesActiveArea(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
-
-	x, y, err := resolvePointerPosition(screenState, 0, 500)
-	if err != nil {
-		t.Fatalf("resolvePointerPosition returned error: %v", err)
-	}
-	if x != 0 {
-		t.Fatalf("x = %d, want 0 at left edge of active_area", x)
-	}
-	wantY := scalePixelToAbsolute(float64(1079)/2, 1080)
-	if y != wantY {
-		t.Fatalf("y = %d, want %d", y, wantY)
-	}
-}
-
-func TestResolvePointerPositionTouchscreenNormalizedUsesFrameSpaceWithinActiveArea(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
-
-	x, y, err := resolvePointerPositionForSurface(screenState, true, 627, 180)
-	if err != nil {
-		t.Fatalf("resolvePointerPositionForSurface returned error: %v", err)
-	}
-
-	wantX := scalePixelToAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920)
-	wantY := scalePixelToAbsolute((180.0/1000.0)*float64(1080-1), 1080)
-	if x != wantX {
-		t.Fatalf("x = %d, want %d", x, wantX)
-	}
-	if y != wantY {
-		t.Fatalf("y = %d, want %d", y, wantY)
-	}
-}
-
-func TestNormalizedCoordinatesPreserveNearlyFullAxisOffsetForAbsolutePointer(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 711, Y: 28, Width: 498, Height: 1052, Valid: true})
-	x, y, err := resolvePointerPositionForSurface(screenState, false, 500, 220)
-	if err != nil {
-		t.Fatalf("resolvePointerPositionForSurface returned error: %v", err)
-	}
-	localX := 0.5 * float64(498-1)
-	localY := 0.22 * float64(1052-1)
-	wantX := scalePixelToAbsolute(localX, 498)
-	wantY := scalePixelToAbsolute(28+localY, 1080)
-	if x != wantX || y != wantY {
-		t.Fatalf("normalized point = (%d,%d), want (%d,%d)", x, y, wantX, wantY)
-	}
-}
-
 func TestPointerCoordinateRejectsNonFiniteStringValues(t *testing.T) {
 	for _, input := range []string{`"NaN"`, `"Inf"`, `"-Inf"`, `"Infinity"`} {
 		var coordinate pointerCoordinate
@@ -777,6 +686,12 @@ func TestPointerCoordinateRejectsNonFiniteStringValues(t *testing.T) {
 			t.Fatalf("UnmarshalJSON(%s) error = %v, want finite number error", input, err)
 		}
 	}
+}
+
+// frameAbsolute is the HID coordinate expected for a frame pixel. Tests restate
+// the mapping rather than calling mnk's helper so a regression there fails here.
+func frameAbsolute(pixel float64, size int) int {
+	return int(math.Round(pixel / float64(size-1) * mnk.AbsMouseMaxPos))
 }
 
 func testPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointerController {
@@ -1029,8 +944,8 @@ func TestTouchscreenTapUsesFrameSpaceForActiveArea(t *testing.T) {
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d (down, repeated up)", len(reports), 1+touchReleaseReportCount)
 	}
-	wantX := uint16(scalePixelToAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920))
-	wantY := uint16(scalePixelToAbsolute((180.0/1000.0)*float64(1080-1), 1080))
+	wantX := uint16(frameAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920))
+	wantY := uint16(frameAbsolute((180.0/1000.0)*float64(1080-1), 1080))
 	if reports[0].flags != 0x03 || reports[0].contactID != 1 || reports[0].x != wantX || reports[0].y != wantY {
 		t.Fatalf("down report = %+v, want touch at (%d,%d)", reports[0], wantX, wantY)
 	}
@@ -1556,7 +1471,7 @@ func TestMouseScrollUsesLastPointerPosition(t *testing.T) {
 	if len(reports) != 2 {
 		t.Fatalf("len(reports) = %d, want 2", len(reports))
 	}
-	wantX, wantY := normalizedToAbsolutePoint(200, 300)
+	wantX, wantY := mnk.NormalizedToAbsolutePoint(200, 300)
 	if reports[1].buttons != 0 || int(reports[1].x) != wantX || int(reports[1].y) != wantY || reports[1].wheel != -3 {
 		t.Fatalf("scroll report = (%d,%d,%d,%d), want (0,%d,%d,-3)", reports[1].buttons, reports[1].x, reports[1].y, reports[1].wheel, wantX, wantY)
 	}
@@ -2300,11 +2215,11 @@ func TestTouchGestureExplicitBackSwipeStartsAtLeftPhysicalEdge(t *testing.T) {
 	if reports[0].x > 100 {
 		t.Fatalf("back start x = %d, want near left physical edge", reports[0].x)
 	}
-	if reports[0].y != uint16(absMouseMaxPos/2+1) {
+	if reports[0].y != uint16(mnk.AbsMouseMaxPos/2+1) {
 		t.Fatalf("back start y = %d, want center", reports[0].y)
 	}
 	finalMove := 1 + defaultSwipeSteps
-	if reports[finalMove].x < uint16(absMouseMaxPos*70/100) {
+	if reports[finalMove].x < uint16(mnk.AbsMouseMaxPos*70/100) {
 		t.Fatalf("back end x = %d, want a long swipe across the screen", reports[finalMove].x)
 	}
 	for i := finalMove + 1; i < len(reports); i++ {
@@ -2330,14 +2245,14 @@ func TestTouchGestureExplicitHomeSwipeStartsAtBottomPhysicalEdge(t *testing.T) {
 	if len(reports) != 2+defaultSwipeSteps+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want provider default sequence", len(reports))
 	}
-	if reports[0].y < uint16(absMouseMaxPos*995/1000) {
+	if reports[0].y < uint16(mnk.AbsMouseMaxPos*995/1000) {
 		t.Fatalf("home start y = %d, want near bottom physical edge", reports[0].y)
 	}
-	if reports[0].x != uint16(absMouseMaxPos/2+1) {
+	if reports[0].x != uint16(mnk.AbsMouseMaxPos/2+1) {
 		t.Fatalf("home start x = %d, want center", reports[0].x)
 	}
 	finalMove := 1 + defaultSwipeSteps
-	if reports[finalMove].y > uint16(absMouseMaxPos/4) {
+	if reports[finalMove].y > uint16(mnk.AbsMouseMaxPos/4) {
 		t.Fatalf("home end y = %d, want a long upward swipe", reports[finalMove].y)
 	}
 	for i := finalMove + 1; i < len(reports); i++ {

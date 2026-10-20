@@ -67,9 +67,12 @@ const (
 	defaultDoubleClickPauseMs       = 100              // Pause between double-click taps
 	defaultKeyboardTapHoldMs        = 50               // Standard key hold
 	defaultKeyboardModifierHoldMs   = 120              // Modifier chord hold
-	absMouseMaxPos                  = 32767            // HID absolute coordinate max
 	screenDimensionsStaleAfter      = 30 * time.Second // Max age for cached screen dimensions
 )
+
+// AbsMouseMaxPos is the largest coordinate the absolute mouse and touchscreen
+// HID reports carry on either axis.
+const AbsMouseMaxPos = 32767
 
 // NewHIDProvider creates a new HID-based MNK provider.
 // Devices should be shared with any ProfileGate that closes FDs across USB profile switches.
@@ -774,7 +777,6 @@ func (p *HIDProvider) validateCoordinate(x, y float64) error {
 }
 
 func (p *HIDProvider) normalizedToAbsolute(x, y float64) (int, int, error) {
-	// Uses the same logic as tools_hid.go:normalizedToAbsolutePointForSurface
 	// Handles active_area for de-blackbarring and touchscreen vs absolute mode
 	if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) {
 		return 0, 0, InvalidArguments("coordinates must be finite")
@@ -806,9 +808,17 @@ func (p *HIDProvider) normalizedToAbsolute(x, y float64) (int, int, error) {
 	}
 
 	// Fallback: simple linear mapping
-	absX := int(math.Round(clampFloat(x, 0, 1000) / 1000.0 * absMouseMaxPos))
-	absY := int(math.Round(clampFloat(y, 0, 1000) / 1000.0 * absMouseMaxPos))
+	absX, absY := NormalizedToAbsolutePoint(x, y)
 	return absX, absY, nil
+}
+
+// NormalizedToAbsolutePoint maps a normalized 0-1000 point linearly onto the
+// whole HID absolute surface, ignoring active_area. HIDProvider uses it when no
+// fresh active_area is known.
+func NormalizedToAbsolutePoint(x, y float64) (int, int) {
+	absX := int(math.Round(clampFloat(x, 0, 1000) / 1000.0 * AbsMouseMaxPos))
+	absY := int(math.Round(clampFloat(y, 0, 1000) / 1000.0 * AbsMouseMaxPos))
+	return absX, absY
 }
 
 const nearlyFullSourceAxisRatio = 0.9
@@ -830,7 +840,7 @@ func scalePixelToAbsolute(value float64, size int) int {
 	}
 	maxPixel := float64(size - 1)
 	clamped := clampFloat(value, 0, maxPixel)
-	return int(math.Round((clamped / maxPixel) * absMouseMaxPos))
+	return int(math.Round((clamped / maxPixel) * AbsMouseMaxPos))
 }
 
 func clampFloat(value, min, max float64) float64 {
@@ -925,7 +935,7 @@ func (p *HIDProvider) getCurrentPosition() (int, int) {
 			return x, y
 		}
 	}
-	return absMouseMaxPos / 2, absMouseMaxPos / 2
+	return AbsMouseMaxPos / 2, AbsMouseMaxPos / 2
 }
 
 // ============================================================================
@@ -939,43 +949,40 @@ func writeDevice(dev Device, report []byte) error {
 	return dev.Write(report)
 }
 
-// writeAbsMouseReport writes a 6-byte absolute mouse report:
-// [buttons, x_lo, x_hi, y_lo, y_hi, wheel]
-func (p *HIDProvider) writeAbsMouseReport(x, y int, buttons uint8, wheel int8) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
+// AbsMouseReport encodes a 6-byte absolute mouse report
+// [buttons, x_lo, x_hi, y_lo, y_hi, wheel] and returns the clamped position
+// the report moves the pointer to.
+func AbsMouseReport(x, y int, buttons uint8, wheel int8) (report []byte, absX, absY int) {
+	clampedX := clampUint16(x, AbsMouseMaxPos)
+	clampedY := clampUint16(y, AbsMouseMaxPos)
 
-	report := make([]byte, 6)
+	report = make([]byte, 6)
 	report[0] = buttons
-	binary.LittleEndian.PutUint16(report[1:3], absX)
-	binary.LittleEndian.PutUint16(report[3:5], absY)
+	binary.LittleEndian.PutUint16(report[1:3], clampedX)
+	binary.LittleEndian.PutUint16(report[3:5], clampedY)
 	report[5] = uint8(wheel)
-
-	// Update state after successful write
-	if err := writeDevice(p.pointerDev, report); err != nil {
-		return err
-	}
-
-	if p.pointerState != nil {
-		p.pointerState.Update(int(absX), int(absY))
-	}
-	return nil
+	return report, int(clampedX), int(clampedY)
 }
 
-// writeTouchscreenReport writes a 6-byte single-contact touch report:
-// [flags, contact_id, x_lo, x_hi, y_lo, y_hi]
-// flags: bit0=tip switch (touching), bit1=in range
-func (p *HIDProvider) writeTouchscreenReport(x, y int, touching bool) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
+// TouchscreenReport encodes a 6-byte single-contact touch report
+// [flags, contact_id, x_lo, x_hi, y_lo, y_hi] and returns the clamped contact
+// position. flags: bit0=tip switch (touching), bit1=in range.
+func TouchscreenReport(x, y int, touching bool) (report []byte, absX, absY int) {
+	clampedX := clampUint16(x, AbsMouseMaxPos)
+	clampedY := clampUint16(y, AbsMouseMaxPos)
 
-	report := make([]byte, 6)
+	report = make([]byte, 6)
 	if touching {
 		report[0] = 0x03 // tip switch + in range
 	}
 	report[1] = 0x01 // contact_id
-	binary.LittleEndian.PutUint16(report[2:4], absX)
-	binary.LittleEndian.PutUint16(report[4:6], absY)
+	binary.LittleEndian.PutUint16(report[2:4], clampedX)
+	binary.LittleEndian.PutUint16(report[4:6], clampedY)
+	return report, int(clampedX), int(clampedY)
+}
+
+func (p *HIDProvider) writeAbsMouseReport(x, y int, buttons uint8, wheel int8) error {
+	report, absX, absY := AbsMouseReport(x, y, buttons, wheel)
 
 	// Update state after successful write
 	if err := writeDevice(p.pointerDev, report); err != nil {
@@ -983,7 +990,21 @@ func (p *HIDProvider) writeTouchscreenReport(x, y int, touching bool) error {
 	}
 
 	if p.pointerState != nil {
-		p.pointerState.Update(int(absX), int(absY))
+		p.pointerState.Update(absX, absY)
+	}
+	return nil
+}
+
+func (p *HIDProvider) writeTouchscreenReport(x, y int, touching bool) error {
+	report, absX, absY := TouchscreenReport(x, y, touching)
+
+	// Update state after successful write
+	if err := writeDevice(p.pointerDev, report); err != nil {
+		return err
+	}
+
+	if p.pointerState != nil {
+		p.pointerState.Update(absX, absY)
 	}
 	return nil
 }

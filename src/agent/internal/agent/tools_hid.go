@@ -4,7 +4,6 @@ import (
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screen"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -14,8 +13,6 @@ import (
 )
 
 const (
-	absMouseMaxPos = 32767
-
 	// defaultTapHoldMs is the dwell between a touch press and release so iOS
 	// registers a tap rather than dropping the sub-millisecond event or
 	// treating it as a long-press.
@@ -174,177 +171,6 @@ var absolutePointerModeExtensionReports = map[string]uint16{
 }
 
 const absolutePointerModeExtensionKeyList = "KEYCODE_VOLUME_MUTE, KEYCODE_VOLUME_UP, KEYCODE_VOLUME_DOWN, KEYCODE_MEDIA_PLAY_PAUSE, KEYCODE_MEDIA_STOP, KEYCODE_MEDIA_NEXT, KEYCODE_MEDIA_PREVIOUS, KEYCODE_MEDIA_REWIND, KEYCODE_MEDIA_FAST_FORWARD, KEYCODE_SCREENSHOT, KEYCODE_BRIGHTNESS_UP, KEYCODE_BRIGHTNESS_DOWN"
-
-type androidKeyboardTapAlias struct {
-	Keycode           int
-	Replacement       string
-	UnsupportedReason string
-}
-
-// Keep Android framework keycodes separate from the generic HID usage table.
-// They are routed through hid.usb2, which advertises a Consumer Control
-// interface instead of the boot keyboard report used by hid.usb0.
-var androidKeyboardTapAliases = map[string]androidKeyboardTapAlias{
-	"keycode_call": {
-		Keycode:           5,
-		UnsupportedReason: "call pickup requires an Android telephony/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_endcall": {
-		Keycode:           6,
-		UnsupportedReason: "call hangup requires an Android telephony/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_home": {
-		Keycode:     3,
-		Replacement: "android_home",
-	},
-	"keycode_menu": {
-		Keycode:     82,
-		Replacement: "menu",
-	},
-	"keycode_back": {
-		Keycode:     4,
-		Replacement: "android_back",
-	},
-	"keycode_search": {
-		Keycode:     84,
-		Replacement: "search",
-	},
-	"keycode_camera": {
-		Keycode:           27,
-		UnsupportedReason: "camera shutter requires a camera/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_focus": {
-		Keycode:           80,
-		UnsupportedReason: "camera focus requires a camera/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_power": {
-		Keycode:     26,
-		Replacement: "power",
-	},
-	"keycode_sleep": {
-		Keycode:     223,
-		Replacement: "sleep",
-	},
-	"keycode_wakeup": {
-		Keycode:           224,
-		UnsupportedReason: "wakeup requires a Generic Desktop/System Control HID path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_soft_sleep": {
-		Keycode:           276,
-		UnsupportedReason: "soft sleep has no verified standard Consumer Control usage on this gadget",
-	},
-	"keycode_notification": {
-		Keycode:           83,
-		UnsupportedReason: "notification center has no verified standard Consumer Control usage on this gadget; use quick_action notification_center or touch_gesture instead",
-	},
-	"keycode_mute": {
-		Keycode:           91,
-		UnsupportedReason: "KEYCODE_MUTE is microphone mute, not speaker mute; hid.usb2 only exposes system speaker/stream volume mute",
-	},
-	"keycode_volume_mute": {
-		Keycode:     164,
-		Replacement: "volume_mute",
-	},
-	"keycode_volume_up": {
-		Keycode:     24,
-		Replacement: "volume_up",
-	},
-	"keycode_volume_down": {
-		Keycode:     25,
-		Replacement: "volume_down",
-	},
-	"keycode_media_play_pause": {
-		Keycode:     85,
-		Replacement: "media_play_pause",
-	},
-	"keycode_media_stop": {
-		Keycode:     86,
-		Replacement: "media_stop",
-	},
-	"keycode_media_next": {
-		Keycode:     87,
-		Replacement: "media_next",
-	},
-	"keycode_media_previous": {
-		Keycode:     88,
-		Replacement: "media_previous",
-	},
-	"keycode_media_rewind": {
-		Keycode:     89,
-		Replacement: "media_rewind",
-	},
-	"keycode_media_fast_forward": {
-		Keycode:     90,
-		Replacement: "media_fast_forward",
-	},
-	"keycode_app_switch": {
-		Keycode:     187,
-		Replacement: "app_switch",
-	},
-	// HID-backed Android KeyEvent aliases. The API levels are from
-	// android.view.KeyEvent; replacements keep the existing Consumer Control
-	// usage values in androidExtensionUsageMap unchanged.
-	"keycode_window": { // API 11
-		Keycode:     171,
-		Replacement: "window",
-	},
-	"keycode_settings": { // API 11
-		Keycode:     176,
-		Replacement: "settings",
-	},
-	"keycode_language_switch": { // API 14
-		Keycode:     204,
-		Replacement: "language_switch",
-	},
-	"keycode_brightness_down": { // API 18
-		Keycode:     220,
-		Replacement: "brightness_down",
-	},
-	"keycode_brightness_up": { // API 18
-		Keycode:     221,
-		Replacement: "brightness_up",
-	},
-	"keycode_media_audio_track": { // API 19
-		Keycode:     222,
-		Replacement: "media_audio_track",
-	},
-	"keycode_refresh": { // API 28
-		Keycode:     285,
-		Replacement: "refresh",
-	},
-	"keycode_profile_switch": { // API 29
-		Keycode:     288,
-		Replacement: "profile_switch",
-	},
-	"keycode_emoji_picker": { // API 35
-		Keycode:     317,
-		Replacement: "emoji_picker",
-	},
-	"keycode_screenshot": { // API 35
-		Keycode:     318,
-		Replacement: "screenshot",
-	},
-	"keycode_dictate": { // API 36
-		Keycode:     319,
-		Replacement: "dictate",
-	},
-	"keycode_new": { // API 36
-		Keycode:     320,
-		Replacement: "new",
-	},
-	"keycode_close": { // API 36
-		Keycode:     321,
-		Replacement: "close",
-	},
-	"keycode_print": { // API 36
-		Keycode:     323,
-		Replacement: "print",
-	},
-	"keycode_fullscreen": { // API 36
-		Keycode:     325,
-		Replacement: "fullscreen",
-	},
-}
 
 // pointerController sends hid.usb1 reports in absolute mouse or touchscreen mode.
 type pointerController struct {
@@ -756,34 +582,18 @@ func mapMNKAdapterResult(ctx context.Context, output string, err error) (string,
 // writeAbsMouseReport writes an absolute mouse report:
 // [buttons, x_lo, x_hi, y_lo, y_hi, wheel].
 func writeAbsMouseReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y int, buttons uint8, wheel int8) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
-
-	report := make([]byte, 6)
-	report[0] = buttons
-	binary.LittleEndian.PutUint16(report[1:3], absX)
-	binary.LittleEndian.PutUint16(report[3:5], absY)
-	report[5] = byte(wheel)
-
+	report, absX, absY := mnk.AbsMouseReport(x, y, buttons, wheel)
 	if err := dev.Write(report); err != nil {
 		return err
 	}
-	state.Update(int(absX), int(absY))
+	state.Update(absX, absY)
 	return nil
 }
 
 // writeTouchscreenReport writes a single-contact touch report:
 // [flags, contact_id, x_lo, x_hi, y_lo, y_hi]. flags bit0=tip switch, bit1=in range.
 func writeTouchscreenReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y int, touching bool) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
-	report := make([]byte, 6)
-	if touching {
-		report[0] = 0x03
-	}
-	report[1] = 0x01
-	binary.LittleEndian.PutUint16(report[2:4], absX)
-	binary.LittleEndian.PutUint16(report[4:6], absY)
+	report, absX, absY := mnk.TouchscreenReport(x, y, touching)
 
 	path := "<nil>"
 	if dev != nil {
@@ -809,7 +619,7 @@ func writeTouchscreenReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y in
 		}
 		return err
 	}
-	state.Update(int(absX), int(absY))
+	state.Update(absX, absY)
 	if touchscreenRCADebugEnabledCached() {
 		touchscreenRCALogf("hid touchscreen report write ok path=%s clamped=(%d,%d) touching=%v", path, absX, absY, touching)
 	}
@@ -822,7 +632,7 @@ func (pc *pointerController) currentXY() (int, int) {
 			return x, y
 		}
 	}
-	return absMouseMaxPos / 2, absMouseMaxPos / 2
+	return mnk.AbsMouseMaxPos / 2, mnk.AbsMouseMaxPos / 2
 }
 
 func (pc *pointerController) moveTo(x, y int, buttons uint8) error {
@@ -905,128 +715,6 @@ func (c pointerCoordinate) Float64() float64 {
 type resolvedPointerPoint struct {
 	x int
 	y int
-}
-
-func resolvePointerPosition(screen *screen.ScreenState, x, y float64) (int, int, error) {
-	return resolvePointerPositionForSurface(screen, false, x, y)
-}
-
-func resolvePointerPositionForSurface(screen *screen.ScreenState, touchscreen bool, x, y float64) (int, int, error) {
-	if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) {
-		return 0, 0, fmt.Errorf("coordinates must be finite")
-	}
-	if x < 0 || x > 1000 || y < 0 || y > 1000 {
-		return 0, 0, fmt.Errorf("coordinates must use the normalized 0-1000 scale, got x=%.2f y=%.2f", x, y)
-	}
-	return normalizedToAbsolutePointForSurface(screen, touchscreen, x, y)
-}
-
-func normalizedToAbsolutePointForSurface(screen *screen.ScreenState, touchscreen bool, x, y float64) (int, int, error) {
-	// Normalized coordinates are always interpreted within active_area:
-	// 0-1000 maps to the mirrored phone touch region inside the HDMI frame.
-	//
-	// pointer_mode absolute:
-	// Scale within active_area's own coordinate system because the absolute
-	// HID cursor surface tracks the de-blackbarred phone region.
-	//
-	// pointer_mode touchscreen:
-	// First project the normalized point into the active_area inside the HDMI
-	// frame, then scale against the full frame because the touchscreen HID
-	// surface covers the complete mirrored frame.
-	if screen != nil {
-		if width, height, active, age, ok := screen.ActiveAreaWithAge(); ok && age < screenDimensionsStaleAfter && active.Valid {
-			activePixelX := (clampFloat(x, 0, 1000) / 1000.0) * float64(active.Width-1)
-			activePixelY := (clampFloat(y, 0, 1000) / 1000.0) * float64(active.Height-1)
-			if touchscreen {
-				fullFramePixelX := float64(active.X) + activePixelX
-				fullFramePixelY := float64(active.Y) + activePixelY
-				absX := scalePixelToAbsolute(fullFramePixelX, width)
-				absY := scalePixelToAbsolute(fullFramePixelY, height)
-				if touchscreenRCADebugEnabledCached() {
-					touchscreenRCALogf(
-						"normalizedToAbsolute touchscreen using active_area input_norm=(%.2f,%.2f) active_pixel=(%.2f,%.2f) full_frame_pixel=(%.2f,%.2f) source=%dx%d active=%s age_ms=%d absolute=(%d,%d)",
-						x,
-						y,
-						activePixelX,
-						activePixelY,
-						fullFramePixelX,
-						fullFramePixelY,
-						width,
-						height,
-						active.Format(),
-						age.Milliseconds(),
-						absX,
-						absY,
-					)
-				}
-				return absX, absY, nil
-			}
-			absX := activeLocalAxisToAbsolute(activePixelX, active.X, active.Width, width)
-			absY := activeLocalAxisToAbsolute(activePixelY, active.Y, active.Height, height)
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf(
-					"normalizedToAbsolute absolute_mouse using active_area input_norm=(%.2f,%.2f) active_pixel=(%.2f,%.2f) source=%dx%d active=%s age_ms=%d absolute=(%d,%d)",
-					x,
-					y,
-					activePixelX,
-					activePixelY,
-					width,
-					height,
-					active.Format(),
-					age.Milliseconds(),
-					absX,
-					absY,
-				)
-			}
-			return absX, absY, nil
-		}
-	}
-	absX, absY := normalizedToAbsolutePoint(x, y)
-	if touchscreenRCADebugEnabledCached() {
-		touchscreenRCALogf("normalizedToAbsolute fallback input_norm=(%.2f,%.2f) touchscreen=%v absolute=(%d,%d) mapping={%s}", x, y, touchscreen, absX, absY, screen.Format())
-	}
-	return absX, absY, nil
-}
-
-func normalizedToAbsolutePoint(x, y float64) (int, int) {
-	return int(math.Round(clampFloat(x, 0, 1000) / 1000.0 * absMouseMaxPos)), int(math.Round(clampFloat(y, 0, 1000) / 1000.0 * absMouseMaxPos))
-}
-
-const nearlyFullSourceAxisRatio = 0.9
-
-// activeLocalAxisToAbsolute maps one coordinate axis from a cropped screenshot
-// to the absolute HID surface. A narrow active axis represents real HDMI
-// letter/pillar-boxing and is de-barred. An active axis covering nearly the
-// whole source often comes from dark UI pixels being mistaken for a small
-// black bar; preserve its source offset so frame-to-frame crop jitter cancels
-// out instead of shifting the touch point.
-func activeLocalAxisToAbsolute(local float64, activeStart, activeSize, sourceSize int) int {
-	if activeSize <= 0 || sourceSize <= 0 {
-		return 0
-	}
-	if float64(activeSize)/float64(sourceSize) >= nearlyFullSourceAxisRatio {
-		return scalePixelToAbsolute(float64(activeStart)+local, sourceSize)
-	}
-	return scalePixelToAbsolute(local, activeSize)
-}
-
-func scalePixelToAbsolute(value float64, size int) int {
-	if size <= 1 {
-		return 0
-	}
-	maxPixel := float64(size - 1)
-	clamped := clampFloat(value, 0, maxPixel)
-	return int(math.Round((clamped / maxPixel) * absMouseMaxPos))
-}
-
-func clampFloat(value, min, max float64) float64 {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
 }
 
 func tapPointer(pc *pointerController, x, y int, button uint8) error {
@@ -1178,16 +866,6 @@ func realSleepMs(ms int) {
 		return
 	}
 	time.Sleep(time.Duration(ms) * time.Millisecond)
-}
-
-func clampUint16(val, max int) uint16 {
-	if val < 0 {
-		return 0
-	}
-	if val > max {
-		return uint16(max)
-	}
-	return uint16(val)
 }
 
 func mouseButtonByte(button string) uint8 {
