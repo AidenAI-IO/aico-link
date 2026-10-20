@@ -431,6 +431,7 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
+    assert 'Technical metadata' not in html
     assert 'Configuration context' not in html
     assert 'How to read these results' not in html
     assert 'Metric definitions' in html
@@ -567,7 +568,7 @@ const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
 openDataset(memoryIndex);
 assert(el('comparison-details').textContent.includes('Judge prompt: v2 → v3'));
 assert(!el('run-details').innerHTML.includes('memory-v2'));
-assert(el('technical-details').innerHTML.includes('memory-v2'));
+assert(!elements.has('technical-details'));
 assert(el('run-details').innerHTML.includes('Test definition'));
 assert(el('run-details').innerHTML.includes('&lt;img src=x&gt;'));
 assert(!el('run-details').innerHTML.includes('<img'));

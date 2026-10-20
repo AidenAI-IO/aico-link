@@ -391,7 +391,8 @@ Branch and commit identify each run; a branch change alone is not presented as
 a change to evaluation settings. A changed suite file is flagged with a source
 comparison link when both commits are known. This does not imply a semantic
 change: formatting alone can change the file fingerprint. Raw fingerprints,
-judge provider, and metrics schema remain under **Technical metadata**.
+judge provider, and metrics schema remain in the report data for troubleshooting
+and are not displayed as a separate table.
 Task-selection metadata distinguishes a repetition change from changed coverage;
 older records without that metadata retain a general coverage-change notice.
 

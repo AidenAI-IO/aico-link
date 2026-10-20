@@ -122,7 +122,7 @@
   #suites tbody tr:hover { background: var(--bg); }
   #history td:first-child, #history th:first-child, #run-details td:first-child, #run-details th:first-child { padding-left: 12px; }
   #history td, #history th, #run-details td, #run-details th { padding-right: 16px; white-space: nowrap; }
-  #run-details td, #technical-details td { white-space: normal; overflow-wrap: anywhere; max-width: 360px; }
+  #run-details td { white-space: normal; overflow-wrap: anywhere; max-width: 360px; }
   .config-diff td.changed { color: #b7791f; font-weight: 600; }
   .reading-notes { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
   .reading-notes p { margin: 8px 0; }
@@ -181,7 +181,7 @@
     <div class="empty" id="dataset-context"></div>
     <nav class="metric-nav" aria-label="Jump to metric"><a href="#dataset-panel">Pass rates</a><a href="#measurement-panel-latency">Latency</a><a href="#measurement-panel-timings">Timings</a><a href="#measurement-panel-calls">Tool &amp; LLM calls</a><a href="#measurement-panel-reliability">Reliability</a><a href="#measurement-panel-tokens">Tokens</a><a href="#measurement-panel-cost">Cost</a><a href="#history-panel">Run history</a></nav>
     <div class="cards" id="latest"></div>
-    <details><summary>Run details</summary><p id="comparison-details" class="empty"></p><div class="scroll"><table id="run-details"></table></div><details><summary>Technical metadata</summary><div class="scroll"><table id="technical-details" class="config-diff"></table></div></details></details>
+    <details><summary>Run details</summary><p id="comparison-details" class="empty"></p><div class="scroll"><table id="run-details"></table></div></details>
     <details class="reading-notes"><summary>Pass metrics &amp; chart controls</summary><p>Each point is one dataset run. Click a legend label to show or hide a metric. pass@k: at least one of k attempts passes; pass^k: all k attempts pass.</p></details>
     <p id="chart-unavailable" class="chart-unavailable" hidden>Charts could not load. Run values and links remain available in Run history below.</p>
     <div class="chart"><canvas id="trend" aria-label="Selected dataset pass rates over time" role="img"></canvas></div>
@@ -301,10 +301,6 @@ const configFields = [
   ["agent_model", "Agent model"], ["judge_model", "Judge model"], ["judge_prompt_version", "Judge prompt"],
   ["metrics_k", "Attempts per task"], ["tasks", "Tasks"], ["total_attempts", "Total attempts"],
   ["execution_environment", "Environment"], ["active_skills", "Skills"],
-];
-const technicalFields = [
-  ["judge_provider", "Judge provider"], ["metrics_schema_version", "Metrics schema"],
-  ["suite_sha256", "Suite SHA-256"], ["workload_sha256", "Workload SHA-256"],
 ];
 const configValue = (run, field) => {
   if (field === "execution_environment") {
@@ -460,7 +456,6 @@ function selectDataset(index) {
     fieldRows(visibleFields) +
     (changed.has("suite_sha256") ? `<tr><td>Test definition</td><td colspan="${detailRuns.length}">File changed. ${sourceDiffLink(selected)}</td></tr>` : "") +
     "</tbody>";
-  el("technical-details").innerHTML = header + "<tbody>" + fieldRows(technicalFields) + "</tbody>";
   el("history-title").textContent = selected.suite + " · run history";
   el("history").innerHTML = `
     <thead><tr><th>When</th><th>Commit</th><th>Agent model</th><th>Judge</th><th class="n">k</th>
