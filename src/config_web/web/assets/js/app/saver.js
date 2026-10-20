@@ -150,6 +150,9 @@ export function createSaver(context, options) {
     refreshChrome();
     try {
       const payload = await patchConfig(patch);
+      // A newer change to the same key may have finished first; do not let this
+      // older response overwrite UI state or toast through onSaved.
+      if (sequence.get(key) !== current) return 'superseded';
       saved(payload);
       if (needsRestart(payload.apply)) {
         // The plan was unavailable and the change turned out to need a
@@ -161,6 +164,7 @@ export function createSaver(context, options) {
       toast(msg('basic.saved', '已保存'));
       return 'saved';
     } catch (error) {
+      if (sequence.get(key) !== current) return 'superseded';
       toastError(error);
       return 'failed';
     }
