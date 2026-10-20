@@ -58,7 +58,7 @@ func configureWebSocketProxy(dialer *websocket.Dialer, cfg tts.ProxyConfig) erro
 		}
 	case "http", "https":
 		dialer.Proxy = func(req *http.Request) (*url.URL, error) {
-			if req != nil && req.URL != nil && bypassProxy(req.URL.Hostname(), req.URL.Port(), cfg.NoProxy) {
+			if req != nil && req.URL != nil && netproxy.Bypass(req.URL.Hostname(), req.URL.Port(), cfg.NoProxy) {
 				return nil, nil
 			}
 			return u, nil
@@ -75,50 +75,4 @@ func parseProxyURL(raw string) (*url.URL, error) {
 		return nil, err
 	}
 	return u, nil
-}
-
-func bypassProxy(host, port, noProxy string) bool {
-	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
-	if host == "" {
-		return false
-	}
-	hostPort := host
-	if port != "" {
-		hostPort = net.JoinHostPort(host, port)
-	}
-	for _, rawRule := range strings.FieldsFunc(noProxy, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
-		rule := strings.TrimSpace(strings.ToLower(rawRule))
-		if rule == "" {
-			continue
-		}
-		if rule == "*" {
-			return true
-		}
-		if strings.Contains(rule, "/") {
-			if ip := net.ParseIP(host); ip != nil {
-				if _, network, err := net.ParseCIDR(rule); err == nil && network.Contains(ip) {
-					return true
-				}
-			}
-			continue
-		}
-		if strings.Contains(rule, ":") && !strings.HasPrefix(rule, ".") {
-			if strings.EqualFold(hostPort, rule) {
-				return true
-			}
-			continue
-		}
-		if strings.HasPrefix(rule, "*.") {
-			base := strings.TrimPrefix(rule, "*.")
-			if host == base || strings.HasSuffix(host, "."+base) {
-				return true
-			}
-			continue
-		}
-		rule = strings.TrimPrefix(rule, ".")
-		if host == rule || strings.HasSuffix(host, "."+rule) {
-			return true
-		}
-	}
-	return false
 }

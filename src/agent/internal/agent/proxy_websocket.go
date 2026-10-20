@@ -12,6 +12,8 @@ import (
 
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
+
+	"aiden-agent/internal/netproxy"
 )
 
 func newProxyWebSocketDialer(cfg ProxyConfig, handshakeTimeout time.Duration) (websocket.Dialer, error) {
@@ -50,14 +52,14 @@ func newProxyWebSocketDialer(cfg ProxyConfig, handshakeTimeout time.Duration) (w
 		}
 		direct := &net.Dialer{}
 		dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if host, port, err := net.SplitHostPort(addr); err == nil && bypassProxy(host, port, cfg.NoProxy) {
+			if host, port, err := net.SplitHostPort(addr); err == nil && netproxy.Bypass(host, port, cfg.NoProxy) {
 				return direct.DialContext(ctx, network, addr)
 			}
 			return ctxDialer.DialContext(ctx, network, addr)
 		}
 	case "http", "https":
 		dialer.Proxy = func(req *http.Request) (*url.URL, error) {
-			if req != nil && req.URL != nil && bypassProxy(req.URL.Hostname(), req.URL.Port(), cfg.NoProxy) {
+			if req != nil && req.URL != nil && netproxy.Bypass(req.URL.Hostname(), req.URL.Port(), cfg.NoProxy) {
 				return nil, nil
 			}
 			return u, nil
