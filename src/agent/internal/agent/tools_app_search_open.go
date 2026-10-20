@@ -110,9 +110,7 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 	}
 	platform := ""
 	if t.deviceTypeFn != nil {
-		if derived := textInputPlatformFromDeviceType(t.deviceTypeFn()); derived != "" {
-			platform = derived
-		}
+		platform = textInputPlatformFromDeviceType(t.deviceTypeFn())
 	}
 	if platform == "" && t.iosKeyboardIsolation != nil {
 		platform = "ios"
@@ -147,9 +145,6 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 	}
 	if result.Reason != "" {
 		output["reason"] = result.Reason
-	}
-	if !result.Opened {
-		output["ok"] = false
 	}
 	return jsonString(output), nil
 }
@@ -197,6 +192,15 @@ type appSearchOpenFlowConfig struct {
 	pastedQuery *bool
 }
 
+// resolvedPlatform is cfg.platform, or the entry tool's platform when the
+// caller left it empty.
+func (cfg appSearchOpenFlowConfig) resolvedPlatform() string {
+	if cfg.platform != "" {
+		return cfg.platform
+	}
+	return cfg.entryTool.platform()
+}
+
 type appSearchOpenFlowResult struct {
 	Opened   bool
 	Reason   string
@@ -239,11 +243,9 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		return interpretTextInputToolOutput(out)
 	}
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
-	if platform == "android" {
+	// Resolve once so every step below works on the same platform.
+	cfg.platform = cfg.resolvedPlatform()
+	if cfg.platform == "android" {
 		entry, err := openAndroidSystemSearch(ctx, cfg, engine)
 		result.VLMCalls += entry.vlmCalls
 		steps = append(steps, entry.steps...)
@@ -416,7 +418,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string, clearFirst, allowQuick bool) (quick bool, err error) {
 	if clearFirst {
 		engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-		if err := engine.clearField(ctx, cfg.platform); err != nil {
+		if err := engine.clearField(ctx, cfg.resolvedPlatform()); err != nil {
 			return false, err
 		}
 	}
@@ -484,14 +486,10 @@ func recoverEmptySearchPaste(ctx context.Context, cfg appSearchOpenFlowConfig, e
 	if err != nil || !field.Empty || field.SearchField == nil {
 		return false, calls, err
 	}
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
 	focus := *field.SearchField
 	logging.Infof("agent", "app_search", "search field empty after paste term=%q; trying long-press paste at %.0f,%.0f", term, focus.X, focus.Y)
 	if bridgeTool := cfg.entryTool.bridgeTool; bridgeTool != nil {
-		if err := bridgeTool.pasteViaContextMenu(ctx, engine, platform, focus); err != nil {
+		if err := bridgeTool.pasteViaContextMenu(ctx, engine, cfg.resolvedPlatform(), focus); err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return false, calls, ctxErr
 			}
@@ -523,7 +521,7 @@ func checkSearchField(ctx context.Context, cfg appSearchOpenFlowConfig, engine *
 		return searchFieldCheck{}, 0, err
 	}
 	if cfg.checkSearchFieldFn != nil {
-		check, err := cfg.checkSearchFieldFn(ctx, shot, cfg.platform)
+		check, err := cfg.checkSearchFieldFn(ctx, shot, cfg.resolvedPlatform())
 		return check, 0, err
 	}
 	modelVision, ok := cfg.vision.(*llmTextInputVision)
@@ -580,10 +578,7 @@ func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) erro
 // so only the pending composition must be committed (see
 // appSearchQuickCommitGap). It reports false when no quick query applies.
 func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (bool, error) {
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
+	platform := cfg.resolvedPlatform()
 	if platform != "ios" || cfg.exactEntryOnly {
 		return false, nil
 	}
@@ -665,10 +660,7 @@ func (e *searchQueryUnverifiedError) Error() string {
 // confirmation verify the outcome. route is empty when no background
 // clipboard route applies.
 func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (route string, err error) {
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
+	platform := cfg.resolvedPlatform()
 	if cfg.entryTool.bridgeTool == nil {
 		return "", nil
 	}

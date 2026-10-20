@@ -4,6 +4,8 @@ import "aiden-agent/internal/agent/realtimevoice"
 
 import "aiden-agent/internal/agent/constants"
 
+import "aiden-agent/internal/agent/mnk"
+
 const (
 	localeSimplifiedChinese = "zh-CN"
 	localeEnglishUS         = "en-US"
@@ -220,7 +222,7 @@ func DefaultConfig() Config {
 		},
 		HID: HIDConfig{
 			KeyboardDevice:        defaultKeyboardDevice,
-			KeyboardLayout:        defaultKeyboardLayout,
+			KeyboardLayout:        mnk.DefaultKeyboardLayout,
 			MouseDevice:           defaultMouseDevice,
 			AndroidKeyboardDevice: defaultAndroidKeyboardDevice,
 			FrameSocket:           defaultFrameServiceSocket,

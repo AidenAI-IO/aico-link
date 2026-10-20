@@ -76,7 +76,7 @@ const (
 // Devices should be shared with any ProfileGate that closes FDs across USB profile switches.
 func NewHIDProvider(pointerDev, keyboardDev, androidKeyboardDev Device, screenState *screen.ScreenState, touchscreen bool, keyboardLayout string, gate ProfileGate) *HIDProvider {
 	if keyboardLayout == "" {
-		keyboardLayout = "qwerty"
+		keyboardLayout = DefaultKeyboardLayout
 	}
 
 	return &HIDProvider{
@@ -1046,8 +1046,8 @@ func ResolveKeypressKeys(keys []string, layout string) (*resolvedKeys, error) {
 		}
 
 		if stroke, ok := keyboardLayoutTapKeyStroke(layout, normalized); ok {
-			resolved.modifier |= stroke.modifier
-			resolved.keys = append(resolved.keys, stroke.usage)
+			resolved.modifier |= stroke.Modifier
+			resolved.keys = append(resolved.keys, stroke.Usage)
 			continue
 		}
 
