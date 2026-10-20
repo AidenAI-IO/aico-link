@@ -142,7 +142,7 @@ func TestSearchPiPClipboardFailureFallsBackToLocal(t *testing.T) {
 }
 
 func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *testing.T) {
-	for _, state := range []string{"no_pip", "foreground", "android_fgs"} {
+	for _, state := range []string{"no_pip", "foreground", "android_stale_fgs"} {
 		t.Run(state, func(t *testing.T) {
 			pb := newTestPhoneBridge(t)
 			pb.platform, pb.appState = "ios", "background"
@@ -151,10 +151,12 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 			if state == "foreground" {
 				pb.appState, pb.connected = "active", true
 			}
-			if state == "android_fgs" {
+			if state == "android_stale_fgs" {
+				// An FGS report older than the background-state window is not
+				// a reliable clipboard route.
 				pb.platform = "android"
 				pb.fgsBridgeSeen, pb.fgsBridgeEnabled = true, true
-				pb.fgsBridgeAt = time.Now()
+				pb.fgsBridgeAt = time.Now().Add(-phoneBridgeBackgroundStateMaxAge - time.Second)
 			}
 			pb.NoteClipboardWrite("Aiden")
 			keyboard := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
@@ -183,6 +185,46 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 				t.Fatalf("keyboard calls = %v, want local probe and query", keyboard.calls)
 			}
 		})
+	}
+}
+
+func TestSearchQueryPastesThroughAndroidFGSClipboard(t *testing.T) {
+	pb := newTestPhoneBridge(t)
+	pb.platform, pb.appState = "android", "background"
+	pb.fgsBridgeSeen, pb.fgsBridgeEnabled = true, true
+	pb.fgsBridgeAt = time.Now()
+	keyboard := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
+	quick := &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
+	hw := &textInputHardwareDeps{
+		deviceTypeFn: func() string { return "android" },
+		keyboardText: keyboard, quickAction: quick,
+		keyboardTap: &recordingTextInputTool{name: "keyboard_tap", out: "ok"},
+		screenshot:  textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+	}
+	vision := unexpectedSearchFieldVision{t: t}
+	var written []string
+	entry := &EnterTextTool{
+		engine: newFastTextInputEngine(*hw, vision),
+		bridgeTool: &textInputBridge{
+			hw: hw, vision: vision, bridgeFn: func() *PhoneBridge { return pb }, sleep: testNoWaitSleep,
+			clipboardWriteFn: func(_ context.Context, _ *PhoneBridge, text string) error {
+				written = append(written, text)
+				return nil
+			},
+		},
+	}
+	quickQuery, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, "备忘录", false, true)
+	if err != nil || quickQuery {
+		t.Fatalf("quick=%v err=%v", quickQuery, err)
+	}
+	if !slices.Equal(written, []string{"备忘录"}) {
+		t.Fatalf("clipboard writes = %v", written)
+	}
+	if len(quick.calls) != 1 || !strings.Contains(quick.calls[0], "paste") {
+		t.Fatalf("quick actions = %v, want one paste", quick.calls)
+	}
+	if len(keyboard.calls) != 0 {
+		t.Fatalf("keyboard_text = %v, want no local IME entry after the paste", keyboard.calls)
 	}
 }
 
@@ -452,4 +494,104 @@ func countDelays(delays []time.Duration, want time.Duration) int {
 		}
 	}
 	return count
+}
+
+// androidFGSSearchFlow builds an Android open_app search flow whose query is
+// pasted through the FGS clipboard route.
+func androidFGSSearchFlow(t *testing.T, found func(call int) bool, fields ...searchFieldCheck) (appSearchOpenFlowConfig, *androidSearchEntryHarness, *int) {
+	t.Helper()
+	pb := newTestPhoneBridge(t)
+	pb.platform, pb.appState = "android", "background"
+	pb.fgsBridgeSeen, pb.fgsBridgeEnabled = true, true
+	pb.fgsBridgeAt = time.Now()
+	h := newAndroidSearchEntryHarness(&androidSearchEntryStore{}, "phone-1", androidSearchCheck{SearchOpen: true})
+	hw := h.cfg.hw
+	hw.deviceTypeFn = func() string { return "android" }
+	hw.quickAction = &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`}
+	entry := &EnterTextTool{
+		engine: newFastTextInputEngine(*hw, h.cfg.vision),
+		bridgeTool: &textInputBridge{
+			hw: hw, vision: h.cfg.vision, bridgeFn: func() *PhoneBridge { return pb }, sleep: testNoWaitSleep,
+			clipboardWriteFn: func(context.Context, *PhoneBridge, string) error { return nil },
+			findPasteMenuFn: func(context.Context, screenshotResult, string) (pasteMenuResult, error) {
+				return pasteMenuResult{Found: true, TapPoint: &focusPointArgs{X: 300, Y: 160}, Label: "粘贴"}, nil
+			},
+		},
+	}
+	lookups, fieldChecks := 0, 0
+	cfg := h.cfg
+	cfg.searchTerm, cfg.entryTool = "便签", entry
+	cfg.findAppTapFn = func(context.Context, screenshotResult, string) (bridgeSearchResult, error) {
+		lookups++
+		if found(lookups) {
+			return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 200, Y: 300}}, nil
+		}
+		return bridgeSearchResult{}, nil
+	}
+	cfg.confirmAppOpenFn = func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
+		return bridgeAppOpenResult{Opened: true}, nil
+	}
+	cfg.checkSearchFieldFn = func(context.Context, screenshotResult, string) (searchFieldCheck, error) {
+		check := fields[len(fields)-1]
+		if fieldChecks < len(fields) {
+			check = fields[fieldChecks]
+		}
+		fieldChecks++
+		return check, nil
+	}
+	return cfg, h, &fieldChecks
+}
+
+func TestOpenAppSearchRetriesEmptyPasteThroughLongPressMenu(t *testing.T) {
+	field := &focusPointArgs{X: 500, Y: 92}
+	cfg, h, fieldChecks := androidFGSSearchFlow(t, func(call int) bool { return call > 2 },
+		searchFieldCheck{Empty: true, SearchField: field}, searchFieldCheck{SearchField: field})
+	result, err := runAppSearchOpenFlow(context.Background(), cfg)
+	if err != nil || !result.Opened {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if *fieldChecks != 2 {
+		t.Fatalf("field checks = %d, want one before and one after the menu paste", *fieldChecks)
+	}
+	var press, menuTap bool
+	for _, call := range h.touch.calls {
+		press = press || (strings.Contains(call, `"long_press"`) && strings.Contains(call, `"x": 500`))
+		menuTap = menuTap || strings.Contains(call, `"x": 300`)
+	}
+	if !press || !menuTap {
+		t.Fatalf("touch calls = %v, want a long press on the field and a paste-menu tap", h.touch.calls)
+	}
+	if len(h.keyboardText.calls) != 0 {
+		t.Fatalf("keyboard_text = %v, want no local typing after the menu paste worked", h.keyboardText.calls)
+	}
+}
+
+func TestOpenAppSearchTypesLocallyWhenMenuPasteLeavesFieldEmpty(t *testing.T) {
+	cfg, h, _ := androidFGSSearchFlow(t, func(call int) bool { return call > 2 },
+		searchFieldCheck{Empty: true, SearchField: &focusPointArgs{X: 500, Y: 92}})
+	cfg.exactEntryOnly = true
+	result, err := runAppSearchOpenFlow(context.Background(), cfg)
+	if err != nil || !result.Opened {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if len(h.keyboardText.calls) == 0 {
+		t.Fatal("want local keyboard entry after the menu paste left the field empty")
+	}
+}
+
+func TestOpenAppSearchKeepsFallbackTermsWhenPastedQueryIsInField(t *testing.T) {
+	cfg, h, fieldChecks := androidFGSSearchFlow(t, func(int) bool { return false },
+		searchFieldCheck{SearchField: &focusPointArgs{X: 500, Y: 92}})
+	result, err := runAppSearchOpenFlow(context.Background(), cfg)
+	if err != nil || result.Opened {
+		t.Fatalf("result=%+v err=%v", result, err)
+	}
+	if *fieldChecks != 1 {
+		t.Fatalf("field checks = %d, want one", *fieldChecks)
+	}
+	for _, call := range h.touch.calls {
+		if strings.Contains(call, `"long_press"`) {
+			t.Fatalf("touch calls = %v, want no long press when the query reached the field", h.touch.calls)
+		}
+	}
 }
