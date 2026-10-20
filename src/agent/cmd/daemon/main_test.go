@@ -1359,6 +1359,41 @@ func (w *fakeWakeupWatcher) Stop() {
 	w.stopCount++
 }
 
+func TestStartWakeupWatchersIfEnabledSkipsWhenDisabled(t *testing.T) {
+	disabled := false
+	factoryCalls := 0
+	watchers, err := startWakeupWatchersIfEnabled(agent.Config{GPIOWakeupEnabled: &disabled}, func(pin int, callback func()) (wakeupWatcher, error) {
+		factoryCalls++
+		return &fakeWakeupWatcher{callback: callback}, nil
+	}, func() {})
+	if err != nil {
+		t.Fatalf("startWakeupWatchersIfEnabled() error = %v", err)
+	}
+	if watchers != nil {
+		t.Fatalf("watchers = %#v, want nil when tap wakeup disabled", watchers)
+	}
+	if factoryCalls != 0 {
+		t.Fatalf("factoryCalls = %d, want 0", factoryCalls)
+	}
+}
+
+func TestStartWakeupWatchersIfEnabledRegistersWhenEnabled(t *testing.T) {
+	enabled := true
+	watchersByPin := map[int]*fakeWakeupWatcher{}
+	watchers, err := startWakeupWatchersIfEnabled(agent.Config{GPIOWakeupEnabled: &enabled}, func(pin int, callback func()) (wakeupWatcher, error) {
+		watcher := &fakeWakeupWatcher{callback: callback}
+		watchersByPin[pin] = watcher
+		return watcher, nil
+	}, func() {})
+	if err != nil {
+		t.Fatalf("startWakeupWatchersIfEnabled() error = %v", err)
+	}
+	defer stopWakeupWatchers(watchers)
+	if len(watchers) != 2 || watchersByPin[32] == nil || watchersByPin[33] == nil {
+		t.Fatalf("watchers pins = %#v, want GPIO 32 and 33", watchersByPin)
+	}
+}
+
 func TestStartWakeupWatchersRegistersGPIO32And33Callbacks(t *testing.T) {
 	advanceWakeup := withWakeupDebounceClock(t, time.Unix(0, 0))
 	watchersByPin := map[int]*fakeWakeupWatcher{}

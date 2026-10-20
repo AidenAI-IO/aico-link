@@ -256,6 +256,7 @@ func DefaultConfig() Config {
 		VoiceFirstTurnTimeoutMs:    defaultVoiceFirstTurnTimeoutMs,
 		VoiceMaxTurns:              defaultVoiceMaxTurns,
 		VoiceInterruptOnWakeup:     defaultBoolPtr(true),
+		GPIOWakeupEnabled:          defaultBoolPtr(true),
 		VoiceStreamingTTSEnabled:   defaultBoolPtr(true),
 		VoiceToolCallSpeech:        defaultBoolPtr(true),
 		VoiceProgressSpeechEnabled: defaultBoolPtr(true),

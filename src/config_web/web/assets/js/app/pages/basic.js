@@ -10,6 +10,7 @@ import {choiceSheet, localeOptions, optionLabel} from '../../ui/choice-sheet.js'
 import {dropdown} from '../../ui/dropdown.js';
 import {group, row, screen, separator} from '../../ui/list.js';
 import {icon, languageTile} from '../../ui/icon.js';
+import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
@@ -203,7 +204,27 @@ export async function basicPage(context) {
         onSelect: choose('keyboardLayout', value => ({hid: {keyboard_layout: value}})),
       }),
     });
-    replace(body, [group({rows: [language]}), group({rows: [device, keyboard]})]);
+    // Do not use configValue(): false || fallback would treat "off" as unset.
+    const gpioEnabled = snapshot?.config?.agent?.gpio_wakeup_enabled !== false;
+    const gpioToggle = switchControl({
+      checked: gpioEnabled,
+      label: msg('config.fields.agent.gpio_wakeup_enabled.label', '轻触唤醒'),
+      onChange: async next => {
+        const outcome = await saver.change('agent.gpio_wakeup_enabled', {agent: {gpio_wakeup_enabled: next}});
+        if (outcome === 'invalid' || outcome === 'failed') setChecked(gpioToggle, !next);
+      },
+    });
+    const tapWakeup = row({
+      label: msg('config.fields.agent.gpio_wakeup_enabled.label', '轻触唤醒'),
+      description: msg('config.fields.agent.gpio_wakeup_enabled.help', '开启后，轻触按键可唤醒 Aiden。'),
+      accessory: gpioToggle,
+      action: 'toggle-gpio-wakeup',
+    });
+    replace(body, [
+      group({rows: [language]}),
+      group({rows: [device, keyboard]}),
+      group({rows: [tapWakeup]}),
+    ]);
     saver.refreshChrome();
   }
   render();

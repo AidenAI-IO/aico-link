@@ -228,6 +228,9 @@ input_mode = "stt"
 # silence_ms = 550          # Silence duration to end utterance (ms)
 # min_speech_ms = 300       # Minimum speech duration to accept (ms)
 
+# Tap button wakeup on GPIO 32/33 (Classic and Realtime). Default true.
+# gpio_wakeup_enabled = true
+
 # Wakeup voice session parameters (for Classic Mode)
 # Only used when input_mode = "stt"
 # voice_followup_enabled = false

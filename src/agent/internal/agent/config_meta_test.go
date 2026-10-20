@@ -514,6 +514,7 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_first_turn_timeout_ms", defaults.VoiceFirstTurnTimeoutMs},
 		{"agent.voice_max_turns", defaults.VoiceMaxTurns},
 		{"agent.voice_interrupt_on_wakeup", defaults.VoiceInterruptOnWakeupOrDefault()},
+		{"agent.gpio_wakeup_enabled", defaults.GPIOWakeupEnabledOrDefault()},
 		{"agent.voice_streaming_tts_enabled", defaults.VoiceStreamingTTSEnabledOrDefault()},
 		{"agent.voice_tool_call_speech", defaults.VoiceToolCallSpeechOrDefault()},
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},

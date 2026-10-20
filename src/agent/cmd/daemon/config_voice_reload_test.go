@@ -11,6 +11,16 @@ import (
 	"aiden-agent/internal/agent"
 )
 
+func TestActiveVoiceConfigTracksGPIOWakeupEnabled(t *testing.T) {
+	base := agent.DefaultConfig()
+	disabled := false
+	changed := base
+	changed.GPIOWakeupEnabled = &disabled
+	if reflect.DeepEqual(activeVoiceConfig(base), activeVoiceConfig(changed)) {
+		t.Fatal("gpio_wakeup_enabled change did not change active voice lifecycle")
+	}
+}
+
 func TestActiveVoiceConfigIgnoresInactiveProviderSettings(t *testing.T) {
 	base := agent.DefaultConfig()
 	base.InputMode = "realtime"

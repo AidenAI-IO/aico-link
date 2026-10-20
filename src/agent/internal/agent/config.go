@@ -324,6 +324,7 @@ type Config struct {
 	VoiceFirstTurnTimeoutMs    int                           `toml:"voice_first_turn_timeout_ms,omitempty"`
 	VoiceMaxTurns              int                           `toml:"voice_max_turns,omitempty"`
 	VoiceInterruptOnWakeup     *bool                         `toml:"voice_interrupt_on_wakeup,omitempty"`
+	GPIOWakeupEnabled          *bool                         `toml:"gpio_wakeup_enabled,omitempty"` // hardware tap wakeup on GPIO 32/33; default true
 	VoiceStreamingTTSEnabled   *bool                         `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                         `toml:"voice_tool_call_speech,omitempty"`
 	VoiceProgressSpeechEnabled *bool                         `toml:"voice_progress_speech_enabled,omitempty"`
@@ -2270,6 +2271,13 @@ func (c Config) VoiceFirstTurnTimeoutOrDefault() time.Duration {
 func (c Config) VoiceInterruptOnWakeupOrDefault() bool {
 	if c.VoiceInterruptOnWakeup != nil {
 		return *c.VoiceInterruptOnWakeup
+	}
+	return true
+}
+
+func (c Config) GPIOWakeupEnabledOrDefault() bool {
+	if c.GPIOWakeupEnabled != nil {
+		return *c.GPIOWakeupEnabled
 	}
 	return true
 }

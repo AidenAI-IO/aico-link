@@ -336,6 +336,17 @@ func startWakeupWatchers(newWatcher wakeupWatcherFactory, callback func()) ([]wa
 	return startWakeupWatchersWithDebounce(newWatcher, callback, wakeupDebounceInterval, wakeupDebounceNow)
 }
 
+// startWakeupWatchersIfEnabled registers GPIO 32/33 listeners when tap wakeup
+// is enabled. When disabled it returns nil watchers so voice loops keep waiting
+// on reload/signal (and realtime /api/chat) without opening sessions from hardware.
+func startWakeupWatchersIfEnabled(cfg agent.Config, newWatcher wakeupWatcherFactory, callback func()) ([]wakeupWatcher, error) {
+	if !cfg.GPIOWakeupEnabledOrDefault() {
+		logging.Infof("agent", "wakeup", "Tap wakeup disabled (gpio_wakeup_enabled=false); ignoring GPIO %s", wakeupGPIOPinsLabel())
+		return nil, nil
+	}
+	return startWakeupWatchers(newWatcher, callback)
+}
+
 type wakeupDebouncer struct {
 	mu       sync.Mutex
 	interval time.Duration
@@ -452,11 +463,13 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.GPIOWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	events := make(chan voiceEvent, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalVoiceWakeupEvent(events)
 	})
@@ -466,7 +479,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	for {
 		if reloadRequested(reload) {
@@ -490,12 +503,14 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.GPIOWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	ctx := context.Background()
 	wakeupEvents := make(chan struct{}, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalWakeupEvent(wakeupEvents)
 	})
@@ -505,7 +520,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	pendingWakeup := false
 	for {
@@ -564,12 +579,21 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 }
 
+func wakeupReadyLabel(cfg agent.Config) string {
+	if cfg.GPIOWakeupEnabledOrDefault() {
+		return wakeupGPIOPinsLabel()
+	}
+	return "tap wakeup disabled"
+}
+
 func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.GPIOWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	events := make(chan voiceEvent, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalVoiceWakeupEvent(events)
 	})
@@ -579,7 +603,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext

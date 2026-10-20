@@ -61,8 +61,9 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VADSpeechThreshold: cfg.VADSpeechThreshold, SilenceMs: cfg.SilenceMs, MinSpeechMs: cfg.MinSpeechMs,
 		VoiceFollowupEnabled: cfg.VoiceFollowupEnabled, VoiceFollowupTimeoutMs: cfg.VoiceFollowupTimeoutMs,
 		VoiceFirstTurnTimeoutMs: cfg.VoiceFirstTurnTimeoutMs, VoiceMaxTurns: cfg.VoiceMaxTurns,
-		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
-		VoiceToolCallSpeech: cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
+		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, GPIOWakeupEnabled: cfg.GPIOWakeupEnabled,
+		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
+		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
 		VoiceMaxResponseTokens: cfg.VoiceMaxResponseTokens,
 	}
 }
