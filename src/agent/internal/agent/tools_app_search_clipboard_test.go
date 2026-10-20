@@ -178,7 +178,7 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 					},
 				},
 			}
-			if _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, "Aiden", false, false); err != nil {
+			if _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "Aiden", false, false); err != nil {
 				t.Fatal(err)
 			}
 			if len(keyboard.calls) != 2 {
@@ -213,9 +213,9 @@ func TestSearchQueryPastesThroughAndroidFGSClipboard(t *testing.T) {
 			},
 		},
 	}
-	quickQuery, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, "备忘录", false, true)
-	if err != nil || quickQuery {
-		t.Fatalf("quick=%v err=%v", quickQuery, err)
+	entered, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "备忘录", false, true)
+	if err != nil || entered != searchQueryPasted {
+		t.Fatalf("entered=%v err=%v, want the pasted query", entered, err)
 	}
 	if !slices.Equal(written, []string{"备忘录"}) {
 		t.Fatalf("clipboard writes = %v", written)
