@@ -17,14 +17,38 @@ The board retains its onboard 24 MHz oscillator, I2C4 M1 at 100 kHz,
 GPIO1_A0 power enable, GPIO1_A1 active-low reset, GPIO1_B1 interrupt,
 and four continuous-clock CSI lanes. HPD is controlled by the receiver
 driver, not a GPIO-high startup workaround. The built-in EDID matches
-`edid/hdmi_1080p30_cta.hex` and advertises 1080p30 only. The libaiden
-fallback uses the same EDID. This preserves 1920x1080 capture while limiting
-the HDMI pixel clock to 74.25 MHz. With the tested Android source, the
+`edid/hdmi_1080p60_cta.hex` and advertises 1080p60 by default. The frame
+service applies the selected profile specifically to RK628; the generic
+libaiden fallback remains 1080p30 for TC358743 compatibility. A persistent
+1080p30 compatibility profile
+preserves 1920x1080 capture while limiting the HDMI pixel clock to 74.25 MHz. With the tested Android source, the
 onboard Type-C bridge path repeatedly lost all three data-channel locks at
 148.5 MHz, including with capture stopped and HPD held steady. Both 720p60
 and 1080p30 locked correctly at 74.25 MHz. This is a compatibility limit for
 the observed path; it does not establish which physical component causes
 the higher-rate instability.
+
+## Persistent input mode
+
+On the board, use:
+
+```bash
+sudo aiden-hdmi-mode 1080p30   # Apply compatibility mode and save it
+sudo aiden-hdmi-mode 1080p60   # Return to 60 Hz and save it
+aiden-hdmi-mode status        # Show the configured selection
+```
+
+The command atomically saves `/userdata/system/hdmi-mode` and restarts
+`aiden-frame.service`. The selection survives reboot and rootfs slot changes;
+without a saved selection, the default is 1080p60. Status reports the configured
+mode, not confirmation of a locked video input. There is no automatic downgrade.
+
+After discovering an RK628 receiver, the frame service applies the selection
+before opening capture, including when the bridge appears after service startup.
+It compares the current EDID first and applies a changed profile once; ordinary
+capture recovery does not repeat that negotiation. TC358743 retains its existing
+policy. An explicitly configured `FRAME_SERVICE_EDID` overrides this mode policy;
+keep it set to `auto` when using the mode command.
 
 An EDID change can take the Android source about 30 seconds to finish
 renegotiating. A temporary zero pixel clock during that interval does not
@@ -77,7 +101,7 @@ updates. `VIDIOC_QUERY_DV_TIMINGS` returns `EAGAIN` while configuration is busy
 and `ENOLCK` when no signal is available.
 
 Routine timing queries select single or dual MIPI mode on every successful
-query. The default 1080p30 input at about 74.25 MHz uses single MIPI mode. These selection
+query. Both 1080p60 (148.5 MHz) and 1080p30 (74.25 MHz) use single MIPI mode. These selection
 messages are available at driver debug level 1; their repetition alone does
 not indicate receiver recovery or a capture failure.
 
@@ -114,8 +138,8 @@ receiver lock loss still needs to be evaluated independently.
 Check all of the following with the connected host awake:
 
 1. Kernel log reports `RK628F/H (20230321)`.
-2. The host enumerates `Linux FHD30` at 1920x1080, 30 Hz without a manual
-   HPD override.
+2. The host enumerates `Linux FHD60` at 1920x1080, 60 Hz by default, or
+   `Linux FHD30` at 30 Hz after selecting compatibility mode.
 3. `v4l2-ctl -d /dev/v4l-subdev2 --query-dv-timings` returns locked,
    nonzero input timings. Discover the actual subdevice using
    `media-ctl -p` if numbering changes.

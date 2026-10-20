@@ -157,68 +157,55 @@ for cleanup in \
     fi
 done
 
-python3 - "$DRIVER" "$ROOT_DIR/edid/hdmi_1080p30_cta.hex" "$ROOT_DIR/src/aiden_sdk.cpp" <<'PY'
+python3 - "$DRIVER" "$ROOT_DIR" <<'PYTEST'
 import pathlib
 import re
 import sys
 
+root = pathlib.Path(sys.argv[2])
 driver = pathlib.Path(sys.argv[1]).read_text()
-fixture = bytes.fromhex(pathlib.Path(sys.argv[2]).read_text())
-sdk = pathlib.Path(sys.argv[3]).read_text()
-
-if len(fixture) != 256:
-    raise SystemExit("FAIL: HDMI 1080p30 EDID must contain two blocks")
-if any(sum(fixture[offset:offset + 128]) % 256 for offset in range(0, len(fixture), 128)):
-    raise SystemExit("FAIL: every HDMI 1080p30 EDID block must have a valid checksum")
-if fixture[20] & 0x80 == 0 or fixture[126] != 1 or fixture[128] != 0x02:
-    raise SystemExit("FAIL: RK628 EDID must describe a digital HDMI sink with one CTA extension")
-
-# Check the preferred detailed timing as well as the CTA mode. A stale
-# 148.5 MHz DTD would let sources bypass the lower-rate compatibility mode.
-dtd = fixture[54:72]
-pixel_clock = int.from_bytes(dtd[:2], "little") * 10000
-width = dtd[2] | ((dtd[4] & 0xf0) << 4)
-height = dtd[5] | ((dtd[7] & 0xf0) << 4)
-hblank = dtd[3] | ((dtd[4] & 0x0f) << 8)
-vblank = dtd[6] | ((dtd[7] & 0x0f) << 8)
-if (width, height, pixel_clock) != (1920, 1080, 74250000):
-    raise SystemExit("FAIL: preferred RK628 timing must be 1920x1080 at 74.25 MHz")
-if pixel_clock != 30 * (width + hblank) * (height + vblank):
-    raise SystemExit("FAIL: preferred RK628 timing must use a 30 Hz refresh rate")
-
-cta = fixture[128:]
-dtd_offset = cta[2]
-video_vics = []
-has_hdmi_vsdb = False
-offset = 4
-while offset < dtd_offset:
-    header = cta[offset]
-    tag = header >> 5
-    length = header & 0x1f
-    payload = cta[offset + 1:offset + 1 + length]
-    if len(payload) != length:
-        raise SystemExit("FAIL: HDMI CTA extension contains a truncated data block")
-    if tag == 2:
-        video_vics.extend(value & 0x7f for value in payload)
-    elif tag == 3 and payload[:3] == bytes((0x03, 0x0c, 0x00)):
-        has_hdmi_vsdb = True
-    offset += 1 + length
-
-if video_vics != [34] or not has_hdmi_vsdb:
-    raise SystemExit("FAIL: RK628 default EDID must advertise HDMI CTA VIC 34 (1080p30) only")
+sdk = (root / "src/aiden_sdk.cpp").read_text()
+fixtures = {}
+for mode, rate, vic, clock in (("1080p60", 60, 16, 148500000), ("1080p30", 30, 34, 74250000)):
+    fixture = bytes.fromhex((root / f"edid/hdmi_{mode}_cta.hex").read_text())
+    fixtures[mode] = fixture
+    assert len(fixture) == 256, f"{mode}: expected two EDID blocks"
+    assert all(sum(fixture[i:i+128]) % 256 == 0 for i in (0, 128)), f"{mode}: bad checksum"
+    assert fixture[20] & 0x80 and fixture[126] == 1 and fixture[128] == 2
+    packaged = bytes.fromhex((root / f"overlay-debian/usr/share/aiden/hdmi/hdmi_{mode}_cta.hex").read_text())
+    assert packaged == fixture, f"{mode}: installed EDID differs from fixture"
+    dtd = fixture[54:72]
+    pixel_clock = int.from_bytes(dtd[:2], "little") * 10000
+    width = dtd[2] | ((dtd[4] & 0xf0) << 4)
+    height = dtd[5] | ((dtd[7] & 0xf0) << 4)
+    hblank = dtd[3] | ((dtd[4] & 0x0f) << 8)
+    vblank = dtd[6] | ((dtd[7] & 0x0f) << 8)
+    assert (width, height, pixel_clock) == (1920, 1080, clock), mode
+    assert pixel_clock == rate * (width + hblank) * (height + vblank), mode
+    cta = fixture[128:]
+    video_vics = []
+    has_hdmi_vsdb = False
+    offset = 4
+    while offset < cta[2]:
+        header = cta[offset]
+        length = header & 0x1f
+        assert offset + 1 + length <= cta[2], f"{mode}: truncated CTA block"
+        payload = cta[offset+1:offset+1+length]
+        if header >> 5 == 2:
+            video_vics.extend(value & 0x7f for value in payload)
+        elif header >> 5 == 3 and payload[:3] == bytes((3, 12, 0)):
+            has_hdmi_vsdb = True
+        offset += 1 + length
+    assert video_vics == [vic] and has_hdmi_vsdb, f"{mode}: unexpected CTA modes"
 
 
-def extract_edid(source, declaration, missing_message):
+def extract_edid(source, declaration):
     match = re.search(declaration + r"\s*=\s*\{(?P<body>.*?)\};", source, re.DOTALL)
-    if not match:
-        raise SystemExit(missing_message)
+    assert match, f"Missing {declaration}"
     return bytes(int(value, 16) for value in re.findall(r"0x([0-9A-Fa-f]{2})", match.group("body")))
 
-
-driver_edid = extract_edid(driver, r"static u8 edid_init_data\[\]", "FAIL: RK628 default EDID is missing")
-sdk_edid = extract_edid(sdk, r"static const uint8_t kDefaultHdmiEdid1080p30\[\]", "FAIL: libaiden default EDID is missing")
-if driver_edid != fixture or sdk_edid != fixture:
-    raise SystemExit("FAIL: RK628 and libaiden must use the same 1080p30 EDID")
-PY
+assert extract_edid(driver, r"static u8 edid_init_data\[\]") == fixtures["1080p60"]
+assert extract_edid(sdk, r"static const uint8_t kDefaultHdmiEdid1080p30\[\]") == fixtures["1080p30"]
+PYTEST
 
 echo "PASS: RK628F driver integration contract"

@@ -182,10 +182,11 @@ suites:
 
   - name: rk628-recovery
     class: deterministic
-    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, scripts/test_rk628d_driver.sh]
+    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aiden/aiden-hdmi-mode, edid, overlay-debian/usr/share/aiden/hdmi]
     command: |
       python3 tests/test_rk628_recovery.py
       bash scripts/test_rk628d_driver.sh
+      python3 tests/test_hdmi_mode_cli.py
     quick: true
     dependencies: [python3, gcc, bash]
     required_inputs:

@@ -100,6 +100,7 @@ add_library(aiden STATIC
     src/frame_ipc.cpp
     src/frame_capture_manager.cpp
     src/frame_camera_capture_source.cpp
+    src/rk628_hdmi_mode.cpp
     src/frame_layout.cpp
     src/frame_processing.cpp
     src/frame_ring_buffer.cpp

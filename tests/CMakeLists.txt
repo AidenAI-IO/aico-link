@@ -22,6 +22,7 @@ set(AIDEN_TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/uds_server.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_ipc.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_capture_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/rk628_hdmi_mode.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_layout.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_processing.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_service_client.cpp
@@ -108,6 +109,7 @@ add_executable(aiden_tests
     aiden_log_test.cpp
     frame_service_protocol_test.cpp
     frame_service_defaults_test.cpp
+    rk628_hdmi_mode_test.cpp
     uds_message_test.cpp
     uds_client_server_test.cpp
     frame_ring_buffer_test.cpp

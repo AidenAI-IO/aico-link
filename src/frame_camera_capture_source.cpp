@@ -1,5 +1,6 @@
 #include "frame_camera_capture_source.h"
 #include "aiden_log.h"
+#include "rk628_hdmi_mode.h"
 #include <chrono>
 #include <dirent.h>
 #include <errno.h>
@@ -116,6 +117,7 @@ bool FrameCameraCaptureSource::open() {
     if (auto_subdev_) {
         subdev_device_ = detect_hdmi_subdev(&bridge_name);
         if (subdev_device_.empty()) {
+            prepared_mode_subdev_.clear();
             AIDEN_LOG_WARN("hdmi", "bridge_not_ready",
                            "attempt=%llu frame capture will retry until an HDMI bridge appears",
                            static_cast<unsigned long long>(open_attempt));
@@ -181,7 +183,7 @@ bool FrameCameraCaptureSource::open() {
         auto_force_trigger_pending_ = false;
         config_.force_trigger = force_trigger_pending_;
         config_.allow_edid_fallback = false;
-        if (auto_edid_) {
+        if (auto_edid_ && bridge_name.find("rk628-csi") == std::string::npos) {
             edid_path_.clear();
         }
     } else {
@@ -256,6 +258,28 @@ bool FrameCameraCaptureSource::open() {
             errno = lock_errno;
             return false;
         }
+    }
+
+    // Apply only after discovery and device ownership, including a bridge
+    // registered after service startup. Recovery keeps the accepted EDID;
+    // it must not repeatedly interrupt the source's negotiation.
+    if (auto_edid_ && bridge_name.find("rk628-csi") != std::string::npos &&
+        prepared_mode_subdev_ != subdev_device_) {
+        const int fd = ::open(subdev_device_.c_str(), O_RDWR | O_CLOEXEC);
+        const bool prepared = fd >= 0 && prepare_rk628_hdmi_mode(
+            fd, "/userdata/system/hdmi-mode", "/usr/share/aiden/hdmi", &edid_path_);
+        const int prepare_errno = errno;
+        if (fd >= 0) {
+            ::close(fd);
+        }
+        if (!prepared) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            errno = prepare_errno;
+            return false;
+        }
+        prepared_mode_subdev_ = subdev_device_;
+        sync_config_strings();
     }
 
     AIDEN_LOG_INFO("camera_source", "camera_init_started",
