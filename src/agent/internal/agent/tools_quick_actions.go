@@ -693,17 +693,7 @@ func (t *QuickActionTool) delegate(ctx context.Context, toolName, payload string
 var sleepQuickActionDelay = realSleepQuickActionDelay
 
 func realSleepQuickActionDelay(ctx context.Context, delayMs int) error {
-	if delayMs <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return sleepWithContext(ctx, time.Duration(delayMs)*time.Millisecond)
 }
 
 func (t *QuickActionTool) listJSON(platform string) string {

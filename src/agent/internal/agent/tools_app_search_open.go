@@ -26,20 +26,6 @@ const appSearchPointerRestoreSettleDelay = 800 * time.Millisecond
 // result. iOS can ignore a second tap that follows too quickly.
 const appSearchQuickCommitGap = 800 * time.Millisecond
 
-func sleepWithContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 type appSearchOpenTool struct {
 	hw                   *textInputHardwareDeps
 	vision               textInputVision

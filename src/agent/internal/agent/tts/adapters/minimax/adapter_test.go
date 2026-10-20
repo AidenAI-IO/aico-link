@@ -257,6 +257,23 @@ func TestWebSocketDialerFallsBackToHTTPProxy(t *testing.T) {
 	}
 }
 
+func TestWebSocketDialerHonorsIPv6NoProxy(t *testing.T) {
+	dialer, err := websocketDialerForConfig(commonConfig{
+		proxy: tts.ProxyConfig{AllProxy: "http://127.0.0.1:7890", NoProxy: "::1"},
+	})
+	if err != nil {
+		t.Fatalf("websocketDialerForConfig() error = %v", err)
+	}
+
+	proxyURL, err := dialer.Proxy(&http.Request{URL: mustURL(t, "ws://[::1]:8080/ws")})
+	if err != nil {
+		t.Fatalf("Proxy() error = %v", err)
+	}
+	if proxyURL != nil {
+		t.Fatalf("proxy URL = %v, want direct connection for NO_PROXY ::1", proxyURL)
+	}
+}
+
 func TestWebSocketRejectsInvalidAudioHex(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
