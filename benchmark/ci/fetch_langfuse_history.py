@@ -226,6 +226,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         "commit_sha": metadata.get("git_sha") or "unknown",
         "suite": metadata.get("benchmark_suite") or "unknown",
         "source": source,
+        "workload_task_ids": metadata.get("workload_task_ids"),
         "execution_environment": metadata.get("execution_environment"),
         "skill_discovery": {
             "read": scores.get("observations.skill_read_device_operator.passed_tasks"),

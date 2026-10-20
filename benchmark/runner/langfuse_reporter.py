@@ -1209,6 +1209,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "benchmark_suite": artifacts.suite.name,
         "suite_sha256": artifacts.suite.sha256,
         "workload_sha256": _workload_sha256(artifacts.results),
+        "workload_task_ids": sorted({str(row["task_id"]).strip() for row in artifacts.results}),
         "artifact_sha256": _artifact_sha256(artifacts),
         "metrics_schema_version": manifest.get("metrics_schema_version"),
         "metrics_k": manifest.get("metrics_k"),

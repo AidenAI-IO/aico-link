@@ -46,7 +46,7 @@ def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     # One workflow run covers every suite, so a 2-task suite must not count as
     # much as a 10-task one: 11/12 is the run's rate, not the mean of 0.5 and 1.0.
     history = [
-        _record(suite="small", tasks=2, passed=1, pass_at_1=0.5),
+        _record(suite="small", tasks=2, passed=1, pass_at_1=0.5, workload_task_ids=["a", "b"]),
         _record(suite="large", tasks=10, passed=10, pass_at_1=1.0),
     ]
 
@@ -57,6 +57,7 @@ def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     assert runs[0]["passed"] == 11
     assert runs[0]["pass_at_1"] == 11 / 12
     assert [suite["suite"] for suite in runs[0]["suites"]] == ["large", "small"]
+    assert runs[0]["suites"][1]["workload_task_ids"] == ["a", "b"]
 
 
 def test_group_into_runs_separates_workflow_runs_and_orders_them_oldest_first() -> None:
@@ -430,6 +431,9 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
+    assert 'Configuration context' not in html
+    assert 'How to read these results' not in html
+    assert 'Metric definitions' in html
     assert '<h2>Data availability</h2>' not in html
     assert 'Latest pass@1 by dataset' not in html
     assert 'Latest failure stages by dataset' not in html
@@ -515,29 +519,25 @@ if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) 
 if (el('measurement-wrap-latency').hidden) process.exit(46);
 const assert = require('node:assert/strict');
 assert(!overviewHTML.includes('Config changed') && !overviewHTML.includes('Config unverified'));
-const memoryComparisons = datasets.filter(s => s.capability === 'Memory');
-const grouped = configurationGroups(memoryComparisons);
-assert.equal(grouped.length, 1);
-assert.equal(grouped[0].datasets.length, 2);
-assert.deepEqual(grouped[0].common, ['judge_prompt_version', 'git_branch']);
-const contextHTML = el('configuration-groups').innerHTML;
-assert.equal((contextHTML.match(/Judge prompt: v2 → v3/g) || []).length, 1);
-assert(contextHTML.includes('1 dataset has additional configuration differences'));
-assert(contextHTML.includes('&lt;img src=x&gt;') && !contextHTML.includes('<img'));
-assert(!el('configuration-context').hidden);
-const differentAttempt = structuredClone(memoryComparisons);
-differentAttempt[1].latest.workflow_run_attempt = 2;
-assert.equal(configurationGroups(differentAttempt).length, 2);
-const differentBaseline = structuredClone(memoryComparisons);
-differentBaseline[1].previous.workflow_run_id = 99;
-assert.equal(configurationGroups(differentBaseline).length, 2);
-const unknownIdentity = structuredClone(memoryComparisons);
-unknownIdentity.forEach(s => { s.latest.workflow_run_id = null; });
-assert.equal(configurationGroups(unknownIdentity).length, 2);
-const differingValues = structuredClone(memoryComparisons);
-differingValues[1].latest.judge_prompt_version = 'v4';
-assert.deepEqual(configurationGroups(differingValues)[0].common, ['git_branch']);
-assert.deepEqual(configurationGroups([]), []);
+assert(!elements.has('configuration-context'));
+assert(!elements.has('comparison-note'));
+const memoryComparison = datasets.find(s => s.suite === 'memory_v1');
+assert(comparisonExplanation(memoryComparison).includes('Test definition file changed'));
+assert(!comparisonExplanation(memoryComparison).includes('Branch:'));
+const repeated = structuredClone(memoryComparison);
+repeated.changed_fields = ['metrics_k', 'workload_sha256'];
+Object.assign(repeated.previous, {workload_task_ids: '["a","b"]', tasks: 2, metrics_k: 1, total_attempts: 2});
+Object.assign(repeated.latest, {workload_task_ids: ['b','a'], tasks: 2, metrics_k: 3, total_attempts: 6});
+assert.equal(comparisonExplanation(repeated), 'Attempts per task: 1 → 3.');
+repeated.latest.workload_task_ids = ['a','c'];
+assert(comparisonExplanation(repeated).includes('Task selection or attempt coverage changed'));
+repeated.latest.workload_task_ids = ['a','b'];
+repeated.latest.total_attempts = 5;
+assert(comparisonExplanation(repeated).includes('attempt coverage changed'));
+repeated.latest.workload_task_ids = null;
+assert(comparisonExplanation(repeated).includes('attempt coverage changed'));
+const branchOnly = {...memoryComparison, changed_fields: ['git_branch']};
+assert.equal(comparisonExplanation(branchOnly), 'No evaluation setting changes recorded.');
 assert.deepEqual(DATA.capabilities, ['Memory', 'Shell utilities', 'Diagnostics', 'Other']);
 assert(!overviewHTML.includes('skill_discovery_v1'));
 assert(el('diagnostic-results').innerHTML.includes('Skill read: 25.0%'));
@@ -566,7 +566,15 @@ assert(buttons.every(button => button['aria-pressed'] === String(button.dataset.
 const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
 openDataset(memoryIndex);
 assert(el('comparison-details').textContent.includes('Judge prompt: v2 → v3'));
-assert(el('run-details').innerHTML.includes('memory-v2'));
+assert(!el('run-details').innerHTML.includes('memory-v2'));
+assert(el('technical-details').innerHTML.includes('memory-v2'));
+assert(el('run-details').innerHTML.includes('Test definition'));
+assert(el('run-details').innerHTML.includes('&lt;img src=x&gt;'));
+assert(!el('run-details').innerHTML.includes('<img'));
+assert(el('run-details').innerHTML.includes('Attempts per task'));
+assert(!el('run-details').innerHTML.includes('Judge provider'));
+assert(sourceDiffLink({...memoryComparison, latest: {...memoryComparison.latest, commit_sha: 'bbbb2222'}}).includes('/compare/aaaaaaaa1111..bbbb2222'));
+assert.equal(sourceDiffLink(memoryComparison), '');
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-trends').hidden, false);
 openFailures(memoryIndex);
@@ -577,7 +585,6 @@ clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
 assert(rows.every(row => !row.hidden));
 clickFilter('trend-capabilities', 'Shell utilities');
-assert(el('configuration-context').hidden);
 assert.equal(selected.suite, 'shell_utility_v1');
 assert(el('dataset-context').textContent.includes('Isolated'));
 assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));

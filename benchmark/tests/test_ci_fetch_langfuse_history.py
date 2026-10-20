@@ -73,7 +73,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
         assert request.method == "GET"
         if request.url.path == "/api/public/experiments":
             assert request.url.params["fields"] == "core,metadata"
-            return _response([_experiment()], "experiments-next") if not request.url.params.get("cursor") else _response([])
+            return _response([_experiment(workload_task_ids='["task-a"]')], "experiments-next") if not request.url.params.get("cursor") else _response([])
         assert request.url.path == "/api/public/v3/scores"
         assert request.url.params["experimentId"] == "exp-1"
         assert {"capability.pass_at_k.eligible_tasks", "capability.pass_pow_k",
@@ -87,6 +87,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
     assert not result.warnings
     assert len(requests) == 4
     record = result.records[0]
+    assert record["workload_task_ids"] == '["task-a"]'
     assert record["pass_at_1"] == 0.9375
     assert record["passed"] == 15
     assert record["eligible_tasks"] == 16

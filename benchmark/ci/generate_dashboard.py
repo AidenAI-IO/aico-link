@@ -147,6 +147,7 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "environment_label": environment_of(record),
             "skill_discovery": record.get("skill_discovery") or {},
             "tasks": tasks,
+            "workload_task_ids": record.get("workload_task_ids"),
             "passed": passed,
             "eligible_tasks": eligible,
             "pass_at_1": record.get("pass_at_1"),

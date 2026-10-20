@@ -534,6 +534,7 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     assert run_scores["observations.used_memory.pass_rate"] == 1.0
     assert client.experiment["metadata"]["git_sha"] == "abc123"
     assert len(client.experiment["metadata"]["workload_sha256"]) == 64
+    assert json.loads(client.experiment["metadata"]["workload_task_ids"]) == ["task-a"]
     assert client.spans[0]["metadata"]["aiden_episode_id"] == "episode-a"
     trace_id = uuid.uuid5(uuid.NAMESPACE_URL, "episode-a").hex
     expected_url = f"http://langfuse.local/project/project-1/traces/{trace_id}"
