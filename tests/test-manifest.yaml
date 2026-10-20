@@ -182,7 +182,7 @@ suites:
 
   - name: rk628-recovery
     class: deterministic
-    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, scripts/test_rk628d_driver.sh]
+    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, scripts/test_rk628d_driver.sh]
     command: |
       python3 tests/test_rk628_recovery.py
       bash scripts/test_rk628d_driver.sh
@@ -192,6 +192,8 @@ suites:
       - pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/rk628_csi_v4l2.c
       - tests/rk628_csi_start_harness.c
       - tests/rkcif_start_harness.c
+      - tests/rk628_timing_harness.c
+      - pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/rk628_hdmirx.c
       - pico-sdk/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/capture.c
     required: true
     timeout_seconds: 60

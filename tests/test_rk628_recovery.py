@@ -431,9 +431,16 @@ def main():
         cif_source = (ROOT / "pico-sdk/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/capture.c").read_text()
         cif_startup = (ROOT / "tests/rkcif_start_harness.c").read_text().replace(
             "/* DRIVER_FUNCTIONS */", extract_function(cif_source, "rkcif_do_start_stream"))
+        timing_source = (DRIVER.parent / "rk628_hdmirx.c").read_text()
+        timing = (ROOT / "tests/rk628_timing_harness.c").read_text().replace(
+            "/* DRIVER_FUNCTIONS */", "\n".join(extract_function(timing_source, name) for name in (
+                "rk628_hdmirx_check_lock", "rk628_hdmirx_try_to_get_timing",
+                "rk628_hdmirx_get_timings",
+            )))
         compiler = shlex.split(os.environ.get("CC", "gcc"))
         for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
-                           ("startup", startup), ("cif-startup", cif_startup)):
+                           ("startup", startup), ("cif-startup", cif_startup),
+                           ("timing", timing)):
             harness = Path(directory) / (name + ".c")
             binary = Path(directory) / name
             harness.write_text(body)

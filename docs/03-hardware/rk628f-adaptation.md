@@ -48,6 +48,15 @@ current stream running. Link loss or a real mode/color change still stops
 the stream and retrains the receiver. Timing queries cannot replace the
 configured comparison baseline during the debounce interval.
 
+AVI packets can continue advertising 1080p60 while the receiver loses data-channel
+lock and measures fewer than 1080 active lines. The standard-mode lookup alone
+therefore cannot establish stable video. Each sample used for timing acquisition
+checks the clock and all three data-channel locks before and after reading the
+timings. Lock loss breaks the sequence of eight stable samples, returns `ENOLCK`,
+and clears the output timings; register-read errors retain their original errno.
+This prevents stale AVI metadata from publishing input readiness. It does not
+repair an unstable HDMI link or guarantee subsequent frame delivery.
+
 The parent HDMI interrupt stays masked during recovery and leaf-mask
 updates. This prevents a pending interrupt from monopolizing I2C while the
 recovery worker holds its configuration mutex. CSI interrupt routing is
