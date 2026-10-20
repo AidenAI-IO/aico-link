@@ -168,7 +168,13 @@ export async function basicPage(context) {
     root: body,
     onSaved: payload => {
       snapshot.config = payload.config || snapshot.config;
-      Object.assign(draft, saved());
+      // A live GPIO save must not wipe device/keyboard values that are still
+      // staged for restart; the saver keeps those patches until commit.
+      const persisted = saved();
+      Object.assign(draft, {
+        deviceType: saver.isStaged('deviceType') ? draft.deviceType : persisted.deviceType,
+        keyboardLayout: saver.isStaged('keyboardLayout') ? draft.keyboardLayout : persisted.keyboardLayout,
+      });
       if (!gpioSaving) gpioDraft = gpioSaved();
       render();
     },
