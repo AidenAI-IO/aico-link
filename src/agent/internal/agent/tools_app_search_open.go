@@ -187,9 +187,6 @@ type appSearchOpenFlowConfig struct {
 	searchEntries     *androidSearchEntryStore
 	// checkSearchFieldFn replaces the empty-search-field check in tests.
 	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, error)
-	// pastedQuery is set by enterSearchQuery when the last query was pasted
-	// through a background clipboard route.
-	pastedQuery *bool
 }
 
 // resolvedPlatform is cfg.platform, or the entry tool's platform when the
@@ -269,19 +266,18 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		attempts = append(attempts, searchAttempt{term: term, allowQuick: index == 0})
 	}
 	previousQuick := false
-	pasted := false
-	cfg.pastedQuery = &pasted
 	for index := 0; index < len(attempts); index++ {
 		term := attempts[index].term
 		if previousQuick {
 			// The quick query is committed ASCII text, so no screen analysis
 			// is needed to clear it.
-			if err := clearSearchQueryText(ctx, cfg); err != nil {
+			if err := clearSearchQueryText(ctx, engine); err != nil {
 				result.Steps = append(steps, "clear quick query failed")
 				return result, err
 			}
 		}
-		quick, err := enterSearchQuery(ctx, cfg, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		entered, err := enterSearchQuery(ctx, cfg, engine, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		quick := entered == searchQueryQuick
 		previousQuick = quick
 		if err != nil {
 			var unverified *searchQueryUnverifiedError
@@ -338,7 +334,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 				steps = append(steps, fmt.Sprintf("app result not found for %q", term))
 				// A pasted query that never reached the field leaves no
 				// results; re-enter it once before trying the next term.
-				if pasted && !recovered {
+				if entered == searchQueryPasted && !recovered {
 					recovered = true
 					reentered, calls, err := recoverEmptySearchPaste(ctx, cfg, engine, term)
 					result.VLMCalls += calls
@@ -413,42 +409,48 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 	return result, nil
 }
 
-// enterSearchQuery reports quick=true when it typed the quick ASCII query,
-// which the caller retries with exact entry if no result is found.
-func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string, clearFirst, allowQuick bool) (quick bool, err error) {
+// searchQueryEntry is how enterSearchQuery entered the query.
+type searchQueryEntry int
+
+const (
+	searchQueryTyped searchQueryEntry = iota
+	// searchQueryQuick is the quick ASCII query, which the caller retries
+	// with exact entry if no result is found.
+	searchQueryQuick
+	// searchQueryPasted went through a background clipboard route.
+	searchQueryPasted
+)
+
+func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string, clearFirst, allowQuick bool) (searchQueryEntry, error) {
 	if clearFirst {
-		engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
 		if err := engine.clearField(ctx, cfg.resolvedPlatform()); err != nil {
-			return false, err
+			return searchQueryTyped, err
 		}
 	}
 	route, err := pasteSearchQuery(ctx, cfg, term)
 	attempted := route != ""
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return searchQueryTyped, err
 	}
 	if attempted && err == nil {
 		logging.Infof("agent", "app_search", "query input route=%s", route)
-		if cfg.pastedQuery != nil {
-			*cfg.pastedQuery = true
-		}
-		return false, nil
-	}
-	if cfg.pastedQuery != nil {
-		*cfg.pastedQuery = false
+		return searchQueryPasted, nil
 	}
 	if attempted {
 		logging.Infof("agent", "app_search", "query input route=local_hid clipboard_error=%v", err)
 		// A failed paste may have inserted text. Clear it without Escape,
 		// which could dismiss Spotlight, before the existing local input path.
-		if err := clearSearchQueryText(ctx, cfg); err != nil {
-			return false, err
+		if err := clearSearchQueryText(ctx, engine); err != nil {
+			return searchQueryTyped, err
 		}
 	}
 	if allowQuick {
-		typed, err := typeQuickSearchQuery(ctx, cfg, term)
-		if err != nil || typed {
-			return typed, err
+		typed, err := typeQuickSearchQuery(ctx, cfg, engine, term)
+		if err != nil {
+			return searchQueryTyped, err
+		}
+		if typed {
+			return searchQueryQuick, nil
 		}
 	}
 
@@ -458,16 +460,16 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 	}
 	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
 	if err != nil {
-		return false, err
+		return searchQueryTyped, err
 	}
 	var result enterTextToolResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		return false, fmt.Errorf("parse search entry result: %w", err)
+		return searchQueryTyped, fmt.Errorf("parse search entry result: %w", err)
 	}
 	if !result.OK {
-		return false, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
+		return searchQueryTyped, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
-	return false, nil
+	return searchQueryTyped, nil
 }
 
 // searchFieldCheck is the state of the system search field after a paste.
@@ -558,8 +560,7 @@ Rules:
 
 // clearSearchQueryText removes committed query text with Select All and
 // Backspace, avoiding Escape, which could dismiss Spotlight.
-func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) error {
-	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+func clearSearchQueryText(ctx context.Context, engine *textInputEngine) error {
 	selectAll, err := textInputKeyboardKeysForSelectAll(engine.hw.platform())
 	if err != nil {
 		return err
@@ -577,12 +578,11 @@ func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) erro
 // mode. System search lists apps for pinyin in both English and pinyin input,
 // so only the pending composition must be committed (see
 // appSearchQuickCommitGap). It reports false when no quick query applies.
-func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (bool, error) {
+func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string) (bool, error) {
 	platform := cfg.resolvedPlatform()
 	if platform != "ios" || cfg.exactEntryOnly {
 		return false, nil
 	}
-	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
 	query, err := appSearchQuickQuery(ctx, engine, term)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
