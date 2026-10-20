@@ -539,10 +539,16 @@ def _validate_consolidated_memory_content(
             payload = json.loads(recalled.output)
         except (TypeError, json.JSONDecodeError) as exc:
             fail(f"episode memory consolidation for {episode_id!r} returned invalid recall output for memory {memory_id!r}: {exc}", evidence_unavailable=True)
-        matches = payload.get("results") if isinstance(payload, dict) else None
-        if matches is not None and (not isinstance(matches, list) or not all(isinstance(item, dict) for item in matches)):
+        if not isinstance(payload, dict) or "results" not in payload:
+            fail(f"episode memory consolidation for {episode_id!r} returned missing recall results", evidence_unavailable=True)
+        matches = payload["results"]
+        # recall_device_memory encodes a nil Go slice as null: a completed empty
+        # recall is behavioral evidence, unlike a missing results field.
+        if matches is None:
+            matches = []
+        if not isinstance(matches, list) or not all(isinstance(item, dict) for item in matches):
             fail(f"episode memory consolidation for {episode_id!r} returned invalid recall results", evidence_unavailable=True)
-        exact = next((item for item in matches or [] if isinstance(item, dict) and item.get("id") == memory_id), None)
+        exact = next((item for item in matches if item.get("id") == memory_id), None)
         if exact is None:
             fail(f"episode memory consolidation for {episode_id!r} could not recall generated memory {memory_id!r}")
         generated.append(exact)

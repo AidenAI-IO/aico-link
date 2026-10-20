@@ -380,12 +380,15 @@ jobs:
           trap 'rm -rf "$upload_dir"' EXIT
           umask 077
           curl --connect-timeout 15 --max-time 60 -fsSL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip -o "$upload_dir/ossutil.zip"
+          # SHA-256 of the pinned archive from the official Alibaba Cloud URL.
+          echo "dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343  $upload_dir/ossutil.zip" | sha256sum -c -
           unzip -q "$upload_dir/ossutil.zip" -d "$upload_dir"
           ossutil="$upload_dir/ossutil-v1.7.19-linux-amd64/ossutil"
           chmod +x "$ossutil"
-          "$ossutil" config -c "$upload_dir/config" \
-            -e oss-cn-hongkong.aliyuncs.com \
-            -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"
+          # Bash's builtin printf keeps credentials out of process arguments.
+          printf '[Credentials]\nendpoint = oss-cn-hongkong.aliyuncs.com\naccessKeyID = %s\naccessKeySecret = %s\n' \
+            "$OSS_ACCESS_KEY_ID" "$OSS_ACCESS_KEY_SECRET" > "$upload_dir/config"
+          unset OSS_ACCESS_KEY_ID OSS_ACCESS_KEY_SECRET
           # Publish only the self-contained dashboard, under this exact run attempt.
           prefix="oss://firmware-agent/benchmark/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           "$ossutil" cp dashboard.html "$prefix/dashboard.html" -c "$upload_dir/config" \

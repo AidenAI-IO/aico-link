@@ -169,3 +169,38 @@ def test_invalid_consolidation_response_is_preserved_without_crashing(tmp_path, 
     assert result.metrics["agent_eligible"] is True
     assert result.metrics["consolidation_memory_count"] is None
     assert "invalid memory_ids" in result.metrics["error"]
+
+
+@pytest.mark.parametrize("payload,eligible", [
+    ({}, False),
+    (None, False),
+    ([], False),
+    ({"results": {}}, False),
+    ({"results": "invalid"}, False),
+    ({"results": [None]}, False),
+    ({"results": []}, True),
+    ({"results": None}, True),
+    ({"results": [{"id": "other"}]}, True),
+])
+def test_evaluated_consolidation_recall_separates_missing_from_empty_evidence(
+    tmp_path, monkeypatch, payload, eligible,
+):
+    class Client(SetupClient):
+        def invoke_tool(self, name, args, timeout=90):
+            return ToolInvokeResult(json.dumps(payload), False, 1)
+
+    step = {"type": "seed_episode", "evaluate": True, "consolidate": True,
+            "episode": {"id": "ep", "user_goal": "Learn"},
+            "consolidation_expectation": {"required_memory_types": ["procedure"]}}
+    result = run_setup(tmp_path, monkeypatch, [step], Client("recall"))
+    assert result.metrics["agent_eligible"] is eligible
+    assert result.metrics["first_failure_stage"] == "setup"
+    if eligible:
+        assert result.status == "failed"
+        assert result.metrics["failure_class"] == "agent"
+        assert result.metrics["quality_score"] == 0
+        evidence = json.loads((tmp_path / "setup_failure.json").read_text())
+        assert evidence["consolidation"]["memory_ids"] == ["learned"]
+    else:
+        assert result.metrics["quality_score"] is None
+        assert "recall results" in result.metrics["error"]
