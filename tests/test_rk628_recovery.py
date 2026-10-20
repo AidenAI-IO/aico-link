@@ -382,7 +382,7 @@ int main(void) {
 
 
 def extract_function(source, name):
-    match = re.search(r"^static (?:bool|int|void) " + name + r"\([^;]*?\)\n\{.*?^\}",
+    match = re.search(r"^(?:static )?(?:bool|int|void) " + name + r"\([^;]*?\)\n\{.*?^\}",
                       source, re.MULTILINE | re.DOTALL)
     if not match:
         raise AssertionError(f"Production function not found: {name}")
@@ -428,9 +428,12 @@ def main():
         ))
         startup = startup.replace("/* DRIVER_REGISTERS */", register_definitions())
         startup = startup.replace("/* DRIVER_FUNCTIONS */", startup_functions)
+        cif_source = (ROOT / "pico-sdk/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/capture.c").read_text()
+        cif_startup = (ROOT / "tests/rkcif_start_harness.c").read_text().replace(
+            "/* DRIVER_FUNCTIONS */", extract_function(cif_source, "rkcif_do_start_stream"))
         compiler = shlex.split(os.environ.get("CC", "gcc"))
         for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
-                           ("startup", startup)):
+                           ("startup", startup), ("cif-startup", cif_startup)):
             harness = Path(directory) / (name + ".c")
             binary = Path(directory) / name
             harness.write_text(body)

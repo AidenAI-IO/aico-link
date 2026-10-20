@@ -76,6 +76,18 @@ frame age means that no frame timestamp exists. Check
 repeated receiver resets. Display enumeration alone does not establish that
 capture is working.
 
+CIF startup can fail before it enables its frame-completion tasklet, for
+example when receiver format readiness returns `EAGAIN` or `ENOLCK`.
+Failure cleanup must disable the tasklet only if that startup attempt enabled
+it. Otherwise each early failure increases the disable count, and later
+successful `STREAMON` calls leave frame completion disabled. A pending tasklet
+then repeatedly wakes `ksoftirqd`, capture dequeues time out, and reopening the
+camera does not clear the imbalance. The startup path tracks whether it enabled
+the tasklet before balancing that operation during cleanup. Deploying the
+corrected CIF module requires a reboot to clear an already affected instance.
+This addresses a persistent capture stall after transient receiver failures;
+receiver lock loss still needs to be evaluated independently.
+
 ## Hardware verification
 
 Check all of the following with the connected host awake:
@@ -100,6 +112,7 @@ video clock. The driver must report no signal in that condition.
 
 The SDK BSP build and audit compile the hardware driver. The Docker suite
 `bash scripts/run_tests_in_docker.sh --suite rk628-recovery` exercises the
-production recovery functions with simulated registers and checks the
+production recovery functions with simulated registers, exercises CIF startup
+after repeated early and late failures, and checks the
 board/EDID integration contract. Run the required local `make check` profile
 after changes; CI runs `make check-full`.
