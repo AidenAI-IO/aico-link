@@ -340,6 +340,7 @@ jobs:
           echo "::notice::$publication_summary"
           echo "$publication_summary" >> "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
+        id: dashboard
         if: ${{ always() }}
         # The dashboard is a reporting side channel: losing it must not turn a
         # passing benchmark into a failed job.
@@ -349,7 +350,7 @@ jobs:
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          set -uo pipefail
+          set -euo pipefail
           # History is read from Langfuse v4 experiments and paginated scores.
           # Local metrics include this run even if publication is delayed or fails.
           uv run python -m ci.generate_dashboard \
@@ -358,10 +359,88 @@ jobs:
             --lookback-days 7 \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
-          if [[ -f dashboard.html ]]; then
-            echo "## Benchmark dashboard" >> "$GITHUB_STEP_SUMMARY"
-            echo "\`dashboard.html\` in the run artifact charts pass@1 per commit and flags suite regressions." >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish benchmark dashboard to OSS
+        id: dashboard_preview
+        if: ${{ always() && steps.dashboard.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 5
+        working-directory: benchmark
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}
+        run: |
+          set -euo pipefail
+          if [[ ! -f dashboard.html || -z "${OSS_ACCESS_KEY_ID:-}" || -z "${OSS_ACCESS_KEY_SECRET:-}" || -z "${REPORT_BASE_URL:-}" ]]; then
+            echo "::notice::Dashboard preview is unavailable; use the run artifact."
+            exit 0
           fi
+          # Keep credentials out of the persistent self-hosted runner's home.
+          upload_dir="$(mktemp -d "$RUNNER_TEMP/benchmark-oss.XXXXXX")"
+          trap 'rm -rf "$upload_dir"' EXIT
+          umask 077
+          curl --connect-timeout 15 --max-time 60 -fsSL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip -o "$upload_dir/ossutil.zip"
+          unzip -q "$upload_dir/ossutil.zip" -d "$upload_dir"
+          ossutil="$upload_dir/ossutil-v1.7.19-linux-amd64/ossutil"
+          chmod +x "$ossutil"
+          "$ossutil" config -c "$upload_dir/config" \
+            -e oss-cn-hongkong.aliyuncs.com \
+            -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET"
+          # Publish only the self-contained dashboard, under this exact run attempt.
+          prefix="oss://firmware-agent/benchmark/runs/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          "$ossutil" cp dashboard.html "$prefix/dashboard.html" -c "$upload_dir/config" \
+            --meta "Content-Type:text/html; charset=utf-8#Content-Disposition:inline" -f
+          python3 - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import time
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          base = os.environ.get("REPORT_BASE_URL", "").strip().rstrip("/")
+          if not base:
+              message = "Configure BENCHMARK_REPORT_BASE_URL with an HTTPS custom domain. OSS default domains force HTML downloads; use the run artifact to view the dashboard."
+              print("::warning::" + message)
+              raise SystemExit(0)
+          parsed = urllib.parse.urlsplit(base)
+          if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+              raise SystemExit("BENCHMARK_REPORT_BASE_URL must be an HTTPS base URL without credentials, query, or fragment.")
+          report = f"{os.environ['GITHUB_RUN_ID']}-{os.environ['GITHUB_RUN_ATTEMPT']}"
+          url = f"{base}/benchmark/runs/{report}/dashboard.html"
+          expected = hashlib.sha256(Path("dashboard.html").read_bytes()).digest()
+          # Cloudflare rejects the default Python urllib User-Agent.
+          request = urllib.request.Request(url, headers={
+              "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          })
+          problem = "not checked"
+          # A fresh upload can take a moment to reach the custom domain.
+          for attempt in range(6):
+              if attempt:
+                  time.sleep(10)
+              try:
+                  with urllib.request.urlopen(request, timeout=30) as response:
+                      if response.headers.get_content_type() != "text/html":
+                          raise SystemExit(f"Preview URL returned {response.headers.get_content_type()}, expected text/html.")
+                      if response.headers.get("Content-Disposition", "").lower().startswith("attachment") or response.headers.get("x-oss-force-download", "").lower() == "true":
+                          raise SystemExit("Preview URL still forces a download. Configure a custom domain or reverse proxy.")
+                      # Cloudflare Web Analytics injects its beacon into HTML responses.
+                      served = re.sub(rb'\s*<script[^>]*static\.cloudflareinsights\.com[^>]*>\s*</script>', b"", response.read())
+                      if hashlib.sha256(served).digest() == expected:
+                          break
+                      problem = "served HTML does not match this run's dashboard"
+              except urllib.error.HTTPError as e:
+                  problem = f"HTTP {e.code} {e.reason}"
+              except urllib.error.URLError as e:
+                  problem = f"unreachable: {e.reason}"
+          else:
+              raise SystemExit(f"Preview URL did not serve this run's dashboard ({problem}). Check OSS read access and the custom domain.")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"dashboard_url={url}\n")
+          PY
       - name: Upload benchmark artifacts
         id: upload_benchmark_artifacts
         if: ${{ always() }}
@@ -425,6 +504,29 @@ jobs:
           retention-days: 14
           compression-level: 9
           overwrite: true
+      - name: Link benchmark dashboard
+        if: ${{ always() }}
+        continue-on-error: true
+        env:
+          DASHBOARD_URL: ${{ steps.dashboard_preview.outputs.dashboard_url }}
+          PRIMARY_ARTIFACT_URL: ${{ steps.upload_benchmark_artifacts.outputs.artifact-url }}
+          RETRY_ARTIFACT_URL: ${{ steps.retry_benchmark_artifacts.outputs.artifact-url }}
+        run: |
+          set -euo pipefail
+          artifact_url="${PRIMARY_ARTIFACT_URL:-$RETRY_ARTIFACT_URL}"
+          {
+            echo "## Benchmark dashboard"
+            echo
+            if [[ -n "$DASHBOARD_URL" ]]; then
+              echo "[Open benchmark dashboard]($DASHBOARD_URL)"
+            else
+              echo "Online preview is unavailable. Open dashboard.html from the run artifact."
+            fi
+            if [[ -n "$artifact_url" ]]; then
+              echo
+              echo "[Download run artifact]($artifact_url)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Link benchmark reports
         if: ${{ always() }}
         continue-on-error: true
