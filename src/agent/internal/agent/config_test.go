@@ -2164,8 +2164,8 @@ func TestVoiceSessionConfigDefaults(t *testing.T) {
 	if !cfg.VoiceInterruptOnWakeupOrDefault() {
 		t.Fatal("VoiceInterruptOnWakeupOrDefault() = false, want true")
 	}
-	if !cfg.GPIOWakeupEnabledOrDefault() {
-		t.Fatal("GPIOWakeupEnabledOrDefault() = false, want true")
+	if !cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = false, want true")
 	}
 	if !cfg.VoiceStreamingTTSEnabledOrDefault() {
 		t.Fatal("VoiceStreamingTTSEnabledOrDefault() = false, want true")
@@ -2184,7 +2184,7 @@ func TestVoiceSessionConfigDefaults(t *testing.T) {
 func TestVoiceSessionConfigOverrides(t *testing.T) {
 	followupEnabled := true
 	interruptDisabled := false
-	gpioWakeupDisabled := false
+	tapWakeupDisabled := false
 	streamingDisabled := false
 	toolSpeech := false
 	progressSpeechDisabled := false
@@ -2193,7 +2193,7 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 		VoiceFirstTurnTimeoutMs:    1234,
 		VoiceFollowupTimeoutMs:     5678,
 		VoiceInterruptOnWakeup:     &interruptDisabled,
-		GPIOWakeupEnabled:          &gpioWakeupDisabled,
+		TapWakeupEnabled:           &tapWakeupDisabled,
 		VoiceStreamingTTSEnabled:   &streamingDisabled,
 		VoiceToolCallSpeech:        &toolSpeech,
 		VoiceProgressSpeechEnabled: &progressSpeechDisabled,
@@ -2212,8 +2212,8 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 	if cfg.VoiceInterruptOnWakeupOrDefault() {
 		t.Fatal("VoiceInterruptOnWakeupOrDefault() = true, want false")
 	}
-	if cfg.GPIOWakeupEnabledOrDefault() {
-		t.Fatal("GPIOWakeupEnabledOrDefault() = true, want false")
+	if cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = true, want false")
 	}
 	if cfg.VoiceStreamingTTSEnabledOrDefault() {
 		t.Fatal("VoiceStreamingTTSEnabledOrDefault() = true, want false")

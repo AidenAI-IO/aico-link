@@ -1362,7 +1362,7 @@ func (w *fakeWakeupWatcher) Stop() {
 func TestStartWakeupWatchersIfEnabledSkipsWhenDisabled(t *testing.T) {
 	disabled := false
 	factoryCalls := 0
-	watchers, err := startWakeupWatchersIfEnabled(agent.Config{GPIOWakeupEnabled: &disabled}, func(pin int, callback func()) (wakeupWatcher, error) {
+	watchers, err := startWakeupWatchersIfEnabled(agent.Config{TapWakeupEnabled: &disabled}, func(pin int, callback func()) (wakeupWatcher, error) {
 		factoryCalls++
 		return &fakeWakeupWatcher{callback: callback}, nil
 	}, func() {})
@@ -1380,7 +1380,7 @@ func TestStartWakeupWatchersIfEnabledSkipsWhenDisabled(t *testing.T) {
 func TestStartWakeupWatchersIfEnabledRegistersWhenEnabled(t *testing.T) {
 	enabled := true
 	watchersByPin := map[int]*fakeWakeupWatcher{}
-	watchers, err := startWakeupWatchersIfEnabled(agent.Config{GPIOWakeupEnabled: &enabled}, func(pin int, callback func()) (wakeupWatcher, error) {
+	watchers, err := startWakeupWatchersIfEnabled(agent.Config{TapWakeupEnabled: &enabled}, func(pin int, callback func()) (wakeupWatcher, error) {
 		watcher := &fakeWakeupWatcher{callback: callback}
 		watchersByPin[pin] = watcher
 		return watcher, nil

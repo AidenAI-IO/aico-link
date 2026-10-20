@@ -459,7 +459,7 @@ type Agent struct {
 	VoiceFirstTurnTimeoutMs    int     `json:"voice_first_turn_timeout_ms"`
 	VoiceMaxTurns              int     `json:"voice_max_turns"`
 	VoiceInterruptOnWakeup     bool    `json:"voice_interrupt_on_wakeup"`
-	GPIOWakeupEnabled          bool    `json:"gpio_wakeup_enabled"`
+	TapWakeupEnabled           bool    `json:"tap_wakeup_enabled"`
 	VoiceStreamingTTSEnabled   bool    `json:"voice_streaming_tts_enabled"`
 	VoiceToolCallSpeech        bool    `json:"voice_tool_call_speech"`
 	VoiceProgressSpeechEnabled bool    `json:"voice_progress_speech_enabled"`
@@ -680,7 +680,7 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceFirstTurnTimeoutMs:    d.Agent.VoiceFirstTurnTimeoutMs,
 		VoiceMaxTurns:              d.Agent.VoiceMaxTurns,
 		VoiceInterruptOnWakeup:     boolPtr(d.Agent.VoiceInterruptOnWakeup),
-		GPIOWakeupEnabled:          boolPtr(d.Agent.GPIOWakeupEnabled),
+		TapWakeupEnabled:           boolPtr(d.Agent.TapWakeupEnabled),
 		VoiceStreamingTTSEnabled:   boolPtr(d.Agent.VoiceStreamingTTSEnabled),
 		VoiceToolCallSpeech:        boolPtr(d.Agent.VoiceToolCallSpeech),
 		VoiceProgressSpeechEnabled: boolPtr(d.Agent.VoiceProgressSpeechEnabled),
@@ -1076,7 +1076,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceFirstTurnTimeoutMs:    int(cfg.VoiceFirstTurnTimeoutOrDefault().Milliseconds()),
 			VoiceMaxTurns:              cfg.VoiceMaxTurns,
 			VoiceInterruptOnWakeup:     cfg.VoiceInterruptOnWakeupOrDefault(),
-			GPIOWakeupEnabled:          cfg.GPIOWakeupEnabledOrDefault(),
+			TapWakeupEnabled:           cfg.TapWakeupEnabledOrDefault(),
 			VoiceStreamingTTSEnabled:   cfg.VoiceStreamingTTSEnabledOrDefault(),
 			VoiceToolCallSpeech:        cfg.VoiceToolCallSpeechOrDefault(),
 			VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabledOrDefault(),

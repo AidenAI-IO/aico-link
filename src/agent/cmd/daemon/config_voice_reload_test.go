@@ -11,13 +11,13 @@ import (
 	"aiden-agent/internal/agent"
 )
 
-func TestActiveVoiceConfigTracksGPIOWakeupEnabled(t *testing.T) {
+func TestActiveVoiceConfigTracksTapWakeupEnabled(t *testing.T) {
 	base := agent.DefaultConfig()
 	disabled := false
 	changed := base
-	changed.GPIOWakeupEnabled = &disabled
+	changed.TapWakeupEnabled = &disabled
 	if reflect.DeepEqual(activeVoiceConfig(base), activeVoiceConfig(changed)) {
-		t.Fatal("gpio_wakeup_enabled change did not change active voice lifecycle")
+		t.Fatal("tap_wakeup_enabled change did not change active voice lifecycle")
 	}
 }
 

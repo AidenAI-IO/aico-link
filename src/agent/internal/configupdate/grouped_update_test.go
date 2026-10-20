@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func TestUpdateWritesGPIOWakeupEnabledToClassicRuntime(t *testing.T) {
+func TestUpdateWritesTapWakeupEnabledToClassicRuntime(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")
 	const source = `[model_settings.providers.local]
@@ -30,12 +30,12 @@ api_key = "key"
 input_mode = "stt"
 
 [voice_settings.classic.runtime]
-gpio_wakeup_enabled = true
+tap_wakeup_enabled = true
 `
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	result, err := NewService().Update(path, []byte(`{"config":{"agent":{"gpio_wakeup_enabled":false}}}`))
+	result, err := NewService().Update(path, []byte(`{"config":{"agent":{"tap_wakeup_enabled":false}}}`))
 	if err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
@@ -47,11 +47,11 @@ gpio_wakeup_enabled = true
 		t.Fatal(err)
 	}
 	text := string(updated)
-	if !strings.Contains(text, "[voice_settings.classic.runtime]") || !strings.Contains(text, "gpio_wakeup_enabled = false") {
-		t.Fatalf("gpio_wakeup_enabled missing from classic.runtime: %s", text)
+	if !strings.Contains(text, "[voice_settings.classic.runtime]") || !strings.Contains(text, "tap_wakeup_enabled = false") {
+		t.Fatalf("tap_wakeup_enabled missing from classic.runtime: %s", text)
 	}
-	if strings.Contains(text, "[conversation_settings.agent]") && strings.Contains(text, "gpio_wakeup_enabled") {
-		t.Fatalf("gpio_wakeup_enabled written under conversation_settings.agent: %s", text)
+	if strings.Contains(text, "[conversation_settings.agent]") && strings.Contains(text, "tap_wakeup_enabled") {
+		t.Fatalf("tap_wakeup_enabled written under conversation_settings.agent: %s", text)
 	}
 }
 

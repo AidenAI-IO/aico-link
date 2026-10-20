@@ -340,8 +340,8 @@ func startWakeupWatchers(newWatcher wakeupWatcherFactory, callback func()) ([]wa
 // is enabled. When disabled it returns nil watchers so voice loops keep waiting
 // on reload/signal (and realtime /api/chat) without opening sessions from hardware.
 func startWakeupWatchersIfEnabled(cfg agent.Config, newWatcher wakeupWatcherFactory, callback func()) ([]wakeupWatcher, error) {
-	if !cfg.GPIOWakeupEnabledOrDefault() {
-		logging.Infof("agent", "wakeup", "Tap wakeup disabled (gpio_wakeup_enabled=false); ignoring GPIO %s", wakeupGPIOPinsLabel())
+	if !cfg.TapWakeupEnabledOrDefault() {
+		logging.Infof("agent", "wakeup", "Tap wakeup disabled (tap_wakeup_enabled=false); ignoring tap button on %s", wakeupGPIOPinsLabel())
 		return nil, nil
 	}
 	return startWakeupWatchers(newWatcher, callback)
@@ -463,7 +463,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
 	}
 
@@ -503,7 +503,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
 	}
 
@@ -580,14 +580,14 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 }
 
 func wakeupReadyLabel(cfg agent.Config) string {
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		return wakeupGPIOPinsLabel()
 	}
 	return "tap wakeup disabled"
 }
 
 func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
 	}
 

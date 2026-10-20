@@ -312,7 +312,7 @@ vad_helper_path = "/usr/lib/aiden/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
-gpio_wakeup_enabled = true
+tap_wakeup_enabled = true
 voice_followup_enabled = false
 voice_followup_timeout_ms = 5000
 voice_first_turn_timeout_ms = 10000
@@ -421,7 +421,7 @@ These fields apply to the `stt` input mode.
 | `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
 | `silence_ms`                    | `550`                                                       | How many milliseconds of silence before an utterance is considered finished                                                                                                            |
 | `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
-| `gpio_wakeup_enabled`           | `true`                                                      | When on, the tap button (GPIO 32/33) can wake Aiden. Realtime `/api/chat` activation still works when off; Classic STT voice sessions normally need the button                              |
+| `tap_wakeup_enabled`            | `true`                                                      | When on, the hardware tap button can wake Aiden. Turning it off disables only that button path—not all wakeup. Realtime `/api/chat` can still activate a session; Classic STT normally needs the button |
 | `voice_followup_enabled`        | `false`                                                     | Enable continuous follow-up after a single wakeup in wakeup mode; defaults to one wakeup per turn                                                                                      |
 | `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
 | `voice_first_turn_timeout_ms`   | `10000`                                                     | Window to wait for the first utterance after wakeup                                                                                                                                    |

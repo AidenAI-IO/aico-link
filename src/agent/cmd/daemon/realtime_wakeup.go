@@ -466,7 +466,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
 	}
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		logging.Infof("agent", "ready", "Starting realtime GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
 	}
 	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
@@ -478,7 +478,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		defer stopWakeupWatchers(watchers)
 	}
 
-	if cfg.GPIOWakeupEnabledOrDefault() {
+	if cfg.TapWakeupEnabledOrDefault() {
 		logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or GPIO %s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
 	} else {
 		logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat; tap wakeup disabled)... Ctrl+C to quit")

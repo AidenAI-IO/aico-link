@@ -126,7 +126,7 @@ playback_backend = "local"
 	}
 }
 
-func TestLoadConfigReadsGPIOWakeupEnabledFromClassicRuntime(t *testing.T) {
+func TestLoadConfigReadsTapWakeupEnabledFromClassicRuntime(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")
 	const source = `
@@ -134,7 +134,7 @@ func TestLoadConfigReadsGPIOWakeupEnabledFromClassicRuntime(t *testing.T) {
 provider = "fake"
 
 [voice_settings.classic.runtime]
-gpio_wakeup_enabled = false
+tap_wakeup_enabled = false
 `
 	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
 		t.Fatal(err)
@@ -143,8 +143,8 @@ gpio_wakeup_enabled = false
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	if cfg.GPIOWakeupEnabledOrDefault() {
-		t.Fatal("GPIOWakeupEnabledOrDefault() = true, want false from classic.runtime")
+	if cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = true, want false from classic.runtime")
 	}
 }
 
