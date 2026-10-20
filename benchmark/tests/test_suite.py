@@ -325,7 +325,7 @@ def test_adb_android_basic_suite_loads_device_operation_tasks():
 
 
 @pytest.mark.parametrize("task_id,tool,tool_input", [
-    ("swipe_navigation", "quick_action", {"action": "app_drawer"}),
+    ("swipe_scroll_list", "touch_gesture", {"type": "swipe", "start": {"x": 500, "y": 800}, "end": {"x": 500, "y": 300}}),
     ("settings_check_wifi", "open_app", {"app": "Settings"}),
     ("clock_count_alarms", "open_app", {"app": "Clock"}),
 ])

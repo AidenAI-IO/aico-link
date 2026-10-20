@@ -447,7 +447,7 @@ def _per_task_setup_seed_episode(
     if expected_status is not None and status != expected_status:
         fail(f"episode memory consolidation for {episode_id!r} status mismatch: expected {expected_status!r}, got {status or 'missing'!r}")
     if status == "ignored" and expected_status != "ignored":
-        fail(f"episode memory consolidation for {episode_id!r} was ignored by the worker")
+        fail(f"episode memory consolidation for {episode_id!r} was ignored by the worker: {result.get('last_error') or 'no reason recorded'}")
     if status == "ignored":
         return {"type": "seed_episode", "episode_id": episode_id, "consolidated": True, "consolidation": result}
     if status != "done":

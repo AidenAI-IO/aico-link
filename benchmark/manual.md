@@ -62,7 +62,8 @@ The main flow for a single task lives in `runner/runtask.py`:
 8. Extract the tool trace from the agent history.
 9. Run the hard assertions.
 10. If the judge is enabled, submit the rubric, trace, final response, and
-    pre/post screenshots to the judge model.
+    pre/post screenshots and the full task prompt (including answer options) to
+    the judge model.
 11. Write `manifest.json`, `results.jsonl`, `summary.md`, `report.html`, and each
     task's artifacts.
 12. If `environment_url` is set, call `/api/release` to free the task route.
@@ -1480,3 +1481,40 @@ Check:
 This is by design. The WebUI persists history but does not recover interrupted
 processes; on restart, non-terminal jobs are marked as stopped to avoid falsely
 showing them as still running.
+
+
+## Evaluation reliability
+
+Judge prompt `v4` includes the original task and answer options. A selected option
+is interpreted as its full option text. JSON output is requested explicitly and
+must contain exactly one `yes`/`no` verdict for each rubric ID. Transport failures,
+truncated output, malformed JSON, and invalid verdict schemas receive at most
+three attempts. Valid negative verdicts are never retried. Exhausted failures
+remain excluded evaluation errors; they are not Agent failures. Cache identity
+includes the task prompt and judge prompt version. Offline rejudging uses the
+saved task prompt, or the archived `suite.json` for older runs.
+
+Benchmark Docker workers without an environment bridge start with
+`--benchmark-headless`. Their model-facing catalog excludes unavailable input,
+Phone Bridge, and screenshot tools. Memory and shell tools remain available.
+This flag requires a benchmark token and cannot be combined with an environment
+bridge; ordinary device runs retain their normal tools.
+
+The explicit episode-memory processing endpoint drains scheduled retries for the
+requested episode immediately, preserving the existing attempt limit. Normal
+background maintenance retains its backoff. Exhausted model-processing failures
+return the terminal `ignored` result and its sanitized reason, so an evaluated
+setup records the actual behavior failure instead of a generic setup HTTP 500.
+
+MobileGym preflight opens Scroll Lab in every simulator slot, executes a known
+upward swipe, checks that `firstVisibleOrdinal` increases, and releases the slot.
+An action returning `ok` without a state change fails preflight. The basic suite
+uses `swipe_scroll_list` with observable list-state assertions; the previous
+`swipe_navigation` task required an app drawer absent from the pinned simulator.
+The new task ID keeps the changed workload distinct in historical comparisons.
+
+Langfuse score writes retry transient connection errors and HTTP 408/429/5xx
+responses up to three attempts using the same deterministic score ID. An
+uncertain write can therefore be retried without duplicating scores. Persistent
+errors still fail publication and must be resolved before treating remote
+reports as complete. Local result artifacts remain the execution evidence.

@@ -186,6 +186,7 @@ def test_resolve_target_platform_infers_mobilegym_android(monkeypatch):
 
 
 def test_preflight_mobilegym_environment_exercises_setup_and_release(monkeypatch):
+    monkeypatch.setattr(preflight_module, "_verify_mobilegym_scroll", lambda *args, **kwargs: None)
     calls = []
     monkeypatch.setattr(
         preflight_module,
@@ -195,14 +196,14 @@ def test_preflight_mobilegym_environment_exercises_setup_and_release(monkeypatch
     monkeypatch.setattr(
         preflight_module,
         "call_environment_setup",
-        lambda environment_url, timeout, task_id: calls.append(
+        lambda environment_url, timeout, task_id, **kwargs: calls.append(
             ("setup", environment_url, timeout, task_id)
         ),
     )
     monkeypatch.setattr(
         preflight_module,
         "call_environment_release",
-        lambda environment_url, timeout, task_id: calls.append(
+        lambda environment_url, timeout, task_id, **kwargs: calls.append(
             ("release", environment_url, timeout, task_id)
         ),
     )
@@ -217,6 +218,7 @@ def test_preflight_mobilegym_environment_exercises_setup_and_release(monkeypatch
 
 
 def test_preflight_mobilegym_environment_checks_every_pool_slot(monkeypatch):
+    monkeypatch.setattr(preflight_module, "_verify_mobilegym_scroll", lambda *args, **kwargs: None)
     calls = []
     setup_barrier = threading.Barrier(3, timeout=1)
     monkeypatch.setattr(
@@ -229,7 +231,7 @@ def test_preflight_mobilegym_environment_checks_every_pool_slot(monkeypatch):
         },
     )
 
-    def setup(environment_url, timeout, task_id):
+    def setup(environment_url, timeout, task_id, **kwargs):
         calls.append(("setup", environment_url, timeout, task_id))
         setup_barrier.wait()
 
@@ -237,7 +239,7 @@ def test_preflight_mobilegym_environment_checks_every_pool_slot(monkeypatch):
     monkeypatch.setattr(
         preflight_module,
         "call_environment_release",
-        lambda environment_url, timeout, task_id: calls.append(
+        lambda environment_url, timeout, task_id, **kwargs: calls.append(
             ("release", environment_url, timeout, task_id)
         ),
     )
@@ -262,7 +264,7 @@ def test_preflight_mobilegym_environment_rejects_setup_failure(monkeypatch):
         lambda environment_url: {"bridge_type": "mobilegym", "platform": "android"},
     )
 
-    def fail_setup(environment_url, timeout, task_id):
+    def fail_setup(environment_url, timeout, task_id, **kwargs):
         raise main.ResetError("setup timed out")
 
     monkeypatch.setattr(preflight_module, "call_environment_setup", fail_setup)
@@ -1175,6 +1177,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     monkeypatch.setattr(main, "_read_environment_health", lambda url: {"bridge_type": "mobilegym"})
     monkeypatch.setattr(main, "generate_report_html", lambda run_dir: "<html></html>")
     monkeypatch.setattr(preflight_module, "call_environment_setup", lambda *args, **kwargs: None)
+    monkeypatch.setattr(preflight_module, "_verify_mobilegym_scroll", lambda *args, **kwargs: None)
     monkeypatch.setattr(preflight_module, "call_environment_release", lambda *args, **kwargs: None)
     monkeypatch.setattr(main, "call_environment_release", lambda *args, **kwargs: None)
     monkeypatch.setattr(main, "clear_stale_adb_android_owner", lambda url: stale_clears.append(url))

@@ -363,6 +363,7 @@ func (p *FilesystemMemoryPlane) ProcessEpisodeMemoryNow(ctx context.Context, epi
 	if processor == nil || processor.state == nil {
 		return episodeMemoryEpisodeStatus{}, nil, fmt.Errorf("episode memory processor is not configured")
 	}
+	ctx = context.WithValue(ctx, episodeMemoryImmediateRetryKey{}, episodeID)
 	stateKey := episodeMemoryStateKey(episodeID, episodeMemoryExtractorVersion)
 	var status episodeMemoryEpisodeStatus
 	found := false

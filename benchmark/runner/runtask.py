@@ -86,6 +86,7 @@ def skipped_task_result(
         artifact_dir=str(artifact_dir),
         started_at=started,
         finished_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={
@@ -163,6 +164,7 @@ def evaluate_task_history(
         rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={**_attempt_metric_defaults(), **(metrics or {})},
@@ -396,6 +398,7 @@ def evaluate_task_history(
     try:
         verdict = judge_task(
             description=task.description_for_judge,
+            task_prompt=base.task_prompt,
             rubric=task.rubric,
             pre_screenshot=pre_screenshot if pre_screenshot and pre_screenshot.exists() else None,
             post_screenshot=last_shot_path,
@@ -455,6 +458,7 @@ def run_one_task(
         attempt=attempt, status="failed",
         rubric=[], rubric_pass_count=0, rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir), started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics=_attempt_metric_defaults(),
