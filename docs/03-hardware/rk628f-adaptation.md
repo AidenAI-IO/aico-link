@@ -55,6 +55,11 @@ preserved. A shared mutex serializes the threaded HDMI handler with mask
 updates. `VIDIOC_QUERY_DV_TIMINGS` returns `EAGAIN` while configuration is busy
 and `ENOLCK` when no signal is available.
 
+Routine timing queries select single or dual MIPI mode on every successful
+query. A 1080p60 input at about 148.5 MHz uses single MIPI mode. These selection
+messages are available at driver debug level 1; their repetition alone does
+not indicate receiver recovery or a capture failure.
+
 Stream start/stop and format-readiness checks share the receiver configuration
 mutex so recovery cannot reset CSI halfway through a stream transition.
 `STREAMON` returns `ENOLCK` when the input is unavailable and `EAGAIN` when
