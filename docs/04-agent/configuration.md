@@ -312,6 +312,7 @@ vad_helper_path = "/usr/lib/aiden/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
+tap_wakeup_enabled = true
 voice_followup_enabled = false
 voice_followup_timeout_ms = 5000
 voice_first_turn_timeout_ms = 10000
@@ -410,7 +411,9 @@ response anchors.
 
 ### Voice & VAD
 
-These fields apply to the `stt` input mode.
+Unless noted otherwise, these fields apply to the `stt` input mode.
+`tap_wakeup_enabled` also applies in `realtime`: it gates the hardware tap
+button in both modes.
 
 | Field                           | Default                                                     | Description                                                                                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -420,6 +423,7 @@ These fields apply to the `stt` input mode.
 | `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
 | `silence_ms`                    | `550`                                                       | How many milliseconds of silence before an utterance is considered finished                                                                                                            |
 | `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
+| `tap_wakeup_enabled`            | `true`                                                      | When on, the hardware tap button can wake Aiden in Classic STT and Realtime. Turning it off disables only that button path—not all wakeup. Realtime `/api/chat` can still activate a session; Classic STT normally needs the button |
 | `voice_followup_enabled`        | `false`                                                     | Enable continuous follow-up after a single wakeup in wakeup mode; defaults to one wakeup per turn                                                                                      |
 | `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
 | `voice_first_turn_timeout_ms`   | `10000`                                                     | Window to wait for the first utterance after wakeup                                                                                                                                    |

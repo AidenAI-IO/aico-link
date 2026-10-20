@@ -126,6 +126,28 @@ playback_backend = "local"
 	}
 }
 
+func TestLoadConfigReadsTapWakeupEnabledFromClassicRuntime(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	const source = `
+[model_settings.model]
+provider = "fake"
+
+[voice_settings.classic.runtime]
+tap_wakeup_enabled = false
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = true, want false from classic.runtime")
+	}
+}
+
 func TestLoadConfigMapsGroupedLogRawHTTPToModelConfig(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")

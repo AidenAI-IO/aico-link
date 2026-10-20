@@ -2133,7 +2133,7 @@ func TestKeyboardTapAbsolutePointerModeRejectsAndroidNavigationKeys(t *testing.T
 	if err != nil {
 		t.Fatalf("Call returned error: %v", err)
 	}
-	if !strings.Contains(out, `hid.pointer_mode="touchscreen"`) || !strings.Contains(out, absolutePointerModeExtensionKeyList) {
+	if !strings.Contains(out, `hid.pointer_mode="touchscreen"`) || !strings.Contains(out, mnk.AbsolutePointerModeExtensionKeyList) {
 		t.Fatalf("output = %q, want absolute pointer mode allow-list error", out)
 	}
 	if got := ToolErrorFromContext(ctx); got == nil || got.Code != CodeInvalidArguments || got.Message != out {
