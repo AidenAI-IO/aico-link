@@ -437,14 +437,18 @@ def main():
                 "rk628_hdmirx_check_lock", "rk628_hdmirx_try_to_get_timing",
                 "rk628_hdmirx_get_timings",
             )))
+        edid = (ROOT / "tests/rk628_edid_harness.c").read_text().replace(
+            "/* DRIVER_FUNCTIONS */", "\n".join(extract_function(source, name) for name in (
+                "rk628_csi_get_edid", "rk628_reset_edid",
+            )))
         compiler = shlex.split(os.environ.get("CC", "gcc"))
         for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
                            ("startup", startup), ("cif-startup", cif_startup),
-                           ("timing", timing)):
+                           ("timing", timing), ("edid", edid)):
             harness = Path(directory) / (name + ".c")
             binary = Path(directory) / name
             harness.write_text(body)
-            subprocess.run([*compiler, "-std=c11", "-Werror", "-I", str(DRIVER.parent),
+            subprocess.run([*compiler, "-std=c11", "-UNDEBUG", "-Werror", "-I", str(DRIVER.parent),
                             str(harness), "-o", str(binary)], check=True)
             subprocess.run([str(binary)], check=True, timeout=10)
 
