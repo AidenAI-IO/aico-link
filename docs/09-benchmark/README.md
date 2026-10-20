@@ -206,16 +206,6 @@ invalid manifest, missing result rows, inconsistent totals, or a killed runner
 still fails the workflow because no complete report exists.
 
 When artifact upload succeeds, the Actions job summary links the report bundle.
-The **Benchmark dashboard** section also links an online preview when
-`OSS_ACCESS_KEY_ID`, `OSS_ACCESS_KEY_SECRET`, and `BENCHMARK_REPORT_BASE_URL`
-are configured, using the same OSS bucket and HTTPS custom domain as the weekly
-report. Each run attempt publishes only its self-contained `dashboard.html` at
-`benchmark/runs/<github-run-id>-<attempt>/dashboard.html`. The link appears only
-after the public response is verified to match that run's HTML and render inline.
-Missing configuration or a publication failure leaves the artifact fallback and
-does not change the benchmark outcome. The preview has the same public visibility
-as weekly dashboards; raw task traces and worker logs remain in Actions artifacts.
-
 To expose the same self-contained, interactive `report.html` directly from CI, configure
 both repository variables below. The publish step copies the generated HTML
 unchanged, so its layout and drawer interactions are identical to the WebUI
