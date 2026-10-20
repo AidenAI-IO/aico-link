@@ -23,7 +23,8 @@
     "etc/systemd/system/*.device.d/*-aiden-optional.conf",
     "etc/tmpfiles.d/aiden*.conf",
     "etc/udev/rules.d/*-aiden-*.rules",
-    "usr/lib/aiden/aiden-*"
+    "usr/lib/aiden/aiden-*",
+    "usr/share/aiden/hdmi/*.hex"
   ],
   "exclude": [
     "usr/lib/aiden/aiden-apt-source",
@@ -73,12 +74,14 @@
     "usr/lib/aiden/aiden-feature-enabled",
     "usr/lib/aiden/aiden-frame-control",
     "usr/lib/aiden/aiden-frame-start",
+    "usr/lib/aiden/aiden-hdmi-mode",
     "usr/lib/aiden/aiden-log.sh",
     "usr/lib/aiden/aiden-mcu-event",
     "usr/lib/aiden/aiden-managed-env-run",
     "usr/lib/aiden/aiden-python-prepare",
     "usr/lib/aiden/aiden-ssh-session-tty",
     "usr/lib/aiden/aiden-ttyd-*",
-    "usr/lib/aiden/aiden-wifi-proxy-*"
+    "usr/lib/aiden/aiden-wifi-proxy-*",
+    "usr/share/aiden/hdmi/*.hex"
   ]
 }

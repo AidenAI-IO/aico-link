@@ -117,6 +117,32 @@ class RuntimeConfigTests(unittest.TestCase):
         self.assertNotIn("etc/default/locale", inventory)
         system_config.audit(self.device)
 
+    def test_hdmi_profiles_verify_with_a_narrow_namespace(self):
+        archive = self.package("0.0.2")
+        staged = self.root / "package-0.0.2"
+        manifest = staged / "usr/lib/aiden/runtime-config.json"
+        document = json.loads(manifest.read_text())
+        for mode in ("1080p30", "1080p60"):
+            path = f"usr/share/aiden/hdmi/hdmi_{mode}_cta.hex"
+            self.assertEqual(document["files"][path]["activation"], "live")
+            self.assertEqual((staged / path).read_bytes(), (ROOT / "overlay-debian" / path).read_bytes())
+
+        record = document["files"]["usr/share/aiden/hdmi/hdmi_1080p60_cta.hex"]
+        for path in (
+            "/usr/share/aiden/hdmi/profile.hex",
+            "usr/share/aiden/hdmi/../profile.hex",
+            "usr/share/aiden/hdmi-extra/profile.hex",
+            "usr/share/aiden/hdmi/nested/profile.hex",
+            "usr/share/aiden/hdmi/profile.sh",
+            "usr/share/elsewhere/profile.hex",
+        ):
+            with self.subTest(path=path):
+                manifest.write_text(json.dumps({"format": 1, "files": {path: record}}))
+                subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(staged), str(archive)],
+                               check=True, stdout=subprocess.DEVNULL)
+                with self.assertRaisesRegex(ValueError, "Unsafe runtime configuration path"):
+                    standalone_release.verify_runtime_config(archive, 1)
+
     def test_upgrade_downgrade_and_reinstall_restart_only_previous_services(self):
         old = self.package("0.0.2")
         self.dpkg("-i", old)

@@ -126,6 +126,13 @@ systemctl restart aiden-frame.service
 systemctl status aiden-frame.service --no-pager
 ```
 
+RK628 input defaults to 1080p60. Use `sudo aiden-hdmi-mode 1080p30` for
+compatibility mode, `sudo aiden-hdmi-mode 1080p60` to switch back, and
+`aiden-hdmi-mode status` to read the saved selection. The command restarts
+capture and preserves the choice in userdata across reboots. See
+[RK628 input modes](../03-hardware/rk628f-adaptation.md#persistent-input-mode).
+
+
 The service retries indefinitely when HDMI is not ready. Its persistent output
 is `/var/log/frame_service/frame_service.log`.
 

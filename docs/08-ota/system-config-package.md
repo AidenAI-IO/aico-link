@@ -27,6 +27,7 @@ and image audits share this inventory; release classification uses the same rule
 | `/etc/systemd/journald.conf.d/*-aiden.conf` | Logging settings |
 | `/etc/tmpfiles.d/aiden*.conf`, `/etc/udev/rules.d/*-aiden-*.rules` | Directory and device permission rules |
 | `/usr/lib/aiden/aiden-*` | Aiden helper scripts, subject to platform exclusions |
+| `/usr/share/aiden/hdmi/*.hex` | RK628 runtime EDID profiles for persistent 1080p60/1080p30 selection |
 
 For example, adding `overlay-debian/etc/aiden/camera.conf` or
 `overlay-debian/usr/lib/aiden/aiden-new-helper` automatically includes it in the `.deb`
@@ -38,7 +39,7 @@ does not automatically enable a new service.
 Platform exclusions include foundational scripts and units for OTA, partition
 expansion/slots, userdata migration, machine identity, SSH identity, user directories,
 environment preparation, Wi-Fi drivers, and media modules. Platform libraries, the
-kernel, drivers, mount units, APT sources and public keys, OTA trust roots, EDID, and
+kernel, drivers, mount units, APT sources and public keys, OTA trust roots, kernel EDID defaults, and
 base VQE configuration also remain platform-owned.
 `/etc/bluetooth/main.conf` is already owned by Debian's `bluez` package and is not taken
 over directly; vendor configuration should preferably use Aiden drop-ins supported by
