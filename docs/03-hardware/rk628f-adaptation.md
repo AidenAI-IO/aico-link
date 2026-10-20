@@ -62,9 +62,10 @@ retries autonomously with a ten-second delay.
 
 ## Receiver recovery
 
-Configuration uses one character-error observation for its readiness and
-retry decisions, preserving the retry when that observation updates the
-counter baseline and equalizer.
+Receiver configuration samples character errors once and uses that result
+for both readiness and retry decisions. Reading the counters can update
+their baseline and the equalizer, so a second read could appear clear and
+incorrectly suppress a required retry.
 When character-error monitoring is enabled, sampling its counters can retune
 the equalizer based on errors accumulated during a long idle and disrupt a
 locked input. Stream start therefore leaves these counters alone; equalizer

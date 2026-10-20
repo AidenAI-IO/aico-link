@@ -188,7 +188,7 @@ suites:
       bash scripts/test_rk628d_driver.sh
       python3 tests/test_hdmi_mode_cli.py
     quick: true
-    dependencies: [python3, gcc, bash]
+    dependencies: [python3, gcc, bash, sed, grep]
     required_inputs:
       - pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/rk628_csi_v4l2.c
       - tests/rk628_csi_start_harness.c

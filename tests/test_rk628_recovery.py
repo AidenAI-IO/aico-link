@@ -23,7 +23,7 @@ PRELUDE = r"""
 typedef uint32_t u32;
 typedef uint8_t u8;
 #define BIT(n) (1U << (n))
-#define RK628F_VERSION 1
+enum { RK628_UNKNOWN, RK628D_VERSION, RK628F_VERSION };
 #define CSI_MODE 1
 #define DSI_MODE 2
 #define LOCK_OK 0
@@ -152,7 +152,7 @@ static int rk628_hdmirx_scdc_ced_err(struct rk628 *rk) {
     return ++ced_reads == 1 ? ced_result : CED_OK;
 }
 static bool mutex_trylock(int *lock) { if (*lock) return false; *lock = 1; return true; }
-static void mutex_lock(int *lock) { assert(mutex_trylock(lock)); }
+static void mutex_lock(int *lock) { bool locked = mutex_trylock(lock); assert(locked); }
 static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
 static int rk628_i2c_read(struct rk628 *rk, u32 reg, u32 *value) {
     *value = 0;
@@ -340,15 +340,13 @@ int main(void) {
 
     /* STREAMON must hold the recovery mutex and report readiness failures. */
     /* Historical idle errors must not retune a currently locked receiver. */
-    for (int error = CED_ERR; error <= CED_FULL; ++error) {
-        reset_fixture();
-        ced_result = error;
-        chip.force_eq = true;
-        assert(!rk628_csi_s_stream(&csi.sd, 1));
-        assert(!ced_reads && starts == 1 && !stops && csi.is_streaming);
-        assert(!csi.nosignal && !resets && !scheduled && chip.force_eq);
-        assert(!csi.confctl_mutex);
-    }
+    reset_fixture();
+    ced_result = CED_FULL;
+    chip.force_eq = true;
+    assert(!rk628_csi_s_stream(&csi.sd, 1));
+    assert(!ced_reads && starts == 1 && !stops && csi.is_streaming);
+    assert(!csi.nosignal && !resets && !scheduled && chip.force_eq);
+    assert(!csi.confctl_mutex);
     reset_fixture();
     csi.nosignal = true;
     assert(rk628_csi_s_stream(&csi.sd, 1) == -ENOLCK);

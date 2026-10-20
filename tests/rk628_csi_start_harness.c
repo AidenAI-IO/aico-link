@@ -1,4 +1,4 @@
-/* Exercise the production CSI startup chain with injected PHY poll failures. */
+/* Exercise CSI startup with PHY status predicates and injected read failures. */
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -49,6 +49,7 @@ struct rk628_csi {
 static struct rk628 chip;
 static struct rk628_csi csi;
 static int poll_results[4], poll_count, failed_poll, scheduled;
+static u32 poll_values[4];
 static u32 transmitter[2];
 static bool powered, video_enabled, csi_interrupts, plugged, avi_ready;
 static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
@@ -78,17 +79,20 @@ static void mutex_unlock(int *lock) { assert(*lock); *lock = 0; }
 #define rk628_csi_enable_csi_interrupts(sd, en) (csi_interrupts = (en))
 #define schedule_delayed_work(...) (++scheduled)
 
-static int poll_status(void *map, u32 reg, u32 *value) {
+static void poll_status(void *map, u32 reg, u32 *value) {
     assert(powered && poll_count < (chip.dual_mipi ? 4 : 2));
     bool secondary = chip.dual_mipi && (poll_count & 1);
     assert(map == chip.regmap[secondary ? RK628_DEV_CSI1 : RK628_DEV_CSI]);
     assert(reg == (secondary ? CSITX1_CSITX_STATUS1 : CSITX_CSITX_STATUS1));
-    bool lock_check = poll_count < (chip.dual_mipi ? 2 : 1);
-    *value = lock_check ? DPHY_PLL_LOCK : STOPSTATE_CLK | STOPSTATE_LANE0;
-    return poll_results[poll_count++];
+    *value = poll_values[poll_count++];
+}
+static int poll_result(bool ready) {
+    int error = poll_results[poll_count - 1];
+    /* A fixed status models a register that stays unchanged until timeout. */
+    return error ? error : ready ? 0 : -ETIMEDOUT;
 }
 #define regmap_read_poll_timeout(map, reg, val, cond, delay, timeout) \
-    poll_status(map, reg, &(val))
+    (poll_status(map, reg, &(val)), poll_result(cond))
 static int rk628_i2c_update_bits(struct rk628 *rk, u32 reg, u32 mask, u32 val) {
     if (reg == CSITX_CSITX_EN || reg == CSITX1_CSITX_EN) {
         unsigned int port = reg == CSITX1_CSITX_EN;
@@ -110,14 +114,22 @@ static int enable_stream(struct v4l2_subdev *, bool);
 
 /* DRIVER_FUNCTIONS */
 
+static void reset_polls(void) {
+    memset(poll_results, 0, sizeof(poll_results));
+    for (int i = 0; i < 4; ++i)
+        poll_values[i] = i < (chip.dual_mipi ? 2 : 1)
+            ? DPHY_PLL_LOCK : STOPSTATE_CLK | STOPSTATE_LANE0;
+    poll_count = failed_poll = 0;
+}
+
 static void reset_fixture(bool dual) {
     memset(&chip, 0, sizeof(chip));
     memset(&csi, 0, sizeof(csi));
-    memset(poll_results, 0, sizeof(poll_results));
     memset(transmitter, 0, sizeof(transmitter));
     chip.version = RK628F_VERSION;
     chip.tx_mode = CSI_MODE;
     chip.dual_mipi = dual;
+    reset_polls();
     chip.regmap[RK628_DEV_CSI] = &transmitter[0];
     chip.regmap[RK628_DEV_CSI1] = &transmitter[1];
     csi.rk628 = &chip;
@@ -125,7 +137,7 @@ static void reset_fixture(bool dual) {
     csi.timings.bt.width = 1920;
     powered = video_enabled = csi_interrupts = false;
     plugged = avi_ready = true;
-    poll_count = failed_poll = scheduled = 0;
+    scheduled = 0;
 }
 
 static void assert_stopped(void) {
@@ -139,18 +151,24 @@ int main(void) {
     for (int dual = 0; dual <= 1; ++dual) {
         int polls = dual ? 4 : 2;
         for (int failure = 0; failure < polls; ++failure) {
-            for (int kind = 0; kind < 2; ++kind) {
-                int error = kind ? -EIO : -ETIMEDOUT;
+            bool lock_check = failure < (dual ? 2 : 1);
+            u32 bad_status[] = { 0, lock_check ? STOPSTATE_CLK | STOPSTATE_LANE0 : DPHY_PLL_LOCK,
+                                STOPSTATE_CLK, STOPSTATE_LANE0 };
+            int status_count = lock_check ? 2 : 4;
+            for (int kind = 0; kind <= status_count; ++kind) {
+                int error = kind ? -ETIMEDOUT : -EIO;
                 reset_fixture(dual);
-                poll_results[failure] = error;
+                if (kind)
+                    poll_values[failure] = bad_status[kind - 1];
+                else
+                    poll_results[failure] = error;
                 failed_poll = failure + 1;
                 assert(rk628_csi_s_stream(&csi.sd, 1) == error);
                 assert(poll_count == failure + 1);
                 assert_stopped();
 
                 /* Reopening after a failed start must use a clean PHY. */
-                memset(poll_results, 0, sizeof(poll_results));
-                poll_count = failed_poll = 0;
+                reset_polls();
                 assert(!rk628_csi_s_stream(&csi.sd, 1));
                 assert(csi.is_streaming && csi.txphy_pwron && powered);
                 assert(video_enabled && csi_interrupts && !csi.confctl_mutex);
@@ -166,6 +184,6 @@ int main(void) {
         assert(csi.nosignal && scheduled == 1);
         assert_stopped();
     }
-    puts("PASS: CSI PHY polling errors propagate through STREAMON with cleanup and retry");
+    puts("PASS: CSI PHY status predicates and read errors gate STREAMON with cleanup and retry");
     return 0;
 }
