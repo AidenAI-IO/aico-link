@@ -4,6 +4,7 @@
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import tempfile
 
@@ -197,7 +198,6 @@ static bool v4l2_match_dv_timings(const struct v4l2_dv_timings *a,
 }
 static void rk628_csi_enable_interrupts(struct v4l2_subdev *, bool);
 static void enable_stream(struct v4l2_subdev *, bool);
-static bool rk628_csi_rx_locked(struct v4l2_subdev *);
 """
 
 CASES = r"""
@@ -347,14 +347,6 @@ int main(void) {
         assert(!csi.confctl_mutex);
     }
     reset_fixture();
-    for (unsigned int i = 0; i < 16; ++i) lock_status[i] = 0x100;
-    assert(rk628_csi_s_stream(&csi.sd, 1) == -EAGAIN);
-    assert(!starts && stops == 1 && resets == 1 && scheduled == 1 && csi.nosignal);
-    reset_fixture();
-    lock_status[0] = 0x100;
-    assert(!rk628_csi_s_stream(&csi.sd, 1));
-    assert(starts == 1 && status_reads == 2 && !resets);
-    reset_fixture();
     csi.nosignal = true;
     assert(rk628_csi_s_stream(&csi.sd, 1) == -ENOLCK);
     assert(!starts && !csi.confctl_mutex);
@@ -377,103 +369,6 @@ int main(void) {
     assert(!rk628_csi_s_stream(&csi.sd, 0));
     assert(stops == 1 && !csi.is_streaming && !csi.confctl_mutex);
     puts("PASS: RK628 recovery, IRQ ordering, timing queries and stream readiness");
-    return 0;
-}
-"""
-
-
-PHY_PRELUDE = r"""
-#include <assert.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-typedef uint32_t u32;
-#define RK628F_VERSION 1
-#define LOCK_OK 0
-#define LOCK_FAIL 1
-#define LOCK_RESET 2
-#define CED_OK 0
-#define CED_ERR 1
-#define CED_FULL 2
-#define RXPHY_CFG_MAX_TIMES 5
-#define RXPHY_CFG_MAX_TIMES_DYNAMIC_EQ 10
-#define HDMI_RX_MD_HACT_PX 0
-#define HDMI_RX_MD_VAL 1
-#define HDMI_RX_MD_HT1 2
-#define HDMI_RX_MD_VTL 3
-#define HDMI_RX_SCDC_REGS1 4
-#define HDMI_RX_PDEC_STS 5
-#define DVI_DET 1
-struct v4l2_subdev { int unused; };
-struct rk628 { int version; bool dynamic_eq, force_eq; };
-struct rk628_csi { struct rk628 *rk628; };
-static struct rk628 chip;
-static struct rk628_csi csi = { &chip };
-static int attempts, ced_reads, error_read, ced_error;
-static bool persistent_error, plugged;
-static struct rk628_csi *to_csi(struct v4l2_subdev *sd) { return &csi; }
-#define v4l2_dbg(...) ((void)0)
-#define v4l2_info(...) ((void)0)
-#define v4l2_err(...) ((void)0)
-#define dev_info(...) ((void)0)
-#define msleep(...) ((void)0)
-#define tx_5v_power_present(sd) plugged
-#define rk628_rcv_supported_res(...) true
-#define rk628_hdmirx_set_preset_eq(...) ((void)0)
-#define rk628_hdmirx_phy_prepclk_cfg(...) ((void)0)
-#define rk628_hdmirx_inno_phy_power_on(...) (++attempts, 0)
-#define rk628_hdmirx_verisyno_phy_power_on(...) (++attempts)
-static int rk628_i2c_read(struct rk628 *rk, u32 reg, u32 *out) {
-    const u32 values[] = {1920, 1080, 2200U << 16, 1125, 0xf00, 0};
-    *out = values[reg];
-    return 0;
-}
-static int rk628_hdmirx_scdc_ced_err(struct rk628 *rk) {
-    ++ced_reads;
-    if (ced_reads == error_read || persistent_error) {
-        rk->force_eq = rk->dynamic_eq;
-        return ced_error;
-    }
-    rk->force_eq = false;
-    return CED_OK;
-}
-static void reset_fixture(void) {
-    chip.version = RK628F_VERSION;
-    chip.dynamic_eq = true;
-    chip.force_eq = false;
-    plugged = true;
-    persistent_error = false;
-    attempts = ced_reads = error_read = 0;
-    ced_error = CED_ERR;
-}
-"""
-
-PHY_CASES = r"""
-int main(void) {
-    struct v4l2_subdev sd;
-    reset_fixture();
-    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && attempts == 1);
-    /* A clean later counter observation must not hide an earlier retune. */
-    for (int sample = 1; sample <= 2; ++sample) {
-        reset_fixture();
-        error_read = sample;
-        assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && attempts == 2);
-        reset_fixture();
-        error_read = sample;
-        ced_error = CED_FULL;
-        assert(rk628_hdmirx_phy_setup(&sd) == LOCK_RESET && attempts == 1);
-    }
-    reset_fixture();
-    persistent_error = true;
-    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_FAIL);
-    assert(attempts == RXPHY_CFG_MAX_TIMES_DYNAMIC_EQ);
-    reset_fixture();
-    chip.force_eq = true;
-    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_OK && ced_reads == 2);
-    reset_fixture();
-    plugged = false;
-    assert(rk628_hdmirx_phy_setup(&sd) == LOCK_FAIL && attempts == 1);
-    puts("PASS: RK628 PHY retries preserve equalizer errors");
     return 0;
 }
 """
@@ -504,16 +399,13 @@ def main():
     ):
         functions.append(extract_function(source, name))
     with tempfile.TemporaryDirectory(prefix="rk628-recovery-") as directory:
-        for name, body in (
-            ("recovery", PRELUDE + "\n".join(functions) + CASES),
-            ("phy", PHY_PRELUDE + extract_function(source, "rk628_hdmirx_phy_setup") + PHY_CASES),
-        ):
-            harness = Path(directory) / (name + ".c")
-            binary = Path(directory) / name
-            harness.write_text(body)
-            subprocess.run([os.environ.get("CC", "gcc"), "-std=c11", "-Werror",
-                            str(harness), "-o", str(binary)], check=True)
-            subprocess.run([str(binary)], check=True, timeout=10)
+        harness = Path(directory) / "recovery.c"
+        binary = Path(directory) / "recovery"
+        harness.write_text(PRELUDE + "\n".join(functions) + CASES)
+        compiler = shlex.split(os.environ.get("CC", "gcc"))
+        subprocess.run([*compiler, "-std=c11", "-Werror",
+                        str(harness), "-o", str(binary)], check=True)
+        subprocess.run([str(binary)], check=True, timeout=10)
 
 
 if __name__ == "__main__":

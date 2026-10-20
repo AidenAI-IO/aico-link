@@ -26,25 +26,16 @@ retries autonomously with a ten-second delay.
 
 ## Receiver recovery
 
-The board enables the upstream `dynamic-eq` receiver option. Without it, a
-phone source can retain a valid HDMI clock and AVI mode while TMDS character
-errors accumulate and the data channels repeatedly lose lock. The receiver
-then retrains with the same equalization setting. Dynamic equalization
-enables character-error monitoring and retunes the receiver when errors
-increase. Initial tuning can still cause a temporary recovery; persistent
-errors require investigating the Type-C bridge and receiver path; the counters
-alone do not identify which component caused them.
 Configuration uses one character-error observation for its readiness and
 retry decisions, preserving the retry when that observation updates the
 counter baseline and equalizer.
-Stream start checks live receiver locks without sampling character-error
-counters. That sample can retune the equalizer based on errors accumulated
-during a long idle, disrupting a currently locked input and producing a
-truncated frame followed by no frames. Equalizer changes stay in receiver
-training; persistent lock loss at stream start schedules that training again.
-PHY setup likewise retries an attempt that changed the equalizer even if a
-subsequent counter observation is clean, and reports saturated counters from
-either observation as requiring a receiver reset.
+When character-error monitoring is enabled, sampling its counters can retune
+the equalizer based on errors accumulated during a long idle and disrupt a
+locked input. Stream start therefore leaves these counters alone; equalizer
+changes stay in receiver training. The board device tree leaves character-error
+monitoring and dynamic EQ disabled because trials with dynamic EQ did not
+establish reliable capture. Character-error counters alone do not identify a
+cable fault.
 
 RK628F can raise vertical-active-line interrupts while its measurement
 settles even though the HDMI clock, all three data channels, and decoded
