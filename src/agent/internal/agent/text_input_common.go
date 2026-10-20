@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/logging"
 	"context"
 	"encoding/json"
@@ -138,7 +139,7 @@ func (e *textInputEngine) compositionSegmentsForText(ctx context.Context, text s
 			if r > 0x7f {
 				return nil, fmt.Errorf("IME segment planner returned non-ASCII input %q", segment)
 			}
-			if _, ok := keyboardLayoutKeyStroke(defaultKeyboardLayout, byte(r)); !ok {
+			if _, ok := mnk.KeyboardLayoutKeyStroke(mnk.DefaultKeyboardLayout, byte(r)); !ok {
 				return nil, fmt.Errorf("IME segment planner returned unsupported key %q", r)
 			}
 		}

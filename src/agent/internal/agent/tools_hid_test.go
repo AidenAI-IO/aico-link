@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screen"
 	"context"
 	"encoding/base64"
@@ -64,13 +65,13 @@ func TestToolSetUpdateDeviceEnvironmentTracksPhoneScreenInfo(t *testing.T) {
 }
 
 func TestBuiltinToolSetWiresConfiguredKeyboardLayout(t *testing.T) {
-	tools := NewBuiltinToolSet(HIDConfig{KeyboardLayout: keyboardLayoutAZERTY}, AudioConfig{}, SearchConfig{}, ProxyConfig{})
+	tools := NewBuiltinToolSet(HIDConfig{KeyboardLayout: mnk.KeyboardLayoutAZERTY}, AudioConfig{}, SearchConfig{}, ProxyConfig{})
 	keyboardText, ok := tools.textInputHW.keyboardText.(*KeyboardTextTool)
 	if !ok {
 		t.Fatalf("keyboardText = %T, want *KeyboardTextTool", tools.textInputHW.keyboardText)
 	}
-	if got := keyboardText.keyboardLayout; got != keyboardLayoutAZERTY {
-		t.Fatalf("keyboard_text layout = %q, want %q", got, keyboardLayoutAZERTY)
+	if got := keyboardText.keyboardLayout; got != mnk.KeyboardLayoutAZERTY {
+		t.Fatalf("keyboard_text layout = %q, want %q", got, mnk.KeyboardLayoutAZERTY)
 	}
 	if _, ok := tools.textInputHW.keyboardTap.(*KeyboardTapTool); !ok {
 		t.Fatalf("keyboardTap = %T, want *KeyboardTapTool", tools.textInputHW.keyboardTap)
@@ -1094,7 +1095,7 @@ func TestKeyboardTextAcceptsBareTextFallback(t *testing.T) {
 
 func TestKeyboardTextUsesConfiguredAZERTYLayout(t *testing.T) {
 	dev, path := newTestHIDDevice(t)
-	tool := &KeyboardTextTool{dev: dev, keyboardLayout: keyboardLayoutAZERTY}
+	tool := &KeyboardTextTool{dev: dev, keyboardLayout: mnk.KeyboardLayoutAZERTY}
 
 	out, err := tool.Call(context.Background(), `{"text":"shape"}`)
 	if err != nil {
@@ -1123,7 +1124,7 @@ func TestKeyboardTextUsesConfiguredAZERTYLayout(t *testing.T) {
 
 func TestKeyboardTextUsesConfiguredQWERTZLayout(t *testing.T) {
 	dev, path := newTestHIDDevice(t)
-	tool := &KeyboardTextTool{dev: dev, keyboardLayout: keyboardLayoutQWERTZ}
+	tool := &KeyboardTextTool{dev: dev, keyboardLayout: mnk.KeyboardLayoutQWERTZ}
 
 	out, err := tool.Call(context.Background(), `{"text":"yz"}`)
 	if err != nil {
@@ -1154,7 +1155,7 @@ func TestKeyboardTextRejectsQWERTZDeadKeysWithoutPartialTyping(t *testing.T) {
 	for _, deadKey := range []string{"^", "`"} {
 		t.Run(deadKey, func(t *testing.T) {
 			dev, path := newTestHIDDevice(t)
-			tool := &KeyboardTextTool{dev: dev, keyboardLayout: keyboardLayoutQWERTZ}
+			tool := &KeyboardTextTool{dev: dev, keyboardLayout: mnk.KeyboardLayoutQWERTZ}
 
 			out, err := tool.Call(context.Background(), fmt.Sprintf(`{"text":"a%sb"}`, deadKey))
 			if err != nil {
@@ -1794,7 +1795,7 @@ func TestKeyboardTapSendsModifierChordWithHold(t *testing.T) {
 
 func TestKeyboardTapUsesConfiguredAZERTYLayout(t *testing.T) {
 	dev, path := newTestHIDDevice(t)
-	tool := testKeyboardTapTool(t, testMNKOpts{keyboard: dev, layout: keyboardLayoutAZERTY})
+	tool := testKeyboardTapTool(t, testMNKOpts{keyboard: dev, layout: mnk.KeyboardLayoutAZERTY})
 
 	out, err := tool.Call(context.Background(), `{"keys":["a"]}`)
 	if err != nil {

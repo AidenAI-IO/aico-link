@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"aiden-agent/internal/agent/mnk"
 )
 
 // fieldIndex builds a section.key -> FieldMeta lookup for the metadata.
@@ -400,7 +402,7 @@ func TestConfigMeta_NonRegistryEnumsMatchValidation(t *testing.T) {
 	}
 
 	keyboardLayoutEnum := enumValues("hid.keyboard_layout")
-	for _, layout := range []string{keyboardLayoutQWERTY, keyboardLayoutAZERTY, keyboardLayoutQWERTZ} {
+	for _, layout := range []string{mnk.KeyboardLayoutQWERTY, mnk.KeyboardLayoutAZERTY, mnk.KeyboardLayoutQWERTZ} {
 		if !contains(keyboardLayoutEnum, layout) {
 			t.Errorf("hid.keyboard_layout enum missing %q", layout)
 		}

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"aiden-agent/internal/agent/executor"
+	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/realtimevoice"
 	"aiden-agent/internal/logging"
 	"errors"
@@ -780,7 +781,7 @@ func (h HIDConfig) KeyboardDeviceOrDefault() string {
 }
 
 func (h HIDConfig) KeyboardLayoutOrDefault() string {
-	layout, _ := normalizeKeyboardLayout(h.KeyboardLayout)
+	layout, _ := mnk.NormalizeKeyboardLayout(h.KeyboardLayout)
 	return layout
 }
 
@@ -1979,8 +1980,8 @@ func (c Config) Validate() error {
 		return err
 	}
 
-	if _, ok := normalizeKeyboardLayout(c.HID.KeyboardLayout); !ok {
-		return fmt.Errorf("invalid hid.keyboard_layout: %s (expected %s)", c.HID.KeyboardLayout, keyboardLayoutValuesText())
+	if _, ok := mnk.NormalizeKeyboardLayout(c.HID.KeyboardLayout); !ok {
+		return fmt.Errorf("invalid hid.keyboard_layout: %s (expected %s)", c.HID.KeyboardLayout, mnk.KeyboardLayoutValuesText())
 	}
 	switch strings.ToLower(strings.TrimSpace(c.HID.PointerMode)) {
 	case "", "absolute", "touchscreen":

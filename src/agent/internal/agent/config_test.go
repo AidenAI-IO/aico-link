@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aiden-agent/internal/agent/mnk"
 )
 
 func TestConfigValidateAcceptsSTT(t *testing.T) {
@@ -318,16 +320,16 @@ provider = "fake"
 }
 
 func TestHIDKeyboardLayoutDefaultsToQWERTY(t *testing.T) {
-	if got := (HIDConfig{}).KeyboardLayoutOrDefault(); got != keyboardLayoutQWERTY {
-		t.Fatalf("KeyboardLayoutOrDefault() = %q, want %q", got, keyboardLayoutQWERTY)
+	if got := (HIDConfig{}).KeyboardLayoutOrDefault(); got != mnk.KeyboardLayoutQWERTY {
+		t.Fatalf("KeyboardLayoutOrDefault() = %q, want %q", got, mnk.KeyboardLayoutQWERTY)
 	}
-	if got := DefaultConfig().HID.KeyboardLayout; got != keyboardLayoutQWERTY {
-		t.Fatalf("DefaultConfig().HID.KeyboardLayout = %q, want %q", got, keyboardLayoutQWERTY)
+	if got := DefaultConfig().HID.KeyboardLayout; got != mnk.KeyboardLayoutQWERTY {
+		t.Fatalf("DefaultConfig().HID.KeyboardLayout = %q, want %q", got, mnk.KeyboardLayoutQWERTY)
 	}
 }
 
 func TestConfigValidateKeyboardLayout(t *testing.T) {
-	for _, layout := range []string{keyboardLayoutQWERTY, keyboardLayoutAZERTY, keyboardLayoutQWERTZ} {
+	for _, layout := range []string{mnk.KeyboardLayoutQWERTY, mnk.KeyboardLayoutAZERTY, mnk.KeyboardLayoutQWERTZ} {
 		cfg := Config{Model: ModelConfig{Provider: "fake"}, HID: HIDConfig{KeyboardLayout: layout}}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("Validate() rejected keyboard layout %q: %v", layout, err)

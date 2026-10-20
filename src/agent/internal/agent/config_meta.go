@@ -3,6 +3,7 @@ package agent
 import (
 	"sort"
 
+	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/realtimevoice"
 	"aiden-agent/internal/agent/tts"
 )
@@ -193,9 +194,9 @@ type ConfigMetadata struct {
 }
 
 func keyboardLayoutEnumOptions() []EnumOption {
-	options := make([]EnumOption, 0, len(keyboardLayoutDefinitions))
-	for _, layout := range keyboardLayoutDefinitions {
-		options = append(options, EnumOption{Value: layout.value, Label: layout.label})
+	options := make([]EnumOption, 0, len(mnk.KeyboardLayoutDefinitions))
+	for _, layout := range mnk.KeyboardLayoutDefinitions {
+		options = append(options, EnumOption{Value: layout.Value, Label: layout.Label})
 	}
 	return options
 }
