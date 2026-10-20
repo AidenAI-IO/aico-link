@@ -362,7 +362,7 @@ func TestSearchLaunchAppTextEntryDisablesBridgePath(t *testing.T) {
 		vision:    vision,
 		platform:  "android",
 		entryTool: entryTool,
-	}, "Aiden", false, false)
+	}, newFastTextInputEngine(*hw, vision), "Aiden", false, false)
 	if err != nil {
 		t.Fatalf("enterSearchQuery() error = %v", err)
 	}
@@ -440,7 +440,7 @@ func TestTypeQuickSearchQuerySkipsAndroid(t *testing.T) {
 	hw := &textInputHardwareDeps{keyboardText: keyboardText, keyboardTap: keys}
 	cfg := appSearchOpenFlowConfig{hw: hw, vision: vision, platform: "android", sleep: testNoWaitSleep}
 
-	quick, err := typeQuickSearchQuery(context.Background(), cfg, "小红书")
+	quick, err := typeQuickSearchQuery(context.Background(), cfg, newFastTextInputEngine(*hw, vision), "小红书")
 	if err != nil || quick {
 		t.Fatalf("typeQuickSearchQuery() = %v, %v; want false, nil on Android", quick, err)
 	}
