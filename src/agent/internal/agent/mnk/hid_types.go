@@ -83,7 +83,9 @@ func (d *HIDDevice) writeLocked(data []byte) error {
 	n, err := d.writeOnceLocked(data)
 	if err != nil {
 		d.closeLocked()
-		if n == 0 && hidShouldRetryWrite(err) {
+		// unix.Write returns n == -1 with the errno, so n <= 0 means nothing
+		// was written and the report can be resent on a fresh descriptor.
+		if n <= 0 && hidShouldRetryWrite(err) {
 			if reopenErr := d.ensureOpenLocked(); reopenErr == nil {
 				n2, retryErr := d.writeOnceLocked(data)
 				if retryErr == nil && n2 == len(data) {

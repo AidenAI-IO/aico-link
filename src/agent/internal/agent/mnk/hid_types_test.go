@@ -148,6 +148,48 @@ func TestHIDDeviceWriteReturnsNonRetryableError(t *testing.T) {
 	}
 }
 
+func TestHIDDeviceWriteRetriesFailedFDWrite(t *testing.T) {
+	// unix.Write reports n == -1 alongside the errno, so a failed fd write
+	// wrote nothing and must still take the reopen-and-retry path.
+	brokenRead, broken, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+	brokenRead.Close()
+	healthyRead, healthy, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("Pipe: %v", err)
+	}
+	t.Cleanup(func() {
+		healthyRead.Close()
+		healthy.Close()
+	})
+
+	openCount := 0
+	dev := NewHIDDeviceWithOpener("pipe-hid", func(string) (io.WriteCloser, error) {
+		openCount++
+		if openCount == 1 {
+			return broken, nil
+		}
+		return healthy, nil
+	})
+	dev.refreshState = ""
+
+	if err := dev.Write([]byte{1, 2, 3}); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if openCount != 2 {
+		t.Fatalf("openCount = %d, want 2 (EPIPE, then reopen)", openCount)
+	}
+	got := make([]byte, 3)
+	if _, err := io.ReadFull(healthyRead, got); err != nil {
+		t.Fatalf("read retried report: %v", err)
+	}
+	if string(got) != string([]byte{1, 2, 3}) {
+		t.Fatalf("retried report = %v, want [1 2 3]", got)
+	}
+}
+
 func TestHIDDeviceOpenRefreshesUSBCompositeOnENXIO(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "usb-refresh")
