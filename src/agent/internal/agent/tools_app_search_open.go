@@ -190,6 +190,11 @@ type appSearchOpenFlowConfig struct {
 	phoneIDFn         func() string
 	checkSearchOpenFn func(context.Context, screenshotResult) (androidSearchCheck, error)
 	searchEntries     *androidSearchEntryStore
+	// checkSearchFieldFn replaces the empty-search-field check in tests.
+	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, error)
+	// pastedQuery is set by enterSearchQuery when the last query was pasted
+	// through a background clipboard route.
+	pastedQuery *bool
 }
 
 type appSearchOpenFlowResult struct {
@@ -262,6 +267,8 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		attempts = append(attempts, searchAttempt{term: term, allowQuick: index == 0})
 	}
 	previousQuick := false
+	pasted := false
+	cfg.pastedQuery = &pasted
 	for index := 0; index < len(attempts); index++ {
 		term := attempts[index].term
 		if previousQuick {
@@ -308,6 +315,8 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		}
 		steps = append(steps, "waited for search results to settle")
 		foundForTerm := false
+		recovered := false
+	lookup:
 		for attempt := 1; attempt <= 2; attempt++ {
 			findResult, calls, err := findSearchOpenAppResult(ctx, cfg, engine, term)
 			result.VLMCalls += calls
@@ -325,6 +334,26 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 					continue
 				}
 				steps = append(steps, fmt.Sprintf("app result not found for %q", term))
+				// A pasted query that never reached the field leaves no
+				// results; re-enter it once before trying the next term.
+				if pasted && !recovered {
+					recovered = true
+					reentered, calls, err := recoverEmptySearchPaste(ctx, cfg, engine, term)
+					result.VLMCalls += calls
+					if err != nil {
+						result.Steps = append(steps, "search paste recovery failed")
+						return result, err
+					}
+					if reentered {
+						steps = append(steps, fmt.Sprintf("search field was empty after paste; re-entered %q", term))
+						if err := sleep(ctx, settleDelay); err != nil {
+							result.Steps = append(steps, "wait for search results canceled")
+							return result, err
+						}
+						attempt = 0
+						continue lookup
+					}
+				}
 				break
 			}
 			foundForTerm = true
@@ -391,13 +420,20 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 			return false, err
 		}
 	}
-	attempted, err := pasteSearchQuery(ctx, cfg, term)
+	route, err := pasteSearchQuery(ctx, cfg, term)
+	attempted := route != ""
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	if attempted && err == nil {
-		logging.Infof("agent", "app_search", "query input route=pip_clipboard_paste")
+		logging.Infof("agent", "app_search", "query input route=%s", route)
+		if cfg.pastedQuery != nil {
+			*cfg.pastedQuery = true
+		}
 		return false, nil
+	}
+	if cfg.pastedQuery != nil {
+		*cfg.pastedQuery = false
 	}
 	if attempted {
 		logging.Infof("agent", "app_search", "query input route=local_hid clipboard_error=%v", err)
@@ -430,6 +466,96 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 		return false, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
 	return false, nil
+}
+
+// searchFieldCheck is the state of the system search field after a paste.
+type searchFieldCheck struct {
+	Empty       bool            `json:"empty"`
+	SearchField *focusPointArgs `json:"search_field"`
+	Reason      string          `json:"reason,omitempty"`
+}
+
+// recoverEmptySearchPaste handles a background clipboard paste that sent the
+// paste keys but left the search field empty, which shows up only as missing
+// results. It pastes through the long-press menu and, if the field is still
+// empty, types the query locally. It reports whether the query was re-entered.
+func recoverEmptySearchPaste(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string) (bool, int, error) {
+	field, calls, err := checkSearchField(ctx, cfg, engine)
+	if err != nil || !field.Empty || field.SearchField == nil {
+		return false, calls, err
+	}
+	platform := cfg.platform
+	if platform == "" {
+		platform = cfg.entryTool.platform()
+	}
+	focus := *field.SearchField
+	logging.Infof("agent", "app_search", "search field empty after paste term=%q; trying long-press paste at %.0f,%.0f", term, focus.X, focus.Y)
+	if bridgeTool := cfg.entryTool.bridgeTool; bridgeTool != nil {
+		if err := bridgeTool.pasteViaContextMenu(ctx, engine, platform, focus); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, calls, ctxErr
+			}
+			logging.Infof("agent", "app_search", "long-press paste failed term=%q: %v", term, err)
+		} else {
+			after, more, err := checkSearchField(ctx, cfg, engine)
+			calls += more
+			if err != nil {
+				return false, calls, err
+			}
+			if !after.Empty {
+				logging.Infof("agent", "app_search", "query input route=long_press_paste")
+				return true, calls, nil
+			}
+		}
+	}
+	logging.Infof("agent", "app_search", "query input route=local_hid after empty paste term=%q", term)
+	input := map[string]any{"text": term, "focus": map[string]any{"x": focus.X, "y": focus.Y}}
+	// Results decide whether local entry worked, as for unverified entry.
+	if _, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true}); err != nil {
+		return false, calls, err
+	}
+	return true, calls, nil
+}
+
+func checkSearchField(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine) (searchFieldCheck, int, error) {
+	shot, err := engine.captureScreenshot(ctx)
+	if err != nil {
+		return searchFieldCheck{}, 0, err
+	}
+	if cfg.checkSearchFieldFn != nil {
+		check, err := cfg.checkSearchFieldFn(ctx, shot, cfg.platform)
+		return check, 0, err
+	}
+	modelVision, ok := cfg.vision.(*llmTextInputVision)
+	if !ok || modelVision == nil {
+		return searchFieldCheck{}, 0, nil
+	}
+	raw, err := modelVision.visionDecisionJSON(ctx, "search_field_empty", buildSearchFieldCheckPrompt(), []string{"empty"}, shot)
+	if err != nil {
+		return searchFieldCheck{}, 1, err
+	}
+	var check searchFieldCheck
+	if err := json.Unmarshal([]byte(raw), &check); err != nil {
+		return searchFieldCheck{}, 1, fmt.Errorf("parse search field check: %w", err)
+	}
+	return check, 1, nil
+}
+
+func buildSearchFieldCheckPrompt() string {
+	return strings.TrimSpace(`Analyze this phone screenshot of a system app search page right after automation pasted a query into its search field.
+Decide whether the search field is still empty, which means the paste had no effect.
+Return JSON only:
+{
+  "empty": true,
+  "search_field": {"x": 500, "y": 80},
+  "reason": "search field shows only its placeholder"
+}
+
+Rules:
+- empty=true when the search field shows no typed text: only placeholder text such as "搜索" or "Search", or nothing at all.
+- empty=false when any query text, pinyin, or uncommitted IME text is in the field.
+- search_field is the center of the search text field in normalized 0-1000 coordinates, or null when no search field is visible.
+- Keep reason short and concrete.`)
 }
 
 // clearSearchQueryText removes committed query text with Select All and
@@ -532,29 +658,42 @@ func (e *searchQueryUnverifiedError) Error() string {
 	return "enter search query: " + e.suggestion
 }
 
-// PiP can write the clipboard without leaving the focused system search UI.
-// The existing result lookup, tap and app-open confirmation verify the outcome.
-func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (attempted bool, err error) {
+// The iOS PiP and Android foreground-service companions can write the
+// clipboard without leaving the focused system search UI. Pasting the exact
+// query also avoids local IME composition, which some Android vendors do not
+// support for external keyboards. The existing result lookup, tap and app-open
+// confirmation verify the outcome. route is empty when no background
+// clipboard route applies.
+func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (route string, err error) {
 	platform := cfg.platform
 	if platform == "" {
 		platform = cfg.entryTool.platform()
 	}
-	if platform != "ios" || cfg.entryTool.bridgeTool == nil {
-		return false, nil
+	if cfg.entryTool.bridgeTool == nil {
+		return "", nil
 	}
 	bridgeTool := cfg.entryTool.bridgeTool
 	bridge := bridgeTool.currentBridge()
-	if bridge == nil || !phoneBridgeCanUsePiPBackground(bridge.getStatus(), "clipboard_write") {
-		return false, nil
+	if bridge == nil {
+		return "", nil
+	}
+	status := bridge.getStatus()
+	switch {
+	case platform == "ios" && phoneBridgeCanUsePiPBackground(status, "clipboard_write"):
+		route = "pip_clipboard_paste"
+	case platform == "android" && phoneBridgeCanUseFGSBackground(status, "clipboard_write"):
+		route = "fgs_clipboard_paste"
+	default:
+		return "", nil
 	}
 	if err := bridgeTool.writeClipboard(ctx, bridge, term); err != nil {
-		return true, err
+		return route, err
 	}
 	if err := bridgeTool.sleepAfterClipboardWrite(ctx); err != nil {
-		return true, err
+		return route, err
 	}
 	_, _, err = bridgeTool.pasteClipboard(ctx, platform)
-	return true, err
+	return route, err
 }
 
 func appSearchFallbackTerms(searchTerm string) []string {
