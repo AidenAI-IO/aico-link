@@ -106,7 +106,7 @@ func TestSupportBundleRejectsWhenBusy(t *testing.T) {
 	mcpSupportBundleSlots <- struct{}{}
 	t.Cleanup(func() { <-mcpSupportBundleSlots })
 
-	_, _, err := (mcpServerBackend{}).SupportBundle(context.Background())
+	_, _, _, err := (mcpServerBackend{}).SupportBundle(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("err=%v want busy", err)
 	}

@@ -43,5 +43,7 @@ type Backend interface {
 	CallRuntimeTool(ctx context.Context, name string, arguments json.RawMessage) (CallResult, error)
 	PhoneBridgeStatus(ctx context.Context) (any, error)
 	DeviceStatus(ctx context.Context) (any, error)
-	SupportBundle(ctx context.Context) ([]byte, string, error)
+	// SupportBundle returns a base64 blob under the backend concurrency cap
+	// (fetch + encode). bytes is the raw archive size before encoding.
+	SupportBundle(ctx context.Context) (blob string, mime string, bytes int, err error)
 }

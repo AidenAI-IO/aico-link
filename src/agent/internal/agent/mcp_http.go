@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"aiden-agent/internal/logging"
 	"aiden-agent/internal/mcp"
 
 	"github.com/tmc/langchaingo/schema"
@@ -19,9 +21,9 @@ import (
 
 const defaultMCPConfigWebBase = "http://127.0.0.1"
 
-// Cap concurrent MCP support_bundle fetches. Each call can retain tens of MiB
-// in Agent buffers (plus config-web archive work); reject extras instead of
-// queueing so an unauthenticated flood cannot multiply memory use.
+// Cap concurrent MCP support_bundle work (config-web fetch + base64 encode).
+// Reject extras instead of queueing so an unauthenticated flood cannot
+// multiply large Agent buffers.
 const maxMCPSupportBundleConcurrent = 1
 
 var (
@@ -97,11 +99,17 @@ func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, argu
 	})
 	isError := execution.Result.IsError() || execution.Error != nil
 	output := execution.Result.Output
-	if execution.Error != nil && output == "" {
-		output = execution.Error.Error()
-	}
-	if execution.Result.Error != nil && output == "" {
-		output = execution.Result.Error.Message
+	// /mcp is unauthenticated: never return raw execution errors (paths, etc.).
+	if execution.Error != nil {
+		logging.Warnf("agent", "mcp", "tool %s failed: %v", name, execution.Error)
+		output = "tool execution failed"
+		isError = true
+	} else if execution.Result.Error != nil {
+		logging.Warnf("agent", "mcp", "tool %s error: %s", name, execution.Result.Error.Message)
+		if strings.TrimSpace(output) == "" || output == execution.Result.Error.Message {
+			output = "tool execution failed"
+		}
+		isError = true
 	}
 	return mcp.CallResult{
 		IsError: isError,
@@ -197,45 +205,47 @@ func (b mcpServerBackend) DeviceStatus(ctx context.Context) (any, error) {
 	return payload, nil
 }
 
-func (b mcpServerBackend) SupportBundle(ctx context.Context) ([]byte, string, error) {
+func (b mcpServerBackend) SupportBundle(ctx context.Context) (string, string, int, error) {
 	select {
 	case mcpSupportBundleSlots <- struct{}{}:
 		defer func() { <-mcpSupportBundleSlots }()
 	default:
-		return nil, "", fmt.Errorf("support_bundle busy; try again later")
+		return "", "", 0, fmt.Errorf("support_bundle busy; try again later")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, "", err
+		return "", "", 0, err
 	}
 	base, err := b.configWebBase()
 	if err != nil {
-		return nil, "", err
+		return "", "", 0, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/logs/support", nil)
 	if err != nil {
-		return nil, "", err
+		return "", "", 0, err
 	}
 	resp, err := mcpSupportBundleHTTPClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("config-web support bundle: %w", err)
+		return "", "", 0, fmt.Errorf("config-web support bundle: %w", err)
 	}
 	defer resp.Body.Close()
 	const maxSupportBundleBytes = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSupportBundleBytes+1))
 	if err != nil {
-		return nil, "", err
+		return "", "", 0, err
 	}
 	if len(body) > maxSupportBundleBytes {
-		return nil, "", fmt.Errorf("config-web support bundle: exceeds %d byte limit", maxSupportBundleBytes)
+		return "", "", 0, fmt.Errorf("config-web support bundle: exceeds %d byte limit", maxSupportBundleBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return "", "", 0, fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	mime := resp.Header.Get("Content-Type")
 	if mime == "" {
 		mime = "application/gzip"
 	}
-	return body, mime, nil
+	// Encode while still holding the slot so base64 peak memory stays gated.
+	blob := base64.StdEncoding.EncodeToString(body)
+	return blob, mime, len(body), nil
 }
 
 func (b mcpServerBackend) configWebBase() (string, error) {

@@ -36,8 +36,8 @@ func (s *stubBackend) DeviceStatus(context.Context) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-func (s *stubBackend) SupportBundle(context.Context) ([]byte, string, error) {
-	return []byte("gzip"), "application/gzip", nil
+func (s *stubBackend) SupportBundle(context.Context) (string, string, int, error) {
+	return "Z3ppcA==", "application/gzip", 4, nil // base64("gzip")
 }
 
 func postMCP(t *testing.T, h http.Handler, body any, origin string) *httptest.ResponseRecorder {
@@ -192,6 +192,42 @@ func TestOriginValidation(t *testing.T) {
 	noOrigin := postMCP(t, h, ping, "")
 	if noOrigin.Code != http.StatusOK {
 		t.Fatalf("missing Origin status=%d body=%s", noOrigin.Code, noOrigin.Body.String())
+	}
+}
+
+func TestJSONRPCBatchRejected(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	raw := []byte(`[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]`)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	req.Host = "192.168.1.10:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d want 400 body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "batch is not supported") {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":null`) {
+		t.Fatalf("want id null: %s", rec.Body.String())
+	}
+}
+
+func TestParseErrorIncludesNullID(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(`{`)))
+	req.Host = "192.168.1.10:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"id":null`) {
+		t.Fatalf("want id null: %s", rec.Body.String())
 	}
 }
 

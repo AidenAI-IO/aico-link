@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"encoding/base64"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -29,9 +29,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateOrigin(r) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(errorResponse(nil, errInvalidRequest, "invalid Origin", nil))
+		writeJSON(w, http.StatusForbidden, errorResponse(nil, errInvalidRequest, "invalid Origin", nil))
 		return
 	}
 	accept := r.Header.Get("Accept")
@@ -50,11 +48,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		// JSON-RPC batch is out of scope; do not advertise batch-era revisions.
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, errInvalidRequest, "JSON-RPC batch is not supported", nil))
+		return
+	}
+
 	var req jsonRPCRequest
 	if err := json.Unmarshal(body, &req); err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(errorResponse(nil, errParseError, "parse error", err.Error()))
+		writeJSON(w, http.StatusBadRequest, errorResponse(nil, errParseError, "parse error", nil))
 		return
 	}
 	if req.JSONRPC != "" && req.JSONRPC != jsonRPCVersion {
@@ -240,11 +243,11 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 		}
 		return resultResponse(req.ID, jsonResult(status))
 	case name == toolSupportBundle:
-		data, mime, bundleErr := h.Backend.SupportBundle(ctx)
+		blob, mime, rawBytes, bundleErr := h.Backend.SupportBundle(ctx)
 		if bundleErr != nil {
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: bundleErr.Error()}},
+				Content: []ContentBlock{{Type: "text", Text: "support_bundle failed"}},
 			})
 		}
 		if mime == "" {
@@ -252,13 +255,13 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 		}
 		return resultResponse(req.ID, CallResult{
 			Content: []ContentBlock{
-				{Type: "text", Text: fmt.Sprintf("support_bundle mime=%s bytes=%d", mime, len(data))},
+				{Type: "text", Text: fmt.Sprintf("support_bundle mime=%s bytes=%d", mime, rawBytes)},
 				{
 					Type: "resource",
 					Resource: &ResourceContents{
 						URI:      "aiden://support-bundle",
 						MIMEType: mime,
-						Blob:     base64.StdEncoding.EncodeToString(data),
+						Blob:     blob,
 					},
 				},
 			},

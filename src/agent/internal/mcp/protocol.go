@@ -21,11 +21,12 @@ const (
 	errUnsupportedVer = -32022
 )
 
+// Advertised protocol versions for initialize / server/discover.
+// Older Streamable HTTP revisions that required JSON-RPC batching are not
+// advertised; preferLegacyProtocol maps them to protocolLegacy25.
 var supportedProtocolVersions = []string{
 	protocolModern,
 	protocolLegacy25,
-	protocolLegacy03,
-	protocolLegacy24,
 }
 
 type jsonRPCRequest struct {
@@ -37,7 +38,7 @@ type jsonRPCRequest struct {
 
 type jsonRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
-	ID      json.RawMessage `json:"id,omitempty"`
+	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
 	Error   *jsonRPCError   `json:"error,omitempty"`
 }
@@ -52,16 +53,23 @@ func isNotification(req jsonRPCRequest) bool {
 	return len(req.ID) == 0 || string(req.ID) == "null"
 }
 
+func normalizeResponseID(id json.RawMessage) json.RawMessage {
+	if len(id) == 0 || string(id) == "null" {
+		return json.RawMessage("null")
+	}
+	return id
+}
+
 func errorResponse(id json.RawMessage, code int, message string, data any) jsonRPCResponse {
 	return jsonRPCResponse{
 		JSONRPC: jsonRPCVersion,
-		ID:      id,
+		ID:      normalizeResponseID(id),
 		Error:   &jsonRPCError{Code: code, Message: message, Data: data},
 	}
 }
 
 func resultResponse(id json.RawMessage, result any) jsonRPCResponse {
-	return jsonRPCResponse{JSONRPC: jsonRPCVersion, ID: id, Result: result}
+	return jsonRPCResponse{JSONRPC: jsonRPCVersion, ID: normalizeResponseID(id), Result: result}
 }
 
 func decodeParams[T any](raw json.RawMessage) (T, error) {
@@ -87,6 +95,12 @@ func protocolSupported(version string) bool {
 func preferLegacyProtocol(requested string) string {
 	if protocolSupported(requested) {
 		return requested
+	}
+	// Accept single-request clients that still send older version strings, but
+	// do not advertise those revisions (they implied JSON-RPC batch support).
+	switch requested {
+	case protocolLegacy03, protocolLegacy24:
+		return protocolLegacy25
 	}
 	return protocolLegacy25
 }
