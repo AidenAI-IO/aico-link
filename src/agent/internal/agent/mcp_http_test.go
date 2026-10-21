@@ -110,7 +110,50 @@ func TestSupportBundleRejectsWhenBusy(t *testing.T) {
 	if release != nil {
 		t.Fatal("release should be nil when busy")
 	}
-	if err == nil || !strings.Contains(err.Error(), "busy") {
-		t.Fatalf("err=%v want busy", err)
+	if err == nil || err.Error() != "support_bundle busy; try again later" {
+		t.Fatalf("err=%v want busy hint", err)
+	}
+}
+
+func TestDeviceStatusScrubsConfigWebErrors(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "/secret/path stack trace", http.StatusInternalServerError)
+	}))
+	t.Cleanup(upstream.Close)
+
+	prev := mcpConfigWebHTTPClient
+	mcpConfigWebHTTPClient = upstream.Client()
+	t.Cleanup(func() { mcpConfigWebHTTPClient = prev })
+
+	runtime := &Runtime{config: Config{MCPConfigWebBaseURL: upstream.URL}}
+	_, err := (mcpServerBackend{server: &Server{runtime: runtime}}).DeviceStatus(context.Background())
+	if err == nil || err.Error() != "device_status failed" {
+		t.Fatalf("err=%v want scrubbed device_status failed", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "/secret/path") {
+		t.Fatalf("leaked upstream body: %v", err)
+	}
+}
+
+func TestSupportBundleScrubsConfigWebErrors(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "/secret/bundle-path", http.StatusInternalServerError)
+	}))
+	t.Cleanup(upstream.Close)
+
+	prev := mcpSupportBundleHTTPClient
+	mcpSupportBundleHTTPClient = upstream.Client()
+	t.Cleanup(func() { mcpSupportBundleHTTPClient = prev })
+
+	runtime := &Runtime{config: Config{MCPConfigWebBaseURL: upstream.URL}}
+	_, _, _, release, err := (mcpServerBackend{server: &Server{runtime: runtime}}).SupportBundle(context.Background())
+	if release != nil {
+		t.Fatal("release should be nil on failure")
+	}
+	if err == nil || err.Error() != "support_bundle failed" {
+		t.Fatalf("err=%v want scrubbed support_bundle failed", err)
+	}
+	if strings.Contains(err.Error(), "/secret/bundle-path") {
+		t.Fatalf("leaked upstream body: %v", err)
 	}
 }

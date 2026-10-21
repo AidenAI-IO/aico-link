@@ -178,29 +178,34 @@ func (b mcpServerBackend) PhoneBridgeStatus(ctx context.Context) (any, error) {
 }
 
 func (b mcpServerBackend) DeviceStatus(ctx context.Context) (any, error) {
+	// /mcp is unauthenticated: log detail locally and return a fixed client error.
+	fail := func(err error) (any, error) {
+		logging.Warnf("agent", "mcp", "device_status failed: %v", err)
+		return nil, fmt.Errorf("device_status failed")
+	}
 	base, err := b.configWebBase()
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/device/status", nil)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	resp, err := mcpConfigWebHTTPClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("config-web device status: %w", err)
+		return fail(fmt.Errorf("config-web device status: %w", err))
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("config-web device status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fail(fmt.Errorf("config-web device status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return nil, err
+		return fail(err)
 	}
 	return payload, nil
 }
@@ -209,12 +214,15 @@ func (b mcpServerBackend) SupportBundle(ctx context.Context) (string, string, in
 	select {
 	case mcpSupportBundleSlots <- struct{}{}:
 	default:
+		logging.Warnf("agent", "mcp", "support_bundle busy")
+		// Client-visible and actionable; distinct from scrubbed failures below.
 		return "", "", 0, nil, fmt.Errorf("support_bundle busy; try again later")
 	}
 	release := func() { <-mcpSupportBundleSlots }
 	fail := func(err error) (string, string, int, func(), error) {
+		logging.Warnf("agent", "mcp", "support_bundle failed: %v", err)
 		release()
-		return "", "", 0, nil, err
+		return "", "", 0, nil, fmt.Errorf("support_bundle failed")
 	}
 	if err := ctx.Err(); err != nil {
 		return fail(err)
