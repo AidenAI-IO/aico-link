@@ -94,7 +94,7 @@ jobs:
   run:
     needs: plan
     if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    runs-on: aiden-hosted-01
+    runs-on: aiden-hosted-02
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
     # A single job fans the cases out in-process instead, where the isolation that

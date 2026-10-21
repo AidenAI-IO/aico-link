@@ -472,7 +472,7 @@ Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 repository setting. If neither is set, the workflow uses `1`. The report derives
 `metrics_k` from the planned task repeats; no separate metrics variable is needed.
 
-The benchmark job uses the dedicated `aiden-hosted-01` runner because the
+The benchmark job uses the `aiden-hosted-02` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the
 selected cases out with a configurable concurrency limit. MobileGym cases are
