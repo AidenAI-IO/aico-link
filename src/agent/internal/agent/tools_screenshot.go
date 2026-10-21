@@ -39,11 +39,9 @@ type screenshotReadyFrameClient interface {
 }
 
 func captureScreenshotJPEG(client screenshotFrameClient, screenState *screen.ScreenState, cropBlack bool) (*frameMetadata, []byte, screenCaptureInfo, error) {
-	hint := screenprovider.CropHint{}
-	if cropBlack {
-		hint = screenshotCropHint(screenState)
-	}
-	return client.LatestFrameWithFormat("jpeg", screenshotJPEGQuality, cropBlack, hint)
+	return captureWithCropHint(screenState, cropBlack, func(hint screenprovider.CropHint) (*frameMetadata, []byte, screenCaptureInfo, error) {
+		return client.LatestFrameWithFormat("jpeg", screenshotJPEGQuality, cropBlack, hint)
+	})
 }
 
 func captureScreenshotJPEGWhenReady(client screenshotFrameClient, screenState *screen.ScreenState, cropBlack bool) (*frameMetadata, []byte, screenCaptureInfo, error) {
@@ -51,18 +49,148 @@ func captureScreenshotJPEGWhenReady(client screenshotFrameClient, screenState *s
 	if !ok {
 		return captureScreenshotJPEG(client, screenState, cropBlack)
 	}
-	hint := screenprovider.CropHint{}
-	if cropBlack {
-		hint = screenshotCropHint(screenState)
+	return captureWithCropHint(screenState, cropBlack, func(hint screenprovider.CropHint) (*frameMetadata, []byte, screenCaptureInfo, error) {
+		return readyClient.LatestFrameWithFormatWhenReady("jpeg", screenshotJPEGQuality, cropBlack, hint)
+	})
+}
+
+// captureWithCropHint passes the frame service the phone screen size it crops
+// to. A live report is remembered with the frame size it cropped; without one
+// (companion app closed, Agent restarted) the remembered size is used, and the
+// frame is captured again without a hint if the frame size no longer matches.
+func captureWithCropHint(screenState *screen.ScreenState, cropBlack bool, capture func(screenprovider.CropHint) (*frameMetadata, []byte, screenCaptureInfo, error)) (*frameMetadata, []byte, screenCaptureInfo, error) {
+	if !cropBlack {
+		return capture(screenprovider.CropHint{})
 	}
-	return readyClient.LatestFrameWithFormatWhenReady("jpeg", screenshotJPEGQuality, cropBlack, hint)
+	fallback := screenState.PhoneScreenFallback()
+	if hint := screenshotCropHint(screenState); hint.ScreenWidth > 0 {
+		meta, data, info, err := capture(hint)
+		if err == nil && meta != nil && meta.SourceWidth > 0 && meta.CropWidth > 0 && fallback != nil {
+			fallback.Remember(screenState.PhoneScreenInfo(), int(meta.SourceWidth), int(meta.SourceHeight))
+		}
+		return meta, data, info, err
+	}
+	if fallback == nil {
+		return capture(screenprovider.CropHint{})
+	}
+	remembered, frameWidth, frameHeight, ok := fallback.LookupForDevice()
+	if !ok {
+		return captureAndLearn(fallback, capture)
+	}
+	meta, data, info, err := capture(cropHintForPhoneScreen(remembered))
+	if err != nil || meta == nil || meta.SourceWidth == 0 {
+		return meta, data, info, err
+	}
+	if frameWidth == 0 {
+		// The app reported before any capture: this frame completes the entry.
+		fallback.NoteFrame(int(meta.SourceWidth), int(meta.SourceHeight))
+		return meta, data, info, err
+	}
+	if int(meta.SourceWidth) != frameWidth || int(meta.SourceHeight) != frameHeight {
+		return captureAndLearn(fallback, capture)
+	}
+	if fallback.ShouldReprobe() {
+		// The hinted frame is returned; this extra capture only lets a
+		// remembered entry be corrected (another phone, a wrong detection).
+		_, _, _, _ = captureAndLearn(fallback, capture)
+	}
+	return meta, data, info, err
+}
+
+// captureAndLearn captures without a hint, letting the frame service detect
+// the black borders, and offers its crop to the fallback store.
+func captureAndLearn(fallback screen.PhoneScreenFallback, capture func(screenprovider.CropHint) (*frameMetadata, []byte, screenCaptureInfo, error)) (*frameMetadata, []byte, screenCaptureInfo, error) {
+	meta, data, info, err := capture(screenprovider.CropHint{})
+	if err == nil && meta != nil && meta.SourceWidth > 0 {
+		// Completes an entry the app reported before any capture.
+		fallback.NoteFrame(int(meta.SourceWidth), int(meta.SourceHeight))
+		fallback.ObserveCrop(int(meta.CropWidth), int(meta.CropHeight), int(meta.SourceWidth), int(meta.SourceHeight),
+			cropEdgesOnScreen(meta, data))
+	}
+	return meta, data, info, err
+}
+
+// A cut edge of a black-border crop lies on the phone screen edge when most of
+// it is clearly above black. The frame service treats a uniform near-black line
+// as border, so on a near-black page an over-crop ends on content, but only on
+// a few glyph or icon pixels; the real edge of any screen that is not
+// near-black (a light page, a colourful dark wallpaper) is above black along
+// most of its length. Rounded corners are skipped.
+const (
+	cropEdgeBrightness   = 20.0
+	cropEdgeCoverage     = 0.6
+	cropEdgeCornerMargin = 0.08
+	cropEdgeDepth        = 3
+)
+
+// cropEdgesOnScreen reports whether every cut edge of the crop in this JPEG
+// lies on the phone screen edge, so the crop is the whole screen and safe to
+// learn. A crop that cut nothing proves nothing and is not trusted.
+func cropEdgesOnScreen(meta *frameMetadata, jpegData []byte) bool {
+	if meta == nil || meta.CropWidth == 0 || meta.CropHeight == 0 {
+		return false
+	}
+	horizontal := meta.CropWidth < meta.SourceWidth
+	vertical := meta.CropHeight < meta.SourceHeight
+	if !horizontal && !vertical {
+		return false
+	}
+	img, err := jpeg.Decode(bytes.NewReader(jpegData))
+	if err != nil {
+		return false
+	}
+	b := img.Bounds()
+	if horizontal && (!cropEdgeBright(img, b.Min.X, 1, b.Min.Y, b.Dy(), false) ||
+		!cropEdgeBright(img, b.Max.X-1, -1, b.Min.Y, b.Dy(), false)) {
+		return false
+	}
+	if vertical && (!cropEdgeBright(img, b.Min.Y, 1, b.Min.X, b.Dx(), true) ||
+		!cropEdgeBright(img, b.Max.Y-1, -1, b.Min.X, b.Dx(), true)) {
+		return false
+	}
+	return true
+}
+
+// cropEdgeBright checks the first cropEdgeDepth lines inward from edge (the
+// crop keeps a pixel of border and JPEG blurs it) and reports whether any is
+// mostly above black.
+func cropEdgeBright(img image.Image, edge, step, start, length int, row bool) bool {
+	margin := int(float64(length) * cropEdgeCornerMargin)
+	start, length = start+margin, length-2*margin
+	samples := min(64, length)
+	if samples <= 1 {
+		return false
+	}
+	for depth := 0; depth < cropEdgeDepth; depth++ {
+		fixed := edge + depth*step
+		bright := 0
+		for i := 0; i < samples; i++ {
+			position := start + i*(length-1)/(samples-1)
+			var c color.Color
+			if row {
+				c = img.At(position, fixed)
+			} else {
+				c = img.At(fixed, position)
+			}
+			if pixelBrightness(c) > cropEdgeBrightness {
+				bright++
+			}
+		}
+		if float64(bright) >= cropEdgeCoverage*float64(samples) {
+			return true
+		}
+	}
+	return false
 }
 
 func screenshotCropHint(screenState *screen.ScreenState) screenprovider.CropHint {
 	if screenState == nil {
 		return screenprovider.CropHint{}
 	}
-	phoneScreen := screenState.PhoneScreenInfo()
+	return cropHintForPhoneScreen(screenState.PhoneScreenInfo())
+}
+
+func cropHintForPhoneScreen(phoneScreen screen.PhoneScreenInfo) screenprovider.CropHint {
 	width, height, ok := currentPhoneScreenDimensions(phoneScreen)
 	if !ok {
 		width, height, ok = nativePhoneScreenDimensions(phoneScreen)
@@ -371,7 +499,29 @@ func detectScreenshotActiveAreaForScreen(screen *screen.ScreenState, jpegData []
 		return detectScreenshotActiveArea(jpegData, expectedWidth, expectedHeight)
 	}
 	phoneScreen := screen.PhoneScreenInfo()
-	return detectScreenshotActiveAreaWithPhoneScreen(jpegData, expectedWidth, expectedHeight, &phoneScreen)
+	if !phoneScreenHasDimensions(phoneScreen) {
+		// No live report (for example the companion app is closed and the
+		// Agent restarted): use the last report for this frame size.
+		if fallback := screen.PhoneScreenFallback(); fallback != nil {
+			if remembered, ok := fallback.Lookup(expectedWidth, expectedHeight); ok {
+				return detectScreenshotActiveAreaWithPhoneScreen(jpegData, expectedWidth, expectedHeight, &remembered)
+			}
+		}
+		return detectScreenshotActiveAreaWithPhoneScreen(jpegData, expectedWidth, expectedHeight, &phoneScreen)
+	}
+	active := detectScreenshotActiveAreaWithPhoneScreen(jpegData, expectedWidth, expectedHeight, &phoneScreen)
+	if fallback := screen.PhoneScreenFallback(); active.Valid && fallback != nil {
+		fallback.Remember(phoneScreen, expectedWidth, expectedHeight)
+	}
+	return active
+}
+
+func phoneScreenHasDimensions(info screen.PhoneScreenInfo) bool {
+	if _, _, ok := currentPhoneScreenDimensions(info); ok {
+		return true
+	}
+	_, _, ok := nativePhoneScreenDimensions(info)
+	return ok
 }
 
 func detectScreenshotActiveAreaWithPhoneScreen(jpegData []byte, expectedWidth, expectedHeight int, phoneScreen *screen.PhoneScreenInfo) screen.ScreenActiveArea {
