@@ -797,13 +797,13 @@ func (s *Server) restoreParseLoop(job *restoreJob) {
 		s.failRestore(job, "cancelled", ctx.Err())
 		return
 	}
+	// handleRestorePlan already moved the job to uploading_and_staging.
 	job.mu.Lock()
-	if isTerminalRestoreState(job.state) {
-		job.mu.Unlock()
+	terminal := isTerminalRestoreState(job.state)
+	job.mu.Unlock()
+	if terminal {
 		return
 	}
-	job.state, job.phase = restoreJobUploading, "staging"
-	job.mu.Unlock()
 	s.restoreJobs.persist(job)
 
 	for {
@@ -940,10 +940,23 @@ func (s *Server) handleRestorePlan(w http.ResponseWriter, r *http.Request, id st
 	digest := sha256.Sum256(digestData)
 	warnings := restorePlanWarnings(manifest, selected, strategy)
 	job.mu.Lock()
+	// Planning ran without the lock: a cancel, a watchdog abort or another
+	// plan may have won meanwhile, and their outcome must not be overwritten.
+	if job.parserErr != nil || job.state != restoreJobAwaitingPlan || job.planSet {
+		state := job.state
+		job.mu.Unlock()
+		writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "error": "restore_plan_unavailable", "state": state})
+		return
+	}
 	job.selected, job.sdStrategy, job.units, job.planDigest = selected, strategy, units, hex.EncodeToString(digest[:])
 	job.sdLease = sdLease
 	job.warnings = warnings
 	job.planSet = true
+	// Leave awaiting_plan before answering so the client may upload the next
+	// chunk as soon as it sees this response, whether or not the parser has
+	// resumed yet.  The stall timeout starts now.
+	job.state, job.phase = restoreJobUploading, "staging"
+	job.lastActivity = time.Now().UTC()
 	closeOnce(job.planReady)
 	inputClosed := job.inputClosed
 	job.mu.Unlock()
