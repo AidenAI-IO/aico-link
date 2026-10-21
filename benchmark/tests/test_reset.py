@@ -853,8 +853,11 @@ def test_call_environment_setup_sends_foreground_app_id(monkeypatch):
         return FakeResponse()
 
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    call_environment_setup("http://127.0.0.1:9090", app_ids=["settings"], foreground_app_id="scroll_lab")
-    assert bodies == [{"app_ids": ["settings"], "foreground_app_id": "scroll_lab"}]
+    fixture = {"apps": {"settings": {"searchQuery": ""}}}
+    call_environment_setup("http://127.0.0.1:9090", app_ids=["settings"], foreground_app_id="scroll_lab",
+                           initial_environment_state=fixture)
+    assert bodies == [{"app_ids": ["settings"], "foreground_app_id": "scroll_lab",
+                       "initial_environment_state": fixture}]
 
 
 def test_call_environment_setup_sends_benchmark_task_id_header(monkeypatch):

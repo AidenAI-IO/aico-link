@@ -142,6 +142,47 @@ Scroll Lab targets (positions 24 and 83). Final selection and irreversible
 scroll overshoot are checked through `/state` and `/route`. The 100-depth
 `mobilegym_scroll_sweep.json` is optional calibration, not the regression gate.
 
+### Device-operation workflows
+
+`benchmark/suites/mobilegym_workflow_v1.json` adds eight complete workflows to
+the default nightly MobileGym profile: a five-field contact form, selective
+note editing, disambiguating notes with the same title, configuring an alarm,
+editing one of two alarms at the same time, transferring a note into a contact,
+transferring a note into an alarm, and cancelling a populated contact draft.
+Weekly reports group these results under **UI operation (simulator)**.
+Two additional Android-only cases in `phone_control_v1.json` isolate title/body
+entry and editing an alarm label. That suite remains explicitly selectable;
+its existing MobileGym CI case is not enabled by default.
+
+Tasks use `app_ids` to preload stores and `initial_environment_state` to seed
+fixtures through `/api/setup`, after reset and before optional
+`foreground_app_id`. The fixture accepts `apps` and/or `os` objects; seeded app
+IDs must be in `app_ids`. Contacts live at `os.providers.contacts.contacts`,
+not in `apps.contacts`. Setup reads the fixture back and fails if it did not
+apply. Setup-token caching includes the fixture, so a changed fixture cannot
+reuse an earlier setup result. Fixtures are harness-only; the agent receives
+the task prompt and uses screenshots and device UI tools.
+
+Final `environment_assertions` support exact values, numeric ranges, and
+`{"$records": [{...}, {...}]}` for collections. `$records` requires the exact
+collection size and a distinct match for every expected record, regardless of
+order. Each record matches the supplied fields recursively, using the existing
+trace subset matcher; omitted generated IDs/timestamps are ignored. This lets
+creation checks accept random IDs while rejecting duplicates, missing records,
+and modifications to seeded non-target records. Ordinary object assertions
+retain exact equality. Preserve target IDs on edits and assert the complete
+body when only one line should change; rewriting that body correctly is valid.
+Cancellation also requires trace/screenshot evidence that the populated draft
+was actually created and discarded; an unchanged final state alone is
+insufficient and the rubric checks this behavior.
+
+The added inputs use ASCII values to exercise the current input path without
+assuming verified non-ASCII IME support. These cases measure simulated UI
+operation, not physical HID, real Android permissions, or real application
+lifecycle behavior. A future Android emulator adapter can reuse the task
+goals and preservation criteria, but needs its own fixtures and outcome
+readers. MobileGym state paths and patches are not a portable device API.
+
 ## 🔧 Configuration
 
 ### Environment Bridge mode

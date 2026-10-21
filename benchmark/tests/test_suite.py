@@ -452,6 +452,31 @@ def test_load_suite_parses_task_app_ids(tmp_path: Path):
     assert suite.tasks[0].foreground_app_id == "scroll_lab"
 
 
+@pytest.mark.parametrize("initial", [
+    [], {}, {"route": {}}, {"apps": []},
+    {"apps": {"clock": {"alarms": []}}},
+    {"os": {"value": float("nan")}},
+])
+def test_load_suite_rejects_invalid_initial_environment_state(tmp_path: Path, initial):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["initial_environment_state"] = initial
+    path = tmp_path / "fixture.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match="initial_environment_state"):
+        load_suite(path)
+
+
+@pytest.mark.parametrize("spec", [{"$records": {}}, {"$records": [1]},
+                                  {"$records": [{}]}, {"$records": [], "extra": 1}])
+def test_load_suite_rejects_invalid_record_matchers(tmp_path: Path, spec):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["environment_assertions"] = {"apps.notes.notes": spec}
+    path = tmp_path / "records.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match=r"\$records"):
+        load_suite(path)
+
+
 @pytest.mark.parametrize("value", ["", " scroll_lab ", 123, []])
 def test_load_suite_rejects_invalid_foreground_app_id(tmp_path: Path, value):
     fixture = json.loads(json.dumps(FIXTURE))

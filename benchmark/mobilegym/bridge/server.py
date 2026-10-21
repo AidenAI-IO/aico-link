@@ -12,6 +12,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from environment_fixture import parse_initial_environment_state, state_contains_fixture
 from mnk_provider import execute_mnk_request
 from setup_token_registry import SetupTokenRegistry, setup_token_from_payload
 
@@ -88,6 +89,15 @@ async def _foreground_app(env: Any, app_id: str) -> None:
         app_id,
     )
     await asyncio.sleep(0.8)
+
+
+async def _initialize_state(env: Any, fixture: dict[str, Any], app_ids: list[str]) -> None:
+    await env.set_state(fixture)
+    # MobileGym's set_state can swallow exceptions; never start a task with
+    # silently missing fixtures or unregistered stores/providers.
+    actual = await env.get_state(required_apps=app_ids)
+    if not state_contains_fixture(actual, fixture):
+        raise RuntimeError("initial_environment_state did not match simulator read-back")
 
 
 class BridgeServer:
@@ -240,6 +250,7 @@ def _handler_for(bridge: BridgeServer):
             setup_token = setup_token_from_payload(payload)
             app_ids = _setup_app_ids(payload)
             foreground_app_id = _foreground_app_id(payload)
+            initial_state = parse_initial_environment_state(payload.get("initial_environment_state"), app_ids)
 
             def setup() -> dict[str, Any]:
                 state = bridge.router.state_for_task_id(task_id)
@@ -247,6 +258,11 @@ def _handler_for(bridge: BridgeServer):
                     state,
                     state.reset_episode(episode_id, app_ids=app_ids),
                 )
+                if initial_state:
+                    bridge.submit_to_state(
+                        state,
+                        state.run_env(lambda env: _initialize_state(env, initial_state, app_ids)),
+                    )
                 if foreground_app_id:
                     bridge.submit_to_state(
                         state,
@@ -256,7 +272,8 @@ def _handler_for(bridge: BridgeServer):
 
             if setup_token:
                 result = bridge.setup_tokens.run(
-                    (task_id, setup_token, tuple(app_ids), foreground_app_id),
+                    (task_id, setup_token, tuple(app_ids), foreground_app_id,
+                     json.dumps(initial_state, sort_keys=True)),
                     setup,
                 )
             else:

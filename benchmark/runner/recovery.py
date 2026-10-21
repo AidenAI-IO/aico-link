@@ -51,6 +51,8 @@ def prepare_task_isolation(
     ready_timeout_sec: int = 120,
     setup_attempts: int = 3,
 ) -> dict[str, Any] | None:
+    if task.initial_environment_state and (not environment_url or task.input_screenshot):
+        raise ResetError("initial_environment_state requires a live environment_url")
     if not wait_for_agent_ready(client, timeout_sec=ready_timeout_sec):
         raise ResetError(f"agent not ready within {ready_timeout_sec}s")
     if not recover_agent_after_timeout(client, timeout_sec=min(30, ready_timeout_sec)):
@@ -80,6 +82,8 @@ def prepare_task_isolation(
                     timeout=DEFAULT_ENVIRONMENT_SETUP_TIMEOUT_SEC,
                     app_ids=task.app_ids,
                     foreground_app_id=task.foreground_app_id,
+                    **({"initial_environment_state": task.initial_environment_state}
+                       if task.initial_environment_state else {}),
                 )
             except (ResetError, AgentTimeoutError, AgentRequestError):
                 raise

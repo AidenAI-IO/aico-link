@@ -15,6 +15,7 @@
     {"id": "notes-entry-policy", "suite": "suites/aiden_app/notes_entry_policy_v1.json", "environment": "isolated"},
     {"id": "perception", "suite": "suites/perception/perception_v1.json", "environment": "isolated"},
     {"id": "mobilegym-basic", "suite": "suites/mobilegym_basic.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 3, "timeout_minutes": 240},
+    {"id": "mobilegym-workflow", "suite": "suites/mobilegym_workflow_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360},
     {"id": "mobilegym-scroll-sweep", "suite": "suites/mobilegym_scroll_sweep.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 4, "timeout_minutes": 360, "runnable": false},
     {"id": "phone-control-mobilegym", "suite": "suites/phone_control_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360, "runnable": false},
 

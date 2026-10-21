@@ -92,6 +92,8 @@ def evaluate_environment_state_assertions(
             passed = False
         elif is_range_assertion(expected):
             passed = _range_assertion_matches(actual, expected)
+        elif isinstance(expected, dict) and set(expected) == {"$records"}:
+            passed = _records_match(actual, expected["$records"])
         else:
             passed = actual == expected
         results.append(
@@ -103,6 +105,31 @@ def evaluate_environment_state_assertions(
             )
         )
     return results
+
+
+def _records_match(actual: Any, expected: list[dict[str, Any]]) -> bool:
+    """Match an entire collection, ignoring order and unspecified record fields.
+
+    Each expectation consumes a distinct record. Augmenting matches avoid a
+    broad expectation stealing the only record that satisfies a specific one.
+    """
+    if not isinstance(actual, list) or len(actual) != len(expected):
+        return False
+    matched: dict[int, int] = {}
+
+    def assign(index: int, visited: set[int]) -> bool:
+        for candidate, record in enumerate(actual):
+            if candidate in visited or not isinstance(record, dict):
+                continue
+            if not dict_contains(record, expected[index]):
+                continue
+            visited.add(candidate)
+            if candidate not in matched or assign(matched[candidate], visited):
+                matched[candidate] = index
+                return True
+        return False
+
+    return all(assign(index, set()) for index in range(len(expected)))
 
 
 def evaluate_trace_observations(

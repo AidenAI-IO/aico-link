@@ -49,18 +49,18 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 13
+    assert len(runnable) == 14
     assert len(hardware) == 12
-    assert len(all_cases) == 27
+    assert len(all_cases) == 28
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.environment for case in runnable}.isdisjoint(
         {case.environment for case in hardware}
     )
-    assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
-        {case.suite for case in catalog.cases}
-        - {"suites/mobilegym_scroll_sweep.json"}
+    assert {case.id for case in runnable} | {case.id for case in hardware} == (
+        {case.id for case in catalog.cases}
+        - {"mobilegym-scroll-sweep", "phone-control-mobilegym"}
     )
 
 

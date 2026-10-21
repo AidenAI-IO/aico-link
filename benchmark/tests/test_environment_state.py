@@ -122,3 +122,45 @@ def test_evaluate_environment_state_assertions_range_rejects_overshoot_and_non_n
         ("apps.scroll_lab.firstVisibleOrdinal", False, 15),
         ("apps.scroll_lab.selectedItemId", False, "<missing>"),
     ]
+
+
+@pytest.mark.parametrize("records,passed", [
+    ([{"id": "random", "name": "New", "timestamp": 10},
+      {"id": "guard", "name": "Old"}], True),
+    ([{"name": "New"}, {"id": "guard", "name": "Changed"}], False),
+    ([{"name": "New"}], False),
+    ([{"name": "New"}, {"id": "guard", "name": "Old"}, {"name": "New"}], False),
+    ({}, False),
+])
+def test_record_assertions_accept_generated_ids_but_reject_collateral_changes(records, passed):
+    checks = evaluate_environment_state_assertions(
+        {"records": records},
+        {"records": {"$records": [{"id": "guard", "name": "Old"}, {"name": "New"}]}},
+    )
+    assert checks[0].passed is passed
+
+
+def test_record_assertions_assign_distinct_matches_even_for_overlapping_subsets():
+    spec = {"records": {"$records": [{"name": "Same"}, {"id": "specific", "name": "Same"}]}}
+    for ids, passed in [(["specific", "other"], True), (["specific", "wrong"], True),
+                        (["other", "wrong"], False)]:
+        checks = evaluate_environment_state_assertions(
+            {"records": [{"id": id, "name": "Same"} for id in ids]}, spec
+        )
+        assert checks[0].passed is passed
+
+
+def test_record_assertions_do_not_reuse_one_matching_record():
+    checks = evaluate_environment_state_assertions(
+        {"records": [{"name": "Same"}, {"name": "Other"}]},
+        {"records": {"$records": [{"name": "Same"}, {"name": "Same"}]}},
+    )
+    assert checks[0].passed is False
+
+
+def test_record_matcher_preserves_exact_object_equality_and_empty_collection_semantics():
+    checks = evaluate_environment_state_assertions(
+        {"object": {"name": "New", "extra": True}, "empty": []},
+        {"object": {"name": "New"}, "empty": {"$records": []}},
+    )
+    assert [check.passed for check in checks] == [False, True]

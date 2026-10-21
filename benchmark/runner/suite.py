@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from environment_fixture import parse_initial_environment_state
 from runner.platform import (
     TargetPlatform,
     normalize_target_platform,
@@ -123,6 +124,7 @@ class TaskSpec:
     expected_recall_from_consolidation: bool = False
     app_ids: list[str] = dc.field(default_factory=list)
     foreground_app_id: str | None = None
+    initial_environment_state: dict[str, Any] = dc.field(default_factory=dict)
     environment_assertions: dict[str, Any] = dc.field(default_factory=dict)
     memory_assertions: dict[str, Any] | None = None
     consolidation_expectation: ConsolidationExpectation | None = None
@@ -282,6 +284,12 @@ def load_suite(path: Path) -> Suite:
             or foreground_app_id != foreground_app_id.strip()
         ):
             raise SuiteValidationError(f"task {tid}: foreground_app_id must be a non-empty app ID")
+        try:
+            initial_environment_state = parse_initial_environment_state(
+                raw.get("initial_environment_state"), app_ids
+            )
+        except ValueError as exc:
+            raise SuiteValidationError(f"task {tid}: {exc}") from exc
         environment_assertions = _parse_environment_assertions(
             raw.get("environment_assertions"), tid
         )
@@ -378,6 +386,7 @@ def load_suite(path: Path) -> Suite:
             expected_recall_from_consolidation=expected_recall_from_consolidation,
             app_ids=app_ids,
             foreground_app_id=foreground_app_id,
+            initial_environment_state=initial_environment_state,
             environment_assertions=environment_assertions,
             memory_assertions=memory_assertions,
             consolidation_expectation=consolidation_expectation,
@@ -616,6 +625,13 @@ def _parse_environment_assertions(raw: Any, task_id: str) -> dict[str, Any]:
             ) from exc
         if is_range_assertion(expected):
             _validate_range_assertion(task_id, normalized, expected)
+        if isinstance(expected, dict) and "$records" in expected:
+            if set(expected) != {"$records"} or not isinstance(expected["$records"], list) or not all(
+                isinstance(record, dict) and record for record in expected["$records"]
+            ):
+                raise SuiteValidationError(
+                    f"task {task_id}: {normalized!r} $records must be a list of non-empty objects"
+                )
         assertions[normalized] = expected
     return assertions
 

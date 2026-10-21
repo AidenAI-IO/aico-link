@@ -156,6 +156,10 @@ class FakeEnv:
         self._record("get_route")
         return self.route
 
+    async def set_state(self, patch):
+        self._record("set_state")
+        self.state.update(patch)
+
     async def reset(self, app_ids=None):
         self._record("reset")
         self.reset_calls += 1
@@ -434,6 +438,49 @@ def test_setup_token_cache_includes_foreground_app_id():
 
         assert bridge.env.reset_calls == 2
         assert bridge.env.page.calls == ["scroll_lab", "settings"]
+
+
+def test_setup_initializes_before_foreground_and_caches_by_fixture():
+    class Page:
+        async def evaluate(self, script, app_id):
+            assert bridge.env.state["apps"]["clock"]["alarms"] == [version]
+            bridge.env._record("foreground")
+
+    with RunningBridge() as bridge:
+        bridge.env.page = Page()
+        for version in (1, 1, 2):
+            status, body = request_json(
+                bridge.base_url, "POST", "/api/setup",
+                {"setup_token": "same", "app_ids": ["clock"], "foreground_app_id": "clock",
+                 "initial_environment_state": {"apps": {"clock": {"alarms": [version]}}}},
+            )
+            assert status == 200, body
+        assert bridge.env.reset_calls == 2
+        assert bridge.env.calls == ["reset", "set_state", "get_state", "foreground"] * 2
+        assert all(bridge.env.loop_matches)
+
+
+def test_setup_fails_if_simulator_silently_ignores_fixture():
+    async def ignore_patch(patch):
+        pass
+
+    with RunningBridge() as bridge:
+        bridge.env.set_state = ignore_patch
+        status, body = request_json(
+            bridge.base_url, "POST", "/api/setup",
+            {"initial_environment_state": {"os": {"providers": {"contacts": {"contacts": []}}}}},
+        )
+        assert status == 500
+        assert "read-back" in body["error"]["message"]
+
+
+@pytest.mark.parametrize("fixture", [{"apps": {"notes": {"notes": []}}}, {"os": []}, []])
+def test_setup_rejects_invalid_fixture_before_reset(fixture):
+    with RunningBridge() as bridge:
+        status, body = request_json(bridge.base_url, "POST", "/api/setup",
+                                    {"initial_environment_state": fixture})
+        assert status == 400
+        assert bridge.env.reset_calls == 0
 
 
 @pytest.mark.parametrize("value", ["", " scroll_lab ", 42, []])
