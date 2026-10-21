@@ -131,6 +131,25 @@ func TestTriggerUSBCompositeRefreshUsesConfiguredCommand(t *testing.T) {
 	}
 }
 
+func TestTriggerUSBCompositeRefreshDoesNotWaitForInheritedOutput(t *testing.T) {
+	// The watchdog resets the gadget in a subshell. A child that keeps the
+	// command's output pipe open must not hold HID recovery past the command.
+	commandPath := filepath.Join(t.TempDir(), "usb-refresh")
+	script := "#!/bin/sh\nsleep 5 &\nexit 0\n"
+	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write refresh command: %v", err)
+	}
+	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
+
+	start := time.Now()
+	if err := triggerUSBCompositeRefresh(); err != nil {
+		t.Fatalf("triggerUSBCompositeRefresh returned error: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("refresh returned after %v, want bounded by the output wait delay", elapsed)
+	}
+}
+
 func TestHIDDeviceWriteReturnsNonRetryableError(t *testing.T) {
 	dev := &HIDDevice{
 		path: "fake-hid",

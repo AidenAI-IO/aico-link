@@ -25,6 +25,10 @@ const (
 	defaultHIDRefreshStatePath        = "/run/aiden_usb_ecm_watchdog.state"
 	defaultUSBCompositeRefreshCommand = "/usr/lib/aiden/aiden-usb-ecm-watchdog"
 	usbCompositeRefreshTimeout        = 10 * time.Second
+	// usbCompositeRefreshWaitDelay bounds the wait for the refresh command's
+	// output after it exits or times out. The watchdog resets the gadget in a
+	// subshell that outlives a killed parent and keeps the pipes open.
+	usbCompositeRefreshWaitDelay = time.Second
 )
 
 // usbCompositeRebindDelay is how long ensureOpenLocked waits after a USB
@@ -265,7 +269,12 @@ func triggerUSBCompositeRefresh() error {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, usbCompositeRefreshCommand(), "refresh")
+	cmd.WaitDelay = usbCompositeRefreshWaitDelay
 	output, err := cmd.CombinedOutput()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// The command succeeded; only a child it left behind held the output open.
+		err = nil
+	}
 	if err != nil {
 		if ctx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("USB composite refresh timed out after %s (output: %s)", usbCompositeRefreshTimeout, string(output))
