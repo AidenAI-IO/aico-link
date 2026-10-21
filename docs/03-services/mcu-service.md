@@ -6,8 +6,8 @@ sidebar_position: 7
 
 `mcu_service` replaces the diagnostic Python logger under the existing
 `aiden-mcu-event.service` unit. It exclusively owns `/dev/ttyS5` at 115200 8N1,
-answers MCU state probes, forwards hardware events, and coordinates an
-MCU-requested and local software Linux poweroff. Local applications use
+answers MCU state probes, forwards hardware events, and coordinates Linux
+poweroff requested by the MCU or by the local root-only CLI. Local applications use
 `/run/mcu_service/mcu_service.sock` (`0660 root:aiden`); the Agent exposes the
 same operations over USB ECM or loopback HTTP.
 
