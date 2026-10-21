@@ -369,6 +369,7 @@ def run_case(
     timeout_seconds: float | None = None,
 ) -> int:
     runtime_environment = _runtime_environment(environment)
+    runtime_environment["BENCHMARK_EXECUTION_ENVIRONMENT"] = case.environment
     environment_url = ""
     service: dict[str, Any] | None = None
     deadline = (

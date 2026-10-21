@@ -275,6 +275,8 @@ func (p *episodeMemoryProcessor) ProcessBatch(ctx context.Context, shouldStop fu
 	return result, err
 }
 
+type episodeMemoryImmediateRetryKey struct{}
+
 func (p *episodeMemoryProcessor) processBatchLocked(ctx context.Context, limit int, shouldStop func() bool) (MemoryBatchResult, error) {
 	if limit <= 0 {
 		limit = episodeMemoryBatchLimit
@@ -282,6 +284,17 @@ func (p *episodeMemoryProcessor) processBatchLocked(ctx context.Context, limit i
 	state, episodes, loadErr := p.loadWork(ctx)
 	if loadErr != nil {
 		return MemoryBatchResult{}, loadErr
+	}
+	// The explicit benchmark drain skips the maintenance backoff for this episode
+	// only. Keep the attempt budget and persisted retry schedule unchanged; the
+	// worker/file locks serialize this snapshot with normal maintenance.
+	if episodeID, ok := ctx.Value(episodeMemoryImmediateRetryKey{}).(string); ok {
+		key := episodeMemoryStateKey(episodeID, episodeMemoryExtractorVersion)
+		status := state.Episodes[key]
+		if status.Status == episodeMemoryStatusRetry {
+			status.RetryAt = ""
+			state.Episodes[key] = status
+		}
 	}
 	works, result, err := p.collectEpisodeMemoryWork(&state, episodes, limit, shouldStop)
 	if err != nil || len(works) == 0 {

@@ -97,3 +97,20 @@ func (t *benchmarkMockTool) Call(ctx context.Context, input string) (string, err
 	}
 	return result.Output, nil
 }
+
+// benchmarkHeadlessTools keeps unavailable hardware services out of memory/shell
+// evaluations. This is explicit container configuration, never inferred on devices.
+func benchmarkHeadlessTools(cfg Config, tools []langtools.Tool) []langtools.Tool {
+	if !cfg.Benchmark.Headless || cfg.Benchmark.Token == "" {
+		return tools
+	}
+	result := make([]langtools.Tool, 0, len(tools))
+	for _, tool := range tools {
+		switch builtInToolSpecMetadata[tool.Name()].Category {
+		case "input", "bridge", "observation":
+			continue
+		}
+		result = append(result, tool)
+	}
+	return result
+}

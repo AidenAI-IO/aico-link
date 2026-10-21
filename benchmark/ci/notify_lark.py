@@ -44,7 +44,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     suites = weekly["suites"]
     week = weekly["totals"]
 
-    overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
+    overview = (f"**Runs:** {week.get('run_count', len(data.get('runs', [])))} workflow runs, {week['suite_runs']} dataset runs\n"
                 f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly['change'])}"
                 f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
     if week["cost_usd_sum"] is not None:
@@ -54,7 +54,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         {"tag": "markdown", "content": overview},
     ]
 
-    # Group suites by capability so related changes surface together.
+    # Group by primary test objective; diagnostics stay separate.
     capabilities = weekly.get("capabilities", [])
     if capabilities:
         lines = []
@@ -65,7 +65,12 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
                 header += (f" ({cap['task_count']:.0f} tasks, {runs} run{'s' if runs != 1 else ''},"
                            f" {cap['passed']:.0f}/{cap['eligible_tasks']:.0f} eligible first attempts passed)")
             lines.append(header)
-        elements.append({"tag": "markdown", "content": "\n".join(lines)})
+        elements.append({"tag": "markdown", "content": "**By test area**\n" + "\n".join(lines)})
+
+    if weekly.get("diagnostics"):
+        lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s['change'])}"
+                 for s in weekly["diagnostics"]]
+        elements.append({"tag": "markdown", "content": "**Diagnostics** (skill read observation, not task pass@1)\n" + "\n".join(lines)})
 
     if suites:
         # Weakest suites first, so those needing attention lead.

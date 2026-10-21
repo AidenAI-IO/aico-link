@@ -894,6 +894,7 @@ def _cmd_run_auto_agent_setup_inner(
         "auto_agent_setup": True,
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
+        "execution_environment": _execution_environment(suite, selected_task_ids),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -1181,6 +1182,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": target_platform or None,
         "mock_environment": _mock_environment_manifest(suite),
+        "execution_environment": _execution_environment(suite, selected_task_ids),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -1242,6 +1244,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print("Warning: failed to upload report to board")
         upload_client.close()
     return _run_exit_code(manifest["totals"])
+
+
+def _execution_environment(suite: Suite, selected_task_ids: list[str]) -> str | None:
+    mocked = [suite.mock_environment is not None or task.mock_environment is not None
+              for task in suite.tasks if not selected_task_ids or task.id in selected_task_ids]
+    if mocked and all(mocked):
+        return "scripted"
+    if any(mocked):
+        return "mixed"
+    return os.environ.get("BENCHMARK_EXECUTION_ENVIRONMENT") or None
 
 
 def _mock_environment_manifest(suite: Suite) -> dict[str, object] | None:

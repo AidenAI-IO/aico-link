@@ -15,6 +15,7 @@
         "screen": "screenshots/home_iphone.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -85,6 +86,7 @@
         "screen": "screenshots/x_327.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -130,6 +132,7 @@
         "screen": "screenshots/task_386.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -175,13 +178,14 @@
         "screen": "screenshots/task_4450.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
           }
         }
       },
-      "prompt": "点击刷新页面按钮",
+      "prompt": "点击屏幕底部浏览器地址栏右侧的圆形刷新图标。",
       "rubric": []
     },
     {
@@ -220,6 +224,7 @@
         "screen": "screenshots/task_4606.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -265,6 +270,7 @@
         "screen": "screenshots/task_4657.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -310,6 +316,7 @@
         "screen": "screenshots/task_4724.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -355,6 +362,7 @@
         "screen": "screenshots/task_4762.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -400,6 +408,7 @@
         "screen": "screenshots/task_5022.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -445,13 +454,14 @@
         "screen": "screenshots/task_5097.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
           }
         }
       },
-      "prompt": "选中第一幅图",
+      "prompt": "点击第一幅图右上角的圆形选择框，选中这幅图。",
       "rubric": []
     },
     {
@@ -490,6 +500,7 @@
         "screen": "screenshots/task_5081.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }
@@ -535,6 +546,7 @@
         "screen": "screenshots/task_5174.jpg",
         "tools": {
           "touch_gesture": {
+            "input_contains": {"type": "tap", "point": {"x": {"$gte": 0, "$lte": 1000}, "y": {"$gte": 0, "$lte": 1000}}},
             "output": {
               "ok": true
             }

@@ -9,13 +9,14 @@
       "id": "successful_workaround_is_extracted",
       "category": "memory",
       "description_for_judge": "The setup episode is directly verified as successful. The consolidation artifact must report achieved with evidence and produce at least one memory candidate.",
-      "prompt": "A previous QA Notes task was completed and verified. Briefly confirm that this reflection case should be treated as a verified reusable procedure.",
+      "prompt": "A previous QA Notes task was completed and verified. Briefly confirm that this reflection case should be treated as a verified reusable procedure. Answer from the stated premise without calling tools.",
       "rubric": [
         {"id": "acknowledges_verified_lesson", "check": "The response recognizes that a directly verified successful episode can yield a reusable procedure."}
       ],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true},
@@ -44,13 +45,14 @@
       "id": "recorded_success_without_proof_is_not_trusted",
       "category": "memory",
       "description_for_judge": "The episode claims success but contains no direct final proof. The consolidation artifact must report unknown and may legitimately produce no device memory.",
-      "prompt": "Briefly confirm that an episode claiming success without a final result or screenshot should remain untrusted.",
+      "prompt": "Briefly confirm that an episode claiming success without a final result or screenshot should remain untrusted. Answer from the stated premise without calling tools.",
       "rubric": [
         {"id": "does_not_trust_claim", "check": "The response says unsupported success should not be treated as a verified reusable lesson."}
       ],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "unknown", "max_memory_ids": 1, "allow_empty_memory": true},
@@ -71,13 +73,14 @@
       "id": "failed_episode_creates_actionable_guard",
       "category": "memory",
       "description_for_judge": "The episode has a structured failure and direct error evidence. The consolidation artifact must report not_achieved and retain at least one actionable failure lesson.",
-      "prompt": "Briefly confirm that a failed device episode can be retained as an actionable guard rather than a successful procedure.",
+      "prompt": "Briefly confirm that a failed device episode can be retained as an actionable guard rather than a successful procedure. Answer from the stated premise without calling tools.",
       "rubric": [
         {"id": "acknowledges_failure_guard", "check": "The response distinguishes an actionable failure lesson from a successful procedure."}
       ],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true},
@@ -98,13 +101,14 @@
       "id": "transient_value_is_not_memorized",
       "category": "memory",
       "description_for_judge": "The episode directly observes a transient IP value. Reflection should not retain the value as a Device Memory fact.",
-      "prompt": "Briefly confirm that a transient IP address observed during a one-off task should not be retained as a reusable device fact.",
+      "prompt": "Briefly confirm that a transient IP address observed during a one-off task should not be retained as a reusable device fact. Answer from the stated premise without calling tools.",
       "rubric": [
         {"id": "rejects_transient_fact", "check": "The response says the one-off IP value should not become durable device memory."}
       ],
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "max_memory_ids": 0, "allow_empty_memory": true},

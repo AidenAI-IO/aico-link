@@ -86,6 +86,7 @@ def skipped_task_result(
         artifact_dir=str(artifact_dir),
         started_at=started,
         finished_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={
@@ -163,6 +164,7 @@ def evaluate_task_history(
         rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={**_attempt_metric_defaults(), **(metrics or {})},
@@ -396,6 +398,7 @@ def evaluate_task_history(
     try:
         verdict = judge_task(
             description=task.description_for_judge,
+            task_prompt=base.task_prompt,
             rubric=task.rubric,
             pre_screenshot=pre_screenshot if pre_screenshot and pre_screenshot.exists() else None,
             post_screenshot=last_shot_path,
@@ -455,6 +458,7 @@ def run_one_task(
         attempt=attempt, status="failed",
         rubric=[], rubric_pass_count=0, rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir), started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics=_attempt_metric_defaults(),
@@ -472,16 +476,43 @@ def run_one_task(
         )
         base.metrics["setup_ms"] = int((time.monotonic() - setup_started_mono) * 1000)
     except SetupAssertionError as e:
+        eligible = e.agent_eligible
+        evidence = {"error": str(e), "setup_step": getattr(e, "setup_step", None)}
+        for field in ("consolidation", "memory_state"):
+            value = getattr(e, field, None)
+            if value is not None:
+                evidence[field] = value
+        (artifact_dir / "setup_failure.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        consolidation = evidence.get("consolidation")
+        if isinstance(consolidation, dict):
+            (artifact_dir / "consolidation.json").write_text(
+                json.dumps(consolidation, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+        if eligible:
+            base.hard_assertion_failures.append(HardAssertionFailure(
+                id="setup_evaluation", label="Memory Behavior",
+                requirement="The evaluated setup step must satisfy its behavior assertions.",
+                actual=str(e),
+            ))
         base.status = "failed"
         base.metrics = {
             **_attempt_metric_defaults(),
             "error": f"setup assertion: {e}",
             "success": False,
-            "agent_eligible": False,
-            "failure_class": "environment",
+            "agent_eligible": eligible,
+            "failure_class": "agent" if eligible else "environment",
+            "quality_score": 0.0 if eligible else None,
             "first_failure_stage": "setup",
+            "failure_event_ref": "setup_failure.json",
             "setup_ms": int((time.monotonic() - started_mono) * 1000),
         }
+        if isinstance(consolidation, dict):
+            assessment = consolidation.get("assessment")
+            memory_ids = consolidation.get("memory_ids")
+            base.metrics["consolidation_goal_result"] = assessment.get("goal_result") if isinstance(assessment, dict) else None
+            base.metrics["consolidation_memory_count"] = len(memory_ids) if isinstance(memory_ids, list) else None
         base.finished_at = now_iso()
         return base
     except (ResetError, AgentTimeoutError, AgentRequestError) as e:

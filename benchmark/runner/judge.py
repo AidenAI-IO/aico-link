@@ -2,9 +2,11 @@ from __future__ import annotations
 import base64
 import dataclasses as dc
 import hashlib
+import http.client
 import json
 import os
 import socket
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -13,7 +15,7 @@ from typing import Any
 from runner.models import RubricVerdict
 from runner.suite import RubricItem
 
-JUDGE_PROMPT_VERSION = "v3"
+JUDGE_PROMPT_VERSION = "v4"
 DEFAULT_JUDGE_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_JUDGE_API_KEY_ENV = "AIDEN_BENCHMARK_JUDGE_API_KEY"
 JUDGE_USER_AGENT = "aiden-benchmark/1.0"
@@ -38,6 +40,9 @@ JUDGE_TEMPLATE = """You are evaluating whether an agent completed a task.
 
 TASK GOAL: {description}
 
+ORIGINAL TASK (including answer options):
+{task_prompt}
+
 Below are:
 - Pre-screenshot: state before the agent acted (when applicable)
 - Post-screenshot: state after the agent finished (when applicable)
@@ -54,14 +59,16 @@ proof of success. For knowledge, classification, or confirmation tasks, evaluate
 the requested answer itself; do not invent a requirement to execute an action.
 Judge only the stated rubric. Accept semantically equivalent formats unless an
 exact format is explicitly required. A requested option-only answer needs no
-extra explanation.
+extra explanation. Interpret a selected option using the original task options;
+selecting an option supplies its content, even when that content is not repeated.
+Return exactly one item for every rubric ID. Verdicts must be strings: "yes" or "no".
 
 RUBRIC:
 {rubric_lines}
 
 Respond as JSON only, no prose:
 {{
-  "items": [{{"id": "...", "verdict": "yes" or "no", "reason": "..."}}, ...],
+  "items": [{{"id": "...", "verdict": "yes", "reason": "Evidence supporting this verdict."}}],
   "overall_notes": "..."
 }}"""
 
@@ -69,7 +76,7 @@ def _read_image_b64(p: Path) -> str:
     return base64.b64encode(p.read_bytes()).decode("ascii")
 
 def _cache_key(pre: Path | None, post: Path | None, trace_json: str, rubric: list[RubricItem],
-               description: str, final_response: str, model: str, base_url: str) -> str:
+               description: str, final_response: str, model: str, base_url: str, task_prompt: str = "") -> str:
     h = hashlib.sha256()
     if pre is not None:
         h.update(pre.read_bytes())
@@ -77,6 +84,7 @@ def _cache_key(pre: Path | None, post: Path | None, trace_json: str, rubric: lis
         h.update(post.read_bytes())
     h.update(trace_json.encode("utf-8"))
     h.update(description.encode("utf-8"))
+    h.update(task_prompt.encode("utf-8"))
     h.update(final_response.encode("utf-8"))
     for r in rubric:
         h.update(r.id.encode()); h.update(r.check.encode())
@@ -124,24 +132,25 @@ def judge_task(
     final_response: str,
     cfg: JudgeConfig,
     cache_dir: Path | None = None,
+    task_prompt: str = "",
 ) -> JudgeOutput:
     trace_json = json.dumps(trace, ensure_ascii=False, sort_keys=True)
     image_items = _judge_images(pre_screenshot, post_screenshot)
     image_labels = [label for label, _ in image_items]
     key = _cache_key(pre_screenshot, post_screenshot, trace_json, rubric, description,
-                     final_response, cfg.model, cfg.base_url)
+                     final_response, cfg.model, cfg.base_url, task_prompt)
     if cache_dir is not None:
         cached = cache_dir / f"{key}.json"
         if cached.exists():
             data = json.loads(cached.read_text("utf-8"))
+            _validate_judge_items({"items": data["verdicts"]}, rubric)
             verdicts = [RubricVerdict(**v) for v in data["verdicts"]]
             return JudgeOutput(verdicts=verdicts, overall_notes=data["overall_notes"],
                                cache_key=key, raw_response=data["raw_response"],
                                image_count=len(image_items), image_labels=image_labels)
-    rubric_lines = "\n".join(f"{i+1}. {{\"id\": \"{r.id}\", \"check\": \"{r.check}\"}}"
-                              for i, r in enumerate(rubric))
+    rubric_lines = json.dumps([dc.asdict(r) for r in rubric], ensure_ascii=False)
     prompt = JUDGE_TEMPLATE.format(
-        description=description, rubric_lines=rubric_lines,
+        description=description, rubric_lines=rubric_lines, task_prompt=task_prompt,
     )
     # Build OpenAI-compatible multimodal content
     user_content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
@@ -157,34 +166,46 @@ def judge_task(
     ]
     # Use an OpenAI-compatible chat completions endpoint.
     api_key = _resolve_judge_api_key(cfg)
-    payload = json.dumps({
-        "model": cfg.model,
-        "messages": [{"role": "user", "content": user_content}],
-        "max_tokens": 1024,
-    }).encode("utf-8")
-    req = urllib.request.Request(
-        _chat_completions_url(cfg.base_url),
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": JUDGE_USER_AGENT,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"judge HTTP {resp.status}")
-            body = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"judge HTTP {e.code}: {e.read()[:200]!r}") from e
-    except (socket.timeout, urllib.error.URLError) as e:
-        raise RuntimeError(f"judge network error: {e}") from e
-    raw = body["choices"][0]["message"]["content"]
-    parsed = _parse_judge_json(raw)
-    verdicts = [RubricVerdict(id=v["id"], verdict=v["verdict"], reason=v["reason"])
-                for v in parsed["items"]]
+    # Retry only transport/response-contract failures, never a valid "no" verdict.
+    for attempt in range(3):
+        payload = json.dumps({
+            "model": cfg.model,
+            "messages": [{"role": "user", "content": user_content}],
+            "response_format": {"type": "json_object"},
+            "max_tokens": min(8192, max(2048, 256 * len(rubric)) * (attempt + 1)),
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            _chat_completions_url(cfg.base_url), data=payload,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json", "User-Agent": JUDGE_USER_AGENT},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                if resp.status != 200:
+                    raise RuntimeError(f"judge HTTP {resp.status}")
+                body = json.loads(resp.read())
+            choice = body["choices"][0]
+            if choice.get("finish_reason") == "length":
+                raise ValueError("judge response was truncated")
+            raw = choice["message"]["content"]
+            if not isinstance(raw, str):
+                raise ValueError("judge response content must be text")
+            parsed = _parse_judge_json(raw)
+            _validate_judge_items(parsed, rubric)
+            verdicts = [RubricVerdict(**v) for v in parsed["items"]]
+            break
+        except urllib.error.HTTPError as exc:
+            if exc.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise RuntimeError(f"judge HTTP {exc.code}") from exc
+            time.sleep(2 ** attempt)
+        except (socket.timeout, urllib.error.URLError, http.client.HTTPException) as exc:
+            if attempt == 2:
+                raise RuntimeError(f"judge network error after 3 attempts: {exc}") from exc
+            time.sleep(2 ** attempt)
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            if attempt == 2:
+                raise ValueError(f"invalid judge response after 3 attempts: {exc}") from exc
     out = JudgeOutput(verdicts=verdicts, overall_notes=parsed.get("overall_notes", ""),
                       cache_key=key, raw_response=raw,
                       image_count=len(image_items), image_labels=image_labels)
@@ -206,3 +227,23 @@ def _parse_judge_json(raw: str) -> dict[str, Any]:
     if start == -1 or end == -1:
         raise ValueError(f"judge response has no JSON object: {raw[:200]}")
     return json.loads(s[start:end+1])
+
+
+def _validate_judge_items(parsed: Any, rubric: list[RubricItem]) -> None:
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("items"), list):
+        raise ValueError("judge response must contain an items array")
+    items = parsed["items"]
+    expected = {r.id for r in rubric}
+    if len(items) != len(rubric):
+        raise ValueError("judge response must contain exactly one verdict per rubric")
+    ids = []
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {"id", "verdict", "reason"}:
+            raise ValueError("judge item requires id, verdict and reason")
+        if not isinstance(item["id"], str) or item["verdict"] not in ("yes", "no") or not isinstance(item["reason"], str):
+            raise ValueError("invalid judge item fields")
+        ids.append(item["id"])
+    if set(ids) != expected or len(set(ids)) != len(ids):
+        raise ValueError("judge rubric IDs are missing, duplicated or unexpected")
+    if not isinstance(parsed.get("overall_notes", ""), str):
+        raise ValueError("judge overall_notes must be text")

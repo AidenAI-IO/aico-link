@@ -154,3 +154,18 @@ def test_rejudge_uses_latest_legacy_step_screenshot_when_post_missing(tmp_path: 
     assert captured["post_screenshot"] == latest
     rows = [json.loads(line) for line in (run_dir / "results.rejudged.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows[0]["status"] == "passed"
+
+
+def test_rejudge_uses_archived_options_for_legacy_results(tmp_path, monkeypatch):
+    task_dir = tmp_path / "tasks" / "choice" / "attempt_1"
+    task_dir.mkdir(parents=True)
+    (task_dir / "trace.json").write_text(json.dumps({"final_response": "<final_answer>(a)</final_answer>"}))
+    prompt = "Choose a relaxing game: (a) Monument Valley (b) RPG"
+    (tmp_path / "suite.json").write_text(json.dumps({"name": "choices", "prompt_prefix": "Use memory.", "tasks": [{"id": "choice", "prompt": prompt, "description_for_judge": "Choose a game using stored preferences", "category": "memory", "rubric": [{"id": "ok", "check": "Avoids RPG"}]}]}))
+    (tmp_path / "results.jsonl").write_text(json.dumps({"task_id": "choice", "attempt": 1, "status": "failed", "rubric_total": 1, "rubric_spec": [{"id": "ok", "check": "Avoids RPG"}]}))
+    def judge(**kwargs):
+        assert kwargs["task_prompt"] == "Use memory.\n\n" + prompt
+        return type("Verdict", (), {"verdicts": [RubricVerdict(id="ok", verdict="yes", reason="Selected option a")]})()
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "judge", "https://judge.example")
+    assert json.loads((tmp_path / "results.rejudged.jsonl").read_text())["status"] == "passed"
