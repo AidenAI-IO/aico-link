@@ -3,6 +3,7 @@ package mnk
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 )
@@ -538,4 +539,23 @@ func stringSliceEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+func TestADBProviderParseWMSizePrefersOverrideSize(t *testing.T) {
+	size, ok := (&ADBProvider{}).parseWMSize("Physical size: 1080x2400\nOverride size: 720x1600\n")
+	if !ok {
+		t.Fatal("parseWMSize ok = false")
+	}
+	if size.width != 720 || size.height != 1600 {
+		t.Fatalf("size = %+v, want 720x1600", size)
+	}
+}
+
+func TestADBProviderNormalizedToPixelRejectsNonFiniteCoordinates(t *testing.T) {
+	provider := &ADBProvider{}
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, _, err := provider.normalizedToPixel(context.Background(), value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
+			t.Fatalf("normalizedToPixel(%v, 500) error = %v, want finite-coordinate error", value, err)
+		}
+	}
 }
