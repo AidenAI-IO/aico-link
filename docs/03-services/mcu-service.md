@@ -199,6 +199,12 @@ It sends SHUTDOWN_READY only for `poweroff` with a valid root-owned intent,
 inactive swap and no writable persistent filesystems. Service restarts,
 package upgrades and Linux reboots do not authorize MCU power removal.
 
+If intent persistence fails for an MCU-requested shutdown, RV replies
+INTERNAL_ERROR but still schedules Linux cleanup: the MCU's forced cutoff has
+already started and cannot be canceled by that error. The final hook withholds
+SHUTDOWN_READY without a valid intent. A local software-poweroff request has no
+preexisting MCU cutoff, so persistence failure instead leaves it unstarted.
+
 The MCU's 30-second deadline starts at its shutdown state transition, even if
 the RV rejects/misses the request. A received SHUTDOWN_READY permits a cut
 after 75 ms. Agent and swap stop limits are shortened, but the **entire** OS

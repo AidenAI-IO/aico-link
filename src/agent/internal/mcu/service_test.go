@@ -380,6 +380,31 @@ func TestLinkRetriesAndShutdownIsolation(t *testing.T) {
 	}
 }
 
+func TestMCUShutdownPersistenceFailureStillStopsLinux(t *testing.T) {
+	shutdown := &fakeShutdown{beginErr: errors.New("intent unavailable"), committed: make(chan struct{}, 4)}
+	s := NewService(shutdown)
+	defer s.Close()
+	for range 2 {
+		response := s.HandleFrame(Frame{REQ, 9, ShutdownRequest, []byte{1, 0, 0, 0}})
+		if !bytes.Equal(response.Payload, []byte{InternalError}) {
+			t.Fatal("unpersisted shutdown acknowledged as safe", response)
+		}
+	}
+	if s.State().RVState != "shutting_down" {
+		t.Fatal("MCU's pending cutoff left application requests enabled")
+	}
+	select {
+	case <-shutdown.committed:
+	case <-time.After(time.Second):
+		t.Fatal("intent failure prevented cleanup before MCU's forced cutoff")
+	}
+	shutdown.mu.Lock()
+	defer shutdown.mu.Unlock()
+	if shutdown.begins != 1 || shutdown.commits != 1 {
+		t.Fatalf("duplicate request repeated shutdown: begins=%d commits=%d", shutdown.begins, shutdown.commits)
+	}
+}
+
 func TestUDSLongPollDoesNotBlockQueriesOrClose(t *testing.T) {
 	s := runningService(t, &fakeRequester{reply: []byte{0, 255, 255, 255, 3, 0}})
 	path := filepath.Join(t.TempDir(), "mcu.sock")

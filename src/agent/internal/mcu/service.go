@@ -185,13 +185,18 @@ func (s *Service) HandleFrame(f Frame) Frame {
 		s.events.Close()
 		if !already {
 			status := byte(Success)
-			if s.shutdown == nil || s.shutdown.Begin() != nil {
+			if s.shutdown == nil {
 				status = InternalError
+			} else if err := s.shutdown.Begin(); err != nil {
+				status = InternalError
+				log.Printf("MCU shutdown intent failed: %v; proceeding with Linux cleanup without SHUTDOWN_READY", err)
 			}
 			s.mu.Lock()
 			s.shutdownStatus = status
 			s.mu.Unlock()
 			if s.shutdown != nil {
+				// MCU's forced cutoff is already running. Stop Linux even if
+				// intent persistence failed; the final hook then withholds READY.
 				time.AfterFunc(100*time.Millisecond, s.shutdown.Commit)
 			}
 		}
@@ -237,10 +242,15 @@ func (s *Service) HandleEvent(f Frame) {
 		e.Inserted = &inserted
 		e.RawLevel = &raw
 	}
-	e = s.events.Append(e)
-	if e.Type == "rk628_plugin_det_changed" {
+	published := s.events.Append(e)
+	if published.ID == "" {
+		// Shutdown closed event publication; retain the last published plug
+		// snapshot rather than silently replacing it with a rejected event.
+		return
+	}
+	if published.Type == "rk628_plugin_det_changed" {
 		s.mu.Lock()
-		s.plugin = &e
+		s.plugin = &published
 		s.mu.Unlock()
 	}
 }
