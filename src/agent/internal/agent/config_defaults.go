@@ -259,6 +259,8 @@ func DefaultConfig() Config {
 		VoiceMaxTurns:              defaultVoiceMaxTurns,
 		VoiceInterruptOnWakeup:     defaultBoolPtr(true),
 		TapWakeupEnabled:           defaultBoolPtr(true),
+		MCPEnabled:                 defaultBoolPtr(true),
+		MCPShellEnabled:            defaultBoolPtr(false),
 		VoiceStreamingTTSEnabled:   defaultBoolPtr(true),
 		VoiceToolCallSpeech:        defaultBoolPtr(true),
 		VoiceProgressSpeechEnabled: defaultBoolPtr(true),

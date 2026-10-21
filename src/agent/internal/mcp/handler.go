@@ -1,0 +1,290 @@
+package mcp
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+)
+
+const (
+	serverName    = "aiden-agent"
+	serverVersion = "1.0.0"
+	maxBodyBytes  = 8 << 20
+)
+
+// Handler serves Streamable HTTP MCP at a single endpoint (POST /mcp).
+// Dual-era: legacy initialize clients (no MCP-Protocol-Version) and modern
+// 2026-07-28 clients (headers + params._meta) are both accepted.
+type Handler struct {
+	Backend Backend
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", http.MethodPost)
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !validateOrigin(r) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(errorResponse(nil, errInvalidRequest, "invalid Origin", nil))
+		return
+	}
+	accept := r.Header.Get("Accept")
+	if accept != "" && !acceptContains(accept, "application/json") && !acceptContains(accept, "text/event-stream") && !acceptContains(accept, "*/*") {
+		http.Error(w, "Accept must include application/json and/or text/event-stream", http.StatusBadRequest)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	if err != nil {
+		http.Error(w, "failed to read body", http.StatusBadRequest)
+		return
+	}
+	if len(body) > maxBodyBytes {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	var req jsonRPCRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(errorResponse(nil, errParseError, "parse error", err.Error()))
+		return
+	}
+	if req.JSONRPC != "" && req.JSONRPC != jsonRPCVersion {
+		writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, errInvalidRequest, "jsonrpc must be 2.0", nil))
+		return
+	}
+	if strings.TrimSpace(req.Method) == "" {
+		writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, errInvalidRequest, "method required", nil))
+		return
+	}
+
+	if isNotification(req) {
+		// Core Streamable HTTP has no required client notifications; accept silently.
+		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+
+	if isModernRequest(r, req) {
+		if verr := validateModernHeaders(r, req); verr != nil {
+			writeJSON(w, http.StatusBadRequest, errorResponse(req.ID, verr.Code, verr.Message, verr.Data))
+			return
+		}
+	}
+
+	resp := h.dispatch(r, req)
+	status := http.StatusOK
+	if resp.Error != nil && resp.Error.Code == errMethodNotFound {
+		// Spec: unknown RPC → HTTP 404 with JSON-RPC -32601.
+		status = http.StatusNotFound
+	}
+	writeJSON(w, status, resp)
+}
+
+func (h *Handler) dispatch(r *http.Request, req jsonRPCRequest) jsonRPCResponse {
+	switch req.Method {
+	case "initialize":
+		return h.handleInitialize(req)
+	case "server/discover":
+		return h.handleDiscover(req)
+	case "ping":
+		return resultResponse(req.ID, map[string]any{})
+	case "tools/list":
+		return h.handleToolsList(req)
+	case "tools/call":
+		return h.handleToolsCall(r, req)
+	case "notifications/initialized", "notifications/cancelled":
+		// Should arrive as notifications (no id); if mis-sent as request, ack.
+		return resultResponse(req.ID, map[string]any{})
+	default:
+		return errorResponse(req.ID, errMethodNotFound, "Method not found", nil)
+	}
+}
+
+func (h *Handler) handleInitialize(req jsonRPCRequest) jsonRPCResponse {
+	type initParams struct {
+		ProtocolVersion string         `json:"protocolVersion"`
+		Capabilities    map[string]any `json:"capabilities"`
+		ClientInfo      map[string]any `json:"clientInfo"`
+	}
+	params, err := decodeParams[initParams](req.Params)
+	if err != nil {
+		return errorResponse(req.ID, errInvalidParams, err.Error(), nil)
+	}
+	version := preferLegacyProtocol(strings.TrimSpace(params.ProtocolVersion))
+	return resultResponse(req.ID, map[string]any{
+		"protocolVersion": version,
+		"capabilities": map[string]any{
+			"tools": map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    serverName,
+			"version": serverVersion,
+		},
+	})
+}
+
+func (h *Handler) handleDiscover(req jsonRPCRequest) jsonRPCResponse {
+	return resultResponse(req.ID, map[string]any{
+		"protocolVersions": supportedProtocolVersions,
+		"capabilities": map[string]any{
+			"tools": map[string]any{},
+		},
+		"serverInfo": map[string]any{
+			"name":    serverName,
+			"version": serverVersion,
+		},
+	})
+}
+
+func (h *Handler) handleToolsList(req jsonRPCRequest) jsonRPCResponse {
+	if h.Backend == nil {
+		return errorResponse(req.ID, errInternal, "mcp backend unavailable", nil)
+	}
+	tools := make([]ToolInfo, 0, len(runtimeToolNames)+3)
+	for _, name := range runtimeToolNames {
+		if name == "shell" && !h.Backend.ShellEnabled() {
+			continue
+		}
+		info, ok := h.Backend.DescribeRuntimeTool(name)
+		if !ok {
+			continue
+		}
+		tools = append(tools, info)
+	}
+	tools = append(tools,
+		ToolInfo{
+			Name:        toolPhoneBridgeStatus,
+			Description: "Phone Bridge connection and device status from the Agent.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		ToolInfo{
+			Name:        toolDeviceStatus,
+			Description: "Device / firmware status from config-web.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		ToolInfo{
+			Name:        toolSupportBundle,
+			Description: "Download a support log archive (gzip tar) from config-web; returns base64.",
+			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+	)
+	return resultResponse(req.ID, map[string]any{
+		"tools": tools,
+	})
+}
+
+func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCResponse {
+	if h.Backend == nil {
+		return errorResponse(req.ID, errInternal, "mcp backend unavailable", nil)
+	}
+	type callParams struct {
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+	}
+	params, err := decodeParams[callParams](req.Params)
+	if err != nil {
+		return errorResponse(req.ID, errInvalidParams, err.Error(), nil)
+	}
+	name := strings.TrimSpace(params.Name)
+	if name == "" {
+		return errorResponse(req.ID, errInvalidParams, "tool name required", nil)
+	}
+	if name == "shell" && !h.Backend.ShellEnabled() {
+		return resultResponse(req.ID, CallResult{
+			IsError: true,
+			Content: []ContentBlock{{Type: "text", Text: "shell is disabled (mcp_shell_enabled=false)"}},
+		})
+	}
+	if !isRuntimeTool(name) && !isStatusTool(name) {
+		return resultResponse(req.ID, CallResult{
+			IsError: true,
+			Content: []ContentBlock{{Type: "text", Text: "tool not in MCP allowlist: " + name}},
+		})
+	}
+
+	ctx := r.Context()
+	switch {
+	case isRuntimeTool(name):
+		result, callErr := h.Backend.CallRuntimeTool(ctx, name, params.Arguments)
+		if callErr != nil {
+			return resultResponse(req.ID, CallResult{
+				IsError: true,
+				Content: []ContentBlock{{Type: "text", Text: callErr.Error()}},
+			})
+		}
+		return resultResponse(req.ID, result)
+	case name == toolPhoneBridgeStatus:
+		status, statusErr := h.Backend.PhoneBridgeStatus(ctx)
+		if statusErr != nil {
+			return resultResponse(req.ID, CallResult{
+				IsError: true,
+				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
+			})
+		}
+		return resultResponse(req.ID, jsonResult(status))
+	case name == toolDeviceStatus:
+		status, statusErr := h.Backend.DeviceStatus(ctx)
+		if statusErr != nil {
+			return resultResponse(req.ID, CallResult{
+				IsError: true,
+				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
+			})
+		}
+		return resultResponse(req.ID, jsonResult(status))
+	case name == toolSupportBundle:
+		data, mime, bundleErr := h.Backend.SupportBundle(ctx)
+		if bundleErr != nil {
+			return resultResponse(req.ID, CallResult{
+				IsError: true,
+				Content: []ContentBlock{{Type: "text", Text: bundleErr.Error()}},
+			})
+		}
+		if mime == "" {
+			mime = "application/gzip"
+		}
+		encoded := base64.StdEncoding.EncodeToString(data)
+		return resultResponse(req.ID, CallResult{
+			Content: []ContentBlock{{
+				Type: "text",
+				Text: fmt.Sprintf("mime=%s bytes=%d encoding=base64\n%s", mime, len(data), encoded),
+			}},
+		})
+	default:
+		return errorResponse(req.ID, errInternal, "unhandled tool", nil)
+	}
+}
+
+func jsonResult(v any) CallResult {
+	raw, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: err.Error()}}}
+	}
+	return CallResult{
+		Content:           []ContentBlock{{Type: "text", Text: string(raw)}},
+		StructuredContent: v,
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, payload any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func acceptContains(accept, want string) bool {
+	for _, part := range strings.Split(accept, ",") {
+		media := strings.TrimSpace(strings.Split(part, ";")[0])
+		if strings.EqualFold(media, want) {
+			return true
+		}
+	}
+	return false
+}

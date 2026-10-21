@@ -1,0 +1,209 @@
+package agent
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+
+	"aiden-agent/internal/mcp"
+
+	"github.com/tmc/langchaingo/schema"
+	langtools "github.com/tmc/langchaingo/tools"
+)
+
+const defaultMCPConfigWebBase = "http://127.0.0.1"
+
+var mcpConfigWebHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
+func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
+	if s.runtime == nil || !s.runtime.ConfigSnapshot().MCPEnabledOrDefault() {
+		http.NotFound(w, r)
+		return
+	}
+	handler := &mcp.Handler{Backend: mcpServerBackend{server: s}}
+	handler.ServeHTTP(w, r)
+}
+
+type mcpServerBackend struct {
+	server *Server
+}
+
+func (b mcpServerBackend) ShellEnabled() bool {
+	if b.server == nil || b.server.runtime == nil {
+		return false
+	}
+	return b.server.runtime.ConfigSnapshot().MCPShellEnabledOrDefault()
+}
+
+func (b mcpServerBackend) DescribeRuntimeTool(name string) (mcp.ToolInfo, bool) {
+	if b.server == nil {
+		return mcp.ToolInfo{}, false
+	}
+	spec, ok := b.server.lookupOwnedToolSpec(name)
+	if !ok {
+		return mcp.ToolInfo{}, false
+	}
+	desc := spec.Descriptor()
+	schemaMap := desc.ArgsSchema
+	if schemaMap == nil {
+		schemaMap = map[string]any{"type": "object", "properties": map[string]any{}}
+	}
+	return mcp.ToolInfo{
+		Name:        desc.Name,
+		Description: desc.Description,
+		InputSchema: schemaMap,
+	}, true
+}
+
+func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, arguments json.RawMessage) (mcp.CallResult, error) {
+	if b.server == nil {
+		return mcp.CallResult{}, fmt.Errorf("server unavailable")
+	}
+	spec, ok := b.server.lookupOwnedToolSpec(name)
+	if !ok {
+		return mcp.CallResult{
+			IsError: true,
+			Content: []mcp.ContentBlock{{Type: "text", Text: "unknown tool: " + name}},
+		}, nil
+	}
+	rawInput := "{}"
+	if len(arguments) > 0 && string(arguments) != "null" {
+		rawInput = string(arguments)
+	}
+	executionCtx := ctx
+	cancel := context.CancelFunc(func() {})
+	if httpToolExecutionSurvivesClientDisconnect(name) {
+		executionCtx, cancel = detachedHTTPToolExecutionContext(ctx)
+	}
+	defer cancel()
+	execution := executeToolCall(executionCtx, ToolCallExecution{
+		Specs:  NewToolSpecs([]langtools.Tool{spec.Tool}),
+		Action: schema.AgentAction{Tool: spec.Name, ToolInput: rawInput},
+	})
+	isError := execution.Result.IsError() || execution.Error != nil
+	output := execution.Result.Output
+	if execution.Error != nil && output == "" {
+		output = execution.Error.Error()
+	}
+	if execution.Result.Error != nil && output == "" {
+		output = execution.Result.Error.Message
+	}
+	return mcp.CallResult{
+		IsError: isError,
+		Content: []mcp.ContentBlock{{Type: "text", Text: output}},
+	}, nil
+}
+
+func (b mcpServerBackend) PhoneBridgeStatus(ctx context.Context) (any, error) {
+	_ = ctx
+	if b.server == nil {
+		return nil, fmt.Errorf("server unavailable")
+	}
+	status := PhoneBridgeStatus{}
+	if b.server.bridge != nil {
+		status = b.server.bridge.getStatus()
+	}
+	if b.server.runtime != nil {
+		status.DeviceType = b.server.runtime.deviceTypeFromState()
+		status.PointerMode = b.server.runtime.devicePointerModeFromState()
+	}
+	return status, nil
+}
+
+func (b mcpServerBackend) DeviceStatus(ctx context.Context) (any, error) {
+	base, err := b.configWebBase()
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/device/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := mcpConfigWebHTTPClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("config-web device status: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("config-web device status: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func (b mcpServerBackend) SupportBundle(ctx context.Context) ([]byte, string, error) {
+	base, err := b.configWebBase()
+	if err != nil {
+		return nil, "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/logs/support", nil)
+	if err != nil {
+		return nil, "", err
+	}
+	client := &http.Client{Timeout: 2 * time.Minute}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, "", fmt.Errorf("config-web support bundle: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	mime := resp.Header.Get("Content-Type")
+	if mime == "" {
+		mime = "application/gzip"
+	}
+	return body, mime, nil
+}
+
+func (b mcpServerBackend) configWebBase() (string, error) {
+	base := defaultMCPConfigWebBase
+	if b.server != nil && b.server.runtime != nil {
+		if configured := strings.TrimSpace(b.server.runtime.ConfigSnapshot().MCPConfigWebBaseURL); configured != "" {
+			base = configured
+		}
+	}
+	if err := validateMCPConfigWebBaseURL(base); err != nil {
+		return "", err
+	}
+	return base, nil
+}
+
+// validateMCPConfigWebBaseURL keeps MCP→config-web fetches on loopback HTTP only.
+func validateMCPConfigWebBaseURL(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("mcp_config_web_base_url: %w", err)
+	}
+	if parsed.Scheme != "http" {
+		return fmt.Errorf("mcp_config_web_base_url: only http loopback is allowed")
+	}
+	host := parsed.Hostname()
+	if host != "127.0.0.1" && !strings.EqualFold(host, "localhost") {
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return fmt.Errorf("mcp_config_web_base_url: host must be loopback")
+		}
+	}
+	if parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("mcp_config_web_base_url: invalid URL")
+	}
+	return nil
+}
