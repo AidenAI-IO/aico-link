@@ -8,7 +8,6 @@
 .claude/
 CLAUDE.md
 *.pcm
-/pico-sdk/
 .env
 
 # Cross-compiled agent binary

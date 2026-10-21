@@ -1,0 +1,26 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: build transport_mdns/mdns_utils and link dns_sd
+
+Add the mDNS client sources to libadb and link the avahi libdns_sd
+compatibility library (Bonjour API) so adb's <dns_sd.h> calls resolve.
+
+Aiden-local patch (re-enables mDNS that nmeum disabled for the client).
+---
+--- a/vendor/CMakeLists.adb.txt
++++ b/vendor/CMakeLists.adb.txt
+@@ -26,6 +26,8 @@
+ 	core/adb/client/usb_dispatch.cpp
+ 	core/adb/client/usb_libusb.cpp
+ 	core/adb/client/usb_linux.cpp
++	core/adb/client/transport_mdns.cpp
++	core/adb/client/mdns_utils.cpp
+ 	core/adb/pairing_auth/aes_128_gcm.cpp
+ 	core/adb/pairing_auth/pairing_auth.cpp
+ 	core/adb/pairing_connection/pairing_connection.cpp
+@@ -195,4 +197,5 @@
+ 	pthread
+ 	usb-1.0
+ 	z
+-	zstd)
++	zstd
++	dns_sd)

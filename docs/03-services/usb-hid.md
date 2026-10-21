@@ -45,10 +45,12 @@ Restarting the unit does drop the configfs group and recreate it. The vendor
 kernel mishandled that path: `CONFIG_USB_CONFIGFS_UEVENT` kept a global
 `android_device` that was never cleared on teardown, so the next control
 transfer dereferenced a freed `struct device`. The production kernel carries
-the fix in the pinned `pico-sdk` submodule commit
-(`usb: gadget: configfs: fix use-after-free on gadget teardown`), whose commit
-message records the three defects and why each fix is shaped the way it is.
-Read it before touching the gadget teardown sequence.
+the fix in `pico-sdk/sysdrv/source/kernel/drivers/usb/gadget/configfs.c`. It
+derives gadget state from the gadget, cancels pending work before destroying
+the device, and clears the global device pointer on teardown. The historical
+[SDK commit](https://github.com/AidenAI-IO/aiden-sdk/commit/abe2bc1fa59691c81418c3cba64eaf703f55870c)
+records the three defects under `usb: gadget: configfs: fix use-after-free on
+gadget teardown`. Read that explanation before touching the teardown sequence.
 
 ## example_usb_hid Usage
 

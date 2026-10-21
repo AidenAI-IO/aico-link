@@ -43,16 +43,17 @@ instead of silently treating the change as tested.
 
 ## Setup and repository map
 
-Clone the repository with its submodules:
+Clone the repository with its MobileGym submodule:
 
 ```bash
 git clone --recursive <repository-url>
 ```
 
-For an existing checkout, initialize them with
-`git submodule update --init --recursive`. The `pico-sdk` and
-`benchmark/mobilegym/vendor/mobilegym` directories are submodules; avoid
-editing their contents unless the task explicitly targets those dependencies.
+For an existing checkout, initialize MobileGym with
+`git submodule update --init --recursive benchmark/mobilegym/vendor/mobilegym`.
+The `pico-sdk/` BSP is vendored directly in this repository; it requires no
+submodule initialization. Avoid editing vendored or submodule contents unless
+the task explicitly targets those dependencies.
 
 The main areas are:
 
@@ -62,6 +63,7 @@ The main areas are:
   authoritative `test-manifest.yaml`.
 - `scripts/`: Docker test runners, Debian and OTA tooling, and release checks.
 - `overlay-debian/`: Debian rootfs files, systemd units, and device helpers.
+- `pico-sdk/`: vendored Luckfox/Rockchip BSP, kernel, bootloader, and build tools.
 - `benchmark/` and `skillopt/`: Python benchmark and SkillOpt projects.
 - `docs/`: build, architecture, operations, and contributor documentation.
 

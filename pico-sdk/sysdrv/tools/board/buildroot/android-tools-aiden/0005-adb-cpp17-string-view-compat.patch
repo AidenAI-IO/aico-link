@@ -1,0 +1,338 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: C++17 compatibility for string_view starts_with/ends_with
+
+std::string_view::starts_with() and ends_with() are C++20 methods. GCC 8.3
+libstdc++ only supports C++17, causing build failures:
+
+  adb_client.cpp:169:18: error: 'using string_view = class
+  std::basic_string_view<char>' has no member named 'starts_with'
+
+This patch creates adb_string_view_compat.h with C++17 free-function
+equivalents (adb_compat::starts_with/ends_with) and rewrites all call
+sites across 7 source files. String-view literal forms like
+"foo"sv.starts_with(x) become adb_compat::starts_with("foo"sv, x).
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/core/adb/sockets.cpp
++++ b/vendor/core/adb/sockets.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG SOCKETS
+ 
+ #include "sysdeps.h"
++#include "adb_string_view_compat.h"
+ 
+ #include <ctype.h>
+@@ -416,9 +417,9 @@
+     LOG(VERBOSE) << "LS(" << s->id << "): bound to '" << name << "' via " << fd_value;
+ 
+ #if !ADB_HOST
+-    if ((name.starts_with("root:") && getuid() != 0 && __android_log_is_debuggable()) ||
+-        (name.starts_with("unroot:") && getuid() == 0) || name.starts_with("usb:") ||
+-        name.starts_with("tcpip:")) {
++    if ((adb_compat::starts_with(name, "root:") && getuid() != 0 && __android_log_is_debuggable()) ||
++        (adb_compat::starts_with(name, "unroot:") && getuid() == 0) || adb_compat::starts_with(name, "usb:") ||
++        adb_compat::starts_with(name, "tcpip:")) {
+         D("LS(%d): enabling exit_on_close", s->id);
+         s->exit_on_close = 1;
+     }
+@@ -627,7 +628,7 @@
+     static constexpr std::string_view prefixes[] = {
+             "usb:", "product:", "model:", "device:", "localfilesystem:"};
+     for (std::string_view prefix : prefixes) {
+-        if (command.starts_with(prefix)) {
++        if (adb_compat::starts_with(command, prefix)) {
+             consume(prefix.size());
+ 
+             size_t offset = command.find_first_of(':');
+@@ -640,13 +641,13 @@
+     }
+ 
+     // For fastboot compatibility, ignore protocol prefixes.
+-    if (command.starts_with("tcp:") || command.starts_with("udp:")) {
++    if (adb_compat::starts_with(command, "tcp:") || adb_compat::starts_with(command, "udp:")) {
+         consume(4);
+         if (command.empty()) {
+             return false;
+         }
+     }
+-    if (command.starts_with("vsock:")) {
++    if (adb_compat::starts_with(command, "vsock:")) {
+         // vsock serials are vsock:cid:port, which have an extra colon compared to tcp.
+         size_t next_colon = command.find(':');
+         if (next_colon == std::string::npos) {
+--- a/vendor/core/adb/socket_spec.cpp
++++ b/vendor/core/adb/socket_spec.cpp
+@@ -14,6 +14,7 @@
+  * limitations under the License.
+  */
+ 
++#include "adb_string_view_compat.h"
+ #include "socket_spec.h"
+ 
+ #include <limits>
+@@ -77,7 +78,7 @@
+ 
+ bool parse_tcp_socket_spec(std::string_view spec, std::string* hostname, int* port,
+                            std::string* serial, std::string* error) {
+-    if (!spec.starts_with("tcp:")) {
++    if (!adb_compat::starts_with(spec, "tcp:")) {
+         *error = "specification is not tcp: ";
+         *error += spec;
+         return false;
+@@ -119,11 +120,11 @@
+ 
+ int get_host_socket_spec_port(std::string_view spec, std::string* error) {
+     int port;
+-    if (spec.starts_with("tcp:")) {
++    if (adb_compat::starts_with(spec, "tcp:")) {
+         if (!parse_tcp_socket_spec(spec, nullptr, &port, nullptr, error)) {
+             return -1;
+         }
+-    } else if (spec.starts_with("vsock:")) {
++    } else if (adb_compat::starts_with(spec, "vsock:")) {
+ #if ADB_LINUX
+         std::string spec_str(spec);
+         std::vector<std::string> fragments = android::base::Split(spec_str, ":");
+@@ -160,17 +161,17 @@
+ bool is_socket_spec(std::string_view spec) {
+     for (const auto& it : kLocalSocketTypes) {
+         std::string prefix = it.first + ":";
+-        if (spec.starts_with(prefix)) {
++        if (adb_compat::starts_with(spec, prefix)) {
+             return true;
+         }
+     }
+-    return spec.starts_with("tcp:") || spec.starts_with("acceptfd:");
++    return adb_compat::starts_with(spec, "tcp:") || adb_compat::starts_with(spec, "acceptfd:");
+ }
+ 
+ bool is_local_socket_spec(std::string_view spec) {
+     for (const auto& it : kLocalSocketTypes) {
+         std::string prefix = it.first + ":";
+-        if (spec.starts_with(prefix)) {
++        if (adb_compat::starts_with(spec, prefix)) {
+             return true;
+         }
+     }
+@@ -185,7 +186,7 @@
+ 
+ bool socket_spec_connect(unique_fd* fd, std::string_view address, int* port, std::string* serial,
+                          std::string* error) {
+-    if (address.starts_with("tcp:")) {
++    if (adb_compat::starts_with(address, "tcp:")) {
+         std::string hostname;
+         int port_value = port ? *port : 0;
+         if (!parse_tcp_socket_spec(address, &hostname, &port_value, serial, error)) {
+@@ -206,7 +207,7 @@
+             return true;
+         }
+         return false;
+-    } else if (address.starts_with("vsock:")) {
++    } else if (adb_compat::starts_with(address, "vsock:")) {
+ #if ADB_LINUX
+         std::string spec_str(address);
+         std::vector<std::string> fragments = android::base::Split(spec_str, ":");
+@@ -262,14 +263,14 @@
+         *error = "vsock is only supported on linux";
+         return false;
+ #endif  // ADB_LINUX
+-    } else if (address.starts_with("acceptfd:")) {
++    } else if (adb_compat::starts_with(address, "acceptfd:")) {
+         *error = "cannot connect to acceptfd";
+         return false;
+     }
+ 
+     for (const auto& it : kLocalSocketTypes) {
+         std::string prefix = it.first + ":";
+-        if (address.starts_with(prefix)) {
++        if (adb_compat::starts_with(address, prefix)) {
+             if (!it.second.available) {
+                 *error = StringPrintf("socket type %s is unavailable on this platform",
+                                       it.first.c_str());
+@@ -299,7 +300,7 @@
+ }
+ 
+ int socket_spec_listen(std::string_view spec, std::string* error, int* resolved_port) {
+-    if (spec.starts_with("tcp:")) {
++    if (adb_compat::starts_with(spec, "tcp:")) {
+         std::string hostname;
+         int port;
+         if (!parse_tcp_socket_spec(spec, &hostname, &port, nullptr, error)) {
+@@ -327,7 +328,7 @@
+             *resolved_port = adb_socket_get_local_port(result);
+         }
+         return result;
+-    } else if (spec.starts_with("vsock:")) {
++    } else if (adb_compat::starts_with(spec, "vsock:")) {
+ #if ADB_LINUX
+         std::string spec_str(spec);
+         std::vector<std::string> fragments = android::base::Split(spec_str, ":");
+@@ -420,7 +421,7 @@
+ 
+     for (const auto& it : kLocalSocketTypes) {
+         std::string prefix = it.first + ":";
+-        if (spec.starts_with(prefix)) {
++        if (adb_compat::starts_with(spec, prefix)) {
+             if (!it.second.available) {
+                 *error = "attempted to listen on unavailable socket type: ";
+                 *error += spec;
+--- a/vendor/core/adb/adb.cpp
++++ b/vendor/core/adb/adb.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG ADB
+ 
+ #include "sysdeps.h"
++#include "adb_string_view_compat.h"
+ #include "adb.h"
+ 
+@@ -1099,7 +1100,7 @@
+     LOG(DEBUG) << "handle_host_request(" << service << ")";
+ 
+     // Transport selection:
+-    if (service.starts_with("transport") || service.starts_with("tport:")) {
++    if (adb_compat::starts_with(service, "transport") || adb_compat::starts_with(service, "tport:")) {
+         TransportType type = kTransportAny;
+ 
+         std::string serial_storage;
+@@ -1210,7 +1211,7 @@
+     }
+ 
+     // remove TCP transport
+-    if (service.starts_with("disconnect:")) {
++    if (adb_compat::starts_with(service, "disconnect:")) {
+         std::string address(service.substr(11));
+         if (address.empty()) {
+             kick_all_tcp_devices();
+@@ -1222,7 +1223,7 @@
+         std::string host;
+         int port = DEFAULT_ADB_LOCAL_TRANSPORT_PORT;
+         std::string error;
+-        if (address.starts_with("vsock:") || address.starts_with("localfilesystem:")) {
++        if (adb_compat::starts_with(address, "vsock:") || adb_compat::starts_with(address, "localfilesystem:")) {
+             serial = address;
+         } else if (!android::base::ParseNetAddress(address, &host, &port, &serial, &error)) {
+             SendFail(reply_fd, android::base::StringPrintf("couldn't parse '%s': %s",
+--- a/vendor/core/adb/client/transport_local.cpp
++++ b/vendor/core/adb/client/transport_local.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG TRANSPORT
+ 
+ #include "sysdeps.h"
++#include "adb_string_view_compat.h"
+ #include "transport.h"
+ 
+@@ -90,7 +91,7 @@
+     std::string serial, prefix_addr;
+ 
+     // If address does not match any socket type, it should default to TCP.
+-    if (address.starts_with("vsock:") || address.starts_with("localfilesystem:")) {
++    if (adb_compat::starts_with(address, "vsock:") || adb_compat::starts_with(address, "localfilesystem:")) {
+         prefix_addr = address;
+     } else {
+         prefix_addr = "tcp:" + address;
+--- a/vendor/core/adb/client/adb_install.cpp
++++ b/vendor/core/adb/client/adb_install.cpp
+@@ -14,6 +14,7 @@
+  * limitations under the License.
+  */
+ 
++#include "adb_string_view_compat.h"
+ #include "adb_install.h"
+ 
+ #include <fcntl.h>
+@@ -326,7 +327,7 @@
+             if (first_apk == -1) {
+                 first_apk = i;
+             }
+-        } else if (arg.starts_with("install"sv)) {
++        } else if (adb_compat::starts_with(arg, "install"sv)) {
+             // incremental installation command on the device is the same for all its variations in
+             // the adb, e.g. install-multiple or install-multi-package
+         } else {
+@@ -448,9 +449,9 @@
+             *install_mode = INSTALL_STREAM;
+         } else if (arg == "--no-streaming"sv) {
+             *install_mode = INSTALL_PUSH;
+-        } else if (strlen(arg) >= "--incr"sv.size() && "--incremental"sv.starts_with(arg)) {
++        } else if (strlen(arg) >= "--incr"sv.size() && adb_compat::starts_with("--incremental"sv, arg)) {
+             *incremental_request = CmdlineOption::Enable;
+-        } else if (strlen(arg) >= "--no-incr"sv.size() && "--no-incremental"sv.starts_with(arg)) {
++        } else if (strlen(arg) >= "--no-incr"sv.size() && adb_compat::starts_with("--no-incremental"sv, arg)) {
+             *incremental_request = CmdlineOption::Disable;
+         } else if (arg == "--wait"sv) {
+             *incremental_wait = true;
+--- a/vendor/core/adb/client/adb_client.cpp
++++ b/vendor/core/adb/client/adb_client.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG ADB
+ 
++#include "adb_string_view_compat.h"
+ #include "sysdeps.h"
+ #include "adb_client.h"
+ 
+@@ -166,7 +167,7 @@
+         return -2;
+     }
+ 
+-    if (!service.starts_with("host") || force_switch) {
++    if (!adb_compat::starts_with(service, "host") || force_switch) {
+         std::optional<TransportId> transport_result = switch_socket_transport(fd.get(), error);
+         if (!transport_result) {
+             return -1;
+--- a/vendor/core/adb/client/incremental_utils.cpp
++++ b/vendor/core/adb/client/incremental_utils.cpp
+@@ -16,6 +16,7 @@
+ 
+ #define TRACE_TAG INCREMENTAL
+ 
++#include "adb_string_view_compat.h"
+ #include "incremental_utils.h"
+ 
+ #include <android-base/endian.h>
+@@ -312,7 +313,7 @@
+     }
+ 
+     auto matcher = [](std::string_view entry_name) {
+-        if (entry_name.starts_with("lib/"sv) && entry_name.ends_with(".so"sv)) {
++        if (adb_compat::starts_with(entry_name, "lib/"sv) && adb_compat::ends_with(entry_name, ".so"sv)) {
+             return true;
+         }
+         return std::any_of(additional_matches.begin(), additional_matches.end(),
+--- /dev/null
++++ b/vendor/core/adb/adb_string_view_compat.h
+@@ -0,0 +1,30 @@
++// Aiden: C++17 compatibility for std::string_view::starts_with/ends_with
++//
++// These methods were added in C++20. GCC 8.3 libstdc++ only supports C++17,
++// so this header provides equivalent free functions that the patched adb
++// source files call via adb_compat::starts_with/ends_with.
++
++#pragma once
++
++#include <string_view>
++
++namespace adb_compat {
++
++inline bool starts_with(std::string_view sv, std::string_view prefix) noexcept {
++    return sv.size() >= prefix.size() && sv.substr(0, prefix.size()) == prefix;
++}
++
++inline bool starts_with(std::string_view sv, char c) noexcept {
++    return !sv.empty() && sv.front() == c;
++}
++
++inline bool ends_with(std::string_view sv, std::string_view suffix) noexcept {
++    return sv.size() >= suffix.size() &&
++           sv.substr(sv.size() - suffix.size()) == suffix;
++}
++
++inline bool ends_with(std::string_view sv, char c) noexcept {
++    return !sv.empty() && sv.back() == c;
++}
++
++} // namespace adb_compat

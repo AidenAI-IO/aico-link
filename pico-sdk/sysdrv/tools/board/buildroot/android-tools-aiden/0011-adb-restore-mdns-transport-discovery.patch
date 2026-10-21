@@ -1,0 +1,20 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: restore mDNS transport discovery in main.cpp
+
+Re-enable init_mdns_transport_discovery() that nmeum's 0002 patch removed.
+Gated on ADB_MDNS env (set to 0 to disable), matching upstream AOSP.
+
+Aiden-local patch (re-enables mDNS that nmeum disabled for the client).
+---
+--- a/vendor/core/adb/client/main.cpp
++++ b/vendor/core/adb/client/main.cpp
+@@ -126,6 +126,9 @@
+     init_reconnect_handler();
+ 
+     adb_wifi_init();
++    if (!getenv("ADB_MDNS") || strcmp(getenv("ADB_MDNS"), "0") != 0) {
++        init_mdns_transport_discovery();
++    }
+ 
+     if (!getenv("ADB_USB") || strcmp(getenv("ADB_USB"), "0") != 0) {
+         usb_init();

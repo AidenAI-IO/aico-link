@@ -1,0 +1,54 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: define libzip in adb build (client-only)
+
+The adb client links libzip (libziparchive), but the libzip CMake target
+is defined in CMakeLists.fastboot.txt upstream. Our client-only build
+only includes CMakeLists.libbase.txt and CMakeLists.adb.txt, so libzip
+is never defined and linking fails:
+
+  ld.bfd: cannot find -llibzip
+
+Define the libziparchive static library directly in CMakeLists.adb.txt
+(the libziparchive sources are present in the vendored tarball).
+libziparchive also needs <gtest/gtest_prod.h>, available in the vendored
+BoringSSL's third_party/googletest, so add that include path too.
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/CMakeLists.adb.txt
++++ b/vendor/CMakeLists.adb.txt
+@@ -8,6 +8,25 @@
+ 	core/adb/proto/pairing.proto)
+
+ # No fastdeploy because it requires deployagent.inc
++# Aiden: libzip is defined in CMakeLists.fastboot.txt upstream, but that
++# file is not included in the client-only build. adb links libzip, so
++# define the libziparchive target here. Include boringssl googletest for
++# gtest_prod.h.
++add_library(ziparchive STATIC
++	libziparchive/zip_archive.cc
++	libziparchive/zip_archive_stream_entry.cc
++	libziparchive/zip_cd_entry_map.cc
++	libziparchive/zip_error.cpp
++	libziparchive/zip_writer.cc)
++
++target_compile_definitions(ziparchive PRIVATE -DZLIB_CONST)
++target_include_directories(ziparchive PUBLIC
++	libziparchive/include
++	boringssl/third_party/googletest/include
++	core/include
++	core/liblog/include
++	libbase/include)
++
+ add_library(libadb STATIC
+ 	core/adb/client/adb_client.cpp
+ 	core/adb/client/adb_install.cpp
+@@ -184,7 +203,7 @@
+ 	libcutils
+ 	libdiagnoseusb
+ 	liblog
+-	libzip
++	ziparchive
+ 	crypto
+ 	ssl
+ 	${PROTOBUF_LIBRARIES}

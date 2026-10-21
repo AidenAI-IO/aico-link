@@ -37,7 +37,7 @@ sudo scripts/flash.sh flash \
 ```
 
 The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary; use
-the Linux tool from the repository `pico-sdk` submodule. On macOS, flash a
+the Linux tool from the vendored `pico-sdk/` directory. On macOS, flash a
 locally built image with:
 
 ```bash

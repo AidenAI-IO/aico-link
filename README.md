@@ -120,7 +120,8 @@ compatible environment bridge. For benchmark suites and reports, see
 
 First-time hardware users should start with [Newcomer Quickstart](docs/01-getting-started/quickstart.md). It walks through wiring, flashing, Wi-Fi setup, Agent configuration, voice verification, and troubleshooting.
 
-Clone the repository:
+Clone the repository (the BSP is included in `pico-sdk/`; `--recursive` also
+initializes the MobileGym dependency):
 
 ```bash
 git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git

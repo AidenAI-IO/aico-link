@@ -1,0 +1,63 @@
+opkg-aiden
+==========
+
+Verbatim backport of Buildroot master's package/opkg (opkg 0.7.0) over the
+opkg 0.4.5 recipe that ships in the vendored buildroot-2023.02.6 tarball.
+
+Upstream provenance
+-------------------
+
+  Repository  https://gitlab.com/buildroot.org/buildroot
+  Commit      073ea145df6e6c55427d6c8bf576622b5db19a53
+              ("package/opkg: add optional libsolv dependency", 2024-12-29)
+              -- the newest commit touching package/opkg as of 2026-07-30;
+              master HEAD at backport time was
+              9f17ac02b8561ca7adeb7911e4939b2ac9ad6320.
+  Files       package/opkg/opkg.mk
+              package/opkg/Config.in
+              package/opkg/opkg.hash
+
+  Backported byte-for-byte. Do NOT hand-edit OPKG_CONF_OPTS or
+  OPKG_DEPENDENCIES: the upstream recipe already conditionalises every option
+  on a Buildroot config symbol (libsolv, libcurl, openssl, zstd, xz, bzip2,
+  lz4, gpg), so the recipe is driven entirely from the defconfig. Local
+  divergence here is what caused repeated rework in earlier attempts.
+
+  Refresh procedure: re-fetch the three files at a newer commit, update the
+  SHAs above, and rebuild. Keep the COPYING hash line in opkg.hash -- Buildroot
+  legal-info needs it.
+
+Why an in-place overwrite instead of an out-of-tree package
+-----------------------------------------------------------
+
+buildroot-2023.02.6 already defines BR2_PACKAGE_OPKG and already registers
+package/opkg/Config.in in package/Config.in, and opkg 0.7.0 is still autotools
+(the release tarball ships a configure script). So the integration only needs
+to replace three files -- unlike android-tools-aiden, no sed injection into
+package/Config.in is required.
+
+The buildroot tree is re-extracted from the tarball on every build
+(sysdrv/Makefile), so the overwrite is re-applied by inject_opkg_aiden_pkg
+from sync_buildroot_board_config after each extraction. Any *.patch file
+dropped in this directory is copied into package/opkg/ as well, so
+toolchain-compatibility patches (GCC 8 + uClibc-ng) can be added here without
+touching the Makefile.
+
+Enabled by these defconfig symbols
+----------------------------------
+
+  BR2_PACKAGE_OPKG=y      opkg itself (selects BR2_PACKAGE_LIBARCHIVE)
+  BR2_PACKAGE_LIBSOLV=y   --with-libsolv; required by the download_first option
+  BR2_PACKAGE_ZSTD=y      --enable-zstd
+
+BR2_PACKAGE_OPENSSL, BR2_PACKAGE_LIBCURL and BR2_PACKAGE_XZ were already
+enabled in luckfox_pico_w_defconfig and give --enable-curl / --enable-ssl-curl
+/ --enable-xz for free.
+
+BR2_PACKAGE_OPKG_GPG_SIGN is deliberately left off: no consumable signature
+artefacts were found for the feeds this device can use, so enabling it would
+pull in libgpgme + libgpg-error + gnupg with nothing to verify. See
+docs/07-operations/opkg-package-management.md §3.6.
+
+Runtime layout lives outside this directory: overlay/etc/init.d/S22opt,
+overlay/etc/opkg/, overlay/etc/profile.d/aiden-opt.sh in the aiden repo.

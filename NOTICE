@@ -11,7 +11,9 @@ each with their own license terms:
 
 - **License**: Various (Linux Kernel GPL-2.0, Buildroot GPL-2.0+, U-Boot GPL-2.0+)
 - **Source**: https://github.com/LuckfoxTECH/luckfox-pico
-- **Location**: `pico-sdk/` (git submodule)
+- **Location**: `pico-sdk/` (vendored source)
+- **Imported snapshot**: https://github.com/AidenAI-IO/aiden-sdk, branch
+  `feat/hardware-adapt`, commit `c4fb3d8406e3a2d8b3401202330a5c8602a4d256`
 - **Description**: BSP and build system for Luckfox Pico development boards
 - **Note**: Linux kernel, U-Boot, and Buildroot components remain under their
   original GPL licenses. Our modifications to these components are also GPL-licensed

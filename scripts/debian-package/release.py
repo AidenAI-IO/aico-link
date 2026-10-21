@@ -32,7 +32,8 @@ def check_source(root, apps):
     for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
         if (metadata / name).read_text().strip():
             raise ValueError("Application binaries were built from a dirty source tree")
-    sdk_commit = command("git", "-C", str(root / "pico-sdk"), "rev-parse", "HEAD")
+    # The vendored SDK shares the firmware source commit.
+    sdk_commit = commit
     if (metadata / "pico-sdk-commit.txt").read_text().strip() != sdk_commit:
         raise ValueError("Application SDK commit does not match the checkout")
     if "status=pass" not in (apps / "apps-audit/summary.txt").read_text().splitlines():

@@ -1,0 +1,55 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] libbase: fix GCC 8.3 ICE on VLA sizeof in logging_splitters.h
+
+GCC 8.3.0 hits an internal compiler error during RTL "expand" when
+compiling vendor/libbase/logging.cpp:
+
+  logging_splitters.h:82: internal compiler error: in
+  expand_expr_real_1, at expr.c:10043
+    size_written = snprintf(logd_chunk + chunk_position,
+                            sizeof(logd_chunk) - chunk_position, ...
+
+The root cause is that logd_chunk is a variable-length array
+(char logd_chunk[max_size + 1], where max_size is a runtime ptrdiff_t),
+so sizeof(logd_chunk) is a runtime expression. GCC 8.x has a known bug
+expanding VLA sizeof in certain contexts, and it fires at every
+optimization level (including -O0), so a per-file -O flag does not help.
+
+Fix it at the source: compute the chunk size once into a plain size_t
+local (logd_chunk_size) right after the VLA declaration and use that in
+the three snprintf calls instead of sizeof(logd_chunk).
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/libbase/logging_splitters.h
++++ b/vendor/libbase/logging_splitters.h
+@@ -68,6 +68,7 @@
+   int file_header_size = file_header.size();
+
+   __attribute__((uninitialized)) char logd_chunk[max_size + 1];
++  const size_t logd_chunk_size = static_cast<size_t>(max_size) + 1;  // Aiden: avoid GCC 8.3 VLA sizeof ICE
+   ptrdiff_t chunk_position = 0;
+
+   auto call_log_function = [&]() {
+@@ -79,10 +80,10 @@
+     int size_written = 0;
+     const char* new_line = chunk_position > 0 ? "\n" : "";
+     if (add_file) {
+-      size_written = snprintf(logd_chunk + chunk_position, sizeof(logd_chunk) - chunk_position,
++      size_written = snprintf(logd_chunk + chunk_position, logd_chunk_size - chunk_position,
+                               "%s%s%.*s", new_line, file_header.c_str(), length, message);
+     } else {
+-      size_written = snprintf(logd_chunk + chunk_position, sizeof(logd_chunk) - chunk_position,
++      size_written = snprintf(logd_chunk + chunk_position, logd_chunk_size - chunk_position,
+                               "%s%.*s", new_line, length, message);
+     }
+
+@@ -122,7 +123,7 @@
+     }
+     // Then write the rest of the msg.
+     if (add_file) {
+-      snprintf(logd_chunk, sizeof(logd_chunk), "%s%s", file_header.c_str(), msg);
++      snprintf(logd_chunk, logd_chunk_size, "%s%s", file_header.c_str(), msg);
+       log_function(log_id, severity, tag, logd_chunk);
+     } else {
+       log_function(log_id, severity, tag, msg);

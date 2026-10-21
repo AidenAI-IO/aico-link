@@ -465,6 +465,27 @@ class ReleaseNotesTests(GitFixture):
         self.assert_notice(record, record["source_commit"])
 
 
+class CheckoutTests(GitFixture):
+    def setUp(self):
+        super().setUp()
+        self.commit({"pico-sdk/project/config": "source config"})
+        self.record = self.make()
+
+    def test_sdk_build_changes_are_allowed_only_after_the_build(self):
+        (self.root / "pico-sdk/project/config").write_text("BSP build overlay")
+        (self.root / "pico-sdk/generated").write_text("BSP output")
+        with patch.object(release, "ROOT", self.root):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                release.check_checkout(self.record)
+            release.check_checkout(self.record, allow_dirty_sdk=True)
+
+    def test_application_changes_remain_rejected_after_the_build(self):
+        (self.root / "src/agent/main.go").write_text("uncommitted application")
+        with patch.object(release, "ROOT", self.root):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                release.check_checkout(self.record, allow_dirty_sdk=True)
+
+
 class ContractTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -584,6 +605,29 @@ class AssetTests(GitFixture):
         (self.assets / "RELEASE-NOTES.md").write_text("corrupt")
         with self.assertRaisesRegex(ValueError, "modified"):
             release.verify(self.assets)
+
+    def test_stage_accepts_vendored_sdk_firmware_commit(self):
+        self.commit({".gitignore": "assets/\npackage/\noutput/\n",
+                     "pico-sdk/project/config": "vendored SDK"})
+        self.record = self.make()
+        record = self.create_assets()
+        metadata = self.root / "output/debian-apps/apps/metadata"
+        metadata.mkdir(parents=True)
+        for name in ("hardware-demo-commit.txt", "pico-sdk-commit.txt"):
+            (metadata / name).write_text(record["source_commit"])
+        for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
+            (metadata / name).write_text("")
+        audit = self.root / "output/debian-apps/apps-audit"
+        audit.mkdir()
+        (audit / "summary.txt").write_text("status=pass\n")
+        package = f"aiden-business_{record['version']}-1_armhf.deb"
+        source = self.root / "output/debian-package"
+        source.mkdir()
+        shutil.copyfile(self.assets / package, source / package)
+        destination = self.root / "output/staged"
+        with patch.object(release, "ROOT", self.root):
+            release.stage(record, destination)
+        self.assertEqual(release.verify(destination)["source_commit"], record["source_commit"])
 
     def test_package_binding_cannot_be_changed_by_rehashing_assets(self):
         self.create_assets()

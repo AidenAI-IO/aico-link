@@ -1,0 +1,40 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] boringssl: build static so symbols link into adb
+
+android-tools-aiden.mk already configures CMake with
+-DBUILD_SHARED_LIBS=OFF, so the vendored BoringSSL links statically into
+adb. Keep that package-wide static build, but force
+CMAKE_POSITION_INDEPENDENT_CODE on only around the boringssl
+subdirectory because adb is a PIE, then restore the previous PIC setting
+before later vendored targets are added.
+
+This keeps the BoringSSL-only symbols baked into adb, avoiding runtime
+resolution against the rootfs OpenSSL 1.1.1, which lacks symbols adb
+needs and aborts at startup:
+
+  /usr/bin/adb: symbol 'SPAKE2_CTX_new': can't resolve symbol
+  /usr/bin/adb: symbol 'EVP_AEAD_CTX_init': can't resolve symbol
+  ... (SPAKE2, EVP_AEAD, CRYPTO_BUFFER, sk_*, HKDF, etc.)
+
+External shared deps (protobuf, brotli, lz4, usb, z, zstd), which ARE
+installed to the rootfs, remain dynamically linked.
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/CMakeLists.txt
++++ b/vendor/CMakeLists.txt
+@@ -1,7 +1,14 @@
+ # TODO: https://cmake.org/cmake/help/v3.0/module/ExternalProject.html
+ # To patch the submodule
+ 
++# Aiden: android-tools-aiden.mk already forces BUILD_SHARED_LIBS=OFF for
++# the whole package, so BoringSSL already builds static. Only force PIC
++# here because adb is a PIE, and restore the previous setting so later
++# vendored targets do not inherit the boringssl-only override.
++set(_aiden_saved_pic ${CMAKE_POSITION_INDEPENDENT_CODE})
++set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ add_subdirectory(boringssl EXCLUDE_FROM_ALL)
++set(CMAKE_POSITION_INDEPENDENT_CODE ${_aiden_saved_pic})
+ set(android-vendored
+ 	avb
+ 	base

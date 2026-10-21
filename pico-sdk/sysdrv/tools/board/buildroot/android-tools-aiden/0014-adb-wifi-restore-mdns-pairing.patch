@@ -1,0 +1,85 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb_wifi: restore mDNS pairing (address-first)
+
+Re-enable mdns-based pairing service lookup that nmeum's 0027 patch
+removed (replaced the `if (true)` short-circuit). Add the missing
+<android-base/stringprintf.h> include for the restored StringPrintf.
+
+IMPORTANT divergence from upstream AOSP: parse the host as a literal
+address FIRST, and only fall back to mdns_get_pairing_service_info()
+when it is not a valid address:port. The pairing handler runs on its
+own service thread (create_service_thread), while the mDNS service
+registries are mutated by the discovery callbacks on the main fdevent
+thread. Reading those registries from the pair thread for an explicit
+IP (as upstream does unconditionally) races with a concurrent
+push_back/erase during '_adb-tls-pairing' discovery and crashes the
+adb server (client sees "protocol fault (couldn't read status
+length)"). Address-first keeps explicit-IP pairing off the registries
+entirely; mDNS-name pairing still works.
+
+Auto-connect after pairing is intentionally NOT restored: it reads
+sAdbSecureConnectServices from this same thread and would reintroduce
+the identical race. Users can 'adb connect' explicitly.
+
+Aiden-local patch (re-enables mDNS that nmeum disabled for the client).
+---
+--- a/vendor/core/adb/client/adb_wifi.cpp
++++ b/vendor/core/adb/client/adb_wifi.cpp
+@@ -24,6 +24,7 @@
+ #include <adb/crypto/x509_generator.h>
+ #include <android-base/file.h>
+ #include <android-base/parsenetaddress.h>
++#include <android-base/stringprintf.h>
+ #include "client/pairing/pairing_client.h"
+ 
+ #include "adb_auth.h"
+@@ -179,16 +180,31 @@
+ 
+ void adb_wifi_pair_device(const std::string& host, const std::string& password,
+                           std::string& response) {
+-    if (true) {
+-        // Check the address for a valid address and port.
++    // If |host| is a literal "address:port", pair with it directly and do not
++    // consult mDNS. Only fall back to an mDNS service-name lookup when |host|
++    // is not a valid network address (e.g. an mDNS instance name). This keeps
++    // explicit-IP pairing off the mDNS service registries, which are mutated
++    // by the discovery thread on the main fdevent thread and are not safe to
++    // read concurrently from this pairing service thread.
++    std::optional<MdnsInfo> mdns_info;
++    {
+         std::string parsed_host;
+         std::string err;
+         int port = -1;
+         if (!android::base::ParseNetAddress(host, &parsed_host, &port, nullptr, &err)) {
+-            response = "Failed to parse address for pairing: " + err;
+-            return;
+-        }
+-        if (port <= 0 || port > 65535) {
++            // Not a literal address; resolve the mDNS pairing service name on
++            // the main fdevent thread, which owns the service registries.
++            std::promise<std::optional<MdnsInfo>> mdns_lookup_promise;
++            std::future<std::optional<MdnsInfo>> mdns_lookup = mdns_lookup_promise.get_future();
++            fdevent_run_on_main_thread([host, &mdns_lookup_promise]() {
++                mdns_lookup_promise.set_value(mdns_get_pairing_service_info(host));
++            });
++            mdns_info = mdns_lookup.get();
++            if (!mdns_info.has_value()) {
++                response = "Failed to parse address for pairing: " + err;
++                return;
++            }
++        } else if (port <= 0 || port > 65535) {
+             response = "Invalid port while parsing address [" + host + "]";
+             return;
+         }
+@@ -222,7 +238,10 @@
+ 
+     PairingResultWaiter waiter;
+     std::unique_lock<std::mutex> lock(waiter.mutex_);
+-    if (!client->Start(host,
++    if (!client->Start(mdns_info.has_value()
++                               ? android::base::StringPrintf("%s:%d", mdns_info->addr.c_str(),
++                                                             mdns_info->port)
++                               : host,
+                        waiter.OnResult, &waiter)) {
+         response = "Failed: Unable to start pairing client.";
+         return;

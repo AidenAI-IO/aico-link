@@ -110,8 +110,8 @@ run_container_script() {
     # proxy.golang.org, which the self-hosted builders cannot resolve. Build
     # inputs that would change output (GOFLAGS) and the container-local
     # GOCACHE/GOMODCACHE/GOPATH/GOTOOLCHAIN are deliberately not forwarded.
-    # Submodule core.worktree paths are resolved from the host Git metadata
-    # when the common directory is available. Dockerized Delta worktrees can
+    # Git worktree metadata resolves paths through the host common directory
+    # when it is available. Dockerized Delta worktrees can
     # expose only the worktree, so the metadata mount is optional there.
     # Preserve the checkout's absolute path as well as the /work build alias.
     local -a docker_args=(

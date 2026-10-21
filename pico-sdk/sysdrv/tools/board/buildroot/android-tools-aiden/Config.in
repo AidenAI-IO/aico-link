@@ -1,0 +1,37 @@
+config BR2_PACKAGE_ANDROID_TOOLS_AIDEN
+	bool "android-tools-aiden (adb client 1.0.41)"
+	depends on BR2_PACKAGE_HOST_GO_TARGET_ARCH_SUPPORTS
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_USE_WCHAR
+	# adb client links a vendored BoringSSL, libusb, protobuf, brotli,
+	# lz4 and zstd; all are pulled in as dependencies below.
+	select BR2_PACKAGE_LIBUSB
+	select BR2_PACKAGE_PROTOBUF
+	select BR2_PACKAGE_ZLIB
+	select BR2_PACKAGE_BROTLI
+	select BR2_PACKAGE_LZ4
+	select BR2_PACKAGE_ZSTD
+	# mDNS discovery (adb mdns check/services, wireless pairing) needs a
+	# Bonjour <dns_sd.h> backend. avahi's libdns_sd compatibility library
+	# provides it; the daemon does the actual discovery. dbus is already
+	# enabled on the board and is pulled in by the compat lib.
+	select BR2_PACKAGE_AVAHI
+	select BR2_PACKAGE_AVAHI_DAEMON
+	select BR2_PACKAGE_AVAHI_LIBDNSSD_COMPATIBILITY
+	help
+	  Modern Android Debug Bridge (adb) client built from the
+	  nmeum/android-tools 30.0.5p1 release, which vendors the AOSP
+	  platform-tools-30 adb sources. The client reports version
+	  1.0.41 and speaks the current adb auth / pairing protocol.
+
+	  Aiden boards run adb in host mode to drive attached Android
+	  devices, so only the adb client is built (no adbd gadget, no
+	  fastboot / mke2fs). This replaces the legacy android-tools
+	  4.2.2 package whose adb client reports 1.0.31.
+
+	  https://github.com/nmeum/android-tools
+
+comment "android-tools-aiden needs a toolchain w/ threads, wchar, C++"
+	depends on !BR2_TOOLCHAIN_HAS_THREADS || \
+		!BR2_INSTALL_LIBSTDCPP || !BR2_USE_WCHAR

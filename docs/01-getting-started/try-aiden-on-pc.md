@@ -27,7 +27,7 @@ use the [Benchmark workflow](../09-benchmark/README.md) instead.
 - [Android SDK Platform Tools](https://developer.android.com/tools/releases/platform-tools),
   which provide `adb`, for the ADB Android workflow.
 
-The sandbox does not require the large `pico-sdk` submodule.
+The sandbox does not build or use the vendored `pico-sdk/` BSP.
 
 ## Get the Source
 

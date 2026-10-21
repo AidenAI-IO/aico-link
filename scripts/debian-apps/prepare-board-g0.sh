@@ -114,7 +114,7 @@ write_bundle_metadata() {
         printf 'format=1\n'
         printf 'source_date_epoch=%s\n' "${BUILD_EPOCH}"
         printf 'hardware_demo_commit=%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-        printf 'pico_sdk_commit=%s\n' "$(git -C "${REPO_ROOT}/pico-sdk" rev-parse HEAD)"
+        printf 'pico_sdk_commit=%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)"
         printf 'apps_elf_audit_sha256=%s\n' "${apps_audit_sha}"
         printf 'media_module_helper_sha256=%s\n' "${module_helper_sha}"
         printf 'board_g0_remote_runner_sha256=%s\n' "${remote_runner_sha}"

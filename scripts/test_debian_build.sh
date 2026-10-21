@@ -19,6 +19,8 @@ bash -n "${BUILD_SCRIPT}"
 # shellcheck disable=SC1090
 source "${BUILD_SCRIPT}"
 
+ensure_pico_sdk
+
 [ "$(choose_job_count 24 32)" = 24 ] \
     || fail "24-job default was not preserved on a larger host"
 [ "$(choose_job_count 24 8)" = 8 ] \

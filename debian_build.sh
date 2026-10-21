@@ -246,13 +246,10 @@ validate_trust_public_key() {
 }
 
 ensure_pico_sdk() {
-    # The pico-sdk submodule is the BSP build tree and is built in place, so
-    # only its presence is required. Its exact commit is recorded as provenance
-    # by the system stage but is not validated against a pinned build contract.
-    git -C "${REPO_ROOT}" submodule update --init -- pico-sdk
-    [ -e "${REPO_ROOT}/pico-sdk/.git" ] || die "pico-sdk submodule is unavailable"
+    # The vendored SDK is the BSP build tree and is built in place. The system
+    # stage records the owning firmware commit as its source provenance.
     [ -e "${REPO_ROOT}/pico-sdk/project/build.sh" ] \
-        || die "pico-sdk submodule has no project/build.sh"
+        || die "vendored pico-sdk has no project/build.sh; restore the repository checkout"
 }
 
 clean_generated_outputs() {

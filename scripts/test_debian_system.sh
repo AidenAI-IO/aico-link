@@ -58,6 +58,27 @@ ensure_bsp_build_image' _ "${SYSTEM_DIR}/build.sh"
     "${bsp_image_mock_log}")" -eq 1 ] \
     || fail "a missing BSP builder image is not pulled exactly once"
 
+vendored_fixture=${TEST_ROOT}/vendored-fixture
+vendored_sdk=${vendored_fixture}/pico-sdk
+mkdir -p "${vendored_sdk}/project/cfg/BoardConfig_IPC" \
+    "${vendored_sdk}/sysdrv/source/kernel/arch/arm/configs" \
+    "${vendored_sdk}/sysdrv/source/uboot/u-boot/configs"
+touch "${vendored_sdk}/project/build.sh" \
+    "${vendored_sdk}/sysdrv/source/uboot/u-boot/configs/aiden-rv1106-rockusb.config"
+git -C "${vendored_fixture}" init -q
+git -C "${vendored_fixture}" add pico-sdk
+git -C "${vendored_fixture}" -c user.name=Test -c user.email=test@example.invalid \
+    commit -qm 'test: vendored SDK fixture'
+DEBIAN_SYSTEM_SDK_DIR="${vendored_sdk}" \
+DEBIAN_SYSTEM_OUTPUT_DIR="${TEST_ROOT}/vendored-output" \
+    bash -c 'source "$1"; prepare_sdk' _ "${SYSTEM_DIR}/build.sh"
+[ ! -e "${vendored_sdk}/.git" ] || fail "vendored SDK unexpectedly has separate Git metadata"
+[ "$(cat "${TEST_ROOT}/vendored-output/source-sdk-commit.txt")" = \
+    "$(git -C "${vendored_fixture}" rev-parse HEAD)" ] \
+    || fail "vendored SDK provenance does not identify its owning firmware commit"
+[ -L "${vendored_sdk}/.BoardConfig.mk" ] \
+    || fail "vendored SDK board configuration was not prepared"
+
 python3 - "${SYSTEM_DIR}" <<'PYTHON'
 import ast, pathlib, sys
 for path in pathlib.Path(sys.argv[1]).glob('*.py'):
@@ -183,7 +204,7 @@ grep -Fq '1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
 grep -Fq 'RK_UBOOT_DEFCONFIG_FRAGMENT="rk-emmc.config rv1106-ab.config aiden-rv1106-rockusb.config"' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
-grep -Fq 'RK_KERNEL_DEFCONFIG_FRAGMENT="aiden-zram.config rv1106-bt.config rv1106-sdiowifi.config aiden-rk628.config debian-system.config"' \
+grep -Fq 'RK_KERNEL_DEFCONFIG_FRAGMENT="aiden-zram.config rv1106-bt.config rv1106-sdiowifi.config aiden-rk628.config debian-system.config rv1106-pm.config"' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
 grep -Fq 'RK_ENABLE_WIFI_CHIP=AIC8800D80' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
@@ -204,15 +225,14 @@ if grep -Eq '^[[:space:]]*(restart-poweroff|compatible = "restart-poweroff")' \
     fail "Pico Zero device tree still converts poweroff into a reboot"
 fi
 
-# The pinned submodule must be present: silently skipping the checks below
-# would let an uninitialized or incomplete checkout pass this suite. The only
-# caller fetches pico-sdk before this runs, so a miss is a real failure.
+# The vendored SDK must be present: silently skipping the checks below
+# would let an incomplete repository checkout pass this suite.
 if [ ! -e "${REPO_ROOT}/pico-sdk/project/build.sh" ]; then
-    fail "pico-sdk submodule is not initialized; run 'git submodule update --init -- pico-sdk'"
+    fail "vendored pico-sdk is missing; restore the repository checkout"
 fi
 
-# The BSP source changes live in the pinned pico-sdk commit. Verify the
-# checked-out submodule still carries them so a stale or rewritten SDK
+# The BSP source changes live in the vendored pico-sdk directory. Verify the
+# checked-out sources still carry them so a stale or rewritten SDK
 # checkout fails here instead of an hour into the BSP build.
 sdk_dir=${REPO_ROOT}/pico-sdk
 for sdk_test in \
@@ -338,7 +358,7 @@ if grep -Fq 'SOURCE_SDK' "${SYSTEM_DIR}/build.sh"; then
 fi
 grep -Fq 'readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}' \
     "${SYSTEM_DIR}/build.sh" \
-    || fail "the system stage does not build the repository pico-sdk submodule in place"
+    || fail "the system stage does not build the vendored pico-sdk directory in place"
 if grep -Fq 'sdk-patches' "${SYSTEM_DIR}/build.sh" \
     || grep -Fq 'sdk-patches' "${SYSTEM_DIR}/audit-bsp.sh"; then
     fail "the system stage still references the removed SDK patch series"
@@ -349,7 +369,7 @@ fi
 [ ! -e "${SYSTEM_DIR}/sdk-patches" ] \
     || fail "the system-stage SDK patch directory must not exist"
 grep -Fq 'aiden-rv1106-rockusb.config' "${SYSTEM_DIR}/build.sh" \
-    || fail "the system stage does not verify the pinned SDK carries the RockUSB config"
+    || fail "the system stage does not verify the vendored SDK carries the RockUSB config"
 grep -Fq 'readonly SDK_DIR=/sdk' \
     "${SYSTEM_DIR}/container-assemble-images.sh" \
     || fail "image assembly does not read the SDK from the /sdk mount"

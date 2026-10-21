@@ -14,8 +14,8 @@ else
     OUTPUT_DIR=${DEFAULT_OUTPUT_DIR}
 fi
 readonly OUTPUT_DIR
-# The BSP is built in place from the repository pico-sdk submodule. The A/B,
-# RockUSB and reproducibility changes are commits in that submodule, so the
+# The BSP is built in place from the vendored pico-sdk directory. The A/B,
+# RockUSB and reproducibility changes are tracked in this repository, so the
 # system stage stages compatible media modules without editing BSP sources.
 readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}
 readonly IMAGE_DIR=${OUTPUT_DIR}/image
@@ -32,7 +32,7 @@ Usage: scripts/debian-system/build.sh [all|builder|rootfs|bsp|images|config|audi
 Environment:
   DEBIAN_SYSTEM_OUTPUT_DIR       Output directory (default: output/debian-system).
   DEBIAN_SYSTEM_SDK_DIR          Luckfox BSP SDK build tree (default: repository
-                                 pico-sdk submodule; built in place).
+                                 pico-sdk directory; built in place).
   DEBIAN_APPS_OUTPUT_DIR         Audited application output.
   DEBIAN_SYSTEM_BUILD_IMAGE      Rootfs/image builder image name.
   DEBIAN_SYSTEM_APT_CACHE_PROXY  Optional HTTP cache URL reachable from the rootfs
@@ -84,26 +84,21 @@ validate_epoch() {
 prepare_sdk() {
     local source_commit
 
-    if [ ! -d "${SDK_DIR}/.git" ] && [ ! -f "${SDK_DIR}/.git" ]; then
-        echo "Luckfox SDK submodule is missing: ${SDK_DIR}" >&2
-        echo "run: git submodule update --init -- pico-sdk" >&2
-        exit 1
-    fi
     if [ ! -e "${SDK_DIR}/project/build.sh" ]; then
         echo "Luckfox SDK has no project/build.sh: ${SDK_DIR}" >&2
         exit 1
     fi
-    # The pinned submodule commit carries the Aiden A/B and RockUSB changes.
+    # The vendored SDK carries the Aiden A/B and RockUSB changes.
     # Check a file it adds so a stale checkout fails here instead of an hour
     # into the BSP build.
     if [ ! -e "${SDK_DIR}/sysdrv/source/uboot/u-boot/configs/aiden-rv1106-rockusb.config" ]; then
-        echo "Luckfox SDK lacks the Aiden RV1106 RockUSB config; update the submodule" >&2
+        echo "Luckfox SDK lacks the Aiden RV1106 RockUSB config; restore the SDK sources" >&2
         exit 1
     fi
 
     mkdir -p "${OUTPUT_DIR}"
 
-    # The submodule owns the BSP source changes. The system stage only overlays
+    # The vendored SDK carries the BSP source changes. The system stage only overlays
     # the production board configuration and kernel config that it owns.
     install -m 0755 \
         "${SCRIPT_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
@@ -114,8 +109,8 @@ prepare_sdk() {
         project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
         "${SDK_DIR}/.BoardConfig.mk"
 
-    # Provenance only: the checked-out submodule commit is recorded, but it is
-    # not validated against a pinned build contract.
+    # Keep the metadata field stable: the vendored SDK resolves to its owning
+    # firmware commit; an external SDK checkout resolves to its own commit.
     source_commit=$(git -C "${SDK_DIR}" rev-parse HEAD)
     printf '%s\n' "${source_commit}" >"${OUTPUT_DIR}/source-sdk-commit.txt"
 }

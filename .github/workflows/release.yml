@@ -126,7 +126,6 @@ jobs:
         with:
           name: release-plan
           path: output/release/
-      - run: git submodule update --init --depth=1 pico-sdk
       - uses: actions/cache@v4
         with:
           path: |

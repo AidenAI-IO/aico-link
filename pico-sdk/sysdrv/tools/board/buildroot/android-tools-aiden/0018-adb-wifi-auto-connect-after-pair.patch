@@ -1,0 +1,83 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb_wifi: auto-connect after pairing with retry (race-safe)
+
+After pairing, the device switches to a connect port and advertises
+_adb-tls-connect, but mDNS discovery must browse+resolve it before it lands
+in sAdbSecureConnectServices. On a freshly-started server (the first
+`adb pair` auto-forks the server) the registry is still empty when pairing
+completes, so a single immediate connect races discovery and loses -- this
+is why first-time pairing never auto-connected but a later pair (after the
+discovery thread had populated the registry) did.
+
+Retry the connect on a detached background thread with a 2s delay between
+attempts (15 attempts, ~30s) until the service appears and connects. Each
+attempt is deferred to the MAIN fdevent thread via fdevent_run_on_main_thread
+(discovery owns sAdbSecureConnectServices there); a shared promise carries the
+result back to the retry loop. The detached thread does not block the pairing
+response returned to the user.
+
+Aiden-local patch (post-pair auto-connect, retry against discovery race).
+---
+--- a/vendor/core/adb/client/adb_wifi.cpp
++++ b/vendor/core/adb/client/adb_wifi.cpp
+@@ -16,7 +16,10 @@
+ 
+ #include "adb_wifi.h"
+ 
++#include <chrono>
+ #include <fstream>
++#include <future>
++#include <memory>
+ #include <random>
+ #include <thread>
+ 
+@@ -31,6 +34,7 @@
+ #include "adb_known_hosts.pb.h"
+ #include "adb_utils.h"
+ #include "client/adb_client.h"
++#include "fdevent/fdevent.h"
+ #include "sysdeps.h"
+ 
+ using adbwifi::pairing::PairingClient;
+@@ -263,5 +267,40 @@
+ 
+     // Write to adb_known_hosts
+     write_known_host_to_file(device_guid);
+-    // Try to auto-connect.
++
++    // Try to auto-connect after pairing. The device switches from the pairing
++    // port to a connect port and advertises _adb-tls-connect, but mDNS discovery
++    // must browse+resolve that service before it lands in sAdbSecureConnectServices.
++    // On a freshly-started server (the very first `adb pair` auto-forks the server)
++    // the registry is still empty here, so a single connect attempt races discovery
++    // and loses. Retry on a detached background thread with a delay between attempts
++    // until the service shows up and connects.
++    //
++    // adb_secure_connect_by_service_name() reads sAdbSecureConnectServices, which
++    // discovery mutates on the MAIN fdevent thread. We must NOT touch it from this
++    // pair service thread, so each attempt is deferred to the main thread via
++    // fdevent_run_on_main_thread; a promise carries the result back so we can decide
++    // whether to keep retrying.
++    std::thread([device_guid]() {
++        constexpr int kMaxAttempts = 15;                       // ~30s total
++        constexpr auto kRetryDelay = std::chrono::seconds(2);
++        constexpr auto kMainThreadWait = std::chrono::seconds(5);
++        for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
++            auto connected_promise = std::make_shared<std::promise<bool>>();
++            std::future<bool> connected = connected_promise->get_future();
++            fdevent_run_on_main_thread([device_guid, connected_promise]() {
++                connected_promise->set_value(
++                        adb_secure_connect_by_service_name(device_guid.c_str()));
++            });
++            if (connected.wait_for(kMainThreadWait) != std::future_status::ready) {
++                return;
++            }
++            if (connected.get()) {
++                return;  // Connected successfully
++            }
++            std::this_thread::sleep_for(kRetryDelay);
++        }
++        // Gave up after kMaxAttempts; discovery will auto-connect later if the
++        // service appears.
++    }).detach();
+ }

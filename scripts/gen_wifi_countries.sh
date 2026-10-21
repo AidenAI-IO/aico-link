@@ -1,6 +1,6 @@
 #!/bin/sh
 # Regenerate the Wi-Fi country allowlist from the AIC8800 driver's regulatory
-# database. Run from the repository root; requires the pico-sdk submodule.
+# database in the vendored pico-sdk tree. Run from the repository root.
 set -eu
 
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -9,7 +9,7 @@ OUT=${ROOT_DIR}/src/agent/internal/wifiregion/countries.go
 
 test -f "${REGDB}" || {
     echo "driver regulatory database is missing: ${REGDB}" >&2
-    echo "run: git submodule update --init --recursive" >&2
+    echo "restore the vendored pico-sdk sources from this repository" >&2
     exit 1
 }
 

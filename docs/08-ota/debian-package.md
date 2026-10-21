@@ -109,7 +109,8 @@ their channel. OTA manifests still use schema 2.
 ## Standalone builds and GitHub Releases
 
 The Linux amd64 build host requires Docker, Git, curl, Python 3.11+, and dpkg-deb.
-The working tree must be clean, and the SDK commit must match the application build record.
+The working tree must be clean, and the firmware revision, including the
+vendored SDK sources, must match the application build record.
 
 ```bash
 scripts/debian-package/release.sh build

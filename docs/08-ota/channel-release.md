@@ -9,7 +9,7 @@ business-package workflows only produce build artifacts.
 ## Release decisions
 
 Each channel compares against its own last successful release, including file contents,
-paths, modes, and the SDK gitlink commit in the Git tree. Drafts, failed builds, and
+paths, modes, and the vendored SDK files in the Git tree. Drafts, failed builds, and
 workflow artifacts do not advance the baseline.
 
 | Comparison result | Build and publish | Base contract |

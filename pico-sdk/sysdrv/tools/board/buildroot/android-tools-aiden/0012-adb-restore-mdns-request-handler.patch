@@ -1,0 +1,33 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: restore handle_mdns_request (mdns check/services)
+
+Re-enable the mdns:check and mdns:services host request handlers that
+nmeum's 0026 patch stubbed to 'return false', which caused
+'adb mdns services' to fail with 'unknown host service'.
+
+Aiden-local patch (re-enables mDNS that nmeum disabled for the client).
+---
+--- a/vendor/core/adb/adb.cpp
++++ b/vendor/core/adb/adb.cpp
+@@ -1077,6 +1077,21 @@
+ }
+ 
+ static bool handle_mdns_request(std::string_view service, int reply_fd) {
++    if (!android::base::ConsumePrefix(&service, "mdns:")) {
++        return false;
++    }
++
++    if (service == "check") {
++        std::string check = mdns_check();
++        SendOkay(reply_fd, check);
++        return true;
++    }
++    if (service == "services") {
++        std::string services_list = mdns_list_discovered_services();
++        SendOkay(reply_fd, services_list);
++        return true;
++    }
++
+     return false;
+ }
+ 

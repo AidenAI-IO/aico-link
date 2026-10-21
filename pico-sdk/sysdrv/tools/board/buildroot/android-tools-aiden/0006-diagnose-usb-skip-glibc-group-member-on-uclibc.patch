@@ -1,0 +1,28 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] diagnose_usb: skip glibc group_member() path on uClibc
+
+diagnose_usb.cpp guards a plugdev-group check with
+'#if defined(__GLIBC__) && !defined(__BIONIC__)' and calls the GNU
+extension group_member(3) inside it. uClibc-ng defines __GLIBC__ for
+source compatibility but does NOT provide group_member(), so the build
+fails:
+
+  diagnose_usb.cpp:50:9: error: 'group_member' was not declared in this scope
+
+Exclude uClibc from that branch by adding '&& !defined(__UCLIBC__)'. On
+uClibc the function then returns an empty string (the "can't determine
+the problem" fallback), which is the correct degraded behaviour.
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/core/diagnose_usb/diagnose_usb.cpp
++++ b/vendor/core/diagnose_usb/diagnose_usb.cpp
+@@ -33,7 +33,7 @@
+ // Returns a message describing any potential problems we find with udev, or an empty string if we
+ // can't find plugdev information (i.e. udev is not installed).
+ static std::string GetUdevProblem() {
+-#if defined(__GLIBC__) && !defined(__BIONIC__)
++#if defined(__GLIBC__) && !defined(__BIONIC__) && !defined(__UCLIBC__)
+     errno = 0;
+     group* plugdev_group = getgrnam("plugdev");
+ 

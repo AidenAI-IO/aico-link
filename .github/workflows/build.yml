@@ -57,8 +57,9 @@ jobs:
     steps:
     - name: Reclaim workspace ownership
       if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aiden-hosted-') }}
-      # The system stage assembles images in privileged containers, so output/ is left
-      # owned by root. actions/checkout's clean phase then fails with EACCES,
+      # The system stage assembles images in privileged containers, so output/ and
+      # pico-sdk build outputs can be owned by root. actions/checkout's clean phase
+      # now cleans the tracked SDK tree too and would fail with EACCES,
       # and Go's module cache adds read-only directories it cannot remove
       # either. Both are cleared before checkout touches the tree.
       shell: bash
@@ -84,36 +85,22 @@ jobs:
           fi
         done
 
-    - name: Remove unusable pico-sdk submodule checkout
+    - name: Remove legacy pico-sdk Git metadata
       if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aiden-hosted-') }}
+      # Runners may still have the former submodule checkout. Remove it before
+      # checkout replaces the gitlink with the SDK files tracked in this repository.
+      # An ordinary SDK directory has no nested Git metadata and is left for
+      # actions/checkout to restore and clean with the rest of the source tree.
       shell: bash
       run: |
         set -euo pipefail
+        if [ -z "${GITHUB_WORKSPACE:-}" ] || [ ! -d "$GITHUB_WORKSPACE" ]; then
+          exit 0
+        fi
         sdk_dir="$GITHUB_WORKSPACE/pico-sdk"
         sdk_git_dir="$GITHUB_WORKSPACE/.git/modules/pico-sdk"
-        if [ ! -e "$sdk_dir" ] && [ ! -e "$sdk_git_dir" ]; then
-          exit 0
-        fi
-
-        if [ -d "$sdk_dir" ] && git -C "$sdk_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
-          exit 0
-        fi
-
-        rm -rf -- "$sdk_dir" "$sdk_git_dir"
-
-    - name: Repair stale pico-sdk submodule metadata
-      if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aiden-hosted-') }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        sdk_dir="$GITHUB_WORKSPACE/pico-sdk"
-        if [ ! -d "$sdk_dir" ]; then
-          exit 0
-        fi
-
-        if git -C "$sdk_dir" ls-files -s sysdrv/tools/board/ubuntu 2>/dev/null | grep -q '^160000 '; then
-          git -C "$sdk_dir" config -f .gitmodules submodule.ubuntu.path sysdrv/tools/board/ubuntu
-          git -C "$sdk_dir" config -f .gitmodules submodule.ubuntu.url https://github.com/luckfox-eng33/pico_ubuntu.git
+        if [ -e "$sdk_dir/.git" ] || [ -e "$sdk_git_dir" ]; then
+          rm -rf -- "$sdk_dir" "$sdk_git_dir"
         fi
 
     - name: Checkout code
@@ -121,8 +108,7 @@ jobs:
       with:
         ref: ${{ inputs.source_ref || github.sha }}
         submodules: false
-        # Nothing after checkout needs the job token: pico-sdk is a public
-        # repository and the build makes no API calls.
+        # The build makes no Git API calls after checkout.
         persist-credentials: false
 
     - name: Download channel release plan
@@ -131,41 +117,6 @@ jobs:
       with:
         name: ${{ inputs.release_plan_artifact }}
         path: output/release/
-
-    - name: Fetch pico-sdk submodule
-      # The repository pico-sdk worktree is the system-stage BSP build tree and is
-      # used in place, so a plain depth-1 checkout is enough. Restoring it to a
-      # pristine state keeps the in-place board and kernel config overlay
-      # deterministic across runs on the same runner.
-      shell: bash
-      run: |
-        set -euo pipefail
-        git submodule update --init --depth=1 pico-sdk
-
-        # The system stage installs its board config and kernel config into this worktree
-        # in place, and actions/checkout cannot deliver a pristine submodule:
-        # its `git clean -ffdx` does not descend into an initialised submodule,
-        # so whatever a previous job left here survives. Restore tracked files
-        # and drop untracked ones, but leave ignored paths (including the BSP
-        # build output under pico-sdk/output) alone. This also removes the
-        # untracked .gitmodules that the metadata repair step writes for older
-        # SDK commits.
-        dirty="$(git -C pico-sdk status --porcelain)"
-        if [ -n "$dirty" ]; then
-          echo "::group::pico-sdk worktree was dirty; restoring it"
-          printf '%s\n' "$dirty" | head -50
-          echo "::endgroup::"
-          git -C pico-sdk clean -ffd
-          git -C pico-sdk checkout --force -- .
-        fi
-
-        remaining="$(git -C pico-sdk status --porcelain)"
-        if [ -n "$remaining" ]; then
-          echo "pico-sdk is still not clean after restore:" >&2
-          printf '%s\n' "$remaining" | head -50 >&2
-          exit 1
-        fi
-        git -C pico-sdk rev-parse HEAD
 
     - name: Verify Debian build script policies
       # Static contract checks over debian_build.sh and the apps/system scripts.

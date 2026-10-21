@@ -105,19 +105,62 @@ if missing_labels.any?
 end
 RUBY
 
-sanitize_line="$(grep -n 'Remove unusable pico-sdk submodule checkout' "$build_workflow" | sed 's/:.*//' | head -n 1 || true)"
-checkout_line="$(grep -n 'uses: actions/checkout@v4' "$build_workflow" | sed 's/:.*//' | head -n 1 || true)"
-if [[ -z "$sanitize_line" || -z "$checkout_line" || "$sanitize_line" -ge "$checkout_line" ]]; then
-  echo "self-hosted build workflow must remove unusable pico-sdk submodule checkouts before actions/checkout" >&2
-  exit 1
-fi
+ruby - "$build_workflow" <<'RUBY'
+require "fileutils"
+require "tmpdir"
+require "yaml"
 
-if ! grep -Fq 'git -C "$sdk_dir" rev-parse --verify HEAD' "$build_workflow" || \
-   ! grep -Fq 'sdk_git_dir="$GITHUB_WORKSPACE/.git/modules/pico-sdk"' "$build_workflow" || \
-   ! grep -Fq 'rm -rf -- "$sdk_dir" "$sdk_git_dir"' "$build_workflow"; then
-  echo "self-hosted build workflow must detect and remove pico-sdk checkouts whose current revision is unavailable" >&2
-  exit 1
-fi
+workflow_path = ARGV.fetch(0)
+steps = YAML.load_file(workflow_path).fetch("jobs").fetch("build").fetch("steps")
+ownership_index = steps.index { |step| step["name"] == "Reclaim workspace ownership" }
+cleanup_index = steps.index { |step| step["name"] == "Remove legacy pico-sdk Git metadata" }
+checkout_index = steps.index { |step| step["uses"].to_s.start_with?("actions/checkout@") }
+unless ownership_index && cleanup_index && checkout_index &&
+       ownership_index < cleanup_index && cleanup_index < checkout_index
+  abort "self-hosted build workflow must reclaim ownership and remove legacy SDK Git metadata before checkout"
+end
+
+cleanup = steps.fetch(cleanup_index).fetch("run")
+%w[gitfile gitdir orphaned_metadata tracked absent].each do |scenario|
+  Dir.mktmpdir("aiden-sdk-checkout-") do |workspace|
+    sdk_dir = File.join(workspace, "pico-sdk")
+    sdk_git_dir = File.join(workspace, ".git", "modules", "pico-sdk")
+    mobilegym_dir = File.join(workspace, "benchmark", "mobilegym", "vendor", "mobilegym")
+    FileUtils.mkdir_p(mobilegym_dir)
+    File.write(File.join(mobilegym_dir, ".git"), "gitdir: preserved\n")
+    unless scenario == "absent"
+      FileUtils.mkdir_p(sdk_dir)
+      File.write(File.join(sdk_dir, "source.c"), "tracked SDK source\n")
+    end
+    if scenario == "gitfile"
+      # Include a broken checkout; cleanup must not depend on a readable HEAD.
+      File.write(File.join(sdk_dir, ".git"), "gitdir: missing\n")
+      FileUtils.mkdir_p(sdk_git_dir)
+    elsif scenario == "gitdir"
+      FileUtils.mkdir_p(File.join(sdk_dir, ".git"))
+    elsif scenario == "orphaned_metadata"
+      FileUtils.mkdir_p(sdk_git_dir)
+    end
+
+    unless system({ "GITHUB_WORKSPACE" => workspace }, "bash", "-c", cleanup)
+      abort "legacy SDK cleanup failed for #{scenario}"
+    end
+    if scenario == "tracked"
+      abort "legacy SDK cleanup removed ordinary SDK sources" unless File.file?(File.join(sdk_dir, "source.c"))
+    elsif File.exist?(sdk_dir) || File.exist?(sdk_git_dir)
+      abort "legacy SDK cleanup left a stale checkout for #{scenario}"
+    end
+    abort "legacy SDK cleanup removed MobileGym metadata" unless File.file?(File.join(mobilegym_dir, ".git"))
+  end
+end
+
+Dir.glob(File.join(File.dirname(workflow_path), "*.{yml,yaml}")).each do |file|
+  if File.read(file).match?(/git\s+submodule[^\n]*\bpico-sdk\b/)
+    abort "#{file}: workflows must use the tracked SDK sources instead of fetching a submodule"
+  end
+end
+puts "Vendored SDK checkout migration check passed."
+RUBY
 
 if ! grep -Fq 'startsWith(inputs.runner, '\''aiden-hosted-'\'')' "$build_workflow"; then
   echo "self-hosted build workflow must treat dedicated Aiden hosted labels as self-hosted runners" >&2

@@ -16,7 +16,7 @@ aiden-firmware/
 ├── edid/                          # HDMI EDID development assets
 ├── overlay-debian/                # Debian rootfs files, helpers, and systemd units
 ├── assets/business/              # Business package models and notification sounds
-├── pico-sdk/                      # Pinned Luckfox BSP SDK submodule
+├── pico-sdk/                      # Vendored Luckfox BSP SDK
 ├── scripts/
 │   ├── debian-apps/               # Debian armhf application build and audit
 │   ├── debian-system/             # Rootfs, BSP, image assembly, and image audit

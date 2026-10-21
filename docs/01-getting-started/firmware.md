@@ -50,7 +50,8 @@ This project's firmware is built on `pico-sdk` and includes the following custom
 - Builds a Debian 13 rootfs from `overlay-debian/`, BSP modules and libraries,
   and the installed `aiden-business` package. No OEM partition or `/oem` directory is created.
 
-The related low-level changes can be found in the `pico-sdk/` submodule.
+The related low-level changes are tracked directly in the vendored `pico-sdk/`
+directory.
 
 ## Building the Full Firmware Locally
 
@@ -132,9 +133,9 @@ version 1.0.41, so it speaks the current adb auth and pairing protocol.
 
 ### 2. Flash with upgrade_tool
 
-On Linux, use the x86_64 tool generated in the repository `pico-sdk`
-submodule. The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O
-binary and will not run on Linux. The guarded flash helper verifies the image
+On Linux, use the x86_64 tool in the vendored `pico-sdk/` directory. The
+repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary and will
+not run on Linux. The guarded flash helper verifies the image
 digest and requires an explicit confirmation because a full factory flash
 overwrites userdata:
 

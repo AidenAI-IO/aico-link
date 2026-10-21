@@ -1,0 +1,42 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb_wifi: strip mDNS collision suffix in known-host check
+
+When multiple instances of the same device advertise (e.g. different bands/IPs),
+mDNS appends " (2)", " (3)" etc to disambiguate. But adb_wifi_is_known_host()
+does exact string match against the stored GUID (which has no suffix), so
+"adb-xxx-yyy (2)" != "adb-xxx-yyy" → known-host check fails → auto-connect
+skipped even for paired devices. Strip the collision suffix before matching.
+
+Aiden-local patch (mDNS collision suffix handling).
+---
+--- a/vendor/core/adb/client/adb_wifi.cpp
++++ b/vendor/core/adb/client/adb_wifi.cpp
+@@ -169,8 +169,27 @@
+         return false;
+     }
+ 
++    // mDNS appends " (2)", " (3)" etc when multiple instances advertise the same
++    // base name (collision resolution). Strip the suffix before matching against
++    // the stored GUID, which never has it. E.g. stored "adb-xxx-yyy" should match
++    // discovered "adb-xxx-yyy (2)".
++    std::string host_base = host;
++    size_t suffix_pos = host.rfind(" (");
++    if (suffix_pos != std::string::npos && host.size() > suffix_pos + 3 && host.back() == ')') {
++        bool numeric_suffix = true;
++        for (size_t i = suffix_pos + 2; i + 1 < host.size(); ++i) {
++            if (host[i] < '0' || host[i] > '9') {
++                numeric_suffix = false;
++                break;
++            }
++        }
++        if (numeric_suffix) {
++            host_base = host.substr(0, suffix_pos);
++        }
++    }
++
+     for (const auto& host_info : known_hosts.host_infos()) {
+-        if (host == host_info.guid()) {
++        if (host_base == host_info.guid()) {
+             return true;
+         }
+     }

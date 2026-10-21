@@ -128,9 +128,10 @@ printf '%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
     >"${DIST_DIR}/metadata/hardware-demo-commit.txt"
 git -C "${REPO_ROOT}" status --short \
     >"${DIST_DIR}/metadata/hardware-demo-status.txt"
-printf '%s\n' "$(git -C "${REPO_ROOT}/pico-sdk" rev-parse HEAD)" \
+# The SDK is part of the firmware commit; retain the existing metadata names.
+printf '%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
     >"${DIST_DIR}/metadata/pico-sdk-commit.txt"
-git -C "${REPO_ROOT}/pico-sdk" status --short \
+git -C "${REPO_ROOT}" status --short -- pico-sdk \
     >"${DIST_DIR}/metadata/pico-sdk-status.txt"
 printf 'source_date_epoch=%s\nagent_build_version=%s\n' \
     "${SOURCE_EPOCH}" "${AGENT_BUILD_VERSION}" \

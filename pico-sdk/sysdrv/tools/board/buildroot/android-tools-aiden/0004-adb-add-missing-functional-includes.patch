@@ -1,0 +1,47 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: add missing <functional> includes for libstdc++
+
+Several adb headers use std::function<> without including <functional>.
+Android's libc++ provides it transitively, but GCC 8.3's libstdc++ does
+not, so the build fails with:
+
+  tls_connection.h:51:31: error: 'function' in namespace 'std' does not
+  name a template type
+    using CertVerifyCb = std::function<int(X509_STORE_CTX*)>;
+
+Add the missing include to the three headers that declare std::function
+members/parameters: adb.h, services.h and tls/.../tls_connection.h.
+
+Aiden-local patch (not from upstream nmeum/android-tools).
+---
+--- a/vendor/core/adb/adb.h
++++ b/vendor/core/adb/adb.h
+@@ -20,6 +20,7 @@
+ #include <stdint.h>
+ #include <sys/types.h>
+ 
++#include <functional>
+ #include <string>
+ 
+ #include <android-base/macros.h>
+--- a/vendor/core/adb/services.h
++++ b/vendor/core/adb/services.h
+@@ -17,6 +17,8 @@
+ #ifndef SERVICES_H_
+ #define SERVICES_H_
+ 
++#include <functional>
++
+ #include "adb_unique_fd.h"
+ 
+ constexpr char kShellServiceArgRaw[] = "raw";
+--- a/vendor/core/adb/tls/include/adb/tls/tls_connection.h
++++ b/vendor/core/adb/tls/include/adb/tls/tls_connection.h
+@@ -20,6 +20,7 @@
+ #include <stdint.h>
+ 
+ #include <string_view>
++#include <functional>
+ #include <vector>
+ 
+ #include <android-base/unique_fd.h>

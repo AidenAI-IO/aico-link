@@ -196,7 +196,7 @@ copied it over the SDK loader. The Debian migration
 driver's default HE mode. The subsequent removal of the legacy overlay did
 not cause the regression: Debian already used the new loader.
 
-Both repository versions pin `pico-sdk` at
+At the time, both repository versions pinned `pico-sdk` at
 `d1a279cbb7e29aa0801943cdf21f0575db69eed5`. All 21 files in the affected board's
 `/usr/lib/aiden/platform/modules/aic8800dc_fw` matched that SDK firmware directory by SHA-256 during
 the 2026-09-15 investigation. This establishes the missing load parameter as

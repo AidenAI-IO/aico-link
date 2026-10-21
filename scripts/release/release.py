@@ -69,7 +69,7 @@ def check_checkout(plan, allow_dirty_sdk=False):
         raise ValueError("Checkout differs from the release plan")
     args = ["git", "status", "--porcelain"]
     if allow_dirty_sdk:
-        args.append("--ignore-submodules=all")
+        args.extend(["--", ".", ":(exclude)pico-sdk"])
     if command(*args, cwd=ROOT):
         raise ValueError("Release builds require committed, clean source and SDK")
 
@@ -186,8 +186,8 @@ def stage(plan, destination):
     for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
         if (metadata / name).read_text().strip():
             raise ValueError("Applications were built from dirty source")
-    sdk = command("git", "rev-parse", f"{plan['source_commit']}:pico-sdk", cwd=ROOT)
-    if (metadata / "pico-sdk-commit.txt").read_text().strip() != sdk:
+    # Vendored SDK provenance is the firmware commit, not the SDK subtree ID.
+    if (metadata / "pico-sdk-commit.txt").read_text().strip() != plan["source_commit"]:
         raise ValueError("Applications were built with a different SDK commit")
     if "status=pass" not in (ROOT / "output/debian-apps/apps-audit/summary.txt").read_text().splitlines():
         raise ValueError("Application audit has not passed")

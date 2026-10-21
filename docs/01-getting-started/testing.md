@@ -49,8 +49,8 @@ A selected required suite with a missing dependency or an unexpected skip fails
 the runner. The JSON result at `output/test-summary.json` records the profile
 and the suites actually executed.
 
-The production cross-build smoke test requires the SDK and pinned ARM vendor
-inputs (`pico-sdk` and the RKNN archive). The Docker smoke runner downloads and
+The production cross-build smoke test uses the vendored `pico-sdk/` sources
+and requires the pinned RKNN archive. The Docker smoke runner downloads and
 checksums the pinned OpenCV-Mobile source when it is not already cached:
 
 ```bash

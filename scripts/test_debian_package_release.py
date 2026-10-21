@@ -26,11 +26,12 @@ class ReleaseTests(unittest.TestCase):
         self.output = self.root / "output"
         self.output.mkdir()
         self.git("init", "-q")
-        (self.root / ".gitignore").write_text("apps/\noutput/\npico-sdk/\n")
-        self.git("add", ".gitignore")
+        (self.root / ".gitignore").write_text("apps/\noutput/\n")
+        (self.root / "pico-sdk").mkdir()
+        (self.root / "pico-sdk/source.c").write_text("vendored SDK\n")
+        self.git("add", ".gitignore", "pico-sdk")
         self.git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "test: fixture")
         self.commit = self.git("rev-parse", "HEAD")
-        (self.root / "pico-sdk").mkdir()
         metadata = self.apps / "apps/metadata"
         metadata.mkdir(parents=True)
         for name, data in {
@@ -86,6 +87,16 @@ class ReleaseTests(unittest.TestCase):
     def test_stale_binary_is_rejected(self):
         (self.apps / "apps/metadata/hardware-demo-commit.txt").write_text("0" * 40)
         with self.assertRaisesRegex(ValueError, "another commit"):
+            release.check_source(self.root, self.apps)
+
+    def test_sdk_subtree_id_is_not_a_source_commit(self):
+        (self.apps / "apps/metadata/pico-sdk-commit.txt").write_text(self.git("rev-parse", "HEAD:pico-sdk"))
+        with self.assertRaisesRegex(ValueError, "SDK commit"):
+            release.check_source(self.root, self.apps)
+
+    def test_dirty_vendored_sdk_is_rejected(self):
+        (self.root / "pico-sdk/source.c").write_text("modified SDK\n")
+        with self.assertRaisesRegex(ValueError, "Commit source"):
             release.check_source(self.root, self.apps)
 
     def test_dirty_source_is_rejected(self):

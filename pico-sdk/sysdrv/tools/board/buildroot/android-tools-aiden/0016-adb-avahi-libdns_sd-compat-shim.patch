@@ -1,0 +1,199 @@
+From: aiden build <build@aiden.local>
+Subject: [PATCH] adb: shim missing avahi libdns_sd functions + fix sdRef teardown
+
+avahi's libdns_sd compatibility layer lacks DNSServiceGetAddrInfo() and
+DNSServiceGetProperty() (and kDNSServiceProtocol_IPv4/IPv6,
+kDNSServiceProperty_DaemonVersion). transport_mdns.cpp needs them. Add a
+small shim, guarded by #if !defined(kDNSServiceProtocol_IPv4) so it only
+activates against the incomplete avahi header (a no-op against real
+mDNSResponder). DNSServiceGetAddrInfo is reimplemented on top of
+DNSServiceQueryRecord(type=A); DNSServiceGetProperty(DaemonVersion) is a
+stub that lets mdns_check() report the daemon as available. Keep the
+AdbAddrInfoCtx alive only for the lifetime of the resolve and release it
+either when the query completes or when the matching DNSServiceRef is
+deallocated.
+
+Also fix an abort during mDNS service teardown that is specific to
+avahi's threaded compat layer. adb's DestroyServiceRef() called
+fdevent_destroy(fde_) BEFORE DNSServiceRefDeallocate(sdRef_). fdevent owns
+the fd and close()s it on destroy; with avahi that fd is the sdRef's
+main_fd, and DNSServiceRefDeallocate() -> sdref_free() must still
+write(COMMAND_QUIT) to it to stop the worker thread before closing it
+itself. Closing it first makes that write() fail with EBADF, tripping
+sdref_free()'s ASSERT_SUCCESS and aborting the whole adb server (observed
+as "compat.c: write() failed: Bad file descriptor" +
+"sdref_free: Assertion __ret == 0 failed", which manifests on the client
+as "protocol fault (couldn't read status length)"). Use fdevent_release()
+(detach without closing) and let DNSServiceRefDeallocate() do the proper
+quit-and-close. The browse error path in on_service_browsed() had the
+mirror problem (RefDeallocate already closed the fd, then fdevent_destroy
+double-closed it) and gets the same treatment. Apple's mDNSResponder has
+no worker-thread/quit protocol, so the original ordering was only correct
+there.
+
+Aiden-local patch (avahi-compat gap; this is why nmeum disabled mDNS).
+---
+--- a/vendor/core/adb/client/transport_mdns.cpp
++++ b/vendor/core/adb/client/transport_mdns.cpp
+@@ -25,7 +25,9 @@
+ #endif
+
+ #include <memory>
++#include <mutex>
+ #include <thread>
++#include <unordered_map>
+ #include <unordered_set>
+ #include <vector>
+
+@@ -41,7 +43,111 @@
+ #include "client/mdns_utils.h"
+ #include "fdevent/fdevent.h"
+ #include "sysdeps.h"
++
++// ---------------------------------------------------------------------------
++// Aiden: avahi's libdns_sd compatibility layer implements most of the Bonjour
++// API but is missing DNSServiceGetAddrInfo() and DNSServiceGetProperty() (and
++// their associated constants). adb only needs:
++//   - DNSServiceGetAddrInfo: resolve a hostname to an IPv4 address. We
++//     reimplement it on top of DNSServiceQueryRecord(type=A), which avahi
++//     does provide, adapting the query-record reply to the addrinfo callback.
++//   - DNSServiceGetProperty(DaemonVersion): only used by mdns_check() to probe
++//     that the daemon is up; we provide a stub that reports a version.
++// Guarded so it compiles only against the incomplete avahi compat header.
++// ---------------------------------------------------------------------------
++#if !defined(kDNSServiceProtocol_IPv4)
++#define kDNSServiceProtocol_IPv4 0x01
++#define kDNSServiceProtocol_IPv6 0x02
++
++typedef void(DNSSD_API* DNSServiceGetAddrInfoReply)(DNSServiceRef sdRef, DNSServiceFlags flags,
++                                                    uint32_t interfaceIndex,
++                                                    DNSServiceErrorType errorCode,
++                                                    const char* hostname,
++                                                    const struct sockaddr* address, uint32_t ttl,
++                                                    void* context);
++
++struct AdbAddrInfoCtx {
++    DNSServiceGetAddrInfoReply callback;
++    void* context;
++};
++
++static auto& g_adb_addrinfo_ctxs =
++        *new std::unordered_map<DNSServiceRef, std::unique_ptr<AdbAddrInfoCtx>>();
++static auto& g_adb_addrinfo_ctxs_mutex = *new std::mutex();
++
++static void adb_release_addrinfo_ctx(DNSServiceRef sdRef) {
++    std::lock_guard<std::mutex> lock(g_adb_addrinfo_ctxs_mutex);
++    g_adb_addrinfo_ctxs.erase(sdRef);
++}
++
++static void DNSSD_API adb_addrinfo_query_reply(DNSServiceRef sdRef, DNSServiceFlags flags,
++                                               uint32_t interfaceIndex,
++                                               DNSServiceErrorType errorCode, const char* fullname,
++                                               uint16_t /*rrtype*/, uint16_t /*rrclass*/,
++                                               uint16_t rdlen, const void* rdata, uint32_t ttl,
++                                               void* context) {
++    auto* ctx = reinterpret_cast<AdbAddrInfoCtx*>(context);
++    auto callback = ctx->callback;
++    void* callback_context = ctx->context;
++    bool done = errorCode != kDNSServiceErr_NoError ||
++                (flags & kDNSServiceFlagsMoreComing) == 0;
++
++    if (errorCode != kDNSServiceErr_NoError || rdlen < 4 || rdata == nullptr) {
++        callback(sdRef, flags, interfaceIndex, errorCode, fullname, nullptr, ttl,
++                 callback_context);
++        if (done) {
++            adb_release_addrinfo_ctx(sdRef);
++        }
++        return;
++    }
++
++    struct sockaddr_in sin;
++    memset(&sin, 0, sizeof(sin));
++    sin.sin_family = AF_INET;
++    memcpy(&sin.sin_addr, rdata, 4);
++    callback(sdRef, flags, interfaceIndex, errorCode, fullname,
++             reinterpret_cast<const struct sockaddr*>(&sin), ttl, callback_context);
++    if (done) {
++        adb_release_addrinfo_ctx(sdRef);
++    }
++}
+
++static DNSServiceErrorType DNSSD_API DNSServiceGetAddrInfo(
++        DNSServiceRef* sdRef, DNSServiceFlags flags, uint32_t interfaceIndex,
++        uint32_t /*protocol*/, const char* hostname, DNSServiceGetAddrInfoReply callBack,
++        void* context) {
++    auto ctx = std::make_unique<AdbAddrInfoCtx>(AdbAddrInfoCtx{callBack, context});
++    DNSServiceErrorType error = DNSServiceQueryRecord(
++            sdRef, flags, interfaceIndex, hostname, kDNSServiceType_A,
++            kDNSServiceClass_IN, adb_addrinfo_query_reply, ctx.get());
++    if (error == kDNSServiceErr_NoError && sdRef != nullptr && *sdRef != nullptr) {
++        std::lock_guard<std::mutex> lock(g_adb_addrinfo_ctxs_mutex);
++        g_adb_addrinfo_ctxs[*sdRef] = std::move(ctx);
++    }
++    return error;
++}
++
++#define kDNSServiceProperty_DaemonVersion "DaemonVersion"
++static DNSServiceErrorType DNSSD_API DNSServiceGetProperty(const char* /*property*/, void* result,
++                                                          uint32_t* size) {
++    // avahi has no equivalent; report a plausible version so mdns_check()
++    // treats the daemon as available. Actual reachability is exercised by the
++    // Browse/Resolve calls.
++    if (result == nullptr || size == nullptr || *size < sizeof(uint32_t)) {
++        return kDNSServiceErr_NoMemory;
++    }
++    *reinterpret_cast<uint32_t*>(result) = 0xFFFFFFFF;
++    *size = sizeof(uint32_t);
++    return kDNSServiceErr_NoError;
++}
++
++static inline void adb_DNSServiceRefDeallocate(DNSServiceRef sdRef) {
++    adb_release_addrinfo_ctx(sdRef);
++    DNSServiceRefDeallocate(sdRef);
++}
++#define DNSServiceRefDeallocate adb_DNSServiceRefDeallocate
++#endif  // !kDNSServiceProtocol_IPv4
++
+ static DNSServiceRef service_refs[kNumADBDNSServices];
+ static fdevent* service_ref_fdes[kNumADBDNSServices];
+ static auto& g_autoconn_whitelist = *new std::unordered_set<int>();
+@@ -150,9 +256,21 @@
+             return;
+         }
+
+-        // Order matters here! Must destroy the fdevent first since it has a
+-        // reference to |sdRef_|.
+-        fdevent_destroy(fde_);
++        // Aiden/avahi: do NOT use fdevent_destroy() here. fdevent owns the fd
++        // (it wraps it in a unique_fd) and would close() it on destroy. With
++        // avahi's libdns_sd compat layer the fd is the sdRef's |main_fd|, and
++        // DNSServiceRefDeallocate() -> sdref_free() must still write COMMAND_QUIT
++        // to that fd to stop its worker thread before closing it itself. If we
++        // close it first, that write() fails with EBADF and sdref_free()'s
++        // ASSERT_SUCCESS aborts the whole adb server. fdevent_release() detaches
++        // the fdevent without closing the fd; releasing the returned unique_fd
++        // hands the fd back to avahi, then DNSServiceRefDeallocate() performs the
++        // proper quit-and-close sequence.
++        //
++        // (Apple's mDNSResponder has no worker thread / quit protocol, so the
++        // original "destroy fdevent first" ordering is only correct there.)
++        unique_fd fd = fdevent_release(fde_);
++        fd.release();
+         D("DNSServiceRefDeallocate(sdRef=%p)", sdRef_);
+         DNSServiceRefDeallocate(sdRef_);
+         initialized_ = false;
+@@ -597,7 +715,13 @@
+         DNSServiceRefDeallocate(sdRef);
+         int serviceIndex = adb_DNSServiceIndexByName(regtype);
+         if (serviceIndex != -1) {
+-            fdevent_destroy(service_ref_fdes[serviceIndex]);
++            // Aiden/avahi: DNSServiceRefDeallocate() above already closed the
++            // sdRef's main_fd. Detach the fdevent with fdevent_release() (which
++            // does not close) and drop the returned fd without closing it, to
++            // avoid double-closing an fd avahi may already have recycled. Using
++            // fdevent_destroy() here would close() that fd a second time.
++            unique_fd fd = fdevent_release(service_ref_fdes[serviceIndex]);
++            fd.release();
+         }
+         return;
+     }

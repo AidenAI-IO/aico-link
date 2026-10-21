@@ -1,0 +1,2 @@
+# Aiden SCH v1 routes the SKI.WB800D80S.1 HCI UART to UART0.
+AIC8800_BT_TTY=/dev/ttyS0

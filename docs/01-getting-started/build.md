@@ -11,11 +11,13 @@ git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git
 cd aiden-firmware
 ```
 
-The project includes Git submodules such as `pico-sdk` and MobileGym. It's recommended to use `--recursive` on the first clone. For an existing checkout, synchronize submodule URLs before initializing or updating them:
+The BSP is vendored directly in `pico-sdk/` and is included in a normal clone.
+The `--recursive` option also initializes the MobileGym submodule. For an
+existing checkout, initialize or update MobileGym with:
 
 ```bash
-git submodule sync --recursive
-git submodule update --init --recursive
+git submodule sync --recursive benchmark/mobilegym/vendor/mobilegym
+git submodule update --init --recursive benchmark/mobilegym/vendor/mobilegym
 ```
 
 ## Docker Test Build
@@ -31,20 +33,15 @@ make check-full   # all required suites; same gate as CI
 `make check` is for short development iterations; it does not replace the full
 CI check. The suite selection and commands live in
 [`tests/test-manifest.yaml`](../../tests/test-manifest.yaml).
-Full production ARM smoke validation is available after the SDK submodule is
-initialized; the Docker smoke image prepares the pinned OpenCV-Mobile input when
-needed:
+Full production ARM smoke validation uses the included SDK; the Docker smoke
+image prepares the pinned OpenCV-Mobile input when needed:
 
 ```bash
 make check-production
 ```
 
 The quick and full profiles compile and audit the TF card device tree from
-`pico-sdk`, so initialize that submodule before running either profile:
-
-```bash
-git submodule update --init --depth=1 pico-sdk
-```
+the vendored `pico-sdk/` sources.
 
 Full hardware targets depend on Rockchip/Luckfox armhf libraries. Use the Debian
 cross-compilation workflow for device-runnable artifacts.
@@ -65,9 +62,9 @@ Build and audit the Debian armhf application bundle with:
 scripts/debian-apps/build-apps.sh all
 ```
 
-Git worktrees are supported. Build containers mount the checkout at both `/work`
-and its host path so Git can resolve the SDK submodule's `core.worktree` path
-when recording source provenance.
+Git worktrees are supported. Build provenance records the firmware repository
+revision, which includes the vendored `pico-sdk/` sources. SDK changes are
+tracked with the rest of the firmware sources.
 
 This workflow will:
 
