@@ -39,6 +39,21 @@ func (c Config) WithDefaults() Config {
 	return c
 }
 
+// Validate reports the first proxy URL that Parse rejects. Empty URLs are
+// valid and mean that no proxy is configured for that scheme.
+func (c Config) Validate() error {
+	for _, field := range []struct{ name, value string }{
+		{"http_proxy", c.HTTPProxy},
+		{"https_proxy", c.HTTPSProxy},
+		{"all_proxy", c.AllProxy},
+	} {
+		if err := Validate(field.value); err != nil {
+			return fmt.Errorf("proxy.%s: %w", field.name, err)
+		}
+	}
+	return nil
+}
+
 // ProxyFunc returns an http.Transport proxy function. Requests skip NO_PROXY
 // destinations and otherwise use the proxy for their scheme, falling back to
 // ALL_PROXY. Without any proxy URL it defers to ProxyFromEnvironment.

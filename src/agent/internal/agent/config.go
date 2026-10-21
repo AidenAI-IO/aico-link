@@ -530,27 +530,11 @@ func isLoopbackHost(host string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-type ProxyConfig struct {
-	HTTPProxy  string
-	HTTPSProxy string
-	AllProxy   string
-	NoProxy    string
-}
+// ProxyConfig is the explicit proxy configuration shared with the TTS adapters
+// and other network clients.
+type ProxyConfig = netproxy.Config
 
 const DefaultNoProxy = netproxy.DefaultNoProxy
-
-func (p ProxyConfig) HasProxyURL() bool {
-	return strings.TrimSpace(p.HTTPProxy) != "" ||
-		strings.TrimSpace(p.HTTPSProxy) != "" ||
-		strings.TrimSpace(p.AllProxy) != ""
-}
-
-func (p ProxyConfig) WithDefaults() ProxyConfig {
-	if p.HasProxyURL() && strings.TrimSpace(p.NoProxy) == "" {
-		p.NoProxy = DefaultNoProxy
-	}
-	return p
-}
 
 func ProxyConfigFromEnvironment() ProxyConfig {
 	p := ProxyConfig{
@@ -569,26 +553,6 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func (p ProxyConfig) IsZero() bool {
-	return strings.TrimSpace(p.HTTPProxy) == "" &&
-		strings.TrimSpace(p.HTTPSProxy) == "" &&
-		strings.TrimSpace(p.AllProxy) == "" &&
-		strings.TrimSpace(p.NoProxy) == ""
-}
-
-func (p ProxyConfig) Validate() error {
-	for name, value := range map[string]string{
-		"http_proxy":  p.HTTPProxy,
-		"https_proxy": p.HTTPSProxy,
-		"all_proxy":   p.AllProxy,
-	} {
-		if err := validateProxyURL(value); err != nil {
-			return fmt.Errorf("proxy.%s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func (a AudioConfig) SocketOrDefault() string {
