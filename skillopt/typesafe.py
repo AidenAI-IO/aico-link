@@ -12,6 +12,7 @@ import os
 import socket
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -29,6 +30,17 @@ def resolve_api_key(api_key_env: str = DEFAULT_API_KEY_ENV) -> str:
     if not api_key:
         raise RuntimeError(f"missing env var {api_key_env}")
     return api_key
+
+
+def _check_base_url(url: str) -> None:
+    """The bearer key must not travel in clear text: https only, except plain
+    http to a loopback host for local testing."""
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme == "https" and parsed.hostname:
+        return
+    if parsed.scheme == "http" and parsed.hostname in ("localhost", "127.0.0.1", "::1"):
+        return
+    raise RuntimeError(f"unsupported typesafe base_url scheme: {url!r} (use https)")
 
 
 def ask(
@@ -54,8 +66,7 @@ def ask(
         headers["TypeSafe-Danger-Zone-Images"] = "true"
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     url = f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}/systemone"
-    if not url.lower().startswith(("https://", "http://")):
-        raise RuntimeError(f"unsupported typesafe base_url scheme: {url!r}")
+    _check_base_url(url)
     for attempt in range(_MAX_RETRIES + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:

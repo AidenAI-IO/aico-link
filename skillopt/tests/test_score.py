@@ -204,8 +204,29 @@ def test_typesafe_sample_classifier_ignores_malformed_confidence(monkeypatch):
     assert task_result_to_rollout(tr).extras["sample_quality"] == "clean"
 
 
-def test_typesafe_ask_rejects_non_http_base_url():
+def test_typesafe_sample_classifier_ignores_non_finite_confidence(monkeypatch):
     from skillopt import typesafe
 
-    with pytest.raises(RuntimeError, match="scheme"):
-        typesafe.ask({}, {}, api_key="ts-key", base_url="file:///etc")
+    response = {"answers": {"kind": {"type": "choice", "choice": "external_blocker", "confidence": "nan"}}}
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER", "typesafe")
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE", "nan")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-key")
+    monkeypatch.setattr(typesafe, "ask", lambda *args, **kwargs: response)
+    tr = _mk_task_result("login", "failed", 0, 2)
+    tr.metrics = {"tool_calls": 6, "final_response": "The app asks me to sign in first."}
+    assert task_result_to_rollout(tr).extras["sample_quality"] == "clean"
+
+
+@pytest.mark.parametrize("base_url", ["file:///etc", "http://api.typesafe.ai/v1", "ftp://example.com"])
+def test_typesafe_ask_requires_https_base_url(base_url):
+    from skillopt import typesafe
+
+    with pytest.raises(RuntimeError, match="https"):
+        typesafe.ask({}, {}, api_key="ts-key", base_url=base_url)
+
+
+def test_typesafe_base_url_allows_loopback_http():
+    from skillopt import typesafe
+
+    typesafe._check_base_url("http://127.0.0.1:8080/v1/systemone")
+    typesafe._check_base_url("https://api.typesafe.ai/v1/systemone")

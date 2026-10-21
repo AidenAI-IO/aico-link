@@ -7,6 +7,7 @@ current by min_delta to be accepted).
 from __future__ import annotations
 import dataclasses as dc
 import json
+import math
 import os
 import re
 import sys
@@ -189,6 +190,8 @@ def _typesafe_sample_quality(tr: TaskResult, fail_reason: str, rule: SampleQuali
         "criteria": _TYPESAFE_CRITERIA,
     }
     min_confidence = _safe_float(os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE"), 0.8)
+    if not math.isfinite(min_confidence):
+        min_confidence = 0.8
     try:
         response = typesafe.ask(state, {"kind": question}, api_key=typesafe.resolve_api_key())
         got = typesafe.answer(response, "kind", "choice")
@@ -196,7 +199,7 @@ def _typesafe_sample_quality(tr: TaskResult, fail_reason: str, rule: SampleQuali
         print(f"[skillopt] typesafe sample classifier failed, using rules: {exc}", file=sys.stderr)
         return rule
     kind, confidence = str(got.get("choice") or ""), _safe_float(got.get("confidence"), 0.0)
-    if kind not in _QUALITY_POLICY or confidence < min_confidence or kind == rule.kind:
+    if kind not in _QUALITY_POLICY or not math.isfinite(confidence) or confidence < min_confidence or kind == rule.kind:
         return rule
     include_in_score, weight, include_in_reflect = _QUALITY_POLICY[kind]
     return SampleQuality(
