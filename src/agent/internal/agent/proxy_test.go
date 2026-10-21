@@ -10,10 +10,10 @@ import (
 )
 
 func TestProxyFuncUsesConfiguredHTTPSProxy(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{
+	fn := ProxyConfig{
 		HTTPSProxy: "http://127.0.0.1:7890",
 		NoProxy:    "localhost,127.0.0.1",
-	})
+	}.ProxyFunc()
 
 	req, err := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
 	if err != nil {
@@ -21,7 +21,7 @@ func TestProxyFuncUsesConfiguredHTTPSProxy(t *testing.T) {
 	}
 	proxyURL, err := fn(req)
 	if err != nil {
-		t.Fatalf("proxyFunc() error = %v", err)
+		t.Fatalf("ProxyFunc() error = %v", err)
 	}
 	if proxyURL == nil || proxyURL.String() != "http://127.0.0.1:7890" {
 		t.Fatalf("proxyURL = %v, want configured proxy", proxyURL)
@@ -29,14 +29,14 @@ func TestProxyFuncUsesConfiguredHTTPSProxy(t *testing.T) {
 }
 
 func TestProxyFuncAcceptsSOCKS5HForRemoteDNS(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{HTTPSProxy: "socks5h://127.0.0.1:18080"})
+	fn := ProxyConfig{HTTPSProxy: "socks5h://127.0.0.1:18080"}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "https://api.openai.com/v1/models", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	proxyURL, err := fn(req)
 	if err != nil {
-		t.Fatalf("proxyFunc() error = %v", err)
+		t.Fatalf("ProxyFunc() error = %v", err)
 	}
 	if proxyURL == nil || proxyURL.String() != "socks5h://127.0.0.1:18080" {
 		t.Fatalf("proxyURL = %v, want SOCKS5H local proxy", proxyURL)
@@ -44,10 +44,10 @@ func TestProxyFuncAcceptsSOCKS5HForRemoteDNS(t *testing.T) {
 }
 
 func TestProxyFuncHonorsNoProxy(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{
+	fn := ProxyConfig{
 		AllProxy: "http://127.0.0.1:7890",
 		NoProxy:  "localhost,*.invalid,api.openai.com,203.0.113.0/24",
-	})
+	}.ProxyFunc()
 
 	for _, target := range []string{
 		"https://api.openai.com/v1/models",
@@ -60,46 +60,46 @@ func TestProxyFuncHonorsNoProxy(t *testing.T) {
 		}
 		proxyURL, err := fn(req)
 		if err != nil {
-			t.Fatalf("proxyFunc(%s) error = %v", target, err)
+			t.Fatalf("ProxyFunc(%s) error = %v", target, err)
 		}
 		if proxyURL != nil {
-			t.Fatalf("proxyFunc(%s) = %v, want bypass", target, proxyURL)
+			t.Fatalf("ProxyFunc(%s) = %v, want bypass", target, proxyURL)
 		}
 	}
 }
 
 func TestProxyFuncHonorsIPv6NoProxy(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{
+	fn := ProxyConfig{
 		AllProxy: "http://127.0.0.1:7890",
 		NoProxy:  "::1",
-	})
+	}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "http://[::1]:8080/status", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	proxyURL, err := fn(req)
 	if err != nil {
-		t.Fatalf("proxyFunc() error = %v", err)
+		t.Fatalf("ProxyFunc() error = %v", err)
 	}
 	if proxyURL != nil {
-		t.Fatalf("proxyFunc() = %v, want IPv6 no_proxy bypass", proxyURL)
+		t.Fatalf("ProxyFunc() = %v, want IPv6 no_proxy bypass", proxyURL)
 	}
 }
 
 func TestProxyFuncAppliesDefaultNoProxy(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{
+	fn := ProxyConfig{
 		AllProxy: "http://127.0.0.1:7890",
-	})
+	}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "http://localhost/status", nil)
 	if err != nil {
 		t.Fatalf("NewRequest: %v", err)
 	}
 	proxyURL, err := fn(req)
 	if err != nil {
-		t.Fatalf("proxyFunc() error = %v", err)
+		t.Fatalf("ProxyFunc() error = %v", err)
 	}
 	if proxyURL != nil {
-		t.Fatalf("proxyFunc() = %v, want default no_proxy bypass", proxyURL)
+		t.Fatalf("ProxyFunc() = %v, want default no_proxy bypass", proxyURL)
 	}
 }
 
@@ -107,14 +107,14 @@ func TestProxyFuncUsesEnvironmentWhenNoProxyURLConfigured(t *testing.T) {
 	clearAgentProxyEnv(t)
 	t.Setenv("HTTPS_PROXY", "http://proxy.example:7893")
 
-	fn := proxyFunc(ProxyConfig{})
+	fn := ProxyConfig{}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/owner/repo/releases/latest", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	proxyURL, err := fn(req)
 	if err != nil {
-		t.Fatalf("proxyFunc() error = %v", err)
+		t.Fatalf("ProxyFunc() error = %v", err)
 	}
 	if proxyURL == nil || proxyURL.String() != "http://proxy.example:7893" {
 		t.Fatalf("proxyURL = %v, want environment proxy", proxyURL)
@@ -125,17 +125,17 @@ func TestProxyFuncRejectsInvalidEnvironmentProxy(t *testing.T) {
 	clearAgentProxyEnv(t)
 	t.Setenv("HTTPS_PROXY", "http://http://proxy.example:7893")
 
-	fn := proxyFunc(ProxyConfig{})
+	fn := ProxyConfig{}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/owner/repo/releases/latest", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = fn(req)
 	if err == nil {
-		t.Fatal("proxyFunc() error = nil, want duplicate scheme error")
+		t.Fatal("ProxyFunc() error = nil, want duplicate scheme error")
 	}
 	if !strings.Contains(err.Error(), "HTTPS_PROXY") || !strings.Contains(err.Error(), "duplicate scheme") {
-		t.Fatalf("proxyFunc() error = %v, want env name and duplicate scheme", err)
+		t.Fatalf("ProxyFunc() error = %v, want env name and duplicate scheme", err)
 	}
 }
 
@@ -166,17 +166,17 @@ func TestProxyConfigValidateRejectsDuplicateScheme(t *testing.T) {
 }
 
 func TestProxyFuncRejectsDuplicateScheme(t *testing.T) {
-	fn := proxyFunc(ProxyConfig{HTTPSProxy: "http://http://proxy.example:7893"})
+	fn := ProxyConfig{HTTPSProxy: "http://http://proxy.example:7893"}.ProxyFunc()
 	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/owner/repo/releases/latest", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = fn(req)
 	if err == nil {
-		t.Fatal("proxyFunc() error = nil, want duplicate scheme error")
+		t.Fatal("ProxyFunc() error = nil, want duplicate scheme error")
 	}
 	if !strings.Contains(err.Error(), "duplicate scheme") {
-		t.Fatalf("proxyFunc() error = %v, want duplicate scheme", err)
+		t.Fatalf("ProxyFunc() error = %v, want duplicate scheme", err)
 	}
 }
 
