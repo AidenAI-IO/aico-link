@@ -424,6 +424,7 @@ type Search struct {
 // DecisionModel is the wire view of the optional decision model. Like Search,
 // its API key is write-only: responses report has_api_key instead of the value.
 type DecisionModel struct {
+	Enabled       bool    `json:"enabled"`
 	Provider      string  `json:"provider"`
 	APIKey        string  `json:"api_key,omitempty"`
 	HasAPIKey     bool    `json:"has_api_key"`
@@ -664,6 +665,7 @@ func (d Config) ToAgentConfig() agent.Config {
 			APIKey:   searchKey,
 		},
 		Decision: agent.DecisionModelConfig{
+			Enabled:       d.Decision.Enabled,
 			Provider:      d.Decision.Provider,
 			APIKey:        decisionKey,
 			BaseURL:       d.Decision.BaseURL,
@@ -1066,6 +1068,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			HasAPIKey: strings.TrimSpace(cfg.Search.APIKey) != "",
 		},
 		Decision: DecisionModel{
+			Enabled:       cfg.Decision.Enabled,
 			Provider:      cfg.Decision.ProviderOrDefault(),
 			HasAPIKey:     strings.TrimSpace(cfg.Decision.APIKey) != "",
 			BaseURL:       cfg.Decision.BaseURLOrDefault(),

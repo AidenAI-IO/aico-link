@@ -70,7 +70,7 @@ func (s *decisionServer) waitForRequest(t *testing.T) {
 func testDecisionAdvisor(server *decisionServer) *decisionAdvisor {
 	advisor := &decisionAdvisor{}
 	advisor.setConfig(func() DecisionModelConfig {
-		return DecisionModelConfig{APIKey: "ts-key", BaseURL: server.URL}
+		return DecisionModelConfig{Enabled: true, APIKey: "ts-key", BaseURL: server.URL}
 	})
 	return advisor
 }
@@ -93,6 +93,7 @@ func decisionTestScreenshot(t *testing.T) screenshotResult {
 func TestDecisionDisabledKeepsMainModel(t *testing.T) {
 	server := newDecisionServer(t)
 	advisor := &decisionAdvisor{}
+	// A saved key with the switch off asks nothing.
 	advisor.setConfig(func() DecisionModelConfig {
 		return DecisionModelConfig{APIKey: "k", BaseURL: server.URL}
 	})
@@ -142,7 +143,7 @@ func TestDecisionActiveFallsBackOnLowConfidenceAndErrors(t *testing.T) {
 	defer failing.Close()
 	advisor := &decisionAdvisor{}
 	advisor.setConfig(func() DecisionModelConfig {
-		return DecisionModelConfig{APIKey: "k", BaseURL: failing.URL}
+		return DecisionModelConfig{Enabled: true, APIKey: "k", BaseURL: failing.URL}
 	})
 	model = &textInputVisionRecordingModel{content: `{"opened":true}`}
 	vision = &llmTextInputVision{models: model, decider: advisor}
@@ -184,7 +185,7 @@ func TestDecisionScreenAnalysisMergesConfidentFlagsKeepingFieldText(t *testing.T
 	defer stalled.Close()
 	vision.decider = &decisionAdvisor{}
 	vision.decider.setConfig(func() DecisionModelConfig {
-		return DecisionModelConfig{APIKey: "k", BaseURL: stalled.URL}
+		return DecisionModelConfig{Enabled: true, APIKey: "k", BaseURL: stalled.URL}
 	})
 	started := time.Now()
 	got, err = vision.AnalyzeScreen(context.Background(), decisionTestScreenshot(t), textInputScreenAnalysisRequest{Platform: "iOS", TargetText: "你好"})
@@ -256,7 +257,7 @@ func TestDecisionOpenAIProviderLeavesTapPointsToMainModel(t *testing.T) {
 	server := newDecisionServer(t, `{"model":"gpt-6-luna","answers":[{"type":"predicate","name":"found","probability":0.97}]}`)
 	advisor := &decisionAdvisor{}
 	advisor.setConfig(func() DecisionModelConfig {
-		return DecisionModelConfig{Provider: DecisionProviderOpenAI, APIKey: "sk", BaseURL: server.URL + "/v1"}
+		return DecisionModelConfig{Enabled: true, Provider: DecisionProviderOpenAI, APIKey: "sk", BaseURL: server.URL + "/v1"}
 	})
 	model := &textInputVisionRecordingModel{content: `{"found":true,"tap_point":{"x":200,"y":250}}`}
 	vision := &llmTextInputVision{models: model, decider: advisor}
@@ -309,7 +310,7 @@ func TestDecisionRaceUnconfidentAnswerAddsNoLatency(t *testing.T) {
 	defer slow.Close()
 	advisor := &decisionAdvisor{}
 	advisor.setConfig(func() DecisionModelConfig {
-		return DecisionModelConfig{APIKey: "k", BaseURL: slow.URL}
+		return DecisionModelConfig{Enabled: true, APIKey: "k", BaseURL: slow.URL}
 	})
 	started := time.Now()
 	result, usedLLM, err := decide(context.Background(), advisor, appOpenDecision(func(context.Context) (bridgeAppOpenResult, error) {

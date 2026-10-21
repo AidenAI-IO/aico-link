@@ -163,7 +163,7 @@ The page renders the following config sections. The Language & Time Zone control
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
 - `[model_settings.model]`: provider, model, api_mode, temperature, max_response_tokens, context_window, model_max_output_tokens
-- `[model_settings.decision]`: optional decision model provider, write-only API key (setting it turns the model on), connection test, and minimum confidence (Base URL and model in TOML only)
+- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test (Base URL and model in TOML only)
 - `[voice_settings.classic.stt]`: provider, language and STT options
 - `[voice_settings.classic.tts]`: provider and playback options
 - `[voice_settings.classic.audio]`: socket, sample_rate, channels, bit_width, backend
@@ -672,8 +672,8 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 
 An optional decision model that answers fixed-choice questions (choice, yes/no,
 box in an image) inside deterministic workflows. It is separate from the main
-model: it never plans or generates text. It is on exactly when `api_key` is
-set; without a key every decision stays with the main model.
+model: it never plans or generates text. It is off by default; turning it on
+requires `api_key`. When it is off every decision stays with the main model.
 Two providers are supported:
 
 - `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
@@ -685,14 +685,16 @@ Two providers are supported:
 
 | Field            | Default                      | Description                                                                   |
 | ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
 | `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev) or `openai` (OpenAI Luna).                          |
-| `api_key`        | empty                        | Provider API key; setting it turns the decision model on and clearing it turns it off. Config Web treats it as write-only and reports `has_api_key`. |
+| `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
 | `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1` or `https://api.openai.com/v1`. |
 | `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need) or `gpt-6-luna`. |
 | `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
 
 ```toml
 [model_settings.decision]
+enabled = true
 api_key = "ts-..."
 ```
 
@@ -737,11 +739,11 @@ the Agent reaches both providers through the same proxy environment it uses for
 other model providers.
 
 In Config Web, **Models** lists the main model and the decision model. The
-decision model page edits the provider, the key and the minimum confidence,
-and **Test connection** sends one small question with the saved settings
-(`POST /api/config/test` with section `decision`). Removing the key turns the
-model off. Switching the provider clears the saved key, which turns the model
-off, and resets the Base URL and model to the new provider's defaults. The
+decision model page edits the switch, the provider, the key and the minimum
+confidence, and **Test connection** sends one small question with the saved
+key (`POST /api/config/test` with section `decision`), also while the switch is
+off. Switching the provider clears the saved key, turns the model off, and
+resets the Base URL and model to the new provider's defaults. The
 Base URL and model are edited in the TOML file.
 
 The SkillOpt sample classifier (`--sample-classifier typesafe`) can use Jev

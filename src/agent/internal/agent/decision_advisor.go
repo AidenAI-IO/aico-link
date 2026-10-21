@@ -49,7 +49,7 @@ func (a *decisionAdvisor) settings() (DecisionModelConfig, *decision.Client, boo
 		return DecisionModelConfig{}, nil, false
 	}
 	cfg := source()
-	if !cfg.Enabled() {
+	if !cfg.On() {
 		return cfg, nil, false
 	}
 	key := strings.Join([]string{cfg.ProviderOrDefault(), cfg.APIKey, cfg.BaseURLOrDefault(), cfg.ModelOrDefault()}, "\x00")

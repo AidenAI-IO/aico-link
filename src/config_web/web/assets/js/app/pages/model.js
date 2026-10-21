@@ -8,7 +8,7 @@
  *   /model/providers/edit?type=<type>   configure a new record of a type
  *   /model/providers/edit?type=custom   "Others": pick the interface type, key and Base URL
  *   /model/models                       the selected provider's model catalogue
- *   /model/decision                     the optional decision model: key, test, confidence
+ *   /model/decision                     the optional decision model: switch, key, confidence, test
  *
  * The main model references a provider *record* by name (`model.provider`); a
  * record carries the type and credentials (`model_providers.<name>`). Several
@@ -40,6 +40,7 @@ import {swipeRow} from '../../ui/swipe.js';
 import {el, replace} from '../../ui/dom.js';
 import {icon} from '../../ui/icon.js';
 import {group, row, screen} from '../../ui/list.js';
+import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
@@ -228,7 +229,7 @@ export async function modelPage(context) {
   const mainSummary = providerName
     ? [recordLabel(providerName, record), modelName].filter(Boolean).join(' · ')
     : resolve(msg('model.not_set', '未设置'));
-  const decisionOn = Boolean(decisionConfig(snapshot).has_api_key);
+  const decisionOn = Boolean(decisionConfig(snapshot).enabled && decisionConfig(snapshot).has_api_key);
   return screen([
     group({
       rows: [
@@ -700,8 +701,8 @@ export async function modelsPage(context) {
 /**
  * The optional decision model. The key is write-only like the Web search key:
  * the Agent reports `has_api_key`, and an empty field keeps the saved key. The
- * key is the only switch: saving one turns the decision model on, removing it
- * turns it off.
+ * Agent rejects `enabled` without a key, so the switch asks for one first
+ * instead of letting that save fail.
  */
 export async function decisionPage(context) {
   const snapshot = await ensureSnapshot(context);
@@ -748,35 +749,25 @@ export async function decisionPage(context) {
   }
 
   /**
-   * The key belongs to one provider, so switching clears it, which turns the
+   * The key belongs to one provider, so switching clears it and turns the
    * model off; the Base URL and model return to the new provider's defaults.
    */
   async function chooseProvider(value) {
     const current = decision();
     if (value === decisionProvider(current.provider).value) return;
     const patch = {decision: {provider: value, base_url: null, model: null}};
-    if (current.has_api_key) {
+    if (current.has_api_key || current.enabled) {
       const confirmed = await confirmSheet({
         title: msg('model.decision_switch_title', '切换决策模型提供商？'),
-        body: msg('model.decision_switch_body', '已保存的 API Key 会被清除，决策模型随之关闭；填写新提供商的 API Key 后自动开启。'),
+        body: msg('model.decision_switch_body', '已保存的 API Key 会被清除，决策模型会先关闭，填写新提供商的 API Key 后再开启。'),
         confirmLabel: msg('model.decision_switch_confirm', '切换'),
         action: 'confirm-decision-provider',
       });
       if (!confirmed) return;
       patch.decision.api_key = '';
+      patch.decision.enabled = false;
     }
     await saver.change('decision.provider', patch);
-  }
-
-  async function removeKey() {
-    const confirmed = await confirmSheet({
-      title: msg('model.decision_remove_key_title', '移除决策模型 API Key？'),
-      body: msg('model.decision_remove_key_body', '移除后决策模型关闭，所有判断交给主模型。'),
-      confirmLabel: msg('model.decision_remove_key_confirm', '移除'),
-      danger: true,
-      action: 'confirm-remove-decision-key',
-    });
-    if (confirmed) await saver.change('decision.api_key', {decision: {api_key: ''}});
   }
 
   /** Sends one small question with the saved settings and reports the reply. */
@@ -802,7 +793,19 @@ export async function decisionPage(context) {
 
   function render() {
     const provider = decisionProvider(decision().provider);
-    const hasKey = Boolean(decision().has_api_key);
+    const toggle = switchControl({
+      checked: Boolean(decision().enabled),
+      label: msg('model.decision_enabled', '启用决策模型'),
+      onChange: async next => {
+        if (next && !decision().has_api_key) {
+          setChecked(toggle, false);
+          toast(msg('model.decision_key_required', '请先填写 API Key'));
+          return;
+        }
+        const outcome = await saver.change('decision.enabled', {decision: {enabled: next}});
+        if (outcome === 'invalid' || outcome === 'failed') setChecked(toggle, !next);
+      },
+    });
     const testButton = el('button', {
       class: 'ds-card-action',
       attrs: {type: 'button'},
@@ -810,6 +813,10 @@ export async function decisionPage(context) {
       on: {click: () => testConnection(testButton)},
     }, [text(msg('model.test', '测试连接'))]);
     replace(body, [
+      group({
+        rows: [row({label: msg('model.decision_enabled', '启用决策模型'), accessory: toggle})],
+        note: msg('model.decision_enabled_help', '开启后，固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。'),
+      }),
       group({rows: [row({
         label: msg('model.decision_provider', '提供商'),
         value: provider.label,
@@ -821,29 +828,20 @@ export async function decisionPage(context) {
           onSelect: chooseProvider,
         }),
       })]}),
-      group({
-        rows: [apiKeyField()],
-        note: msg('model.decision_key_help', '填写 API Key 后即开启：固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。'),
-      }),
-      hasKey ? el('div', {class: 'ds-group'}, [testButton]) : null,
-      hasKey ? group({rows: [row({
-        label: msg('model.decision_remove_key', '移除 API Key'),
-        labelTone: 'danger',
-        action: 'remove-decision-key',
-        onPress: removeKey,
-      })]}) : null,
+      group({rows: [apiKeyField()]}),
       group({
         rows: [inlineValueRow({
           key: 'decision.min_confidence',
           label: msg('model.decision_min_confidence', '最低置信度'),
-          description: msg('model.decision_min_confidence_help', '低于该值的判断交回主模型；留空使用默认值 0.8'),
+          description: msg('model.decision_min_confidence_help', '低于该值的判断交回主模型，默认 0.8'),
           parse: parse.optionalRange(0, 1),
-          invalid: msg('model.decision_min_confidence_invalid', '请输入 0 到 1 之间的数，或留空'),
+          invalid: msg('model.decision_min_confidence_invalid', '请输入 0 到 1 之间的数'),
           saved: () => (decision().min_confidence == null ? '' : String(decision().min_confidence)),
           patch: value => ({decision: {min_confidence: value}}),
           saver,
         })],
       }),
+      decision().has_api_key ? el('div', {class: 'ds-group'}, [testButton]) : null,
     ]);
     saver.refreshChrome();
   }

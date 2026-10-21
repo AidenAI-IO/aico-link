@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"net/url"
@@ -44,10 +45,11 @@ const (
 // DecisionModelConfig configures the optional decision model (TypeSafe Jev or
 // OpenAI Luna): a classifier that answers fixed-choice questions (choice,
 // yes/no, score) inside deterministic workflows, such as reading the input
-// method state or confirming that an app opened. It is on exactly when an API
-// key is set; without one, or when an answer falls below MinConfidence,
-// callers keep using the main model.
+// method state or confirming that an app opened. It is off by default and
+// needs an API key to be turned on; when off, or when an answer falls below
+// MinConfidence, callers keep using the main model.
 type DecisionModelConfig struct {
+	Enabled       bool    `toml:"enabled"`
 	Provider      string  `toml:"provider,omitempty"`
 	APIKey        string  `toml:"api_key,omitempty"`
 	BaseURL       string  `toml:"base_url,omitempty"`
@@ -55,10 +57,10 @@ type DecisionModelConfig struct {
 	MinConfidence float64 `toml:"min_confidence,omitempty"`
 }
 
-// Enabled reports whether decisions go to the decision model: an API key is
-// the only switch.
-func (c DecisionModelConfig) Enabled() bool {
-	return strings.TrimSpace(c.APIKey) != ""
+// On reports whether decisions go to the decision model: it is enabled and
+// has an API key.
+func (c DecisionModelConfig) On() bool {
+	return c.Enabled && strings.TrimSpace(c.APIKey) != ""
 }
 
 func (c DecisionModelConfig) ProviderOrDefault() string {
@@ -107,6 +109,9 @@ func (c DecisionModelConfig) validate() error {
 	}
 	if baseURL := strings.TrimSpace(c.BaseURL); baseURL != "" && !isDecisionBaseURL(baseURL) {
 		return fmt.Errorf("decision.base_url must be an http(s) URL, got %q", c.BaseURL)
+	}
+	if c.Enabled && strings.TrimSpace(c.APIKey) == "" {
+		return errors.New("decision.api_key is required when decision.enabled=true")
 	}
 	return nil
 }

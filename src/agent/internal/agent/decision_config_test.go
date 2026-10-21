@@ -10,11 +10,14 @@ import (
 
 func TestDecisionModelConfigDefaults(t *testing.T) {
 	var cfg DecisionModelConfig
-	if cfg.Enabled() {
-		t.Fatal("decision model must be off without an API key")
+	if cfg.On() {
+		t.Fatal("decision model must be off by default")
 	}
-	if !(DecisionModelConfig{APIKey: "ts-secret"}).Enabled() {
-		t.Fatal("an API key alone must turn the decision model on")
+	if (DecisionModelConfig{APIKey: "ts-secret"}).On() {
+		t.Fatal("a key without the switch must leave the decision model off")
+	}
+	if !(DecisionModelConfig{Enabled: true, APIKey: "ts-secret"}).On() {
+		t.Fatal("the switch with a key must turn the decision model on")
 	}
 	if got := cfg.ProviderOrDefault(); got != DecisionProviderTypeSafe {
 		t.Fatalf("ProviderOrDefault() = %q", got)
@@ -37,7 +40,9 @@ func TestConfigValidateDecisionModel(t *testing.T) {
 		field    string
 	}{
 		{name: "off without key", decision: DecisionModelConfig{}},
-		{name: "on with key", decision: DecisionModelConfig{APIKey: "ts-secret"}},
+		{name: "key without switch", decision: DecisionModelConfig{APIKey: "ts-secret"}},
+		{name: "enabled with key", decision: DecisionModelConfig{Enabled: true, APIKey: "ts-secret"}},
+		{name: "enabled without key", decision: DecisionModelConfig{Enabled: true}, field: "decision.api_key"},
 		{name: "unknown provider", decision: DecisionModelConfig{Provider: "other"}, field: "decision.provider"},
 		{name: "openai provider", decision: DecisionModelConfig{Provider: "OpenAI", APIKey: "sk"}},
 		{name: "confidence above one", decision: DecisionModelConfig{MinConfidence: 1.5}, field: "decision.min_confidence"},
@@ -73,7 +78,6 @@ func TestLoadConfigReadsDecisionModelFromModelSettings(t *testing.T) {
 		`provider = "fake"`,
 		"",
 		"[model_settings.decision]",
-		"# enabled is no longer read; a leftover key must still load.",
 		"enabled = true",
 		`api_key = "ts-secret"`,
 		"min_confidence = 0.65",
@@ -86,7 +90,7 @@ func TestLoadConfigReadsDecisionModelFromModelSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadResolvedConfig() error = %v", err)
 	}
-	if !cfg.Decision.Enabled() || cfg.Decision.APIKey != "ts-secret" || cfg.Decision.MinConfidenceOrDefault() != 0.65 {
+	if !cfg.Decision.On() || cfg.Decision.APIKey != "ts-secret" || cfg.Decision.MinConfidenceOrDefault() != 0.65 {
 		t.Fatalf("decision config = %+v", cfg.Decision)
 	}
 	if cfg.Decision.ModelOrDefault() != defaultTypeSafeModel {

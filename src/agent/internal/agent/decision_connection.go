@@ -19,13 +19,14 @@ type DecisionModelTestResult struct {
 // RunDecisionModelTest sends one small text question with the candidate
 // settings, the way the Agent asks workflow decisions, and reports whether a
 // well-formed answer came back. An empty candidate key uses the saved one, as
-// the settings page never receives the saved key.
+// the settings page never receives the saved key. It works with the switch
+// off, so a key can be checked before turning the model on.
 func RunDecisionModelTest(ctx context.Context, cfg Config, candidate DecisionModelConfig) (DecisionModelTestResult, error) {
 	if strings.TrimSpace(candidate.APIKey) == "" {
 		candidate.APIKey = cfg.Decision.APIKey
 	}
 	result := DecisionModelTestResult{Provider: candidate.ProviderOrDefault(), Model: candidate.ModelOrDefault()}
-	if !candidate.Enabled() {
+	if strings.TrimSpace(candidate.APIKey) == "" {
 		return result, errors.New("decision.api_key is not set")
 	}
 	if err := candidate.validate(); err != nil {

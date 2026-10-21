@@ -183,10 +183,11 @@ model = "gpt-5.5"
 # Optional decision model: TypeSafe Jev ("typesafe") or OpenAI Luna ("openai").
 # It answers fixed-choice checks in deterministic workflows, asked together
 # with the main model; confident answers are used, the rest come from the main
-# model. Setting api_key turns it on; without a key it is off.
+# model. Off by default; enabling it requires an API key.
 # base_url and model default per provider (api.typesafe.ai/v1 + jev-preview,
 # or api.openai.com/v1 + gpt-6-luna).
 [model_settings.decision]
+# enabled = false
 # provider = "typesafe"
 # api_key = ""
 # base_url = "https://api.typesafe.ai/v1"

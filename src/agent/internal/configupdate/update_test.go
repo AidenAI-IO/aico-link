@@ -881,9 +881,16 @@ func TestUpdateConfigFileWritesDecisionModelUnderModelSettings(t *testing.T) {
 		t.Fatalf("decision response leaked or misreported the key: %+v", result.Config.Decision)
 	}
 
-	// A full GET payload reports has_api_key instead of the key; echoing it
-	// back must keep the saved key and write none of the reported defaults.
-	patch, err := json.Marshal(map[string]any{"config": map[string]any{"decision": result.Config.Decision}})
+	if result.Config.Decision.Enabled {
+		t.Fatal("saving a key must not turn the switch on")
+	}
+
+	// The page submits the switch on its own, and a full GET payload (which
+	// reports has_api_key instead of the key) must keep the saved key and
+	// write none of the reported defaults.
+	echoed := result.Config.Decision
+	echoed.Enabled = true
+	patch, err := json.Marshal(map[string]any{"config": map[string]any{"decision": echoed}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -891,7 +898,7 @@ func TestUpdateConfigFileWritesDecisionModelUnderModelSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.ChangedPaths) != 0 {
+	if strings.Join(result.ChangedPaths, ",") != "model_settings.decision.enabled" {
 		t.Fatalf("changed paths = %v", result.ChangedPaths)
 	}
 	got, err := os.ReadFile(path)
@@ -899,12 +906,12 @@ func TestUpdateConfigFileWritesDecisionModelUnderModelSettings(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(got)
-	for _, want := range []string{"[model_settings.decision]", `api_key = "ts-secret"`} {
+	for _, want := range []string{"[model_settings.decision]", `api_key = "ts-secret"`, "enabled = true"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("decision model config missing %q:\n%s", want, text)
 		}
 	}
-	for _, unwanted := range []string{"has_api_key", "enabled =", "base_url =", "min_confidence =", "mode =", "model ="} {
+	for _, unwanted := range []string{"has_api_key", "base_url =", "min_confidence =", "mode =", "model ="} {
 		if strings.Contains(text, unwanted) {
 			t.Fatalf("echoed defaults or status fields were written (%q):\n%s", unwanted, text)
 		}
@@ -913,18 +920,17 @@ func TestUpdateConfigFileWritesDecisionModelUnderModelSettings(t *testing.T) {
 
 func TestUpdateConfigFileSwitchesDecisionProviderAndClearsKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.toml")
-	source := "[model_settings.decision]\napi_key = \"ts-secret\"\nbase_url = \"https://ts.example/v1\"\nmodel = \"jev-1.14.0\"\n"
+	source := "[model_settings.decision]\nenabled = true\napi_key = \"ts-secret\"\nbase_url = \"https://ts.example/v1\"\nmodel = \"jev-1.14.0\"\n"
 	if err := os.WriteFile(path, []byte(source), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	// The page's provider switch: the key belongs to the old provider, and
-	// clearing it is what turns the decision model off.
-	result, err := NewService().Update(path, []byte(`{"config":{"decision":{"provider":"openai","api_key":"","base_url":null,"model":null}}}`))
+	// The page's provider switch: the key belongs to the old provider.
+	result, err := NewService().Update(path, []byte(`{"config":{"decision":{"provider":"openai","api_key":"","enabled":false,"base_url":null,"model":null}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := result.Config.Decision
-	if got.Provider != "openai" || got.HasAPIKey || got.BaseURL != "https://api.openai.com/v1" || got.Model != "gpt-6-luna" {
+	if got.Provider != "openai" || got.HasAPIKey || got.Enabled || got.BaseURL != "https://api.openai.com/v1" || got.Model != "gpt-6-luna" {
 		t.Fatalf("decision after switch = %+v", got)
 	}
 	data, err := os.ReadFile(path)
@@ -933,6 +939,24 @@ func TestUpdateConfigFileSwitchesDecisionProviderAndClearsKey(t *testing.T) {
 	}
 	if text := string(data); strings.Contains(text, "ts-secret") || strings.Contains(text, "ts.example") || strings.Contains(text, "jev-1.14.0") {
 		t.Fatalf("old provider settings survived the switch:\n%s", text)
+	}
+}
+
+func TestUpdateConfigFileRejectsEnablingDecisionModelWithoutKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_, err := NewService().Update(path, []byte(`{"config":{"decision":{"enabled":true}}}`))
+	if err == nil || !strings.Contains(err.Error(), "decision.api_key is required") {
+		t.Fatalf("enable without key error = %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(got) != 0 {
+		t.Fatalf("rejected decision update changed config:\n%s", got)
 	}
 }
 
