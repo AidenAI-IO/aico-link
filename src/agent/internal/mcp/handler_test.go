@@ -36,8 +36,17 @@ func (s *stubBackend) DeviceStatus(context.Context) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-func (s *stubBackend) SupportBundle(context.Context) (string, string, int, error) {
-	return "Z3ppcA==", "application/gzip", 4, nil // base64("gzip")
+func (s *stubBackend) SupportBundle(context.Context) (string, string, int, func(), error) {
+	return "Z3ppcA==", "application/gzip", 4, nil, nil // base64("gzip")
+}
+
+type releaseTrackingBundleBackend struct {
+	stubBackend
+	released *bool
+}
+
+func (s *releaseTrackingBundleBackend) SupportBundle(context.Context) (string, string, int, func(), error) {
+	return "Z3ppcA==", "application/gzip", 4, func() { *s.released = true }, nil
 }
 
 func postMCP(t *testing.T, h http.Handler, body any, origin string) *httptest.ResponseRecorder {
@@ -248,6 +257,37 @@ func TestSupportBundleEmbeddedResource(t *testing.T) {
 	}
 	if strings.Contains(body, "encoding=base64\n") {
 		t.Fatalf("should not put archive in text body: %s", body)
+	}
+}
+
+func TestSupportBundleReleasesSlotAfterWrite(t *testing.T) {
+	released := false
+	h := &Handler{Backend: &releaseTrackingBundleBackend{released: &released}}
+	rec := postMCP(t, h, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      8,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": "support_bundle", "arguments": map[string]any{}},
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !released {
+		t.Fatal("support_bundle slot release was not called after writeJSON")
+	}
+}
+
+func TestRequestBodyTooLarge(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	oversized := bytes.Repeat([]byte("a"), maxBodyBytes+1)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(oversized))
+	req.Host = "192.168.1.10:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status=%d want 413 body=%s", rec.Code, rec.Body.String())
 	}
 }
 

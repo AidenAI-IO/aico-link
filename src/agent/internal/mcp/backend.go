@@ -44,6 +44,9 @@ type Backend interface {
 	PhoneBridgeStatus(ctx context.Context) (any, error)
 	DeviceStatus(ctx context.Context) (any, error)
 	// SupportBundle returns a base64 blob under the backend concurrency cap
-	// (fetch + encode). bytes is the raw archive size before encoding.
-	SupportBundle(ctx context.Context) (blob string, mime string, bytes int, err error)
+	// (fetch + encode + response write). bytes is the raw archive size before
+	// encoding. On success, release must be called after the HTTP response is
+	// fully written so peak memory stays gated for slow clients. On error,
+	// release is nil (the slot is already freed).
+	SupportBundle(ctx context.Context) (blob string, mime string, bytes int, release func(), err error)
 }

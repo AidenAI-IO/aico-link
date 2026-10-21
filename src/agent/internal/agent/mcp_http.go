@@ -21,9 +21,9 @@ import (
 
 const defaultMCPConfigWebBase = "http://127.0.0.1"
 
-// Cap concurrent MCP support_bundle work (config-web fetch + base64 encode).
-// Reject extras instead of queueing so an unauthenticated flood cannot
-// multiply large Agent buffers.
+// Cap concurrent MCP support_bundle work (config-web fetch + base64 encode +
+// response write). Reject extras instead of queueing so an unauthenticated
+// flood cannot multiply large Agent buffers while slow clients drain.
 const maxMCPSupportBundleConcurrent = 1
 
 var (
@@ -205,47 +205,52 @@ func (b mcpServerBackend) DeviceStatus(ctx context.Context) (any, error) {
 	return payload, nil
 }
 
-func (b mcpServerBackend) SupportBundle(ctx context.Context) (string, string, int, error) {
+func (b mcpServerBackend) SupportBundle(ctx context.Context) (string, string, int, func(), error) {
 	select {
 	case mcpSupportBundleSlots <- struct{}{}:
-		defer func() { <-mcpSupportBundleSlots }()
 	default:
-		return "", "", 0, fmt.Errorf("support_bundle busy; try again later")
+		return "", "", 0, nil, fmt.Errorf("support_bundle busy; try again later")
+	}
+	release := func() { <-mcpSupportBundleSlots }
+	fail := func(err error) (string, string, int, func(), error) {
+		release()
+		return "", "", 0, nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return "", "", 0, err
+		return fail(err)
 	}
 	base, err := b.configWebBase()
 	if err != nil {
-		return "", "", 0, err
+		return fail(err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/api/logs/support", nil)
 	if err != nil {
-		return "", "", 0, err
+		return fail(err)
 	}
 	resp, err := mcpSupportBundleHTTPClient.Do(req)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("config-web support bundle: %w", err)
+		return fail(fmt.Errorf("config-web support bundle: %w", err))
 	}
 	defer resp.Body.Close()
 	const maxSupportBundleBytes = 32 << 20
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSupportBundleBytes+1))
 	if err != nil {
-		return "", "", 0, err
+		return fail(err)
 	}
 	if len(body) > maxSupportBundleBytes {
-		return "", "", 0, fmt.Errorf("config-web support bundle: exceeds %d byte limit", maxSupportBundleBytes)
+		return fail(fmt.Errorf("config-web support bundle: exceeds %d byte limit", maxSupportBundleBytes))
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", "", 0, fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fail(fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body))))
 	}
 	mime := resp.Header.Get("Content-Type")
 	if mime == "" {
 		mime = "application/gzip"
 	}
-	// Encode while still holding the slot so base64 peak memory stays gated.
+	// Encode while holding the slot; caller releases after writeJSON so slow
+	// readers cannot accumulate multiple large responses.
 	blob := base64.StdEncoding.EncodeToString(body)
-	return blob, mime, len(body), nil
+	return blob, mime, len(body), release, nil
 }
 
 func (b mcpServerBackend) configWebBase() (string, error) {

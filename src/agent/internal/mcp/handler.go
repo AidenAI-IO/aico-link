@@ -3,6 +3,7 @@ package mcp
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -38,13 +39,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes+1))
+	// MaxBytesReader closes the connection on overflow instead of letting
+	// net/http drain the remainder for keep-alive reuse.
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 		http.Error(w, "failed to read body", http.StatusBadRequest)
-		return
-	}
-	if len(body) > maxBodyBytes {
-		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -82,7 +87,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := h.dispatch(r, req)
+	resp, release := h.dispatch(r, req)
+	if release != nil {
+		defer release()
+	}
 	status := http.StatusOK
 	if resp.Error != nil && resp.Error.Code == errMethodNotFound {
 		// Spec: unknown RPC → HTTP 404 with JSON-RPC -32601.
@@ -91,23 +99,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, status, resp)
 }
 
-func (h *Handler) dispatch(r *http.Request, req jsonRPCRequest) jsonRPCResponse {
+func (h *Handler) dispatch(r *http.Request, req jsonRPCRequest) (jsonRPCResponse, func()) {
 	switch req.Method {
 	case "initialize":
-		return h.handleInitialize(req)
+		return h.handleInitialize(req), nil
 	case "server/discover":
-		return h.handleDiscover(req)
+		return h.handleDiscover(req), nil
 	case "ping":
-		return resultResponse(req.ID, map[string]any{})
+		return resultResponse(req.ID, map[string]any{}), nil
 	case "tools/list":
-		return h.handleToolsList(req)
+		return h.handleToolsList(req), nil
 	case "tools/call":
 		return h.handleToolsCall(r, req)
 	case "notifications/initialized", "notifications/cancelled":
 		// Should arrive as notifications (no id); if mis-sent as request, ack.
-		return resultResponse(req.ID, map[string]any{})
+		return resultResponse(req.ID, map[string]any{}), nil
 	default:
-		return errorResponse(req.ID, errMethodNotFound, "Method not found", nil)
+		return errorResponse(req.ID, errMethodNotFound, "Method not found", nil), nil
 	}
 }
 
@@ -184,9 +192,9 @@ func (h *Handler) handleToolsList(req jsonRPCRequest) jsonRPCResponse {
 	})
 }
 
-func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCResponse {
+func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCResponse, func()) {
 	if h.Backend == nil {
-		return errorResponse(req.ID, errInternal, "mcp backend unavailable", nil)
+		return errorResponse(req.ID, errInternal, "mcp backend unavailable", nil), nil
 	}
 	type callParams struct {
 		Name      string          `json:"name"`
@@ -194,23 +202,23 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 	}
 	params, err := decodeParams[callParams](req.Params)
 	if err != nil {
-		return errorResponse(req.ID, errInvalidParams, err.Error(), nil)
+		return errorResponse(req.ID, errInvalidParams, err.Error(), nil), nil
 	}
 	name := strings.TrimSpace(params.Name)
 	if name == "" {
-		return errorResponse(req.ID, errInvalidParams, "tool name required", nil)
+		return errorResponse(req.ID, errInvalidParams, "tool name required", nil), nil
 	}
 	if name == "shell" && !h.Backend.ShellEnabled() {
 		return resultResponse(req.ID, CallResult{
 			IsError: true,
 			Content: []ContentBlock{{Type: "text", Text: "shell is disabled (mcp_shell_enabled=false)"}},
-		})
+		}), nil
 	}
 	if !isRuntimeTool(name) && !isStatusTool(name) {
 		return resultResponse(req.ID, CallResult{
 			IsError: true,
 			Content: []ContentBlock{{Type: "text", Text: "tool not in MCP allowlist: " + name}},
-		})
+		}), nil
 	}
 
 	ctx := r.Context()
@@ -221,38 +229,40 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
 				Content: []ContentBlock{{Type: "text", Text: callErr.Error()}},
-			})
+			}), nil
 		}
-		return resultResponse(req.ID, result)
+		return resultResponse(req.ID, result), nil
 	case name == toolPhoneBridgeStatus:
 		status, statusErr := h.Backend.PhoneBridgeStatus(ctx)
 		if statusErr != nil {
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
 				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
-			})
+			}), nil
 		}
-		return resultResponse(req.ID, jsonResult(status))
+		return resultResponse(req.ID, jsonResult(status)), nil
 	case name == toolDeviceStatus:
 		status, statusErr := h.Backend.DeviceStatus(ctx)
 		if statusErr != nil {
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
 				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
-			})
+			}), nil
 		}
-		return resultResponse(req.ID, jsonResult(status))
+		return resultResponse(req.ID, jsonResult(status)), nil
 	case name == toolSupportBundle:
-		blob, mime, rawBytes, bundleErr := h.Backend.SupportBundle(ctx)
+		blob, mime, rawBytes, release, bundleErr := h.Backend.SupportBundle(ctx)
 		if bundleErr != nil {
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
 				Content: []ContentBlock{{Type: "text", Text: "support_bundle failed"}},
-			})
+			}), nil
 		}
 		if mime == "" {
 			mime = "application/gzip"
 		}
+		// Hold the backend slot through writeJSON so slow readers cannot
+		// accumulate multiple large base64 responses after fetch completes.
 		return resultResponse(req.ID, CallResult{
 			Content: []ContentBlock{
 				{Type: "text", Text: fmt.Sprintf("support_bundle mime=%s bytes=%d", mime, rawBytes)},
@@ -265,9 +275,9 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 					},
 				},
 			},
-		})
+		}), release
 	default:
-		return errorResponse(req.ID, errInternal, "unhandled tool", nil)
+		return errorResponse(req.ID, errInternal, "unhandled tool", nil), nil
 	}
 }
 
