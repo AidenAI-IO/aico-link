@@ -81,9 +81,10 @@ func validateModernHeaders(r *http.Request, req jsonRPCRequest) *headerValidatio
 			Message: "Header mismatch: missing MCP-Protocol-Version",
 		}
 	}
-	// Body _meta is optional: Streamable HTTP requires the version header on
-	// every POST, not a duplicate in params._meta. When _meta is present it
-	// must match the header.
+	// Spec 2026-07-28 marks per-request params._meta protocolVersion and
+	// clientCapabilities as required on modern requests. This endpoint also
+	// accepts header-only modern traffic (no body _meta) for simpler device
+	// clients; when body _meta is present it must still match the header.
 	if bodyVersion != "" && headerVersion != bodyVersion {
 		return &headerValidationError{
 			Code:    errHeaderMismatch,

@@ -14,6 +14,7 @@ type ToolInfo struct {
 
 // CallResult is the MCP tools/call payload (legacy-compatible content list).
 type CallResult struct {
+	ResultType        string         `json:"resultType,omitempty"`
 	Content           []ContentBlock `json:"content"`
 	StructuredContent any            `json:"structuredContent,omitempty"`
 	IsError           bool           `json:"isError,omitempty"`

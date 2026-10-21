@@ -69,7 +69,26 @@ func errorResponse(id json.RawMessage, code int, message string, data any) jsonR
 }
 
 func resultResponse(id json.RawMessage, result any) jsonRPCResponse {
-	return jsonRPCResponse{JSONRPC: jsonRPCVersion, ID: normalizeResponseID(id), Result: result}
+	return jsonRPCResponse{JSONRPC: jsonRPCVersion, ID: normalizeResponseID(id), Result: withResultType(result)}
+}
+
+// withResultType stamps resultType=complete for 2026-07-28 Result objects.
+// Older clients treat a missing resultType as complete; advertising 2026 requires it.
+func withResultType(result any) any {
+	switch v := result.(type) {
+	case map[string]any:
+		if _, ok := v["resultType"]; !ok {
+			v["resultType"] = "complete"
+		}
+		return v
+	case CallResult:
+		if v.ResultType == "" {
+			v.ResultType = "complete"
+		}
+		return v
+	default:
+		return result
+	}
 }
 
 func decodeParams[T any](raw json.RawMessage) (T, error) {
@@ -96,8 +115,11 @@ func preferLegacyProtocol(requested string) string {
 	if protocolSupported(requested) {
 		return requested
 	}
-	// Accept single-request clients that still send older version strings, but
-	// do not advertise those revisions (they implied JSON-RPC batch support).
+	// Deliberate compatibility choice for initialize only: unknown or older
+	// initialize version strings (including 2025-03-26 / 2024-11-05) negotiate
+	// to 2025-11-25. Wire shape for our single-POST JSON-RPC tools is the same
+	// across those legacy revisions; we do not advertise the older strings in
+	// server/discover because they historically implied JSON-RPC batching.
 	switch requested {
 	case protocolLegacy03, protocolLegacy24:
 		return protocolLegacy25

@@ -29,7 +29,7 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
-When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release; use a trusted LAN/USB link or turn the switch off.
+When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release; use a trusted LAN/USB link or turn the switch off. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port (also unauthenticated in this release).
 
 ## Allowlist
 
@@ -51,13 +51,14 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 | `device_status` | config-web `GET /api/device/status` |
 | `support_bundle` | config-web `GET /api/logs/support` (embedded resource blob; one in-flight call at a time, extras rejected) |
 
-Use MCP `tools/list` for discovery. Do not expect a separate `list_tools` tool. `GET /health` is not exposed over MCP.
+Use MCP `tools/list` for tool discovery. `server/discover` returns a 2026-07-28 `DiscoverResult` (`supportedVersions`, `resultType`, `serverInfo` under `_meta`). Do not expect a separate `list_tools` tool. `GET /health` is not exposed over MCP.
 
 ## Transport notes (2026-07-28 Streamable HTTP)
 
-- Dual-era: clients may send `MCP-Protocol-Version` alone (including `2026-07-28`) without `params._meta`; `tools/list` / `ping` work on that path.
+- Dual-era: clients may send `MCP-Protocol-Version` alone (including `2026-07-28`) without `params._meta`; `tools/list` / `ping` work on that path. Spec-required body `_meta` fields are enforced when present; header-only modern traffic is accepted for simpler device clients.
 - Strict modern checks apply when `params._meta` carries `2026-07-28` or the client sends `Mcp-Method`: then `MCP-Protocol-Version` is required, `Mcp-Method` must match the body method, and (for `tools/call`) `Mcp-Name` must match. If `params._meta` includes a protocol version it must match the header. Mismatches return HTTP 400 with JSON-RPC `-32020`.
-- Advertised protocol versions are `2026-07-28` and `2025-11-25`. Older Streamable HTTP version strings are accepted on initialize but mapped to `2025-11-25`.
+- Advertised protocol versions (`server/discover` `supportedVersions` and initialize) are `2026-07-28` and `2025-11-25`. On `initialize`, older or unrecognized version strings (for example `2025-03-26`) are deliberately negotiated to `2025-11-25` because this endpoint's single-POST JSON-RPC tool wire shape matches across those legacy revisions; older strings are not advertised because they historically implied JSON-RPC batching.
+- Successful JSON-RPC results include `resultType: "complete"` (required when advertising `2026-07-28`).
 - JSON-RPC batch arrays are not supported (single request object per POST); batch bodies return HTTP 400.
 - Unknown methods return HTTP 404 with JSON-RPC `-32601`.
 - Responses are `application/json` (SSE streams not used yet). No `subscriptions/listen` / MRTR in this release.

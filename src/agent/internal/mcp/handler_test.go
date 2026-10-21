@@ -240,6 +240,70 @@ func TestParseErrorIncludesNullID(t *testing.T) {
 	}
 }
 
+func TestServerDiscoverShape(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	rec := postMCP(t, h, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      3,
+		"method":  "server/discover",
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Result["resultType"] != "complete" {
+		t.Fatalf("resultType=%v", envelope.Result["resultType"])
+	}
+	if _, ok := envelope.Result["supportedVersions"]; !ok {
+		t.Fatalf("missing supportedVersions: %v", envelope.Result)
+	}
+	if _, ok := envelope.Result["protocolVersions"]; ok {
+		t.Fatalf("legacy protocolVersions key must not be present: %v", envelope.Result)
+	}
+	meta, _ := envelope.Result["_meta"].(map[string]any)
+	info, _ := meta["io.modelcontextprotocol/serverInfo"].(map[string]any)
+	if info["name"] != "aiden-agent" {
+		t.Fatalf("serverInfo=%v", info)
+	}
+	if _, ok := envelope.Result["serverInfo"]; ok {
+		t.Fatalf("top-level serverInfo must not be present: %v", envelope.Result)
+	}
+}
+
+func TestInitializeNegotiatesUnknownVersionToLegacy25(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	rec := postMCP(t, h, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]any{},
+			"clientInfo":      map[string]any{"name": "t", "version": "0"},
+		},
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var envelope struct {
+		Result map[string]any `json:"result"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Result["protocolVersion"] != protocolLegacy25 {
+		t.Fatalf("protocolVersion=%v want %s", envelope.Result["protocolVersion"], protocolLegacy25)
+	}
+	if envelope.Result["resultType"] != "complete" {
+		t.Fatalf("resultType=%v", envelope.Result["resultType"])
+	}
+}
+
 func TestSupportBundleEmbeddedResource(t *testing.T) {
 	h := &Handler{Backend: &stubBackend{}}
 	rec := postMCP(t, h, map[string]any{

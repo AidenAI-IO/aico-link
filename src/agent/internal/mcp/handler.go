@@ -143,15 +143,21 @@ func (h *Handler) handleInitialize(req jsonRPCRequest) jsonRPCResponse {
 }
 
 func (h *Handler) handleDiscover(req jsonRPCRequest) jsonRPCResponse {
+	// 2026-07-28 DiscoverResult: supportedVersions + serverInfo under _meta.
 	return resultResponse(req.ID, map[string]any{
-		"protocolVersions": supportedProtocolVersions,
+		"resultType":        "complete",
+		"supportedVersions": supportedProtocolVersions,
 		"capabilities": map[string]any{
 			"tools": map[string]any{},
 		},
-		"serverInfo": map[string]any{
-			"name":    serverName,
-			"version": serverVersion,
+		"_meta": map[string]any{
+			"io.modelcontextprotocol/serverInfo": map[string]any{
+				"name":    serverName,
+				"version": serverVersion,
+			},
 		},
+		"ttlMs":      int64(3600000),
+		"cacheScope": "public",
 	})
 }
 
