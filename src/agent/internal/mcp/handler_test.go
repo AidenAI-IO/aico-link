@@ -268,6 +268,57 @@ func TestModernHeadersRequired(t *testing.T) {
 	}
 }
 
+func TestModernProtocolVersionHeaderOnlyToolsList(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{
+		tools: map[string]ToolInfo{"screenshot": {Name: "screenshot", InputSchema: map[string]any{"type": "object"}}},
+	}}
+	raw, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/list",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	req.Host = "192.168.1.10:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(headerProtocolVersion, protocolModern)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"screenshot"`) {
+		t.Fatalf("body=%s", rec.Body.String())
+	}
+}
+
+func TestModernHeadersWithoutBodyMetaToolsCall(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{
+		tools: map[string]ToolInfo{"screenshot": {Name: "screenshot", InputSchema: map[string]any{"type": "object"}}},
+	}}
+	raw, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "screenshot",
+			"arguments": map[string]any{},
+		},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	req.Host = "192.168.1.10:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set(headerProtocolVersion, protocolModern)
+	req.Header.Set(headerMethod, "tools/call")
+	req.Header.Set(headerName, "screenshot")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "ok:screenshot") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestLegacyProtocolVersionHeaderSkipsModernValidation(t *testing.T) {
 	h := &Handler{Backend: &stubBackend{
 		tools: map[string]ToolInfo{"screenshot": {Name: "screenshot", InputSchema: map[string]any{"type": "object"}}},

@@ -55,8 +55,9 @@ Use MCP `tools/list` for discovery. Do not expect a separate `list_tools` tool. 
 
 ## Transport notes (2026-07-28 Streamable HTTP)
 
-- Dual-era: legacy clients may use `initialize` and older `MCP-Protocol-Version` values (`2025-*`) without `params._meta`.
-- Modern (`2026-07-28`) clients must send `MCP-Protocol-Version`, `Mcp-Method`, and (for `tools/call`) `Mcp-Name`, matching `params._meta` / body fields. Mismatches return HTTP 400 with JSON-RPC `-32020`.
+- Dual-era: clients may send `MCP-Protocol-Version` alone (including `2026-07-28`) without `params._meta`; `tools/list` / `ping` work on that path.
+- Strict modern checks apply when `params._meta` carries `2026-07-28` or the client sends `Mcp-Method`: then `MCP-Protocol-Version` is required, `Mcp-Method` must match the body method, and (for `tools/call`) `Mcp-Name` must match. If `params._meta` includes a protocol version it must match the header. Mismatches return HTTP 400 with JSON-RPC `-32020`.
+- JSON-RPC batch arrays are not supported (single request object per POST).
 - Unknown methods return HTTP 404 with JSON-RPC `-32601`.
 - Responses are `application/json` (SSE streams not used yet). No `subscriptions/listen` / MRTR in this release.
 

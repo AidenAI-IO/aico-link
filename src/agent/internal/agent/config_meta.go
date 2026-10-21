@@ -783,14 +783,8 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "mcp_enabled", Label: "MCP", Widget: WidgetBoolean,
 						Help:    "When on, Agent tools can be used over MCP.",
 						Default: defaults.MCPEnabledOrDefault()},
-					{Key: "mcp_shell_enabled", Label: "MCP shell", Widget: WidgetBoolean,
-						Help:     "When on, the MCP allowlist includes the shell tool. TOML-only in this release.",
-						Default:  defaults.MCPShellEnabledOrDefault(),
-						Advanced: true},
-					{Key: "mcp_config_web_base_url", Label: "MCP config-web base URL", Widget: WidgetText,
-						Help:     "Loopback HTTP base URL used by MCP device_status / support_bundle.",
-						Default:  "http://127.0.0.1",
-						Advanced: true},
+					// mcp_shell_enabled and mcp_config_web_base_url stay TOML-only
+					// (not in configupdate.Agent / Config Web widgets) this release.
 					{Key: "vad_backend", Widget: WidgetSelect,
 						Enum:        enumOptions(defaultVADBackend, "cpu"),
 						Default:     defaults.VADBackend,

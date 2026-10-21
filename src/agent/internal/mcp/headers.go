@@ -37,12 +37,20 @@ type headerValidationError struct {
 func (e *headerValidationError) Error() string { return e.Message }
 
 // isModernRequest is true only for 2026-07-28 per-request-metadata traffic.
-// Older Streamable HTTP clients may send MCP-Protocol-Version (e.g. 2025-03-26)
-// without params._meta; those stay on the legacy path after initialize.
+// A bare MCP-Protocol-Version: 2026-07-28 header (no params._meta / Mcp-Method)
+// stays on the legacy path so conforming clients can call tools/list and ping
+// without inventing body metadata. Strict validation runs when the body carries
+// modern _meta, or when the client opts in with Mcp-Method.
 func isModernRequest(r *http.Request, req jsonRPCRequest) bool {
-	headerVersion := strings.TrimSpace(r.Header.Get(headerProtocolVersion))
 	bodyVersion, _, _ := extractBodyMeta(req)
-	return headerVersion == protocolModern || bodyVersion == protocolModern
+	if bodyVersion == protocolModern {
+		return true
+	}
+	headerVersion := strings.TrimSpace(r.Header.Get(headerProtocolVersion))
+	if headerVersion == protocolModern && strings.TrimSpace(r.Header.Get(headerMethod)) != "" {
+		return true
+	}
+	return false
 }
 
 func extractBodyMeta(req jsonRPCRequest) (protocolVersion, name, uri string) {
@@ -73,13 +81,10 @@ func validateModernHeaders(r *http.Request, req jsonRPCRequest) *headerValidatio
 			Message: "Header mismatch: missing MCP-Protocol-Version",
 		}
 	}
-	if bodyVersion == "" {
-		return &headerValidationError{
-			Code:    errHeaderMismatch,
-			Message: "Header mismatch: missing params._meta.io.modelcontextprotocol/protocolVersion",
-		}
-	}
-	if headerVersion != bodyVersion {
+	// Body _meta is optional: Streamable HTTP requires the version header on
+	// every POST, not a duplicate in params._meta. When _meta is present it
+	// must match the header.
+	if bodyVersion != "" && headerVersion != bodyVersion {
 		return &headerValidationError{
 			Code:    errHeaderMismatch,
 			Message: fmt.Sprintf("Header mismatch: MCP-Protocol-Version %q does not match body %q", headerVersion, bodyVersion),
