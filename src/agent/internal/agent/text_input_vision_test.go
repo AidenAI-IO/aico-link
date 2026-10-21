@@ -256,6 +256,28 @@ func TestAnalyzeScreenRetriesFormatEchoWithFeedback(t *testing.T) {
 	}
 }
 
+func TestVisionDecisionJSONRetriesMalformedJSON(t *testing.T) {
+	model := &textInputVisionRecordingModel{contents: []string{
+		`{"found": true, "tap_point": {"x": 170, "y": 175}}}`,
+		`{"found": true, "tap_point": {"x": 170, "y": 175}}`,
+	}}
+	vision := &llmTextInputVision{models: model}
+	raw, err := vision.visionDecisionJSON(context.Background(), "app_search", "find", []string{"found"}, screenshotResult{Data: "ZmFrZQ=="})
+	if err != nil || model.calls != 2 || !json.Valid([]byte(raw)) {
+		t.Fatalf("raw=%s calls=%d err=%v", raw, model.calls, err)
+	}
+	retry := fmt.Sprint(model.messages[1][1].Parts[0])
+	if !strings.Contains(retry, "not valid JSON") {
+		t.Fatalf("retry prompt lacks validation feedback: %s", retry)
+	}
+
+	model = &textInputVisionRecordingModel{content: `{"found": true}}`}
+	vision = &llmTextInputVision{models: model}
+	if _, err := vision.visionDecisionJSON(context.Background(), "app_search", "find", []string{"found"}, screenshotResult{Data: "ZmFrZQ=="}); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("repeated malformed JSON err = %v", err)
+	}
+}
+
 func TestAnalyzeScreenRejectsRepeatedFormatEcho(t *testing.T) {
 	model := &textInputVisionRecordingModel{content: `{"type": "json_object"}`}
 	vision := &llmTextInputVision{models: model}
