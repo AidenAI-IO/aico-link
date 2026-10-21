@@ -53,9 +53,11 @@ func (b mcpServerBackend) ShellEnabled() bool {
 }
 
 func (b mcpServerBackend) DescribeRuntimeTool(name string) (mcp.ToolInfo, bool) {
-	if b.server == nil {
+	if b.server == nil || b.server.runtime == nil {
 		return mcp.ToolInfo{}, false
 	}
+	b.server.runtime.configOperations.RLock()
+	defer b.server.runtime.configOperations.RUnlock()
 	spec, ok := b.server.lookupOwnedToolSpec(name)
 	if !ok {
 		return mcp.ToolInfo{}, false
@@ -73,9 +75,13 @@ func (b mcpServerBackend) DescribeRuntimeTool(name string) (mcp.ToolInfo, bool) 
 }
 
 func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, arguments json.RawMessage) (mcp.CallResult, error) {
-	if b.server == nil {
+	if b.server == nil || b.server.runtime == nil {
 		return mcp.CallResult{}, fmt.Errorf("server unavailable")
 	}
+	// Hold configOperations only for runtime tool lookup/execution — not for
+	// device_status / support_bundle, which share the /mcp HTTP handler.
+	b.server.runtime.configOperations.RLock()
+	defer b.server.runtime.configOperations.RUnlock()
 	spec, ok := b.server.lookupOwnedToolSpec(name)
 	if !ok {
 		return mcp.CallResult{
@@ -215,8 +221,7 @@ func (b mcpServerBackend) SupportBundle(ctx context.Context) (string, string, in
 	case mcpSupportBundleSlots <- struct{}{}:
 	default:
 		logging.Warnf("agent", "mcp", "support_bundle busy")
-		// Client-visible and actionable; distinct from scrubbed failures below.
-		return "", "", 0, nil, fmt.Errorf("support_bundle busy; try again later")
+		return "", "", 0, nil, mcp.ErrSupportBundleBusy
 	}
 	release := func() { <-mcpSupportBundleSlots }
 	fail := func(err error) (string, string, int, func(), error) {

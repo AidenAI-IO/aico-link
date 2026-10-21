@@ -253,10 +253,13 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 	case name == toolSupportBundle:
 		blob, mime, rawBytes, release, bundleErr := h.Backend.SupportBundle(ctx)
 		if bundleErr != nil {
-			// Backend returns only client-safe text (busy hint or scrubbed failure).
+			msg := "support_bundle failed"
+			if errors.Is(bundleErr, ErrSupportBundleBusy) {
+				msg = ErrSupportBundleBusy.Error()
+			}
 			return resultResponse(req.ID, CallResult{
 				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: bundleErr.Error()}},
+				Content: []ContentBlock{{Type: "text", Text: msg}},
 			}), nil
 		}
 		if mime == "" {

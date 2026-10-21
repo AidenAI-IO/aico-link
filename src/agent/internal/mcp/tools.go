@@ -1,5 +1,11 @@
 package mcp
 
+import "errors"
+
+// ErrSupportBundleBusy is returned when another support_bundle call holds the
+// concurrency slot. It is safe to surface to unauthenticated MCP clients.
+var ErrSupportBundleBusy = errors.New("support_bundle busy; try again later")
+
 // Runtime tool names that map 1:1 to Agent HTTP tools.
 var runtimeToolNames = []string{
 	"screenshot",

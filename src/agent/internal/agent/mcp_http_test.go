@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"aiden-agent/internal/mcp"
 )
 
 func TestMCPDisabledReturnsNotFound(t *testing.T) {
@@ -110,8 +113,8 @@ func TestSupportBundleRejectsWhenBusy(t *testing.T) {
 	if release != nil {
 		t.Fatal("release should be nil when busy")
 	}
-	if err == nil || err.Error() != "support_bundle busy; try again later" {
-		t.Fatalf("err=%v want busy hint", err)
+	if err == nil || !errors.Is(err, mcp.ErrSupportBundleBusy) {
+		t.Fatalf("err=%v want ErrSupportBundleBusy", err)
 	}
 }
 

@@ -601,7 +601,10 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
-		if s.runtime != nil && (r.URL.Path == "/mcp" || strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
+		// /mcp is intentionally omitted: long support_bundle/device_status calls must
+		// not hold configOperations for the whole request. Runtime tool paths take
+		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
+		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
 		}
