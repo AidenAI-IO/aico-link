@@ -49,7 +49,7 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 | `bridge_clipboard` | `POST /api/tools/bridge_clipboard` |
 | `shell` | `POST /api/tools/shell` (gated) |
 | `device_status` | config-web `GET /api/device/status` |
-| `support_bundle` | config-web `GET /api/logs/support` (embedded resource blob) |
+| `support_bundle` | config-web `GET /api/logs/support` (embedded resource blob; one in-flight call at a time, extras rejected) |
 
 Use MCP `tools/list` for discovery. Do not expect a separate `list_tools` tool. `GET /health` is not exposed over MCP.
 

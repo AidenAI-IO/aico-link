@@ -19,7 +19,16 @@ import (
 
 const defaultMCPConfigWebBase = "http://127.0.0.1"
 
-var mcpConfigWebHTTPClient = &http.Client{Timeout: 30 * time.Second}
+// Cap concurrent MCP support_bundle fetches. Each call can retain tens of MiB
+// in Agent buffers (plus config-web archive work); reject extras instead of
+// queueing so an unauthenticated flood cannot multiply memory use.
+const maxMCPSupportBundleConcurrent = 1
+
+var (
+	mcpConfigWebHTTPClient     = &http.Client{Timeout: 30 * time.Second}
+	mcpSupportBundleHTTPClient = &http.Client{Timeout: 2 * time.Minute}
+	mcpSupportBundleSlots      = make(chan struct{}, maxMCPSupportBundleConcurrent)
+)
 
 func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	if s.runtime == nil || !s.runtime.ConfigSnapshot().MCPEnabledOrDefault() {
@@ -189,6 +198,15 @@ func (b mcpServerBackend) DeviceStatus(ctx context.Context) (any, error) {
 }
 
 func (b mcpServerBackend) SupportBundle(ctx context.Context) ([]byte, string, error) {
+	select {
+	case mcpSupportBundleSlots <- struct{}{}:
+		defer func() { <-mcpSupportBundleSlots }()
+	default:
+		return nil, "", fmt.Errorf("support_bundle busy; try again later")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, "", err
+	}
 	base, err := b.configWebBase()
 	if err != nil {
 		return nil, "", err
@@ -197,8 +215,7 @@ func (b mcpServerBackend) SupportBundle(ctx context.Context) ([]byte, string, er
 	if err != nil {
 		return nil, "", err
 	}
-	client := &http.Client{Timeout: 2 * time.Minute}
-	resp, err := client.Do(req)
+	resp, err := mcpSupportBundleHTTPClient.Do(req)
 	if err != nil {
 		return nil, "", fmt.Errorf("config-web support bundle: %w", err)
 	}

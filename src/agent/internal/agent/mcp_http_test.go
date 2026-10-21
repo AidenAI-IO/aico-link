@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -97,5 +99,15 @@ func TestMCPContentFromToolOutputPlainText(t *testing.T) {
 	blocks := mcpContentFromToolOutput("not-json")
 	if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "not-json" {
 		t.Fatalf("blocks=%+v", blocks)
+	}
+}
+
+func TestSupportBundleRejectsWhenBusy(t *testing.T) {
+	mcpSupportBundleSlots <- struct{}{}
+	t.Cleanup(func() { <-mcpSupportBundleSlots })
+
+	_, _, err := (mcpServerBackend{}).SupportBundle(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "busy") {
+		t.Fatalf("err=%v want busy", err)
 	}
 }
