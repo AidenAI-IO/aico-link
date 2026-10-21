@@ -201,6 +201,16 @@ The Agent associates cached phone screen dimensions with
 dimensions while the same USB HID session remains attached. A physical USB
 disconnect invalidates the cache before a new host session can reuse it.
 
+Screenshots also fall back to `phone_screen.json` in the Agent config
+directory when no live report exists, for example after an Agent restart while
+the app is closed. It holds the last reported dimensions with the capture frame
+size they cropped, or, without any report, the aspect ratio learned from a
+black-border crop whose cut edges show screen content rather than near-black
+pixels. The entry applies only to the same device type and frame size, so a
+near-black page still crops to the phone's aspect ratio instead of into the
+page. Every 20th capture that uses the entry also detects again, so a
+different phone with a verified crop of another aspect ratio replaces it.
+
 When `app_state=background|inactive`, `return_entry=dynamic_island`,
 `return_entry_available=true`, and PiP Bridge mode is not enabled, `open_url`
 and bridge data tools can click the Aiden App Dynamic Island entry, wait for Phone

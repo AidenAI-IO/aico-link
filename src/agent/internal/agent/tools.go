@@ -378,6 +378,9 @@ func (s *ToolSet) UpdateDeviceEnvironment(env *PhoneEnvironment) {
 		return
 	}
 	s.screen.UpdatePhoneScreenInfo(env.Screen)
+	if fallback := s.screen.PhoneScreenFallback(); fallback != nil {
+		fallback.Remember(env.Screen, 0, 0)
+	}
 }
 
 // RegisterMemoryTools wires the memory recall/write tools. configDir locates the
