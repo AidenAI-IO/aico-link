@@ -222,21 +222,11 @@ func TestSoftwarePoweroffWaitsForStateResponse(t *testing.T) {
 	if f := next(); f.Command != RVReady {
 		t.Fatal(f)
 	}
-	path := filepath.Join(t.TempDir(), "mcu.sock")
-	server, err := Listen(path, s)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer server.Close()
-	client := Client{Socket: path}
-	state, err := client.GetState(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	state := s.State()
 	for range 2 {
-		result, err := client.Poweroff(ctx, state.Generation, "software-off")
-		if err != nil || result.RVState != "shutting_down" {
-			t.Fatalf("poweroff result: %+v %v", result, err)
+		result := s.Handle(ctx, Request{Op: "poweroff", Generation: state.Generation, RequestID: "software-off"})
+		if result.Status != "OK" || result.State.RVState != "shutting_down" {
+			t.Fatalf("poweroff result: %+v", result)
 		}
 	}
 	shutdown.mu.Lock()

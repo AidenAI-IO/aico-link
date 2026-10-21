@@ -126,6 +126,10 @@ func (u *UDSServer) serve(ctx context.Context, c net.Conn) {
 		_ = writeMessage(c, errorResponse(err))
 		return
 	}
+	if r.Op == "poweroff" && !poweroffPeerIsRoot(c) {
+		_ = writeMessage(c, errorResponse(&APIError{Status: "DENIED", Message: "poweroff requires a root peer"}))
+		return
+	}
 	wait := r.WaitMS
 	if wait < 0 || wait > 25000 {
 		wait = 0

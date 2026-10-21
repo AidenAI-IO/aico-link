@@ -35,7 +35,7 @@ The Go client is in `src/agent/internal/mcu/uds.go`.
 | `events_since` | `GET /api/mcu/events` | `since`, `generation`, `limit`, `wait_ms`; event page |
 | `get_led` | `GET /api/mcu/leds/red` or `/white` | `led`: requested/effective mode, timings, remaining lease, output and priority reason |
 | `set_led` | `PUT /api/mcu/leds/red` or `/white` | `mode`, `on_ms`, `off_ms`, `lease_s`; returns `led` |
-| `poweroff` | Local UDS/CLI only | `generation`, `request_id`; returns accepted `shutting_down` state |
+| `poweroff` | Root-only local UDS/CLI | `generation`, `request_id`; returns accepted `shutting_down` state |
 
 For UDS LED requests also supply `led: "red"` or `"white"`. HTTP derives the
 LED and operation from the path. All successful responses have `status: "OK"`.
@@ -173,7 +173,10 @@ sudo /usr/lib/aiden/mcu_service poweroff
 ```
 
 The CLI queries the current service generation and submits an idempotent UDS
-`poweroff` operation. The daemon persists current-boot intent, enters
+`poweroff` operation. The daemon checks Linux `SO_PEERCRED` and accepts this
+operation only from UID 0; ordinary `aiden` group clients receive `DENIED`.
+Credential lookup failures also deny access. Poweroff has no HTTP endpoint.
+The daemon persists current-boot intent, enters
 SHUTTING_DOWN, closes event waits and stops application UART requests. It waits
 for the MCU's next GET_STATE probe (normally within five seconds), then schedules
 Linux poweroff after writing the SHUTTING_DOWN response. The final shutdown hook

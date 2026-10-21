@@ -8,12 +8,103 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"golang.org/x/sys/unix"
 )
+
+func TestUDSPoweroffPeerCredentials(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	assertDenied := func(client Client) {
+		t.Helper()
+		state, err := client.GetState(ctx)
+		if err != nil {
+			t.Fatal("ordinary queries must remain available", err)
+		}
+		response, err := client.Do(ctx, Request{Op: "poweroff", Generation: state.Generation, RequestID: "peer-test"})
+		if err == nil || response.Status != "DENIED" || response.UnknownOutcome {
+			t.Fatalf("unprivileged poweroff: %+v %v", response, err)
+		}
+	}
+	if socket := os.Getenv("AIDEN_MCU_PEER_TEST_SOCKET"); socket != "" {
+		if os.Geteuid() == 0 {
+			t.Fatal("test client did not drop root privileges")
+		}
+		assertDenied(Client{Socket: socket})
+		return
+	}
+	dir, err := os.MkdirTemp("/tmp", "mcu-peer-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	shutdown := &fakeShutdown{}
+	s := NewService(shutdown)
+	defer s.Close()
+	s.link = &fakeRequester{}
+	s.state = Ready
+	socket := filepath.Join(dir, "mcu.sock")
+	server, err := Listen(socket, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	client := Client{Socket: socket}
+	if os.Geteuid() != 0 {
+		assertDenied(client)
+	} else {
+		// Give the child access to the socket and executable so rejection proves
+		// peer authentication rather than a filesystem permission failure.
+		if err := os.Chmod(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(socket, 0666); err != nil {
+			t.Fatal(err)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			t.Fatal(err)
+		}
+		binary, err := os.ReadFile(executable)
+		if err != nil {
+			t.Fatal(err)
+		}
+		childPath := filepath.Join(dir, "peer.test")
+		if err := os.WriteFile(childPath, binary, 0755); err != nil {
+			t.Fatal(err)
+		}
+		child := exec.CommandContext(ctx, childPath, "-test.run=^TestUDSPoweroffPeerCredentials$", "-test.v")
+		child.Env = append(os.Environ(), "AIDEN_MCU_PEER_TEST_SOCKET="+socket)
+		child.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+		if output, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("unprivileged client: %v\n%s", err, output)
+		}
+	}
+	shutdown.mu.Lock()
+	begins, commits := shutdown.begins, shutdown.commits
+	shutdown.mu.Unlock()
+	if begins != 0 || commits != 0 || s.State().RVState != "ready" {
+		t.Fatal("denied poweroff changed lifecycle")
+	}
+	if os.Geteuid() == 0 {
+		for range 2 {
+			state, err := client.Poweroff(ctx, s.events.Generation(), "peer-test")
+			if err != nil || state.RVState != "shutting_down" {
+				t.Fatalf("root poweroff: %+v %v", state, err)
+			}
+		}
+		shutdown.mu.Lock()
+		defer shutdown.mu.Unlock()
+		if shutdown.begins != 1 || shutdown.commits != 0 {
+			t.Fatal("root poweroff did not preserve lifecycle ordering and idempotency")
+		}
+	}
+}
 
 func TestLinuxSerialPTY(t *testing.T) {
 	fd, err := unix.Open("/dev/ptmx", unix.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK|unix.O_CLOEXEC, 0)
