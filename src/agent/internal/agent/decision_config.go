@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"strings"
 )
@@ -101,7 +102,7 @@ func (c DecisionModelConfig) validate() error {
 	if provider := c.ProviderOrDefault(); provider != DecisionProviderTypeSafe && provider != DecisionProviderOpenAI {
 		return fmt.Errorf("invalid decision.provider: %s (expected %s or %s)", c.Provider, DecisionProviderTypeSafe, DecisionProviderOpenAI)
 	}
-	if c.MinConfidence < 0 || c.MinConfidence > 1 {
+	if math.IsNaN(c.MinConfidence) || c.MinConfidence < 0 || c.MinConfidence > 1 {
 		return fmt.Errorf("decision.min_confidence must be between 0 and 1, got %g", c.MinConfidence)
 	}
 	if baseURL := strings.TrimSpace(c.BaseURL); baseURL != "" && !isDecisionBaseURL(baseURL) {

@@ -188,14 +188,14 @@ def _typesafe_sample_quality(tr: TaskResult, fail_reason: str, rule: SampleQuali
         "instructions": "This is one benchmark run of a phone-automation agent. Which kind of training sample is it?",
         "criteria": _TYPESAFE_CRITERIA,
     }
+    min_confidence = _safe_float(os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE"), 0.8)
     try:
-        min_confidence = float(os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE", "0.8"))
         response = typesafe.ask(state, {"kind": question}, api_key=typesafe.resolve_api_key())
         got = typesafe.answer(response, "kind", "choice")
     except Exception as exc:  # noqa: BLE001 - classification falls back to the rules
         print(f"[skillopt] typesafe sample classifier failed, using rules: {exc}", file=sys.stderr)
         return rule
-    kind, confidence = str(got.get("choice") or ""), float(got.get("confidence") or 0)
+    kind, confidence = str(got.get("choice") or ""), _safe_float(got.get("confidence"), 0.0)
     if kind not in _QUALITY_POLICY or confidence < min_confidence or kind == rule.kind:
         return rule
     include_in_score, weight, include_in_reflect = _QUALITY_POLICY[kind]

@@ -54,6 +54,8 @@ def ask(
         headers["TypeSafe-Danger-Zone-Images"] = "true"
     payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
     url = f"{(base_url or DEFAULT_BASE_URL).rstrip('/')}/systemone"
+    if not url.lower().startswith(("https://", "http://")):
+        raise RuntimeError(f"unsupported typesafe base_url scheme: {url!r}")
     for attempt in range(_MAX_RETRIES + 1):
         req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
         try:

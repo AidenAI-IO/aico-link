@@ -274,6 +274,11 @@ func logComparison[T any](p decisionPoint[T], provider string, outcome decisionO
 	logDecision(p.op, provider, jevSummary, outcome.Confidence, llmSummary(p, value, llmErr), agree, jevMS, llmMS, fallback)
 }
 
+// decisionMergeGrace is how long decideMerge waits for the decision model
+// after the main model has answered. Jev usually answers first; this only
+// bounds a stalled endpoint.
+const decisionMergeGrace = 2 * time.Second
+
 // decideMerge asks both models at once and waits for both. The main model's
 // answer is used, with a confident decision-model answer merged into it.
 func decideMerge[T any](ctx context.Context, p decisionPoint[T], cfg DecisionModelConfig, client *decision.Client) (T, bool, error) {
@@ -284,9 +289,11 @@ func decideMerge[T any](ctx context.Context, p decisionPoint[T], cfg DecisionMod
 		ms      int64
 	}
 	started := time.Now()
+	askCtx, cancelAsk := context.WithCancel(ctx)
+	defer cancelAsk()
 	jevDone := make(chan jevResult, 1)
 	go func() {
-		outcome, err := p.ask(ctx, client, minConfidence)
+		outcome, err := p.ask(askCtx, client, minConfidence)
 		jevDone <- jevResult{outcome: outcome, err: err, ms: time.Since(started).Milliseconds()}
 	}()
 	value, err := p.llm(ctx)
@@ -294,11 +301,18 @@ func decideMerge[T any](ctx context.Context, p decisionPoint[T], cfg DecisionMod
 	if err != nil {
 		return value, true, err
 	}
+	// The main model has answered; a slow decision model may refine that
+	// answer but not hold it up for long.
+	grace := time.NewTimer(decisionMergeGrace)
+	defer grace.Stop()
 	var jev jevResult
 	select {
 	case jev = <-jevDone:
 	case <-ctx.Done():
 		return value, true, ctx.Err()
+	case <-grace.C:
+		logDecision(p.op, cfg.ProviderOrDefault(), "", 0, llmSummary(p, value, nil), "n/a", time.Since(started).Milliseconds(), llmMS, "timeout")
+		return value, true, nil
 	}
 	fallback := ""
 	switch {

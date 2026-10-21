@@ -14,6 +14,8 @@ func TestHandlePopupTapsOnlySafeDialogs(t *testing.T) {
 	}{
 		{popupCheck{Kind: popupKindAd, Summary: "开屏广告 跳过", SafeTap: &focusPointArgs{X: 900, Y: 80}}, true, false},
 		{popupCheck{Kind: popupKindPastePermission, SafeTap: &focusPointArgs{X: 700, Y: 560}}, true, false},
+		// A tap point off the 0-1000 grid is not tapped; the dialog is reported.
+		{popupCheck{Kind: popupKindAd, SafeTap: &focusPointArgs{X: 1400, Y: 80}}, false, true},
 		// A tap point on a consent dialog must never be used.
 		{popupCheck{Kind: popupKindConsent, Summary: "隐私政策 同意/不同意", SafeTap: &focusPointArgs{X: 700, Y: 900}}, false, true},
 		{popupCheck{Kind: popupKindSystemPermission, Summary: "允许通知"}, false, true},

@@ -57,6 +57,10 @@ func normalizePopup(p popupCheck) popupCheck {
 	if !popupSafeKinds[p.Kind] {
 		p.SafeTap = nil
 	}
+	// A tap point off the 0-1000 grid would miss; report the dialog instead.
+	if p.SafeTap != nil && (p.SafeTap.X < 0 || p.SafeTap.X > 1000 || p.SafeTap.Y < 0 || p.SafeTap.Y > 1000) {
+		p.SafeTap = nil
+	}
 	return p
 }
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,7 @@ func TestConfigValidateDecisionModel(t *testing.T) {
 		{name: "openai provider", decision: DecisionModelConfig{Provider: "OpenAI", APIKey: "sk"}},
 		{name: "confidence above one", decision: DecisionModelConfig{MinConfidence: 1.5}, field: "decision.min_confidence"},
 		{name: "negative confidence", decision: DecisionModelConfig{MinConfidence: -0.1}, field: "decision.min_confidence"},
+		{name: "NaN confidence", decision: DecisionModelConfig{MinConfidence: math.NaN()}, field: "decision.min_confidence"},
 		{name: "relative base URL", decision: DecisionModelConfig{BaseURL: "api.typesafe.ai"}, field: "decision.base_url"},
 	}
 	for _, tt := range tests {

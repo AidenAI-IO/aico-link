@@ -173,6 +173,24 @@ func TestDecisionScreenAnalysisMergesConfidentFlagsKeepingFieldText(t *testing.T
 	if err != nil || got.TargetMatched || !got.CompositionPending {
 		t.Fatalf("unsure analysis = %+v, err = %v", got, err)
 	}
+
+	// A stalled decision model delays the main model's answer by at most the
+	// grace period.
+	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Reading the body lets the server notice the canceled request.
+		_, _ = io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer stalled.Close()
+	vision.decider = &decisionAdvisor{}
+	vision.decider.setConfig(func() DecisionModelConfig {
+		return DecisionModelConfig{APIKey: "k", BaseURL: stalled.URL}
+	})
+	started := time.Now()
+	got, err = vision.AnalyzeScreen(context.Background(), decisionTestScreenshot(t), textInputScreenAnalysisRequest{Platform: "iOS", TargetText: "你好"})
+	if err != nil || !got.CompositionPending || time.Since(started) > decisionMergeGrace+time.Second {
+		t.Fatalf("stalled analysis = %+v, err = %v after %v", got, err, time.Since(started))
+	}
 }
 
 func TestDecisionAppSearchTapsBoxCenter(t *testing.T) {

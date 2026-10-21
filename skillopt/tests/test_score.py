@@ -189,3 +189,23 @@ def test_typesafe_sample_classifier_falls_back_to_rules_on_error(monkeypatch):
     monkeypatch.setattr(typesafe, "ask", fail)
     tr = _mk_task_result("timeout", "timeout", 0, 2)
     assert task_result_to_rollout(tr).extras["sample_quality"] == "timeout"
+
+
+def test_typesafe_sample_classifier_ignores_malformed_confidence(monkeypatch):
+    from skillopt import typesafe
+
+    response = {"answers": {"kind": {"type": "choice", "choice": "external_blocker", "confidence": "high"}}}
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER", "typesafe")
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE", "not-a-number")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-key")
+    monkeypatch.setattr(typesafe, "ask", lambda *args, **kwargs: response)
+    tr = _mk_task_result("login", "failed", 0, 2)
+    tr.metrics = {"tool_calls": 6, "final_response": "The app asks me to sign in first."}
+    assert task_result_to_rollout(tr).extras["sample_quality"] == "clean"
+
+
+def test_typesafe_ask_rejects_non_http_base_url():
+    from skillopt import typesafe
+
+    with pytest.raises(RuntimeError, match="scheme"):
+        typesafe.ask({}, {}, api_key="ts-key", base_url="file:///etc")
