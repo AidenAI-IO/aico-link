@@ -5,6 +5,7 @@ import (
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/realtimevoice"
 	"aiden-agent/internal/logging"
+	"aiden-agent/internal/netproxy"
 	"errors"
 	"fmt"
 	"math"
@@ -533,7 +534,7 @@ type ProxyConfig struct {
 	NoProxy    string
 }
 
-const DefaultNoProxy = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+const DefaultNoProxy = netproxy.DefaultNoProxy
 
 func (p ProxyConfig) HasProxyURL() bool {
 	return strings.TrimSpace(p.HTTPProxy) != "" ||
