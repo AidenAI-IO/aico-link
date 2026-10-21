@@ -5,36 +5,40 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 
 	"aiden-agent/internal/agent"
 	"aiden-agent/internal/logging"
+	"aiden-agent/internal/mcu"
 )
 
-// inputLifecycle owns the GPIO listeners and voice loop, independently of the
+// inputLifecycle owns the input listeners and voice loop, independently of the
 // HTTP server. A reload drains the current session before replacing the loop.
 type inputLifecycle struct {
-	mu             sync.Mutex
-	dialogMu       sync.Mutex
-	dialog         *agent.AudioDialog
-	runtime        *agent.Runtime
-	server         *agent.Server
-	cfg            agent.Config
-	stop           chan struct{}
-	shutdown       chan os.Signal
-	done           chan struct{}
-	quick          wakeupWatcher
-	closed         bool
-	shutdownClosed bool
-	quiescing      atomic.Bool
-	newDialog      func(agent.Config) (*agent.AudioDialog, error)
-	runVoice       func(agent.Config, *agent.AudioDialog, chan os.Signal, <-chan struct{})
-	newWatcher     wakeupWatcherFactory
+	mu              sync.Mutex
+	dialogMu        sync.Mutex
+	dialog          *agent.AudioDialog
+	runtime         *agent.Runtime
+	server          *agent.Server
+	cfg             agent.Config
+	stop            chan struct{}
+	shutdown        chan os.Signal
+	done            chan struct{}
+	quick           wakeupWatcher
+	closed          bool
+	shutdownClosed  bool
+	quiescing       atomic.Bool
+	newDialog       func(agent.Config) (*agent.AudioDialog, error)
+	runVoice        func(agent.Config, *agent.AudioDialog, chan os.Signal, <-chan struct{})
+	newWatcher      wakeupWatcherFactory
+	newVoiceWatcher voiceWakeupWatcherFactory
 }
 
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
-	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
+	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
+	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher, newVoiceWatcher: source.newWatcher}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
 		defer c.dialogMu.Unlock()
@@ -121,13 +125,13 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 		}
 		switch cfg.InputModeOrDefault() {
 		case "stt":
-			runWakeupMode(cfg, dialog, c.runtime, shutdown, c.newWatcher, stop)
+			runWakeupMode(cfg, dialog, c.runtime, shutdown, c.newVoiceWatcher, stop)
 		case "realtime":
 			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
 			if tasks != nil {
 				defer tasks.Close()
 			}
-			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newWatcher, stop)
+			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newVoiceWatcher, stop)
 		default:
 			select {
 			case <-stop:

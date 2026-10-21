@@ -19,7 +19,8 @@ AGENT = 'aiden-agent.service'
 FRAME = 'aiden-frame.service'
 TTYD = 'aiden-ttyd.service'
 UNITS = [WATCHER, RESTART, AGENT, FRAME, TTYD, 'aiden-audio.service',
-         'aiden-ble.service', 'aiden-config-web.service', 'aiden-wifi-proxy.service']
+         'aiden-ble.service', 'aiden-config-web.service', 'aiden-wifi-proxy.service',
+         'aiden-mcu-event.service']
 
 
 class LifecycleTests(unittest.TestCase):

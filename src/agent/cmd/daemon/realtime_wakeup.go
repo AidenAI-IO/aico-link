@@ -363,11 +363,11 @@ func abandonSleepForPendingRealtimeReengagement(sleep *realtimeSleepState, reeng
 	return sleep.abandon()
 }
 
-func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher wakeupWatcherFactory) {
+func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory) {
 	runRealtimeWakeupModeWithServer(cfg, sigChan, nil, nil, nil, newWatcher)
 }
 
-func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
+func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	events := make(chan struct{}, 1)
 	bridge := newRealtimeChatBridge(func() {
 		signalWakeupEvent(events)
@@ -466,17 +466,17 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
 	}
-	logging.Infof("agent", "ready", "Starting realtime GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Starting realtime MCU ASR wakeup listener...")
 	watchers, err := startWakeupWatchers(newWatcher, func() {
 		signalWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Warnf("agent", "realtime", "GPIO wakeup unavailable: %v; /api/chat activation remains enabled", err)
+		logging.Warnf("agent", "realtime", "ASR wakeup unavailable: %v; /api/chat activation remains enabled", err)
 	} else {
 		defer stopWakeupWatchers(watchers)
 	}
 
-	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or GPIO %s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or MCU ASR)... Ctrl+C to quit")
 	var taskWake taskWakeState
 	for {
 		if reloadRequested(reload) {
@@ -563,7 +563,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
 			// An API request can arrive while the previous session is tearing
-			// down. Preserve that activation after clearing stale GPIO events.
+			// down. Preserve that activation after clearing stale wake events.
 			if rotated || chatBridgeHasPending(bridge) {
 				signalWakeupEvent(events)
 			}
@@ -580,7 +580,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 func drainRealtimeWakeups(events <-chan struct{}, failureAnnouncementPending bool) {
 	// A wakeup queued while failure speech starts is a new activation. Leave
 	// it for the event loop to cancel the announcement and set pendingActivation.
-	// The channel already coalesces GPIO/API wakeups into one pending event.
+	// The channel already coalesces ASR/API wakeups into one pending event.
 	if failureAnnouncementPending {
 		return
 	}

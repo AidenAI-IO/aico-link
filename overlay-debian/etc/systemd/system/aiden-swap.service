@@ -12,7 +12,7 @@ ExecStart=/usr/lib/aiden/aiden-swap start
 ExecStop=/usr/lib/aiden/aiden-swap stop
 RemainAfterExit=yes
 TimeoutStartSec=180s
-TimeoutStopSec=30s
+TimeoutStopSec=5s
 
 [Install]
 WantedBy=multi-user.target

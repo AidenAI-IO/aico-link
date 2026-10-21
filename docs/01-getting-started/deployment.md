@@ -109,7 +109,7 @@ systemd dependencies rather than filename order:
 2. Userdata migration, machine identity, platform library registration, and strict environment generation complete.
 3. Media, Wi-Fi, Bluetooth, USB gadget, DHCP, and time services prepare hardware and networking.
 4. Frame, audio, BLE, Agent, Config Web, adb host, and WLAN recovery services start independently.
-   The MCU event service owns `/dev/ttyS5` and writes received V1 EVENT frames to the journal.
+   The MCU service owns `/dev/ttyS5`, exposes hardware APIs and wake long polling, and coordinates MCU-requested Linux poweroff.
 5. The OTA health aggregator checks required local services before committing a pending slot.
 
 Inspect the dependency graph with:
@@ -226,30 +226,13 @@ permission-restricted service log does not abort the export.
 Use `journalctl -u <unit>` for systemd lifecycle and helper failures. Service
 stdout/stderr that is intentionally persisted remains in the files above.
 
-The `aiden-mcu-event` service reads V1 frames from `/dev/ttyS5` at 115200 8N1.
-Every valid MCU EVENT is logged with its command, sequence, and raw payload;
-`WAKEUP` (`0x07`) and `RK628_PLUGIN_DET_CHANGED` (`0x08`) have names, and
-unknown event commands retain their command and payload in the journal. It
-decodes WAKEUP's four-byte payload as `wake_source, 00, 00, 00` and logs both
-the numeric source and its name (for example,
-`wake_source=0x06 wake_source_name=ASR`). Unknown source values remain visible
-as `UNKNOWN`. Wrong lengths or nonzero reserved bytes are logged with
-`invalid_payload` and no inferred source. Wake reasons are carried directly
-by the event; there is no separate wake-source query. The service announces
-`RV_READY` (`0x06`) and answers MCU `GET_STATE` (`0x01`) probes so queued events
-can be delivered. It does not perform any event action. A valid
-`SHUTDOWN_REQUEST` (`0x09`) is logged and answered `DENIED`; malformed requests
-receive `INVALID`. This diagnostic service does not perform Linux shutdown
-or send `SHUTDOWN_READY` (`0x0A`), so it is not a
-complete power-management peer. Stop it before using another owner of
-`/dev/ttyS5`. This board configures journald with volatile storage, so export
-the event journal before reboot when the record needs to be retained.
-
-The remaining MCU request commands are `GET_BATTERY` (`0x02`),
-`SET_WAKEUP_TIMER` (`0x03`), `GET_WAKEUP_TIMER` (`0x04`), and
-`CANCEL_WAKEUP_TIMER` (`0x05`). The diagnostic logger does not issue these
-requests. Command IDs and wake-source values are separate fields: ASR source
-`0x06` is the first payload byte of a `WAKEUP` command `0x07`.
+The `aiden-mcu-event.service` unit now runs `mcu_service`, the production UART
+peer on `/dev/ttyS5` (115200 8N1). It exposes battery/timer/LED operations and
+cursor-based wake long polling, and coordinates MCU-requested Linux poweroff.
+See [MCU Service](../03-services/mcu-service.md) for application contracts,
+shutdown timing constraints and post-flash validation commands. Stop the unit
+before using another UART owner. Journald is volatile on this board; export
+logs before reboot when the record needs to be retained.
 
 For a Wi-Fi startup failure, collect the following without rebooting if
 possible:

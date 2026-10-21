@@ -95,7 +95,7 @@ audit_business_package() {
         "${OUTPUT_DIR}/packages.txt" || fail "aiden-business is not installed"
     for path in \
         /usr/lib/aiden/agent /usr/lib/aiden/frame_service \
-        /usr/lib/aiden/audio_service /usr/lib/aiden/ble_service \
+        /usr/lib/aiden/audio_service /usr/lib/aiden/mcu_service /usr/lib/aiden/ble_service \
         /usr/lib/aiden/frame_service_cli /usr/lib/aiden/audio_service_cli \
         /usr/lib/aiden/aiden-environment /usr/lib/aiden/ttyd \
         /usr/share/aiden/config-web/index.html \

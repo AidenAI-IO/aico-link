@@ -64,7 +64,9 @@ def verify_runtime_config(package, enabled):
         for path, record in document["files"].items():
             entry = Path(path)
             hdmi_profile = entry.parent.as_posix() == "usr/share/aiden/hdmi" and entry.suffix == ".hex"
-            if entry.is_absolute() or ".." in entry.parts or not (path.startswith(("etc/", "usr/lib/aiden/")) or hdmi_profile):
+            allowed = (path.startswith(("etc/", "usr/lib/aiden/")) or hdmi_profile
+                       or path == "usr/lib/systemd/system-shutdown/aiden-mcu-shutdown")
+            if entry.is_absolute() or ".." in entry.parts or not allowed:
                 raise ValueError("Unsafe runtime configuration path")
             member = archive.getmember("./" + path)
             if (not member.isfile() or (member.uid, member.gid, member.mode) != (0, 0, int(record["mode"], 8))

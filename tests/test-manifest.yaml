@@ -142,12 +142,17 @@ suites:
 
   - name: mcu-event-service
     class: deterministic
-    paths: [overlay-debian/usr/lib/aiden/aiden-mcu-event, overlay-debian/etc/systemd/system/aiden-mcu-event.service, tests/test_mcu_event_service.py]
-    command: python3 tests/test_mcu_event_service.py
+    paths: [src/agent/internal/mcu, src/agent/cmd/mcu_service, src/agent/cmd/daemon, src/agent/internal/agent/mcu_http.go, scripts/test_mcu_after_flash.py, tests/test_mcu_after_flash.py, overlay-debian/etc/systemd/system/aiden-mcu-event.service]
+    command: |
+      cd src/agent && go test -race -count=1 -timeout=2m ./internal/mcu ./cmd/mcu_service
+      go test -count=1 -timeout=2m -run '^TestMCUHTTP' ./internal/agent
+      go test -race -count=1 -timeout=2m -run '^Test(MCUWakeup|StartWakeupWatchers|RunWakeupMode|Signal.*WakeupEvent|RunVoiceSession|ProcessAudioUntilUtterance.*Wakeup|StartQuickCaptureGPIOWatcher)' ./cmd/daemon
+      CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -o ../../output/mcu_service ./cmd/mcu_service
+      cd ../.. && python3 tests/test_mcu_after_flash.py
     quick: true
-    dependencies: [python3]
+    dependencies: [go, python3, gcc]
     required: true
-    timeout_seconds: 60
+    timeout_seconds: 300
 
   - name: debian-rootfs-grow
     class: deterministic

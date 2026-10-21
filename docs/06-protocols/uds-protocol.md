@@ -38,6 +38,10 @@ JSON header describes the request or response; large binary data (such as raw HD
 `notification_publish` operations are documented in
 [BLE Service](../03-services/ble-service.md).
 
+`mcu_service` uses the same envelope with no binary payload and one operation
+per connection. Its queries, mutations and cancellable event long polling are
+documented in [MCU Service](../03-services/mcu-service.md).
+
 ## Cross-Language Clients
 
 Go or other languages don't need C++ ABI / cgo, just:

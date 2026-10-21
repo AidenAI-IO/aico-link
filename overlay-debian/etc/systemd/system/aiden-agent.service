@@ -18,6 +18,7 @@ ConditionPathExists=!/run/aiden/backup/recovery.failed
 Type=simple
 EnvironmentFile=/etc/aiden_boot.conf
 EnvironmentFile=/run/aiden/system.env
+Environment=AIDEN_MCU_SERVICE_SOCKET=/run/mcu_service/mcu_service.sock
 Environment=AIDEN_BLE_SERVICE_SOCKET=/run/ble_service/ble_service.sock
 Environment=AIDEN_USB_COMPOSITE_REFRESH_COMMAND=/usr/lib/aiden/aiden-usb-ecm-watchdog
 Environment=PYTHONUSERBASE=/userdata/agent/python
@@ -32,7 +33,7 @@ ExecStart=/usr/lib/aiden/aiden-managed-env-run /usr/lib/aiden/agent -dir /userda
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=30s
-TimeoutStopSec=60s
+TimeoutStopSec=10s
 StandardOutput=append:/userdata/agent/log/agent.log
 StandardError=append:/userdata/agent/log/agent.log
 

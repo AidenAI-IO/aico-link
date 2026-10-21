@@ -15,6 +15,26 @@ fail() {
 
 [ -d "${UNIT_DIR}" ] || fail "overlay-debian systemd unit directory is missing"
 
+# The stable unit must have exactly one UART owner, and final power removal
+# must use the post-unmount hook rather than a normal service ExecStop.
+grep -Fqx 'ExecStart=/usr/lib/aiden/mcu_service --port /dev/ttyS5' "${UNIT_DIR}/aiden-mcu-event.service"
+grep -Fqx 'Group=aiden' "${UNIT_DIR}/aiden-mcu-event.service"
+grep -Fqx 'RuntimeDirectoryMode=0750' "${UNIT_DIR}/aiden-mcu-event.service"
+test ! -e "${OVERLAY}/usr/lib/aiden/aiden-mcu-event" || fail "retired MCU logger remains installed"
+shutdown_hook=${OVERLAY}/usr/lib/systemd/system-shutdown/aiden-mcu-shutdown
+test -x "${shutdown_hook}" || fail "MCU shutdown hook is not executable"
+sh -n "${shutdown_hook}"
+grep -Fqx 'exec /usr/lib/aiden/mcu_service shutdown-hook "$1"' "${shutdown_hook}"
+python3 - "${REPO_ROOT}" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts/debian-package"))
+import system_config
+files = system_config.inventory()
+assert "usr/lib/systemd/system-shutdown/aiden-mcu-shutdown" in files
+assert "usr/lib/aiden/aiden-mcu-event" not in files
+PY
+
 grep -qx 'JobRunningTimeoutSec=5s' \
     "${UNIT_DIR}/dev-rtc0.device.d/20-aiden-optional.conf"
 grep -qx 'JobRunningTimeoutSec=30s' \
