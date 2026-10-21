@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"aiden-agent/internal/agent/tts"
 )
@@ -33,6 +34,27 @@ func TestSessionHTTPClientHonorsNoProxy(t *testing.T) {
 
 	assertProxy(t, transport.Proxy, defaultEndpoint+"/audio/speech", "")
 	assertProxy(t, transport.Proxy, "https://tts.example/api/v1/audio/speech", "http://127.0.0.1:7890")
+}
+
+func TestHTTPClientTimeoutAppliesOnlyWithProxyURL(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proxy tts.ProxyConfig
+		want  time.Duration
+	}{
+		{name: "direct", proxy: tts.ProxyConfig{NoProxy: "openrouter.ai"}, want: 0},
+		{name: "proxied", proxy: tts.ProxyConfig{HTTPSProxy: "http://127.0.0.1:7890"}, want: requestTimeout},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider, err := New(tts.ProviderConfig{APIKey: "test-key", Proxy: tc.proxy})
+			if err != nil {
+				t.Fatalf("New() error = %v", err)
+			}
+			if got := provider.(*Adapter).httpClient.Timeout; got != tc.want {
+				t.Fatalf("httpClient.Timeout = %v, want %v", got, tc.want)
+			}
+		})
+	}
 }
 
 func assertProxy(t *testing.T, proxy func(*http.Request) (*url.URL, error), target, want string) {

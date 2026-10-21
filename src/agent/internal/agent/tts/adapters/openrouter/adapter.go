@@ -65,13 +65,18 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 	if speed == 0 {
 		speed = 1.0
 	}
+	httpClient := &http.Client{Transport: cfg.Proxy.Transport()}
+	if cfg.Proxy.HasProxyURL() {
+		// Only proxied requests are capped; direct requests are bounded by the stream context.
+		httpClient.Timeout = requestTimeout
+	}
 	return &Adapter{
 		apiKey:     cfg.APIKey,
 		model:      model,
 		voice:      voice,
 		endpoint:   endpoint,
 		speed:      speed,
-		httpClient: &http.Client{Transport: cfg.Proxy.Transport(), Timeout: requestTimeout},
+		httpClient: httpClient,
 	}, nil
 }
 
