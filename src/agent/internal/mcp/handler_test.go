@@ -152,21 +152,66 @@ func TestToolsCallAllowlistAndShellGate(t *testing.T) {
 
 func TestOriginValidation(t *testing.T) {
 	h := &Handler{Backend: &stubBackend{}}
-	bad := postMCP(t, h, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "ping",
-	}, "http://evil.example")
+	ping := map[string]any{"jsonrpc": "2.0", "id": 1, "method": "ping"}
+
+	bad := postMCP(t, h, ping, "http://evil.example")
 	if bad.Code != http.StatusForbidden {
-		t.Fatalf("status=%d want 403", bad.Code)
+		t.Fatalf("cross-origin status=%d want 403", bad.Code)
 	}
-	good := postMCP(t, h, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"method":  "ping",
-	}, "http://192.168.1.10:8080")
+
+	// DNS rebinding: Origin and Host both carry the attacker name — must reject.
+	raw, _ := json.Marshal(ping)
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(raw))
+	req.Host = "attacker.example:8080"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Origin", "http://attacker.example:8080")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("rebinding status=%d want 403 body=%s", rec.Code, rec.Body.String())
+	}
+
+	good := postMCP(t, h, ping, "http://192.168.1.10:8080")
 	if good.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s", good.Code, good.Body.String())
+		t.Fatalf("IP origin status=%d body=%s", good.Code, good.Body.String())
+	}
+
+	localhostRaw, _ := json.Marshal(ping)
+	localhostReq := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader(localhostRaw))
+	localhostReq.Host = "localhost:8080"
+	localhostReq.Header.Set("Content-Type", "application/json")
+	localhostReq.Header.Set("Accept", "application/json, text/event-stream")
+	localhostReq.Header.Set("Origin", "http://localhost:8080")
+	localhostRec := httptest.NewRecorder()
+	h.ServeHTTP(localhostRec, localhostReq)
+	if localhostRec.Code != http.StatusOK {
+		t.Fatalf("localhost origin status=%d body=%s", localhostRec.Code, localhostRec.Body.String())
+	}
+
+	noOrigin := postMCP(t, h, ping, "")
+	if noOrigin.Code != http.StatusOK {
+		t.Fatalf("missing Origin status=%d body=%s", noOrigin.Code, noOrigin.Body.String())
+	}
+}
+
+func TestSupportBundleEmbeddedResource(t *testing.T) {
+	h := &Handler{Backend: &stubBackend{}}
+	rec := postMCP(t, h, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      7,
+		"method":  "tools/call",
+		"params":  map[string]any{"name": "support_bundle", "arguments": map[string]any{}},
+	}, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"type":"resource"`) || !strings.Contains(body, `"blob"`) {
+		t.Fatalf("want embedded resource blob: %s", body)
+	}
+	if strings.Contains(body, "encoding=base64\n") {
+		t.Fatalf("should not put archive in text body: %s", body)
 	}
 }
 

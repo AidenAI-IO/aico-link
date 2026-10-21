@@ -76,3 +76,26 @@ func TestValidateMCPConfigWebBaseURL(t *testing.T) {
 		t.Fatal("https should fail")
 	}
 }
+
+func TestMCPContentFromToolOutputImage(t *testing.T) {
+	blocks := mcpContentFromToolOutput(`{"width":10,"height":8,"format":"jpeg","size":4,"data":"ZmFrZQ=="}`)
+	if len(blocks) != 2 {
+		t.Fatalf("blocks=%d want 2", len(blocks))
+	}
+	if blocks[0].Type != "image" || blocks[0].MIMEType != "image/jpeg" || blocks[0].Data != "ZmFrZQ==" {
+		t.Fatalf("image block=%+v", blocks[0])
+	}
+	if blocks[1].Type != "text" || !bytes.Contains([]byte(blocks[1].Text), []byte(`"width":10`)) {
+		t.Fatalf("text block=%+v", blocks[1])
+	}
+	if bytes.Contains([]byte(blocks[1].Text), []byte("ZmFrZQ==")) || bytes.Contains([]byte(blocks[1].Text), []byte(`"data"`)) {
+		t.Fatalf("metadata must not include data: %s", blocks[1].Text)
+	}
+}
+
+func TestMCPContentFromToolOutputPlainText(t *testing.T) {
+	blocks := mcpContentFromToolOutput("not-json")
+	if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "not-json" {
+		t.Fatalf("blocks=%+v", blocks)
+	}
+}

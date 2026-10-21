@@ -19,12 +19,21 @@ type CallResult struct {
 	IsError           bool           `json:"isError,omitempty"`
 }
 
-// ContentBlock is an MCP content item.
+// ContentBlock is an MCP content item (text, image, or embedded resource).
 type ContentBlock struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
+	Type     string            `json:"type"`
+	Text     string            `json:"text,omitempty"`
+	MIMEType string            `json:"mimeType,omitempty"`
+	Data     string            `json:"data,omitempty"`
+	Resource *ResourceContents `json:"resource,omitempty"`
+}
+
+// ResourceContents is an embedded resource payload inside a content block.
+type ResourceContents struct {
+	URI      string `json:"uri"`
 	MIMEType string `json:"mimeType,omitempty"`
-	Data     string `json:"data,omitempty"`
+	Blob     string `json:"blob,omitempty"` // base64
+	Text     string `json:"text,omitempty"`
 }
 
 // Backend is implemented by the Agent Server.

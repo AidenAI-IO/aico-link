@@ -363,6 +363,9 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"BundledSkillsDir":           "skills reload is flagged separately",
 		"Telemetry":                  "per-run value read from the runtime snapshot",
 		"ConfigDir":                  "fixed for the process; apply rejects changes",
+		"MCPEnabled":                 "HTTP /mcp gated from runtime snapshot; not used by voice loop",
+		"MCPShellEnabled":            "HTTP /mcp gated from runtime snapshot; not used by voice loop",
+		"MCPConfigWebBaseURL":        "HTTP /mcp gated from runtime snapshot; not used by voice loop",
 	}
 	filledValue := fillNonZeroValue(t, reflect.TypeOf(agent.Config{}))
 	filled := filledValue.Interface().(agent.Config)

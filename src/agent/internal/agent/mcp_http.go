@@ -96,8 +96,52 @@ func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, argu
 	}
 	return mcp.CallResult{
 		IsError: isError,
-		Content: []mcp.ContentBlock{{Type: "text", Text: output}},
+		Content: mcpContentFromToolOutput(output),
 	}, nil
+}
+
+// mcpContentFromToolOutput turns Runtime tool JSON that includes a screenshot
+// payload into an MCP image block plus metadata text (without the base64).
+func mcpContentFromToolOutput(output string) []mcp.ContentBlock {
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(output), &obj); err != nil {
+		return []mcp.ContentBlock{{Type: "text", Text: output}}
+	}
+	data, _ := obj["data"].(string)
+	format, _ := obj["format"].(string)
+	data = strings.TrimSpace(data)
+	format = strings.ToLower(strings.TrimSpace(format))
+	if data == "" || format == "" {
+		return []mcp.ContentBlock{{Type: "text", Text: output}}
+	}
+	mime, ok := mcpImageMIME(format)
+	if !ok {
+		return []mcp.ContentBlock{{Type: "text", Text: output}}
+	}
+	delete(obj, "data")
+	meta, err := json.Marshal(obj)
+	if err != nil {
+		return []mcp.ContentBlock{{Type: "image", MIMEType: mime, Data: data}}
+	}
+	return []mcp.ContentBlock{
+		{Type: "image", MIMEType: mime, Data: data},
+		{Type: "text", Text: string(meta)},
+	}
+}
+
+func mcpImageMIME(format string) (string, bool) {
+	switch format {
+	case "jpeg", "jpg":
+		return "image/jpeg", true
+	case "png":
+		return "image/png", true
+	case "webp":
+		return "image/webp", true
+	case "gif":
+		return "image/gif", true
+	default:
+		return "", false
+	}
 }
 
 func (b mcpServerBackend) PhoneBridgeStatus(ctx context.Context) (any, error) {
@@ -159,9 +203,13 @@ func (b mcpServerBackend) SupportBundle(ctx context.Context) ([]byte, string, er
 		return nil, "", fmt.Errorf("config-web support bundle: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	const maxSupportBundleBytes = 32 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxSupportBundleBytes+1))
 	if err != nil {
 		return nil, "", err
+	}
+	if len(body) > maxSupportBundleBytes {
+		return nil, "", fmt.Errorf("config-web support bundle: exceeds %d byte limit", maxSupportBundleBytes)
 	}
 	if resp.StatusCode != http.StatusOK {
 		return nil, "", fmt.Errorf("config-web support bundle: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))

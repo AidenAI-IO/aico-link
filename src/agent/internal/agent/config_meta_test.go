@@ -518,6 +518,8 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_interrupt_on_wakeup", defaults.VoiceInterruptOnWakeupOrDefault()},
 		{"agent.tap_wakeup_enabled", defaults.TapWakeupEnabledOrDefault()},
 		{"agent.mcp_enabled", defaults.MCPEnabledOrDefault()},
+		{"agent.mcp_shell_enabled", defaults.MCPShellEnabledOrDefault()},
+		{"agent.mcp_config_web_base_url", "http://127.0.0.1"},
 		{"agent.voice_streaming_tts_enabled", defaults.VoiceStreamingTTSEnabledOrDefault()},
 		{"agent.voice_tool_call_speech", defaults.VoiceToolCallSpeechOrDefault()},
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},

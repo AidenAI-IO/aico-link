@@ -172,7 +172,7 @@ func (h *Handler) handleToolsList(req jsonRPCRequest) jsonRPCResponse {
 		},
 		ToolInfo{
 			Name:        toolSupportBundle,
-			Description: "Download a support log archive (gzip tar) from config-web; returns base64.",
+			Description: "Download a support log archive (gzip tar) from config-web; returns an embedded resource blob.",
 			InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 	)
@@ -250,12 +250,18 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) jsonRPCRe
 		if mime == "" {
 			mime = "application/gzip"
 		}
-		encoded := base64.StdEncoding.EncodeToString(data)
 		return resultResponse(req.ID, CallResult{
-			Content: []ContentBlock{{
-				Type: "text",
-				Text: fmt.Sprintf("mime=%s bytes=%d encoding=base64\n%s", mime, len(data), encoded),
-			}},
+			Content: []ContentBlock{
+				{Type: "text", Text: fmt.Sprintf("support_bundle mime=%s bytes=%d", mime, len(data))},
+				{
+					Type: "resource",
+					Resource: &ResourceContents{
+						URI:      "aiden://support-bundle",
+						MIMEType: mime,
+						Blob:     base64.StdEncoding.EncodeToString(data),
+					},
+				},
+			},
 		})
 	default:
 		return errorResponse(req.ID, errInternal, "unhandled tool", nil)

@@ -49,7 +49,7 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 | `bridge_clipboard` | `POST /api/tools/bridge_clipboard` |
 | `shell` | `POST /api/tools/shell` (gated) |
 | `device_status` | config-web `GET /api/device/status` |
-| `support_bundle` | config-web `GET /api/logs/support` (base64 in text) |
+| `support_bundle` | config-web `GET /api/logs/support` (embedded resource blob) |
 
 Use MCP `tools/list` for discovery. Do not expect a separate `list_tools` tool. `GET /health` is not exposed over MCP.
 
@@ -62,7 +62,14 @@ Use MCP `tools/list` for discovery. Do not expect a separate `list_tools` tool. 
 
 ## Origin
 
-If the client sends an `Origin` header, it must match the request `Host` (DNS-rebinding protection). Clients that omit `Origin` (typical MCP host apps / curl) are accepted.
+Clients that omit `Origin` (typical MCP host apps / curl) are accepted.
+
+If the client sends an `Origin` header (browser requests), it must:
+
+1. Use a non-rebindable hostname: an IP literal or `localhost`
+2. Match the request `Host` (scheme-insensitive `host:port`)
+
+This blocks ordinary cross-origin browser calls and rejects rebound attacker names even when `Origin` and `Host` agree. It is not a full Host allowlist; point browsers at the board by IP (or `localhost` over USB/loopback). There is still no authentication on `/mcp` in this release.
 
 ## Related
 
