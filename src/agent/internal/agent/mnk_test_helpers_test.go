@@ -9,9 +9,9 @@ import (
 )
 
 type testMNKOpts struct {
-	pointer            *HIDDevice
-	keyboard           *HIDDevice
-	android            *HIDDevice
+	pointer            *mnk.HIDDevice
+	keyboard           *mnk.HIDDevice
+	android            *mnk.HIDDevice
 	screenState        *screen.ScreenState
 	touchscreen        bool
 	layout             string

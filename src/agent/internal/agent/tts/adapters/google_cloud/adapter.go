@@ -13,7 +13,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -60,17 +59,12 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 		speed = 1.0
 	}
 
-	httpClient := http.DefaultClient
-	if cfg.Proxy.AllProxy != "" || cfg.Proxy.HTTPSProxy != "" || cfg.Proxy.HTTPProxy != "" {
-		httpClient = buildProxyHTTPClient(cfg.Proxy)
-	}
-
 	adapter := &Adapter{
 		endpoint:   endpoint,
 		voice:      voice,
 		language:   extractLanguageFromVoice(voice),
 		speed:      speed,
-		httpClient: httpClient,
+		httpClient: &http.Client{Transport: cfg.Proxy.Transport()},
 	}
 
 	if cfg.APIKey == "" {
@@ -103,28 +97,6 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 		sink:       sink,
 		textBuffer: new(bytes.Buffer),
 	}, nil
-}
-
-func buildProxyHTTPClient(p tts.ProxyConfig) *http.Client {
-	proxyURL := p.AllProxy
-	if proxyURL == "" {
-		proxyURL = p.HTTPSProxy
-	}
-	if proxyURL == "" {
-		proxyURL = p.HTTPProxy
-	}
-
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	if proxyURL != "" {
-		transport.Proxy = func(_ *http.Request) (*url.URL, error) {
-			return url.Parse(proxyURL)
-		}
-	}
-
-	return &http.Client{
-		Transport: transport,
-		Timeout:   30 * time.Second,
-	}
 }
 
 func extractLanguageFromVoice(voice string) string {

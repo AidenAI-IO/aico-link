@@ -117,7 +117,7 @@ func testHIDAtomicMoveCurve(t *testing.T, touchscreen bool) {
 		t.Fatalf("atomic motion was shortened: %v", elapsed)
 	}
 	_, tailStartY := position(held[p.swipeSteps])
-	if distance := float64(tailStartY-endY) * 1000 / absMouseMaxPos; distance <= 0 || distance > 2.1 {
+	if distance := float64(tailStartY-endY) * 1000 / AbsMouseMaxPos; distance <= 0 || distance > 2.1 {
 		t.Fatalf("release tail must move to endpoint, distance=%v", distance)
 	}
 	if elapsed := held[len(held)-1].at.Sub(held[p.swipeSteps].at); elapsed < 95*time.Millisecond {
@@ -231,7 +231,7 @@ func testSwipeReleaseHasRealSlowMotionAndExactEndpoint(t *testing.T, touchscreen
 				t.Fatalf("main motion duration %v, want at least 180ms before the slow tail", duration)
 			}
 			x, y = position(tailStart)
-			distance := math.Hypot(float64(wantX-x), float64(wantY-y)) * 1000 / absMouseMaxPos
+			distance := math.Hypot(float64(wantX-x), float64(wantY-y)) * 1000 / AbsMouseMaxPos
 			if distance <= 0 || distance > 2.1 {
 				t.Fatalf("tail distance %v", distance)
 			}

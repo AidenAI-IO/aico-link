@@ -1122,8 +1122,17 @@ OPENROUTER_API_KEY=...
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HTTP_PROXY` / `http_proxy`   | HTTP proxy URL, for example `http://127.0.0.1:7890`                                                                                                |
 | `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL, usually the same HTTP proxy endpoint                                                                                              |
-| `ALL_PROXY` / `all_proxy`     | Generic proxy used by HTTP clients and some WebSocket adapters                                                                                     |
+| `ALL_PROXY` / `all_proxy`     | Fallback proxy used when no scheme-specific proxy applies                                                                                          |
 | `NO_PROXY` / `no_proxy`       | Comma-separated bypass rules; when a proxy URL is set and no bypass value is present, the launcher injects the default private-network bypass list |
+
+Agent HTTP clients, including the Google Cloud and OpenRouter TTS adapters, use
+the proxy for the request scheme and fall back to `ALL_PROXY`. WebSocket
+clients, including the realtime STT clients and the Fish Audio, MiniMax, and
+Volcengine TTS adapters, prefer `HTTPS_PROXY`, then `HTTP_PROXY`, then
+`ALL_PROXY`. All of them connect directly to hosts that match `NO_PROXY`, even
+when the proxy is SOCKS5, and use the default private-network bypass list when
+a proxy URL is set without `NO_PROXY`. The Alibaba Cloud TTS adapter always
+connects directly.
 
 Per-Wi-Fi policies are configured in the Config Web connection dialog and
 stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting

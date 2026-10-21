@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aiden-agent/internal/agent/mnk"
 	"context"
 	"io"
 	"testing"
@@ -8,12 +9,9 @@ import (
 
 func TestKeyboardTextWithoutIOSIsolationUsesConfiguredHID(t *testing.T) {
 	writer := &fakeHIDWriteCloser{}
-	dev := &HIDDevice{
-		path: "bridge-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return writer, nil
-		},
-	}
+	dev := mnk.NewHIDDeviceWithOpener("bridge-hid", func(string) (io.WriteCloser, error) {
+		return writer, nil
+	})
 	tool := &KeyboardTextTool{dev: dev, keyboardLayout: "qwerty"}
 
 	out, err := tool.Call(context.Background(), `{"text":"A"}`)
