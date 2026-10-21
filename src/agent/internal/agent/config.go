@@ -328,6 +328,9 @@ type Config struct {
 	VoiceMaxTurns              int                           `toml:"voice_max_turns,omitempty"`
 	VoiceInterruptOnWakeup     *bool                         `toml:"voice_interrupt_on_wakeup,omitempty"`
 	TapWakeupEnabled           *bool                         `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled                 *bool                         `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	MCPShellEnabled            *bool                         `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	MCPConfigWebBaseURL        string                        `toml:"mcp_config_web_base_url,omitempty"`
 	VoiceStreamingTTSEnabled   *bool                         `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                         `toml:"voice_tool_call_speech,omitempty"`
 	VoiceProgressSpeechEnabled *bool                         `toml:"voice_progress_speech_enabled,omitempty"`
@@ -2247,6 +2250,20 @@ func (c Config) TapWakeupEnabledOrDefault() bool {
 		return *c.TapWakeupEnabled
 	}
 	return true
+}
+
+func (c Config) MCPEnabledOrDefault() bool {
+	if c.MCPEnabled != nil {
+		return *c.MCPEnabled
+	}
+	return true
+}
+
+func (c Config) MCPShellEnabledOrDefault() bool {
+	if c.MCPShellEnabled != nil {
+		return *c.MCPShellEnabled
+	}
+	return false
 }
 
 func (c Config) VoiceStreamingTTSEnabledOrDefault() bool {

@@ -98,28 +98,81 @@ function terminalRow() {
 }
 
 export async function advancedPage(context) {
+  const snapshot = await ensureSnapshot(context);
   const body = el('div');
-  const saver = createSaver(context, {title: msg('ui.nav_advanced', '高级设置'), back: '/', root: body});
-  replace(body, [group({
-    rows: [
-      row({
-        label: msg('advanced.logs', '日志'),
-        value: msg('advanced.logs_hint', '管理日志记录和导出'),
-        chevron: true,
-        action: 'open-logs',
-        onPress: () => context.navigate('/advanced/logs'),
+  const saver = createSaver(context, {
+    title: msg('ui.nav_advanced', '高级设置'),
+    back: '/',
+    root: body,
+    onSaved: adoptSaved(snapshot, () => render()),
+  });
+  const mcpSaved = () => snapshot?.config?.agent?.mcp_enabled !== false;
+  let mcpDraft = mcpSaved();
+  let mcpSaving = false;
+
+  async function saveMCP(next) {
+    if (mcpSaving) return;
+    const previous = mcpDraft;
+    mcpDraft = next;
+    mcpSaving = true;
+    render();
+    try {
+      const outcome = await saver.change('agent.mcp_enabled', {agent: {mcp_enabled: next}});
+      if (outcome === 'invalid' || outcome === 'failed') mcpDraft = previous;
+      else mcpDraft = mcpSaved();
+    } finally {
+      mcpSaving = false;
+      render();
+    }
+  }
+
+  function render() {
+    const mcpToggle = switchControl({
+      checked: mcpDraft,
+      label: msg('advanced.mcp_enabled', 'MCP'),
+      onChange: next => {
+        if (mcpSaving) {
+          setChecked(mcpToggle, mcpDraft);
+          return;
+        }
+        saveMCP(next);
+      },
+    });
+    if (mcpSaving) mcpToggle.disabled = true;
+    replace(body, [
+      group({
+        rows: [
+          row({
+            label: msg('advanced.logs', '日志'),
+            value: msg('advanced.logs_hint', '管理日志记录和导出'),
+            chevron: true,
+            action: 'open-logs',
+            onPress: () => context.navigate('/advanced/logs'),
+          }),
+          row({
+            label: msg('advanced.manual_config', '手动编辑配置'),
+            value: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
+            chevron: true,
+            action: 'open-manual-config',
+            onPress: () => context.navigate('/advanced/config'),
+          }),
+          terminalRow(),
+        ],
       }),
-      row({
-        label: msg('advanced.manual_config', '手动编辑配置'),
-        value: msg('advanced.manual_config_hint', '编辑 Agent TOML 配置文件'),
-        chevron: true,
-        action: 'open-manual-config',
-        onPress: () => context.navigate('/advanced/config'),
+      group({
+        rows: [
+          row({
+            label: msg('advanced.mcp_enabled', 'MCP'),
+            description: msg('advanced.mcp_enabled_help', '开启后可通过 MCP 调用 Agent 工具。'),
+            accessory: mcpToggle,
+            action: 'toggle-mcp-enabled',
+          }),
+        ],
       }),
-      terminalRow(),
-    ],
-  })]);
-  saver.refreshChrome();
+    ]);
+    saver.refreshChrome();
+  }
+  render();
   return screen([body]);
 }
 

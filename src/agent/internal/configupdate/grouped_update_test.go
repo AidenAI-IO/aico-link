@@ -55,6 +55,54 @@ tap_wakeup_enabled = true
 	}
 }
 
+func TestUpdateWritesMCPEnabledToConversationAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "agent.toml")
+	const source = `[model_settings.providers.local]
+type = "openai"
+api_key = "secret"
+
+[model_settings.model]
+provider = "local"
+model = "gpt-old"
+
+[voice_settings.classic.stt]
+provider = "openai-whisper"
+api_key = "key"
+
+[voice_settings.classic.tts]
+provider = "minimax-cn"
+api_key = "key"
+
+[voice_settings.mode]
+input_mode = "stt"
+
+[conversation_settings.agent]
+mcp_enabled = true
+`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewService().Update(path, []byte(`{"config":{"agent":{"mcp_enabled":false}}}`))
+	if err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	if !result.OK {
+		t.Fatalf("Update() OK = false error=%q", result.Error)
+	}
+	updated, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "[conversation_settings.agent]") || !strings.Contains(text, "mcp_enabled = false") {
+		t.Fatalf("mcp_enabled missing from conversation_settings.agent: %s", text)
+	}
+	if strings.Contains(text, "[voice_settings.classic.runtime]") && strings.Contains(text, "mcp_enabled") {
+		t.Fatalf("mcp_enabled written under classic.runtime: %s", text)
+	}
+}
+
 func TestUpdateWritesGroupedTOMLPaths(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.toml")
