@@ -108,20 +108,37 @@ boundary removes any driver row padding (Y and UV rows are copied into a tight
 consumers continue to see compact NV12. Configured `uyvy`, `yuyv`, and `nv16`
 formats remain available as compatibility fallbacks.
 
-JPEG requests use software JPEG by default on Debian. Hardware mode is an
-optional RV1106 Rockit MPI VENC path for compact NV12: the service copies the
-frame into an aligned MMZ buffer using the VENC horizontal and virtual
-strides, synchronizes caches, and retries once after transient channel errors.
-If VENC is unavailable or cooling down, software JPEG encoding is used. On the
-current RV1106 image, hardware VENC has returned `RK_ERR_VENC_BUF_EMPTY` and
-has triggered faults in the vendor `mpp_vcodec` module, so it is experimental
-and must be explicitly enabled with `FRAME_SERVICE_JPEG_ENCODER=hardware` only
-after board-specific validation. When hardware mode is enabled, a background
-warm-up runs after the first valid NV12 frame; a request racing that warm-up
-immediately uses software fallback instead of waiting on the cold VENC path. A
-resolution change schedules a new warm-up without blocking capture. Optionally
-set `FRAME_SERVICE_VENC_CHANNEL` to a preferred channel from 0 through 63; on
-a channel collision the service automatically tries another channel.
+JPEG requests use the RV1106 Rockit MPI VENC hardware encoder by default for
+compact NV12. The service copies the frame into an MMZ buffer using the
+vendor-calculated horizontal and vertical alignment, synchronizes caches,
+and retains the channel between requests. JPEG requests share the encoder
+lock, including during background warm-up, so concurrent clients continue to
+use hardware. A size change recreates the channel. Set
+`FRAME_SERVICE_JPEG_ENCODER=software` in `/etc/aiden_frame_service.conf` to
+disable hardware encoding. Unavailable encoders and transient failures retain
+software fallback and a retry cooldown. Optionally set
+`FRAME_SERVICE_VENC_CHANNEL` to a preferred channel from 0 through 63; on a
+channel collision the service automatically tries another channel.
+
+Hardware encoding requires the matching Debian media modules. The vendor
+assembly assumes 32-byte kernel `struct page` objects, while Debian's
+`CONFIG_MEMCG` kernel uses 36 bytes. The Debian BSP build stages and rebuilds
+`mpp_vcodec.ko` and `rockit.ko` with conversions compiled against the configured
+kernel headers; it also disables the unused vendor internal MCU loader.
+The service checks both modules' read-only `aiden_page_size` parameters before
+using VENC. An application-only upgrade on an older BSP logs
+`venc_kernel_abi_unsupported` and uses software until the platform modules are
+updated. This avoids the former `jpege_seek_bits` kernel fault and subsequent
+`RK_ERR_VENC_BUF_EMPTY` timeout.
+
+To validate a board, run `scripts/board_jpeg_smoke.py` on the device. It tests
+a cold JPEG request, quality changes, full and cropped frames (including a
+width that requires row padding), repeated channel size changes, and concurrent
+raw/JPEG clients. Copy the saved JPEG samples to a host for full decoding and
+image inspection. Confirm `venc_encoded` entries without `software_fallback`,
+check `/proc/vcodec/enc/venc_info` for completed hardware packets, and inspect
+the kernel journal for faults. Valid JPEG output alone does not prove hardware
+execution.
 
 
 ## On-Demand Capture Lifecycle

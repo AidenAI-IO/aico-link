@@ -100,7 +100,10 @@ for status in /proc/rkisp-vir0 /proc/rkisp0; do
     value=$(sed -n 's/.*Size:[^x]*x\([0-9][0-9]*\)@.*/\1/p' "${status}" | head -n 1)
     case "${value}" in ''|*[!0-9]*) ;; *) sensor_height=${value}; break ;; esac
 done
+# Debian uses Linux media services without the vendor's internal MCU firmware.
+# The rebuilt assembly release includes an MCU loader absent from its old .ko.
 insert_if_present rockit.ko \
+    en_mcu=0 \
     mcu_fw_path=/usr/lib/aiden/platform/modules/hpmcu_wrap.bin \
     mcu_fw_addr=0xff6fe000 isp_max_h="${sensor_height}"
 udevadm settle --timeout=10 || true

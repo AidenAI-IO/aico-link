@@ -389,6 +389,11 @@ audit_platform_files() {
         rga3.ko mpp_vcodec.ko rknpu.ko rockit.ko; do
         test -s "${ROOTFS_MOUNT}/usr/lib/aiden/platform/modules/${module}" || fail "kernel module is missing: ${module}"
     done
+    for module in mpp_vcodec.ko rockit.ko; do
+        grep -aq 'aiden_page_abi=kernel-helpers-v1' \
+            "${ROOTFS_MOUNT}/usr/lib/aiden/platform/modules/${module}" \
+            || fail "media module lacks Debian kernel page compatibility: ${module}"
+    done
     local firmware
     for firmware in \
         aic_userconfig_8800d80.txt \

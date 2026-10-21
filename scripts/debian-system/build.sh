@@ -16,7 +16,7 @@ fi
 readonly OUTPUT_DIR
 # The BSP is built in place from the repository pico-sdk submodule. The A/B,
 # RockUSB and reproducibility changes are commits in that submodule, so the
-# system stage applies no patches of its own.
+# system stage stages compatible media modules without editing BSP sources.
 readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}
 readonly IMAGE_DIR=${OUTPUT_DIR}/image
 readonly APPS_OUTPUT=${DEBIAN_APPS_OUTPUT_DIR:-${REPO_ROOT}/output/debian-apps}
@@ -231,9 +231,20 @@ run_bsp() {
         -e KBUILD_BUILD_USER=aiden \
         -e KBUILD_BUILD_HOST=system \
         -v "${SDK_DIR}:/sdk" \
+        -v "${SCRIPT_DIR}:/aiden-bsp-scripts:ro" \
+        -v "${OUTPUT_DIR}:/aiden-system-output" \
         -w /sdk \
         "${BSP_BUILD_IMAGE}" \
-        bash -lc './build.sh uboot && ./build.sh driver && ./build.sh env && ./build.sh abimages'
+        bash -lc './build.sh uboot && ./build.sh driver &&
+            python3 /aiden-bsp-scripts/prepare-media-compat.py \
+                --sdk /sdk --output /aiden-system-output/media-compat \
+                --kernel-build /sdk/sysdrv/source/objs_kernel \
+                --cross-compile /sdk/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf- \
+                --jobs "${RK_JOBS}" &&
+            install -m 0644 /aiden-system-output/media-compat/mpp_vcodec.ko \
+                /aiden-system-output/media-compat/rockit.ko \
+                /sdk/output/out/sysdrv_out/kernel_drv_ko/ &&
+            ./build.sh env && ./build.sh abimages'
 
     "${SCRIPT_DIR}/canonicalize-bsp.py" \
         --source-date-epoch "${BUILD_EPOCH}" \

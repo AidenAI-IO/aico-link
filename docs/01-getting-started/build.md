@@ -49,6 +49,14 @@ git submodule update --init --depth=1 pico-sdk
 Full hardware targets depend on Rockchip/Luckfox armhf libraries. Use the Debian
 cross-compilation workflow for device-runnable artifacts.
 
+The Debian BSP stage also rebuilds the vendor media modules against the
+configured kernel. Its compatibility helpers handle the `struct page` layout
+used by `CONFIG_MEMCG`, which is required for hardware JPEG encoding. The
+assembly and helpers are staged under `output/debian-system/media-compat/`;
+the SDK sources remain unchanged. Deploy the rebuilt `mpp_vcodec.ko` and
+`rockit.ko` with the matching kernel. Updating only the application bundle on
+an older platform keeps JPEG on software until these modules are updated.
+
 ## Debian ARM Cross-Compilation
 
 Build and audit the Debian armhf application bundle with:

@@ -115,6 +115,7 @@ run_case() {
         test -d "$fixture/sys/module/$module"
     done
     grep -q 'isp_max_h=0' "$fixture/loaded"
+    grep -q 'en_mcu=0' "$fixture/loaded"
     test "$(grep -cx "$expected" "$fixture/rockit-state")" -eq 2
     test ! -e "$fixture/dev/v4l-subdev0"
     local before

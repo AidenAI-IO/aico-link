@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -416,11 +417,42 @@ std::vector<VENC_CHN> venc_channel_candidates() {
     return candidates;
 }
 
+unsigned int media_module_page_size(const char* module) {
+    const std::string path = std::string("/sys/module/") + module +
+                             "/parameters/aiden_page_size";
+    FILE* file = std::fopen(path.c_str(), "r");
+    if (!file) {
+        return 0;
+    }
+    unsigned int size = 0;
+    if (std::fscanf(file, "%u", &size) != 1) {
+        size = 0;
+    }
+    std::fclose(file);
+    return size;
+}
+
+bool compatible_media_modules() {
+    const unsigned int venc_page_size = media_module_page_size("mpp_vcodec");
+    const unsigned int rockit_page_size = media_module_page_size("rockit");
+    if (venc_page_size > 0 && venc_page_size == rockit_page_size) {
+        return true;
+    }
+    // Business-package upgrades can retain an older BSP. Its vendor assembly
+    // assumes 32-byte struct page objects and faults on Debian's MEMCG kernel.
+    AIDEN_LOG_WARN("jpeg", "venc_kernel_abi_unsupported",
+                   "mpp_page_size=%u rockit_page_size=%u rebuild_debian_bsp=1",
+                   venc_page_size, rockit_page_size);
+    return false;
+}
+
 bool hardware_jpeg_enabled() {
     const char* mode = std::getenv("FRAME_SERVICE_JPEG_ENCODER");
-    // Debian defaults to software because the vendor VENC JPEG path is not
-    // reliable on every kernel/image combination.
-    return mode && std::strcmp(mode, "hardware") == 0;
+    if (mode && std::strcmp(mode, "software") == 0) {
+        return false;
+    }
+    static const bool compatible = compatible_media_modules();
+    return compatible;
 }
 
 class RockitNv12JpegEncoder {
@@ -437,6 +469,7 @@ public:
                 int quality,
                 std::vector<uint8_t>* output,
                 bool wait_for_lock) {
+        const auto started = std::chrono::steady_clock::now();
         if (!wait_for_lock && warmup_pending_.load()) {
             return false;
         }
@@ -461,6 +494,12 @@ public:
             if (ensure_channel_locked(width, height) &&
                 encode_once_locked(nv12, width, height, pts, quality, output)) {
                 retry_after_ = std::chrono::steady_clock::time_point();
+                AIDEN_LOG_INFO("jpeg", "venc_encoded",
+                               "channel=%d width=%u height=%u quality=%d bytes=%zu elapsed_us=%lld",
+                               channel_, width, height, quality, output->size(),
+                               static_cast<long long>(std::chrono::duration_cast<
+                                   std::chrono::microseconds>(
+                                       std::chrono::steady_clock::now() - started).count()));
                 return true;
             }
             reset_locked();
@@ -552,7 +591,7 @@ private:
         VENC_PACK_S pack{};
         VENC_STREAM_S stream{};
         stream.pstPack = &pack;
-        stream.u32PackCount = 0;
+        stream.u32PackCount = 1;
         ret = RK_MPI_VENC_GetStream(channel_, &stream, kNv12VencTimeoutMs);
         if (ret != RK_SUCCESS) {
             AIDEN_LOG_ERROR("jpeg", "venc_stream_failed",
@@ -574,10 +613,17 @@ private:
             const RK_U64 stream_capacity = RK_MPI_MB_GetSize(pack.pMbBlk);
             if (stream_address && pack.u32Len > 0 &&
                 (stream_capacity == 0 ||
-                 static_cast<RK_U64>(pack.u32Offset) + pack.u32Len <= stream_capacity)) {
-                const uint8_t* jpeg = static_cast<const uint8_t*>(stream_address) + pack.u32Offset;
-                output->assign(jpeg, jpeg + pack.u32Len);
-                copied = true;
+                 pack.u32Len <= stream_capacity)) {
+                // Rockit's JPEG MB handle already points at the packet data,
+                // including the offset in the underlying MPP stream buffer.
+                const uint8_t* jpeg = static_cast<const uint8_t*>(stream_address);
+                if (pack.u32Len >= 4 && jpeg[0] == 0xff && jpeg[1] == 0xd8 &&
+                    jpeg[pack.u32Len - 2] == 0xff && jpeg[pack.u32Len - 1] == 0xd9) {
+                    output->assign(jpeg, jpeg + pack.u32Len);
+                    copied = true;
+                } else {
+                    AIDEN_LOG_ERROR("jpeg", "venc_jpeg_invalid", "channel=%d", channel_);
+                }
             } else {
                 AIDEN_LOG_ERROR("jpeg", "venc_stream_invalid",
                                 "channel=%d offset=%u length=%u capacity=%llu", channel_,
@@ -619,10 +665,10 @@ private:
             return false;
         }
 
-        // Allocate the vendor-calculated backing size, but describe the
-        // visible frame dimensions to VENC as done by the RV1106 samples.
-        virtual_width_ = width;
-        virtual_height_ = height;
+        // The UV plane starts after the aligned Y plane, including bottom
+        // padding. Describe the same layout to VENC that we copy into the MB.
+        virtual_width_ = calculated.u32VirWidth;
+        virtual_height_ = calculated.u32VirHeight;
         horizontal_stride_ = RK_MPI_CAL_COMM_GetHorStride(virtual_width_, RK_FMT_YUV420SP);
         input_size_ = calculated.u32MBSize;
         if (horizontal_stride_ < width ||
@@ -675,6 +721,12 @@ private:
         attribute.stVencAttr.stAttrJpege.bSupportDCF = RK_FALSE;
         attribute.stVencAttr.stAttrJpege.stMPFCfg.u8LargeThumbNailNum = 0;
         attribute.stVencAttr.stAttrJpege.enReceiveMode = VENC_PIC_RECEIVE_SINGLE;
+        attribute.stRcAttr.enRcMode = VENC_RC_MODE_MJPEGFIXQP;
+        attribute.stRcAttr.stMjpegFixQp.u32SrcFrameRateNum = 1;
+        attribute.stRcAttr.stMjpegFixQp.u32SrcFrameRateDen = 1;
+        attribute.stRcAttr.stMjpegFixQp.fr32DstFrameRateNum = 1;
+        attribute.stRcAttr.stMjpegFixQp.fr32DstFrameRateDen = 1;
+        attribute.stRcAttr.stMjpegFixQp.u32Qfactor = 80;
 
         const std::vector<VENC_CHN> candidates = venc_channel_candidates();
         RK_S32 last_collision = RK_SUCCESS;
@@ -1065,7 +1117,7 @@ bool encode_yuv_to_jpeg_hw(const std::vector<uint8_t>& yuv_data,
         nv12_jpeg_encoder().encode(*input, encoded_metadata.width,
                                    encoded_metadata.height,
                                    encoded_metadata.capture_ts_ns / 1000ULL,
-                                   quality, output, false)) {
+                                   quality, output, true)) {
         return true;
     }
     if (try_hardware) {
@@ -1091,6 +1143,9 @@ bool encode_yuv_to_jpeg_hw_with_crop(const std::vector<uint8_t>& yuv_data,
                                      uint32_t crop_x, uint32_t crop_y,
                                      uint32_t crop_width, uint32_t crop_height,
                                      std::vector<uint8_t>* output) {
+    if (!hardware_jpeg_enabled()) {
+        return false;
+    }
     PIXEL_FORMAT_E rk_pixel_format = RK_FMT_BUTT;
     if (pixel_format == "uyvy") {
         rk_pixel_format = RK_FMT_YUV422_UYVY;

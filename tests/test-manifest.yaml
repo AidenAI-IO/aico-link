@@ -180,6 +180,15 @@ suites:
     required: true
     timeout_seconds: 60
 
+  - name: media-page-compat
+    class: deterministic
+    paths: [scripts/debian-system/prepare-media-compat.py, scripts/debian-system/media-page-compat.c, tests/test_media_page_compat.py, pico-sdk]
+    command: python3 tests/test_media_page_compat.py
+    quick: true
+    dependencies: [python3, gcc]
+    required: true
+    timeout_seconds: 60
+
   - name: rk628-recovery
     class: deterministic
     paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, tests/rk628_edid_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aiden/aiden-hdmi-mode, edid, overlay-debian/usr/share/aiden/hdmi]

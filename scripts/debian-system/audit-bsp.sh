@@ -183,6 +183,10 @@ audit_modules() {
         video_rkcif.ko video_rkisp.ko; do
         require_file "${MODULE_DIR}/${module}"
     done
+    for module in mpp_vcodec.ko rockit.ko; do
+        grep -aq 'aiden_page_abi=kernel-helpers-v1' "${MODULE_DIR}/${module}" \
+            || fail "media module lacks Debian kernel page compatibility: ${module}"
+    done
     for firmware in \
         aic_userconfig_8800d80.txt \
         fmacfw_8800d80_h_u02.bin \

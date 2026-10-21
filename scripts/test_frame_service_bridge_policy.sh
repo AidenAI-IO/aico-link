@@ -11,7 +11,7 @@ frame_source="$repo_root/src/frame_camera_capture_source.cpp"
 # Debian is the maintained deployment target. Buildroot overlays are outside
 # the supported solution and intentionally are not asserted here.
 grep -q '^FRAME_SERVICE_PIXEL_FORMAT=nv12$' "$debian_config"
-grep -q '^FRAME_SERVICE_JPEG_ENCODER=software$' "$debian_config"
+grep -q '^FRAME_SERVICE_JPEG_ENCODER=hardware$' "$debian_config"
 grep -q '^# FRAME_SERVICE_VENC_CHANNEL=63$' "$debian_config"
 grep -q '^FRAME_SERVICE_WARMUP_FRAMES=$' "$debian_config"
 grep -q '^FRAME_SERVICE_ALLOW_UNIFORM_FRAMES=1$' "$debian_config"
