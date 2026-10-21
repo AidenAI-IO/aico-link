@@ -37,6 +37,14 @@
 # Maximum tool-call iterations
 # max_iterations = -1
 
+# MCP Streamable HTTP endpoint on the Agent (:8080/mcp). Default true.
+# Also available under Config Web → Advanced.
+# mcp_enabled = true
+# Expose the shell tool over MCP. Default false.
+# mcp_shell_enabled = false
+# Optional base URL for MCP device_status / support_bundle (config-web).
+# mcp_config_web_base_url = "http://127.0.0.1"
+
 # History pruning threshold
 # Context size management. Both values are fractions of the usable model input
 # budget: either 0 to select the default, or greater than 0 and less than 1.

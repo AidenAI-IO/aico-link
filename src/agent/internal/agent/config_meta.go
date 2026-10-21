@@ -798,6 +798,11 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "tap_wakeup_enabled", Label: "Tap wakeup", Widget: WidgetBoolean,
 						Help:    "When on, the tap button can wake Aiden. Turning it off disables only that button path, not other activation such as Realtime /api/chat.",
 						Default: defaults.TapWakeupEnabledOrDefault()},
+					{Key: "mcp_enabled", Label: "MCP", Widget: WidgetBoolean,
+						Help:    "When on, Agent tools can be used over MCP.",
+						Default: defaults.MCPEnabledOrDefault()},
+					// mcp_shell_enabled and mcp_config_web_base_url stay TOML-only
+					// (not in configupdate.Agent / Config Web widgets) this release.
 					{Key: "vad_backend", Widget: WidgetSelect,
 						Enum:        enumOptions(defaultVADBackend, "cpu"),
 						Default:     defaults.VADBackend,

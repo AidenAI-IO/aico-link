@@ -552,6 +552,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills/reload", s.handleSkillsReload)
 	mux.HandleFunc("/api/tools", s.handleTools)
 	mux.HandleFunc("/api/tools/", s.handleTools)
+	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/api/providers/screenshot", s.handleProviderScreenshot)
 	mux.HandleFunc("/api/providers/mnk", s.handleProviderMNK)
 	mux.HandleFunc("/api/concurrent", s.handleConcurrent)
@@ -600,6 +601,9 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
+		// /mcp is intentionally omitted: long support_bundle/device_status calls must
+		// not hold configOperations for the whole request. Runtime tool paths take
+		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
 		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
