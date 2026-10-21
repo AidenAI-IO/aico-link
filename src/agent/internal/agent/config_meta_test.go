@@ -115,7 +115,7 @@ func TestConfigMeta_Valid(t *testing.T) {
 		t.Errorf("expected device section first, got %q", ConfigMeta().Sections[0].Name)
 	}
 
-	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "telemetry", "live_activity", "agent"} {
+	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "decision", "telemetry", "live_activity", "agent"} {
 		if !seenSections[name] {
 			t.Errorf("expected section %q to be present", name)
 		}
@@ -1135,6 +1135,7 @@ func TestConfigMeta_CoversConfigFields(t *testing.T) {
 		{"device", reflect.TypeOf(DeviceConfig{}), map[string]bool{"backend": true}},
 		{"hid", reflect.TypeOf(HIDConfig{}), map[string]bool{"pointer_mode": true}},
 		{"search", reflect.TypeOf(SearchConfig{}), nil},
+		{"decision", reflect.TypeOf(DecisionModelConfig{}), nil},
 		{"log", reflect.TypeOf(LogConfig{}), nil},
 		{"telemetry", reflect.TypeOf(TelemetryConfig{}), nil},
 		{"live_activity", reflect.TypeOf(LiveActivityConfig{}), nil},

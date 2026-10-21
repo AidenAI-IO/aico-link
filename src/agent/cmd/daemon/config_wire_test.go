@@ -524,6 +524,7 @@ func TestWebConfigDTOTopLevelSectionsAreCovered(t *testing.T) {
 		"agent",
 		"audio",
 		"audio_archive",
+		"decision",
 		"device",
 		"frame_service",
 		"hid",

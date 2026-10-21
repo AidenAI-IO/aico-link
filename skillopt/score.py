@@ -7,7 +7,9 @@ current by min_delta to be accepted).
 from __future__ import annotations
 import dataclasses as dc
 import json
+import os
 import re
+import sys
 from typing import Any
 
 from runner.models import TaskResult
@@ -27,6 +29,8 @@ class SampleQuality:
     include_in_score: bool = True
     score_weight: float = 1.0
     include_in_reflect: bool = True
+    # The rule-based kind when the Jev classifier overrode it.
+    rule_kind: str = ""
 
     @property
     def is_clean(self) -> bool:
@@ -38,13 +42,16 @@ class SampleQuality:
         )
 
     def to_extras(self) -> dict[str, Any]:
-        return {
+        extras = {
             "sample_quality": self.kind,
             "sample_quality_reason": self.reason,
             "score_weight": self.score_weight,
             "score_excluded": not self.include_in_score,
             "reflect_excluded": not self.include_in_reflect,
         }
+        if self.rule_kind:
+            extras["sample_quality_rule"] = self.rule_kind
+        return extras
 
 
 _SYSTEM_ERROR_MARKERS = (
@@ -137,6 +144,72 @@ def task_result_to_rollout(tr: TaskResult) -> RolloutResult:
 
 
 def task_result_sample_quality(tr: TaskResult, *, fail_reason: str = "") -> SampleQuality:
+    rule = _rule_sample_quality(tr, fail_reason=fail_reason)
+    if os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER", "rules").strip() != "typesafe":
+        return rule
+    return _typesafe_sample_quality(tr, fail_reason, rule)
+
+
+# Sample-quality policy per kind: (include_in_score, score_weight, include_in_reflect).
+_QUALITY_POLICY = {
+    "system_error": (False, 0.0, False),
+    "agent_format_error": (False, 0.0, False),
+    "timeout": (True, TIMEOUT_SCORE_WEIGHT, False),
+    "external_blocker": (True, EXTERNAL_BLOCKER_SCORE_WEIGHT, False),
+    "clean": (True, 1.0, True),
+}
+
+_TYPESAFE_CRITERIA = {
+    "system_error": "the harness, environment, network or service failed; the agent's own behavior is not what went wrong",
+    "agent_format_error": "the agent made no tool calls, gave an empty reply, or replied with an internal JSON plan instead of acting",
+    "timeout": "the task ran out of time",
+    "external_blocker": "the task failed because of something outside the agent: a login wall, missing account, captcha, permission prompt, or app that is unavailable",
+    "clean": "an ordinary pass or failure that fairly reflects the agent's own ability",
+}
+
+
+def _typesafe_sample_quality(tr: TaskResult, fail_reason: str, rule: SampleQuality) -> SampleQuality:
+    """Ask Jev for the sample-quality class; a confident answer overrides the rules."""
+    from skillopt import typesafe
+
+    metrics = tr.metrics or {}
+    state = {
+        "status": str(tr.status or ""),
+        "fail_reason": fail_reason,
+        "tool_calls": metrics.get("tool_calls"),
+        "final_response": str(metrics.get("final_response") or metrics.get("aiden_last_response") or "")[:2000],
+        "evidence": _quality_text(
+            str(tr.status or ""), fail_reason, metrics,
+            getattr(tr, "hard_assertions", None), getattr(tr, "hard_assertion_failures", []), getattr(tr, "rubric", []),
+        )[:8000],
+    }
+    question = {
+        "type": "choice",
+        "instructions": "This is one benchmark run of a phone-automation agent. Which kind of training sample is it?",
+        "criteria": _TYPESAFE_CRITERIA,
+    }
+    try:
+        min_confidence = float(os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER_MIN_CONFIDENCE", "0.8"))
+        response = typesafe.ask(state, {"kind": question}, api_key=typesafe.resolve_api_key())
+        got = typesafe.answer(response, "kind", "choice")
+    except Exception as exc:  # noqa: BLE001 - classification falls back to the rules
+        print(f"[skillopt] typesafe sample classifier failed, using rules: {exc}", file=sys.stderr)
+        return rule
+    kind, confidence = str(got.get("choice") or ""), float(got.get("confidence") or 0)
+    if kind not in _QUALITY_POLICY or confidence < min_confidence or kind == rule.kind:
+        return rule
+    include_in_score, weight, include_in_reflect = _QUALITY_POLICY[kind]
+    return SampleQuality(
+        kind=kind,
+        reason=f"jev confidence {confidence:.2f}; rules said {rule.kind}",
+        include_in_score=include_in_score,
+        score_weight=weight,
+        include_in_reflect=include_in_reflect,
+        rule_kind=rule.kind,
+    )
+
+
+def _rule_sample_quality(tr: TaskResult, *, fail_reason: str = "") -> SampleQuality:
     metrics = tr.metrics or {}
     status = str(tr.status or "")
     text = _quality_text(

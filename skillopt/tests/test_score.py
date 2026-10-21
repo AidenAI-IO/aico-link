@@ -153,3 +153,39 @@ def test_validation_gate_rejects_negative_min_delta():
 
     with pytest.raises(ValueError, match="min_delta must be non-negative"):
         validation_gate(cand, cur, min_delta=-0.5)
+
+
+def test_typesafe_sample_classifier_overrides_rules_only_when_confident(monkeypatch):
+    from skillopt import typesafe
+
+    answers = iter([
+        {"answers": {"kind": {"type": "choice", "choice": "external_blocker", "confidence": 0.93}}},
+        {"answers": {"kind": {"type": "choice", "choice": "external_blocker", "confidence": 0.4}}},
+    ])
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER", "typesafe")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-key")
+    monkeypatch.setattr(typesafe, "ask", lambda *args, **kwargs: next(answers))
+
+    tr = _mk_task_result("login", "failed", 0, 2)
+    tr.metrics = {"tool_calls": 6, "final_response": "The app asks me to sign in first."}
+    overridden = task_result_to_rollout(tr)
+    assert overridden.extras["sample_quality"] == "external_blocker"
+    assert overridden.extras["sample_quality_rule"] == "clean"
+    assert rollout_sample_quality(overridden).score_weight == pytest.approx(0.5)
+
+    kept = task_result_to_rollout(tr)
+    assert kept.extras["sample_quality"] == "clean"
+    assert "sample_quality_rule" not in kept.extras
+
+
+def test_typesafe_sample_classifier_falls_back_to_rules_on_error(monkeypatch):
+    from skillopt import typesafe
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("typesafe HTTP 451")
+
+    monkeypatch.setenv("SKILLOPT_SAMPLE_CLASSIFIER", "typesafe")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "ts-key")
+    monkeypatch.setattr(typesafe, "ask", fail)
+    tr = _mk_task_result("timeout", "timeout", 0, 2)
+    assert task_result_to_rollout(tr).extras["sample_quality"] == "timeout"

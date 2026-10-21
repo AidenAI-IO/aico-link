@@ -475,3 +475,53 @@ func (s *recordingBridgeQuickActionTool) Call(ctx context.Context, input string)
 	}
 	return s.recordingTextInputTool.Call(ctx, input)
 }
+
+func TestTextInputBridgeAllowsPastePermissionDialogBeforeMenuFallback(t *testing.T) {
+	message := "权限弹窗测试"
+	vision := &stubTextInputVision{analyses: []textInputScreenAnalysis{{
+		ObservedMode: textInputModeComposition,
+		FieldText:    "",
+	}, {
+		ObservedMode: textInputModeComposition,
+		FieldText:    message,
+	}}}
+	pb := newTestPhoneBridge(t)
+	pb.NoteClipboardWrite(message)
+	pb.platform = "ios"
+	pb.appState = "background"
+	pb.appStateAt = time.Now()
+	touch := &recordingTextInputTool{name: "touch_gesture", out: "ok"}
+	checks := 0
+	tool := &textInputBridge{
+		hw: &textInputHardwareDeps{
+			touchGesture: touch,
+			keyboardTap:  &recordingTextInputTool{name: "keyboard_tap", out: "ok"},
+			keyboardText: &recordingTextInputTool{name: "keyboard_text", out: "ok"},
+			quickAction:  &recordingTextInputTool{name: "quick_action", out: `{"ok":true}`},
+			screenshot:   textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
+		},
+		vision:   vision,
+		bridgeFn: func() *PhoneBridge { return pb },
+		sleep:    testNoWaitSleep,
+		findPopupFn: func(context.Context, screenshotResult, string) (popupCheck, error) {
+			checks++
+			return popupCheck{Kind: popupKindPastePermission, Summary: "允许粘贴", SafeTap: &focusPointArgs{X: 700, Y: 560}}, nil
+		},
+		findPasteMenuFn: func(context.Context, screenshotResult, string) (pasteMenuResult, error) {
+			t.Fatal("long-press menu must not run once the allowed paste landed")
+			return pasteMenuResult{}, nil
+		},
+	}
+
+	out, err := callEnterTextBridgeForTest(context.Background(), tool, `{"text":"`+message+`","focus":{"x":300,"y":940}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"committed": true`) || checks != 1 {
+		t.Fatalf("output=%s checks=%d", out, checks)
+	}
+	last := touch.calls[len(touch.calls)-1]
+	if !strings.Contains(last, `"type": "tap"`) || !strings.Contains(last, `"x": 700`) {
+		t.Fatalf("touch_gesture calls=%v, want the allow-paste tap last", touch.calls)
+	}
+}

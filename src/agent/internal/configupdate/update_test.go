@@ -865,6 +865,77 @@ func TestUpdateConfigFileRejectsChangedReadOnlyCredentialStatus(t *testing.T) {
 	}
 }
 
+func TestUpdateConfigFileWritesDecisionModelUnderModelSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(path, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewService().Update(path, []byte(`{"config":{"decision":{"api_key":"ts-secret"}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(result.ChangedPaths, ",") != "model_settings.decision.api_key" {
+		t.Fatalf("changed paths = %v", result.ChangedPaths)
+	}
+	if !result.Config.Decision.HasAPIKey || result.Config.Decision.APIKey != "" {
+		t.Fatalf("decision response leaked or misreported the key: %+v", result.Config.Decision)
+	}
+
+	// A full GET payload reports has_api_key instead of the key; echoing it
+	// back must keep the saved key and write none of the reported defaults.
+	patch, err := json.Marshal(map[string]any{"config": map[string]any{"decision": result.Config.Decision}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err = NewService().Update(path, patch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.ChangedPaths) != 0 {
+		t.Fatalf("changed paths = %v", result.ChangedPaths)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(got)
+	for _, want := range []string{"[model_settings.decision]", `api_key = "ts-secret"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("decision model config missing %q:\n%s", want, text)
+		}
+	}
+	for _, unwanted := range []string{"has_api_key", "enabled =", "base_url =", "min_confidence =", "mode =", "model ="} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("echoed defaults or status fields were written (%q):\n%s", unwanted, text)
+		}
+	}
+}
+
+func TestUpdateConfigFileSwitchesDecisionProviderAndClearsKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	source := "[model_settings.decision]\napi_key = \"ts-secret\"\nbase_url = \"https://ts.example/v1\"\nmodel = \"jev-1.14.0\"\n"
+	if err := os.WriteFile(path, []byte(source), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	// The page's provider switch: the key belongs to the old provider, and
+	// clearing it is what turns the decision model off.
+	result, err := NewService().Update(path, []byte(`{"config":{"decision":{"provider":"openai","api_key":"","base_url":null,"model":null}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := result.Config.Decision
+	if got.Provider != "openai" || got.HasAPIKey || got.BaseURL != "https://api.openai.com/v1" || got.Model != "gpt-6-luna" {
+		t.Fatalf("decision after switch = %+v", got)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := string(data); strings.Contains(text, "ts-secret") || strings.Contains(text, "ts.example") || strings.Contains(text, "jev-1.14.0") {
+		t.Fatalf("old provider settings survived the switch:\n%s", text)
+	}
+}
+
 func TestUpdateConfigFileRejectsChangedDerivedPointerMode(t *testing.T) {
 	source := "[basic_settings.device]\ndevice_type = \"iOS\"\n"
 	path := filepath.Join(t.TempDir(), "agent.toml")

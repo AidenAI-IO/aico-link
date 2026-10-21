@@ -1226,6 +1226,8 @@ func tomlPathForWebPath(path []string) []string {
 		}
 	case "model_providers":
 		prefix = []string{"model_settings", "providers"}
+	case "decision":
+		prefix = []string{"model_settings", "decision"}
 	case "voice_model":
 		prefix = []string{"voice_settings", "realtime"}
 	case "voice_model_providers":

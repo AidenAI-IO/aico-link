@@ -1,12 +1,14 @@
 /**
- * Main model routes.
+ * Model routes.
  *
- *   /model                              provider, model, parameters, context limits, test
+ *   /model                              entries: the main model, the optional decision model
+ *   /model/main                         provider, model, parameters, context limits, test
  *   /model/providers                    configured provider records, then unconfigured types
  *   /model/providers/edit?name=<record> edit a configured record's credentials
  *   /model/providers/edit?type=<type>   configure a new record of a type
  *   /model/providers/edit?type=custom   "Others": pick the interface type, key and Base URL
  *   /model/models                       the selected provider's model catalogue
+ *   /model/decision                     the optional decision model: key, test, confidence
  *
  * The main model references a provider *record* by name (`model.provider`); a
  * record carries the type and credentials (`model_providers.<name>`). Several
@@ -19,6 +21,11 @@
  * The advanced model fields (conversation API, provider compaction, raw HTTP
  * logging, reasoning budget) are not part of this design; they remain on the
  * classic page.
+ *
+ * The decision model (`decision`) is a separate, optional classifier for fixed
+ * workflow checks, so it has its own page rather than a group under the main
+ * model's parameters. Its Base URL and model keep their defaults here;
+ * they are edited in the TOML file when they ever need to change.
  */
 
 import {fetchSnapshot, request, t} from '../data.js';
@@ -138,6 +145,19 @@ async function ensureSnapshot(context) {
 const modelConfig = snapshot => (snapshot && snapshot.config && snapshot.config.model) || {};
 const records = snapshot => (snapshot && snapshot.config && snapshot.config.model_providers) || {};
 const currentRecord = snapshot => records(snapshot)[modelConfig(snapshot).provider] || null;
+const decisionConfig = snapshot => (snapshot && snapshot.config && snapshot.config.decision) || {};
+
+/** Decision model providers, as `decision.provider` accepts them. */
+export const DECISION_PROVIDERS = [
+  {value: 'typesafe', label: msg('model.decision_provider_typesafe', 'TypeSafe Jev'),
+    help: msg('model.decision_provider_typesafe_help', '在 typesafe.ai 获取 API Key')},
+  {value: 'openai', label: msg('model.decision_provider_openai', 'OpenAI Luna'),
+    help: msg('model.decision_provider_openai_help', '使用 OpenAI 的 Decisions API；它不能定位点击位置，这类判断仍交给主模型')},
+];
+
+function decisionProvider(value) {
+  return DECISION_PROVIDERS.find(entry => entry.value === value) || DECISION_PROVIDERS[0];
+}
 
 function adoptSaved(snapshot) {
   return payload => {
@@ -199,12 +219,55 @@ async function selectProvider(snapshot, saver, name, record) {
 
 /* ------------------------------------------------------------------ home --- */
 
+/** The models the Agent uses: the main model and the optional decision model. */
 export async function modelPage(context) {
+  const snapshot = await ensureSnapshot(context);
+  const providerName = modelConfig(snapshot).provider || '';
+  const record = currentRecord(snapshot);
+  const modelName = modelConfig(snapshot).model || '';
+  const mainSummary = providerName
+    ? [recordLabel(providerName, record), modelName].filter(Boolean).join(' · ')
+    : resolve(msg('model.not_set', '未设置'));
+  const decisionOn = Boolean(decisionConfig(snapshot).has_api_key);
+  return screen([
+    group({
+      rows: [
+        row({
+          label: msg('model.main', '主模型'),
+          accessory: el('span', {class: 'ds-row__value-with-mark'}, [
+            record ? providerMark(record.type) : null,
+            text(mainSummary, 'ds-row__value'),
+          ]),
+          chevron: true,
+          action: 'open-main-model',
+          onPress: () => context.navigate('/model/main'),
+        }),
+      ],
+    }),
+    group({
+      caption: msg('model.section_auxiliary', '辅助模型（可选）'),
+      rows: [
+        row({
+          label: msg('model.decision', '决策模型'),
+          value: decisionOn ? msg('model.decision_on', '已开启') : msg('model.decision_off', '未开启'),
+          tone: decisionOn ? 'success' : undefined,
+          chevron: true,
+          action: 'open-decision-model',
+          onPress: () => context.navigate('/model/decision'),
+        }),
+      ],
+    }),
+  ]);
+}
+
+/* ------------------------------------------------------------- main model --- */
+
+export async function mainModelPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
   const saver = createSaver(context, {
-    title: msg('ui.nav_model', '主模型设置'),
-    back: '/',
+    title: msg('model.main', '主模型'),
+    back: '/model',
     root: body,
     onSaved: payload => {
       adoptSaved(snapshot)(payload);
@@ -355,7 +418,7 @@ export async function providersPage(context) {
   const body = el('div');
   const saver = createSaver(context, {
     title: msg('model.providers', '提供商'),
-    back: '/model',
+    back: '/model/main',
     root: body,
     onSaved: adoptSaved(snapshot),
   });
@@ -499,7 +562,7 @@ export async function providerEditPage(context) {
         onPress: async () => {
           useAsMain.disabled = true;
           const outcome = await selectProvider(snapshot, saver, existingName, existing);
-          if (outcome === 'saved' || outcome === 'staged') context.navigate('/model', {replace: true});
+          if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/main', {replace: true});
           else useAsMain.disabled = false;
         },
       })
@@ -588,7 +651,7 @@ export async function providerEditPage(context) {
 export async function modelsPage(context) {
   const snapshot = await ensureSnapshot(context);
   const body = el('div');
-  const saver = createSaver(context, {title: msg('model.model', '模型'), back: '/model', root: body, onSaved: adoptSaved(snapshot)});
+  const saver = createSaver(context, {title: msg('model.model', '模型'), back: '/model/main', root: body, onSaved: adoptSaved(snapshot)});
   const providerName = modelConfig(snapshot).provider;
   const record = currentRecord(snapshot);
   const type = record ? record.type : '';
@@ -597,11 +660,11 @@ export async function modelsPage(context) {
 
   async function choose(model) {
     if (model === current) {
-      context.navigate('/model', {replace: true});
+      context.navigate('/model/main', {replace: true});
       return;
     }
     const outcome = await saver.change('model.model', await selectionPatch(snapshot, providerName, type, model));
-    if (outcome === 'saved' || outcome === 'staged') context.navigate('/model', {replace: true});
+    if (outcome === 'saved' || outcome === 'staged') context.navigate('/model/main', {replace: true});
   }
 
   const listed = models.map(entry => entry.id);
@@ -629,6 +692,163 @@ export async function modelsPage(context) {
     })]}),
   ]);
   saver.refreshChrome();
+  return screen([body]);
+}
+
+/* -------------------------------------------------------------- decision --- */
+
+/**
+ * The optional decision model. The key is write-only like the Web search key:
+ * the Agent reports `has_api_key`, and an empty field keeps the saved key. The
+ * key is the only switch: saving one turns the decision model on, removing it
+ * turns it off.
+ */
+export async function decisionPage(context) {
+  const snapshot = await ensureSnapshot(context);
+  const body = el('div');
+  const saver = createSaver(context, {
+    title: msg('model.decision', '决策模型'),
+    back: '/model',
+    root: body,
+    onSaved: payload => {
+      adoptSaved(snapshot)(payload);
+      render();
+    },
+  });
+  const decision = () => decisionConfig(snapshot);
+
+  function apiKeyField() {
+    const input = el('input', {
+      class: 'ds-input',
+      attrs: {
+        type: 'password',
+        autocomplete: 'off',
+        autocapitalize: 'none',
+        spellcheck: 'false',
+        placeholder: resolve(decision().has_api_key
+          ? msg('model.api_key_saved', '已保存，留空保持不变')
+          : msg('model.api_key_placeholder', '请输入 API Key')),
+        'aria-label': resolve(msg('model.decision_api_key', '决策模型 API Key')),
+      },
+      data: {action: 'edit-decision-api-key'},
+    });
+    input.addEventListener('keydown', event => {
+      if (event.key === 'Enter') input.blur();
+    });
+    input.addEventListener('change', async () => {
+      const key = input.value.trim();
+      if (!key) return;
+      if (await saver.change('decision.api_key', {decision: {api_key: key}}) === 'saved') input.value = '';
+    });
+    return el('div', {class: 'ds-form-card'}, [
+      text(msg('model.decision_api_key', '决策模型 API Key'), 'ds-form-card__title'),
+      text(decisionProvider(decision().provider).help, 'ds-form-card__help'),
+      input,
+    ]);
+  }
+
+  /**
+   * The key belongs to one provider, so switching clears it, which turns the
+   * model off; the Base URL and model return to the new provider's defaults.
+   */
+  async function chooseProvider(value) {
+    const current = decision();
+    if (value === decisionProvider(current.provider).value) return;
+    const patch = {decision: {provider: value, base_url: null, model: null}};
+    if (current.has_api_key) {
+      const confirmed = await confirmSheet({
+        title: msg('model.decision_switch_title', '切换决策模型提供商？'),
+        body: msg('model.decision_switch_body', '已保存的 API Key 会被清除，决策模型随之关闭；填写新提供商的 API Key 后自动开启。'),
+        confirmLabel: msg('model.decision_switch_confirm', '切换'),
+        action: 'confirm-decision-provider',
+      });
+      if (!confirmed) return;
+      patch.decision.api_key = '';
+    }
+    await saver.change('decision.provider', patch);
+  }
+
+  async function removeKey() {
+    const confirmed = await confirmSheet({
+      title: msg('model.decision_remove_key_title', '移除决策模型 API Key？'),
+      body: msg('model.decision_remove_key_body', '移除后决策模型关闭，所有判断交给主模型。'),
+      confirmLabel: msg('model.decision_remove_key_confirm', '移除'),
+      danger: true,
+      action: 'confirm-remove-decision-key',
+    });
+    if (confirmed) await saver.change('decision.api_key', {decision: {api_key: ''}});
+  }
+
+  /** Sends one small question with the saved settings and reports the reply. */
+  async function testConnection(action) {
+    action.disabled = true;
+    try {
+      const payload = await request('/api/config/test', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({section: 'decision', values: decision()}),
+      });
+      const result = (payload.results || [])[0];
+      toast(payload.ok
+        ? msg('model.test_passed', '连接成功')
+        : `${resolve(msg('model.test_failed', '连接失败'))}${result && result.detail ? `：${result.detail}` : ''}`,
+        {durationMs: payload.ok ? undefined : 5000});
+    } catch (error) {
+      toast(error && error.message ? error.message : resolve(msg('model.test_failed', '连接失败')), {durationMs: 5000});
+    } finally {
+      action.disabled = false;
+    }
+  }
+
+  function render() {
+    const provider = decisionProvider(decision().provider);
+    const hasKey = Boolean(decision().has_api_key);
+    const testButton = el('button', {
+      class: 'ds-card-action',
+      attrs: {type: 'button'},
+      data: {action: 'test-decision-connection'},
+      on: {click: () => testConnection(testButton)},
+    }, [text(msg('model.test', '测试连接'))]);
+    replace(body, [
+      group({rows: [row({
+        label: msg('model.decision_provider', '提供商'),
+        value: provider.label,
+        chevron: true,
+        action: 'open-decision-provider',
+        onPress: () => choiceSheet({
+          options: DECISION_PROVIDERS.map(entry => ({value: entry.value, label: entry.label})),
+          selected: provider.value,
+          onSelect: chooseProvider,
+        }),
+      })]}),
+      group({
+        rows: [apiKeyField()],
+        note: msg('model.decision_key_help', '填写 API Key 后即开启：固定流程里的判断（如输入法状态、App 是否打开）同时问决策模型和主模型，决策模型有把握时直接采用，否则用主模型的结果。'),
+      }),
+      hasKey ? el('div', {class: 'ds-group'}, [testButton]) : null,
+      hasKey ? group({rows: [row({
+        label: msg('model.decision_remove_key', '移除 API Key'),
+        labelTone: 'danger',
+        action: 'remove-decision-key',
+        onPress: removeKey,
+      })]}) : null,
+      group({
+        rows: [inlineValueRow({
+          key: 'decision.min_confidence',
+          label: msg('model.decision_min_confidence', '最低置信度'),
+          description: msg('model.decision_min_confidence_help', '低于该值的判断交回主模型；留空使用默认值 0.8'),
+          parse: parse.optionalRange(0, 1),
+          invalid: msg('model.decision_min_confidence_invalid', '请输入 0 到 1 之间的数，或留空'),
+          saved: () => (decision().min_confidence == null ? '' : String(decision().min_confidence)),
+          patch: value => ({decision: {min_confidence: value}}),
+          saver,
+        })],
+      }),
+    ]);
+    saver.refreshChrome();
+  }
+
+  render();
   return screen([body]);
 }
 

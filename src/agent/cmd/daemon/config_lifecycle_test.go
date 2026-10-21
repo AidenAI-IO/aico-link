@@ -339,6 +339,7 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"DeviceTypeOverride":         "CLI-only; already folded into Device before comparison",
 		"Model":                      "shared model manager is replaced by Runtime at Agent task boundaries",
 		"ModelProviders":             "resolved into Model at config load time",
+		"Decision":                   "decision model is read by Agent tasks, not the voice loop",
 		"TTSProviders":               "resolved into TTS / the shared TTS provider manager",
 		"STTProviders":               "resolved into STT at config load time",
 		"VoiceModelProviders":        "resolved into VoiceModel at config load time",
