@@ -338,15 +338,15 @@ func TestQuickActionSpotlightSearchClearsSearchField(t *testing.T) {
 	if got, want := len(reports), 10; got != want {
 		t.Fatalf("keyboard reports = %d, want %d (Cmd+Space, two Cmd+A/Backspace clear passes): %v", got, want, reports)
 	}
-	assertKeyboardReport(t, reports[0], hidModifierLeftMeta, hidUsageSpace, "Cmd+Space")
+	assertKeyboardReport(t, reports[0], hidModifierMap["meta"], hidKeyboardMap["space"], "Cmd+Space")
 	assertReleaseReport(t, reports[1], "release after Cmd+Space")
-	assertKeyboardReport(t, reports[2], hidModifierLeftMeta, hidUsageA, "first Cmd+A")
+	assertKeyboardReport(t, reports[2], hidModifierMap["meta"], hidKeyboardMap["a"], "first Cmd+A")
 	assertReleaseReport(t, reports[3], "release after first Cmd+A")
-	assertKeyboardReport(t, reports[4], 0, hidUsageBackspace, "first Backspace")
+	assertKeyboardReport(t, reports[4], 0, hidKeyboardMap["backspace"], "first Backspace")
 	assertReleaseReport(t, reports[5], "release after first Backspace")
-	assertKeyboardReport(t, reports[6], hidModifierLeftMeta, hidUsageA, "second Cmd+A")
+	assertKeyboardReport(t, reports[6], hidModifierMap["meta"], hidKeyboardMap["a"], "second Cmd+A")
 	assertReleaseReport(t, reports[7], "release after second Cmd+A")
-	assertKeyboardReport(t, reports[8], 0, hidUsageBackspace, "second Backspace")
+	assertKeyboardReport(t, reports[8], 0, hidKeyboardMap["backspace"], "second Backspace")
 	assertReleaseReport(t, reports[9], "release after second Backspace")
 }
 
@@ -452,15 +452,6 @@ func readKeyboardReports(t *testing.T, dev *mnk.HIDDevice, path string) [][]byte
 	return reports
 }
 
-// Boot keyboard values from the USB HID Usage Tables that the keyboard report
-// assertions expect.
-const (
-	hidModifierLeftMeta = 0x08
-	hidUsageA           = 0x04
-	hidUsageBackspace   = 0x2a
-	hidUsageSpace       = 0x2c
-)
-
 func assertKeyboardReport(t *testing.T, report []byte, modifier, key uint8, label string) {
 	t.Helper()
 	if report[0] != modifier || report[2] != key {
@@ -500,8 +491,8 @@ func TestQuickActionDeleteBackwardUsesBackspace(t *testing.T) {
 	if len(data) != 16 {
 		t.Fatalf("report bytes = %d, want 16 (backspace + release)", len(data))
 	}
-	if data[2] != hidUsageBackspace {
-		t.Fatalf("delete_backward key = 0x%02x, want backspace 0x%02x", data[2], hidUsageBackspace)
+	if data[2] != hidKeyboardMap["backspace"] {
+		t.Fatalf("delete_backward key = 0x%02x, want backspace 0x%02x", data[2], hidKeyboardMap["backspace"])
 	}
 }
 

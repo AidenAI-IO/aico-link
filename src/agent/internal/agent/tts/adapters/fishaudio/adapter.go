@@ -9,15 +9,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack/v5"
-	"golang.org/x/net/proxy"
 
 	"aiden-agent/internal/agent/tts"
 	"aiden-agent/internal/logging"
@@ -41,7 +38,7 @@ type Adapter struct {
 	referenceID string
 	model       string
 	endpoint    string
-	proxyURL    string
+	proxy       tts.ProxyConfig
 	speed       float64
 }
 
@@ -77,7 +74,7 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 		referenceID: referenceID,
 		model:       model,
 		endpoint:    endpoint,
-		proxyURL:    cfg.Proxy.AllProxy,
+		proxy:       cfg.Proxy,
 		speed:       speed,
 	}, nil
 }
@@ -123,13 +120,8 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 }
 
 func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
-	dialer := websocket.Dialer{
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
-		HandshakeTimeout: connectTimeout,
-	}
-	if err := configureProxy(&dialer, a.proxyURL); err != nil {
+	dialer, err := a.websocketDialer()
+	if err != nil {
 		return nil, err
 	}
 
@@ -148,29 +140,15 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 	return conn, nil
 }
 
-func configureProxy(dialer *websocket.Dialer, proxyURL string) error {
-	if proxyURL == "" {
-		return nil
+func (a *Adapter) websocketDialer() (websocket.Dialer, error) {
+	dialer := websocket.Dialer{
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+		HandshakeTimeout: connectTimeout,
 	}
-	u, err := url.Parse(proxyURL)
-	if err != nil {
-		return fmt.Errorf("parse proxy: %w", err)
-	}
-	switch u.Scheme {
-	case "socks5", "socks5h":
-		d, err := proxy.FromURL(u, proxy.Direct)
-		if err != nil {
-			return fmt.Errorf("socks5: %w", err)
-		}
-		dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return d.(proxy.ContextDialer).DialContext(ctx, network, addr)
-		}
-	case "http", "https":
-		dialer.Proxy = func(req *http.Request) (*url.URL, error) { return u, nil }
-	default:
-		return fmt.Errorf("unsupported proxy scheme: %s", u.Scheme)
-	}
-	return nil
+	err := a.proxy.ConfigureWebSocketDialer(&dialer)
+	return dialer, err
 }
 
 // session is one Fish Audio streaming session.

@@ -207,7 +207,7 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 			waitResult.ScreenChanged != nil && *waitResult.ScreenChanged,
 			formatTouchscreenRCAFloatPtr(waitResult.LastDiff),
 		)
-	} else if err := waitForPostActionScreenshot(ctx, t.delay); err != nil {
+	} else if err := sleepWithContext(ctx, t.delay); err != nil {
 		return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but post-action delay failed: %v", t.inner.Name(), actionOutput, err), nil
 	}
 
@@ -441,22 +441,6 @@ func postActionErrorCode(err error) string {
 		return CodeDeadlineExceeded
 	default:
 		return CodeToolExecutionFailed
-	}
-}
-
-func waitForPostActionScreenshot(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
 	}
 }
 

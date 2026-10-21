@@ -79,6 +79,7 @@ func main() {
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
+		benchmarkHeadless         = flag.Bool("benchmark-headless", false, "Hide unavailable device tools in a benchmark container without an environment bridge")
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
@@ -144,6 +145,13 @@ func main() {
 			_ = logging.LogEvent(logging.Error, "agent", "startup", "benchmark_token_empty")
 			os.Exit(1)
 		}
+	}
+	if *benchmarkHeadless {
+		if cfg.Benchmark.Token == "" || cfg.EnvironmentBridge.Enabled {
+			fmt.Fprintln(os.Stderr, "benchmark-headless requires benchmark-token-file and no environment bridge")
+			os.Exit(1)
+		}
+		cfg.Benchmark.Headless = true
 	}
 	if *benchmarkMockTools {
 		if cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled || cfg.EnvironmentBridge.Endpoint == "" {
@@ -336,6 +344,17 @@ func startWakeupWatchers(newWatcher wakeupWatcherFactory, callback func()) ([]wa
 	return startWakeupWatchersWithDebounce(newWatcher, callback, wakeupDebounceInterval, wakeupDebounceNow)
 }
 
+// startWakeupWatchersIfEnabled registers GPIO 32/33 listeners when tap wakeup
+// is enabled. When disabled it returns nil watchers so voice loops keep waiting
+// on reload/signal (and realtime /api/chat) without opening sessions from hardware.
+func startWakeupWatchersIfEnabled(cfg agent.Config, newWatcher wakeupWatcherFactory, callback func()) ([]wakeupWatcher, error) {
+	if !cfg.TapWakeupEnabledOrDefault() {
+		logging.Infof("agent", "wakeup", "Tap wakeup disabled (tap_wakeup_enabled=false); ignoring tap button on %s", wakeupGPIOPinsLabel())
+		return nil, nil
+	}
+	return startWakeupWatchers(newWatcher, callback)
+}
+
 type wakeupDebouncer struct {
 	mu       sync.Mutex
 	interval time.Duration
@@ -452,11 +471,13 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.TapWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	events := make(chan voiceEvent, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalVoiceWakeupEvent(events)
 	})
@@ -466,7 +487,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	for {
 		if reloadRequested(reload) {
@@ -490,12 +511,14 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.TapWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	ctx := context.Background()
 	wakeupEvents := make(chan struct{}, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalWakeupEvent(wakeupEvents)
 	})
@@ -505,7 +528,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	pendingWakeup := false
 	for {
@@ -564,12 +587,21 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 }
 
+func wakeupReadyLabel(cfg agent.Config) string {
+	if cfg.TapWakeupEnabledOrDefault() {
+		return wakeupGPIOPinsLabel()
+	}
+	return "tap wakeup disabled"
+}
+
 func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	if cfg.TapWakeupEnabledOrDefault() {
+		logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	}
 
 	events := make(chan voiceEvent, 1)
 
-	watchers, err := startWakeupWatchers(newWatcher, func() {
+	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
 		dialog.InterruptOutput()
 		signalVoiceWakeupEvent(events)
 	})
@@ -579,7 +611,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext

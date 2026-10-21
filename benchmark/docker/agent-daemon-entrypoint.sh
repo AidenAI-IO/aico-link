@@ -48,4 +48,10 @@ if [ "${AIDEN_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
     set -- "$@" --benchmark-mock-tools
 fi
 
+# These containers have no physical device services. Real-device CLI runs do not
+# use this entrypoint; bridged and scripted environments retain their tool catalog.
+if [ -n "${AIDEN_BENCHMARK_TOKEN_FILE:-}" ] && [ "${AIDEN_ENVIRONMENT_BRIDGE_MODE:-0}" != "1" ]; then
+    set -- "$@" --benchmark-headless
+fi
+
 exec "$@"

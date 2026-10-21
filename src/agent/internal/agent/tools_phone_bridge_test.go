@@ -507,7 +507,7 @@ func TestSearchLaunchAppUsesRealQuickActionDeviceType(t *testing.T) {
 		if len(reports) < 2 {
 			t.Fatalf("keyboard reports = %d, want iOS spotlight binding", len(reports))
 		}
-		assertKeyboardReport(t, reports[0], hidModifierLeftMeta, hidUsageSpace, "Cmd+Space")
+		assertKeyboardReport(t, reports[0], hidModifierMap["meta"], hidKeyboardMap["space"], "Cmd+Space")
 		assertReleaseReport(t, reports[1], "release after Cmd+Space")
 	})
 }

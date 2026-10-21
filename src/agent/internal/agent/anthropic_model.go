@@ -1675,18 +1675,7 @@ func shouldRetryAnthropicStreamError(err error) bool {
 }
 
 func waitBeforeAnthropicRetry(ctx context.Context, retryNumber int, retryDelay time.Duration) error {
-	delay := time.Duration(retryNumber) * retryDelay
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return sleepWithContext(ctx, time.Duration(retryNumber)*retryDelay)
 }
 
 func (m *anthropicModel) withRawHTTPLogScope(ctx context.Context) context.Context {

@@ -312,6 +312,7 @@ vad_helper_path = "/usr/lib/aiden/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
+tap_wakeup_enabled = true
 voice_followup_enabled = false
 voice_followup_timeout_ms = 5000
 voice_first_turn_timeout_ms = 10000
@@ -410,7 +411,9 @@ response anchors.
 
 ### Voice & VAD
 
-These fields apply to the `stt` input mode.
+Unless noted otherwise, these fields apply to the `stt` input mode.
+`tap_wakeup_enabled` also applies in `realtime`: it gates the hardware tap
+button in both modes.
 
 | Field                           | Default                                                     | Description                                                                                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -420,6 +423,7 @@ These fields apply to the `stt` input mode.
 | `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
 | `silence_ms`                    | `550`                                                       | How many milliseconds of silence before an utterance is considered finished                                                                                                            |
 | `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
+| `tap_wakeup_enabled`            | `true`                                                      | When on, the hardware tap button can wake Aiden in Classic STT and Realtime. Turning it off disables only that button path—not all wakeup. Realtime `/api/chat` can still activate a session; Classic STT normally needs the button |
 | `voice_followup_enabled`        | `false`                                                     | Enable continuous follow-up after a single wakeup in wakeup mode; defaults to one wakeup per turn                                                                                      |
 | `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
 | `voice_first_turn_timeout_ms`   | `10000`                                                     | Window to wait for the first utterance after wakeup                                                                                                                                    |
@@ -1114,8 +1118,17 @@ OPENROUTER_API_KEY=...
 | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `HTTP_PROXY` / `http_proxy`   | HTTP proxy URL, for example `http://127.0.0.1:7890`                                                                                                |
 | `HTTPS_PROXY` / `https_proxy` | HTTPS proxy URL, usually the same HTTP proxy endpoint                                                                                              |
-| `ALL_PROXY` / `all_proxy`     | Generic proxy used by HTTP clients and some WebSocket adapters                                                                                     |
+| `ALL_PROXY` / `all_proxy`     | Fallback proxy used when no scheme-specific proxy applies                                                                                          |
 | `NO_PROXY` / `no_proxy`       | Comma-separated bypass rules; when a proxy URL is set and no bypass value is present, the launcher injects the default private-network bypass list |
+
+Agent HTTP clients, including the Google Cloud and OpenRouter TTS adapters, use
+the proxy for the request scheme and fall back to `ALL_PROXY`. WebSocket
+clients, including the realtime STT clients and the Fish Audio, MiniMax, and
+Volcengine TTS adapters, prefer `HTTPS_PROXY`, then `HTTP_PROXY`, then
+`ALL_PROXY`. All of them connect directly to hosts that match `NO_PROXY`, even
+when the proxy is SOCKS5, and use the default private-network bypass list when
+a proxy URL is set without `NO_PROXY`. The Alibaba Cloud TTS adapter always
+connects directly.
 
 Per-Wi-Fi policies are configured in the Config Web connection dialog and
 stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting

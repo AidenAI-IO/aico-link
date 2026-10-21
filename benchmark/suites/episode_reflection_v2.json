@@ -18,6 +18,7 @@
       "expected_recalled_memory_tool": "recall_device_memory",
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["Preview", "reopen"]},
@@ -53,6 +54,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "unknown", "max_memory_ids": 0, "allow_empty_memory": true},
@@ -80,6 +82,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["failure"], "required_memory_substrings": ["reopen"]},
@@ -109,6 +112,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "max_memory_ids": 0, "allow_empty_memory": true},
@@ -138,6 +142,7 @@
       "expected_recalled_memory_tool": "recall_device_memory",
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["failure"], "required_memory_substrings": ["recipient"]},
@@ -162,6 +167,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "max_memory_ids": 3, "allow_empty_memory": true, "forbidden_memory_substrings": ["192.0.2.20", "255.255.255.0", "192.0.2.1"]},
@@ -189,6 +195,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "max_memory_ids": 3, "allow_empty_memory": true, "forbidden_memory_substrings": ["913204"]},
@@ -216,6 +223,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 1, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["Preview"]},
@@ -249,6 +257,7 @@
       "expected_recalled_memory_tool": "recall_device_memory",
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_scope": {"app_name": "QA Notes", "app_version": "7"}},
@@ -282,6 +291,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"expected_status": "ignored"},
@@ -306,6 +316,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "not_achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["failure"], "required_memory_substrings": ["reopen"]},
@@ -333,6 +344,7 @@
       "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 2, "must_complete_within_sec": 90, "response_required": true},
       "setup": {
         "type": "seed_episode",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
         "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["verify"]},

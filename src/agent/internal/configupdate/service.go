@@ -1213,7 +1213,7 @@ func tomlPathForWebPath(path []string) []string {
 			prefix = []string{"basic_settings", "language_timezone"}
 		} else if key == "input_mode" {
 			prefix = []string{"voice_settings", "mode"}
-		} else if strings.HasPrefix(key, "vad_") || strings.HasPrefix(key, "silence_") || strings.HasPrefix(key, "min_speech_") || strings.HasPrefix(key, "voice_") {
+		} else if key == "tap_wakeup_enabled" || strings.HasPrefix(key, "vad_") || strings.HasPrefix(key, "silence_") || strings.HasPrefix(key, "min_speech_") || strings.HasPrefix(key, "voice_") {
 			prefix = []string{"voice_settings", "classic", "runtime"}
 		} else {
 			prefix = []string{"conversation_settings", "agent"}

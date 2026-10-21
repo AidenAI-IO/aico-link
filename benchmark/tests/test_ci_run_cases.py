@@ -25,6 +25,7 @@ def test_run_case_forwards_configured_repeat_count(monkeypatch, tmp_path, repeat
     commands: list[list[str]] = []
 
     def fake_run(command, **kwargs):
+        assert kwargs["env"]["BENCHMARK_EXECUTION_ENVIRONMENT"] == "isolated"
         commands.append(command)
         return subprocess.CompletedProcess(command, 0)
 

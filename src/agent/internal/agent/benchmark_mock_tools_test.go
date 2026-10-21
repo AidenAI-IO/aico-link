@@ -139,3 +139,16 @@ func TestBenchmarkMockRuntimeRetainsBridgeAvailabilityAndNativeSchemas(t *testin
 	}
 	t.Fatal("PiP contacts tool unavailable")
 }
+
+func TestBenchmarkHeadlessToolsExcludeDeviceServices(t *testing.T) {
+	tools := []langtools.Tool{mockPolicyTestTool{"screenshot"}, mockPolicyTestTool{"touch_gesture"}, mockPolicyTestTool{"wait_for_stable_screen"}, mockPolicyTestTool{"bridge_contacts"}, mockPolicyTestTool{"shell"}, mockPolicyTestTool{"recall_device_memory"}}
+	cfg := Config{Benchmark: BenchmarkConfig{Token: "token", Headless: true}}
+	filtered := benchmarkHeadlessTools(cfg, tools)
+	if len(filtered) != 2 || filtered[0].Name() != "shell" || filtered[1].Name() != "recall_device_memory" {
+		t.Fatalf("headless tools = %v", filtered)
+	}
+	cfg.Benchmark.Headless = false
+	if len(benchmarkHeadlessTools(cfg, tools)) != len(tools) {
+		t.Fatal("normal catalog changed")
+	}
+}

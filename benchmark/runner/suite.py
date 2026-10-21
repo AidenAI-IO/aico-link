@@ -17,14 +17,14 @@ VALID_CATEGORIES = {"diagnostic", "single_step", "multi_step", "memory", "percep
 SETUP_KEYS = {
     "agent_prompt": {"type", "prompt", "timeout_sec", "clear_history_after", "expected_response"},
     "seed_memory": {"type", "memories", "timeout_sec", "clear_history_after"},
-    "seed_episode": {"type", "episode", "consolidate", "timeout_sec", "consolidation_expectation"},
+    "seed_episode": {"type", "episode", "consolidate", "timeout_sec", "consolidation_expectation", "evaluate"},
     "seed_session_chunk": {"type", "session_id", "summary", "messages", "timeout_sec", "clear_history_after"},
     "seed_notification": {
         "type", "events", "consolidate", "timeout_sec",
-        "expected_memory_count", "expected_memory_scope", "expected_memory_query",
+        "expected_memory_count", "expected_memory_scope", "expected_memory_query", "evaluate",
     },
     "assert_memory": {
-        "type", "query", "expected", "absent_ids", "expected_count", "timeout_sec",
+        "type", "query", "expected", "absent_ids", "expected_count", "timeout_sec", "evaluate",
     },
 }
 
@@ -315,6 +315,7 @@ def load_suite(path: Path) -> Suite:
                     raise SuiteValidationError(
                         f"task {tid}: unsupported {setup_type} setup keys: {', '.join(unknown_setup_keys)}"
                     )
+                validate_setup_evaluation(setup_item)
                 if setup_type == "assert_memory":
                     validate_assert_memory_setup(
                         setup_item,
@@ -351,7 +352,7 @@ def load_suite(path: Path) -> Suite:
             consolidation_expectation = None
         memory_assertions = raw.get("memory_assertions")
         if memory_assertions is not None:
-            allowed = SETUP_KEYS["assert_memory"] - {"type"}
+            allowed = SETUP_KEYS["assert_memory"] - {"type", "evaluate"}
             if not isinstance(memory_assertions, dict) or not memory_assertions or set(memory_assertions) - allowed:
                 raise SuiteValidationError(f"task {tid}: invalid memory_assertions")
             if not (
@@ -435,6 +436,16 @@ def load_suite(path: Path) -> Suite:
         mock_environment=mock_environment,
         status=status.strip().lower(),
     )
+
+
+def validate_setup_evaluation(setup: dict[str, Any]) -> None:
+    if "evaluate" not in setup:
+        return
+    if not isinstance(setup["evaluate"], bool):
+        raise SuiteValidationError("setup evaluate must be boolean")
+    if setup["evaluate"] and setup.get("type") in {"seed_episode", "seed_notification"}:
+        if setup.get("consolidate") is not True:
+            raise SuiteValidationError("setup evaluate requires consolidate=true")
 
 
 def validate_assert_memory_setup(

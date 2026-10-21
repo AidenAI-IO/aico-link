@@ -2873,6 +2873,7 @@ type benchmarkProcessEpisodeMemoryRequest struct {
 }
 
 type benchmarkProcessEpisodeMemoryResponse struct {
+	LastError  string                   `json:"last_error,omitempty"`
 	EpisodeID  string                   `json:"episode_id"`
 	Status     string                   `json:"status"`
 	Assessment *episodeMemoryAssessment `json:"assessment,omitempty"`
@@ -3009,6 +3010,7 @@ func (s *Server) handleBenchmarkProcessEpisodeMemory(w http.ResponseWriter, r *h
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(benchmarkProcessEpisodeMemoryResponse{
 		EpisodeID:  req.EpisodeID,
+		LastError:  status.LastError,
 		Status:     string(status.Status),
 		Assessment: status.Assessment,
 		MemoryIDs:  memoryIDs,
