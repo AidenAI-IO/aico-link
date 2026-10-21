@@ -188,6 +188,20 @@ model = "gpt-5.5"
 # context_window = 128000
 # model_max_output_tokens = 8192
 
+# Optional decision model: TypeSafe Jev ("typesafe") or OpenAI Luna ("openai").
+# It answers fixed-choice checks in deterministic workflows, asked together
+# with the main model; confident answers are used, the rest come from the main
+# model. Off by default; enabling it requires an API key.
+# base_url and model default per provider (api.typesafe.ai/v1 + jev-preview,
+# or api.openai.com/v1 + gpt-6-luna).
+[model_settings.decision]
+# enabled = false
+# provider = "typesafe"
+# api_key = ""
+# base_url = "https://api.typesafe.ai/v1"
+# model = "jev-preview"
+# min_confidence = 0.8
+
 ################################################################################
 # Voice Settings
 ################################################################################

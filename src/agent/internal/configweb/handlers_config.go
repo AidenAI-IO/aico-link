@@ -41,7 +41,7 @@ func (s *Server) handleConfigTest(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "missing 'values' object")
 		return
 	}
-	if section == "model" || section == "tts" || section == "stt" {
+	if section == "model" || section == "tts" || section == "stt" || section == "decision" {
 		s.handleProviderConfigTest(w, r, section, request)
 		return
 	}

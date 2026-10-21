@@ -36,6 +36,8 @@ func ParseConfigValidationErrors(err error) []ConfigValidationError {
 		field = "search.provider"
 	case strings.Contains(errMsg, "search.api_key"), strings.Contains(errMsg, "search api_key"):
 		field = "search.api_key"
+	case strings.Contains(errMsg, "decision."):
+		field = firstConfigField(errMsg, "decision.")
 	case strings.Contains(errMsg, "model.provider"):
 		field = "model.provider"
 	case strings.Contains(errMsg, "model.api_mode"):

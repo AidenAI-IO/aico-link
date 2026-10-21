@@ -29,6 +29,9 @@ func (v *retryingTextInputVision) AnalyzeScreen(_ context.Context, _ screenshotR
 }
 
 type textInputVisionRecordingModel struct {
+	// delay makes the model answer after the fake decision model, as the real
+	// main model does; a call canceled during the delay is not recorded.
+	delay    time.Duration
 	options  []llms.CallOption
 	content  string
 	contents []string
@@ -36,7 +39,14 @@ type textInputVisionRecordingModel struct {
 	messages [][]llms.MessageContent
 }
 
-func (m *textInputVisionRecordingModel) GenerateContent(_ context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (m *textInputVisionRecordingModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	if m.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(m.delay):
+		}
+	}
 	m.options = options
 	m.messages = append(m.messages, messages)
 	m.calls++

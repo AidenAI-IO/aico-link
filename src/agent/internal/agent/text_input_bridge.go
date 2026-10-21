@@ -48,7 +48,9 @@ type textInputBridge struct {
 	deviceTypeFn     func() string
 	clipboardWriteFn func(context.Context, *PhoneBridge, string) error
 	findPasteMenuFn  func(context.Context, screenshotResult, string) (pasteMenuResult, error)
-	sleep            func(context.Context, time.Duration) error
+	// findPopupFn replaces the blocking-dialog check in tests.
+	findPopupFn func(context.Context, screenshotResult, string) (popupCheck, error)
+	sleep       func(context.Context, time.Duration) error
 }
 
 func (t *textInputBridge) SetDeviceTypeFunc(fn func() string) {
@@ -267,8 +269,55 @@ func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInpu
 				return result
 			}
 		}
+		// Nothing landed in the field. A dialog can hold the paste back, most
+		// often iOS "Allow Paste" when the user skipped the onboarding
+		// setting. Safe dialogs are handled here; any other dialog is reported
+		// instead of being pasted over again.
+		popup, err := t.handleBlockingPopup(ctx, engine, platform)
+		if err != nil {
+			result.Err = err
+			return result
+		}
+		if popup.blocking() {
+			result.Err = fmt.Errorf("%s dialog is blocking input: %s", popup.Kind, popup.Summary)
+			return result
+		}
+		if popup.Handled {
+			if err := t.sleepAfterPaste(ctx); err != nil {
+				result.Err = err
+				return result
+			}
+			analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
+			if err != nil {
+				result.Err = err
+				return result
+			}
+			if committed, committedFieldText := evaluateFieldCommit(analysis); committed {
+				result.Committed = true
+				result.FieldText = committedFieldText
+				return result
+			}
+			result.FieldText = analysis.FieldText
+			if strings.TrimSpace(analysis.FieldText) != "" {
+				return result
+			}
+		}
 	}
 	return result
+}
+
+// handleBlockingPopup checks for a dialog over the field after a paste had no
+// effect, tapping it away when that is safe (see handlePopup).
+func (t *textInputBridge) handleBlockingPopup(ctx context.Context, engine *textInputEngine, platform string) (popupCheck, error) {
+	if t == nil || t.hw == nil || t.hw.touchGesture == nil {
+		return popupCheck{}, nil
+	}
+	shot, err := engine.captureScreenshot(ctx)
+	if err != nil {
+		return popupCheck{}, err
+	}
+	popup, _, err := handlePopup(ctx, t.hw, t.vision, t.findPopupFn, shot, platform, popupMomentPaste)
+	return popup, err
 }
 
 func (t *textInputBridge) pasteViaContextMenu(ctx context.Context, engine *textInputEngine, platform string, focus focusPointArgs) error {
@@ -318,6 +367,14 @@ func (t *textInputBridge) findPasteMenuAction(ctx context.Context, shot screensh
 	if !ok || modelVision == nil {
 		return pasteMenuResult{}, fmt.Errorf("paste menu vision is not configured")
 	}
+	llm := func(ctx context.Context) (pasteMenuResult, error) {
+		return findPasteMenuActionLLM(ctx, modelVision, shot, platform)
+	}
+	result, _, err := decide(ctx, modelVision.decider, pasteMenuDecision(llm, shot, platform))
+	return result, err
+}
+
+func findPasteMenuActionLLM(ctx context.Context, modelVision *llmTextInputVision, shot screenshotResult, platform string) (pasteMenuResult, error) {
 	prompt := strings.TrimSpace(fmt.Sprintf(`Analyze this %s device screenshot after a long press inside a focused text field.
 Find the visible system context-menu action that pastes the clipboard into that field. The label may be Paste, 粘贴, or another localized equivalent.
 Return JSON only:

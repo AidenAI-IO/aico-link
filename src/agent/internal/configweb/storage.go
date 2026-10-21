@@ -295,7 +295,7 @@ func validateCanonicalConfigBackup(data []byte) error {
 		{[]string{"basic_settings"}, []string{"language_timezone", "device"}},
 		{[]string{"basic_settings", "device"}, []string{"hid"}},
 		{[]string{"conversation_settings"}, []string{"agent", "search", "termination_policy"}},
-		{[]string{"model_settings"}, []string{"model", "providers"}},
+		{[]string{"model_settings"}, []string{"model", "providers", "decision"}},
 		{[]string{"voice_settings"}, []string{"mode", "realtime", "classic"}},
 		{[]string{"voice_settings", "realtime"}, []string{"providers"}},
 		{[]string{"voice_settings", "classic"}, []string{"runtime", "stt", "tts", "audio", "audio_archive"}},

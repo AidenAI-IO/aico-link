@@ -19,6 +19,7 @@ type Config struct {
 	STTProviders        map[string]STTProvider        `json:"stt_providers,omitempty"`
 	VoiceModelProviders map[string]VoiceModelProvider `json:"voice_model_providers,omitempty"`
 	Model               Model                         `json:"model"`
+	Decision            DecisionModel                 `json:"decision"`
 	TTS                 TTS                           `json:"tts"`
 	STT                 STT                           `json:"stt"`
 	Audio               Audio                         `json:"audio"`
@@ -420,6 +421,18 @@ type Search struct {
 	HasAPIKey bool   `json:"has_api_key"`
 }
 
+// DecisionModel is the wire view of the optional decision model. Like Search,
+// its API key is write-only: responses report has_api_key instead of the value.
+type DecisionModel struct {
+	Enabled       bool    `json:"enabled"`
+	Provider      string  `json:"provider"`
+	APIKey        string  `json:"api_key,omitempty"`
+	HasAPIKey     bool    `json:"has_api_key"`
+	BaseURL       string  `json:"base_url"`
+	Model         string  `json:"model"`
+	MinConfidence float64 `json:"min_confidence"`
+}
+
 type Telemetry struct {
 	Enabled           bool     `json:"enabled"`
 	Provider          string   `json:"provider"`
@@ -487,6 +500,10 @@ func (d Config) ToAgentConfig() agent.Config {
 		searchKey = d.Search.APIKey
 	} else if d.Search.HasAPIKey {
 		searchKey = hasAPIKeyPlaceholder
+	}
+	decisionKey := d.Decision.APIKey
+	if strings.TrimSpace(decisionKey) == "" && d.Decision.HasAPIKey {
+		decisionKey = hasAPIKeyPlaceholder
 	}
 	voiceModelKey := d.VoiceModel.APIKey
 	if strings.TrimSpace(voiceModelKey) == "" && d.VoiceModel.HasAPIKey {
@@ -647,6 +664,14 @@ func (d Config) ToAgentConfig() agent.Config {
 		Search: agent.SearchConfig{
 			Provider: d.Search.Provider,
 			APIKey:   searchKey,
+		},
+		Decision: agent.DecisionModelConfig{
+			Enabled:       d.Decision.Enabled,
+			Provider:      d.Decision.Provider,
+			APIKey:        decisionKey,
+			BaseURL:       d.Decision.BaseURL,
+			Model:         d.Decision.Model,
+			MinConfidence: d.Decision.MinConfidence,
 		},
 		Telemetry: agent.TelemetryConfig{
 			Enabled:           boolPtr(d.Telemetry.Enabled),
@@ -1043,6 +1068,14 @@ func FromAgentConfig(cfg agent.Config) Config {
 		Search: Search{
 			Provider:  cfg.Search.ProviderOrDefault(),
 			HasAPIKey: strings.TrimSpace(cfg.Search.APIKey) != "",
+		},
+		Decision: DecisionModel{
+			Enabled:       cfg.Decision.Enabled,
+			Provider:      cfg.Decision.ProviderOrDefault(),
+			HasAPIKey:     strings.TrimSpace(cfg.Decision.APIKey) != "",
+			BaseURL:       cfg.Decision.BaseURLOrDefault(),
+			Model:         cfg.Decision.ModelOrDefault(),
+			MinConfidence: cfg.Decision.MinConfidenceOrDefault(),
 		},
 		Telemetry: Telemetry{
 			Enabled:           cfg.Telemetry.EnabledOrDefault(),

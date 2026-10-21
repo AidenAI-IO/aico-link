@@ -42,9 +42,10 @@ load boundary; Config Web writes only the grouped paths below.
    - Screenshot Pruning: `screenshot_keep_n`, `screenshot_prune_interval`
    - Tool Settings: `[conversation_settings.termination_policy]`, web search `[conversation_settings.search]`
 
-4. **Main Model Settings**:
+4. **Model Settings**:
    - Provider Configuration: `[model_settings.providers.<name>]`
    - Model Selection: `[model_settings.model]` including provider, model, api_key, temperature, max_response_tokens, context_window, reasoning_effort, and api_mode settings
+   - Optional Decision Model: `[model_settings.decision]`
 
 5. **Voice Settings**:
    - Mode Selection: `[voice_settings.mode].input_mode` (`stt` for Classic or `realtime` for Realtime)
@@ -91,6 +92,7 @@ creating another top-level section.
 - [`[basic_settings.device]`](#basic_settingsdevice)
 - [`[basic_settings.device.hid]`](#basic_settingsdevicehid)
 - [`[model_settings.model]`](#model_settingsmodel)
+- [`[model_settings.decision]`](#model_settingsdecision)
 - [`[advanced_settings.log]`](#advanced_settingslog)
 - [`[voice_settings.classic.audio]`](#voice_settingsclassicaudio)
 - [`[voice_settings.realtime]`](#voice_settingsrealtime)
@@ -162,6 +164,7 @@ The page renders the following config sections. The Language & Time Zone control
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
 - `[model_settings.model]`: provider, model, api_mode, temperature, max_response_tokens, context_window, model_max_output_tokens
+- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test (Base URL and model in TOML only)
 - `[voice_settings.classic.stt]`: provider, language and STT options
 - `[voice_settings.classic.tts]`: provider and playback options
 - `[voice_settings.classic.audio]`: socket, sample_rate, channels, bit_width, backend
@@ -668,6 +671,87 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 [vision](https://api-docs.deepseek.com/guides/vision),
 [thinking with tool calls](https://api-docs.deepseek.com/guides/thinking_mode),
 [Responses API compatibility](https://api-docs.deepseek.com/guides/responses_api).
+
+## `[model_settings.decision]`
+
+An optional decision model that answers fixed-choice questions (choice, yes/no,
+box in an image) inside deterministic workflows. It is separate from the main
+model: it never plans or generates text. It is off by default; turning it on
+requires `api_key`. When it is off every decision stays with the main model.
+Two providers are supported:
+
+- `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
+  questions, so it can also locate tap targets.
+- `openai`: OpenAI's Decisions API (GPT-6 Luna, public beta). Answers choice
+  and yes/no (predicate) questions but has no box answer, so the tap-target
+  decisions (`app_search`, `paste_menu`, the Android search field) always stay
+  with the main model.
+
+| Field            | Default                      | Description                                                                   |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
+| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev) or `openai` (OpenAI Luna).                          |
+| `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
+| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1` or `https://api.openai.com/v1`. |
+| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need) or `gpt-6-luna`. |
+| `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
+
+```toml
+[model_settings.decision]
+enabled = true
+api_key = "ts-..."
+```
+
+Each decision below asks both models at once. A decision-model answer that
+reaches `min_confidence` is used as soon as it arrives and the main-model call
+is canceled; otherwise the main model's answer is used, so an unsure decision
+model adds no latency.
+
+| Op in the log           | Decision                                          | What the decision model may decide       |
+| ----------------------- | ------------------------------------------------- | ---------------------------------------- |
+| `ime_probe`             | Input method state after typing the probe letter  | The state                                |
+| `probe_cleanup`         | Whether the probe letter is still in the field    | Whether to delete it                     |
+| `screen_analysis`       | Whether the entered text matched and composition is pending | Only the match and pending flags; both models are awaited and the field text always comes from the main model |
+| `app_search`            | Direct app result on the search page, and its tap point | Only a confident "found" with a confident tap box; "not found" always goes to the main model |
+| `app_open_confirmation` | Whether the app opened                            | Only a confident "opened"; otherwise the main model decides |
+| `android_search_entry`  | Whether Android launcher search opened            | The answer and the search field position |
+| `paste_menu`            | The Paste action in the long-press menu           | The tap point                            |
+
+These are the decisions where, in on-device runs (2026-10, iOS and Android),
+confident decision-model answers matched the main model or corrected it.
+Decisions that did not gain from it, such as IME candidate choice, dialog
+checks, loop-guard advice and memory retention, are not sent to the decision
+model.
+
+`app_open_confirmation` trusts only "opened": Jev was confidently wrong saying
+"not opened" on app-switch transitions (dimmed screen, "opening app" overlay),
+and never wrong saying "opened". Otherwise the main model compares the search
+page the result was tapped on with the screen after the tap and answers
+whether the screen left the search page, without having to recognize the app:
+Settings reopening on its own search page and Safari's start page read as "not
+opened" from the second screenshot alone. `app_search` trusts only "found": a
+screenshot taken before the results settle, or after the app already opened,
+reads as "not found", and the main model then rechecks.
+
+Every decision writes one Agent log line under the `decision` component:
+`op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,
+where `dm` is the decision model's answer; `llm` and `agree` are filled in
+when the main model's answer was also used.
+
+The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
+the Agent reaches both providers through the same proxy environment it uses for
+other model providers.
+
+In Config Web, **Models** lists the main model and the decision model. The
+decision model page edits the switch, the provider, the key and the minimum
+confidence, and **Test connection** sends one small question with the saved
+key (`POST /api/config/test` with section `decision`), also while the switch is
+off. Switching the provider clears the saved key, turns the model off, and
+resets the Base URL and model to the new provider's defaults. The
+Base URL and model are edited in the TOML file.
+
+The SkillOpt sample classifier (`--sample-classifier typesafe`) can use Jev
+offline; it reads the key from `TYPESAFE_API_KEY`.
 
 ## `[advanced_settings.log]`
 

@@ -733,6 +733,24 @@ func ConfigMeta() ConfigMetadata {
 				},
 			},
 			{
+				Name: "decision",
+				Fields: []FieldMeta{
+					{Key: "provider", Label: "Decision model provider", Widget: WidgetSelect,
+						Enum:    []EnumOption{{Value: DecisionProviderTypeSafe, Label: "TypeSafe Jev"}, {Value: DecisionProviderOpenAI, Label: "OpenAI Luna"}},
+						Default: defaults.Decision.ProviderOrDefault()},
+					{Key: "enabled", Label: "Enable decision model", Widget: WidgetBoolean, Default: false,
+						Help: "Fixed workflow checks ask the decision model and the main model at once; confident decision-model answers are used. Requires an API key."},
+					{Key: "api_key", Label: "Decision model API key", Widget: WidgetText, Secret: true, Layout: "wide"},
+					{Key: "base_url", Label: "Decision model Base URL", Widget: WidgetText, Layout: "wide",
+						Default: defaults.Decision.BaseURLOrDefault()},
+					{Key: "model", Label: "Decision model", Widget: WidgetText,
+						Default: defaults.Decision.ModelOrDefault()},
+					{Key: "min_confidence", Label: "Minimum confidence", Widget: WidgetNumber,
+						Help:    "Answers below this confidence (0 to 1) are handed back to the main model.",
+						Default: defaults.Decision.MinConfidenceOrDefault()},
+				},
+			},
+			{
 				Name: "telemetry",
 				Fields: []FieldMeta{
 					{Key: "enabled", Widget: WidgetBoolean, Default: false},

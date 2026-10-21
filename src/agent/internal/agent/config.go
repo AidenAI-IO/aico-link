@@ -294,6 +294,7 @@ type Config struct {
 	STTProviders               map[string]STTProvider        `toml:"stt_providers,omitempty"`   // Named STT provider configurations
 	VoiceModelProviders        map[string]VoiceModelProvider `toml:"voice_model_providers,omitempty"`
 	Model                      ModelConfig                   `toml:"model"`
+	Decision                   DecisionModelConfig           `toml:"decision,omitempty"`
 	TTS                        TTSConfig                     `toml:"tts,omitempty"`
 	STT                        STTConfig                     `toml:"stt,omitempty"`
 	HID                        HIDConfig                     `toml:"hid"`
@@ -1445,6 +1446,7 @@ func groupedConfigToRuntime(grouped map[string]interface{}) map[string]interface
 	moveTable([]string{"conversation_settings", "termination_policy"}, "termination_policy")
 	moveTable([]string{"model_settings", "model"}, "model")
 	moveTable([]string{"model_settings", "providers"}, "model_providers")
+	moveTable([]string{"model_settings", "decision"}, "decision")
 	moveTable([]string{"voice_settings", "realtime", "providers"}, "voice_model_providers")
 	mergeRootTable(grouped, result, []string{"voice_settings", "mode"})
 	mergeRootTable(grouped, result, []string{"voice_settings", "classic", "runtime"})
@@ -1724,6 +1726,9 @@ func (c Config) Validate() error {
 		}
 	default:
 		return fmt.Errorf("invalid search.provider: %s (expected duckduckgo, brave, or tavily)", c.Search.Provider)
+	}
+	if err := c.Decision.validate(); err != nil {
+		return err
 	}
 
 	if strings.TrimSpace(c.Model.Provider) == "" {
