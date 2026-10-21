@@ -82,6 +82,14 @@ func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, argu
 	// device_status / support_bundle, which share the /mcp HTTP handler.
 	b.server.runtime.configOperations.RLock()
 	defer b.server.runtime.configOperations.RUnlock()
+	// Recheck under the lock: tools/call may have passed ShellEnabled() before a
+	// reload disabled mcp_shell_enabled.
+	if name == "shell" && !b.server.runtime.ConfigSnapshot().MCPShellEnabledOrDefault() {
+		return mcp.CallResult{
+			IsError: true,
+			Content: []mcp.ContentBlock{{Type: "text", Text: "shell is disabled (mcp_shell_enabled=false)"}},
+		}, nil
+	}
 	spec, ok := b.server.lookupOwnedToolSpec(name)
 	if !ok {
 		return mcp.CallResult{
