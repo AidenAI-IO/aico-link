@@ -213,6 +213,25 @@ func TestCropEdgesOnScreen(t *testing.T) {
 	}
 }
 
+func TestPhoneScreenCacheReportIgnoresFrameOfAnotherDeviceType(t *testing.T) {
+	deviceType := "iOS"
+	cache := newPhoneScreenCache(t.TempDir(), func() string { return deviceType })
+	// The iPhone's capture frame is the latest one seen.
+	cache.NoteFrame(1280, 720)
+	// An Android phone replaces it and reports before any capture.
+	deviceType = "Android"
+	w, h := 1080, 2400
+	cache.Remember(screen.PhoneScreenInfo{WidthPixels: &w, HeightPixels: &h}, 0, 0)
+	if _, ok := cache.Lookup(1280, 720); ok {
+		t.Fatal("the report must not take the previous device type's frame size")
+	}
+	// Its first capture completes the entry with its own frame size.
+	cache.NoteFrame(1920, 1080)
+	if info, ok := cache.Lookup(1920, 1080); !ok || *info.WidthPixels != 1080 {
+		t.Fatalf("lookup = %+v, %v, want the report completed with 1920x1080", info, ok)
+	}
+}
+
 func TestPhoneScreenCacheLearnsOnlyVerifiedCrops(t *testing.T) {
 	cache := newPhoneScreenCache(t.TempDir(), func() string { return "iOS" })
 	observe := func(w, h int, verified bool, times int) {

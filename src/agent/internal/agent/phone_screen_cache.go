@@ -36,8 +36,10 @@ type phoneScreenCache struct {
 	loaded       bool
 	entry        phoneScreenCacheEntry
 	deviceTypeFn func() string
-	// lastFrameWidth/Height are the latest capture frame size seen.
+	// lastFrameWidth/Height are the latest capture frame size seen, and
+	// lastFrameDeviceType the device type it was seen with.
 	lastFrameWidth, lastFrameHeight int
+	lastFrameDeviceType             string
 	// candidate and candidateCount track verified crops not yet confirmed.
 	candidate      [2]int
 	candidateCount int
@@ -129,15 +131,21 @@ func (c *phoneScreenCache) Remember(info screen.PhoneScreenInfo, frameWidth, fra
 	if c.path == "" {
 		return
 	}
-	if frameWidth <= 0 || frameHeight <= 0 {
-		frameWidth, frameHeight = c.lastFrameWidth, c.lastFrameHeight
-	} else {
-		c.lastFrameWidth, c.lastFrameHeight = frameWidth, frameHeight
-	}
 	c.loadLocked()
+	deviceType := c.deviceTypeLocked()
+	if frameWidth <= 0 || frameHeight <= 0 {
+		// A frame seen with another device type does not belong to this
+		// report; leave the entry pending for the next capture to complete.
+		frameWidth, frameHeight = 0, 0
+		if c.lastFrameDeviceType == deviceType {
+			frameWidth, frameHeight = c.lastFrameWidth, c.lastFrameHeight
+		}
+	} else {
+		c.noteFrameLocked(frameWidth, frameHeight, deviceType)
+	}
 	entry := phoneScreenCacheEntry{
 		Source:      phoneScreenSourceReported,
-		DeviceType:  c.deviceTypeLocked(),
+		DeviceType:  deviceType,
 		FrameWidth:  frameWidth,
 		FrameHeight: frameHeight,
 		Screen:      info,
@@ -147,6 +155,10 @@ func (c *phoneScreenCache) Remember(info screen.PhoneScreenInfo, frameWidth, fra
 		return
 	}
 	c.storeLocked(entry)
+}
+
+func (c *phoneScreenCache) noteFrameLocked(frameWidth, frameHeight int, deviceType string) {
+	c.lastFrameWidth, c.lastFrameHeight, c.lastFrameDeviceType = frameWidth, frameHeight, deviceType
 }
 
 func (c *phoneScreenCache) storeLocked(entry phoneScreenCacheEntry) {
@@ -185,9 +197,9 @@ func (c *phoneScreenCache) ObserveCrop(cropWidth, cropHeight, frameWidth, frameH
 	if c.path == "" {
 		return
 	}
-	c.lastFrameWidth, c.lastFrameHeight = frameWidth, frameHeight
 	c.loadLocked()
 	deviceType := c.deviceTypeLocked()
+	c.noteFrameLocked(frameWidth, frameHeight, deviceType)
 	current := c.entry
 	if current.DeviceType == deviceType && current.FrameWidth == frameWidth && current.FrameHeight == frameHeight {
 		if w, h, ok := entryScreenDimensions(current.Screen); ok &&
@@ -247,12 +259,13 @@ func (c *phoneScreenCache) NoteFrame(frameWidth, frameHeight int) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.lastFrameWidth, c.lastFrameHeight = frameWidth, frameHeight
+	deviceType := c.deviceTypeLocked()
+	c.noteFrameLocked(frameWidth, frameHeight, deviceType)
 	if c.path == "" {
 		return
 	}
 	c.loadLocked()
-	if entry := c.entry; entry.FrameWidth == 0 && phoneScreenHasDimensions(entry.Screen) {
+	if entry := c.entry; entry.FrameWidth == 0 && entry.DeviceType == deviceType && phoneScreenHasDimensions(entry.Screen) {
 		entry.FrameWidth, entry.FrameHeight = frameWidth, frameHeight
 		c.storeLocked(entry)
 	}
