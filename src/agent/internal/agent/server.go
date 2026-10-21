@@ -465,6 +465,9 @@ func NewServer(runtime *Runtime, addr string) *Server {
 	}
 	loadQuickActionsForConfig(runtime.ConfigSnapshot().ConfigDir, runtime.logger)
 	configureAndroidSearchEntryStore(runtime.ConfigSnapshot().ConfigDir)
+	if cache := newPhoneScreenCache(runtime.ConfigSnapshot().ConfigDir, runtime.deviceTypeFromState); cache != nil {
+		runtime.screenState.SetPhoneScreenFallback(cache)
+	}
 	s.quickCapture = newServerQuickCapture(runtime, s.screenCaptureClient)
 	runtime.toolSnapshot().RegisterPhoneBridge(s.bridge)
 	// Initialize speech clients if configured.
