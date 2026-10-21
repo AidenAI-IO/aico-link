@@ -90,7 +90,7 @@ func TestExecuteConfigTestAsksDecisionModelWithSavedKey(t *testing.T) {
 		_, _ = io.WriteString(w, `{"answers":{"check":{"type":"noul","noul":0.97}}}`)
 	}))
 	defer server.Close()
-	cfg := agent.Config{Decision: agent.DecisionModelConfig{APIKey: "ts-saved"}}
+	cfg := agent.Config{Decision: agent.DecisionModelConfig{APIKey: "ts-saved", BaseURL: server.URL}}
 
 	// The page sends what it shows: has_api_key, never the saved key.
 	values := []byte(`{"provider":"typesafe","has_api_key":true,"base_url":"` + server.URL + `","model":"jev-preview"}`)
