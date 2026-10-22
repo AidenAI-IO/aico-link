@@ -1,0 +1,452 @@
+{
+  "name": "mobilegym_navigation_v1",
+  "suite_category": "MobileGym",
+  "version": "1.0",
+  "description": "Five tasks covering similar-label targeting at different positions, Home/app switching, Back navigation and reverse scrolling. Candidate simulator workload; reference qualification and agent baseline are pending.",
+  "prompt_prefix": "Use the phone UI and screenshots to complete the task.",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "similar_titles_target_first",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "In Notes, open Project Atlas (code AT-204), not Project Atlas archive. Leave its detail page visible and do not edit either note.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Open the record with code AT-204 among the similar titles and leave its detail visible."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "similar_titles_target_last",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "In Notes, open Project Atlas (code AT-204), not Project Atlas archive. Leave its detail page visible and do not edit either note.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Open the record with code AT-204 among the similar titles and leave its detail visible."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "switch_from_settings",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes",
+        "settings"
+      ],
+      "foreground_app_id": "settings",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        },
+        "os": {
+          "settings": {
+            "global": {
+              "wifiEnabled": true,
+              "bluetoothEnabled": false
+            }
+          }
+        }
+      },
+      "prompt": "Starting in Settings, go to Home, open Notes, and open Project Atlas (code AT-204). Leave that note visible without changing settings or notes.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The successful trace shows leaving Settings via Home and opening the target in Notes. Final route alone does not prove visiting Home."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        },
+        "os.settings.global.wifiEnabled": true,
+        "os.settings.global.bluetoothEnabled": false
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "back_and_open_other_record",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "In Notes, open Project Atlas (AT-204), return to the list, then open Project Atlas archive (AT-203). Leave the archive visible without editing either note.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows opening AT-204, returning to the list, and then opening AT-203 in that order. Do not award the sequence based on the final screen alone."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-guard",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "scroll_down_then_return",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "scroll_lab"
+      ],
+      "foreground_app_id": "scroll_lab",
+      "initial_environment_state": {
+        "apps": {
+          "scroll_lab": {
+            "selectedItemId": null,
+            "scrollTop": 0,
+            "firstVisibleOrdinal": 1,
+            "maxFirstVisibleOrdinal": 1
+          }
+        }
+      },
+      "prompt": "In Scroll Lab, scroll down until item 24 (SL-024) is visible. Stay on the list without opening an item, leaving the app, or resetting it. Then reverse direction and scroll back up to item 3 (SL-003), open item 3 and leave its details visible. Do not use search.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The successful trace shows descending until item 24 is visible, reversing scroll direction within the same list, then opening item 3. Leaving/reopening the list or app to jump back to the top fails this check. Maximum scroll position only proves descent, not the requested reverse gesture."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "scroll_lab",
+        "route.path": "/item/scroll-item-003",
+        "apps.scroll_lab.selectedItemId": "scroll-item-003",
+        "apps.scroll_lab.maxFirstVisibleOrdinal": {
+          "min": 20,
+          "max": 24
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    }
+  ]
+}

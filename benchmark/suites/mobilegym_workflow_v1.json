@@ -1,8 +1,8 @@
 {
   "name": "mobilegym_workflow_v1",
   "suite_category": "MobileGym",
-  "version": "1.0",
-  "description": "Deterministic UI workflows for forms, selective editing, record disambiguation, alarm configuration, cross-app transfer, and draft cancellation.",
+  "version": "1.2",
+  "description": "Three experimental user workflows: edit and reopen a note, create and reopen a contact, and transfer a note into a contact. Manual only until reference UI replay validates the operation path; not a validated phone capability baseline.",
   "prompt_prefix": "",
   "global_reset": {},
   "trace_observations": [
@@ -13,6 +13,97 @@
     }
   ],
   "tasks": [
+    {
+      "id": "note_replace_one_item",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-shopping",
+                "title": "Shopping list",
+                "content": "Milk\nEggs\nRice",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Travel checklist",
+                "content": "Passport\nCharger\nTickets",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ]
+          }
+        }
+      },
+      "prompt": "Open Notes and replace Eggs with Tea in Shopping list, preserving its title and the other two lines. Save, return to the note list, then reopen Shopping list and verify the complete body. Leave every other note unchanged.",
+      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
+      "rubric": [
+        {
+          "id": "edited_content",
+          "description": "Persist Milk, Tea, and Rice on separate lines with the original title. Replacing the whole body correctly is acceptable."
+        },
+        {
+          "id": "preserved_notes",
+          "description": "Keep the other note and target metadata intact; do not create a duplicate."
+        },
+        {
+          "id": "reopened_and_verified",
+          "description": "The trace shows saving the edited or created record, returning to its list, reopening that same record, and inspecting its saved contents. A final success claim or final-state assertion alone does not satisfy this check."
+        }
+      ],
+      "environment_assertions": {
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-shopping",
+              "title": "Shopping list",
+              "content": "Milk\nTea\nRice",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Travel checklist",
+              "content": "Passport\nCharger\nTickets",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 2,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
     {
       "id": "contact_complete_form",
       "category": "device_operation",
@@ -49,7 +140,7 @@
           }
         }
       },
-      "prompt": "打开通讯录，新建联系人 Morgan Lee，手机 13800001002，公司 Northstar Labs，职位 Product Lead，工作邮箱 morgan.lee@example.com。保存，其他联系人保持不变。",
+      "prompt": "Open Contacts and create Morgan Lee with mobile 13800001002, company Northstar Labs, title Product Lead, and work email morgan.lee@example.com. Save, return to the contact list, then reopen the new contact and verify all fields. Leave existing contacts unchanged and do not create duplicates.",
       "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
       "rubric": [
         {
@@ -59,6 +150,10 @@
         {
           "id": "preserved_contacts",
           "description": "Keep the existing contact intact; create exactly one new contact."
+        },
+        {
+          "id": "reopened_and_verified",
+          "description": "The trace shows saving the edited or created record, returning to its list, reopening that same record, and inspecting its saved contents. A final success claim or final-state assertion alone does not satisfy this check."
         }
       ],
       "environment_assertions": {
@@ -112,383 +207,6 @@
         ],
         "min_tool_calls": 2,
         "must_complete_within_sec": 360
-      },
-      "repeats": 1
-    },
-    {
-      "id": "note_replace_one_item",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "notes"
-      ],
-      "initial_environment_state": {
-        "apps": {
-          "notes": {
-            "notes": [
-              {
-                "id": "note-shopping",
-                "title": "Shopping list",
-                "content": "Milk\nEggs\nRice",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              },
-              {
-                "id": "note-guard",
-                "title": "Travel checklist",
-                "content": "Passport\nCharger\nTickets",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              }
-            ]
-          }
-        }
-      },
-      "prompt": "打开便签，把 Shopping list 中的 Eggs 改成 Tea，保留标题和其他两项内容，确认修改已保存。不要修改其他便签。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "edited_content",
-          "description": "Persist Milk, Tea, and Rice on separate lines with the original title. Replacing the whole body correctly is acceptable."
-        },
-        {
-          "id": "preserved_notes",
-          "description": "Keep the other note and target metadata intact; do not create a duplicate."
-        }
-      ],
-      "environment_assertions": {
-        "apps.notes.notes": {
-          "$records": [
-            {
-              "id": "note-shopping",
-              "title": "Shopping list",
-              "content": "Milk\nTea\nRice",
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            },
-            {
-              "id": "note-guard",
-              "title": "Travel checklist",
-              "content": "Passport\nCharger\nTickets",
-              "updatedAt": 1770000000000,
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            }
-          ]
-        }
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 360
-      },
-      "repeats": 1
-    },
-    {
-      "id": "note_disambiguate_same_title",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "notes"
-      ],
-      "initial_environment_state": {
-        "apps": {
-          "notes": {
-            "notes": [
-              {
-                "id": "note-north",
-                "title": "Delivery plan",
-                "content": "Site: North\nGate: A\nBoxes: 4",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              },
-              {
-                "id": "note-south",
-                "title": "Delivery plan",
-                "content": "Site: South\nGate: A\nBoxes: 8",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              },
-              {
-                "id": "note-guard",
-                "title": "Travel checklist",
-                "content": "Passport\nCharger\nTickets",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              }
-            ]
-          }
-        }
-      },
-      "prompt": "便签里有两条 Delivery plan。找到正文中 Site: South 的那条，将 Gate: A 改为 Gate: C，保留其他内容。Site: North 那条和其他便签都不要改。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "selected_correct_record",
-          "description": "Inspect the similarly titled notes and update only the South entry."
-        },
-        {
-          "id": "preserved_content",
-          "description": "Save all original lines except the requested gate change, without changing the North entry."
-        }
-      ],
-      "environment_assertions": {
-        "apps.notes.notes": {
-          "$records": [
-            {
-              "id": "note-north",
-              "title": "Delivery plan",
-              "content": "Site: North\nGate: A\nBoxes: 4",
-              "updatedAt": 1770000000000,
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            },
-            {
-              "id": "note-south",
-              "title": "Delivery plan",
-              "content": "Site: South\nGate: C\nBoxes: 8",
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            },
-            {
-              "id": "note-guard",
-              "title": "Travel checklist",
-              "content": "Passport\nCharger\nTickets",
-              "updatedAt": 1770000000000,
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            }
-          ]
-        }
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 360
-      },
-      "repeats": 1
-    },
-    {
-      "id": "alarm_create_multiple_options",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "clock"
-      ],
-      "initial_environment_state": {
-        "apps": {
-          "clock": {
-            "alarms": [
-              {
-                "id": "alarm-guard",
-                "hour": 9,
-                "minute": 10,
-                "enabled": true,
-                "repeat": "once",
-                "note": "Backup",
-                "vibrate": true,
-                "autoDelete": false
-              }
-            ]
-          }
-        }
-      },
-      "prompt": "打开时钟，新建一个每天 07:35 的闹钟，备注 Morning review，关闭振动，不启用响铃后自动删除，并让它保持开启。保留已有闹钟。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "configured_alarm",
-          "description": "Save an enabled 07:35 daily alarm with the requested note, vibration off, and automatic deletion off."
-        },
-        {
-          "id": "preserved_alarm",
-          "description": "Keep the existing alarm unchanged and avoid duplicate new alarms."
-        }
-      ],
-      "environment_assertions": {
-        "apps.clock.alarms": {
-          "$records": [
-            {
-              "id": "alarm-guard",
-              "hour": 9,
-              "minute": 10,
-              "enabled": true,
-              "repeat": "once",
-              "note": "Backup",
-              "vibrate": true,
-              "autoDelete": false
-            },
-            {
-              "hour": 7,
-              "minute": 35,
-              "enabled": true,
-              "repeat": "daily",
-              "note": "Morning review",
-              "vibrate": false,
-              "autoDelete": false
-            }
-          ]
-        }
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 480
-      },
-      "repeats": 1
-    },
-    {
-      "id": "alarm_edit_matching_record",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "clock"
-      ],
-      "initial_environment_state": {
-        "apps": {
-          "clock": {
-            "alarms": [
-              {
-                "id": "alarm-target",
-                "hour": 7,
-                "minute": 30,
-                "enabled": true,
-                "repeat": "once",
-                "note": "Commute",
-                "vibrate": true,
-                "autoDelete": false
-              },
-              {
-                "id": "alarm-decoy",
-                "hour": 7,
-                "minute": 30,
-                "enabled": true,
-                "repeat": "daily",
-                "note": "Workout",
-                "vibrate": false,
-                "autoDelete": false
-              },
-              {
-                "id": "alarm-guard",
-                "hour": 9,
-                "minute": 10,
-                "enabled": true,
-                "repeat": "once",
-                "note": "Backup",
-                "vibrate": true,
-                "autoDelete": false
-              }
-            ]
-          }
-        }
-      },
-      "prompt": "打开时钟，有两个 07:30 的闹钟。把备注 Commute 的那个改成 07:45、法定工作日重复；保留它的备注、开启状态、振动和自动删除设置。Workout 和其他闹钟保持不变，不要新建闹钟。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "selected_and_edited",
-          "description": "Edit the Commute alarm in place, preserving its identity and other options."
-        },
-        {
-          "id": "repeat_and_time",
-          "description": "Persist 07:45 and the statutory workday repeat option (not Monday through Friday)."
-        },
-        {
-          "id": "preserved_other_alarms",
-          "description": "Keep Workout and Backup unchanged."
-        }
-      ],
-      "environment_assertions": {
-        "apps.clock.alarms": {
-          "$records": [
-            {
-              "id": "alarm-target",
-              "hour": 7,
-              "minute": 45,
-              "enabled": true,
-              "repeat": "workday",
-              "note": "Commute",
-              "vibrate": true,
-              "autoDelete": false
-            },
-            {
-              "id": "alarm-decoy",
-              "hour": 7,
-              "minute": 30,
-              "enabled": true,
-              "repeat": "daily",
-              "note": "Workout",
-              "vibrate": false,
-              "autoDelete": false
-            },
-            {
-              "id": "alarm-guard",
-              "hour": 9,
-              "minute": 10,
-              "enabled": true,
-              "repeat": "once",
-              "note": "Backup",
-              "vibrate": true,
-              "autoDelete": false
-            }
-          ]
-        }
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 480
       },
       "repeats": 1
     },
@@ -557,7 +275,7 @@
           }
         }
       },
-      "prompt": "打开便签，查看 Supplier contact，把其中的姓名、公司、职位、手机和邮箱保存成一个新联系人。保留原便签和所有已有联系人，不要重复创建。",
+      "prompt": "Open Notes and read Supplier contact. Create one contact with its name, company, title, mobile number, and email. Save, return to the contact list, then reopen the new contact and verify all fields against the source. Preserve the source note and every existing note and contact; do not create duplicates.",
       "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
       "rubric": [
         {
@@ -571,6 +289,10 @@
         {
           "id": "preserved_source",
           "description": "Keep source notes and existing contacts unchanged."
+        },
+        {
+          "id": "reopened_and_verified",
+          "description": "The trace shows saving the edited or created record, returning to its list, reopening that same record, and inspecting its saved contents. A final success claim or final-state assertion alone does not satisfy this check."
         }
       ],
       "environment_assertions": {
@@ -650,217 +372,6 @@
         ],
         "min_tool_calls": 2,
         "must_complete_within_sec": 480
-      },
-      "repeats": 1
-    },
-    {
-      "id": "note_to_alarm",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "notes",
-        "clock"
-      ],
-      "initial_environment_state": {
-        "apps": {
-          "notes": {
-            "notes": [
-              {
-                "id": "note-alarm-source",
-                "title": "Evening routine",
-                "content": "Time: 21:40\nRepeat: daily\nLabel: Prepare demo\nVibration: off\nAuto delete: off",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              },
-              {
-                "id": "note-guard",
-                "title": "Travel checklist",
-                "content": "Passport\nCharger\nTickets",
-                "updatedAt": 1770000000000,
-                "folderId": "unfiled",
-                "pinned": false,
-                "locked": false,
-                "isPrivate": false,
-                "trashedAt": null
-              }
-            ]
-          },
-          "clock": {
-            "alarms": [
-              {
-                "id": "alarm-guard",
-                "hour": 9,
-                "minute": 10,
-                "enabled": true,
-                "repeat": "once",
-                "note": "Backup",
-                "vibrate": true,
-                "autoDelete": false
-              }
-            ]
-          }
-        }
-      },
-      "prompt": "查看便签 Evening routine，根据里面的时间、重复方式、备注、振动和自动删除要求，新建并开启一个闹钟。原便签和已有闹钟保持不变。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "read_source",
-          "description": "Obtain the configuration from the note before configuring Clock."
-        },
-        {
-          "id": "configured_from_source",
-          "description": "Create exactly one enabled alarm matching every option in the note."
-        },
-        {
-          "id": "preserved_source",
-          "description": "Keep all source notes and existing alarms intact."
-        }
-      ],
-      "environment_assertions": {
-        "apps.notes.notes": {
-          "$records": [
-            {
-              "id": "note-alarm-source",
-              "title": "Evening routine",
-              "content": "Time: 21:40\nRepeat: daily\nLabel: Prepare demo\nVibration: off\nAuto delete: off",
-              "updatedAt": 1770000000000,
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            },
-            {
-              "id": "note-guard",
-              "title": "Travel checklist",
-              "content": "Passport\nCharger\nTickets",
-              "updatedAt": 1770000000000,
-              "folderId": "unfiled",
-              "pinned": false,
-              "locked": false,
-              "isPrivate": false,
-              "trashedAt": null
-            }
-          ]
-        },
-        "apps.clock.alarms": {
-          "$records": [
-            {
-              "id": "alarm-guard",
-              "hour": 9,
-              "minute": 10,
-              "enabled": true,
-              "repeat": "once",
-              "note": "Backup",
-              "vibrate": true,
-              "autoDelete": false
-            },
-            {
-              "hour": 21,
-              "minute": 40,
-              "enabled": true,
-              "repeat": "daily",
-              "note": "Prepare demo",
-              "vibrate": false,
-              "autoDelete": false
-            }
-          ]
-        }
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 480
-      },
-      "repeats": 1
-    },
-    {
-      "id": "contact_discard_draft",
-      "category": "device_operation",
-      "platforms": [
-        "android"
-      ],
-      "app_ids": [
-        "contacts"
-      ],
-      "initial_environment_state": {
-        "os": {
-          "providers": {
-            "contacts": {
-              "contacts": [
-                {
-                  "id": "contact-guard",
-                  "displayName": "Taylor Reed",
-                  "company": "Cedar Studio",
-                  "phones": [
-                    {
-                      "id": "p0",
-                      "label": "手机",
-                      "number": "13900002001",
-                      "isPrimary": true
-                    }
-                  ],
-                  "emails": [],
-                  "starred": true,
-                  "createdAt": 1770000000000,
-                  "updatedAt": 1770000000000
-                }
-              ]
-            }
-          }
-        }
-      },
-      "prompt": "打开通讯录，新建联系人草稿，填入姓名 Draft Person、手机 13600001004，然后取消并返回联系人列表，不保存。已有联系人保持不变。",
-      "description_for_judge": "Complete the requested task using screenshots and device UI tools. Judge the persisted outcome and the trace, not an unsupported claim of success.",
-      "rubric": [
-        {
-          "id": "filled_draft",
-          "description": "Trace or screenshots must show both requested fields entered in a new contact draft. Doing nothing does not satisfy this task."
-        },
-        {
-          "id": "discarded_draft",
-          "description": "Cancel the populated draft and return to the contact list without saving any new contact."
-        }
-      ],
-      "environment_assertions": {
-        "os.providers.contacts.contacts": {
-          "$records": [
-            {
-              "id": "contact-guard",
-              "displayName": "Taylor Reed",
-              "company": "Cedar Studio",
-              "phones": [
-                {
-                  "id": "p0",
-                  "label": "手机",
-                  "number": "13900002001",
-                  "isPrimary": true
-                }
-              ],
-              "emails": [],
-              "starred": true,
-              "createdAt": 1770000000000,
-              "updatedAt": 1770000000000
-            }
-          ]
-        },
-        "route.app": "contacts"
-      },
-      "hard_assertions": {
-        "forbidden_tools": [
-          "request_user_action"
-        ],
-        "min_tool_calls": 2,
-        "must_complete_within_sec": 360
       },
       "repeats": 1
     }

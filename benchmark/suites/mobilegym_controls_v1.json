@@ -1,0 +1,606 @@
+{
+  "name": "mobilegym_controls_v1",
+  "suite_category": "MobileGym",
+  "version": "1.0",
+  "description": "Eight tasks covering Wi-Fi on/off/already-satisfied states, bidirectional alarm time boundaries, alarm toggle/repeat selection and long-press pinning. Candidate simulator workload; reference qualification and agent baseline are pending.",
+  "prompt_prefix": "Use the phone UI and screenshots to complete the task.",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "wifi_enable",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "settings"
+      ],
+      "foreground_app_id": "settings",
+      "initial_environment_state": {
+        "os": {
+          "settings": {
+            "global": {
+              "wifiEnabled": false,
+              "bluetoothEnabled": false,
+              "airplaneModeEnabled": false
+            }
+          }
+        }
+      },
+      "prompt": "Open the Wi-Fi settings page and ensure Wi-Fi is on. If it is already in that state, leave it alone. Leave the Wi-Fi page visible. Do not change Bluetooth or airplane mode.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Inspect Wi-Fi and change it only if necessary. In the already-enabled case, any off/on toggle fails this rubric even if the final state is on."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "settings",
+        "route.path": "/page/wifi_settings",
+        "os.settings.global.wifiEnabled": true,
+        "os.settings.global.bluetoothEnabled": false,
+        "os.settings.global.airplaneModeEnabled": false
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "wifi_disable",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "settings"
+      ],
+      "foreground_app_id": "settings",
+      "initial_environment_state": {
+        "os": {
+          "settings": {
+            "global": {
+              "wifiEnabled": true,
+              "bluetoothEnabled": false,
+              "airplaneModeEnabled": false
+            }
+          }
+        }
+      },
+      "prompt": "Open the Wi-Fi settings page and ensure Wi-Fi is off. If it is already in that state, leave it alone. Leave the Wi-Fi page visible. Do not change Bluetooth or airplane mode.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Inspect Wi-Fi and change it only if necessary. In the already-enabled case, any off/on toggle fails this rubric even if the final state is on."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "settings",
+        "route.path": "/page/wifi_settings",
+        "os.settings.global.wifiEnabled": false,
+        "os.settings.global.bluetoothEnabled": false,
+        "os.settings.global.airplaneModeEnabled": false
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "wifi_already_enabled",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "settings"
+      ],
+      "foreground_app_id": "settings",
+      "initial_environment_state": {
+        "os": {
+          "settings": {
+            "global": {
+              "wifiEnabled": true,
+              "bluetoothEnabled": false,
+              "airplaneModeEnabled": false
+            }
+          }
+        }
+      },
+      "prompt": "Open the Wi-Fi settings page and ensure Wi-Fi is on. If it is already in that state, leave it alone. Leave the Wi-Fi page visible. Do not change Bluetooth or airplane mode.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Inspect Wi-Fi and change it only if necessary. In the already-enabled case, any off/on toggle fails this rubric even if the final state is on."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "settings",
+        "route.path": "/page/wifi_settings",
+        "os.settings.global.wifiEnabled": true,
+        "os.settings.global.bluetoothEnabled": false,
+        "os.settings.global.airplaneModeEnabled": false
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "alarm_minute_forward",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "clock"
+      ],
+      "foreground_app_id": "clock",
+      "initial_environment_state": {
+        "apps": {
+          "clock": {
+            "alarms": [
+              {
+                "id": "alarm-target",
+                "hour": 6,
+                "minute": 59,
+                "enabled": true,
+                "repeat": "once",
+                "note": "Morning review",
+                "vibrate": true,
+                "autoDelete": false
+              },
+              {
+                "id": "alarm-guard",
+                "hour": 9,
+                "minute": 15,
+                "enabled": false,
+                "repeat": "daily",
+                "note": "Archive alarm",
+                "vibrate": false,
+                "autoDelete": false
+              }
+            ]
+          }
+        }
+      },
+      "prompt": "In Clock, Move Morning review from 06:59 to 07:00, exactly one minute later. Save if needed and leave the alarm list visible. Preserve its label, vibration and auto-delete settings. Leave Archive alarm unchanged; do not create another alarm.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Perform the requested change to the existing alarm. Verify the saved time/repeat/enabled state in the list or reopened editor, then return to the alarm list."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "clock",
+        "route.path": "/alarm",
+        "apps.clock.alarms": {
+          "$records": [
+            {
+              "id": "alarm-target",
+              "hour": 7,
+              "minute": 0,
+              "enabled": true,
+              "repeat": "once",
+              "note": "Morning review",
+              "vibrate": true,
+              "autoDelete": false
+            },
+            {
+              "id": "alarm-guard",
+              "hour": 9,
+              "minute": 15,
+              "enabled": false,
+              "repeat": "daily",
+              "note": "Archive alarm",
+              "vibrate": false,
+              "autoDelete": false
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "alarm_minute_backward",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "clock"
+      ],
+      "foreground_app_id": "clock",
+      "initial_environment_state": {
+        "apps": {
+          "clock": {
+            "alarms": [
+              {
+                "id": "alarm-target",
+                "hour": 7,
+                "minute": 0,
+                "enabled": true,
+                "repeat": "once",
+                "note": "Morning review",
+                "vibrate": true,
+                "autoDelete": false
+              },
+              {
+                "id": "alarm-guard",
+                "hour": 9,
+                "minute": 15,
+                "enabled": false,
+                "repeat": "daily",
+                "note": "Archive alarm",
+                "vibrate": false,
+                "autoDelete": false
+              }
+            ]
+          }
+        }
+      },
+      "prompt": "In Clock, Move Morning review from 07:00 to 06:59, exactly one minute earlier. Save if needed and leave the alarm list visible. Preserve its label, vibration and auto-delete settings. Leave Archive alarm unchanged; do not create another alarm.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Perform the requested change to the existing alarm. Verify the saved time/repeat/enabled state in the list or reopened editor, then return to the alarm list."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "clock",
+        "route.path": "/alarm",
+        "apps.clock.alarms": {
+          "$records": [
+            {
+              "id": "alarm-target",
+              "hour": 6,
+              "minute": 59,
+              "enabled": true,
+              "repeat": "once",
+              "note": "Morning review",
+              "vibrate": true,
+              "autoDelete": false
+            },
+            {
+              "id": "alarm-guard",
+              "hour": 9,
+              "minute": 15,
+              "enabled": false,
+              "repeat": "daily",
+              "note": "Archive alarm",
+              "vibrate": false,
+              "autoDelete": false
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "alarm_disable",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "clock"
+      ],
+      "foreground_app_id": "clock",
+      "initial_environment_state": {
+        "apps": {
+          "clock": {
+            "alarms": [
+              {
+                "id": "alarm-target",
+                "hour": 6,
+                "minute": 59,
+                "enabled": true,
+                "repeat": "once",
+                "note": "Morning review",
+                "vibrate": true,
+                "autoDelete": false
+              },
+              {
+                "id": "alarm-guard",
+                "hour": 9,
+                "minute": 15,
+                "enabled": false,
+                "repeat": "daily",
+                "note": "Archive alarm",
+                "vibrate": false,
+                "autoDelete": false
+              }
+            ]
+          }
+        }
+      },
+      "prompt": "In Clock, Turn off Morning review without changing its time or repeat mode. Save if needed and leave the alarm list visible. Preserve its label, vibration and auto-delete settings. Leave Archive alarm unchanged; do not create another alarm.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Perform the requested change to the existing alarm. Verify the saved time/repeat/enabled state in the list or reopened editor, then return to the alarm list."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "clock",
+        "route.path": "/alarm",
+        "apps.clock.alarms": {
+          "$records": [
+            {
+              "id": "alarm-target",
+              "hour": 6,
+              "minute": 59,
+              "enabled": false,
+              "repeat": "once",
+              "note": "Morning review",
+              "vibrate": true,
+              "autoDelete": false
+            },
+            {
+              "id": "alarm-guard",
+              "hour": 9,
+              "minute": 15,
+              "enabled": false,
+              "repeat": "daily",
+              "note": "Archive alarm",
+              "vibrate": false,
+              "autoDelete": false
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "alarm_repeat_weekdays",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "clock"
+      ],
+      "foreground_app_id": "clock",
+      "initial_environment_state": {
+        "apps": {
+          "clock": {
+            "alarms": [
+              {
+                "id": "alarm-target",
+                "hour": 6,
+                "minute": 59,
+                "enabled": true,
+                "repeat": "once",
+                "note": "Morning review",
+                "vibrate": true,
+                "autoDelete": false
+              },
+              {
+                "id": "alarm-guard",
+                "hour": 9,
+                "minute": 15,
+                "enabled": false,
+                "repeat": "daily",
+                "note": "Archive alarm",
+                "vibrate": false,
+                "autoDelete": false
+              }
+            ]
+          }
+        }
+      },
+      "prompt": "In Clock, Change Morning review to repeat Monday through Friday (weekdays), keeping its time and enabled state. Save if needed and leave the alarm list visible. Preserve its label, vibration and auto-delete settings. Leave Archive alarm unchanged; do not create another alarm.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "Perform the requested change to the existing alarm. Verify the saved time/repeat/enabled state in the list or reopened editor, then return to the alarm list."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "clock",
+        "route.path": "/alarm",
+        "apps.clock.alarms": {
+          "$records": [
+            {
+              "id": "alarm-target",
+              "hour": 6,
+              "minute": 59,
+              "enabled": true,
+              "repeat": "weekday",
+              "note": "Morning review",
+              "vibrate": true,
+              "autoDelete": false
+            },
+            {
+              "id": "alarm-guard",
+              "hour": 9,
+              "minute": 15,
+              "enabled": false,
+              "repeat": "daily",
+              "note": "Archive alarm",
+              "vibrate": false,
+              "autoDelete": false
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "long_press_pin_note",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "In Notes, long-press Project Atlas to select it, then pin it. Return to the normal note list and leave it visible. Do not pin or change Project Atlas archive.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows a successful long press on the target, selection or context actions, and pinning only the target. A final pinned record without evidence of the requested long press does not satisfy this rubric."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "folderId": "unfiled",
+              "pinned": true,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    }
+  ]
+}

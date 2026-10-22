@@ -1,0 +1,668 @@
+{
+  "name": "mobilegym_editing_v1",
+  "suite_category": "MobileGym",
+  "version": "1.0",
+  "description": "Seven independently seeded text-editing tasks: multiline punctuation, append, line replacement, deletion, clearing, title/body focus and mixed Chinese/ASCII. Candidate simulator workload; reference qualification and agent baseline are pending.",
+  "prompt_prefix": "Use the phone UI and screenshots to complete the task.",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "body_multiline_ascii",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Replace only the body with exactly:\nOrder #204: 2 x tea @ $3.50\nEmail: morgan+bench@example.com\nReady? Yes! Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Order #204: 2 x tea @ $3.50\nEmail: morgan+bench@example.com\nReady? Yes!",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "append_line",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Append a new final line reading exactly Review: Friday. Keep the three existing lines. Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft\nReview: Friday",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "replace_middle_line",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Change only the middle line from Code: AT-204 to Code: AT-205. Keep the first and last lines. Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Owner: Morgan\nCode: AT-205\nStatus: draft",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "delete_last_character",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Aiden-123!",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Remove only the final exclamation mark from the body Aiden-123!, leaving Aiden-123. Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "Aiden-123",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "clear_body_keep_title",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Clear the entire body, leaving it empty. Keep the existing note and its title. Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "rename_title_keep_body",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Change only the title to Project Atlas - approved. Keep the body unchanged. Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas - approved",
+              "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    },
+    {
+      "id": "body_mixed_chinese_ascii",
+      "category": "device_operation",
+      "platforms": [
+        "android"
+      ],
+      "app_ids": [
+        "notes"
+      ],
+      "foreground_app_id": "notes",
+      "initial_environment_state": {
+        "apps": {
+          "notes": {
+            "notes": [
+              {
+                "id": "note-target",
+                "title": "Project Atlas",
+                "content": "Owner: Morgan\nCode: AT-204\nStatus: draft",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              },
+              {
+                "id": "note-guard",
+                "title": "Project Atlas archive",
+                "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+                "updatedAt": 1770000000000,
+                "folderId": "unfiled",
+                "pinned": false,
+                "locked": false,
+                "isPrivate": false,
+                "trashedAt": null
+              }
+            ],
+            "settings": {
+              "notesViewMode": "list"
+            }
+          }
+        }
+      },
+      "prompt": "Open Project Atlas in Notes. Replace only the body with exactly:\n周五 18:30 取快递\nCode: Aiden-204! Save, return to the list, and reopen this same note to check the saved title and full body. Leave the archive note unchanged.",
+      "description_for_judge": "Use screenshots and the successful UI action trace to verify the requested operation. A claimed success is insufficient. Deterministic assertions independently check the final route and data; they do not prove intermediate steps.",
+      "rubric": [
+        {
+          "id": "completed_ui_goal",
+          "description": "The trace shows editing the intended field, saving, leaving and reopening the same record. Check the complete saved title/body, not just the changed fragment. For Chinese, committed text must contain no pinyin or unfinished composition."
+        },
+        {
+          "id": "preserved_unrelated_data",
+          "description": "Do not modify unrelated records or settings, delete/recreate the target, or create duplicates."
+        }
+      ],
+      "environment_assertions": {
+        "route.app": "notes",
+        "route.path": "/note/note-target",
+        "apps.notes.notes": {
+          "$records": [
+            {
+              "id": "note-target",
+              "title": "Project Atlas",
+              "content": "周五 18:30 取快递\nCode: Aiden-204!",
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            },
+            {
+              "id": "note-guard",
+              "title": "Project Atlas archive",
+              "content": "Owner: Taylor\nCode: AT-203\nStatus: archived",
+              "updatedAt": 1770000000000,
+              "folderId": "unfiled",
+              "pinned": false,
+              "locked": false,
+              "isPrivate": false,
+              "trashedAt": null
+            }
+          ]
+        }
+      },
+      "hard_assertions": {
+        "forbidden_tools": [
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 60,
+        "must_complete_within_sec": 360
+      },
+      "repeats": 1
+    }
+  ]
+}

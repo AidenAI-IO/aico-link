@@ -14,11 +14,6 @@ from runner.suite import load_suite
 
 SUITES = Path(__file__).resolve().parents[1] / "suites"
 WORKFLOWS = load_suite(SUITES / "mobilegym_workflow_v1.json")
-PHONE = load_suite(SUITES / "phone_control_v1.json")
-NEW_TASKS = WORKFLOWS.tasks + [
-    task for task in PHONE.tasks
-    if task.id in {"notes_fill_title_and_body", "clock_edit_alarm_label"}
-]
 
 
 def checks_pass(task, state):
@@ -27,7 +22,7 @@ def checks_pass(task, state):
     ))
 
 
-@pytest.mark.parametrize("task", [task for task in NEW_TASKS if task.id != "contact_discard_draft"],
+@pytest.mark.parametrize("task", WORKFLOWS.tasks,
                          ids=lambda task: task.id)
 def test_mutation_tasks_cannot_pass_without_changing_seeded_state(task):
     assert not checks_pass(task, task.initial_environment_state)
@@ -53,22 +48,48 @@ def test_cross_app_contact_checks_destination_and_preserves_source():
     assert not checks_pass(task, state)
 
 
-def test_alarm_edit_rejects_recreation_and_modifying_same_time_decoy():
-    task = next(task for task in WORKFLOWS.tasks if task.id == "alarm_edit_matching_record")
+def test_note_edit_preserves_identity_other_lines_and_unrelated_notes():
+    task = next(task for task in WORKFLOWS.tasks if task.id == "note_replace_one_item")
     state = deepcopy(task.initial_environment_state)
-    alarms = state["apps"]["clock"]["alarms"]
-    alarms[0].update(minute=45, repeat="workday")
+    notes = state["apps"]["notes"]["notes"]
+    notes[0].update(content="Milk\nTea\nRice", updatedAt=1770000001000)
     assert checks_pass(task, state)
-    alarms[0]["id"] = "replacement"
+    correct = deepcopy(state)
+    notes[0]["content"] = "Tea"
     assert not checks_pass(task, state)
-    alarms[0]["id"] = "alarm-target"
-    alarms[1]["minute"] = 45
+    state = deepcopy(correct)
+    state["apps"]["notes"]["notes"][0]["id"] = "recreated-note"
+    assert not checks_pass(task, state)
+    state = deepcopy(correct)
+    state["apps"]["notes"]["notes"][1]["content"] = "Tea"
     assert not checks_pass(task, state)
 
 
-def test_workflows_are_in_default_mobilegym_ci_and_simulator_report_group():
-    case = next(case for case in select_cases(load_catalog(), profile="runnable")
-                if case.suite == "suites/mobilegym_workflow_v1.json")
+@pytest.mark.parametrize("task_id", ["contact_complete_form", "note_to_contact"])
+def test_contact_creation_rejects_missing_fields_duplicates_and_guard_edits(task_id):
+    task = next(task for task in WORKFLOWS.tasks if task.id == task_id)
+    state = deepcopy(task.initial_environment_state)
+    contacts = state["os"]["providers"]["contacts"]["contacts"]
+    expected = task.environment_assertions["os.providers.contacts.contacts"]["$records"][-1]
+    contacts.append({**deepcopy(expected), "id": "generated-contact-id"})
+    assert checks_pass(task, state)
+    contacts[-1]["emails"] = []
+    assert not checks_pass(task, state)
+    contacts[-1]["emails"] = deepcopy(expected["emails"])
+    contacts.append(deepcopy(contacts[-1]))
+    assert not checks_pass(task, state)
+    contacts.pop()
+    contacts[0]["displayName"] = "Changed guard"
+    assert not checks_pass(task, state)
+
+
+def test_workflows_are_manual_experiments():
+    catalog = load_catalog()
+    case, = select_cases(catalog, profile="runnable", suite="suites/mobilegym_workflow_v1.json")
+    assert case not in select_cases(catalog, profile="runnable")
+    assert {task.id for task in WORKFLOWS.tasks} == {
+        "note_replace_one_item", "contact_complete_form", "note_to_contact",
+    }
     assert case.environment == "mobilegym"
     assert case.target_platform == "android"
-    assert capability_of(WORKFLOWS.name) == "UI operation (simulator)"
+    assert capability_of(WORKFLOWS.name) == "Experimental workflows (simulator)"

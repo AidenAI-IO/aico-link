@@ -394,6 +394,10 @@ for credentials, report commands, time windows, and comparison rules.
 
 ## GitHub Actions CI
 
+For the distinction between defined tasks, scheduled coverage and validated
+operation paths, see [Phone operation coverage and validation](./phone-operation-coverage.md).
+That inventory also specifies the missing acceptance cases and reference replays.
+
 The benchmark workflow is `.github/workflows/benchmark.yml`. It deliberately
 uses the CLI runner rather than the WebUI, so every case has a stable exit code,
 self-contained artifacts, and an idempotent Langfuse publication step.
@@ -420,6 +424,13 @@ suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
 Apple Silicon bridge; it remains available through manual `hardware`/`all`
 dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
+
+The three-task `mobilegym_workflow_v1.json` suite is a manual experiment, excluded
+from the automatic sweep until known-correct UI replay validates its operation
+path. It checks editing a note, creating a contact, and transferring note contents
+into a contact, with save/reopen verification and preservation assertions. It is
+reported separately as experimental simulator workflows. See the
+[MobileGym workflow validation procedure](../../benchmark/mobilegym/README.md#experimental-user-workflows).
 
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
@@ -518,3 +529,5 @@ runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 - [Detailed Guide](./quickstart.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)
+
+Three additional manual operation candidates provide 20 executable tasks: `mobilegym_navigation_v1` (5), `mobilegym_editing_v1` (7), and `mobilegym_controls_v1` (8). See the [coverage inventory](./phone-operation-coverage.md#implemented-operation-candidates) for scope, CI selection and evidence limits.

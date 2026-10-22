@@ -142,17 +142,78 @@ Scroll Lab targets (positions 24 and 83). Final selection and irreversible
 scroll overshoot are checked through `/state` and `/route`. The 100-depth
 `mobilegym_scroll_sweep.json` is optional calibration, not the regression gate.
 
-### Device-operation workflows
+### Operation candidate suites
 
-`benchmark/suites/mobilegym_workflow_v1.json` adds eight complete workflows to
-the default nightly MobileGym profile: a five-field contact form, selective
-note editing, disambiguating notes with the same title, configuring an alarm,
-editing one of two alarms at the same time, transferring a note into a contact,
-transferring a note into an alarm, and cancelling a populated contact draft.
-Weekly reports group these results under **UI operation (simulator)**.
-Two additional Android-only cases in `phone_control_v1.json` isolate title/body
-entry and editing an alarm label. That suite remains explicitly selectable;
-its existing MobileGym CI case is not enabled by default.
+The following suites add 20 executable tasks with isolated fixtures and exact
+state/route assertions:
+
+| Suite | Tasks | Scope |
+| --- | ---: | --- |
+| `mobilegym_navigation_v1.json` | 5 | Similar-label targeting at two positions, Home/app switching, Back navigation, down-and-back scrolling |
+| `mobilegym_editing_v1.json` | 7 | Multiline ASCII, append/replace/delete/clear, title/body focus, mixed Chinese/ASCII |
+| `mobilegym_controls_v1.json` | 8 | Wi-Fi state variants, alarm time boundaries/toggle/repeat, long-press pinning |
+
+Select any of these paths in the benchmark CI workflow with profile `runnable`,
+or use the runner command below with that suite path. They are excluded from
+the daily selection pending reference qualification and an agent baseline.
+Weekly reports keep each candidate capability separate from existing UI scores.
+See the [coverage inventory](../../docs/09-benchmark/phone-operation-coverage.md#implemented-operation-candidates)
+for assertions and remaining gaps. Engineering tests or successful fixture
+readback do not mean the agent has passed these tasks. Keep the judge enabled
+for ordered navigation, save/reopen, long press and already-satisfied settings.
+
+### Experimental user workflows
+
+See the [phone-operation coverage inventory](../../docs/09-benchmark/phone-operation-coverage.md)
+for all eight capability dimensions, evidence gaps and the native-device acceptance
+workload. The experiments below cover only a small part of that workload.
+
+`mobilegym_workflow_v1.json` contains three manual experiments:
+
+| Task | User outcome | Preservation checks |
+| --- | --- | --- |
+| `note_replace_one_item` | Edit one shopping-list item, save and reopen the note | Original identity, title, remaining lines and unrelated note |
+| `contact_complete_form` | Create a contact with name, phone, company, title and email; reopen it | Existing contact and exactly one new record |
+| `note_to_contact` | Read a note, create the corresponding contact and reopen it | Source notes, existing contact and no duplicates |
+
+This suite is excluded from the automatic `runnable` profile and reported under
+**Experimental workflows (simulator)**. It is a candidate workload, not a
+validated phone-operation baseline. Basic MobileGym and scrolling remain the
+only automatic interactive simulator suites. Static perception and scripted
+bridge-policy tests measure different capabilities.
+
+Run these experiments explicitly through CI with profile `runnable` and suite
+`suites/mobilegym_workflow_v1.json`, or with an existing daemon and bridge:
+
+```bash
+cd benchmark
+uv run python -m runner run \
+  --suite suites/mobilegym_workflow_v1.json \
+  --agent-url http://127.0.0.1:<agent-port> \
+  --environment-url http://127.0.0.1:<bridge-port>
+```
+
+Keep the judge enabled: final-state assertions verify record contents and
+preservation, while the rubric requires evidence of leaving and reopening the
+record. State equality alone cannot prove that the agent performed this check.
+
+Before treating scores as capability evidence or enabling automatic execution:
+
+1. Replay known-correct UI operations for each task through the same daemon and
+   bridge input path. Verify saved contents after leaving and reopening the record.
+2. Record the environment version, fixture, action trace, observed outcome and
+   any input/IME blocker. Setup readback and screenshot availability do not prove
+   that text editing works. The input path has not yet passed reference replay.
+3. Run the agent on the validated environment and inspect failed traces. Separate
+   reproducible environment failures from agent failures; the current runner does
+   not automatically identify every bridge failure.
+4. Reuse the user goals on a native Android or iOS environment with its own setup
+   and outcome readers. Only then assess real-phone operation. Add focused probes
+   when an observed failure needs diagnosis.
+
+Version 1.2 narrows the previous workload and adds reopen verification, so its
+aggregate score is not directly comparable with earlier versions. CI green
+indicates report completion, not task success.
 
 Tasks use `app_ids` to preload stores and `initial_environment_state` to seed
 fixtures through `/api/setup`, after reset and before optional
@@ -172,16 +233,11 @@ creation checks accept random IDs while rejecting duplicates, missing records,
 and modifications to seeded non-target records. Ordinary object assertions
 retain exact equality. Preserve target IDs on edits and assert the complete
 body when only one line should change; rewriting that body correctly is valid.
-Cancellation also requires trace/screenshot evidence that the populated draft
-was actually created and discarded; an unchanged final state alone is
-insufficient and the rubric checks this behavior.
 
-The added inputs use ASCII values to exercise the current input path without
-assuming verified non-ASCII IME support. These cases measure simulated UI
-operation, not physical HID, real Android permissions, or real application
-lifecycle behavior. A future Android emulator adapter can reuse the task
-goals and preservation criteria, but needs its own fixtures and outcome
-readers. MobileGym state paths and patches are not a portable device API.
+These experiments do not establish coverage of long press, drag, keyboard
+occlusion, permission dialogs, physical HID or real Android application lifecycle
+behavior. MobileGym state paths and patches are not a portable device API, and
+simulator scores are not native Android scores.
 
 ## 🔧 Configuration
 

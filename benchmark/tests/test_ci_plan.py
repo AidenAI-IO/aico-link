@@ -49,9 +49,9 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 14
+    assert len(runnable) == 13
     assert len(hardware) == 12
-    assert len(all_cases) == 28
+    assert len(all_cases) == 31
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
@@ -60,7 +60,8 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     )
     assert {case.id for case in runnable} | {case.id for case in hardware} == (
         {case.id for case in catalog.cases}
-        - {"mobilegym-scroll-sweep", "phone-control-mobilegym"}
+        - {"mobilegym-scroll-sweep", "phone-control-mobilegym", "mobilegym-workflow",
+           "mobilegym-navigation", "mobilegym-editing", "mobilegym-controls"}
     )
 
 

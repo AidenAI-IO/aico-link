@@ -84,7 +84,9 @@ async def _foreground_app(env: Any, app_id: str) -> None:
             const apps = window.__SIM__?.getState?.()?.os?.installedApps || [];
             if (!apps.some(app => app.id === appId)) throw new Error(`app is not installed: ${appId}`);
             if (!window.__OS__?.openApp) throw new Error('window.__OS__.openApp is unavailable');
-            window.__OS__.openApp(appId, '/');
+            // Launch normally after reset. Forcing '/' pushes an external
+            // route after app redirects and leaves Clock on a blank root.
+            window.__OS__.openApp(appId);
         }""",
         app_id,
     )
