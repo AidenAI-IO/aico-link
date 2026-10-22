@@ -519,20 +519,34 @@ func (v *llmTextInputVision) visionJSON(ctx context.Context, operation, prompt s
 // or unknown observation.
 func (v *llmTextInputVision) visionDecisionJSON(ctx context.Context, operation, prompt string, required []string, screenshots ...screenshotResult) (string, error) {
 	var missing []string
+	invalid := false
 	for attempt := 1; attempt <= textInputVisionParseAttempts; attempt++ {
 		attemptPrompt := prompt
-		if len(missing) > 0 {
+		switch {
+		case invalid:
+			attemptPrompt += "\n\nThe previous response was not valid JSON. Analyze the same screenshot and return exactly one JSON object and nothing else."
+		case len(missing) > 0:
 			attemptPrompt += fmt.Sprintf("\n\nThe previous response was missing required fields: %s. Analyze the same screenshot and return one complete JSON object with every required field.", strings.Join(missing, ", "))
 		}
 		raw, err := v.visionJSONWithScreenshots(ctx, operation, attemptPrompt, screenshots...)
 		if err != nil {
 			return "", err
 		}
+		// Malformed JSON (an extra closing brace from deepseek-flash, for
+		// example) is retried like a missing field: the caller's parse would
+		// otherwise fail the whole step on one bad response.
+		if invalid = !json.Valid([]byte(raw)); invalid {
+			logging.Warnf("agent", "text_input", "vision %s response is not valid JSON attempt=%d", operation, attempt)
+			continue
+		}
 		missing = missingJSONFields(raw, required)
 		if len(missing) == 0 {
 			return raw, nil
 		}
 		logging.Warnf("agent", "text_input", "vision %s response missing %s attempt=%d", operation, strings.Join(missing, ","), attempt)
+	}
+	if invalid {
+		return "", fmt.Errorf("vision %s response is not valid JSON", operation)
 	}
 	return "", fmt.Errorf("vision %s response missing required fields: %s", operation, strings.Join(missing, ", "))
 }
