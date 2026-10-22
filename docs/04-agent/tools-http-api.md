@@ -124,8 +124,11 @@ This avoids searching for an app that is already visible in the drawer.
 
 Conversational `touch_gesture` calls with missing standard-gesture fields are
 rejected before baseline capture. A swipe must include `type:"swipe"`, `start`,
-and either `end` or `direction` together. The error includes complete tap and
-swipe examples so a retry can retain all required fields.
+and either `end` or `direction` together. Every supplied `point`, `start`, or
+`end` must be an object containing both numeric `x` and `y`; zero is valid,
+while missing or null coordinates are rejected before capture. The error
+includes complete tap and swipe examples so a retry can retain all required
+fields.
 
 ## curl Examples
 

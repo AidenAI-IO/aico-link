@@ -538,10 +538,39 @@ func validateTouchGestureFields(input string) error {
 			missing = "end or direction is required for swipe"
 		}
 	}
+	if missing == "" {
+		for _, field := range []struct {
+			name  string
+			value json.RawMessage
+		}{
+			{"point", args.Point},
+			{"start", args.Start},
+			{"end", args.End},
+		} {
+			if len(field.value) != 0 && !validTouchGestureCoordinate(field.value) {
+				missing = field.name + " must be a JSON object containing both numeric x and y coordinates"
+				break
+			}
+		}
+	}
 	if missing != "" {
 		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":900},\"direction\":\"up\"}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
 	}
 	return nil
+}
+
+func validTouchGestureCoordinate(raw json.RawMessage) bool {
+	var point map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &point); err != nil {
+		return false
+	}
+	for _, axis := range []string{"x", "y"} {
+		var value *float64
+		if err := json.Unmarshal(point[axis], &value); err != nil || value == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func unwrapCompatibleToolInput(input string) string {
