@@ -733,7 +733,7 @@ func modelProvidersFromConfig(providers map[string]agent.ModelProvider) map[stri
 	for name, provider := range providers {
 		result[name] = ModelProvider{
 			Type:      provider.Type,
-			HasAPIKey: strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey: agent.ProviderAPIKeyConfigured(provider.APIKey),
 			BaseURL:   provider.BaseURL,
 		}
 	}
@@ -766,7 +766,7 @@ func ttsProvidersFromConfig(providers map[string]agent.TTSProvider) map[string]T
 	for name, provider := range providers {
 		result[name] = TTSProvider{
 			Type:        provider.Type,
-			HasAPIKey:   strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:   agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:       provider.Model,
 			VoiceID:     provider.VoiceID,
 			Emotion:     provider.Emotion,
@@ -806,7 +806,7 @@ func sttProvidersFromConfig(providers map[string]agent.STTProvider) map[string]S
 	for name, provider := range providers {
 		result[name] = STTProvider{
 			Type:            provider.Type,
-			HasAPIKey:       strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:       agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:           provider.Model,
 			BaseURL:         provider.BaseURL,
 			AppID:           provider.AppID,
@@ -860,7 +860,7 @@ func voiceModelProvidersFromConfig(providers map[string]agent.VoiceModelProvider
 			Type:                   provider.Type,
 			UpstreamProvider:       provider.UpstreamProvider,
 			AgentID:                provider.AgentID,
-			HasAPIKey:              strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:              agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:                  provider.Model,
 			WorkspaceID:            provider.WorkspaceID,
 			Region:                 provider.Region,
@@ -970,7 +970,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			Provider:               cfg.VoiceModel.Provider,
 			UpstreamProvider:       cfg.VoiceModel.UpstreamProvider,
 			AgentID:                cfg.VoiceModel.AgentID,
-			HasAPIKey:              strings.TrimSpace(cfg.VoiceModel.APIKey) != "",
+			HasAPIKey:              agent.ProviderAPIKeyConfigured(cfg.VoiceModel.APIKey),
 			Model:                  cfg.VoiceModel.Model,
 			WorkspaceID:            cfg.VoiceModel.WorkspaceID,
 			Region:                 cfg.VoiceModel.Region,

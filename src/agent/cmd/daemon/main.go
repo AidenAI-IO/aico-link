@@ -16,6 +16,7 @@ import (
 
 	"aiden-agent/internal/agent"
 	"aiden-agent/internal/backup"
+	"aiden-agent/internal/configupdate"
 	"aiden-agent/internal/configweb"
 	"aiden-agent/internal/logging"
 	"aiden-agent/internal/wifiproxy"
@@ -184,6 +185,7 @@ func main() {
 	}
 	defer runtime.Close()
 	runtime.InitializeConfigApplication(persistedConfig)
+	runtime.RegisterConfigTools(configupdate.NewService())
 	if environmentErr == nil {
 		runtime.SetInitialEnvironmentRevision(environmentRevision)
 	}

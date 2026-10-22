@@ -12,6 +12,9 @@ import (
 // write-only. The browser receives configured-state flags and non-secret fields;
 // submitted api_key/secret fields are still accepted by the decoder.
 func TestConfigWire_VoiceProvidersRoundTrip(t *testing.T) {
+	// has_api_key reports a $VAR reference only when the variable is set.
+	t.Setenv("MINIMAX_KEY", "sk-from-env")
+	t.Setenv("SPEKO_KEY", "sk-from-env")
 	cfg := agent.Config{
 		TTSProviders: map[string]agent.TTSProvider{
 			"minimax-main": {Type: "minimax", APIKey: "sk-aaa", VoiceID: "male-qn-qingse", Emotion: "happy"},

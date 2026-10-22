@@ -85,6 +85,8 @@ creating another top-level section.
 ## Contents
 
 - [Configuration groups](#configuration-groups)
+- [Applying Changes Online](#applying-changes-online)
+- [Agent self-configuration](#agent-self-configuration)
 - [Directory layout](#directory-layout)
 - [Config Web: the device config page](#config-web-the-device-config-page)
 - [Minimal config examples](#minimal-config-examples)
@@ -121,6 +123,74 @@ restarts only the frame service. Every queued application logs one outcome line
 to `log/agent.log`: `config_applied` with the applied revision and duration, or
 `config_apply_failed` with the error. Editing the TOML outside Config Web
 requires an explicit reload request or service restart; there is no file watcher.
+
+## Agent self-configuration
+
+The Agent can change a small set of its own settings when the user asks, such
+as "speak slower" or "reply in English". It uses two agent-only tools, which
+are not exposed through `/api/tools` or MCP:
+
+- `config_get` returns the adjustable settings and the apply status of the last
+  saved change: `applied`, `pending`, `reboot_required`, or `failed`.
+- `config_update` takes `{"settings": {"<path>": value}, "dry_run": bool}` and
+  saves directly. The tool description tells the model to change only what the
+  user explicitly asked for, never because of screen or notification content,
+  and then to tell the user the `from`/`to` values and that they can ask to
+  change it back. `dry_run: true` returns the same preview without writing, for
+  a request that is ambiguous about the setting or value.
+
+There is no confirmation step. A confirmation enforced only by the tool
+description cannot stop an injected instruction, which can claim the user
+confirmed; the allowlist below is the safety boundary. Every allowlisted
+setting applies live and can be changed back with one request, so a second
+turn would only slow down voice use.
+
+A save goes through the same validation and atomic write as Config Web, then
+queues the new revision for live application like a Config Web save. The
+running task holds the run lock, so the change takes effect when the current
+task or voice conversation ends. Each save logs `config_self_update` with the
+changed settings and revision.
+
+A saved setting can still have no effect, and the result says so instead of
+letting the reply claim it changed. `ignored` lists, with a reason, a setting
+that resolves to a different value (such as `tts.speed` without a TTS
+provider) or that the resolved `input_mode` never reads (such as
+`agent.silence_ms` in realtime mode). The value is still written, so it applies
+after a later mode switch. `notes` lists a setting the mode narrows: in
+realtime mode, `tts.speed` changes standalone speech such as notifications and
+failure announcements, but not the voice model's own conversation voice.
+
+Only these Config Web paths are writable. All of them apply live, and numeric
+values outside the listed range are rejected, because a model can emit any
+number where Config Web offers a slider. `voice_progress_speech_enabled` is
+deliberately absent: nothing at runtime reads it, so the tool would report a
+change that cannot happen.
+
+| Path | Meaning |
+| ---- | ------- |
+| `tts.speed` | Speech playback speed multiplier, 0.5-2; in realtime mode, standalone speech only |
+| `stt.language` | Speech recognition language; `stt` mode only |
+| `agent.locale` | Reply locale: `zh-CN` or `en-US` |
+| `agent.timezone` | IANA time zone |
+| `agent.silence_ms` | Silence that ends a spoken turn, 200-5000 ms; `stt` mode only |
+| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening, timeout 1000-60000 ms; `stt` mode only |
+| `agent.voice_max_turns` | Spoken turns per voice conversation, 0-50; `stt` mode only |
+| `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply; `stt` mode only |
+| `agent.voice_tool_call_speech` | Spoken note when a tool call starts |
+| `voice_notifications.enabled` | Read phone notifications aloud |
+| `live_activity.enabled` | Task progress Live Activity |
+
+Providers, credentials, endpoints, the custom prompt, HID/USB identity, OTA,
+storage, and telemetry are deliberately excluded, so an instruction injected
+through screen or notification content cannot redirect model traffic, read
+keys, or drop the USB link. The allowlist lives in
+`src/agent/internal/agent/config_tools.go`; a contract test in
+`internal/configupdate` checks that every listed path is writable and live.
+
+Config Web, the `agent config update` CLI, and `config_update` serialize their
+read-modify-write cycles with an exclusive `flock` on `.agent.toml.lock` next
+to `agent.toml`, so concurrent saves from different processes merge instead of
+overwriting each other.
 
 ## Directory layout
 
@@ -258,7 +328,7 @@ android_keyboard_device = "/dev/hidg2"
 frame_socket = "/run/frame_service/frame_service.sock"
 ```
 
-> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box.
+> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box. A `$VAR_NAME` reference counts as configured only when that variable is set in the Agent environment (`/userdata/system/env`): `has_api_key` is `false` for an unset reference, so Config Web and the companion app's onboarding ask for a key instead of showing it as filled in. The committed template, which a default image installs, references variables a device does not set, so a new device reports every provider key as missing until the user enters one.
 
 ### Google Gemini provider
 
