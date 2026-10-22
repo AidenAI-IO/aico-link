@@ -31,6 +31,7 @@ type EpisodeRetentionCleaner struct {
 	maxEntries int
 	priority   int
 	now        func() time.Time
+	removeAll  func(string) error
 }
 
 func NewEpisodeRetentionCleaner(memoryDir string, priority int) *EpisodeRetentionCleaner {
@@ -40,6 +41,7 @@ func NewEpisodeRetentionCleaner(memoryDir string, priority int) *EpisodeRetentio
 		maxEntries: defaultEpisodeMaxEntries,
 		priority:   priority,
 		now:        time.Now,
+		removeAll:  os.RemoveAll,
 	}
 }
 
@@ -79,22 +81,25 @@ func (c *EpisodeRetentionCleaner) Clean(ctx context.Context) (uint64, error) {
 	if err != nil || len(plan.dirs) == 0 {
 		return 0, err
 	}
+	// Drop the index entries first: a directory that then fails to delete is
+	// only an unindexed orphan, which a later run removes, rather than an
+	// index entry pointing at nothing.
+	if plan.indexChanged {
+		plan.index.UpdatedAt = c.now().UTC().Format(time.RFC3339Nano)
+		if err := store.writeIndex(plan.index); err != nil {
+			return 0, err
+		}
+	}
 	var freed uint64
 	for _, dir := range plan.dirs {
 		if err := ctx.Err(); err != nil {
 			return freed, err
 		}
 		size := directoryBytes(dir)
-		if err := os.RemoveAll(dir); err != nil {
+		if err := c.removeAll(dir); err != nil {
 			return freed, fmt.Errorf("remove episode %s: %w", filepath.Base(dir), err)
 		}
 		freed += size
-	}
-	if plan.indexChanged {
-		plan.index.UpdatedAt = c.now().UTC().Format(time.RFC3339Nano)
-		if err := store.writeIndex(plan.index); err != nil {
-			return freed, err
-		}
 	}
 	return freed, nil
 }
@@ -199,15 +204,21 @@ func (c *EpisodeRetentionCleaner) orphanDirs(ctx context.Context, root string, i
 	return orphans, nil
 }
 
-// entryDir returns the episode directory of an index entry, and false when the
-// entry's path would leave the episodes directory.
+// entryDir returns the episode directory of an index entry, and false unless
+// it is an episode directory, <year>/<episode id> under the episodes root
+// (see episodeDir). A path that leaves the root, or names the root or a year
+// directory holding other episodes, is never a deletion target.
 func (s *TaskEpisodeStore) entryDir(entry episodeIndexEntry) (string, bool) {
 	if strings.TrimSpace(entry.File) == "" {
 		return "", false
 	}
 	dir := filepath.Dir(filepath.Join(s.rootDir, filepath.FromSlash(entry.File)))
 	rel, err := filepath.Rel(s.rootDir, dir)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if err != nil {
+		return "", false
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	if len(parts) != 2 || parts[0] == "." || parts[0] == ".." || parts[1] == "." || parts[1] == ".." {
 		return "", false
 	}
 	return dir, true

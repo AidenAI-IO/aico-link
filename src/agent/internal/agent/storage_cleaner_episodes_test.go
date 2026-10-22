@@ -154,3 +154,46 @@ func TestEpisodeRetentionIgnoresPathsOutsideTheEpisodesDirectory(t *testing.T) {
 		t.Fatal("cleaner removed a directory outside memory/episodes")
 	}
 }
+
+func TestEpisodeRetentionNeverDeletesAYearDirectory(t *testing.T) {
+	memoryDir, store, now := episodeCleanerFixture(t)
+	addCleanerEpisode(t, store, "ep_recent", "active", now.Add(-time.Hour))
+	index, err := store.loadIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	year := filepath.Dir(filepath.Dir(filepath.Join(store.rootDir, index.Episodes[0].File)))
+	// An old entry whose file sits directly in the year directory, as
+	// RebuildIndex can produce, resolves to the year directory itself.
+	index.Episodes = append(index.Episodes, episodeIndexEntry{
+		ID: "ep_stray", File: filepath.Base(year) + "/episode.yaml", Status: "active",
+		EndedAt: now.Add(-60 * 24 * time.Hour).Format(time.RFC3339Nano),
+	})
+	if err := writeYAMLAtomic(store.indexPath(), index); err != nil {
+		t.Fatal(err)
+	}
+	cleaner := NewEpisodeRetentionCleaner(memoryDir, 1)
+	cleaner.now = func() time.Time { return now }
+	if _, err := cleaner.Clean(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if matches, _ := filepath.Glob(filepath.Join(year, "ep_recent")); len(matches) != 1 {
+		t.Fatal("cleaner deleted the year directory with a recent episode in it")
+	}
+}
+
+func TestEpisodeRetentionDropsIndexEntriesBeforeDeleting(t *testing.T) {
+	memoryDir, store, now := episodeCleanerFixture(t)
+	addCleanerEpisode(t, store, "ep_old", "active", now.Add(-40*24*time.Hour))
+	cleaner := NewEpisodeRetentionCleaner(memoryDir, 1)
+	cleaner.now = func() time.Time { return now }
+	cleaner.removeAll = func(string) error { return os.ErrPermission }
+	// The deletion fails; the entry must already be gone from the index, so
+	// the directory is left as an unindexed orphan for a later run.
+	if _, err := cleaner.Clean(context.Background()); err == nil {
+		t.Fatal("expected the failed removal to be reported")
+	}
+	if indexedIDs(t, store)["ep_old"] {
+		t.Fatal("index still lists an episode the cleaner was deleting")
+	}
+}
