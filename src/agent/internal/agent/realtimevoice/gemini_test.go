@@ -250,6 +250,14 @@ func TestGeminiVertexUsesOAuthHeaderAndVertexModelResource(t *testing.T) {
 			t.Errorf("Vertex model = %q, want %q", payload["model"], wantModel)
 		}
 		_ = conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+		// Hold the connection open until the client closes it. Returning here
+		// drops the socket without a close frame, and the client may observe
+		// that abnormal closure before setupComplete.
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
 	}))
 	defer server.Close()
 
