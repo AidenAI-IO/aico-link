@@ -21,7 +21,6 @@ package agent
 //
 // 2. Array parameters:
 //    stringArrayArgSchema("Keys to press", []string{"ctrl", "c"})
-//    integerArrayArgSchema("Indices", []int{0, 1, 2})
 //
 //    Why: LLMs may pass comma-separated strings like "ctrl,c" instead of proper arrays.
 //         Examples clarify the array structure.

@@ -59,7 +59,7 @@ func shouldAnnounceRealtimeSessionFailure(err error) bool {
 	return errors.As(err, &providerFailure)
 }
 
-// runRealtimeWakeupMode owns the realtime voice path. The legacy wakeup
+// runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
 // runners remain separate so they can be restored without changing this path.
 type realtimeChatCommand struct {
 	ctx     context.Context
