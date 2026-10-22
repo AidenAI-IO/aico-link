@@ -59,8 +59,6 @@ func shouldAnnounceRealtimeSessionFailure(err error) bool {
 	return errors.As(err, &providerFailure)
 }
 
-// runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
-// runners remain separate so they can be restored without changing this path.
 type realtimeChatCommand struct {
 	ctx     context.Context
 	request agent.RealtimeChatRequest
@@ -363,6 +361,8 @@ func abandonSleepForPendingRealtimeReengagement(sleep *realtimeSleepState, reeng
 	return sleep.abandon()
 }
 
+// runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
+// runners remain separate so they can be restored without changing this path.
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
 	events := make(chan struct{}, 1)
 	bridge := newRealtimeChatBridge(func() {

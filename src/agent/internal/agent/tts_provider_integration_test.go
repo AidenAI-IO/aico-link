@@ -620,9 +620,6 @@ type interruptibleAudioTTSProvider struct {
 	blockWrites bool
 	firstWrite  chan struct{}
 	writeOnce   sync.Once
-	closeCount  atomic.Int32
-	mu          sync.Mutex
-	seen        []string
 }
 
 func newInterruptibleAudioTTSProvider(name string, pcmBytes int, blockWrites bool) *interruptibleAudioTTSProvider {
@@ -664,10 +661,6 @@ type interruptibleAudioTTSSession struct {
 }
 
 func (s *interruptibleAudioTTSSession) WriteText(text string) error {
-	s.provider.mu.Lock()
-	s.provider.seen = append(s.provider.seen, text)
-	s.provider.mu.Unlock()
-
 	if s.provider.pcmBytes > 0 {
 		if err := s.sink.WritePCM(make([]byte, s.provider.pcmBytes)); err != nil {
 			s.err = err
@@ -688,7 +681,6 @@ func (s *interruptibleAudioTTSSession) WriteText(text string) error {
 func (s *interruptibleAudioTTSSession) Flush() error { return nil }
 
 func (s *interruptibleAudioTTSSession) Close() error {
-	s.provider.closeCount.Add(1)
 	return nil
 }
 
