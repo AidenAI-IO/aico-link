@@ -68,6 +68,7 @@ class ADBAndroidDevice:
         self.screenshot_max_width = max(1, int(screenshot_max_width))
         self.jpeg_quality = min(95, max(1, int(jpeg_quality)))
         self._screen_size: tuple[int, int] | None = None
+        self._supports_keycombination: bool | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -170,6 +171,18 @@ class ADBAndroidDevice:
     def keyevent(self, keycode: str | int) -> None:
         self._run(["shell", "input", "keyevent", str(keycode)])
 
+    def keycombination(self, keycodes: list[str]) -> None:
+        """Send simultaneous keys only when the device advertises native support."""
+        if self._supports_keycombination is None:
+            help_text = self._run_text(["shell", "input"])
+            self._supports_keycombination = bool(re.search(r"\bkeycombination\b", help_text))
+        if not self._supports_keycombination:
+            raise ADBCommandError("device does not support input keycombination; cannot execute text-editing shortcuts")
+        output = self._run_text(["shell", "input", "keycombination", *keycodes])
+        # Some Android input implementations print an error but exit zero.
+        if "error" in output.lower() or "unknown command" in output.lower():
+            raise ADBCommandError(f"input keycombination failed: {output.strip()}")
+
     def input_text(self, text: str) -> None:
         """Type ASCII text via `input text`.
 
@@ -251,13 +264,25 @@ class ADBAndroidDevice:
         self._run(["shell", "cmd", "statusbar", "collapse"])
 
     def reset_home(self) -> None:
-        """Best-effort reset to a neutral home screen."""
+        """Return home and verify that no keyboard leaks into the next task."""
         try:
             self.collapse_statusbar()
         except ADBCommandError:
             pass
         self.keyevent("KEYCODE_HOME")
         time.sleep(0.3)
+        for attempt in range(3):
+            dump = self._run_text(["shell", "dumpsys", "input_method"], timeout=5)
+            shown = re.findall(r"\b(?:mInputShown|mIsInputViewShown)=(true|false)\b", dump)
+            if not shown:
+                raise ADBCommandError("cannot verify keyboard visibility during reset")
+            if "true" not in shown:
+                return
+            if attempt < 2:
+                self.keyevent("KEYCODE_BACK")
+                self.keyevent("KEYCODE_HOME")
+                time.sleep(0.3)
+        raise ADBCommandError("keyboard is still visible after reset; refusing to start a contaminated task")
 
 
 def unsupported_adb_text_chars(text: str) -> str:

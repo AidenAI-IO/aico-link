@@ -742,12 +742,22 @@ class ADBToolsAPIHandler:
         }
         normalized_keys = [alias_map.get(k, k) for k in normalized_keys]
         has_meta = any(k in ("meta", "cmd", "super", "win") for k in normalized_keys)
-        # Unlike the HID path (and unlike MobileGym, which silently drops
-        # them), adb has no reliable way to inject ctrl/alt/shift combos —
-        # reject instead of executing a different action than requested.
+        # The Go text engine uses these chords to clear fields and undo probes.
+        # Never degrade a chord to sequential/plain keyevents on older Android.
+        if len(normalized_keys) == 2 and "ctrl" in normalized_keys:
+            key = next(k for k in normalized_keys if k != "ctrl") if normalized_keys.count("ctrl") == 1 else ""
+            if key in {"a", "z"}:
+                keycodes = ["KEYCODE_CTRL_LEFT", f"KEYCODE_{key.upper()}"]
+                return self._execute_device(
+                    lambda: self.state.device.keycombination(keycodes),
+                    tool_name="keyboard_tap",
+                    tool_input=tool_input,
+                    adb_summary="input keycombination " + " ".join(keycodes),
+                )
+        # Other modifier combinations remain explicitly unsupported.
         if any(k in ("ctrl", "alt", "shift") for k in normalized_keys):
             return {
-                "output": "error: adb keyboard_tap does not support ctrl/alt/shift modifiers; use the bare key, keyboard_text, or quick_action instead",
+                "output": "error: adb keyboard_tap supports ctrl/alt/shift modifiers only for ctrl+a and ctrl+z on devices with input keycombination; use the bare key, keyboard_text, or quick_action instead",
                 "is_error": True,
             }
         non_modifiers = [k for k in normalized_keys if k not in ("meta", "cmd", "super", "win")]

@@ -28,8 +28,11 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
     final_response = ""
     step = 0
     pending: dict[str, Any] | None = None
+    last_result: ToolCall | None = None
     for msg in history:
         mtype = msg.get("type")
+        if mtype != "state":
+            last_result = None
         if mtype == "tool_call":
             if pending is not None:
                 tool_calls.append(ToolCall(**pending))
@@ -51,7 +54,18 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
                 # summary instead (e.g. "... returned a screenshot observation ...").
                 pending["has_screenshot"] = True
             tool_calls.append(ToolCall(**pending))
+            last_result = tool_calls[-1]
             pending = None
+        elif mtype == "state" and last_result is not None:
+            # The daemon emits post-action images as state messages immediately
+            # after the result. Initial/unrelated state images are not tool shots.
+            caption = f"screenshot observation returned by the {last_result.tool} tool."
+            attachments = msg.get("attachments") or []
+            if caption in str(msg.get("content", "")) and any(
+                isinstance(item, dict) and item.get("kind") == "image"
+                for item in attachments
+            ):
+                last_result.has_screenshot = True
         elif mtype == "assistant":
             final_response = msg.get("content", "")
     if pending is not None:
@@ -107,6 +121,8 @@ def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) ->
     if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
         return False
     for (result, normalized), tool_call in zip(results, completed):
+        if isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip():
+            tool_call.has_screenshot = True
         tool_error = result.get("tool_error")
         details = tool_error.get("details") if isinstance(tool_error, dict) else None
         if isinstance(details, dict) and details.get("action_completed") is True:

@@ -5,6 +5,26 @@ from pathlib import Path
 from runner.judge import JudgeConfig, judge_task
 from runner.suite import RubricItem
 from runner.report import now_iso
+from runner.trace import extract_trace, apply_episode_tool_evidence
+
+
+def _refresh_screenshot_evidence(trace: dict, attempt_dir: Path) -> bool:
+    """Repair old screenshot flags without rewriting recorded execution gates."""
+    history_path = attempt_dir / "history.json"
+    if not history_path.exists():
+        return False
+    refreshed = extract_trace(json.loads(history_path.read_text("utf-8")))
+    episode_path = attempt_dir / "episode.json"
+    if episode_path.exists():
+        apply_episode_tool_evidence(refreshed, json.loads(episode_path.read_text("utf-8")))
+    recorded = trace.get("tool_calls", [])
+    if len(recorded) != len(refreshed.tool_calls) or any(
+        old.get("tool") != new.tool for old, new in zip(recorded, refreshed.tool_calls)
+    ):
+        return False
+    for old, new in zip(recorded, refreshed.tool_calls):
+        old["has_screenshot"] = bool(old.get("has_screenshot") or new.has_screenshot)
+    return True
 
 
 def _post_screenshot_path(attempt_dir: Path) -> Path:
@@ -56,6 +76,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
             continue
         try:
             trace = json.loads((attempt_dir / "trace.json").read_text("utf-8"))
+            if _refresh_screenshot_evidence(trace, attempt_dir):
+                metrics["screenshots_taken"] = sum(bool(call.get("has_screenshot")) for call in trace.get("tool_calls", []))
         except Exception as e:
             row["status"] = "judge_error"
             row.setdefault("metrics", {})["rejudge_error"] = f"trace load: {e}"
