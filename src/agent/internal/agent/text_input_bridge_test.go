@@ -384,11 +384,6 @@ func TestTextInputBridgeObservesFieldBeforeFallbackAfterShortcutError(t *testing
 	}
 }
 
-type recordingBridgeQuickActionTool struct {
-	*recordingTextInputTool
-	onCall func(string)
-}
-
 func TestTextInputBridgeRestoresViaSharedPhoneBridgeRestorerAndSwitchesBack(t *testing.T) {
 	vision := &stubTextInputVision{analyses: []textInputScreenAnalysis{{
 		ObservedMode: textInputModeASCII, FieldText: "hello world", TargetMatched: true,
@@ -467,13 +462,6 @@ func TestTextInputBridgeRestoresViaSharedPhoneBridgeRestorerAndSwitchesBack(t *t
 	if len(keyboardText.calls) != 0 {
 		t.Fatalf("keyboard_text calls=%v, want no Aiden search input", keyboardText.calls)
 	}
-}
-
-func (s *recordingBridgeQuickActionTool) Call(ctx context.Context, input string) (string, error) {
-	if s.onCall != nil {
-		s.onCall(input)
-	}
-	return s.recordingTextInputTool.Call(ctx, input)
 }
 
 func TestTextInputBridgeAllowsPastePermissionDialogBeforeMenuFallback(t *testing.T) {

@@ -34,7 +34,6 @@ const (
 		"- If ambiguous → briefly confirm the user's intent before acting."
 )
 
-var voiceSteerListenTimeout = defaultVoiceSteerListenTimeout
 var voiceTurnCancelWaitTimeout = 2 * time.Second
 var wakeupDebounceNow = time.Now
 
@@ -930,9 +929,6 @@ func captureVoiceSteer(cfg agent.Config, dialog audioDialogRunner, sigChan chan 
 }
 
 func voiceSteerListenTimeoutForConfig(_ agent.Config) time.Duration {
-	if voiceSteerListenTimeout > 0 {
-		return voiceSteerListenTimeout
-	}
 	return defaultVoiceSteerListenTimeout
 }
 

@@ -215,24 +215,6 @@ func (m *routedOpenAppModel) Call(context.Context, string, ...llms.CallOption) (
 	panic("unexpected Call invocation")
 }
 
-func modelMessagesContain(messages []llms.MessageContent, want string) bool {
-	for _, message := range messages {
-		for _, part := range message.Parts {
-			switch typed := part.(type) {
-			case llms.TextContent:
-				if strings.Contains(typed.Text, want) {
-					return true
-				}
-			case llms.ToolCallResponse:
-				if strings.Contains(typed.Content, want) {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
 func modelMessagesContainSuccessfulToolResult(messages []llms.MessageContent, name string) bool {
 	for _, message := range messages {
 		for _, part := range message.Parts {

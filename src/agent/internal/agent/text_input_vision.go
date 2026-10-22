@@ -81,10 +81,6 @@ type llmTextInputVision struct {
 	decider *decisionAdvisor
 }
 
-func newLLMTextInputVision(models model.Model) textInputVision {
-	return newDecidingTextInputVision(models, nil)
-}
-
 func newDecidingTextInputVision(models model.Model, decider *decisionAdvisor) textInputVision {
 	if models == nil {
 		return nil

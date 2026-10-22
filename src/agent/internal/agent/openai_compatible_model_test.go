@@ -1949,16 +1949,6 @@ func assertRawHTTPLogIsValidJSONL(t *testing.T, logText string) {
 	}
 }
 
-func findLogLineContaining(logText, substring string) bool {
-	lines := strings.Split(logText, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, substring) {
-			return true
-		}
-	}
-	return false
-}
-
 func TestModelManagerOpenRouterRetriesEOFInModelCall(t *testing.T) {
 	attempts := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

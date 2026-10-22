@@ -698,10 +698,6 @@ func testPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointer
 	return &pointerController{dev: dev, state: state}
 }
 
-func testTouchscreenPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointerController {
-	return &pointerController{dev: dev, state: state, touchscreen: true}
-}
-
 type touchscreenReport struct {
 	flags     uint8
 	contactID uint8

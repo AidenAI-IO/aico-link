@@ -949,14 +949,6 @@ func responsesGenerationInfoForToolCall(info map[string]any, toolID string) map[
 	return cloned
 }
 
-type roleExecutionResult struct {
-	Action          *schema.AgentAction
-	Step            *schema.AgentStep
-	ToolError       *ToolError
-	CandidateAnswer string
-	ToolDuration    time.Duration
-}
-
 func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolCall messages.Message, step schema.AgentStep, prepared PreparedToolResult) error {
 	if llmExecutor == nil {
 		return fmt.Errorf("llm executor is nil")

@@ -13,8 +13,6 @@ const (
 	headerMethod          = "Mcp-Method"
 	headerName            = "Mcp-Name"
 
-	metaProtocolVersion = "io.modelcontextprotocol/protocolVersion"
-
 	errHeaderMismatch = -32020
 )
 
