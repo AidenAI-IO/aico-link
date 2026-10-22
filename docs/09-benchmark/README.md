@@ -457,7 +457,7 @@ below.
 
 - Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
   `BENCHMARK_AGENT_BASE_URL`, `BENCHMARK_JUDGE_MODEL`,
-  `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `ANDROID_SERIAL`,
+  `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `BENCHMARK_ANDROID_SERIAL`,
   `BENCHMARK_ANDROID_SDK_DIR`,
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
   `BENCHMARK_IOS_ENVIRONMENT_URL`, `BENCHMARK_MAC_ENVIRONMENT_URL`,
@@ -474,7 +474,8 @@ repository setting. If neither is set, the workflow uses `1`. The report derives
 `metrics_k` from the planned task repeats; no separate metrics variable is needed.
 
 ADB cases need a booted Android device or emulator reachable from the runner
-host. Set `ANDROID_SERIAL` to its adb serial, for example `emulator-5554`. When
+host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
+`emulator-5554`; the workflow passes it to the runner as `ANDROID_SERIAL`. When
 `adb` is not already on the runner's `PATH`, the workflow uses
 `<sdk>/platform-tools/adb`, where `<sdk>` is the optional
 `BENCHMARK_ANDROID_SDK_DIR` variable and defaults to `~/android-sdk`. Before any

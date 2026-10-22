@@ -137,7 +137,7 @@ jobs:
       LANGFUSE_BASE_URL: ${{ vars.LANGFUSE_BASE_URL }}
       BENCHMARK_TELEMETRY: '1'
       LANGFUSE_HTTPS_PROXY: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
-      ANDROID_SERIAL: ${{ vars.ANDROID_SERIAL }}
+      ANDROID_SERIAL: ${{ vars.BENCHMARK_ANDROID_SERIAL }}
       BENCHMARK_PHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_PHONE_ENVIRONMENT_URL }}
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
       BENCHMARK_MAC_ENVIRONMENT_URL: ${{ vars.BENCHMARK_MAC_ENVIRONMENT_URL }}
@@ -273,7 +273,7 @@ jobs:
           set -euo pipefail
           sdk_dir="${ANDROID_SDK_DIR/#\~/$HOME}"
           if [[ -z "${ANDROID_SERIAL:-}" ]]; then
-            echo "ADB cases require the ANDROID_SERIAL repository variable" >&2
+            echo "ADB cases require the BENCHMARK_ANDROID_SERIAL repository variable" >&2
             exit 1
           fi
           if ! command -v adb >/dev/null 2>&1; then
