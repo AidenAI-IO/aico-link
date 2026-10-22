@@ -317,7 +317,7 @@ android_keyboard_device = "/dev/hidg2"
 frame_socket = "/run/frame_service/frame_service.sock"
 ```
 
-> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box.
+> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box. A `$VAR_NAME` reference counts as configured only when that variable is set in the Agent environment (`/userdata/system/env`): `has_api_key` is `false` for an unset reference, so Config Web and the companion app's onboarding ask for a key instead of showing it as filled in. The committed template, which a default image installs, references variables a device does not set, so a new device reports every provider key as missing until the user enters one.
 
 ### Google Gemini provider
 

@@ -173,6 +173,14 @@ func resolveProviderAPIKey(apiKey string) string {
 	return os.Getenv(env)
 }
 
+// ProviderAPIKeyConfigured reports whether a provider api_key yields a
+// credential at runtime. A "$NAME" reference counts only when the environment
+// variable is set: the shipped template references unset variables, and a
+// settings page must not report those keys as filled in.
+func ProviderAPIKeyConfigured(apiKey string) bool {
+	return strings.TrimSpace(resolveProviderAPIKey(apiKey)) != ""
+}
+
 func providerAPIKeyEnv(apiKey string) (string, bool) {
 	trimmed := strings.TrimSpace(apiKey)
 	if !strings.HasPrefix(trimmed, "$") {
