@@ -43,10 +43,14 @@ def test_keycombination_checks_errors_even_with_zero_exit_status(monkeypatch, ou
         device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
 
 
-def test_reset_home_dismisses_and_checks_keyboard(monkeypatch):
+@pytest.mark.parametrize("initial", [
+    "mInputShown=true",
+    "mInputShown=false\nInput method service state for example.LatinIME:\n  mWindowVisible=true",
+])
+def test_reset_home_dismisses_and_checks_keyboard(monkeypatch, initial):
     device = ADBAndroidDevice("serial-1")
     calls = []
-    states = iter(["mInputShown=true", "mInputShown=false"])
+    states = iter([initial, "mInputShown=false\nInput method service state for example.LatinIME:\n  mWindowVisible=false"])
 
     def run_text(args, **kwargs):
         calls.append(args)
@@ -103,6 +107,25 @@ Last computed insets:
 """
     monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
     assert device.keyboard_visible() is visible
+
+
+@pytest.mark.parametrize("manager,window,expected", [
+    (False, False, False),
+    (False, True, True),
+    (True, False, True),
+    (True, True, True),
+])
+def test_keyboard_visibility_reconciles_current_signals(monkeypatch, manager, window, expected):
+    device = ADBAndroidDevice("serial-1")
+    dump = f"""Current Input Method Manager state:
+  mInputShown={str(manager).lower()}
+Input method service state for example.LatinIME:
+  mWindowVisible={str(window).lower()}
+  mIsInputViewShown=true
+Last computed insets:
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    assert device.keyboard_visible() is expected
 
 
 def test_keyboard_visibility_does_not_accept_view_state_alone(monkeypatch):

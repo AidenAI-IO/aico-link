@@ -247,9 +247,11 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
   explicit error; modifiers are never silently dropped. Nonzero `hold_ms` is
   rejected because `input keyevent` cannot hold a key for an arbitrary duration.
 - **Reset verifies keyboard visibility**: setup returns Home, checks
-  the current manager's `mInputShown` in `dumpsys input_method` (falling back
-  to the IME service's `mWindowVisible`), and uses Back/Home to dismiss a
-  remaining keyboard. Historical records and `mIsInputViewShown` are ignored:
+  the current manager's `mInputShown` and the IME service's `mWindowVisible`
+  in `dumpsys input_method`, and uses Back/Home to dismiss a remaining keyboard.
+  Either available signal reporting visible keeps reset in its retry loop;
+  all available signals must report hidden before setup proceeds.
+  Historical records and `mIsInputViewShown` are ignored:
   the latter can remain true after the IME window has been hidden.
   Setup fails if the keyboard remains visible or its visibility cannot be
   determined, preventing state leakage into the next task.

@@ -275,13 +275,13 @@ class ADBAndroidDevice:
             maxsplit=1,
         )[0]
         shown = re.search(r"\bmInputShown=(true|false)\b", manager)
-        if shown:
-            return shown.group(1) == "true"
         service = re.search(r"(?ms)^Input method service state for [^\n]+:\n(.*?)(?:^Last computed insets:|\Z)", dump)
-        if service:
-            visible = re.search(r"\bmWindowVisible=(true|false)\b", service.group(1))
-            if visible:
-                return visible.group(1) == "true"
+        visible = re.search(r"\bmWindowVisible=(true|false)\b", service.group(1)) if service else None
+        # Manager and service visibility can disagree while a hide is in flight.
+        # Do not accept reset until every available current signal is hidden.
+        signals = [match.group(1) == "true" for match in (shown, visible) if match]
+        if signals:
+            return any(signals)
         raise ADBCommandError("cannot verify current keyboard window visibility during reset")
 
     def reset_home(self) -> None:
