@@ -85,6 +85,8 @@ creating another top-level section.
 ## Contents
 
 - [Configuration groups](#configuration-groups)
+- [Applying Changes Online](#applying-changes-online)
+- [Agent self-configuration](#agent-self-configuration)
 - [Directory layout](#directory-layout)
 - [Config Web: the device config page](#config-web-the-device-config-page)
 - [Minimal config examples](#minimal-config-examples)
@@ -121,6 +123,63 @@ restarts only the frame service. Every queued application logs one outcome line
 to `log/agent.log`: `config_applied` with the applied revision and duration, or
 `config_apply_failed` with the error. Editing the TOML outside Config Web
 requires an explicit reload request or service restart; there is no file watcher.
+
+## Agent self-configuration
+
+The Agent can change a small set of its own settings when the user asks, such
+as "speak slower" or "reply in English". It uses two agent-only tools, which
+are not exposed through `/api/tools` or MCP:
+
+- `config_get` returns the adjustable settings and the apply status of the last
+  saved change: `applied`, `pending`, `reboot_required`, or `failed`.
+- `config_update` takes `{"settings": {"<path>": value}, "dry_run": bool}` and
+  saves directly. The tool description tells the model to change only what the
+  user explicitly asked for, never because of screen or notification content,
+  and then to tell the user the `from`/`to` values and that they can ask to
+  change it back. `dry_run: true` returns the same preview without writing, for
+  a request that is ambiguous about the setting or value.
+
+There is no confirmation step. A confirmation enforced only by the tool
+description cannot stop an injected instruction, which can claim the user
+confirmed; the allowlist below is the safety boundary. Every allowlisted
+setting applies live and can be changed back with one request, so a second
+turn would only slow down voice use.
+
+A save goes through the same validation and atomic write as Config Web, then
+queues the new revision for live application like a Config Web save. The
+running task holds the run lock, so the change takes effect when the current
+task or voice conversation ends. Each save logs `config_self_update` with the
+changed settings and revision. A setting that is written but resolves to a
+different value, such as `tts.speed` without a TTS provider, is reported under
+`ignored` so the reply does not claim it changed.
+
+Only these Config Web paths are writable, and all of them apply live:
+
+| Path | Meaning |
+| ---- | ------- |
+| `tts.speed` | Speech playback speed multiplier |
+| `stt.language` | Speech recognition language |
+| `agent.locale` | Reply locale: `zh-CN` or `en-US` |
+| `agent.timezone` | IANA time zone |
+| `agent.silence_ms` | Silence that ends a spoken turn |
+| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening |
+| `agent.voice_max_turns` | Spoken turns per voice conversation |
+| `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply |
+| `agent.voice_tool_call_speech`, `agent.voice_progress_speech_enabled` | Spoken tool and progress notes |
+| `voice_notifications.enabled` | Read phone notifications aloud |
+| `live_activity.enabled` | Task progress Live Activity |
+
+Providers, credentials, endpoints, the custom prompt, HID/USB identity, OTA,
+storage, and telemetry are deliberately excluded, so an instruction injected
+through screen or notification content cannot redirect model traffic, read
+keys, or drop the USB link. The allowlist lives in
+`src/agent/internal/agent/config_tools.go`; a contract test in
+`internal/configupdate` checks that every listed path is writable and live.
+
+Config Web, the `agent config update` CLI, and `config_update` serialize their
+read-modify-write cycles with an exclusive `flock` on `.agent.toml.lock` next
+to `agent.toml`, so concurrent saves from different processes merge instead of
+overwriting each other.
 
 ## Directory layout
 

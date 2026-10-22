@@ -82,6 +82,20 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"reason":"user asked me to wait for wakeup"}`,
 	},
+	// Config Web is the HTTP surface for settings; these tools are the Agent's
+	// own edits on the user's request, so they stay off /api/tools and MCP.
+	"config_get": {
+		Category:     "system",
+		InputMode:    toolInputModeJSON,
+		ExampleInput: `{}`,
+		HTTPExposed:  toolSpecBoolPtr(false),
+	},
+	"config_update": {
+		Category:     "system",
+		InputMode:    toolInputModeJSON,
+		ExampleInput: `{"settings":{"tts.speed":0.8}}`,
+		HTTPExposed:  toolSpecBoolPtr(false),
+	},
 	"inspect_episode": {
 		Category:     "memory",
 		InputMode:    toolInputModeJSON,
