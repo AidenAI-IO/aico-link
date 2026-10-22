@@ -247,7 +247,10 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
   explicit error; modifiers are never silently dropped. Nonzero `hold_ms` is
   rejected because `input keyevent` cannot hold a key for an arbitrary duration.
 - **Reset verifies keyboard visibility**: setup returns Home, checks
-  `dumpsys input_method`, and uses Back/Home to dismiss a remaining keyboard.
+  the current manager's `mInputShown` in `dumpsys input_method` (falling back
+  to the IME service's `mWindowVisible`), and uses Back/Home to dismiss a
+  remaining keyboard. Historical records and `mIsInputViewShown` are ignored:
+  the latter can remain true after the IME window has been hidden.
   Setup fails if the keyboard remains visible or its visibility cannot be
   determined, preventing state leakage into the next task.
 - After an action the bridge waits 0.6s before taking the screenshot

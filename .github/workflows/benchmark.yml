@@ -293,10 +293,6 @@ jobs:
           echo "$ANDROID_SERIAL did not finish booting" >&2
           adb devices >&2
           exit 1
-      - name: Validate Android reset
-        if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
-        working-directory: benchmark
-        run: uv run python -m ci.diagnose_adb_reset
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-
@@ -409,7 +405,6 @@ jobs:
             benchmark/dashboard.html
             benchmark/dashboard-data.json
             benchmark/${{ env.PREPARE_LOG }}
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-android-reset/*
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/results.jsonl
@@ -437,7 +432,6 @@ jobs:
             benchmark/dashboard.html
             benchmark/dashboard-data.json
             benchmark/${{ env.PREPARE_LOG }}
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-android-reset/*
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/manifest.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/metrics.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/results.jsonl

@@ -43,11 +43,10 @@ def test_keycombination_checks_errors_even_with_zero_exit_status(monkeypatch, ou
         device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
 
 
-@pytest.mark.parametrize("field", ["mInputShown", "mIsInputViewShown"])
-def test_reset_home_dismisses_and_checks_keyboard(monkeypatch, field):
+def test_reset_home_dismisses_and_checks_keyboard(monkeypatch):
     device = ADBAndroidDevice("serial-1")
     calls = []
-    states = iter([f"{field}=true", f"{field}=false"])
+    states = iter(["mInputShown=true", "mInputShown=false"])
 
     def run_text(args, **kwargs):
         calls.append(args)
@@ -66,6 +65,51 @@ def test_reset_home_dismisses_and_checks_keyboard(monkeypatch, field):
         ["shell", "input", "keyevent", "KEYCODE_HOME"],
         ["shell", "dumpsys", "input_method"],
     ]
+
+
+@pytest.mark.parametrize("history", ["mStartInputHistory:", "mSoftInputShowHideHistory:", "mImeTrackerService#History:"])
+@pytest.mark.parametrize("current", ["mInputShown=false", "mShowRequested=false mInputShown=false"])
+def test_reset_ignores_stale_view_flag_and_historical_visibility(monkeypatch, history, current):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+    dump = f"""Current Input Method Manager state:
+  {current}
+  {history}
+    mInputShown=true
+Input method service state for example.LatinIME:
+  mWindowVisible=false
+  mIsInputViewShown=true
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    monkeypatch.setattr(device, "_run", lambda args, **kw: calls.append(args))
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _: None)
+    device.reset_home()
+    assert calls == [
+        ["shell", "cmd", "statusbar", "collapse"],
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+    ]
+
+
+@pytest.mark.parametrize("visible", [True, False])
+def test_keyboard_visibility_uses_service_window_when_manager_field_absent(monkeypatch, visible):
+    device = ADBAndroidDevice("serial-1")
+    dump = f"""Current Input Method Manager state:
+  mStartInputHistory:
+    mInputShown=true
+Input method service state for example.LatinIME:
+  mDecorViewVisible={str(visible).lower()} mWindowVisible={str(visible).lower()} mInShowWindow=false
+  mIsInputViewShown=true
+Last computed insets:
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    assert device.keyboard_visible() is visible
+
+
+def test_keyboard_visibility_does_not_accept_view_state_alone(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: "mIsInputViewShown=true")
+    with pytest.raises(ADBCommandError, match="current keyboard window visibility"):
+        device.keyboard_visible()
 
 
 @pytest.mark.parametrize("state", ["mInputShown=true", "unrecognized input method dump"])

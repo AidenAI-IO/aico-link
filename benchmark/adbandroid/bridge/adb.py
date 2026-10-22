@@ -263,6 +263,27 @@ class ADBAndroidDevice:
     def collapse_statusbar(self) -> None:
         self._run(["shell", "cmd", "statusbar", "collapse"])
 
+    def keyboard_visible(self) -> bool:
+        """Read current IME visibility, excluding histories and retained view state."""
+        dump = self._run_text(["shell", "dumpsys", "input_method"], timeout=5)
+        # The dump appends request histories and client/service state. In
+        # particular mIsInputViewShown can stay true after hideWindow() has
+        # hidden the IME window, so it is not a visibility signal.
+        manager = re.split(
+            r"(?m)^\s*(?:m\w*History\b|mImeTrackerService#History\b|Input method (?:client|service) state\b)",
+            dump,
+            maxsplit=1,
+        )[0]
+        shown = re.search(r"\bmInputShown=(true|false)\b", manager)
+        if shown:
+            return shown.group(1) == "true"
+        service = re.search(r"(?ms)^Input method service state for [^\n]+:\n(.*?)(?:^Last computed insets:|\Z)", dump)
+        if service:
+            visible = re.search(r"\bmWindowVisible=(true|false)\b", service.group(1))
+            if visible:
+                return visible.group(1) == "true"
+        raise ADBCommandError("cannot verify current keyboard window visibility during reset")
+
     def reset_home(self) -> None:
         """Return home and verify that no keyboard leaks into the next task."""
         try:
@@ -272,11 +293,7 @@ class ADBAndroidDevice:
         self.keyevent("KEYCODE_HOME")
         time.sleep(0.3)
         for attempt in range(3):
-            dump = self._run_text(["shell", "dumpsys", "input_method"], timeout=5)
-            shown = re.findall(r"\b(?:mInputShown|mIsInputViewShown)=(true|false)\b", dump)
-            if not shown:
-                raise ADBCommandError("cannot verify keyboard visibility during reset")
-            if "true" not in shown:
+            if not self.keyboard_visible():
                 return
             if attempt < 2:
                 self.keyevent("KEYCODE_BACK")
