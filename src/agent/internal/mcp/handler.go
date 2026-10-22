@@ -215,16 +215,10 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 		return errorResponse(req.ID, errInvalidParams, "tool name required", nil), nil
 	}
 	if name == "shell" && !h.Backend.ShellEnabled() {
-		return resultResponse(req.ID, CallResult{
-			IsError: true,
-			Content: []ContentBlock{{Type: "text", Text: "shell is disabled (mcp_shell_enabled=false)"}},
-		}), nil
+		return resultResponse(req.ID, ErrorResult("shell is disabled (mcp_shell_enabled=false)")), nil
 	}
 	if !isRuntimeTool(name) && !isStatusTool(name) {
-		return resultResponse(req.ID, CallResult{
-			IsError: true,
-			Content: []ContentBlock{{Type: "text", Text: "tool not in MCP allowlist: " + name}},
-		}), nil
+		return resultResponse(req.ID, ErrorResult("tool not in MCP allowlist: "+name)), nil
 	}
 
 	ctx := r.Context()
@@ -232,28 +226,19 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 	case isRuntimeTool(name):
 		result, callErr := h.Backend.CallRuntimeTool(ctx, name, params.Arguments)
 		if callErr != nil {
-			return resultResponse(req.ID, CallResult{
-				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: callErr.Error()}},
-			}), nil
+			return resultResponse(req.ID, ErrorResult(callErr.Error())), nil
 		}
 		return resultResponse(req.ID, result), nil
 	case name == toolPhoneBridgeStatus:
 		status, statusErr := h.Backend.PhoneBridgeStatus(ctx)
 		if statusErr != nil {
-			return resultResponse(req.ID, CallResult{
-				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
-			}), nil
+			return resultResponse(req.ID, ErrorResult(statusErr.Error())), nil
 		}
 		return resultResponse(req.ID, jsonResult(status)), nil
 	case name == toolDeviceStatus:
 		status, statusErr := h.Backend.DeviceStatus(ctx)
 		if statusErr != nil {
-			return resultResponse(req.ID, CallResult{
-				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: statusErr.Error()}},
-			}), nil
+			return resultResponse(req.ID, ErrorResult(statusErr.Error())), nil
 		}
 		return resultResponse(req.ID, jsonResult(status)), nil
 	case name == toolSupportBundle:
@@ -263,10 +248,7 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 			if errors.Is(bundleErr, ErrSupportBundleBusy) {
 				msg = ErrSupportBundleBusy.Error()
 			}
-			return resultResponse(req.ID, CallResult{
-				IsError: true,
-				Content: []ContentBlock{{Type: "text", Text: msg}},
-			}), nil
+			return resultResponse(req.ID, ErrorResult(msg)), nil
 		}
 		if mime == "" {
 			mime = "application/gzip"
@@ -291,10 +273,15 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 	}
 }
 
+// ErrorResult is a tool result that reports msg as a failed call.
+func ErrorResult(msg string) CallResult {
+	return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: msg}}}
+}
+
 func jsonResult(v any) CallResult {
 	raw, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
-		return CallResult{IsError: true, Content: []ContentBlock{{Type: "text", Text: err.Error()}}}
+		return ErrorResult(err.Error())
 	}
 	return CallResult{
 		Content:           []ContentBlock{{Type: "text", Text: string(raw)}},
