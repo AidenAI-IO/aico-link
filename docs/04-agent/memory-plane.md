@@ -118,6 +118,12 @@ Screenshot binary data is stored as an Episode artifact. Event records contain r
 
 The recorded `outcome.success` value is not treated as verified truth. It is input evidence for later assessment.
 
+`memory/episodes/index.yaml` lists every Episode with a short user goal and
+summary (each capped at 300 characters) for lookups; the full goal and trace
+stay in the Episode's own `episode.yaml` and `events.jsonl`. Each run reads and
+rewrites the index, so it is kept small, and the copy just written is reused
+for the next read instead of parsing the file again.
+
 ### Episode Storage Retention
 
 The current Episode implementation does not register a retention cleaner for

@@ -916,11 +916,29 @@ func (s *TaskEpisodeStore) loadIndex() (episodeIndex, error) {
 	return cloneEpisodeIndex(index), nil
 }
 
+// episodeIndexTextLimit caps the user goal and summary kept in the index, in
+// runes. Every task reads and rewrites the whole index twice, so a pasted
+// document in one request used to make every later task slower (a 2.8 MB
+// index cost about 2 s per task on the board). The full text stays in each
+// episode's own episode.yaml, which Get reads.
+const episodeIndexTextLimit = 300
+
 func (s *TaskEpisodeStore) writeIndex(index episodeIndex) error {
+	for i := range index.Episodes {
+		index.Episodes[i].UserGoal = truncateForLog(index.Episodes[i].UserGoal, episodeIndexTextLimit)
+		index.Episodes[i].Summary = truncateForLog(index.Episodes[i].Summary, episodeIndexTextLimit)
+	}
 	if err := writeYAMLAtomic(s.indexPath(), index); err != nil {
 		return err
 	}
-	s.invalidateIndexCache()
+	// Keep what was just written as the cache, so the next read does not parse
+	// the file again. The signature still detects writes from elsewhere.
+	signature, ok, err := memoryFileSignatureForPath(s.indexPath())
+	if err != nil || !ok {
+		s.invalidateIndexCache()
+		return nil
+	}
+	s.storeIndexCache(signature, index)
 	return nil
 }
 
