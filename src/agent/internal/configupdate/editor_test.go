@@ -49,6 +49,19 @@ func TestSelfConfigSettingsAreWritableAndLive(t *testing.T) {
 		"voice_notifications.enabled":         false,
 		"live_activity.enabled":               false,
 	}
+	// config_update reads the resolved input mode from the same snapshot to
+	// tell which settings the current mode ignores.
+	modePath := filepath.Join(t.TempDir(), "agent.toml")
+	if err := os.WriteFile(modePath, []byte(selfConfigFixture), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	modeSnapshot, err := NewService().Snapshot(modePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupJSON(t, modeSnapshot, "agent.input_mode"); string(got) != `"stt"` {
+		t.Fatalf("snapshot agent.input_mode = %s, want \"stt\"", got)
+	}
 	for _, setting := range agent.SelfConfigSettingPaths() {
 		sample, ok := samples[setting]
 		if !ok {

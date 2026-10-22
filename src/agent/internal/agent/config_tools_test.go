@@ -232,12 +232,91 @@ func TestConfigUpdateReportsIgnoredSettingButStillReloads(t *testing.T) {
 	}
 	result := decodeToolResult(t, output)
 	ignored, _ := result["ignored"].([]any)
-	if len(ignored) != 1 || ignored[0] != "tts.speed" {
-		t.Fatalf("ignored = %v, want [tts.speed]", result["ignored"])
+	if len(ignored) != 1 || ignored[0].(map[string]any)["setting"] != "tts.speed" {
+		t.Fatalf("ignored = %v, want tts.speed", result["ignored"])
 	}
 	if len(h.reloads) != 1 {
 		t.Fatalf("reloads = %v, want the written file reloaded", h.reloads)
 	}
+}
+
+// A setting the current input mode never reads is still saved, for a later
+// mode switch, but must be reported so the reply does not claim it changed.
+func TestConfigUpdateReportsSettingsTheInputModeIgnores(t *testing.T) {
+	cases := []struct {
+		name        string
+		mode        string
+		settings    string
+		wantIgnored []string
+		wantNotes   []string
+		wantReason  string
+	}{
+		{
+			name:        "realtime ignores stt-only settings and narrows tts.speed",
+			mode:        "realtime",
+			settings:    `{"agent.silence_ms":1500,"stt.language":"en","tts.speed":0.8,"agent.timezone":"Asia/Tokyo"}`,
+			wantIgnored: []string{"stt.language", "agent.silence_ms"},
+			wantNotes:   []string{"tts.speed"},
+			wantReason:  "realtime",
+		},
+		{
+			name:     "stt honours every setting",
+			mode:     "stt",
+			settings: `{"agent.silence_ms":1500,"stt.language":"en","tts.speed":0.8}`,
+		},
+		{
+			name:        "text only ignores voice input settings",
+			mode:        "",
+			settings:    `{"agent.silence_ms":1500,"stt.language":"en"}`,
+			wantIgnored: []string{"stt.language", "agent.silence_ms"},
+			wantReason:  "text only",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var settings map[string]any
+			if err := json.Unmarshal([]byte(tc.settings), &settings); err != nil {
+				t.Fatal(err)
+			}
+			candidate := map[string]any{"agent": map[string]any{"input_mode": tc.mode}, "tts": map[string]any{}, "stt": map[string]any{}}
+			for path, value := range settings {
+				section, field, _ := strings.Cut(path, ".")
+				candidate[section].(map[string]any)[field] = value
+			}
+			candidateJSON, _ := json.Marshal(candidate)
+			editor := &fakeConfigEditor{
+				snapshot: json.RawMessage(`{}`),
+				edit:     ConfigEdit{Config: candidateJSON, ChangedPaths: []string{"changed"}, Apply: ApplyLive, Revision: 5},
+			}
+			h := newConfigToolHarness(editor)
+			output, err := h.update.Call(context.Background(), `{"settings":`+tc.settings+`}`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := decodeToolResult(t, output)
+			if got := effectSettings(result["ignored"]); strings.Join(got, ",") != strings.Join(tc.wantIgnored, ",") {
+				t.Fatalf("ignored = %v, want %v", got, tc.wantIgnored)
+			}
+			if got := effectSettings(result["notes"]); strings.Join(got, ",") != strings.Join(tc.wantNotes, ",") {
+				t.Fatalf("notes = %v, want %v", got, tc.wantNotes)
+			}
+			if tc.wantReason != "" && !strings.Contains(output, tc.wantReason) {
+				t.Fatalf("output %s does not name the mode %q", output, tc.wantReason)
+			}
+			if len(h.reloads) != 1 {
+				t.Fatalf("reloads = %v, want the saved file reloaded", h.reloads)
+			}
+		})
+	}
+}
+
+func effectSettings(raw any) []string {
+	items, _ := raw.([]any)
+	settings := make([]string, 0, len(items))
+	for _, item := range items {
+		settings = append(settings, item.(map[string]any)["setting"].(string))
+	}
+	return settings
 }
 
 func TestConfigUpdateUnchangedSkipsReload(t *testing.T) {

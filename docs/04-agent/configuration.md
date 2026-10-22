@@ -149,19 +149,26 @@ A save goes through the same validation and atomic write as Config Web, then
 queues the new revision for live application like a Config Web save. The
 running task holds the run lock, so the change takes effect when the current
 task or voice conversation ends. Each save logs `config_self_update` with the
-changed settings and revision. A setting that is written but resolves to a
-different value, such as `tts.speed` without a TTS provider, is reported under
-`ignored` so the reply does not claim it changed.
+changed settings and revision.
+
+A saved setting can still have no effect, and the result says so instead of
+letting the reply claim it changed. `ignored` lists, with a reason, a setting
+that resolves to a different value (such as `tts.speed` without a TTS
+provider) or that the resolved `input_mode` never reads (such as
+`agent.silence_ms` in realtime mode). The value is still written, so it applies
+after a later mode switch. `notes` lists a setting the mode narrows: in
+realtime mode, `tts.speed` changes standalone speech such as notifications and
+failure announcements, but not the voice model's own conversation voice.
 
 Only these Config Web paths are writable, and all of them apply live:
 
 | Path | Meaning |
 | ---- | ------- |
-| `tts.speed` | Speech playback speed multiplier |
-| `stt.language` | Speech recognition language |
+| `tts.speed` | Speech playback speed multiplier; in realtime mode, standalone speech only |
+| `stt.language` | Speech recognition language; `stt` mode only |
 | `agent.locale` | Reply locale: `zh-CN` or `en-US` |
 | `agent.timezone` | IANA time zone |
-| `agent.silence_ms` | Silence that ends a spoken turn |
+| `agent.silence_ms` | Silence that ends a spoken turn; `stt` mode only |
 | `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening |
 | `agent.voice_max_turns` | Spoken turns per voice conversation |
 | `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply |

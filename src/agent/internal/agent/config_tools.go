@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -39,6 +40,12 @@ type selfConfigSetting struct {
 	Path        string
 	Type        string // "boolean", "integer", "number", or "string"
 	Description string
+	// InputModes lists the resolved input modes in which the setting has any
+	// effect; empty means every mode.
+	InputModes []string
+	// ModeNotes explains, per input mode, an effect the mode narrows without
+	// voiding, so the reply can say what will and will not change.
+	ModeNotes map[string]string
 }
 
 // selfConfigSettings is the allowlist of fields config_update may write. It
@@ -47,11 +54,14 @@ type selfConfigSetting struct {
 // Web: a prompt-injected instruction must not be able to redirect traffic,
 // leak keys, or drop the USB link. Every field here applies live.
 var selfConfigSettings = []selfConfigSetting{
-	{Path: "tts.speed", Type: "number", Description: "Speech playback speed multiplier; 1.0 is normal."},
-	{Path: "stt.language", Type: "string", Description: "Speech recognition language code, such as zh or en."},
+	{Path: "tts.speed", Type: "number", Description: "Speech playback speed multiplier; 1.0 is normal. In realtime voice mode it does not change the conversation voice.",
+		ModeNotes: map[string]string{
+			"realtime": "Realtime voice conversations speak with the voice model's own voice, so their speed does not change; only standalone speech such as notifications and failure announcements uses this speed.",
+		}},
+	{Path: "stt.language", Type: "string", Description: "Speech recognition language code, such as zh or en. Applies in stt voice mode only.", InputModes: []string{"stt"}},
 	{Path: "agent.locale", Type: "string", Description: "Reply language and locale: zh-CN or en-US."},
 	{Path: "agent.timezone", Type: "string", Description: "IANA time zone, such as Asia/Shanghai."},
-	{Path: "agent.silence_ms", Type: "integer", Description: "Silence in milliseconds that ends the user's spoken turn; raise it if the user is cut off."},
+	{Path: "agent.silence_ms", Type: "integer", Description: "Silence in milliseconds that ends the user's spoken turn; raise it if the user is cut off. Applies in stt voice mode only.", InputModes: []string{"stt"}},
 	{Path: "agent.voice_followup_enabled", Type: "boolean", Description: "Keep listening for a follow-up after a spoken reply."},
 	{Path: "agent.voice_followup_timeout_ms", Type: "integer", Description: "How long to wait for a follow-up, in milliseconds."},
 	{Path: "agent.voice_max_turns", Type: "integer", Description: "Maximum spoken turns in one voice conversation."},
@@ -244,12 +254,17 @@ func (t *ConfigUpdateTool) Call(_ context.Context, input string) (string, error)
 	if len(edit.ApplyReasons) > 0 {
 		result["apply_reasons"] = edit.ApplyReasons
 	}
-	if ignored := selfConfigIgnored(request.Settings, edit.Config); len(ignored) > 0 {
-		// A field can be written yet resolve to another value, for example
-		// tts.speed while no TTS provider is set up. Report it rather than let
-		// the reply claim the user's request took effect.
+	// A field can be written yet have no effect: it resolves to another value
+	// (tts.speed while no TTS provider is set up) or the input mode never
+	// reads it (silence_ms in realtime mode). Report both rather than let the
+	// reply claim the user's request took effect.
+	ignored, notes := selfConfigEffects(request.Settings, edit.Config)
+	if len(ignored) > 0 {
 		result["ignored"] = ignored
-		result["ignored_note"] = "These settings resolve to a different value in the current configuration, usually because the feature they tune is not set up; tell the user instead of claiming they changed."
+		result["ignored_note"] = "These settings were saved but have no effect in the current configuration; tell the user why instead of claiming they changed."
+	}
+	if len(notes) > 0 {
+		result["notes"] = notes
 	}
 	// ChangedPaths, not the resolved diff, decides whether the file changes:
 	// an ignored setting is still written and must still be reloaded.
@@ -427,21 +442,47 @@ func selfConfigChanges(settings map[string]json.RawMessage, before, after json.R
 	return changes, nil
 }
 
-// selfConfigIgnored lists requested settings whose resolved candidate value
-// differs from what was requested.
-func selfConfigIgnored(settings map[string]json.RawMessage, after json.RawMessage) []string {
-	var ignored []string
+type selfConfigEffect struct {
+	Setting string `json:"setting"`
+	Reason  string `json:"reason"`
+}
+
+// selfConfigEffects reports requested settings that the candidate config
+// will not honour (ignored) or will honour only in part (notes).
+func selfConfigEffects(settings map[string]json.RawMessage, after json.RawMessage) (ignored, notes []selfConfigEffect) {
+	mode := ""
+	if raw, err := selfConfigValue(after, "agent.input_mode"); err == nil {
+		_ = json.Unmarshal(raw, &mode)
+	}
+	mode = strings.ToLower(strings.TrimSpace(mode))
 	for _, setting := range selfConfigSettings {
 		requested, ok := settings[setting.Path]
 		if !ok {
 			continue
 		}
+		if len(setting.InputModes) > 0 && !slices.Contains(setting.InputModes, mode) {
+			ignored = append(ignored, selfConfigEffect{Setting: setting.Path, Reason: fmt.Sprintf(
+				"The current input mode is %s; this setting only applies in %s mode.",
+				selfConfigModeName(mode), strings.Join(setting.InputModes, " or "))})
+			continue
+		}
 		resolved, err := selfConfigValue(after, setting.Path)
 		if err != nil || !jsonEqual(requested, resolved) {
-			ignored = append(ignored, setting.Path)
+			ignored = append(ignored, selfConfigEffect{Setting: setting.Path, Reason: "It resolves to a different value, usually because the feature it tunes is not set up."})
+			continue
+		}
+		if note := setting.ModeNotes[mode]; note != "" {
+			notes = append(notes, selfConfigEffect{Setting: setting.Path, Reason: note})
 		}
 	}
-	return ignored
+	return ignored, notes
+}
+
+func selfConfigModeName(mode string) string {
+	if mode == "" {
+		return "text only (no voice input)"
+	}
+	return mode
 }
 
 func jsonEqual(a, b json.RawMessage) bool {
