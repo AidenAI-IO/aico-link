@@ -154,6 +154,27 @@ suites:
     required: true
     timeout_seconds: 300
 
+  - name: aico-power
+    class: deterministic
+    paths:
+      - overlay-debian/usr/bin/aico-power
+      - tests/test_aico_power.py
+      - pico-sdk/project/scripts/test_aiden_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+      - pico-sdk/sysdrv/source/kernel/arch/arm/configs/rv1106-pm.config
+    command: |
+      python3 tests/test_aico_power.py
+      python3 pico-sdk/project/scripts/test_aiden_custom_dts.py AidenCustomBoardTest.test_suspend_uses_the_board_power_and_pin_configuration
+    quick: true
+    dependencies: [python3]
+    required_inputs:
+      - overlay-debian/usr/bin/aico-power
+      - tests/test_aico_power.py
+      - pico-sdk/project/scripts/test_aiden_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+    required: true
+    timeout_seconds: 60
+
   - name: debian-rootfs-grow
     class: deterministic
     paths: [overlay-debian/usr/lib/aiden/aiden-rootfs-grow, overlay-debian/etc/systemd/system/aiden-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]

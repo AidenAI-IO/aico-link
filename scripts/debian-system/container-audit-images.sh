@@ -217,6 +217,11 @@ audit_rootfs() {
     test -x "${ROOTFS_MOUNT}/usr/bin/python3" || fail "Debian Python is missing"
     test -x "${ROOTFS_MOUNT}/usr/bin/pip3" || fail "Debian pip is missing"
     test -x "${ROOTFS_MOUNT}/usr/bin/hciattach" || fail "hciattach is missing"
+    test -x "${ROOTFS_MOUNT}/usr/bin/aico-power" \
+        || fail "power-state command is missing or not executable"
+    cmp "${ROOTFS_MOUNT}/usr/bin/aico-power" \
+        "${REPO_ROOT}/overlay-debian/usr/bin/aico-power" \
+        || fail "power-state command differs from the image source"
     test -x "${ROOTFS_MOUNT}/usr/sbin/dnsmasq" || fail "dnsmasq-base is missing"
     test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-usb-gadget" \
         || fail "USB gadget helper was not installed"

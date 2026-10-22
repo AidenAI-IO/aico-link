@@ -63,6 +63,21 @@ class AidenCustomBoardTest(unittest.TestCase):
     def test_poweroff_does_not_restart(self):
         self.assertNotIn("restart-poweroff", self.dts)
 
+    def test_suspend_uses_the_board_power_and_pin_configuration(self):
+        # The RV1106 machine compatible activates the platform suspend path;
+        # s2idle remains available through the common CONFIG_SUSPEND code.
+        self.assertRegex(
+            self.dts,
+            r'compatible\s*=\s*"rockchip,rv1103g-38x38-ipc-v10",\s*'
+            r'"rockchip,rv1106g3",\s*"rockchip,rv1106";',
+        )
+        suspend = self.node("&rockchip_suspend")
+        # SCH v1 has no external 32 kHz source. The reference EVB sleep IO
+        # table would also override the board's GPIO0 pinmux and pulls.
+        self.assertIn("rockchip,sleep-mode-config = <0>;", suspend)
+        self.assertIn("/delete-property/ rockchip,sleep-io-config;", suspend)
+        self.assertIn("retain-state-suspended;", self.node("rv_hold"))
+
     def test_power_management_i2c_nodes(self):
         # Charger and fuel gauge are both on the MCU's bus. The old RV1106
         # I2C1 M1 binding also steals Bluetooth UART0 RX/TX.
@@ -253,6 +268,7 @@ class AidenCustomBoardTest(unittest.TestCase):
         mcu_uart = self.node("&uart5")
         self.assertIn('status = "okay";', mcu_uart)
         self.assertIn("pinctrl-0 = <&uart5m1_xfer>;", mcu_uart)
+        self.assertIn("wakeup-source;", mcu_uart)
         # UART3 M1 RX shares GPIO1_D1 with RV_HOLD.
         self.assertIn('status = "disabled";', self.node("&uart3"))
         self.assertNotIn("uart3m1_xfer", self.dts)

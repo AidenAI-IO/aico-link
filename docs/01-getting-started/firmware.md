@@ -89,26 +89,42 @@ building an image, verify the runtime with:
 Runtime-installed packages stay under `/userdata`; see
 [Persistent Python Packages](../04-agent/python-packages.md).
 
-## Suspend Power Measurements
+## System Suspend
 
-The Debian board configuration includes `rv1106-pm.config` to enable system
-suspend. After booting a kernel built with this fragment, check the available
-states with `cat /sys/power/state` and `cat /sys/power/mem_sleep`.
-
-For a suspend-to-idle (`s2idle`) measurement, run these commands as root:
+The Debian board configuration includes `rv1106-pm.config` and the Aiden board
+DTS settings for both suspend-to-idle (`s2idle`) and suspend-to-RAM (`deep`).
+The image installs `/usr/bin/aico-power`, available in the normal shell PATH.
+Run either command as root:
 
 ```bash
-echo s2idle > /sys/power/mem_sleep
-sync
-echo mem > /sys/power/state
+aico-power sleep       # Select s2idle and request suspend
+aico-power deep-sleep  # Select deep and request suspend
 ```
 
-The SSH connection may stop responding while the board is suspended. UART5 is
-declared as a wake source for the MCU link, but wake delivery and whole-board
-power consumption still require hardware validation. The MCU's periodic status
-queries must be coordinated with sleep before relying on UART wake in normal
-operation. For a measurement without automatic resume, disable unwanted wake
-sources first and keep a physical reset or power-cycle path available.
+The command verifies that the kernel advertises the requested mode, syncs
+filesystems, selects `/sys/power/mem_sleep`, and writes `mem` to
+`/sys/power/state`. It waits until the suspend request returns and reports
+kernel errors with a nonzero exit status. Check the available states with:
+
+```bash
+cat /sys/power/state
+cat /sys/power/mem_sleep
+```
+
+Both `s2idle` and `deep` should appear in `mem_sleep`; brackets indicate the
+currently selected mode. Each command selects its own mode explicitly.
+Deep sleep retains RAM and the RV power-hold signal; it does not power off the
+RV1106. The RK628 driver powers down its enable GPIO during system suspend and
+restores it on resume. ASRPRO and Wi-Fi/Bluetooth supply controls are not changed
+by this command. A peripheral driver that refuses suspend causes the request
+to fail; the command does not detach drivers to bypass that error.
+
+UART5 remains a wake source for the MCU link, so periodic MCU traffic can wake
+`s2idle` immediately. Deep resume requires a suitable PMU-bank GPIO wake source
+and its kernel configuration; UART5 is not a deep-sleep wake path. The temporary
+J2-13/GPIO0_A6 wake key used in hardware testing is not installed by the
+production DTS. Until the board's deep wake path is configured, use reset or a
+power cycle to restart it. Shell and network access pause while suspended.
 
 ## Flashing the Firmware
 

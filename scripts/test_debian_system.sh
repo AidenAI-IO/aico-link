@@ -295,6 +295,8 @@ fi
     || fail "Debian ttyd helper is missing"
 [ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-ttyd-login" ] \
     || fail "Debian ttyd login helper is missing"
+[ -x "${REPO_ROOT}/overlay-debian/usr/bin/aico-power" ] \
+    || fail "Debian power-state command is missing or not executable"
 grep -Fq 'aiden-ttyd.service' \
     "${REPO_ROOT}/overlay-debian/etc/systemd/system/aiden.target"
 grep -Fq 'overlay-debian/" "${ROOTFS_DIR}/"' \

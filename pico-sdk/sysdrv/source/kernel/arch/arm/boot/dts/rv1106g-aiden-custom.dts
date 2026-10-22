@@ -17,7 +17,8 @@
 
 / {
 	model = "Aiden SCH v1";
-	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3";
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3",
+		     "rockchip,rv1106";
 
 	chosen {
 		bootargs = "root=/dev/mmcblk0p7 rootwait snd_soc_core.prealloc_buffer_size_kbytes=16 coherent_pool=0";
@@ -154,6 +155,7 @@
 			label = "rv-hold";
 			gpios = <&gpio1 RK_PD1 GPIO_ACTIVE_HIGH>;
 			default-state = "on";
+			retain-state-suspended;
 		};
 	};
 
@@ -181,6 +183,13 @@
 	adc-keys {
 		status = "disabled";
 	};
+};
+
+&rockchip_suspend {
+	/* SCH v1 has no external 32 kHz crystal; use the internal oscillator. */
+	rockchip,sleep-mode-config = <0>;
+	/* Preserve board pinmux/pulls instead of applying the EVB GPIO0 table. */
+	/delete-property/ rockchip,sleep-io-config;
 };
 
 /**********CRU**********/
