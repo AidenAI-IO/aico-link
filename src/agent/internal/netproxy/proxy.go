@@ -81,7 +81,7 @@ func ProxyFromEnvironment(req *http.Request, allowedSchemes ...string) (*url.URL
 		return nil, nil
 	}
 	if req != nil && req.URL != nil {
-		if bypassLocalhostOrLoopback(req.URL.Hostname()) {
+		if IsLoopbackHost(req.URL.Hostname()) {
 			return nil, nil
 		}
 		if Bypass(req.URL.Hostname(), req.URL.Port(), NoProxyFromEnvironment()) {
@@ -128,7 +128,9 @@ func hasEmbeddedProxyAssignment(value string) bool {
 	return false
 }
 
-func bypassLocalhostOrLoopback(host string) bool {
+// IsLoopbackHost reports whether host is localhost or a loopback IP, which
+// never goes through a proxy.
+func IsLoopbackHost(host string) bool {
 	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
 	if host == "localhost" {
 		return true
