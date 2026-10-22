@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -504,13 +503,13 @@ func (c VoiceModelConfig) Validate() error {
 	if endpoint := strings.TrimSpace(c.Endpoint); provider != "speko" && endpoint != "" {
 		u, err := url.Parse(endpoint)
 		if err != nil || u.Host == "" || (u.Scheme != "wss" &&
-			!(u.Scheme == "ws" && isLoopbackHost(u.Hostname()))) {
+			!(u.Scheme == "ws" && netproxy.IsLoopbackHost(u.Hostname()))) {
 			return fmt.Errorf("voice_model.endpoint: invalid websocket URL %q", c.Endpoint)
 		}
 	}
 	if base := strings.TrimSpace(c.BaseURL); base != "" {
 		u, err := url.Parse(base)
-		if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname()))) {
+		if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && netproxy.IsLoopbackHost(u.Hostname()))) {
 			return fmt.Errorf("voice_model.base_url: invalid HTTP URL %q", c.BaseURL)
 		}
 	}
@@ -520,15 +519,6 @@ func (c VoiceModelConfig) Validate() error {
 		}
 	}
 	return nil
-}
-
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSpace(strings.Trim(host, "[]"))
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
 }
 
 // ProxyConfig is the explicit proxy configuration shared with the TTS adapters
