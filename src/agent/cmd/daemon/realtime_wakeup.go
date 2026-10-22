@@ -363,10 +363,6 @@ func abandonSleepForPendingRealtimeReengagement(sleep *realtimeSleepState, reeng
 	return sleep.abandon()
 }
 
-func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher wakeupWatcherFactory) {
-	runRealtimeWakeupModeWithServer(cfg, sigChan, nil, nil, nil, newWatcher)
-}
-
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
 	events := make(chan struct{}, 1)
 	bridge := newRealtimeChatBridge(func() {

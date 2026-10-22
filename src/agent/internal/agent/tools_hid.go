@@ -18,18 +18,6 @@ const (
 	// treating it as a long-press.
 	defaultTapHoldMs = 60
 
-	// defaultSwipeHoldBeforeMs is the dwell at the start of a swipe so iOS
-	// recognises the touchdown frame before the touch begins moving. The
-	// edge-back recogniser in particular rejects swipes that move on the same
-	// frame as the press.
-	defaultSwipeHoldBeforeMs = 80
-
-	// defaultSwipeHoldAfterMs defaults to zero so a swipe releases as soon as
-	// it reaches the destination. Holding at the end makes phone UIs look like
-	// the touch never released and can leave the screen stuck in a dragged
-	// state.
-	defaultSwipeHoldAfterMs = 0
-
 	defaultSwipeDurationMs = 700
 	defaultSwipeSteps      = 24
 
@@ -57,9 +45,6 @@ const (
 	// defaultKeyboardTapHoldMs matches example_usb_hid's default tap duration.
 	// Zero hold often fails on macOS/iOS hosts that miss sub-frame modifier chords.
 	defaultKeyboardTapHoldMs = 50
-	// keyboardModifierTapHoldMs keeps modifier chords pressed long enough for
-	// macOS/iOS hosts to register shortcuts like Cmd+Q.
-	keyboardModifierTapHoldMs = 120
 )
 
 // pointerController sends hid.usb1 reports in absolute mouse or touchscreen mode.
@@ -306,15 +291,6 @@ func (t *TouchGestureTool) SetDeviceTypeFunc(fn func() string) {
 	}
 }
 
-func (t *TouchGestureTool) platform() string {
-	if t != nil && t.deviceTypeFn != nil {
-		if deviceType, ok := normalizeDeviceType(t.deviceTypeFn()); ok {
-			return normalizeAgentToolPlatform(deviceTypePlatform(deviceType))
-		}
-	}
-	return ""
-}
-
 func (t *TouchGestureTool) Description() string {
 	return `Perform touch/pointer gestures. Provide either type or actions. Use the type form for normal interaction: tap, double_tap, long_press, swipe, drag_start, or drag_release. Atomic actions are a low-frequency advanced option only for an uninterrupted custom contact sequence that cannot be expressed by those standard gestures. Do not use actions for ordinary taps, long presses, swipes, scrolling, or moving draggable UI targets. Atomic actions execute in order and keep the contact pressed until touch_up. Atomic move_to accepts speed in normalized coordinate units per second; duration_ms overrides speed, and omitting both preserves immediate movement. ` +
 		`Base coordinates on the latest screenshot using normalized 0-1000 coordinates where (500,500) is center. For taps and long presses, aim at the visual center of the target. Point, start, and end never accept screenshot pixels: convert a target measured at (pixel_x,pixel_y) in the latest image with x=pixel_x/max(image_width-1,1)*1000 and y=pixel_y/max(image_height-1,1)*1000 before calling. The tool returns a post-action screenshot. Swipe direction names describe finger movement, not content scroll. ` +
@@ -516,36 +492,11 @@ func writeTouchscreenReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y in
 	return nil
 }
 
-func (pc *pointerController) currentXY() (int, int) {
-	if pc.state != nil {
-		if x, y, ok := pc.state.Current(); ok {
-			return x, y
-		}
-	}
-	return mnk.AbsMouseMaxPos / 2, mnk.AbsMouseMaxPos / 2
-}
-
 func (pc *pointerController) moveTo(x, y int, buttons uint8) error {
 	if pc.touchscreen {
 		return writeTouchscreenReport(pc.dev, pc.state, x, y, buttons != 0)
 	}
 	return writeAbsMouseReport(pc.dev, pc.state, x, y, buttons, 0)
-}
-
-func (pc *pointerController) scroll(delta int) error {
-	if delta == 0 {
-		return nil
-	}
-	if delta < -127 {
-		delta = -127
-	} else if delta > 127 {
-		delta = 127
-	}
-	if pc.touchscreen {
-		return nil
-	}
-	x, y := pc.currentXY()
-	return writeAbsMouseReport(pc.dev, pc.state, x, y, 0, int8(delta))
 }
 
 type pointerPoint struct {
@@ -675,10 +626,6 @@ func releasePointerRepeated(pc *pointerController, x, y int, count int, delayMs 
 
 func movePointer(pc *pointerController, x, y int, buttons uint8) error {
 	return pc.moveTo(x, y, buttons)
-}
-
-func scrollPointer(pc *pointerController, delta int) error {
-	return pc.scroll(delta)
 }
 
 func dragPointer(pc *pointerController, start, end resolvedPointerPoint, button uint8, durationMs, holdBeforeMs, holdAfterMs, steps int) (dragErr error) {

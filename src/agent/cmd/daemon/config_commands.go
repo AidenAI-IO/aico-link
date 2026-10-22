@@ -19,27 +19,13 @@ import (
 type webConfigDTO = configupdate.Config
 type modelDTO = configupdate.Model
 type modelProviderDTO = configupdate.ModelProvider
-type ttsProviderDTO = configupdate.TTSProvider
-type sttProviderDTO = configupdate.STTProvider
 type ttsDTO = configupdate.TTS
 type sttDTO = configupdate.STT
 type audioDTO = configupdate.Audio
 type audioArchiveDTO = configupdate.AudioArchive
-type frameServiceDTO = configupdate.FrameService
 type quickCaptureDTO = configupdate.QuickCapture
-type storageDTO = configupdate.Storage
-type storageDegradedModeDTO = configupdate.StorageDegradedMode
-type storageCleanupDTO = configupdate.StorageCleanup
-type deviceDTO = configupdate.Device
-type voiceNotificationsDTO = configupdate.VoiceNotifications
-type voiceNotificationResponseTailDTO = configupdate.VoiceNotificationResponseTail
-type voiceNotificationExpirationDTO = configupdate.VoiceNotificationExpiration
 type logDTO = configupdate.Log
-type otaDTO = configupdate.OTA
-type hidDTO = configupdate.HID
 type searchDTO = configupdate.Search
-type telemetryDTO = configupdate.Telemetry
-type liveActivityDTO = configupdate.LiveActivity
 type agentDTO = configupdate.Agent
 
 func webConfigDTOFromAgentConfig(cfg agent.Config) webConfigDTO {

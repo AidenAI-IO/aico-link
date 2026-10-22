@@ -614,61 +614,6 @@ func (m *rawStreamingModel) GenerateContent(ctx context.Context, messages []llms
 	return contentResponse(m.content), nil
 }
 
-type audioDialogRunResult struct {
-	result RunResult
-	err    error
-}
-
-type blockingStreamingModel struct {
-	firstChunk  string
-	secondChunk string
-	content     string
-	released    chan struct{}
-	releaseOnce sync.Once
-}
-
-func newBlockingStreamingModel(firstChunk, secondChunk, content string) *blockingStreamingModel {
-	return &blockingStreamingModel{
-		firstChunk:  firstChunk,
-		secondChunk: secondChunk,
-		content:     content,
-		released:    make(chan struct{}),
-	}
-}
-
-func (m *blockingStreamingModel) Call(context.Context, string, ...llms.CallOption) (string, error) {
-	return m.content, nil
-}
-
-func (m *blockingStreamingModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
-	var callOptions llms.CallOptions
-	for _, option := range options {
-		option(&callOptions)
-	}
-	if callOptions.StreamingFunc != nil {
-		if err := callOptions.StreamingFunc(ctx, []byte(m.firstChunk)); err != nil {
-			return nil, err
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-m.released:
-		}
-		if m.secondChunk != "" {
-			if err := callOptions.StreamingFunc(ctx, []byte(m.secondChunk)); err != nil {
-				return nil, err
-			}
-		}
-	}
-	return contentResponse(m.content), nil
-}
-
-func (m *blockingStreamingModel) release() {
-	m.releaseOnce.Do(func() {
-		close(m.released)
-	})
-}
-
 type interruptibleAudioTTSProvider struct {
 	name        string
 	pcmBytes    int
@@ -709,16 +654,6 @@ func (p *interruptibleAudioTTSProvider) signalFirstWrite() {
 	p.writeOnce.Do(func() {
 		close(p.firstWrite)
 	})
-}
-
-func (p *interruptibleAudioTTSProvider) texts() []string {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return append([]string(nil), p.seen...)
-}
-
-func (p *interruptibleAudioTTSProvider) closeCalls() int {
-	return int(p.closeCount.Load())
 }
 
 type interruptibleAudioTTSSession struct {
@@ -839,28 +774,6 @@ func waitForTestSignal(t *testing.T, ch <-chan struct{}, name string) {
 	case <-ch:
 	case <-time.After(2 * time.Second):
 		t.Fatalf("timed out waiting for %s", name)
-	}
-}
-
-func waitForAudioDialogRunResult(t *testing.T, ch <-chan audioDialogRunResult) audioDialogRunResult {
-	t.Helper()
-	select {
-	case result := <-ch:
-		return result
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for RunAgentTurn")
-		return audioDialogRunResult{}
-	}
-}
-
-func waitForError(t *testing.T, ch <-chan error) error {
-	t.Helper()
-	select {
-	case err := <-ch:
-		return err
-	case <-time.After(3 * time.Second):
-		t.Fatal("timed out waiting for operation")
-		return nil
 	}
 }
 
