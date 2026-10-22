@@ -35,19 +35,18 @@ api_key = "tts-secret"
 // the allowlist would make config_update promise something it cannot keep.
 func TestSelfConfigSettingsAreWritableAndLive(t *testing.T) {
 	samples := map[string]any{
-		"tts.speed":                           1.2,
-		"stt.language":                        "en",
-		"agent.locale":                        "zh-CN",
-		"agent.timezone":                      "Asia/Tokyo",
-		"agent.silence_ms":                    1500,
-		"agent.voice_followup_enabled":        true,
-		"agent.voice_followup_timeout_ms":     9000,
-		"agent.voice_max_turns":               3,
-		"agent.voice_interrupt_on_wakeup":     false,
-		"agent.voice_tool_call_speech":        false,
-		"agent.voice_progress_speech_enabled": false,
-		"voice_notifications.enabled":         false,
-		"live_activity.enabled":               false,
+		"tts.speed":                       1.2,
+		"stt.language":                    "en",
+		"agent.locale":                    "zh-CN",
+		"agent.timezone":                  "Asia/Tokyo",
+		"agent.silence_ms":                1500,
+		"agent.voice_followup_enabled":    true,
+		"agent.voice_followup_timeout_ms": 9000,
+		"agent.voice_max_turns":           3,
+		"agent.voice_interrupt_on_wakeup": false,
+		"agent.voice_tool_call_speech":    false,
+		"voice_notifications.enabled":     false,
+		"live_activity.enabled":           false,
 	}
 	// config_update reads the resolved input mode from the same snapshot to
 	// tell which settings the current mode ignores.
@@ -125,14 +124,13 @@ func TestConcurrentEditsKeepEverySave(t *testing.T) {
 		t.Fatal(err)
 	}
 	patches := map[string]any{
-		"tts.speed":                           1.3,
-		"agent.timezone":                      "Asia/Tokyo",
-		"agent.silence_ms":                    1700,
-		"agent.voice_max_turns":               4,
-		"agent.voice_tool_call_speech":        false,
-		"agent.voice_progress_speech_enabled": false,
-		"live_activity.enabled":               false,
-		"voice_notifications.enabled":         false,
+		"tts.speed":                    1.3,
+		"agent.timezone":               "Asia/Tokyo",
+		"agent.silence_ms":             1700,
+		"agent.voice_max_turns":        4,
+		"agent.voice_tool_call_speech": false,
+		"live_activity.enabled":        false,
+		"voice_notifications.enabled":  false,
 	}
 	var wg sync.WaitGroup
 	for setting, value := range patches {

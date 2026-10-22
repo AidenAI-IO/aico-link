@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -46,28 +47,36 @@ type selfConfigSetting struct {
 	// ModeNotes explains, per input mode, an effect the mode narrows without
 	// voiding, so the reply can say what will and will not change.
 	ModeNotes map[string]string
+	// Min and Max bound a numeric setting. Config Web constrains these with
+	// sliders; a model emits any number, so the bound must be enforced here.
+	Min, Max *float64
 }
+
+func selfConfigBound(value float64) *float64 { return &value }
 
 // selfConfigSettings is the allowlist of fields config_update may write. It
 // holds listening and conversation preferences only. Providers, credentials,
 // endpoints, HID/USB identity, OTA, storage, and telemetry stay with Config
 // Web: a prompt-injected instruction must not be able to redirect traffic,
-// leak keys, or drop the USB link. Every field here applies live.
+// leak keys, or drop the USB link. Every field here applies live and has a
+// runtime reader; a field nothing reads would let the reply claim a change
+// that cannot happen.
 var selfConfigSettings = []selfConfigSetting{
 	{Path: "tts.speed", Type: "number", Description: "Speech playback speed multiplier; 1.0 is normal. In realtime voice mode it does not change the conversation voice.",
+		Min: selfConfigBound(0.5), Max: selfConfigBound(2),
 		ModeNotes: map[string]string{
 			"realtime": "Realtime voice conversations speak with the voice model's own voice, so their speed does not change; only standalone speech such as notifications and failure announcements uses this speed.",
 		}},
 	{Path: "stt.language", Type: "string", Description: "Speech recognition language code, such as zh or en. Applies in stt voice mode only.", InputModes: []string{"stt"}},
 	{Path: "agent.locale", Type: "string", Description: "Reply language and locale: zh-CN or en-US."},
 	{Path: "agent.timezone", Type: "string", Description: "IANA time zone, such as Asia/Shanghai."},
-	{Path: "agent.silence_ms", Type: "integer", Description: "Silence in milliseconds that ends the user's spoken turn; raise it if the user is cut off. Applies in stt voice mode only.", InputModes: []string{"stt"}},
-	{Path: "agent.voice_followup_enabled", Type: "boolean", Description: "Keep listening for a follow-up after a spoken reply."},
-	{Path: "agent.voice_followup_timeout_ms", Type: "integer", Description: "How long to wait for a follow-up, in milliseconds."},
-	{Path: "agent.voice_max_turns", Type: "integer", Description: "Maximum spoken turns in one voice conversation."},
-	{Path: "agent.voice_interrupt_on_wakeup", Type: "boolean", Description: "Let a new wakeup interrupt the reply being spoken."},
+	{Path: "agent.silence_ms", Type: "integer", Description: "Silence in milliseconds that ends the user's spoken turn; raise it if the user is cut off. Applies in stt voice mode only.", InputModes: []string{"stt"},
+		Min: selfConfigBound(200), Max: selfConfigBound(5000)},
+	{Path: "agent.voice_followup_enabled", Type: "boolean", Description: "Keep listening for a follow-up after a spoken reply. Applies in stt voice mode only.", InputModes: []string{"stt"}},
+	{Path: "agent.voice_followup_timeout_ms", Type: "integer", Description: "How long to wait for a follow-up, in milliseconds. Applies in stt voice mode only.", InputModes: []string{"stt"}, Min: selfConfigBound(1000), Max: selfConfigBound(60000)},
+	{Path: "agent.voice_max_turns", Type: "integer", Description: "Maximum spoken turns in one voice conversation. Applies in stt voice mode only.", InputModes: []string{"stt"}, Min: selfConfigBound(0), Max: selfConfigBound(50)},
+	{Path: "agent.voice_interrupt_on_wakeup", Type: "boolean", Description: "Let a new wakeup interrupt the reply being spoken. Applies in stt voice mode only.", InputModes: []string{"stt"}},
 	{Path: "agent.voice_tool_call_speech", Type: "boolean", Description: "Speak a short note when starting a tool call."},
-	{Path: "agent.voice_progress_speech_enabled", Type: "boolean", Description: "Speak progress updates during long tasks."},
 	{Path: "voice_notifications.enabled", Type: "boolean", Description: "Read phone notifications aloud."},
 	{Path: "live_activity.enabled", Type: "boolean", Description: "Show task progress as a Live Activity on the phone."},
 }
@@ -84,7 +93,11 @@ func lookupSelfConfigSetting(path string) (selfConfigSetting, bool) {
 func selfConfigSettingList() string {
 	lines := make([]string, 0, len(selfConfigSettings))
 	for _, setting := range selfConfigSettings {
-		lines = append(lines, fmt.Sprintf("%s (%s): %s", setting.Path, setting.Type, setting.Description))
+		kind := setting.Type
+		if setting.Min != nil || setting.Max != nil {
+			kind += ", " + selfConfigBoundText(setting.Min) + "-" + selfConfigBoundText(setting.Max)
+		}
+		lines = append(lines, fmt.Sprintf("%s (%s): %s", setting.Path, kind, setting.Description))
 	}
 	return strings.Join(lines, "; ")
 }
@@ -98,8 +111,11 @@ type configToolBackend struct {
 	log    func(changes []selfConfigChange, revision uint64, state string)
 }
 
-// RegisterConfigTools wires config_get and config_update to editor. Call it
-// before the runtime serves tasks; the daemon injects configupdate.Service.
+// RegisterConfigTools wires config_get and config_update to editor. It writes
+// the tool map without a lock, so call it only at startup, before the HTTP
+// server or the input lifecycle can read the tools; the daemon injects
+// configupdate.Service there. A hardware reload carries both tools onto the
+// rebuilt ToolSet by name.
 func (r *Runtime) RegisterConfigTools(editor ConfigEditor) {
 	tools := r.toolSnapshot()
 	if tools == nil || editor == nil {
@@ -261,7 +277,11 @@ func (t *ConfigUpdateTool) Call(_ context.Context, input string) (string, error)
 	ignored, notes := selfConfigEffects(request.Settings, edit.Config)
 	if len(ignored) > 0 {
 		result["ignored"] = ignored
-		result["ignored_note"] = "These settings were saved but have no effect in the current configuration; tell the user why instead of claiming they changed."
+		if dryRun {
+			result["ignored_note"] = "These settings would be saved but have no effect in the current configuration; tell the user why before saving."
+		} else {
+			result["ignored_note"] = "These settings were saved but have no effect in the current configuration; tell the user why instead of claiming they changed."
+		}
 	}
 	if len(notes) > 0 {
 		result["notes"] = notes
@@ -344,6 +364,13 @@ func selfConfigPatch(settings map[string]json.RawMessage) (json.RawMessage, erro
 	return json.Marshal(map[string]any{"config": root})
 }
 
+func selfConfigBoundText(bound *float64) string {
+	if bound == nil {
+		return "any"
+	}
+	return strconv.FormatFloat(*bound, 'f', -1, 64)
+}
+
 // SelfConfigSettingPaths lists the Config Web paths config_update may write.
 func SelfConfigSettingPaths() []string {
 	paths := make([]string, 0, len(selfConfigSettings))
@@ -385,6 +412,9 @@ func decodeSelfConfigValue(setting selfConfigSetting, raw json.RawMessage) (any,
 		}
 		if setting.Type == "integer" && parsed != math.Trunc(parsed) {
 			return nil, mismatch
+		}
+		if (setting.Min != nil && parsed < *setting.Min) || (setting.Max != nil && parsed > *setting.Max) {
+			return nil, fmt.Errorf("setting %s must be between %s and %s", setting.Path, selfConfigBoundText(setting.Min), selfConfigBoundText(setting.Max))
 		}
 	}
 	return value, nil

@@ -160,19 +160,23 @@ after a later mode switch. `notes` lists a setting the mode narrows: in
 realtime mode, `tts.speed` changes standalone speech such as notifications and
 failure announcements, but not the voice model's own conversation voice.
 
-Only these Config Web paths are writable, and all of them apply live:
+Only these Config Web paths are writable. All of them apply live, and numeric
+values outside the listed range are rejected, because a model can emit any
+number where Config Web offers a slider. `voice_progress_speech_enabled` is
+deliberately absent: nothing at runtime reads it, so the tool would report a
+change that cannot happen.
 
 | Path | Meaning |
 | ---- | ------- |
-| `tts.speed` | Speech playback speed multiplier; in realtime mode, standalone speech only |
+| `tts.speed` | Speech playback speed multiplier, 0.5-2; in realtime mode, standalone speech only |
 | `stt.language` | Speech recognition language; `stt` mode only |
 | `agent.locale` | Reply locale: `zh-CN` or `en-US` |
 | `agent.timezone` | IANA time zone |
-| `agent.silence_ms` | Silence that ends a spoken turn; `stt` mode only |
-| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening |
-| `agent.voice_max_turns` | Spoken turns per voice conversation |
-| `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply |
-| `agent.voice_tool_call_speech`, `agent.voice_progress_speech_enabled` | Spoken tool and progress notes |
+| `agent.silence_ms` | Silence that ends a spoken turn, 200-5000 ms; `stt` mode only |
+| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening, timeout 1000-60000 ms; `stt` mode only |
+| `agent.voice_max_turns` | Spoken turns per voice conversation, 0-50; `stt` mode only |
+| `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply; `stt` mode only |
+| `agent.voice_tool_call_speech` | Spoken note when a tool call starts |
 | `voice_notifications.enabled` | Read phone notifications aloud |
 | `live_activity.enabled` | Task progress Live Activity |
 

@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+func TestConfigUpdateDryRunIgnoredNoteSaysNothingSaved(t *testing.T) {
+	editor := &fakeConfigEditor{
+		snapshot: json.RawMessage(`{}`),
+		edit:     ConfigEdit{Config: json.RawMessage(`{"agent":{"input_mode":"realtime","silence_ms":1500}}`), ChangedPaths: []string{"voice_settings.vad.silence_ms"}, Apply: ApplyLive},
+	}
+	output, err := newConfigToolHarness(editor).update.Call(context.Background(), `{"settings":{"agent.silence_ms":1500},"dry_run":true}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note, _ := decodeToolResult(t, output)["ignored_note"].(string)
+	if !strings.Contains(note, "would be saved") || strings.Contains(note, "were saved") {
+		t.Fatalf("dry-run ignored_note = %q, want preview wording", note)
+	}
+}
+
 type fakeConfigEditor struct {
 	snapshot json.RawMessage
 	edit     ConfigEdit
@@ -89,6 +104,12 @@ func TestConfigUpdateRejectsWrongValueTypes(t *testing.T) {
 		`{"settings":{"agent.voice_followup_enabled":"yes"}}`,
 		`{"settings":{"agent.timezone":"  "}}`,
 		`{"settings":{"agent.timezone":null}}`,
+		`{"settings":{"tts.speed":25}}`,
+		`{"settings":{"tts.speed":0.1}}`,
+		`{"settings":{"agent.silence_ms":-1}}`,
+		`{"settings":{"agent.voice_followup_timeout_ms":-500}}`,
+		`{"settings":{"agent.voice_max_turns":500}}`,
+		`{"settings":{"agent.voice_progress_speech_enabled":false}}`,
 		`{"settings":{}}`,
 	} {
 		editor := &fakeConfigEditor{snapshot: json.RawMessage(`{}`)}
@@ -254,8 +275,8 @@ func TestConfigUpdateReportsSettingsTheInputModeIgnores(t *testing.T) {
 		{
 			name:        "realtime ignores stt-only settings and narrows tts.speed",
 			mode:        "realtime",
-			settings:    `{"agent.silence_ms":1500,"stt.language":"en","tts.speed":0.8,"agent.timezone":"Asia/Tokyo"}`,
-			wantIgnored: []string{"stt.language", "agent.silence_ms"},
+			settings:    `{"agent.silence_ms":1500,"stt.language":"en","tts.speed":0.8,"agent.timezone":"Asia/Tokyo","agent.voice_followup_enabled":false,"agent.voice_tool_call_speech":false}`,
+			wantIgnored: []string{"stt.language", "agent.silence_ms", "agent.voice_followup_enabled"},
 			wantNotes:   []string{"tts.speed"},
 			wantReason:  "realtime",
 		},
