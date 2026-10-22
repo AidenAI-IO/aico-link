@@ -116,7 +116,6 @@ type PhoneBridgeStatus struct {
 
 type PhoneBridge struct {
 	mu                     sync.Mutex
-	statusExpiryTimer      *time.Timer
 	conn                   *websocket.Conn
 	connected              bool
 	platform               string

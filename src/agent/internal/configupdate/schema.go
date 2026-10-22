@@ -19,6 +19,7 @@ type Config struct {
 	STTProviders        map[string]STTProvider        `json:"stt_providers,omitempty"`
 	VoiceModelProviders map[string]VoiceModelProvider `json:"voice_model_providers,omitempty"`
 	Model               Model                         `json:"model"`
+	Decision            DecisionModel                 `json:"decision"`
 	TTS                 TTS                           `json:"tts"`
 	STT                 STT                           `json:"stt"`
 	Audio               Audio                         `json:"audio"`
@@ -420,6 +421,18 @@ type Search struct {
 	HasAPIKey bool   `json:"has_api_key"`
 }
 
+// DecisionModel is the wire view of the optional decision model. Like Search,
+// its API key is write-only: responses report has_api_key instead of the value.
+type DecisionModel struct {
+	Enabled       bool    `json:"enabled"`
+	Provider      string  `json:"provider"`
+	APIKey        string  `json:"api_key,omitempty"`
+	HasAPIKey     bool    `json:"has_api_key"`
+	BaseURL       string  `json:"base_url"`
+	Model         string  `json:"model"`
+	MinConfidence float64 `json:"min_confidence"`
+}
+
 type Telemetry struct {
 	Enabled           bool     `json:"enabled"`
 	Provider          string   `json:"provider"`
@@ -460,6 +473,7 @@ type Agent struct {
 	VoiceMaxTurns              int     `json:"voice_max_turns"`
 	VoiceInterruptOnWakeup     bool    `json:"voice_interrupt_on_wakeup"`
 	TapWakeupEnabled           bool    `json:"tap_wakeup_enabled"`
+	MCPEnabled                 bool    `json:"mcp_enabled"`
 	VoiceStreamingTTSEnabled   bool    `json:"voice_streaming_tts_enabled"`
 	VoiceToolCallSpeech        bool    `json:"voice_tool_call_speech"`
 	VoiceProgressSpeechEnabled bool    `json:"voice_progress_speech_enabled"`
@@ -486,6 +500,10 @@ func (d Config) ToAgentConfig() agent.Config {
 		searchKey = d.Search.APIKey
 	} else if d.Search.HasAPIKey {
 		searchKey = hasAPIKeyPlaceholder
+	}
+	decisionKey := d.Decision.APIKey
+	if strings.TrimSpace(decisionKey) == "" && d.Decision.HasAPIKey {
+		decisionKey = hasAPIKeyPlaceholder
 	}
 	voiceModelKey := d.VoiceModel.APIKey
 	if strings.TrimSpace(voiceModelKey) == "" && d.VoiceModel.HasAPIKey {
@@ -647,6 +665,14 @@ func (d Config) ToAgentConfig() agent.Config {
 			Provider: d.Search.Provider,
 			APIKey:   searchKey,
 		},
+		Decision: agent.DecisionModelConfig{
+			Enabled:       d.Decision.Enabled,
+			Provider:      d.Decision.Provider,
+			APIKey:        decisionKey,
+			BaseURL:       d.Decision.BaseURL,
+			Model:         d.Decision.Model,
+			MinConfidence: d.Decision.MinConfidence,
+		},
 		Telemetry: agent.TelemetryConfig{
 			Enabled:           boolPtr(d.Telemetry.Enabled),
 			Provider:          d.Telemetry.Provider,
@@ -681,6 +707,7 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceMaxTurns:              d.Agent.VoiceMaxTurns,
 		VoiceInterruptOnWakeup:     boolPtr(d.Agent.VoiceInterruptOnWakeup),
 		TapWakeupEnabled:           boolPtr(d.Agent.TapWakeupEnabled),
+		MCPEnabled:                 boolPtr(d.Agent.MCPEnabled),
 		VoiceStreamingTTSEnabled:   boolPtr(d.Agent.VoiceStreamingTTSEnabled),
 		VoiceToolCallSpeech:        boolPtr(d.Agent.VoiceToolCallSpeech),
 		VoiceProgressSpeechEnabled: boolPtr(d.Agent.VoiceProgressSpeechEnabled),
@@ -706,7 +733,7 @@ func modelProvidersFromConfig(providers map[string]agent.ModelProvider) map[stri
 	for name, provider := range providers {
 		result[name] = ModelProvider{
 			Type:      provider.Type,
-			HasAPIKey: strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey: agent.ProviderAPIKeyConfigured(provider.APIKey),
 			BaseURL:   provider.BaseURL,
 		}
 	}
@@ -739,7 +766,7 @@ func ttsProvidersFromConfig(providers map[string]agent.TTSProvider) map[string]T
 	for name, provider := range providers {
 		result[name] = TTSProvider{
 			Type:        provider.Type,
-			HasAPIKey:   strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:   agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:       provider.Model,
 			VoiceID:     provider.VoiceID,
 			Emotion:     provider.Emotion,
@@ -779,7 +806,7 @@ func sttProvidersFromConfig(providers map[string]agent.STTProvider) map[string]S
 	for name, provider := range providers {
 		result[name] = STTProvider{
 			Type:            provider.Type,
-			HasAPIKey:       strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:       agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:           provider.Model,
 			BaseURL:         provider.BaseURL,
 			AppID:           provider.AppID,
@@ -833,7 +860,7 @@ func voiceModelProvidersFromConfig(providers map[string]agent.VoiceModelProvider
 			Type:                   provider.Type,
 			UpstreamProvider:       provider.UpstreamProvider,
 			AgentID:                provider.AgentID,
-			HasAPIKey:              strings.TrimSpace(provider.APIKey) != "",
+			HasAPIKey:              agent.ProviderAPIKeyConfigured(provider.APIKey),
 			Model:                  provider.Model,
 			WorkspaceID:            provider.WorkspaceID,
 			Region:                 provider.Region,
@@ -943,7 +970,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			Provider:               cfg.VoiceModel.Provider,
 			UpstreamProvider:       cfg.VoiceModel.UpstreamProvider,
 			AgentID:                cfg.VoiceModel.AgentID,
-			HasAPIKey:              strings.TrimSpace(cfg.VoiceModel.APIKey) != "",
+			HasAPIKey:              agent.ProviderAPIKeyConfigured(cfg.VoiceModel.APIKey),
 			Model:                  cfg.VoiceModel.Model,
 			WorkspaceID:            cfg.VoiceModel.WorkspaceID,
 			Region:                 cfg.VoiceModel.Region,
@@ -1042,6 +1069,14 @@ func FromAgentConfig(cfg agent.Config) Config {
 			Provider:  cfg.Search.ProviderOrDefault(),
 			HasAPIKey: strings.TrimSpace(cfg.Search.APIKey) != "",
 		},
+		Decision: DecisionModel{
+			Enabled:       cfg.Decision.Enabled,
+			Provider:      cfg.Decision.ProviderOrDefault(),
+			HasAPIKey:     strings.TrimSpace(cfg.Decision.APIKey) != "",
+			BaseURL:       cfg.Decision.BaseURLOrDefault(),
+			Model:         cfg.Decision.ModelOrDefault(),
+			MinConfidence: cfg.Decision.MinConfidenceOrDefault(),
+		},
 		Telemetry: Telemetry{
 			Enabled:           cfg.Telemetry.EnabledOrDefault(),
 			Provider:          cfg.Telemetry.ProviderOrDefault(),
@@ -1077,6 +1112,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceMaxTurns:              cfg.VoiceMaxTurns,
 			VoiceInterruptOnWakeup:     cfg.VoiceInterruptOnWakeupOrDefault(),
 			TapWakeupEnabled:           cfg.TapWakeupEnabledOrDefault(),
+			MCPEnabled:                 cfg.MCPEnabledOrDefault(),
 			VoiceStreamingTTSEnabled:   cfg.VoiceStreamingTTSEnabledOrDefault(),
 			VoiceToolCallSpeech:        cfg.VoiceToolCallSpeechOrDefault(),
 			VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabledOrDefault(),

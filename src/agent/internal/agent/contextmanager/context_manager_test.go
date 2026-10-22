@@ -562,16 +562,6 @@ func TestContextManagerConcurrentAppendWithStatefulHook(t *testing.T) {
 	}
 }
 
-func standardMessageText(message llms.MessageContent) string {
-	var parts []string
-	for _, part := range message.Parts {
-		if text, ok := part.(llms.TextContent); ok {
-			parts = append(parts, text.Text)
-		}
-	}
-	return strings.Join(parts, "\n")
-}
-
 func TestStoreAttachmentPersistsMetadataOnly(t *testing.T) {
 	manager := newTestContextManager(t)
 	stored, err := manager.StoreAttachment("image/png", []byte("png-bytes"))

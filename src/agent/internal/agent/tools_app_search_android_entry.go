@@ -224,15 +224,19 @@ func checkAndroidSearchOpen(ctx context.Context, cfg appSearchOpenFlowConfig, en
 	if !ok || modelVision == nil {
 		return androidSearchCheck{}, 0, fmt.Errorf("android search check vision is not configured")
 	}
-	raw, err := modelVision.visionDecisionJSON(ctx, "android_search_entry", buildAndroidSearchCheckPrompt(cfg.searchTerm), []string{"search_open"}, shot)
-	if err != nil {
-		return androidSearchCheck{}, 1, err
+	llm := func(ctx context.Context) (androidSearchCheck, error) {
+		raw, err := modelVision.visionDecisionJSON(ctx, "android_search_entry", buildAndroidSearchCheckPrompt(cfg.searchTerm), []string{"search_open"}, shot)
+		if err != nil {
+			return androidSearchCheck{}, err
+		}
+		var check androidSearchCheck
+		if err := json.Unmarshal([]byte(raw), &check); err != nil {
+			return androidSearchCheck{}, fmt.Errorf("parse android search check: %w", err)
+		}
+		return check, nil
 	}
-	var check androidSearchCheck
-	if err := json.Unmarshal([]byte(raw), &check); err != nil {
-		return androidSearchCheck{}, 1, fmt.Errorf("parse android search check: %w", err)
-	}
-	return check, 1, nil
+	check, usedLLM, err := decide(ctx, modelVision.decider, androidSearchDecision(llm, shot))
+	return check, vlmCallCount(usedLLM), err
 }
 
 func buildAndroidSearchCheckPrompt(target string) string {

@@ -103,13 +103,6 @@ const (
 
 const defaultMemoryDeviceID = "default"
 
-type memorySearchQuery struct {
-	Terms    []string
-	Tags     []string
-	Entities []string
-	Limit    int
-}
-
 type FilesystemMemoryPlaneOption func(*FilesystemMemoryPlane)
 
 // WithMemoryPlaneLongTermStore shares an existing long-term memory store with
@@ -363,6 +356,7 @@ func (p *FilesystemMemoryPlane) ProcessEpisodeMemoryNow(ctx context.Context, epi
 	if processor == nil || processor.state == nil {
 		return episodeMemoryEpisodeStatus{}, nil, fmt.Errorf("episode memory processor is not configured")
 	}
+	ctx = context.WithValue(ctx, episodeMemoryImmediateRetryKey{}, episodeID)
 	stateKey := episodeMemoryStateKey(episodeID, episodeMemoryExtractorVersion)
 	var status episodeMemoryEpisodeStatus
 	found := false

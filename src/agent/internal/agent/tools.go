@@ -18,13 +18,16 @@ import (
 
 // ToolSet is a fixed collection of built-in tools, keyed by name.
 type ToolSet struct {
-	tools                map[string]langtools.Tool
-	screen               *screen.ScreenState
-	screenProvider       screenprovider.Provider
-	mnkProvider          mnk.Provider // MNK Provider for input control
-	phoneBridge          *PhoneBridge
-	phoneBridgeRestorer  *PhoneBridgeRestorer
-	textInputHW          *textInputHardwareDeps
+	tools               map[string]langtools.Tool
+	screen              *screen.ScreenState
+	screenProvider      screenprovider.Provider
+	mnkProvider         mnk.Provider // MNK Provider for input control
+	phoneBridge         *PhoneBridge
+	phoneBridgeRestorer *PhoneBridgeRestorer
+	textInputHW         *textInputHardwareDeps
+	// decider is shared by the text-input and app-open vision so the decision
+	// model config is read live by all of them.
+	decider              *decisionAdvisor
 	iosKeyboardIsolation *iosKeyboardIsolationController
 	// Environment bridges own the target device and cannot toggle the local
 	// board's USB gadget profile, so bridge input bypasses local iOS isolation.
@@ -142,8 +145,8 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		}
 	}
 
-	kbDev := NewHIDDevice(hidCfg.KeyboardDeviceOrDefault())
-	androidKbDev := NewHIDDevice(hidCfg.AndroidKeyboardDeviceOrDefault())
+	kbDev := mnk.NewHIDDevice(hidCfg.KeyboardDeviceOrDefault())
+	androidKbDev := mnk.NewHIDDevice(hidCfg.AndroidKeyboardDeviceOrDefault())
 	screen := toolOptions.screenState
 	if screen == nil {
 		screen = newToolScreenState()
@@ -156,7 +159,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	pointer.iosKeyboardIsolation = iosKeyboardIsolation
 	var adbInput *ADBInputController
 	if hidCfg.InputBackendADB() {
-		adbInput = NewADBInputController(screen)
+		adbInput = NewADBInputController()
 	}
 
 	mnkProvider := toolOptions.mnkProvider
@@ -263,10 +266,13 @@ func (s *ToolSet) RegisterEnterTextTool(models model.Model, deviceTypeFn func() 
 	if s == nil || s.textInputHW == nil || models == nil {
 		return
 	}
-	engine := newTextInputEngine(*s.textInputHW, newLLMTextInputVision(models))
+	if s.decider == nil {
+		s.decider = &decisionAdvisor{}
+	}
+	engine := newTextInputEngine(*s.textInputHW, newDecidingTextInputVision(models, s.decider))
 	bridgeTool := &textInputBridge{
 		hw:       s.textInputHW,
-		vision:   newLLMTextInputVision(models),
+		vision:   newDecidingTextInputVision(models, s.decider),
 		bridgeFn: func() *PhoneBridge { return s.phoneBridge },
 		restorer: s.phoneBridgeRestorer,
 	}
@@ -279,7 +285,7 @@ func (s *ToolSet) RegisterEnterTextTool(models model.Model, deviceTypeFn func() 
 	entryTool.SetDeviceTypeFunc(deviceTypeFn)
 	searchOpenTool := &appSearchOpenTool{
 		hw:                   s.textInputHW,
-		vision:               newLLMTextInputVision(models),
+		vision:               newDecidingTextInputVision(models, s.decider),
 		deviceTypeFn:         deviceTypeFn,
 		entryTool:            entryTool,
 		launchDelay:          appSearchOpenLaunchDelay,
@@ -372,6 +378,9 @@ func (s *ToolSet) UpdateDeviceEnvironment(env *PhoneEnvironment) {
 		return
 	}
 	s.screen.UpdatePhoneScreenInfo(env.Screen)
+	if fallback := s.screen.PhoneScreenFallback(); fallback != nil {
+		fallback.Remember(env.Screen, 0, 0)
+	}
 }
 
 // RegisterMemoryTools wires the memory recall/write tools. configDir locates the
@@ -420,6 +429,18 @@ func (s *ToolSet) registerSkillTools(skillsDir, manifestPath string, deviceTypeF
 	}
 	s.tools["skill_manage"] = manageTool
 	s.tools["skill_mark_used"] = NewSkillMarkUsedTool(skillsDir, usagePath)
+}
+
+// SetDecisionConfigFn installs the live [model_settings.decision] source for
+// the decisions the optional decision model can answer.
+func (s *ToolSet) SetDecisionConfigFn(cfg func() DecisionModelConfig) {
+	if s == nil {
+		return
+	}
+	if s.decider == nil {
+		s.decider = &decisionAdvisor{}
+	}
+	s.decider.setConfig(cfg)
 }
 
 func (s *ToolSet) SetRuntimeDeviceTypeFn(deviceTypeFn func() string) {

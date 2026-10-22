@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 
 	"aiden-agent/internal/agent/mnk"
 )
@@ -42,27 +41,11 @@ func (g *iosKeyboardIsolationProfileGate) WithPointer(ctx context.Context, fn fu
 	})
 }
 
-// mnkDevice adapts agent HIDDevice to mnk.Device so isolation and HIDProvider share FDs.
-type mnkDevice struct {
-	dev *HIDDevice
-}
-
-func asMNKDevice(dev *HIDDevice) mnk.Device {
+// asMNKDevice shares a HID device between isolation and HIDProvider. A nil
+// device stays a nil interface so HIDProvider reports it as not configured.
+func asMNKDevice(dev *mnk.HIDDevice) mnk.Device {
 	if dev == nil {
 		return nil
 	}
-	return mnkDevice{dev: dev}
-}
-
-func (d mnkDevice) Write(data []byte) error {
-	if d.dev == nil {
-		return fmt.Errorf("hid device is not configured")
-	}
-	return d.dev.Write(data)
-}
-
-func (d mnkDevice) Close() {
-	if d.dev != nil {
-		d.dev.Close()
-	}
+	return dev
 }

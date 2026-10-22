@@ -16,6 +16,7 @@ import (
 
 	"aiden-agent/internal/agent"
 	"aiden-agent/internal/backup"
+	"aiden-agent/internal/configupdate"
 	"aiden-agent/internal/configweb"
 	"aiden-agent/internal/logging"
 	"aiden-agent/internal/wifiproxy"
@@ -33,7 +34,6 @@ const (
 		"- If ambiguous → briefly confirm the user's intent before acting."
 )
 
-var voiceSteerListenTimeout = defaultVoiceSteerListenTimeout
 var voiceTurnCancelWaitTimeout = 2 * time.Second
 var wakeupDebounceNow = time.Now
 
@@ -79,6 +79,7 @@ func main() {
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
+		benchmarkHeadless         = flag.Bool("benchmark-headless", false, "Hide unavailable device tools in a benchmark container without an environment bridge")
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
@@ -145,6 +146,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if *benchmarkHeadless {
+		if cfg.Benchmark.Token == "" || cfg.EnvironmentBridge.Enabled {
+			fmt.Fprintln(os.Stderr, "benchmark-headless requires benchmark-token-file and no environment bridge")
+			os.Exit(1)
+		}
+		cfg.Benchmark.Headless = true
+	}
 	if *benchmarkMockTools {
 		if cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled || cfg.EnvironmentBridge.Endpoint == "" {
 			fmt.Fprintln(os.Stderr, "benchmark-mock-tools requires benchmark-token-file and environment-bridge-mode with an endpoint")
@@ -177,6 +185,7 @@ func main() {
 	}
 	defer runtime.Close()
 	runtime.InitializeConfigApplication(persistedConfig)
+	runtime.RegisterConfigTools(configupdate.NewService())
 	if environmentErr == nil {
 		runtime.SetInitialEnvironmentRevision(environmentRevision)
 	}
@@ -920,9 +929,6 @@ func captureVoiceSteer(cfg agent.Config, dialog audioDialogRunner, sigChan chan 
 }
 
 func voiceSteerListenTimeoutForConfig(_ agent.Config) time.Duration {
-	if voiceSteerListenTimeout > 0 {
-		return voiceSteerListenTimeout
-	}
 	return defaultVoiceSteerListenTimeout
 }
 

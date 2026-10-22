@@ -16,7 +16,7 @@ const (
 	DefaultListenAddress   = "127.0.0.1:18080"
 	DefaultConfigPath      = "/userdata/system/wifi-proxies.json"
 	DefaultEnvironmentPath = "/run/wifi_proxy/proxy-env"
-	DefaultNoProxy         = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+	DefaultNoProxy         = netproxy.DefaultNoProxy
 	legacyDefaultNoProxy   = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 	ConfigVersion          = 1
 	maxNoProxyLength       = 4096
@@ -153,7 +153,7 @@ func NormalizeNetwork(network Network) (Network, error) {
 	case ModeDirect:
 		return Network{Mode: ModeDirect}, nil
 	case ModeProxy:
-		parsed, err := netproxy.Parse(network.ProxyURL, "http", "https", "socks5", "socks5h")
+		parsed, err := parseUpstream(network.ProxyURL)
 		if err != nil {
 			return Network{}, err
 		}
@@ -188,8 +188,14 @@ func NormalizeNoProxy(value string) (string, error) {
 	return value, nil
 }
 
+// parseUpstream parses an upstream proxy URL in any scheme the proxy can
+// forward through.
+func parseUpstream(raw string) (*url.URL, error) {
+	return netproxy.Parse(raw, "http", "https", "socks5", "socks5h")
+}
+
 func RedactedURL(raw string) string {
-	parsed, err := netproxy.Parse(raw, "http", "https", "socks5", "socks5h")
+	parsed, err := parseUpstream(raw)
 	if err != nil {
 		return ""
 	}
@@ -206,7 +212,7 @@ const redactedPassword = "xxxxx"
 // so editing its host or port must not wipe the stored password. Anything else
 // is returned unchanged.
 func RestoreRedactedPassword(submitted, saved string) string {
-	next, err := netproxy.Parse(submitted, "http", "https", "socks5", "socks5h")
+	next, err := parseUpstream(submitted)
 	if err != nil || next.User == nil {
 		return submitted
 	}
@@ -214,7 +220,7 @@ func RestoreRedactedPassword(submitted, saved string) string {
 	if !hasPassword || password != redactedPassword {
 		return submitted
 	}
-	previous, err := netproxy.Parse(saved, "http", "https", "socks5", "socks5h")
+	previous, err := parseUpstream(saved)
 	if err != nil || previous.User == nil || previous.User.Username() != next.User.Username() {
 		return submitted
 	}

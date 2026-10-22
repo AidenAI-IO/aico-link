@@ -17,23 +17,9 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
-
-func TestResolvePointerPositionNormalized(t *testing.T) {
-	x, y, err := resolvePointerPosition(nil, 500, 250)
-	if err != nil {
-		t.Fatalf("resolvePointerPosition returned error: %v", err)
-	}
-	if x != 16384 {
-		t.Fatalf("x = %d, want 16384", x)
-	}
-	if y != 8192 {
-		t.Fatalf("y = %d, want 8192", y)
-	}
-}
 
 func TestToolSetUpdateDeviceEnvironmentTracksPhoneScreenInfo(t *testing.T) {
 	tools := NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{})
@@ -164,12 +150,12 @@ func TestTouchGestureTouchscreenPrimesMappingBeforeNormalizedInput(t *testing.T)
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d", len(reports), 1+touchReleaseReportCount)
 	}
-	expectedX := scalePixelToAbsolute(711+(931.0/1000.0)*496, 1920)
-	expectedY := scalePixelToAbsolute((83.0/1000.0)*1079, 1080)
+	expectedX := frameAbsolute(711+(931.0/1000.0)*496, 1920)
+	expectedY := frameAbsolute((83.0/1000.0)*1079, 1080)
 	if reports[0].x != uint16(expectedX) || reports[0].y != uint16(expectedY) {
 		t.Fatalf("first report = (%d,%d), want (%d,%d)", reports[0].x, reports[0].y, expectedX, expectedY)
 	}
-	fallbackX, fallbackY := normalizedToAbsolutePoint(931, 83)
+	fallbackX, fallbackY := mnk.NormalizedToAbsolutePoint(931, 83)
 	if reports[0].x == uint16(fallbackX) && reports[0].y == uint16(fallbackY) {
 		t.Fatalf("first report used fallback coordinates (%d,%d)", reports[0].x, reports[0].y)
 	}
@@ -228,8 +214,8 @@ func TestTouchGestureTouchscreenKeepsFreshFullFrameMappingWhenPrimeWouldFail(t *
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d", len(reports), 1+touchReleaseReportCount)
 	}
-	expectedX := scalePixelToAbsolute((931.0/1000.0)*1919, 1920)
-	expectedY := scalePixelToAbsolute((83.0/1000.0)*1079, 1080)
+	expectedX := frameAbsolute((931.0/1000.0)*1919, 1920)
+	expectedY := frameAbsolute((83.0/1000.0)*1079, 1080)
 	if reports[0].x != uint16(expectedX) || reports[0].y != uint16(expectedY) {
 		t.Fatalf("first report = (%d,%d), want (%d,%d)", reports[0].x, reports[0].y, expectedX, expectedY)
 	}
@@ -358,15 +344,11 @@ func (r *recordingADBRunner) run(ctx context.Context, _ string, args ...string) 
 	return []byte(out), nil, nil
 }
 
-func newTestADBInputController(t *testing.T, screenState *screen.ScreenState, runner *recordingADBRunner) *ADBInputController {
+func newTestADBInputController(t *testing.T, runner *recordingADBRunner) *ADBInputController {
 	t.Helper()
 	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
 	t.Setenv("AIDEN_ADB_SERIAL", "serial123")
-	if screenState == nil {
-		screenState = &screen.ScreenState{}
-	}
 	return &ADBInputController{
-		screen: screenState,
 		client: NewADBScreenClient(),
 		runADB: runner.run,
 	}
@@ -411,18 +393,6 @@ func TestADBTouchGestureTapAutoRejectsOutOfRangeCoordinates(t *testing.T) {
 	}
 	if len(runner.commands) != 0 {
 		t.Fatalf("adb commands = %#v, want no command for out-of-range normalized coordinates", runner.commands)
-	}
-}
-
-func TestPointerResolversRejectNonFiniteCoordinates(t *testing.T) {
-	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
-		if _, _, err := resolvePointerPositionForSurface(nil, false, value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
-			t.Fatalf("resolvePointerPositionForSurface(%v, 500) error = %v, want finite-coordinate error", value, err)
-		}
-		controller := &ADBInputController{}
-		if _, err := controller.ResolvePosition(context.Background(), value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
-			t.Fatalf("ResolvePosition(%v, 500) error = %v, want finite-coordinate error", value, err)
-		}
 	}
 }
 
@@ -574,7 +544,7 @@ func TestADBKeyboardTextUsesADBKeyboardBroadcastAndRestoresIME(t *testing.T) {
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(context.Background(), `{"text":"Hello!"}`)
 	if err != nil {
@@ -612,7 +582,7 @@ func TestADBKeyboardTextRestoresIMEAfterCallerContextCanceled(t *testing.T) {
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(ctx, `{"text":"Hello"}`)
 	if err != nil {
@@ -641,7 +611,7 @@ func TestADBKeyboardTextFallsBackToKeyEventsWhenADBKeyboardUnavailable(t *testin
 		}
 		return "", nil
 	}}
-	tool := &KeyboardTextTool{adb: newTestADBInputController(t, nil, runner)}
+	tool := &KeyboardTextTool{adb: newTestADBInputController(t, runner)}
 
 	out, err := tool.Call(context.Background(), `{"text":"A z!"}`)
 	if err != nil {
@@ -705,68 +675,6 @@ func TestADBMouseScrollUsesSwipeApproximation(t *testing.T) {
 	}
 }
 
-func TestParseADBWMSizePrefersOverrideSize(t *testing.T) {
-	size, ok := parseADBWMSize("Physical size: 1080x2400\nOverride size: 720x1600\n")
-	if !ok {
-		t.Fatal("parseADBWMSize ok = false")
-	}
-	if size.width != 720 || size.height != 1600 {
-		t.Fatalf("size = %+v, want 720x1600", size)
-	}
-}
-
-func TestResolvePointerPositionNormalizedUsesActiveArea(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
-
-	x, y, err := resolvePointerPosition(screenState, 0, 500)
-	if err != nil {
-		t.Fatalf("resolvePointerPosition returned error: %v", err)
-	}
-	if x != 0 {
-		t.Fatalf("x = %d, want 0 at left edge of active_area", x)
-	}
-	wantY := scalePixelToAbsolute(float64(1079)/2, 1080)
-	if y != wantY {
-		t.Fatalf("y = %d, want %d", y, wantY)
-	}
-}
-
-func TestResolvePointerPositionTouchscreenNormalizedUsesFrameSpaceWithinActiveArea(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
-
-	x, y, err := resolvePointerPositionForSurface(screenState, true, 627, 180)
-	if err != nil {
-		t.Fatalf("resolvePointerPositionForSurface returned error: %v", err)
-	}
-
-	wantX := scalePixelToAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920)
-	wantY := scalePixelToAbsolute((180.0/1000.0)*float64(1080-1), 1080)
-	if x != wantX {
-		t.Fatalf("x = %d, want %d", x, wantX)
-	}
-	if y != wantY {
-		t.Fatalf("y = %d, want %d", y, wantY)
-	}
-}
-
-func TestNormalizedCoordinatesPreserveNearlyFullAxisOffsetForAbsolutePointer(t *testing.T) {
-	screenState := &screen.ScreenState{}
-	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 711, Y: 28, Width: 498, Height: 1052, Valid: true})
-	x, y, err := resolvePointerPositionForSurface(screenState, false, 500, 220)
-	if err != nil {
-		t.Fatalf("resolvePointerPositionForSurface returned error: %v", err)
-	}
-	localX := 0.5 * float64(498-1)
-	localY := 0.22 * float64(1052-1)
-	wantX := scalePixelToAbsolute(localX, 498)
-	wantY := scalePixelToAbsolute(28+localY, 1080)
-	if x != wantX || y != wantY {
-		t.Fatalf("normalized point = (%d,%d), want (%d,%d)", x, y, wantX, wantY)
-	}
-}
-
 func TestPointerCoordinateRejectsNonFiniteStringValues(t *testing.T) {
 	for _, input := range []string{`"NaN"`, `"Inf"`, `"-Inf"`, `"Infinity"`} {
 		var coordinate pointerCoordinate
@@ -780,12 +688,14 @@ func TestPointerCoordinateRejectsNonFiniteStringValues(t *testing.T) {
 	}
 }
 
-func testPointerController(dev *HIDDevice, state *pointerState) *pointerController {
-	return &pointerController{dev: dev, state: state}
+// frameAbsolute is the HID coordinate expected for a frame pixel. Tests restate
+// the mapping rather than calling mnk's helper so a regression there fails here.
+func frameAbsolute(pixel float64, size int) int {
+	return int(math.Round(pixel / float64(size-1) * mnk.AbsMouseMaxPos))
 }
 
-func testTouchscreenPointerController(dev *HIDDevice, state *pointerState) *pointerController {
-	return &pointerController{dev: dev, state: state, touchscreen: true}
+func testPointerController(dev *mnk.HIDDevice, state *mnk.PointerState) *pointerController {
+	return &pointerController{dev: dev, state: state}
 }
 
 type touchscreenReport struct {
@@ -795,7 +705,7 @@ type touchscreenReport struct {
 	y         uint16
 }
 
-func readTouchscreenReports(t *testing.T, dev *HIDDevice, path string) []touchscreenReport {
+func readTouchscreenReports(t *testing.T, dev *mnk.HIDDevice, path string) []touchscreenReport {
 	t.Helper()
 
 	dev.Close()
@@ -1030,8 +940,8 @@ func TestTouchscreenTapUsesFrameSpaceForActiveArea(t *testing.T) {
 	if len(reports) != 1+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want %d (down, repeated up)", len(reports), 1+touchReleaseReportCount)
 	}
-	wantX := uint16(scalePixelToAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920))
-	wantY := uint16(scalePixelToAbsolute((180.0/1000.0)*float64(1080-1), 1080))
+	wantX := uint16(frameAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920))
+	wantY := uint16(frameAbsolute((180.0/1000.0)*float64(1080-1), 1080))
 	if reports[0].flags != 0x03 || reports[0].contactID != 1 || reports[0].x != wantX || reports[0].y != wantY {
 		t.Fatalf("down report = %+v, want touch at (%d,%d)", reports[0], wantX, wantY)
 	}
@@ -1507,143 +1417,6 @@ func (t *contextToolErrorStub) Call(ctx context.Context, input string) (string, 
 	return toolErrorString(t.toolErr), nil
 }
 
-func TestHIDDeviceWriteRetriesAfterEndpointShutdown(t *testing.T) {
-	first := &fakeHIDWriteCloser{writeErr: syscall.ESHUTDOWN}
-	second := &fakeHIDWriteCloser{}
-	openCount := 0
-
-	dev := &HIDDevice{
-		path: "fake-hid",
-		open: func(string) (io.WriteCloser, error) {
-			openCount++
-			if openCount == 1 {
-				return first, nil
-			}
-			return second, nil
-		},
-	}
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("Write returned error: %v", err)
-	}
-	if openCount != 2 {
-		t.Fatalf("openCount = %d, want 2", openCount)
-	}
-	if !first.closed {
-		t.Fatalf("expected first writer to be closed after retryable failure")
-	}
-	if second.writeCount != 1 {
-		t.Fatalf("second writer writeCount = %d, want 1", second.writeCount)
-	}
-}
-
-func TestHIDDeviceWriteReopensWhenDeviceNodeRecreated(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "hidg0")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("create test hid device: %v", err)
-	}
-	dev := NewHIDDevice(path)
-	dev.refreshState = ""
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("first Write returned error: %v", err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatalf("remove test hid device: %v", err)
-	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("recreate test hid device: %v", err)
-	}
-
-	if err := dev.Write([]byte{4, 5, 6}); err != nil {
-		t.Fatalf("second Write returned error: %v", err)
-	}
-	dev.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read recreated test hid device: %v", err)
-	}
-	if string(data) != string([]byte{4, 5, 6}) {
-		t.Fatalf("recreated device data = %v, want only second report", data)
-	}
-}
-
-func TestHIDDeviceWriteReopensAfterWatchdogRefreshState(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hidg0")
-	statePath := filepath.Join(dir, "aiden_usb_ecm_watchdog.state")
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatalf("create test hid device: %v", err)
-	}
-	dev := NewHIDDevice(path)
-	dev.refreshState = statePath
-
-	if err := dev.Write([]byte{1, 2, 3}); err != nil {
-		t.Fatalf("first Write returned error: %v", err)
-	}
-	if err := os.WriteFile(statePath, []byte("last_refresh_result=ok\n"), 0o600); err != nil {
-		t.Fatalf("write watchdog state: %v", err)
-	}
-	refreshTime := dev.openedAt.Add(time.Second)
-	if err := os.Chtimes(statePath, refreshTime, refreshTime); err != nil {
-		t.Fatalf("set watchdog state mtime: %v", err)
-	}
-
-	if err := dev.Write([]byte{4, 5, 6}); err != nil {
-		t.Fatalf("second Write returned error: %v", err)
-	}
-	dev.Close()
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read test hid device: %v", err)
-	}
-	if string(data) != string([]byte{4, 5, 6}) {
-		t.Fatalf("device data = %v, want second report after reopen", data)
-	}
-}
-
-func TestTriggerUSBCompositeRefreshUsesConfiguredCommand(t *testing.T) {
-	dir := t.TempDir()
-	commandPath := filepath.Join(dir, "usb-refresh")
-	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AIDEN_USB_REFRESH_TEST_ARGS\"\n"
-	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
-		t.Fatalf("write refresh command: %v", err)
-	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
-	t.Setenv("AIDEN_USB_REFRESH_TEST_ARGS", argsPath)
-
-	if err := triggerUSBCompositeRefresh(""); err != nil {
-		t.Fatalf("triggerUSBCompositeRefresh returned error: %v", err)
-	}
-	args, err := os.ReadFile(argsPath)
-	if err != nil {
-		t.Fatalf("read refresh arguments: %v", err)
-	}
-	if string(args) != "refresh\n" {
-		t.Fatalf("refresh arguments = %q, want %q", args, "refresh\\n")
-	}
-}
-
-func TestHIDDeviceWriteReturnsNonRetryableError(t *testing.T) {
-	dev := &HIDDevice{
-		path: "fake-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return &fakeHIDWriteCloser{writeErr: errors.New("permission denied")}, nil
-		},
-	}
-
-	err := dev.Write([]byte{1})
-	if err == nil {
-		t.Fatal("expected write error")
-	}
-	if !strings.Contains(err.Error(), "permission denied") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
 func TestMouseScrollToolRejectsOutOfRangeDelta(t *testing.T) {
 	tool := &MouseScrollTool{}
 	ctx, _ := WithToolError(context.Background())
@@ -1694,7 +1467,7 @@ func TestMouseScrollUsesLastPointerPosition(t *testing.T) {
 	if len(reports) != 2 {
 		t.Fatalf("len(reports) = %d, want 2", len(reports))
 	}
-	wantX, wantY := normalizedToAbsolutePoint(200, 300)
+	wantX, wantY := mnk.NormalizedToAbsolutePoint(200, 300)
 	if reports[1].buttons != 0 || int(reports[1].x) != wantX || int(reports[1].y) != wantY || reports[1].wheel != -3 {
 		t.Fatalf("scroll report = (%d,%d,%d,%d), want (0,%d,%d,-3)", reports[1].buttons, reports[1].x, reports[1].y, reports[1].wheel, wantX, wantY)
 	}
@@ -1707,7 +1480,7 @@ type mouseReport struct {
 	wheel   int8
 }
 
-func newTestHIDDevice(t *testing.T) (*HIDDevice, string) {
+func newTestHIDDevice(t *testing.T) (*mnk.HIDDevice, string) {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -1718,7 +1491,7 @@ func newTestHIDDevice(t *testing.T) (*HIDDevice, string) {
 	}
 	f.Close()
 
-	return NewHIDDevice(path), path
+	return mnk.NewHIDDevice(path), path
 }
 
 func TestKeyboardTapSendsModifierOnly(t *testing.T) {
@@ -2202,7 +1975,7 @@ func TestKeyboardTapRejectsMixedAndroidExtensionChord(t *testing.T) {
 	}
 }
 
-func readMouseReports(t *testing.T, dev *HIDDevice, path string) []mouseReport {
+func readMouseReports(t *testing.T, dev *mnk.HIDDevice, path string) []mouseReport {
 	t.Helper()
 
 	dev.Close()
@@ -2275,21 +2048,18 @@ func (w *timestampedHIDWriter) writeTimes() []time.Time {
 	return out
 }
 
-func newTimedHIDDevice() (*HIDDevice, *timestampedHIDWriter) {
+func newTimedHIDDevice() (*mnk.HIDDevice, *timestampedHIDWriter) {
 	w := &timestampedHIDWriter{}
-	dev := &HIDDevice{
-		path: "timed-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return w, nil
-		},
-	}
+	dev := mnk.NewHIDDeviceWithOpener("timed-hid", func(string) (io.WriteCloser, error) {
+		return w, nil
+	})
 	return dev, w
 }
 
 func TestTapPointerHoldsBetweenPressAndRelease(t *testing.T) {
 	dev, w := newTimedHIDDevice()
 
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	if err := tapPointer(pc, 100, 200, 0x01); err != nil {
 		t.Fatalf("tapPointer error: %v", err)
 	}
@@ -2307,7 +2077,7 @@ func TestTapPointerHoldsBetweenPressAndRelease(t *testing.T) {
 func TestTapPointerSettlesCursorBeforePress(t *testing.T) {
 	dev, w := newTimedHIDDevice()
 
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	if err := tapPointer(pc, 100, 200, 0x01); err != nil {
 		t.Fatalf("tapPointer error: %v", err)
 	}
@@ -2441,11 +2211,11 @@ func TestTouchGestureExplicitBackSwipeStartsAtLeftPhysicalEdge(t *testing.T) {
 	if reports[0].x > 100 {
 		t.Fatalf("back start x = %d, want near left physical edge", reports[0].x)
 	}
-	if reports[0].y != uint16(absMouseMaxPos/2+1) {
+	if reports[0].y != uint16(mnk.AbsMouseMaxPos/2+1) {
 		t.Fatalf("back start y = %d, want center", reports[0].y)
 	}
 	finalMove := 1 + defaultSwipeSteps
-	if reports[finalMove].x < uint16(absMouseMaxPos*70/100) {
+	if reports[finalMove].x < uint16(mnk.AbsMouseMaxPos*70/100) {
 		t.Fatalf("back end x = %d, want a long swipe across the screen", reports[finalMove].x)
 	}
 	for i := finalMove + 1; i < len(reports); i++ {
@@ -2471,14 +2241,14 @@ func TestTouchGestureExplicitHomeSwipeStartsAtBottomPhysicalEdge(t *testing.T) {
 	if len(reports) != 2+defaultSwipeSteps+touchReleaseReportCount {
 		t.Fatalf("len(reports) = %d, want provider default sequence", len(reports))
 	}
-	if reports[0].y < uint16(absMouseMaxPos*995/1000) {
+	if reports[0].y < uint16(mnk.AbsMouseMaxPos*995/1000) {
 		t.Fatalf("home start y = %d, want near bottom physical edge", reports[0].y)
 	}
-	if reports[0].x != uint16(absMouseMaxPos/2+1) {
+	if reports[0].x != uint16(mnk.AbsMouseMaxPos/2+1) {
 		t.Fatalf("home start x = %d, want center", reports[0].x)
 	}
 	finalMove := 1 + defaultSwipeSteps
-	if reports[finalMove].y > uint16(absMouseMaxPos/4) {
+	if reports[finalMove].y > uint16(mnk.AbsMouseMaxPos/4) {
 		t.Fatalf("home end y = %d, want a long upward swipe", reports[finalMove].y)
 	}
 	for i := finalMove + 1; i < len(reports); i++ {
@@ -2714,16 +2484,13 @@ func TestTouchGestureDragStartAndReleaseTiming(t *testing.T) {
 func TestDragPointerReleasesOnMoveError(t *testing.T) {
 	failAfter := 3 // settle + press + first move = 3rd write fails
 	writer := &countingFailWriter{failAt: failAfter}
-	dev := &HIDDevice{
-		path: "fail-hid",
-		open: func(string) (io.WriteCloser, error) {
-			return writer, nil
-		},
-	}
+	dev := mnk.NewHIDDeviceWithOpener("fail-hid", func(string) (io.WriteCloser, error) {
+		return writer, nil
+	})
 
 	start := resolvedPointerPoint{x: 100, y: 100}
 	end := resolvedPointerPoint{x: 200, y: 200}
-	pc := testPointerController(dev, &pointerState{})
+	pc := testPointerController(dev, &mnk.PointerState{})
 	err := dragPointer(pc, start, end, 0x01, 0, 0, 0, 3)
 	if err == nil {
 		t.Fatal("expected error from dragPointer")

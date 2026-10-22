@@ -82,7 +82,7 @@ func (u Upstreams) Validate() error {
 		if raw == "" {
 			continue
 		}
-		if _, err := netproxy.Parse(raw, "http", "https", "socks5", "socks5h"); err != nil {
+		if _, err := parseUpstream(raw); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -155,8 +155,7 @@ func validateListenAddress(address string) error {
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("invalid Wi-Fi proxy listen port %q", portText)
 	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+	if !netproxy.IsLoopbackHost(host) {
 		return errors.New("Wi-Fi proxy must listen on a loopback address")
 	}
 	return nil
@@ -517,7 +516,7 @@ func fallbackLocalSchemes(fallback Upstreams) (string, string, string) {
 }
 
 func localSchemeForUpstream(raw string) string {
-	parsed, err := netproxy.Parse(raw, "http", "https", "socks5", "socks5h")
+	parsed, err := parseUpstream(raw)
 	if err == nil && (strings.EqualFold(parsed.Scheme, "socks5") || strings.EqualFold(parsed.Scheme, "socks5h")) {
 		// socks5h is the same SOCKS5 wire protocol; the h tells clients such
 		// as curl to send the hostname through the tunnel instead of relying
@@ -556,7 +555,21 @@ func (s *Server) upstreamFor(target *url.URL) (*url.URL, error) {
 	if target == nil {
 		return nil, nil
 	}
-	if bypassLocalhostOrLoopback(target.Hostname()) {
+	return s.upstreamForHost(target.Hostname(), target.Port(), target.Scheme)
+}
+
+// genericFallbackUpstream picks the upstream for a SOCKS5 client, which names
+// only a host and port.
+func (s *Server) genericFallbackUpstream(targetAddress string) (*url.URL, error) {
+	host, port := splitTargetAddress(targetAddress)
+	return s.upstreamForHost(host, port, "socks5")
+}
+
+// upstreamForHost returns the proxy for host on the current Wi-Fi network, or
+// nil to connect directly. scheme selects the fallback proxy variable when the
+// network has no saved setting.
+func (s *Server) upstreamForHost(host, port, scheme string) (*url.URL, error) {
+	if netproxy.IsLoopbackHost(host) {
 		return nil, nil
 	}
 	s.mu.RLock()
@@ -570,20 +583,20 @@ func (s *Server) upstreamFor(target *url.URL) (*url.URL, error) {
 		case ModeDirect:
 			return nil, nil
 		case ModeProxy:
-			if netproxy.Bypass(target.Hostname(), target.Port(), network.NoProxy) {
+			if netproxy.Bypass(host, port, network.NoProxy) {
 				return nil, nil
 			}
-			return netproxy.Parse(network.ProxyURL, "http", "https", "socks5", "socks5h")
+			return parseUpstream(network.ProxyURL)
 		}
 	}
-	if netproxy.Bypass(target.Hostname(), target.Port(), fallback.NoProxy) {
+	if netproxy.Bypass(host, port, fallback.NoProxy) {
 		return nil, nil
 	}
-	raw := fallbackProxyForScheme(fallback, target.Scheme)
+	raw := fallbackProxyForScheme(fallback, scheme)
 	if raw == "" {
 		return nil, nil
 	}
-	return netproxy.Parse(raw, "http", "https", "socks5", "socks5h")
+	return parseUpstream(raw)
 }
 
 func fallbackProxyForScheme(fallback Upstreams, scheme string) string {
@@ -606,47 +619,6 @@ func fallbackProxyForScheme(fallback Upstreams, scheme string) string {
 		}
 	}
 	return raw
-}
-
-func bypassLocalhostOrLoopback(host string) bool {
-	host = strings.Trim(strings.ToLower(strings.TrimSpace(host)), "[]")
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-func (s *Server) genericFallbackUpstream(targetAddress string) (*url.URL, error) {
-	host, port := splitTargetAddress(targetAddress)
-	if bypassLocalhostOrLoopback(host) {
-		return nil, nil
-	}
-	s.mu.RLock()
-	ssid := s.currentSSID
-	network, configured := s.config.Networks[ssid]
-	fallback := s.fallback
-	s.mu.RUnlock()
-
-	if configured {
-		switch network.Mode {
-		case ModeDirect:
-			return nil, nil
-		case ModeProxy:
-			if netproxy.Bypass(host, port, network.NoProxy) {
-				return nil, nil
-			}
-			return netproxy.Parse(network.ProxyURL, "http", "https", "socks5", "socks5h")
-		}
-	}
-	if netproxy.Bypass(host, port, fallback.NoProxy) {
-		return nil, nil
-	}
-	raw := fallbackProxyForScheme(fallback, "socks5")
-	if raw == "" {
-		return nil, nil
-	}
-	return netproxy.Parse(raw, "http", "https", "socks5", "socks5h")
 }
 
 func splitTargetAddress(address string) (string, string) {

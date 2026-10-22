@@ -311,6 +311,8 @@ func TestConfigCheckPath_RejectsInvalidTOML(t *testing.T) {
 // agent.toml. Validation was skipped for the same reason.
 func TestConfigWire_ProvidersRoundTrip(t *testing.T) {
 	t.Run("providers reach the DTO with write-only credentials", func(t *testing.T) {
+		// has_api_key reports a $VAR reference only when the variable is set.
+		t.Setenv("OPENAI_KEY", "sk-from-env")
 		cfg := agent.Config{
 			ModelProviders: map[string]agent.ModelProvider{
 				"my-openai": {Type: "openai", APIKey: "$OPENAI_KEY"},
@@ -524,6 +526,7 @@ func TestWebConfigDTOTopLevelSectionsAreCovered(t *testing.T) {
 		"agent",
 		"audio",
 		"audio_archive",
+		"decision",
 		"device",
 		"frame_service",
 		"hid",

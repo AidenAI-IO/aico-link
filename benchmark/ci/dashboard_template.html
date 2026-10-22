@@ -122,7 +122,7 @@
   #suites tbody tr:hover { background: var(--bg); }
   #history td:first-child, #history th:first-child, #run-details td:first-child, #run-details th:first-child { padding-left: 12px; }
   #history td, #history th, #run-details td, #run-details th { padding-right: 16px; white-space: nowrap; }
-  .config-change { display: block; margin-top: 4px; font-size: 11px; color: #b7791f; overflow-wrap: anywhere; }
+  #run-details td { white-space: normal; overflow-wrap: anywhere; max-width: 360px; }
   .config-diff td.changed { color: #b7791f; font-weight: 600; }
   .reading-notes { margin-bottom: 16px; color: var(--muted); font-size: 13px; }
   .reading-notes p { margin: 8px 0; }
@@ -159,15 +159,16 @@
     <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
   </div>
   <section id="view-latest" role="tabpanel" aria-labelledby="tab-latest">
-  <div class="panel" id="overview-panel"><h2>Dataset overview · latest results</h2><p id="latest-run-note" class="empty"></p>
-    <p class="empty">Compare each dataset with its previous run. Open failure details to inspect tasks, or view trends to investigate changes.</p>
-    <div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets by capability"></div>
+  <div class="panel" id="overview-panel"><h2>Latest results</h2><p id="latest-run-note" class="empty"></p>
+    <p class="empty">Changes are relative to each dataset’s previous run.</p>
+    <p class="empty">Test area</p><div id="change-summary" class="filters" role="group" aria-label="Filter latest datasets by test area"></div>
     <p class="empty" id="filter-count" role="status" aria-live="polite"></p>
-    <details class="reading-notes"><summary id="reading-notes-label">How to read these results</summary><p id="comparison-note"></p><p>Calls and task time include measured eligible attempts, including failures. n = measured / eligible attempts. Changes use the previous run within the last 7 days.</p><div id="availability"></div></details>
+    <details class="reading-notes"><summary id="reading-notes-label">Metric definitions</summary><p>pass@1: first attempt passes. pass@k: at least one of k attempts passes. pass^k: all k attempts pass. Changes are percentage points (pp); no comparison means a previous run or score is unavailable within the last 7 days.</p><p>Calls and task time include measured eligible attempts. n = measured / eligible attempts.</p><div id="availability"></div></details>
     <div class="scroll"><table id="suites"></table></div><p class="empty" id="overview-empty" hidden>No datasets match this filter. Select All to show all datasets.</p>
+    <div id="diagnostic-results"></div>
   </div>
-  <div class="panel"><div class="section-actions"><h2>Failure details · latest run per dataset</h2><button class="action" id="back-overview" type="button">Back to overview ↑</button></div>
-    <p class="empty">Recorded errors and failed checks across all attempts. Excluded attempts are separate from capability failures. Dataset filters above also apply here.</p>
+  <div class="panel"><div class="section-actions"><h2>Failure details</h2><button class="action" id="back-overview" type="button">Back to overview ↑</button></div>
+    <p class="empty">Latest run per dataset, across all attempts. Excluded attempts do not count toward pass rates.</p>
     <div id="failure-details"></div>
     <p class="empty" id="failures-empty" hidden>No datasets match these filters.</p>
   </div>
@@ -175,7 +176,7 @@
   <section id="view-trends" role="tabpanel" aria-labelledby="tab-trends" hidden>
   <div class="panel" id="dataset-panel">
     <div class="section-actions"><h2>Dataset trends</h2><button class="action" id="selected-failures" type="button">View latest failure details →</button></div>
-    <div id="trend-capabilities" class="filters" role="group" aria-label="Filter dataset trends by capability"></div>
+    <p class="empty">Test area</p><div id="trend-capabilities" class="filters" role="group" aria-label="Filter dataset trends by test area"></div>
     <div class="toolbar"><label for="dataset-select">Dataset</label><select id="dataset-select" aria-label="Dataset"></select></div>
     <div class="empty" id="dataset-context"></div>
     <nav class="metric-nav" aria-label="Jump to metric"><a href="#dataset-panel">Pass rates</a><a href="#measurement-panel-latency">Latency</a><a href="#measurement-panel-timings">Timings</a><a href="#measurement-panel-calls">Tool &amp; LLM calls</a><a href="#measurement-panel-reliability">Reliability</a><a href="#measurement-panel-tokens">Tokens</a><a href="#measurement-panel-cost">Cost</a><a href="#history-panel">Run history</a></nav>
@@ -210,7 +211,7 @@ const runs = DATA.runs;
 el("availability").innerHTML = `Data coverage: ${DATA.dataCompleteness.measured} / ${DATA.dataCompleteness.total} dataset runs have complete first-attempt counts. Historical publication failures remain unknown.` +
   (DATA.warnings.length ? ` <details><summary>${DATA.warnings.length} data warnings</summary><div class="warnings">` +
     DATA.warnings.map(w => `<div class="alert">${esc(w)}</div>`).join("") + '</div></details>' : '');
-el("reading-notes-label").textContent = `How to read these results${DATA.warnings.length ? ` · ${DATA.warnings.length} data warnings` : ""}`;
+el("reading-notes-label").textContent = `Metric definitions${DATA.warnings.length ? ` · ${DATA.warnings.length} data warnings` : ""}`;
 
 el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${runs.length} workflow runs · ${DATA.suites.length} datasets`;
 
@@ -298,33 +299,59 @@ const deltaClass = d => d == null || d === 0 ? "" : d > 0 ? "good" : "bad";
 const deltaLabel = d => d == null ? "No comparison" : d === 0 ? "Unchanged" : `${d > 0 ? "↑" : "↓"} ${signed(d)}`;
 const configFields = [
   ["agent_model", "Agent model"], ["judge_model", "Judge model"], ["judge_prompt_version", "Judge prompt"],
-  ["judge_provider", "Judge provider"], ["suite_sha256", "Suite"], ["workload_sha256", "Workload"],
-  ["metrics_schema_version", "Metrics schema"], ["metrics_k", "k"], ["target_platform", "Platform"],
-  ["active_skills", "Skills"], ["git_branch", "Branch"],
+  ["metrics_k", "Attempts per task"], ["tasks", "Tasks"], ["total_attempts", "Total attempts"],
+  ["execution_environment", "Environment"], ["active_skills", "Skills"],
 ];
-const configLabel = field => (configFields.find(([key]) => key === field) || [field, field])[1];
 const configValue = (run, field) => {
-  const value = run?.[field];
+  if (field === "execution_environment") {
+    const platform = run?.target_platform;
+    return [platform && platform !== "auto" ? platform : "", run?.environment_label || "Unknown"].filter(Boolean).join(" / ");
+  }
+  let value = run?.[field];
+  if (field === "active_skills" && typeof value === "string") {
+    try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) value = parsed; } catch {}
+  }
   const text = Array.isArray(value) ? value.join(", ") : value == null || value === "" ? "—" : String(value);
-  // Hashes are only useful for telling versions apart.
-  return field.endsWith("_sha256") && text !== "—" ? text.slice(0, 10) : text;
+  return text;
 };
-const configChangeText = s => (s.changed_fields || []).map(field =>
-  `${configLabel(field)}: ${configValue(s.previous, field)} → ${configValue(s.latest, field)}`).join("; ");
-// Overview label for comparisons whose configurations differ or cannot be confirmed.
-const comparisonLabel = s => s.comparison_status === "Configuration changed"
-  ? `<span class="config-change">Config changed · ${esc(configChangeText(s))}</span>`
-  : s.comparison_status === "Configuration unverified"
-    ? '<span class="config-change">Config unverified · settings incomplete</span>' : "";
-const comparisonExplanations = {
-  "Comparable": "Comparable. Both runs used the same configuration.",
-  "No baseline": "No baseline. This dataset has no previous run in the last 7 days.",
-  "Missing scores": "Missing scores. One of the runs lacks a measured rate, so the change is unavailable.",
-  "Configuration unverified": "Configuration unverified. A run is missing configuration metadata, so settings cannot be confirmed to match; the change is shown with incomplete configuration context. This is not a task failure.",
+const sameTaskSelection = (before, after) => {
+  const ids = run => {
+    const raw = run?.workload_task_ids;
+    try {
+      const value = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return Array.isArray(value) && value.length && value.every(id => typeof id === "string")
+        ? JSON.stringify([...value].sort()) : null;
+    } catch { return null; }
+  };
+  const previous = ids(before);
+  const complete = run => Number(run?.tasks) > 0 && Number(run?.metrics_k) > 0 &&
+    Number(run?.total_attempts) === Number(run.tasks) * Number(run.metrics_k);
+  return previous !== null && previous === ids(after) && complete(before) && complete(after);
 };
-const comparisonExplanation = s => s.comparison_status === "Configuration changed"
-  ? `Configuration changed: ${configChangeText(s)}. The change compares runs with different settings; highlighted values differ.`
-  : comparisonExplanations[s.comparison_status] || s.comparison_status;
+const comparisonNotes = s => {
+  const changed = new Set(s.changed_fields || []);
+  const notes = [];
+  if (changed.has("suite_sha256")) notes.push("Test definition file changed");
+  if (changed.has("workload_sha256") && !sameTaskSelection(s.previous, s.latest))
+    notes.push("Task selection or attempt coverage changed");
+  if (changed.has("metrics_schema_version")) notes.push("Metric calculation version changed");
+  if (changed.has("judge_provider")) notes.push("Judge provider changed");
+  for (const [field, label] of configFields) {
+    if (field === "execution_environment" ? changed.has(field) || changed.has("target_platform") : changed.has(field))
+      notes.push(`${label}: ${configValue(s.previous, field)} → ${configValue(s.latest, field)}`);
+  }
+  if (s.comparison_status === "Configuration unverified") notes.push("Some comparison settings are unavailable");
+  return notes;
+};
+const comparisonExplanation = s => {
+  const notes = comparisonNotes(s);
+  if (!s.previous) return "No previous run in the last 7 days.";
+  if (s.comparison_status === "Missing scores") notes.unshift("A score is unavailable; no change is calculated");
+  return notes.length ? notes.join(". ") + "." : "No evaluation setting changes recorded.";
+};
+const sourceDiffLink = s => DATA.repo && s.previous?.commit_sha && s.latest.commit_sha &&
+    s.previous.commit_sha !== "unknown" && s.latest.commit_sha !== "unknown" && s.previous.commit_sha !== s.latest.commit_sha
+  ? safeLink(`https://github.com/${DATA.repo.split('/').map(encodeURIComponent).join('/')}/compare/${encodeURIComponent(s.previous.commit_sha)}..${encodeURIComponent(s.latest.commit_sha)}`, "View source changes") : "";
 const overviewRows = datasets.map((s, index) => ({ ...s, index }))
   .sort((a, b) => Number(["declined", "mixed"].includes(b.change_direction)) - Number(["declined", "mixed"].includes(a.change_direction)) ||
     Math.max(...Object.values(b.metric_deltas).map(v => Math.abs(v || 0))) - Math.max(...Object.values(a.metric_deltas).map(v => Math.abs(v || 0))));
@@ -349,6 +376,7 @@ function applyDatasetFilters() {
   document.querySelectorAll("button[data-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.filter === activeFilter)));
   el("filter-count").textContent = `${indices.length} of ${datasets.length} datasets · Declined and mixed changes appear first`;
   el("overview-empty").hidden = indices.length > 0;
+  el("suites").hidden = !indices.some(i => !datasets[i].diagnostic);
   el("failures-empty").hidden = indices.length > 0;
   el("dataset-select").innerHTML = indices.length
     ? indices.map(i => `<option value="${i}">${esc(datasets[i].suite)}</option>`).join("")
@@ -360,25 +388,27 @@ function applyDatasetFilters() {
     datasets[i].latest.timestamp > datasets[best].latest.timestamp ? i : best, undefined);
   selectDataset(indices.includes(current) ? current : newest);
 }
-const unverified = datasets.filter(s => s.comparison_status === "Configuration unverified").length;
-const changedConfig = datasets.filter(s => s.comparison_status === "Configuration changed").length;
-el("comparison-note").textContent = unverified || changedConfig
-  ? `Changes compare each dataset with its previous run: ${changedConfig} with changed configurations; ${unverified} with unverified configurations. Changed datasets list what differs; open Run details to see both runs.`
-  : "Changes compare each dataset with its previous run. Missing scores or a previous run leave the change unavailable.";
-
 el("suites").innerHTML = `
   <thead><tr><th>Dataset</th><th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th>
   <th class="n">Tool calls · mean</th><th class="n">LLM calls · mean</th><th class="n">Task time · p50</th><th>Latest run</th></tr></thead><tbody>` +
   (datasets.length ? overviewRows.map(s => {
     const details = s.latest.failure_details || [];
     const detailLabel = details.length ? `${details.length} failed / excluded` : s.latest.failure_details_status === "available" ? "No failures" : "Details unavailable";
-    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button>${comparisonLabel(s)}<div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
-      ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
+    if (s.diagnostic) return "";
+    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button><div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
+      ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}" title="${esc(comparisonExplanation(s))}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
       <td class="n">${overviewMeasure(s, "tool_calls", "mean", 1, "calls")}</td>
       <td class="n">${overviewMeasure(s, "llm_calls", "mean", 1, "calls")}</td>
       <td class="n">${overviewMeasure(s, "task_wall_ms", "p50", 0.001, "s")}</td>
-      <td>${when(s.latest.timestamp)}</td></tr>`;
+      <td>${when(s.latest.timestamp)}<div class="empty">${esc(s.latest.environment_label)}</div></td></tr>`;
   }).join("") : '<tr><td colspan="8" class="empty">No datasets.</td></tr>') + "</tbody>";
+
+const skillReadRate = point => {
+  const {read, observed} = point?.skill_discovery || {};
+  return Number.isInteger(read) && Number.isInteger(observed) && observed > 0 && read >= 0 && read <= observed ? read / observed : null;
+};
+el("diagnostic-results").innerHTML = datasets.map((s, index) => s.diagnostic
+  ? `<div data-filter-dataset="${index}"><h3>Diagnostics</h3><button type="button" class="dataset" data-dataset="${index}">${esc(s.suite)}</button><p>Skill read: ${pct(skillReadRate(s.latest))}. Observation only; excluded from test-area pass rates. Open trends for UI task outcomes.</p></div>` : "").join("");
 
 function selectDataset(index) {
   selected = datasets[index];
@@ -396,21 +426,36 @@ function selectDataset(index) {
   });
   const points = selected.points;
   const latest = selected.latest;
-  el("dataset-context").textContent = `${selected.capability} · ${selected.suite} · ${points.length} runs · ${when(points[0].timestamp)} — ${when(latest.timestamp)}`;
+  el("dataset-context").textContent = `${selected.capability} · ${selected.suite} · ${latest.environment_label} · ${points.length} runs · ${when(points[0].timestamp)} — ${when(latest.timestamp)}` +
+    (selected.diagnostic ? " · Pass metrics below measure UI task completion, not skill discovery." : "");
   el("latest").innerHTML = metrics.map(metric => `<div>
     <div class="num">${pct(latest[metric.key])}</div><div class="cap">Latest ${metric.label}</div>
     <span class="delta ${deltaClass(selected.metric_deltas[metric.key])}">${deltaLabel(selected.metric_deltas[metric.key])}</span>
   </div>`).join("") + `<div><div class="num" style="font-size:15px;padding-top:10px">${commitLink(latest.commit_sha)}</div>
     <div class="cap">Latest commit · k=${esc(latest.metrics_k)}</div></div>`;
+  if (selected.diagnostic) {
+    el("latest").innerHTML = `<div><div class="num">${pct(skillReadRate(latest))}</div><div class="cap">Skill read observation</div></div>` + el("latest").innerHTML;
+  }
   el("comparison-details").textContent = comparisonExplanation(selected);
   const detailRuns = [["Latest", latest], ["Previous", selected.previous]].filter(([label, run]) => run);
   const changed = new Set(selected.changed_fields || []);
+  const row = (label, values, differs = false) => `<tr><td>${esc(label)}</td>${values.map(value =>
+    `<td class="${differs ? "changed" : ""}">${value}</td>`).join("")}</tr>`;
+  const header = `<thead><tr><th>Setting</th>${detailRuns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead>`;
+  const fieldRows = fields => fields.map(([field, label]) => {
+    const values = detailRuns.map(([, run]) => configValue(run, field));
+    return row(label, values.map(esc), values.length === 2 && values[0] !== values[1]);
+  }).join("");
+  const visibleFields = configFields.filter(([field]) => field !== "active_skills" || detailRuns.some(([, run]) =>
+    run.active_skills && !["[]", ""].includes(String(run.active_skills))));
   el("run-details").className = "config-diff";
-  el("run-details").innerHTML = `<thead><tr><th>Setting</th>${detailRuns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>` +
-    `<tr><td>When</td>${detailRuns.map(([, run]) => `<td>${when(run.timestamp)}</td>`).join("")}</tr>` +
-    `<tr><td>Commit</td>${detailRuns.map(([, run]) => `<td>${commitLink(run.commit_sha)}</td>`).join("")}</tr>` +
-    configFields.map(([field, label]) => `<tr><td>${esc(label)}</td>${detailRuns.map(([, run]) =>
-      `<td class="${changed.has(field) ? "changed" : ""}">${esc(configValue(run, field))}</td>`).join("")}</tr>`).join("") + "</tbody>";
+  el("run-details").innerHTML = header + "<tbody>" +
+    row("When", detailRuns.map(([, run]) => when(run.timestamp))) +
+    row("Commit", detailRuns.map(([, run]) => commitLink(run.commit_sha))) +
+    row("Branch", detailRuns.map(([, run]) => esc(configValue(run, "git_branch")))) +
+    fieldRows(visibleFields) +
+    (changed.has("suite_sha256") ? `<tr><td>Test definition</td><td colspan="${detailRuns.length}">File changed. ${sourceDiffLink(selected)}</td></tr>` : "") +
+    "</tbody>";
   el("history-title").textContent = selected.suite + " · run history";
   el("history").innerHTML = `
     <thead><tr><th>When</th><th>Commit</th><th>Agent model</th><th>Judge</th><th class="n">k</th>
@@ -566,6 +611,10 @@ el("suites").addEventListener("click", event => {
 el("failure-details").addEventListener("click", event => {
   const button = event.target.closest("button[data-trend-dataset]");
   if (button) openDataset(Number(button.dataset.trendDataset));
+});
+el("diagnostic-results").addEventListener("click", event => {
+  const button = event.target.closest("button[data-dataset]");
+  if (button) openDataset(Number(button.dataset.dataset));
 });
 el("selected-failures").addEventListener("click", () => openFailures(datasets.indexOf(selected)));
 el("selected-failures").disabled = !datasets.length;

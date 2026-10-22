@@ -714,6 +714,7 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	rt.stateManager.RegisterUpdater(&deviceStateUpdater{snapshot: rt.ConfigSnapshot})
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
+	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -760,6 +761,10 @@ func (r *Runtime) initRunGate() {
 		r.runGate = make(chan struct{}, 1)
 		r.runGate <- struct{}{}
 	})
+}
+
+func (r *Runtime) decisionConfig() DecisionModelConfig {
+	return r.ConfigSnapshot().Decision
 }
 
 func (r *Runtime) deviceTypeFromState() string {
@@ -1929,7 +1934,7 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	return benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools))
+	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
 }
 
 // AvailableTools returns the runtime-filtered tools exposed to the

@@ -739,17 +739,6 @@ func stringValue(value any) string {
 	return text
 }
 
-func zeroString(value *string) {
-	if value == nil {
-		return
-	}
-	data := []byte(*value)
-	for i := range data {
-		data[i] = 0
-	}
-	*value = ""
-}
-
 func exitCode(err error) int {
 	var exit *exitError
 	if errors.As(err, &exit) {

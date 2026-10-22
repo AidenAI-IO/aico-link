@@ -132,6 +132,16 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 	if result.Reason != "" {
 		output["reason"] = result.Reason
 	}
+	if result.Popup != nil {
+		output["popup"] = map[string]any{
+			"kind":    result.Popup.Kind,
+			"summary": result.Popup.Summary,
+			"note":    "A dialog is open over the app. Decide from the task whether to continue; do not accept permission, login, privacy or payment dialogs unless the user asked for it.",
+		}
+	}
+	if !result.Opened {
+		output["ok"] = false
+	}
 	return jsonString(output), nil
 }
 
@@ -173,6 +183,8 @@ type appSearchOpenFlowConfig struct {
 	searchEntries     *androidSearchEntryStore
 	// checkSearchFieldFn replaces the empty-search-field check in tests.
 	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, error)
+	// checkPopupFn replaces the after-open dialog check in tests.
+	checkPopupFn func(context.Context, screenshotResult, string) (popupCheck, error)
 }
 
 // resolvedPlatform is cfg.platform, or the entry tool's platform when the
@@ -189,6 +201,8 @@ type appSearchOpenFlowResult struct {
 	Reason   string
 	VLMCalls int
 	Steps    []string
+	// Popup is a dialog left open over the app for the Agent to decide on.
+	Popup *popupCheck
 }
 
 func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (appSearchOpenFlowResult, error) {
@@ -245,7 +259,9 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 			if err := sleep(ctx, launchDelay); err != nil {
 				return result, err
 			}
-			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, searchTerm)
+			// This is a launcher icon, not a search result. Keep target-app
+			// confirmation instead of the search-page transition comparison.
+			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, searchTerm, screenshotResult{})
 			result.VLMCalls += calls
 			if err != nil {
 				return result, err
@@ -328,7 +344,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		recovered := false
 	lookup:
 		for attempt := 1; attempt <= 2; attempt++ {
-			findResult, calls, err := findSearchOpenAppResult(ctx, cfg, engine, term)
+			findResult, searchShot, calls, err := findSearchOpenAppResult(ctx, cfg, engine, term)
 			result.VLMCalls += calls
 			if err != nil {
 				result.Steps = append(steps, "locate app failed")
@@ -384,7 +400,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 				result.Steps = append(steps, "app launch wait canceled")
 				return result, err
 			}
-			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, term)
+			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, term, searchShot)
 			result.VLMCalls += calls
 			if err != nil {
 				result.Steps = append(steps, "confirm app open failed")
@@ -392,6 +408,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 			}
 			if opened.Opened {
 				steps = append(steps, "app open confirmed")
+				steps, result = checkPopupAfterOpen(ctx, cfg, engine, steps, result)
 				if cfg.afterOpenFn != nil {
 					if err := cfg.afterOpenFn(); err != nil {
 						result.Steps = append(steps, "after-open hook failed")
@@ -731,26 +748,30 @@ func appSearchFallbackTerms(searchTerm string) []string {
 	return unique
 }
 
-func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeSearchResult, int, error) {
+// findSearchOpenAppResult also returns the search page screenshot the result
+// was located on.
+func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeSearchResult, screenshotResult, int, error) {
 	shot, err := engine.captureScreenshot(ctx)
 	if err != nil {
-		return bridgeSearchResult{}, 0, err
+		return bridgeSearchResult{}, screenshotResult{}, 0, err
 	}
 	if cfg.findAppTapFn != nil {
 		result, err := cfg.findAppTapFn(ctx, shot, searchTerm)
-		return result, 0, err
+		return result, shot, 0, err
 	}
 	modelVision, ok := cfg.vision.(*llmTextInputVision)
 	if !ok || modelVision == nil {
-		return bridgeSearchResult{}, 0, fmt.Errorf("app search vision is not configured")
+		return bridgeSearchResult{}, shot, 0, fmt.Errorf("app search vision is not configured")
 	}
-	prompt := buildAppSearchResultPrompt(searchTerm)
-	raw, err := modelVision.visionDecisionJSON(ctx, "app_search", prompt, []string{"found"}, shot)
-	if err != nil {
-		return bridgeSearchResult{}, 1, err
+	result, usedLLM, err := decide(ctx, modelVision.decider, appSearchDecision(modelVision, shot, searchTerm))
+	return result, shot, vlmCallCount(usedLLM), err
+}
+
+func vlmCallCount(usedLLM bool) int {
+	if usedLLM {
+		return 1
 	}
-	result, err := parseAppSearchResult(raw)
-	return result, 1, err
+	return 0
 }
 
 // parseAppSearchResult ignores unknown fields: some models echo the response
@@ -786,7 +807,7 @@ Rules:
 - If not visible, return {"found": false, "tap_point": {"x": 0, "y": 0}}.`, searchTerm))
 }
 
-func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeAppOpenResult, int, error) {
+func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string, searchShot screenshotResult) (bridgeAppOpenResult, int, error) {
 	shot, err := engine.captureScreenshot(ctx)
 	if err != nil {
 		return bridgeAppOpenResult{}, 0, err
@@ -799,6 +820,54 @@ func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engi
 	if !ok || modelVision == nil {
 		return bridgeAppOpenResult{}, 0, fmt.Errorf("app open confirmation vision is not configured")
 	}
+	llm := func(ctx context.Context) (bridgeAppOpenResult, error) {
+		if searchShot.Data != "" {
+			return confirmSearchLeftLLM(ctx, modelVision, searchShot, shot, searchTerm)
+		}
+		return confirmSearchOpenAppLLM(ctx, modelVision, shot, searchTerm)
+	}
+	result, usedLLM, err := decide(ctx, modelVision.decider, appOpenDecision(llm, shot, searchTerm))
+	return result, vlmCallCount(usedLLM), err
+}
+
+// confirmSearchLeftLLM asks whether the screen left the system search page,
+// comparing the search page the result was tapped on with the screen after the
+// tap, instead of asking the model to recognize the target app. An app's first
+// screen varies too much for that: Settings reopens on its own search page and
+// Safari on a start page that looks like the home screen, which both read as
+// "not opened" from one screenshot. In on-device iOS runs the comparison was
+// right 16 of 16 times, where the single-screenshot question was right 12.
+func confirmSearchLeftLLM(ctx context.Context, modelVision *llmTextInputVision, before, after screenshotResult, searchTerm string) (bridgeAppOpenResult, error) {
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", buildSearchLeftPrompt(searchTerm), []string{"left_search"}, before, after)
+	if err != nil {
+		return bridgeAppOpenResult{}, err
+	}
+	var parsed struct {
+		LeftSearch bool   `json:"left_search"`
+		Reason     string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return bridgeAppOpenResult{}, fmt.Errorf("parse app open confirmation: %w", err)
+	}
+	return bridgeAppOpenResult{Opened: parsed.LeftSearch, Reason: parsed.Reason}, nil
+}
+
+func buildSearchLeftPrompt(searchTerm string) string {
+	return strings.TrimSpace(fmt.Sprintf(`You get two device screenshots. The first is a system search results page for query %q, captured just before tapping an app result. The second was captured shortly after the tap.
+Decide whether the second screenshot has left that system search page for another screen.
+Return JSON only:
+{
+  "left_search": true,
+  "reason": "an app screen replaced the search results"
+}
+
+Rules:
+- left_search=true when the second screenshot shows any screen other than the system search page and the launcher: an app screen, an app's own search or start page, a blank or dark app page, or a loading transition. You do not need to recognize the app.
+- left_search=false when the second screenshot still shows the same system search page, with or without the keyboard, or the home screen.
+- Keep reason short and concrete.`, searchTerm))
+}
+
+func confirmSearchOpenAppLLM(ctx context.Context, modelVision *llmTextInputVision, shot screenshotResult, searchTerm string) (bridgeAppOpenResult, error) {
 	prompt := strings.TrimSpace(fmt.Sprintf(`Analyze this device screenshot immediately after tapping the app search result for query %q.
 Decide whether the screen has opened the requested app instead of remaining on the search results page.
 Return JSON only:
@@ -813,13 +882,13 @@ Rules:
 - Keep reason short and concrete.`, searchTerm))
 	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", prompt, []string{"opened"}, shot)
 	if err != nil {
-		return bridgeAppOpenResult{}, 1, err
+		return bridgeAppOpenResult{}, err
 	}
 	var result bridgeAppOpenResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return bridgeAppOpenResult{}, 1, fmt.Errorf("parse app open confirmation: %w", err)
+		return bridgeAppOpenResult{}, fmt.Errorf("parse app open confirmation: %w", err)
 	}
-	return result, 1, nil
+	return result, nil
 }
 
 func tapSearchOpenResult(ctx context.Context, hw *textInputHardwareDeps, point focusPointArgs) error {
@@ -831,4 +900,26 @@ func tapSearchOpenResult(ctx context.Context, hw *textInputHardwareDeps, point f
 		return err
 	}
 	return interpretTextInputToolOutput(out)
+}
+
+// checkPopupAfterOpen looks for a dialog over the freshly opened app. Ads are
+// closed; anything else is returned to the Agent in the result.
+func checkPopupAfterOpen(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, steps []string, result appSearchOpenFlowResult) ([]string, appSearchOpenFlowResult) {
+	shot, err := engine.captureScreenshot(ctx)
+	if err != nil {
+		logging.Warnf("agent", "popup", "after-open screenshot failed: %v", err)
+		return steps, result
+	}
+	popup, calls, err := handlePopup(ctx, cfg.hw, cfg.vision, cfg.checkPopupFn, shot, cfg.platform, popupMomentAppOpen)
+	result.VLMCalls += calls
+	switch {
+	case err != nil:
+		logging.Warnf("agent", "popup", "after-open dialog handling failed: %v", err)
+	case popup.Handled:
+		steps = append(steps, fmt.Sprintf("closed %s dialog", popup.Kind))
+	case popup.blocking():
+		steps = append(steps, fmt.Sprintf("%s dialog is open", popup.Kind))
+		result.Popup = &popup
+	}
+	return steps, result
 }

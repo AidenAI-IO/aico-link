@@ -236,6 +236,12 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--budget", type=int, default=10, help="Max optimization steps")
     parser.add_argument("--edit-budget", type=int, default=4, help="Maximum skill edits per optimization iteration")
     parser.add_argument("--min-delta", type=float, default=0.03, help="Validation gate threshold")
+    parser.add_argument(
+        "--sample-classifier",
+        choices=["rules", "typesafe"],
+        default=os.environ.get("SKILLOPT_SAMPLE_CLASSIFIER", "rules"),
+        help="typesafe lets a confident Jev decision-model answer override the rule-based sample quality (key in TYPESAFE_API_KEY)",
+    )
     parser.add_argument("--mobilegym-parallel", type=int, default=1, help="Legacy MobileGym worker count")
     parser.add_argument(
         "--optimizer-model",
@@ -286,6 +292,7 @@ def cli(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    os.environ["SKILLOPT_SAMPLE_CLASSIFIER"] = args.sample_classifier
     if args.backend == "mobilegym" and not str(args.environment_url or "").strip():
         print("Error: --backend mobilegym requires --environment-url", file=sys.stderr)
         return 2

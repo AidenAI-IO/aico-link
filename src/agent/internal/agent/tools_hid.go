@@ -4,45 +4,19 @@ import (
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screen"
 	"context"
-	"encoding/binary"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"math"
-	"os"
-	"os/exec"
 	"strconv"
 	"strings"
-	"sync"
-	"syscall"
 	"time"
-
-	"golang.org/x/sys/unix"
 )
 
 const (
-	absMouseMaxPos = 32767
-
-	defaultHIDRefreshStatePath        = "/run/aiden_usb_ecm_watchdog.state"
-	defaultUSBCompositeRefreshCommand = "/usr/lib/aiden/aiden-usb-ecm-watchdog"
-
 	// defaultTapHoldMs is the dwell between a touch press and release so iOS
 	// registers a tap rather than dropping the sub-millisecond event or
 	// treating it as a long-press.
 	defaultTapHoldMs = 60
-
-	// defaultSwipeHoldBeforeMs is the dwell at the start of a swipe so iOS
-	// recognises the touchdown frame before the touch begins moving. The
-	// edge-back recogniser in particular rejects swipes that move on the same
-	// frame as the press.
-	defaultSwipeHoldBeforeMs = 80
-
-	// defaultSwipeHoldAfterMs defaults to zero so a swipe releases as soon as
-	// it reaches the destination. Holding at the end makes phone UIs look like
-	// the touch never released and can leave the screen stuck in a dragged
-	// state.
-	defaultSwipeHoldAfterMs = 0
 
 	defaultSwipeDurationMs = 700
 	defaultSwipeSteps      = 24
@@ -60,12 +34,6 @@ const (
 	// not match the current HDMI capture resolution.
 	screenDimensionsStaleAfter = 30 * time.Second
 
-	// defaultHIDWriteTimeout bounds each HID report write. Linux hidg writes can
-	// otherwise block forever when the USB host stops polling, which leaves the
-	// last successful pressed report active and prevents swipe release reports
-	// from being sent.
-	defaultHIDWriteTimeout = 750 * time.Millisecond
-
 	// touchReleaseReportCount repeats the button-up/touch-up report for touch-like
 	// gestures. On phone USB HID hosts a single final release report can be missed
 	// or coalesced with the final move, leaving the UI in a pressed/dragged state.
@@ -77,478 +45,22 @@ const (
 	// defaultKeyboardTapHoldMs matches example_usb_hid's default tap duration.
 	// Zero hold often fails on macOS/iOS hosts that miss sub-frame modifier chords.
 	defaultKeyboardTapHoldMs = 50
-	// keyboardModifierTapHoldMs keeps modifier chords pressed long enough for
-	// macOS/iOS hosts to register shortcuts like Cmd+Q.
-	keyboardModifierTapHoldMs = 120
 )
-
-type androidKeyboardTapAlias struct {
-	Keycode           int
-	Replacement       string
-	UnsupportedReason string
-}
-
-// Keep Android framework keycodes separate from the generic HID usage table.
-// They are routed through hid.usb2, which advertises a Consumer Control
-// interface instead of the boot keyboard report used by hid.usb0.
-var androidKeyboardTapAliases = map[string]androidKeyboardTapAlias{
-	"keycode_call": {
-		Keycode:           5,
-		UnsupportedReason: "call pickup requires an Android telephony/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_endcall": {
-		Keycode:           6,
-		UnsupportedReason: "call hangup requires an Android telephony/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_home": {
-		Keycode:     3,
-		Replacement: "android_home",
-	},
-	"keycode_menu": {
-		Keycode:     82,
-		Replacement: "menu",
-	},
-	"keycode_back": {
-		Keycode:     4,
-		Replacement: "android_back",
-	},
-	"keycode_search": {
-		Keycode:     84,
-		Replacement: "search",
-	},
-	"keycode_camera": {
-		Keycode:           27,
-		UnsupportedReason: "camera shutter requires a camera/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_focus": {
-		Keycode:           80,
-		UnsupportedReason: "camera focus requires a camera/media key path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_power": {
-		Keycode:     26,
-		Replacement: "power",
-	},
-	"keycode_sleep": {
-		Keycode:     223,
-		Replacement: "sleep",
-	},
-	"keycode_wakeup": {
-		Keycode:           224,
-		UnsupportedReason: "wakeup requires a Generic Desktop/System Control HID path beyond the current hid.usb2 Consumer Control interface",
-	},
-	"keycode_soft_sleep": {
-		Keycode:           276,
-		UnsupportedReason: "soft sleep has no verified standard Consumer Control usage on this gadget",
-	},
-	"keycode_notification": {
-		Keycode:           83,
-		UnsupportedReason: "notification center has no verified standard Consumer Control usage on this gadget; use quick_action notification_center or touch_gesture instead",
-	},
-	"keycode_mute": {
-		Keycode:           91,
-		UnsupportedReason: "KEYCODE_MUTE is microphone mute, not speaker mute; hid.usb2 only exposes system speaker/stream volume mute",
-	},
-	"keycode_volume_mute": {
-		Keycode:     164,
-		Replacement: "volume_mute",
-	},
-	"keycode_volume_up": {
-		Keycode:     24,
-		Replacement: "volume_up",
-	},
-	"keycode_volume_down": {
-		Keycode:     25,
-		Replacement: "volume_down",
-	},
-	"keycode_media_play_pause": {
-		Keycode:     85,
-		Replacement: "media_play_pause",
-	},
-	"keycode_media_stop": {
-		Keycode:     86,
-		Replacement: "media_stop",
-	},
-	"keycode_media_next": {
-		Keycode:     87,
-		Replacement: "media_next",
-	},
-	"keycode_media_previous": {
-		Keycode:     88,
-		Replacement: "media_previous",
-	},
-	"keycode_media_rewind": {
-		Keycode:     89,
-		Replacement: "media_rewind",
-	},
-	"keycode_media_fast_forward": {
-		Keycode:     90,
-		Replacement: "media_fast_forward",
-	},
-	"keycode_app_switch": {
-		Keycode:     187,
-		Replacement: "app_switch",
-	},
-	// HID-backed Android KeyEvent aliases. The API levels are from
-	// android.view.KeyEvent; replacements keep the existing Consumer Control
-	// usage values in mnk's androidExtensionUsageMap unchanged.
-	"keycode_window": { // API 11
-		Keycode:     171,
-		Replacement: "window",
-	},
-	"keycode_settings": { // API 11
-		Keycode:     176,
-		Replacement: "settings",
-	},
-	"keycode_language_switch": { // API 14
-		Keycode:     204,
-		Replacement: "language_switch",
-	},
-	"keycode_brightness_down": { // API 18
-		Keycode:     220,
-		Replacement: "brightness_down",
-	},
-	"keycode_brightness_up": { // API 18
-		Keycode:     221,
-		Replacement: "brightness_up",
-	},
-	"keycode_media_audio_track": { // API 19
-		Keycode:     222,
-		Replacement: "media_audio_track",
-	},
-	"keycode_refresh": { // API 28
-		Keycode:     285,
-		Replacement: "refresh",
-	},
-	"keycode_profile_switch": { // API 29
-		Keycode:     288,
-		Replacement: "profile_switch",
-	},
-	"keycode_emoji_picker": { // API 35
-		Keycode:     317,
-		Replacement: "emoji_picker",
-	},
-	"keycode_screenshot": { // API 35
-		Keycode:     318,
-		Replacement: "screenshot",
-	},
-	"keycode_dictate": { // API 36
-		Keycode:     319,
-		Replacement: "dictate",
-	},
-	"keycode_new": { // API 36
-		Keycode:     320,
-		Replacement: "new",
-	},
-	"keycode_close": { // API 36
-		Keycode:     321,
-		Replacement: "close",
-	},
-	"keycode_print": { // API 36
-		Keycode:     323,
-		Replacement: "print",
-	},
-	"keycode_fullscreen": { // API 36
-		Keycode:     325,
-		Replacement: "fullscreen",
-	},
-}
-
-// HIDDevice manages a single HID device file with lazy open and auto-reopen.
-type HIDDevice struct {
-	path         string
-	mu           sync.Mutex
-	file         io.WriteCloser
-	open         func(string) (io.WriteCloser, error)
-	writeTimeout time.Duration
-	openedAt     time.Time
-	refreshState string
-}
-
-type pointerState struct {
-	mu    sync.Mutex
-	x     int
-	y     int
-	valid bool
-}
-
-func (s *pointerState) Update(x, y int) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.x = x
-	s.y = y
-	s.valid = true
-}
-
-func (s *pointerState) Current() (x, y int, ok bool) {
-	if s == nil {
-		return 0, 0, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.valid {
-		return 0, 0, false
-	}
-	return s.x, s.y, true
-}
 
 // pointerController sends hid.usb1 reports in absolute mouse or touchscreen mode.
 type pointerController struct {
-	dev                  *HIDDevice
-	state                *pointerState
+	dev                  *mnk.HIDDevice
+	state                *mnk.PointerState
 	touchscreen          bool
 	iosKeyboardIsolation *iosKeyboardIsolationController
 }
 
 func newPointerController(hid HIDConfig) *pointerController {
 	return &pointerController{
-		dev:         NewHIDDevice(hid.MouseDeviceOrDefault()),
-		state:       &pointerState{},
+		dev:         mnk.NewHIDDevice(hid.MouseDeviceOrDefault()),
+		state:       &mnk.PointerState{},
 		touchscreen: hid.PointerTouchscreen(),
 	}
-}
-
-func NewHIDDevice(path string) *HIDDevice {
-	return &HIDDevice{
-		path:         path,
-		writeTimeout: defaultHIDWriteTimeout,
-		refreshState: defaultHIDRefreshStatePath,
-		open: func(path string) (io.WriteCloser, error) {
-			return os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0)
-		},
-	}
-}
-
-func (d *HIDDevice) Write(data []byte) error {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.writeLocked(data, nil)
-}
-
-func (d *HIDDevice) writeLocked(data []byte, after func()) error {
-	if err := d.ensureOpenLocked(); err != nil {
-		return err
-	}
-	if err := d.reopenStaleFileLocked(); err != nil {
-		return err
-	}
-
-	n, err := d.writeOnceLocked(data)
-	if err != nil {
-		d.closeLocked()
-		if n == 0 && hidShouldRetryWrite(err) {
-			if reopenErr := d.ensureOpenLocked(); reopenErr == nil {
-				n2, retryErr := d.writeOnceLocked(data)
-				if retryErr == nil && n2 == len(data) {
-					if after != nil {
-						after()
-					}
-					return nil
-				}
-				d.closeLocked()
-				if retryErr != nil {
-					return fmt.Errorf("write %s: %w", d.path, retryErr)
-				}
-				return fmt.Errorf("write %s: short write after retry (%d/%d bytes)", d.path, n2, len(data))
-			}
-		}
-		return fmt.Errorf("write %s: %w", d.path, err)
-	}
-	if n != len(data) {
-		d.closeLocked()
-		return fmt.Errorf("write %s: short write (%d/%d bytes)", d.path, n, len(data))
-	}
-	if after != nil {
-		after()
-	}
-	// Sync to ensure data is flushed to USB gadget driver
-	if f, ok := d.file.(*os.File); ok {
-		_ = f.Sync()
-	}
-	return nil
-}
-
-func (d *HIDDevice) writeOnceLocked(data []byte) (int, error) {
-	if fdFile, ok := d.file.(interface{ Fd() uintptr }); ok {
-		return d.writeFDLocked(int(fdFile.Fd()), data)
-	}
-	return d.file.Write(data)
-}
-
-func (d *HIDDevice) writeFDLocked(fd int, data []byte) (int, error) {
-	timeout := d.writeTimeout
-	if timeout <= 0 {
-		timeout = defaultHIDWriteTimeout
-	}
-	deadline := time.Now().Add(timeout)
-
-	for {
-		n, err := unix.Write(fd, data)
-		if err == nil {
-			return n, nil
-		}
-		if err == unix.EINTR {
-			continue
-		}
-		if !hidWriteWouldBlock(err) {
-			return n, err
-		}
-
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return 0, fmt.Errorf("timed out after %s waiting to write HID report", timeout)
-		}
-
-		pollTimeoutMs := int(remaining.Milliseconds())
-		if pollTimeoutMs < 1 {
-			pollTimeoutMs = 1
-		}
-		fds := []unix.PollFd{{
-			Fd:     int32(fd),
-			Events: unix.POLLOUT | unix.POLLERR | unix.POLLHUP,
-		}}
-		ready, pollErr := unix.Poll(fds, pollTimeoutMs)
-		if pollErr == unix.EINTR {
-			continue
-		}
-		if pollErr != nil {
-			return 0, pollErr
-		}
-		if ready == 0 {
-			return 0, fmt.Errorf("timed out after %s waiting to write HID report", timeout)
-		}
-		if fds[0].Revents&(unix.POLLERR|unix.POLLHUP|unix.POLLNVAL) != 0 {
-			return 0, syscall.EPIPE
-		}
-	}
-}
-
-func (d *HIDDevice) Close() {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	d.closeLocked()
-}
-
-func (d *HIDDevice) ensureOpenLocked() error {
-	if d.file != nil {
-		return nil
-	}
-	opener := d.open
-	if opener == nil {
-		opener = func(path string) (io.WriteCloser, error) {
-			return os.OpenFile(path, os.O_WRONLY, 0)
-		}
-	}
-	f, err := opener(d.path)
-	if err != nil {
-		// ENXIO means the device node exists but the USB gadget function is not enabled
-		// (e.g. USB host suspended the connection). Try to trigger a USB composite refresh.
-		if errors.Is(err, syscall.ENXIO) {
-			refreshErr := triggerUSBCompositeRefresh(d.refreshState)
-			if refreshErr == nil {
-				// Wait briefly for the gadget to rebind and reach configured state
-				time.Sleep(2 * time.Second)
-				f, err = opener(d.path)
-			} else {
-				// Propagate watchdog refresh failure so it remains diagnosable
-				return fmt.Errorf("open %s: USB composite refresh failed: %w (original error: %v)", d.path, refreshErr, err)
-			}
-		}
-		if err != nil {
-			return fmt.Errorf("open %s: %w", d.path, err)
-		}
-	}
-	d.file = f
-	d.openedAt = time.Now()
-	return nil
-}
-
-func (d *HIDDevice) closeLocked() {
-	if d.file != nil {
-		_ = d.file.Close()
-		d.file = nil
-		d.openedAt = time.Time{}
-	}
-}
-
-func (d *HIDDevice) reopenStaleFileLocked() error {
-	if d.file == nil {
-		return nil
-	}
-	if !d.openedAt.IsZero() && d.refreshState != "" {
-		if info, err := os.Stat(d.refreshState); err == nil && info.ModTime().After(d.openedAt) {
-			d.closeLocked()
-			return d.ensureOpenLocked()
-		}
-	}
-
-	statter, ok := d.file.(interface{ Stat() (os.FileInfo, error) })
-	if !ok {
-		return nil
-	}
-	fdInfo, err := statter.Stat()
-	if err != nil {
-		d.closeLocked()
-		return d.ensureOpenLocked()
-	}
-	pathInfo, err := os.Stat(d.path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		d.closeLocked()
-		return d.ensureOpenLocked()
-	}
-	if !os.SameFile(fdInfo, pathInfo) {
-		d.closeLocked()
-		return d.ensureOpenLocked()
-	}
-	return nil
-}
-
-func usbCompositeRefreshCommand() string {
-	if command := strings.TrimSpace(os.Getenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
-		return command
-	}
-	return defaultUSBCompositeRefreshCommand
-}
-
-func triggerUSBCompositeRefresh(_ string) error {
-	// Trigger the USB watchdog's refresh command to rebind the USB composite gadget.
-	// This is needed when the USB host suspends the connection or the gadget
-	// enters a stale state where HID device nodes exist but are not functional.
-	// Use a bounded timeout to prevent a hung watchdog from blocking HID recovery.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	cmd := exec.CommandContext(ctx, usbCompositeRefreshCommand(), "refresh")
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("USB composite refresh timed out after 10s (output: %s)", string(output))
-		}
-		return fmt.Errorf("USB composite refresh failed: %w (output: %s)", err, string(output))
-	}
-	return nil
-}
-
-func hidShouldRetryWrite(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, syscall.ESHUTDOWN) || errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ENOTCONN) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ENODEV) {
-		return true
-	}
-	text := strings.ToLower(err.Error())
-	return strings.Contains(text, "transport endpoint shutdown") ||
-		strings.Contains(text, "broken pipe") ||
-		strings.Contains(text, "connection reset")
-}
-
-func hidWriteWouldBlock(err error) bool {
-	return errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK)
 }
 
 // KeyboardTapTool sends a key press then release via HID.
@@ -619,7 +131,7 @@ func (t *KeyboardTapTool) Call(ctx context.Context, input string) (string, error
 // KeyboardTextTool types a string character by character via HID.
 type KeyboardTextTool struct {
 	textProvider         mnk.TextProvider
-	dev                  *HIDDevice
+	dev                  *mnk.HIDDevice
 	adb                  *ADBInputController
 	keyboardLayout       string
 	iosKeyboardIsolation *iosKeyboardIsolationController
@@ -777,15 +289,6 @@ func (t *TouchGestureTool) SetDeviceTypeFunc(fn func() string) {
 	if t != nil {
 		t.deviceTypeFn = fn
 	}
-}
-
-func (t *TouchGestureTool) platform() string {
-	if t != nil && t.deviceTypeFn != nil {
-		if deviceType, ok := normalizeDeviceType(t.deviceTypeFn()); ok {
-			return normalizeAgentToolPlatform(deviceTypePlatform(deviceType))
-		}
-	}
-	return ""
 }
 
 func (t *TouchGestureTool) Description() string {
@@ -946,51 +449,23 @@ func mapMNKAdapterResult(ctx context.Context, output string, err error) (string,
 
 // writeAbsMouseReport writes an absolute mouse report:
 // [buttons, x_lo, x_hi, y_lo, y_hi, wheel].
-func writeAbsMouseReport(dev *HIDDevice, state *pointerState, x, y int, buttons uint8, wheel int8) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
-
-	report := make([]byte, 6)
-	report[0] = buttons
-	binary.LittleEndian.PutUint16(report[1:3], absX)
-	binary.LittleEndian.PutUint16(report[3:5], absY)
-	report[5] = byte(wheel)
-
-	var after func()
-	if state != nil {
-		after = func() {
-			state.Update(int(absX), int(absY))
-		}
+func writeAbsMouseReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y int, buttons uint8, wheel int8) error {
+	report, absX, absY := mnk.AbsMouseReport(x, y, buttons, wheel)
+	if err := dev.Write(report); err != nil {
+		return err
 	}
-
-	dev.mu.Lock()
-	defer dev.mu.Unlock()
-	return dev.writeLocked(report, after)
+	state.Update(absX, absY)
+	return nil
 }
 
 // writeTouchscreenReport writes a single-contact touch report:
 // [flags, contact_id, x_lo, x_hi, y_lo, y_hi]. flags bit0=tip switch, bit1=in range.
-func writeTouchscreenReport(dev *HIDDevice, state *pointerState, x, y int, touching bool) error {
-	absX := clampUint16(x, absMouseMaxPos)
-	absY := clampUint16(y, absMouseMaxPos)
-	report := make([]byte, 6)
-	if touching {
-		report[0] = 0x03
-	}
-	report[1] = 0x01
-	binary.LittleEndian.PutUint16(report[2:4], absX)
-	binary.LittleEndian.PutUint16(report[4:6], absY)
-
-	var after func()
-	if state != nil {
-		after = func() {
-			state.Update(int(absX), int(absY))
-		}
-	}
+func writeTouchscreenReport(dev *mnk.HIDDevice, state *mnk.PointerState, x, y int, touching bool) error {
+	report, absX, absY := mnk.TouchscreenReport(x, y, touching)
 
 	path := "<nil>"
 	if dev != nil {
-		path = dev.path
+		path = dev.Path()
 	}
 	if touchscreenRCADebugEnabledCached() {
 		touchscreenRCALogf(
@@ -1005,28 +480,18 @@ func writeTouchscreenReport(dev *HIDDevice, state *pointerState, x, y int, touch
 			report,
 		)
 	}
-	dev.mu.Lock()
-	defer dev.mu.Unlock()
-	err := dev.writeLocked(report, after)
+	err := dev.Write(report)
 	if err != nil {
 		if touchscreenRCADebugEnabledCached() {
 			touchscreenRCALogf("hid touchscreen report write error path=%s clamped=(%d,%d) touching=%v err=%v", path, absX, absY, touching, err)
 		}
 		return err
 	}
+	state.Update(absX, absY)
 	if touchscreenRCADebugEnabledCached() {
 		touchscreenRCALogf("hid touchscreen report write ok path=%s clamped=(%d,%d) touching=%v", path, absX, absY, touching)
 	}
 	return nil
-}
-
-func (pc *pointerController) currentXY() (int, int) {
-	if pc.state != nil {
-		if x, y, ok := pc.state.Current(); ok {
-			return x, y
-		}
-	}
-	return absMouseMaxPos / 2, absMouseMaxPos / 2
 }
 
 func (pc *pointerController) moveTo(x, y int, buttons uint8) error {
@@ -1034,22 +499,6 @@ func (pc *pointerController) moveTo(x, y int, buttons uint8) error {
 		return writeTouchscreenReport(pc.dev, pc.state, x, y, buttons != 0)
 	}
 	return writeAbsMouseReport(pc.dev, pc.state, x, y, buttons, 0)
-}
-
-func (pc *pointerController) scroll(delta int) error {
-	if delta == 0 {
-		return nil
-	}
-	if delta < -127 {
-		delta = -127
-	} else if delta > 127 {
-		delta = 127
-	}
-	if pc.touchscreen {
-		return nil
-	}
-	x, y := pc.currentXY()
-	return writeAbsMouseReport(pc.dev, pc.state, x, y, 0, int8(delta))
 }
 
 type pointerPoint struct {
@@ -1109,128 +558,6 @@ func (c pointerCoordinate) Float64() float64 {
 type resolvedPointerPoint struct {
 	x int
 	y int
-}
-
-func resolvePointerPosition(screen *screen.ScreenState, x, y float64) (int, int, error) {
-	return resolvePointerPositionForSurface(screen, false, x, y)
-}
-
-func resolvePointerPositionForSurface(screen *screen.ScreenState, touchscreen bool, x, y float64) (int, int, error) {
-	if math.IsNaN(x) || math.IsInf(x, 0) || math.IsNaN(y) || math.IsInf(y, 0) {
-		return 0, 0, fmt.Errorf("coordinates must be finite")
-	}
-	if x < 0 || x > 1000 || y < 0 || y > 1000 {
-		return 0, 0, fmt.Errorf("coordinates must use the normalized 0-1000 scale, got x=%.2f y=%.2f", x, y)
-	}
-	return normalizedToAbsolutePointForSurface(screen, touchscreen, x, y)
-}
-
-func normalizedToAbsolutePointForSurface(screen *screen.ScreenState, touchscreen bool, x, y float64) (int, int, error) {
-	// Normalized coordinates are always interpreted within active_area:
-	// 0-1000 maps to the mirrored phone touch region inside the HDMI frame.
-	//
-	// pointer_mode absolute:
-	// Scale within active_area's own coordinate system because the absolute
-	// HID cursor surface tracks the de-blackbarred phone region.
-	//
-	// pointer_mode touchscreen:
-	// First project the normalized point into the active_area inside the HDMI
-	// frame, then scale against the full frame because the touchscreen HID
-	// surface covers the complete mirrored frame.
-	if screen != nil {
-		if width, height, active, age, ok := screen.ActiveAreaWithAge(); ok && age < screenDimensionsStaleAfter && active.Valid {
-			activePixelX := (clampFloat(x, 0, 1000) / 1000.0) * float64(active.Width-1)
-			activePixelY := (clampFloat(y, 0, 1000) / 1000.0) * float64(active.Height-1)
-			if touchscreen {
-				fullFramePixelX := float64(active.X) + activePixelX
-				fullFramePixelY := float64(active.Y) + activePixelY
-				absX := scalePixelToAbsolute(fullFramePixelX, width)
-				absY := scalePixelToAbsolute(fullFramePixelY, height)
-				if touchscreenRCADebugEnabledCached() {
-					touchscreenRCALogf(
-						"normalizedToAbsolute touchscreen using active_area input_norm=(%.2f,%.2f) active_pixel=(%.2f,%.2f) full_frame_pixel=(%.2f,%.2f) source=%dx%d active=%s age_ms=%d absolute=(%d,%d)",
-						x,
-						y,
-						activePixelX,
-						activePixelY,
-						fullFramePixelX,
-						fullFramePixelY,
-						width,
-						height,
-						active.Format(),
-						age.Milliseconds(),
-						absX,
-						absY,
-					)
-				}
-				return absX, absY, nil
-			}
-			absX := activeLocalAxisToAbsolute(activePixelX, active.X, active.Width, width)
-			absY := activeLocalAxisToAbsolute(activePixelY, active.Y, active.Height, height)
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf(
-					"normalizedToAbsolute absolute_mouse using active_area input_norm=(%.2f,%.2f) active_pixel=(%.2f,%.2f) source=%dx%d active=%s age_ms=%d absolute=(%d,%d)",
-					x,
-					y,
-					activePixelX,
-					activePixelY,
-					width,
-					height,
-					active.Format(),
-					age.Milliseconds(),
-					absX,
-					absY,
-				)
-			}
-			return absX, absY, nil
-		}
-	}
-	absX, absY := normalizedToAbsolutePoint(x, y)
-	if touchscreenRCADebugEnabledCached() {
-		touchscreenRCALogf("normalizedToAbsolute fallback input_norm=(%.2f,%.2f) touchscreen=%v absolute=(%d,%d) mapping={%s}", x, y, touchscreen, absX, absY, screen.Format())
-	}
-	return absX, absY, nil
-}
-
-func normalizedToAbsolutePoint(x, y float64) (int, int) {
-	return int(math.Round(clampFloat(x, 0, 1000) / 1000.0 * absMouseMaxPos)), int(math.Round(clampFloat(y, 0, 1000) / 1000.0 * absMouseMaxPos))
-}
-
-const nearlyFullSourceAxisRatio = 0.9
-
-// activeLocalAxisToAbsolute maps one coordinate axis from a cropped screenshot
-// to the absolute HID surface. A narrow active axis represents real HDMI
-// letter/pillar-boxing and is de-barred. An active axis covering nearly the
-// whole source often comes from dark UI pixels being mistaken for a small
-// black bar; preserve its source offset so frame-to-frame crop jitter cancels
-// out instead of shifting the touch point.
-func activeLocalAxisToAbsolute(local float64, activeStart, activeSize, sourceSize int) int {
-	if activeSize <= 0 || sourceSize <= 0 {
-		return 0
-	}
-	if float64(activeSize)/float64(sourceSize) >= nearlyFullSourceAxisRatio {
-		return scalePixelToAbsolute(float64(activeStart)+local, sourceSize)
-	}
-	return scalePixelToAbsolute(local, activeSize)
-}
-
-func scalePixelToAbsolute(value float64, size int) int {
-	if size <= 1 {
-		return 0
-	}
-	maxPixel := float64(size - 1)
-	clamped := clampFloat(value, 0, maxPixel)
-	return int(math.Round((clamped / maxPixel) * absMouseMaxPos))
-}
-
-func clampFloat(value, min, max float64) float64 {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
 }
 
 func tapPointer(pc *pointerController, x, y int, button uint8) error {
@@ -1301,10 +628,6 @@ func releasePointerRepeated(pc *pointerController, x, y int, count int, delayMs 
 
 func movePointer(pc *pointerController, x, y int, buttons uint8) error {
 	return pc.moveTo(x, y, buttons)
-}
-
-func scrollPointer(pc *pointerController, delta int) error {
-	return pc.scroll(delta)
 }
 
 func dragPointer(pc *pointerController, start, end resolvedPointerPoint, button uint8, durationMs, holdBeforeMs, holdAfterMs, steps int) (dragErr error) {
@@ -1382,16 +705,6 @@ func realSleepMs(ms int) {
 		return
 	}
 	time.Sleep(time.Duration(ms) * time.Millisecond)
-}
-
-func clampUint16(val, max int) uint16 {
-	if val < 0 {
-		return 0
-	}
-	if val > max {
-		return uint16(max)
-	}
-	return uint16(val)
 }
 
 func mouseButtonByte(button string) uint8 {

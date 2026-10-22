@@ -383,6 +383,19 @@ second step:
 
 ## Historical dashboard and weekly report
 
+Latest results keeps scores, deltas, test-area filters, and failure evidence in
+view. Metric definitions and data-coverage notes are collapsed. Select a dataset
+to inspect its run comparison under **Weekly trends → Run details**: model,
+judge prompt, attempts per task, task and attempt counts, skills, and environment.
+Branch and commit identify each run; a branch change alone is not presented as
+a change to evaluation settings. A changed suite file is flagged with a source
+comparison link when both commits are known. This does not imply a semantic
+change: formatting alone can change the file fingerprint. Raw fingerprints,
+judge provider, and metrics schema remain in the report data for troubleshooting
+and are not displayed as a separate table.
+Task-selection metadata distinguishes a repetition change from changed coverage;
+older records without that metadata retain a general coverage-change notice.
+
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
 of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days

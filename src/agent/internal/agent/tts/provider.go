@@ -6,7 +6,11 @@
 // streaming API.
 package tts
 
-import "context"
+import (
+	"context"
+
+	"aiden-agent/internal/netproxy"
+)
 
 // TTSProvider is the unified abstraction for all TTS backends.
 type TTSProvider interface {
@@ -99,10 +103,7 @@ type ProviderConfig struct {
 	Extra map[string]any
 }
 
-// ProxyConfig mirrors the agent-level proxy settings used by adapters.
-type ProxyConfig struct {
-	HTTPProxy  string
-	HTTPSProxy string
-	AllProxy   string
-	NoProxy    string
-}
+// ProxyConfig mirrors the agent-level proxy settings. Adapters build HTTP
+// clients with Transport and WebSocket dialers with ConfigureWebSocketDialer so
+// they follow the same precedence and NO_PROXY rules as the Agent.
+type ProxyConfig = netproxy.Config

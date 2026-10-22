@@ -46,7 +46,7 @@ def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     # One workflow run covers every suite, so a 2-task suite must not count as
     # much as a 10-task one: 11/12 is the run's rate, not the mean of 0.5 and 1.0.
     history = [
-        _record(suite="small", tasks=2, passed=1, pass_at_1=0.5),
+        _record(suite="small", tasks=2, passed=1, pass_at_1=0.5, workload_task_ids=["a", "b"]),
         _record(suite="large", tasks=10, passed=10, pass_at_1=1.0),
     ]
 
@@ -57,6 +57,7 @@ def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     assert runs[0]["passed"] == 11
     assert runs[0]["pass_at_1"] == 11 / 12
     assert [suite["suite"] for suite in runs[0]["suites"]] == ["large", "small"]
+    assert runs[0]["suites"][1]["workload_task_ids"] == ["a", "b"]
 
 
 def test_group_into_runs_separates_workflow_runs_and_orders_them_oldest_first() -> None:
@@ -419,11 +420,21 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         _k_record(suite="partial_stages", eligible_failures=2,
                   failure_stages={"tool_execution": 1}, failure_stage_coverage=0.5),
         _k_record(suite="memory_v1"),
+        _k_record(suite="memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+                  judge_prompt_version="v3", git_branch='<img src=x>', suite_sha256="memory-v2"),
         _k_record(suite="episode_memory_v1"),
-        _k_record(suite="shell_utility_v1"),
+        _k_record(suite="episode_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+                  judge_prompt_version="v3", git_branch='<img src=x>'),
+        _k_record(suite="shell_utility_v1", execution_environment="isolated"),
+        _k_record(suite="skill_discovery_v1", execution_environment="external",
+                  skill_discovery={"read": 1, "observed": 4}),
     ], output_file=output, report_end=REPORT_END, warnings=["SDK unavailable <script>"],
        repo="owner/repo")
     html = output.read_text()
+    assert 'Technical metadata' not in html
+    assert 'Configuration context' not in html
+    assert 'How to read these results' not in html
+    assert 'Metric definitions' in html
     assert '<h2>Data availability</h2>' not in html
     assert 'Latest pass@1 by dataset' not in html
     assert 'Latest failure stages by dataset' not in html
@@ -508,9 +519,32 @@ if (namesForFilter('all').length !== datasets.length) process.exit(39);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
 const assert = require('node:assert/strict');
-assert.deepEqual(DATA.capabilities, ['Memory', 'Tool use', 'Other']);
+assert(!overviewHTML.includes('Config changed') && !overviewHTML.includes('Config unverified'));
+assert(!elements.has('configuration-context'));
+assert(!elements.has('comparison-note'));
+const memoryComparison = datasets.find(s => s.suite === 'memory_v1');
+assert(comparisonExplanation(memoryComparison).includes('Test definition file changed'));
+assert(!comparisonExplanation(memoryComparison).includes('Branch:'));
+const repeated = structuredClone(memoryComparison);
+repeated.changed_fields = ['metrics_k', 'workload_sha256'];
+Object.assign(repeated.previous, {workload_task_ids: '["a","b"]', tasks: 2, metrics_k: 1, total_attempts: 2});
+Object.assign(repeated.latest, {workload_task_ids: ['b','a'], tasks: 2, metrics_k: 3, total_attempts: 6});
+assert.equal(comparisonExplanation(repeated), 'Attempts per task: 1 → 3.');
+repeated.latest.workload_task_ids = ['a','c'];
+assert(comparisonExplanation(repeated).includes('Task selection or attempt coverage changed'));
+repeated.latest.workload_task_ids = ['a','b'];
+repeated.latest.total_attempts = 5;
+assert(comparisonExplanation(repeated).includes('attempt coverage changed'));
+repeated.latest.workload_task_ids = null;
+assert(comparisonExplanation(repeated).includes('attempt coverage changed'));
+const branchOnly = {...memoryComparison, changed_fields: ['git_branch']};
+assert.equal(comparisonExplanation(branchOnly), 'No evaluation setting changes recorded.');
+assert.deepEqual(DATA.capabilities, ['Memory', 'Shell utilities', 'Diagnostics', 'Other']);
+assert(!overviewHTML.includes('skill_discovery_v1'));
+assert(el('diagnostic-results').innerHTML.includes('Skill read: 25.0%'));
+assert(datasets.find(s => s.suite === 'skill_discovery_v1').latest.environment_label === 'External device');
 assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
-assert.deepEqual(namesForFilter('Tool use'), ['shell_utility_v1']);
+assert.deepEqual(namesForFilter('Shell utilities'), ['shell_utility_v1']);
 assert(namesForFilter('Other').includes('other'));
 assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);
 const rows = datasets.flatMap((s, i) => [
@@ -532,6 +566,16 @@ assert(rows.every(row => row.hidden === (datasets[Number(row.dataset.filterDatas
 assert(buttons.every(button => button['aria-pressed'] === String(button.dataset.filter === 'Memory')));
 const memoryIndex = datasets.findIndex(s => s.suite === 'memory_v1');
 openDataset(memoryIndex);
+assert(el('comparison-details').textContent.includes('Judge prompt: v2 → v3'));
+assert(!el('run-details').innerHTML.includes('memory-v2'));
+assert(!elements.has('technical-details'));
+assert(el('run-details').innerHTML.includes('Test definition'));
+assert(el('run-details').innerHTML.includes('&lt;img src=x&gt;'));
+assert(!el('run-details').innerHTML.includes('<img'));
+assert(el('run-details').innerHTML.includes('Attempts per task'));
+assert(!el('run-details').innerHTML.includes('Judge provider'));
+assert(sourceDiffLink({...memoryComparison, latest: {...memoryComparison.latest, commit_sha: 'bbbb2222'}}).includes('/compare/aaaaaaaa1111..bbbb2222'));
+assert.equal(sourceDiffLink(memoryComparison), '');
 assert.equal(activeFilter, 'Memory');
 assert.equal(el('view-trends').hidden, false);
 openFailures(memoryIndex);
@@ -541,8 +585,9 @@ assert.equal(el('failure-dataset-' + memoryIndex).open, true);
 clickFilter('trend-capabilities', 'all');
 assert.equal(selected.suite, 'memory_v1');
 assert(rows.every(row => !row.hidden));
-clickFilter('trend-capabilities', 'Tool use');
+clickFilter('trend-capabilities', 'Shell utilities');
 assert.equal(selected.suite, 'shell_utility_v1');
+assert(el('dataset-context').textContent.includes('Isolated'));
 assert.equal(el('dataset-select').value, String(datasets.indexOf(selected)));
 assert.equal((el('dataset-select').innerHTML.match(/<option /g) || []).length, 1);
 clickFilter('change-summary', 'Other');
@@ -550,5 +595,12 @@ assert.equal(selected.suite, 'other');
 assert(!el('dataset-select').innerHTML.includes('<img'));
 assert(el('dataset-select').innerHTML.includes('&lt;img'));
 assert.equal(el('suites').innerHTML, overviewHTML);
+clickFilter('change-summary', 'Diagnostics');
+assert.equal(selected.suite, 'skill_discovery_v1');
+assert(el('dataset-context').textContent.includes('not skill discovery'));
+assert(el('latest').innerHTML.includes('Skill read observation'));
+assert.equal(skillReadRate({skill_discovery:{read:0,observed:4}}),0);
+assert.equal(skillReadRate({skill_discovery:{read:2,observed:1}}),null);
+assert.equal(skillReadRate({}),null);
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

@@ -170,6 +170,7 @@ drilldown for task-level benchmark evidence.
 | `--optimizer-model` | OpenRouter model for reflection and patch generation. |
 | `--judge-model` | OpenRouter model for benchmark rubric judge. |
 | `--no-judge` | Skip LLM judge and use hard assertions only. |
+| `--sample-classifier` | `rules` (default) or `typesafe`: let a confident TypeSafe Jev answer override the rule-based sample quality. Needs `TYPESAFE_API_KEY`; the rule result is kept as `sample_quality_rule`. |
 | `--environment-url` | Environment bridge endpoint for benchmark-backed rollouts. |
 | `--agent-config` | Agent config passed to benchmark daemon workers. |
 | `--artifact-root` | Root directory for SkillOpt run artifacts. |

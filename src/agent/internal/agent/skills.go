@@ -6,7 +6,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode/utf8"
 )
 
 const (
@@ -211,7 +210,7 @@ func (m *SkillManager) CatalogSummary() string {
 			hidden++
 			continue
 		}
-		desc := truncateRunes(strings.TrimSpace(skill.Description), maxSkillCatalogDescriptionRunes)
+		desc := truncateForLog(strings.TrimSpace(skill.Description), maxSkillCatalogDescriptionRunes)
 		if desc == "" {
 			desc = "(no description)"
 		}
@@ -267,14 +266,6 @@ func currentDeviceTypeForMessage(deviceType string) string {
 		return strings.TrimSpace(deviceType)
 	}
 	return "unknown"
-}
-
-func truncateRunes(s string, max int) string {
-	if max <= 0 || utf8.RuneCountInString(s) <= max {
-		return s
-	}
-	runes := []rune(s)
-	return string(runes[:max]) + "..."
 }
 
 func (r ResolvedSkills) CombinedInstructions() string {

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"aiden-agent/internal/agent/mnk"
 )
 
 const (
@@ -86,7 +88,7 @@ func (r *PhoneBridgeRestorer) tap(ctx context.Context, status PhoneBridgeStatus)
 	default:
 	}
 	x, y := phoneBridgeDynamicIslandTapPoint()
-	absX, absY := normalizedToAbsolutePoint(x, y)
+	absX, absY := mnk.NormalizedToAbsolutePoint(x, y)
 	return tapPointer(r.pc, absX, absY, mouseButtonByte("left"))
 }
 

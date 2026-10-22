@@ -259,12 +259,6 @@ type dashScopeSession struct {
 	TurnDetection    json.RawMessage `json:"turn_detection,omitempty"`
 }
 
-type dashScopeTurnDetection struct {
-	Type              string  `json:"type"`
-	Threshold         float64 `json:"threshold,omitempty"`
-	SilenceDurationMs int     `json:"silence_duration_ms,omitempty"`
-}
-
 type dashScopeServerEvent struct {
 	EventID    string                 `json:"event_id"`
 	Type       string                 `json:"type"`

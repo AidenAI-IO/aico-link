@@ -414,6 +414,9 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup_failure.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
@@ -441,6 +444,9 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup_failure.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log

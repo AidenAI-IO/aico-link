@@ -110,43 +110,6 @@ func extractToolCallText(toolInput string) string {
 	return ""
 }
 
-// summarizeProcedureSteps 把 procedure 步骤压成一段对 LLM 友好的多行文本。
-// limit<=0 时不截断。
-func summarizeProcedureSteps(steps []ProcedureStep, limit int) string {
-	if len(steps) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for i, step := range steps {
-		if limit > 0 && i >= limit {
-			b.WriteString(fmt.Sprintf("  ... (+%d more steps)\n", len(steps)-limit))
-			break
-		}
-		b.WriteString(fmt.Sprintf("  %d. %s", i+1, step.Tool))
-		args := []string{}
-		if step.Coords != "" {
-			args = append(args, "@"+step.Coords)
-		}
-		if step.Text != "" {
-			args = append(args, fmt.Sprintf("text=%q", truncateForLog(step.Text, 32)))
-		}
-		if step.Description != "" {
-			args = append(args, "desc="+strconv.Quote(truncateForLog(step.Description, 60)))
-		}
-		if len(args) > 0 {
-			b.WriteString("(")
-			b.WriteString(strings.Join(args, ", "))
-			b.WriteString(")")
-		}
-		if step.OutcomeNote != "" {
-			b.WriteString(" → ")
-			b.WriteString(step.OutcomeNote)
-		}
-		b.WriteString("\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
-}
-
 // observedPagesByApp 收集 episode 中每个 app 出现过的所有 page_name，结果按
 // 出现顺序去重，便于写入 app_profile.PagesSeen。
 func observedPagesByApp(events []TaskEpisodeEvent) map[string][]string {

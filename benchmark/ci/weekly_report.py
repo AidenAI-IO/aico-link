@@ -66,6 +66,7 @@ CONFIG_LABELS = {
     "suite_sha256": "suite", "workload_sha256": "workload",
     "metrics_schema_version": "metrics schema", "metrics_k": "k",
     "target_platform": "platform", "active_skills": "skills", "git_branch": "branch",
+    "execution_environment": "environment",
 }
 assert sorted(CONFIG_LABELS) == sorted(COMPARISON_FIELDS)
 
@@ -90,34 +91,61 @@ def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]
             if _config_value(before, field) != _config_value(now, field)]
 
 
-# Capability measured by each suite, in report order. Groups separate abilities
-# that move independently, such as memory recall and device operation.
+# Primary test objectives, in report order. Tool calls are a mechanism shared
+# across areas, while execution environments are separate run metadata.
 CAPABILITY_SUITES = {
     "Memory": ("memory_v1", "episode_memory_v1", "notification_memory_v1",
-               "personamem_lt_recall_v1", "quick_capture_v1"),
+               "personamem_lt_recall_v1", "quick_capture_v1", "episode_memory_before_v1",
+               "episode_memory_after_v1", "episode_memory_legacy_v1"),
     "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),
-    "Tool use": ("shell_utility_v1",),
     "Visual grounding": ("perception_v1",),
-    "Device policy (scripted)": ("aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
-    "UI operation (simulator)": ("mobilegym_basic", "mobilegym_scroll_regression",
-                                 "mobilegym_scroll_sweep", "phone_control_v1"),
-    "Real device": ("adb_android_basic", "app_workflow_v1", "episode_memory_before_v1",
-                    "episode_memory_after_v1", "episode_memory_legacy_v1", "quick_action_v1",
-                    "skill_discovery_v1", "vphone_ios_basic", "aiden_app_connection_capabilities_v1"),
+    "UI operation": ("mobilegym_basic", "mobilegym_scroll_regression", "mobilegym_scroll_sweep",
+                     "phone_control_v1", "adb_android_basic", "vphone_ios_basic",
+                     "app_workflow_v1", "quick_action_v1"),
+    "Device integration": ("aiden_app_connection_capabilities_v1",
+                           "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
+    "Shell utilities": ("shell_utility_v1",),
 }
+DIAGNOSTIC_SUITES = ("skill_discovery_v1",)
+DIAGNOSTIC_AREA = "Diagnostics"
 OTHER_CAPABILITY = "Other"
 _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
+AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
+ENVIRONMENT_LABELS = {
+    "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
+    "adb": "ADB device", "external": "External device", "mixed": "Mixed",
+}
 
 
 def capability_of(suite: str) -> str:
+    if suite in DIAGNOSTIC_SUITES:
+        return DIAGNOSTIC_AREA
     return _CAPABILITY_BY_SUITE.get(suite, OTHER_CAPABILITY)
 
 
 def _by_capability(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for record in records:
+        if record["suite"] in DIAGNOSTIC_SUITES:
+            continue
         groups.setdefault(capability_of(record["suite"]), []).append(record)
     return groups
+
+
+def environment_of(record: dict[str, Any]) -> str:
+    """Use recorded execution metadata; never infer an environment from a suite name."""
+    return ENVIRONMENT_LABELS.get(record.get("execution_environment"), "Unknown")
+
+
+def skill_discovery_totals(records: list[dict[str, Any]]) -> dict[str, Any]:
+    counts = [record.get("skill_discovery") or {} for record in records]
+    complete = bool(counts) and all(
+        isinstance(c.get("observed"), (int, float)) and isinstance(c.get("read"), (int, float))
+        and 0 <= c["read"] <= c["observed"] and float(c["read"]).is_integer()
+        and float(c["observed"]).is_integer() for c in counts)
+    observed = sum(c["observed"] for c in counts) if complete else None
+    read = sum(c["read"] for c in counts) if complete else None
+    return {"observed": observed, "read": read, "rate": read / observed if observed else None}
 
 
 def describe_config_changes(changes: list[dict[str, str]]) -> str:
@@ -137,10 +165,17 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
     previous_by_suite = _by_suite(previous)
     suites = []
+    diagnostics = []
     for name, group in _by_suite(current).items():
         totals = _totals(group)
         prior = previous_by_suite.get(name, [])
         before = _totals(prior)["pass_at_1"]
+        if name in DIAGNOSTIC_SUITES:
+            observation = skill_discovery_totals(group)
+            previous_observation = skill_discovery_totals(prior)
+            diagnostics.append({"suite": name, **observation,
+                                "change": _change(observation["rate"], previous_observation["rate"])})
+            continue
         suites.append({"suite": name, **totals, "previous_pass_at_1": before,
                        "change": _change(totals["pass_at_1"], before),
                        "config_changes": _config_changes(group, prior)})
@@ -149,7 +184,7 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     previous_by_capability = _by_capability(previous)
     capabilities = []
     current_by_capability = _by_capability(current)
-    order = [*CAPABILITY_SUITES, OTHER_CAPABILITY]
+    order = AREA_ORDER
     for name in sorted(current_by_capability, key=order.index):
         group = current_by_capability[name]
         totals = _totals(group)
@@ -157,11 +192,12 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
         capabilities.append({"capability": name, **totals, "previous_pass_at_1": before,
                              "change": _change(totals["pass_at_1"], before),
                              "suites": sorted({r["suite"] for r in group})})
-    totals, previous_totals = _totals(current), _totals(previous)
+    totals = _totals([r for r in current if r["suite"] not in DIAGNOSTIC_SUITES])
+    previous_totals = _totals([r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES])
     return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
             "totals": totals, "previous_totals": previous_totals,
             "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]),
-            "capabilities": capabilities, "suites": suites}
+            "capabilities": capabilities, "suites": suites, "diagnostics": diagnostics}
 
 
 def _pct(value: float | None) -> str:
@@ -198,8 +234,8 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
         "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
         "Configuration changes list settings that differ between the two windows' latest runs.", "",
-        "### By capability", "",
-        "| Capability | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
+        "### By test area", "",
+        "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
           f"{c['run_count']} | {c['eligible_tasks']:.0f} | "
@@ -216,6 +252,12 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
                      f"{_resources(suite)[0]} |")
     if not report["suites"]:
         lines.append("| No benchmark runs in this window | | | — | — | — | — | — |")
+    if report.get("diagnostics"):
+        lines.extend(["", "### Diagnostics", "", "Skill discovery is an observation, not UI task pass@1. Excluded from test-area and overall pass rates.", ""])
+        for diagnostic in report["diagnostics"]:
+            lines.append(f"- {_cell(diagnostic['suite'])}: skill read {_pct(diagnostic['rate'])} ({_pp(diagnostic['change'])}); "
+                         + (f"{diagnostic['read']:.0f}/{diagnostic['observed']:.0f} observed attempts."
+                            if diagnostic["observed"] is not None else "observation data unavailable."))
     lines.append("")
     if warnings:
         lines.extend(["### Data availability", "", *[f"- {_cell(w)}" for w in warnings], ""])

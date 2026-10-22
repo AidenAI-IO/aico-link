@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/screen"
 	"context"
 	"encoding/json"
@@ -433,7 +434,7 @@ func TestQuickActionRestoresIOSPointerWhenCanceledMidSequence(t *testing.T) {
 	}
 }
 
-func readKeyboardReports(t *testing.T, dev *HIDDevice, path string) [][]byte {
+func readKeyboardReports(t *testing.T, dev *mnk.HIDDevice, path string) [][]byte {
 	t.Helper()
 
 	dev.Close()

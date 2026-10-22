@@ -3,7 +3,7 @@ import dataclasses as dc
 import json
 from pathlib import Path
 from runner.judge import JudgeConfig, judge_task
-from runner.suite import RubricItem
+from runner.suite import RubricItem, load_suite
 from runner.report import now_iso
 from runner.trace import extract_trace, apply_episode_tool_evidence
 
@@ -39,6 +39,9 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
     cfg = JudgeConfig(model=judge_model, base_url=judge_base_url)
     cache = run_dir / "_judge_cache"
     new_results = []
+    suite_path = run_dir / "suite.json"
+    suite = load_suite(suite_path) if suite_path.exists() else None
+    prompts = {t.id: f"{suite.prompt_prefix.rstrip()}\n\n{t.prompt}".strip() for t in suite.tasks} if suite else {}
     for line in (run_dir / "results.jsonl").read_text("utf-8").splitlines():
         row = json.loads(line)
         metrics = row.setdefault("metrics", {})
@@ -97,6 +100,7 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
         try:
             verdict = judge_task(
                 description=row.get("description_for_judge", ""),
+                task_prompt=row.get("task_prompt") or prompts.get(row["task_id"], ""),
                 rubric=rubric, pre_screenshot=pre if pre.exists() else None,
                 post_screenshot=post if post.exists() else None,
                 trace=trace, final_response=trace.get("final_response", ""),
