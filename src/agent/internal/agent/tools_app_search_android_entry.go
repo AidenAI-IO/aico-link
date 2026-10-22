@@ -109,6 +109,11 @@ func androidSearchHomeThenSwipe(ctx context.Context, cfg appSearchOpenFlowConfig
 // androidSearchEntryOrder puts the remembered entry first and keeps the rest
 // in their default order.
 func androidSearchEntryOrder(preferred string) []androidSearchEntry {
+	if preferred == "" {
+		// A drawer works on common Android launchers without opening the
+		// notification shade or relying on hardware type-to-search support.
+		preferred = androidSearchEntryAppDrawer
+	}
 	order := make([]androidSearchEntry, 0, len(androidSearchEntries))
 	for _, entry := range androidSearchEntries {
 		if entry.id == preferred {
@@ -127,11 +132,13 @@ type androidSearchCheck struct {
 	SearchOpen  bool            `json:"search_open"`
 	SearchField *focusPointArgs `json:"search_field"`
 	Reason      string          `json:"reason"`
+	AppIcon     *focusPointArgs `json:"app_icon,omitempty"`
 }
 
 type androidSearchEntryOutcome struct {
 	steps    []string
 	vlmCalls int
+	appIcon  *focusPointArgs
 }
 
 // openAndroidSystemSearch opens launcher search with the first entry the
@@ -169,6 +176,11 @@ func openAndroidSystemSearch(ctx context.Context, cfg appSearchOpenFlowConfig, e
 		if err != nil {
 			outcome.steps = append(outcome.steps, fmt.Sprintf("check search entry %s failed", entry.id))
 			return outcome, err
+		}
+		if cfg.searchTerm != "" && check.AppIcon != nil {
+			outcome.appIcon = check.AppIcon
+			outcome.steps = append(outcome.steps, "found target app icon in launcher")
+			return outcome, nil
 		}
 		if !check.SearchOpen && entry.tapField && check.SearchField != nil {
 			if err := tapSearchOpenResult(ctx, cfg.hw, *check.SearchField); err != nil {
@@ -212,7 +224,7 @@ func checkAndroidSearchOpen(ctx context.Context, cfg appSearchOpenFlowConfig, en
 	if !ok || modelVision == nil {
 		return androidSearchCheck{}, 0, fmt.Errorf("android search check vision is not configured")
 	}
-	raw, err := modelVision.visionDecisionJSON(ctx, "android_search_entry", buildAndroidSearchCheckPrompt(), []string{"search_open"}, shot)
+	raw, err := modelVision.visionDecisionJSON(ctx, "android_search_entry", buildAndroidSearchCheckPrompt(cfg.searchTerm), []string{"search_open"}, shot)
 	if err != nil {
 		return androidSearchCheck{}, 1, err
 	}
@@ -223,8 +235,8 @@ func checkAndroidSearchOpen(ctx context.Context, cfg appSearchOpenFlowConfig, en
 	return check, 1, nil
 }
 
-func buildAndroidSearchCheckPrompt() string {
-	return strings.TrimSpace(`Analyze this Android phone screenshot taken right after trying to open the launcher's app search.
+func buildAndroidSearchCheckPrompt(target string) string {
+	prompt := strings.TrimSpace(`Analyze this Android phone screenshot taken right after trying to open the launcher's app search.
 Decide whether the launcher or system app search page is showing.
 Return JSON only:
 {
@@ -239,6 +251,12 @@ Rules:
 - search_open=false for the notification shade or quick settings, the home screen (including a search widget on it), an app drawer that still shows its app grid, a web browser, or any other app.
 - search_field: when search_open=false but an app search bar is visible, such as the search bar at the top of an app drawer, give its center in normalized 0-1000 coordinates. Otherwise return null.
 - Keep reason short and concrete.`)
+	if strings.TrimSpace(target) != "" {
+		prompt += fmt.Sprintf(`
+
+Also look for the requested app %q on this same screenshot. Include "app_icon": {"x":500,"y":200} only when its own uniquely identifiable app icon is clearly visible in the launcher home screen or app drawer. Use its visible center in normalized 0-1000 coordinates. Otherwise return "app_icon": null. Do not select a search field, notification, quick setting, web/content result, or an unrelated app. A visible target icon can be opened directly without entering search.`, target)
+	}
+	return prompt
 }
 
 // androidSearchEntryStore remembers the working search entry per phone in the

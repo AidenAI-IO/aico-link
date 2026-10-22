@@ -500,6 +500,47 @@ Do not continue with another action until the corrected call succeeds.`)
 		}
 		return fmt.Errorf("%s input must be valid JSON after compatibility conversion", spec.Name)
 	}
+	if spec.Name == "touch_gesture" {
+		return validateTouchGestureFields(trimmed)
+	}
+	return nil
+}
+
+// Reject incomplete standard gestures before a tool wrapper captures its baseline.
+func validateTouchGestureFields(input string) error {
+	var args struct {
+		Type      string          `json:"type"`
+		Actions   json.RawMessage `json:"actions"`
+		Point     json.RawMessage `json:"point"`
+		Start     json.RawMessage `json:"start"`
+		End       json.RawMessage `json:"end"`
+		Direction string          `json:"direction"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return fmt.Errorf("touch_gesture requires a JSON object: %w", err)
+	}
+	present := func(value json.RawMessage) bool { return len(value) > 0 && string(value) != "null" }
+	if present(args.Actions) {
+		return nil // The adapter validates the advanced atomic program.
+	}
+	var missing string
+	switch strings.ToLower(strings.TrimSpace(args.Type)) {
+	case "":
+		missing = "type is required"
+	case "tap", "double_tap", "long_press", "drag_start", "drag_release":
+		if !present(args.Point) {
+			missing = "point is required for " + args.Type
+		}
+	case "swipe":
+		if !present(args.Start) {
+			missing = "start is required for swipe"
+		} else if !present(args.End) && strings.TrimSpace(args.Direction) == "" {
+			missing = "end or direction is required for swipe"
+		}
+	}
+	if missing != "" {
+		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":900},\"direction\":\"up\"}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
+	}
 	return nil
 }
 
