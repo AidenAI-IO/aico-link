@@ -517,10 +517,7 @@ func detectScreenshotActiveAreaForScreen(screen *screen.ScreenState, jpegData []
 }
 
 func phoneScreenHasDimensions(info screen.PhoneScreenInfo) bool {
-	if _, _, ok := currentPhoneScreenDimensions(info); ok {
-		return true
-	}
-	_, _, ok := nativePhoneScreenDimensions(info)
+	_, _, ok := entryScreenDimensions(info)
 	return ok
 }
 

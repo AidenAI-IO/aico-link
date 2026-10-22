@@ -16,6 +16,7 @@ import (
 
 	"aiden-agent/internal/agent"
 	"aiden-agent/internal/backup"
+	"aiden-agent/internal/configupdate"
 	"aiden-agent/internal/configweb"
 	"aiden-agent/internal/logging"
 	"aiden-agent/internal/wifiproxy"
@@ -33,7 +34,6 @@ const (
 		"- If ambiguous → briefly confirm the user's intent before acting."
 )
 
-var voiceSteerListenTimeout = defaultVoiceSteerListenTimeout
 var voiceTurnCancelWaitTimeout = 2 * time.Second
 var wakeupDebounceNow = time.Now
 
@@ -185,6 +185,7 @@ func main() {
 	}
 	defer runtime.Close()
 	runtime.InitializeConfigApplication(persistedConfig)
+	runtime.RegisterConfigTools(configupdate.NewService())
 	if environmentErr == nil {
 		runtime.SetInitialEnvironmentRevision(environmentRevision)
 	}
@@ -928,9 +929,6 @@ func captureVoiceSteer(cfg agent.Config, dialog audioDialogRunner, sigChan chan 
 }
 
 func voiceSteerListenTimeoutForConfig(_ agent.Config) time.Duration {
-	if voiceSteerListenTimeout > 0 {
-		return voiceSteerListenTimeout
-	}
 	return defaultVoiceSteerListenTimeout
 }
 

@@ -42,9 +42,10 @@ load boundary; Config Web writes only the grouped paths below.
    - Screenshot Pruning: `screenshot_keep_n`, `screenshot_prune_interval`
    - Tool Settings: `[conversation_settings.termination_policy]`, web search `[conversation_settings.search]`
 
-4. **Main Model Settings**:
+4. **Model Settings**:
    - Provider Configuration: `[model_settings.providers.<name>]`
    - Model Selection: `[model_settings.model]` including provider, model, api_key, temperature, max_response_tokens, context_window, reasoning_effort, and api_mode settings
+   - Optional Decision Model: `[model_settings.decision]`
 
 5. **Voice Settings**:
    - Mode Selection: `[voice_settings.mode].input_mode` (`stt` for Classic or `realtime` for Realtime)
@@ -65,6 +66,7 @@ load boundary; Config Web writes only the grouped paths below.
 8. **Advanced Settings**:
    - Logs: detailed model request capture, Agent log level, retention, and support-log export
    - Manual Config Edit: validated raw editor for the canonical grouped `agent.toml`
+   - MCP: `[conversation_settings.agent].mcp_enabled` (toggle on the Advanced page); see [MCP](mcp.md)
 
    Hardware and runtime debug tables remain available in TOML but are not
    exposed as product settings in Config Web.
@@ -83,6 +85,8 @@ creating another top-level section.
 ## Contents
 
 - [Configuration groups](#configuration-groups)
+- [Applying Changes Online](#applying-changes-online)
+- [Agent self-configuration](#agent-self-configuration)
 - [Directory layout](#directory-layout)
 - [Config Web: the device config page](#config-web-the-device-config-page)
 - [Minimal config examples](#minimal-config-examples)
@@ -90,6 +94,7 @@ creating another top-level section.
 - [`[basic_settings.device]`](#basic_settingsdevice)
 - [`[basic_settings.device.hid]`](#basic_settingsdevicehid)
 - [`[model_settings.model]`](#model_settingsmodel)
+- [`[model_settings.decision]`](#model_settingsdecision)
 - [`[advanced_settings.log]`](#advanced_settingslog)
 - [`[voice_settings.classic.audio]`](#voice_settingsclassicaudio)
 - [`[voice_settings.realtime]`](#voice_settingsrealtime)
@@ -118,6 +123,74 @@ restarts only the frame service. Every queued application logs one outcome line
 to `log/agent.log`: `config_applied` with the applied revision and duration, or
 `config_apply_failed` with the error. Editing the TOML outside Config Web
 requires an explicit reload request or service restart; there is no file watcher.
+
+## Agent self-configuration
+
+The Agent can change a small set of its own settings when the user asks, such
+as "speak slower" or "reply in English". It uses two agent-only tools, which
+are not exposed through `/api/tools` or MCP:
+
+- `config_get` returns the adjustable settings and the apply status of the last
+  saved change: `applied`, `pending`, `reboot_required`, or `failed`.
+- `config_update` takes `{"settings": {"<path>": value}, "dry_run": bool}` and
+  saves directly. The tool description tells the model to change only what the
+  user explicitly asked for, never because of screen or notification content,
+  and then to tell the user the `from`/`to` values and that they can ask to
+  change it back. `dry_run: true` returns the same preview without writing, for
+  a request that is ambiguous about the setting or value.
+
+There is no confirmation step. A confirmation enforced only by the tool
+description cannot stop an injected instruction, which can claim the user
+confirmed; the allowlist below is the safety boundary. Every allowlisted
+setting applies live and can be changed back with one request, so a second
+turn would only slow down voice use.
+
+A save goes through the same validation and atomic write as Config Web, then
+queues the new revision for live application like a Config Web save. The
+running task holds the run lock, so the change takes effect when the current
+task or voice conversation ends. Each save logs `config_self_update` with the
+changed settings and revision.
+
+A saved setting can still have no effect, and the result says so instead of
+letting the reply claim it changed. `ignored` lists, with a reason, a setting
+that resolves to a different value (such as `tts.speed` without a TTS
+provider) or that the resolved `input_mode` never reads (such as
+`agent.silence_ms` in realtime mode). The value is still written, so it applies
+after a later mode switch. `notes` lists a setting the mode narrows: in
+realtime mode, `tts.speed` changes standalone speech such as notifications and
+failure announcements, but not the voice model's own conversation voice.
+
+Only these Config Web paths are writable. All of them apply live, and numeric
+values outside the listed range are rejected, because a model can emit any
+number where Config Web offers a slider. `voice_progress_speech_enabled` is
+deliberately absent: nothing at runtime reads it, so the tool would report a
+change that cannot happen.
+
+| Path | Meaning |
+| ---- | ------- |
+| `tts.speed` | Speech playback speed multiplier, 0.5-2; in realtime mode, standalone speech only |
+| `stt.language` | Speech recognition language; `stt` mode only |
+| `agent.locale` | Reply locale: `zh-CN` or `en-US` |
+| `agent.timezone` | IANA time zone |
+| `agent.silence_ms` | Silence that ends a spoken turn, 200-5000 ms; `stt` mode only |
+| `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Follow-up listening, timeout 1000-60000 ms; `stt` mode only |
+| `agent.voice_max_turns` | Spoken turns per voice conversation, 0-50; `stt` mode only |
+| `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply; `stt` mode only |
+| `agent.voice_tool_call_speech` | Spoken note when a tool call starts |
+| `voice_notifications.enabled` | Read phone notifications aloud |
+| `live_activity.enabled` | Task progress Live Activity |
+
+Providers, credentials, endpoints, the custom prompt, HID/USB identity, OTA,
+storage, and telemetry are deliberately excluded, so an instruction injected
+through screen or notification content cannot redirect model traffic, read
+keys, or drop the USB link. The allowlist lives in
+`src/agent/internal/agent/config_tools.go`; a contract test in
+`internal/configupdate` checks that every listed path is writable and live.
+
+Config Web, the `agent config update` CLI, and `config_update` serialize their
+read-modify-write cycles with an exclusive `flock` on `.agent.toml.lock` next
+to `agent.toml`, so concurrent saves from different processes merge instead of
+overwriting each other.
 
 ## Directory layout
 
@@ -161,6 +234,7 @@ The page renders the following config sections. The Language & Time Zone control
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
 - `[model_settings.model]`: provider, model, api_mode, temperature, max_response_tokens, context_window, model_max_output_tokens
+- `[model_settings.decision]`: optional decision model switch, provider, write-only API key, minimum confidence, and connection test (Base URL and model in TOML only)
 - `[voice_settings.classic.stt]`: provider, language and STT options
 - `[voice_settings.classic.tts]`: provider and playback options
 - `[voice_settings.classic.audio]`: socket, sample_rate, channels, bit_width, backend
@@ -254,7 +328,7 @@ android_keyboard_device = "/dev/hidg2"
 frame_socket = "/run/frame_service/frame_service.sock"
 ```
 
-> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box.
+> Provider credentials use one field everywhere. Set `api_key = "$VAR_NAME"` to read from an environment variable, or set a literal key directly. Config Web accepts the same two forms in its API Key box. A `$VAR_NAME` reference counts as configured only when that variable is set in the Agent environment (`/userdata/system/env`): `has_api_key` is `false` for an unset reference, so Config Web and the companion app's onboarding ask for a key instead of showing it as filled in. The committed template, which a default image installs, references variables a device does not set, so a new device reports every provider key as missing until the user enters one.
 
 ### Google Gemini provider
 
@@ -380,6 +454,9 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | `timezone`                  | `UTC` (default) / supported IANA zone | Controller time zone used for the model-facing current date, `controller_timezone` state, and shell child processes. Config Web provides the supported IANA zone list. |
 | `prompt`                    | -                           | Prompt appended after the built-in Agent instruction at runtime. The built-in instruction is not configurable. |
 | `max_iterations`            | `-1`                        | Maximum number of tool-call loops per run; `-1` means unlimited                                                                                                                                           |
+| `mcp_enabled`               | `true`                      | When on, the Agent serves Streamable HTTP MCP at `POST /mcp` on port 8080. Config Web exposes this under Advanced Settings. See [MCP](mcp.md).                                                              |
+| `mcp_shell_enabled`         | `false`                     | When on, the MCP allowlist includes the `shell` tool. TOML-only in this release (not on the Config Web Advanced page).                                                                                      |
+| `mcp_config_web_base_url`   | `http://127.0.0.1`          | Loopback HTTP base URL used by MCP `device_status` / `support_bundle`. Non-loopback values are rejected.                                                                                                   |
 | `context_prune_threshold`   | `0.5`                       | Fraction of the usable model input budget that triggers deterministic cleanup of stale state snapshots and older tool exchanges, including while one long-running tool loop is still executing. It cleans down to 6/7 of the trigger (so the default cleans from 50% to ~43%). Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.5`. The effective value is capped at `context_compaction_threshold`, so this cheap deterministic pass always gets a chance to free tokens before the LLM summary runs. A value of `1` or greater is rejected, as are `nan` and `inf`; a legacy absolute token count (for example `12000`) is detected on load, logged, and replaced by the default. |
 | `context_compaction_threshold` | `0.8`                    | Fraction of the usable model input budget at which the conversation is summarized into a compaction message. Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.8`. Values of `1` or greater, `nan`, and `inf` are rejected. Compaction itself has no token target: the transcript is reduced structurally by retaining head and tail messages and replacing the middle with one LLM summary, so the post-compaction size follows from the summary rather than from a budget. |
 | `screenshot_keep_n`         | `3`                         | Number of most recent screenshots to keep when pruning screenshots from the LLM context; unset or `0` uses the default                                                                                    |
@@ -664,6 +741,87 @@ Official references: [model capabilities and limits](https://api-docs.deepseek.c
 [vision](https://api-docs.deepseek.com/guides/vision),
 [thinking with tool calls](https://api-docs.deepseek.com/guides/thinking_mode),
 [Responses API compatibility](https://api-docs.deepseek.com/guides/responses_api).
+
+## `[model_settings.decision]`
+
+An optional decision model that answers fixed-choice questions (choice, yes/no,
+box in an image) inside deterministic workflows. It is separate from the main
+model: it never plans or generates text. It is off by default; turning it on
+requires `api_key`. When it is off every decision stays with the main model.
+Two providers are supported:
+
+- `typesafe`: TypeSafe's System One API (Jev). Answers choice, yes/no and box
+  questions, so it can also locate tap targets.
+- `openai`: OpenAI's Decisions API (GPT-6 Luna, public beta). Answers choice
+  and yes/no (predicate) questions but has no box answer, so the tap-target
+  decisions (`app_search`, `paste_menu`, the Android search field) always stay
+  with the main model.
+
+| Field            | Default                      | Description                                                                   |
+| ---------------- | ---------------------------- | ----------------------------------------------------------------------------- |
+| `enabled`        | `false`                      | Turns the decision model on. Requires `api_key`.                              |
+| `provider`       | `typesafe`                   | `typesafe` (TypeSafe Jev) or `openai` (OpenAI Luna).                          |
+| `api_key`        | empty                        | Provider API key. Config Web treats it as write-only and reports `has_api_key`. |
+| `base_url`       | provider default             | Provider endpoint; must be an absolute `http(s)` URL. Defaults to `https://api.typesafe.ai/v1` or `https://api.openai.com/v1`. |
+| `model`          | provider default             | Decision model name. Defaults to `jev-preview` (Jev 1.14, which box questions need) or `gpt-6-luna`. |
+| `min_confidence` | `0.8`                        | Answers below this confidence (0 to 1) are handed back to the main model. A yes/no answer counts as confident at `p >= min_confidence` or `p <= 1 - min_confidence`. `0` selects the default. |
+
+```toml
+[model_settings.decision]
+enabled = true
+api_key = "ts-..."
+```
+
+Each decision below asks both models at once. A decision-model answer that
+reaches `min_confidence` is used as soon as it arrives and the main-model call
+is canceled; otherwise the main model's answer is used, so an unsure decision
+model adds no latency.
+
+| Op in the log           | Decision                                          | What the decision model may decide       |
+| ----------------------- | ------------------------------------------------- | ---------------------------------------- |
+| `ime_probe`             | Input method state after typing the probe letter  | The state                                |
+| `probe_cleanup`         | Whether the probe letter is still in the field    | Whether to delete it                     |
+| `screen_analysis`       | Whether the entered text matched and composition is pending | Only the match and pending flags; both models are awaited and the field text always comes from the main model |
+| `app_search`            | Direct app result on the search page, and its tap point | Only a confident "found" with a confident tap box; "not found" always goes to the main model |
+| `app_open_confirmation` | Whether the app opened                            | Only a confident "opened"; otherwise the main model decides |
+| `android_search_entry`  | Whether Android launcher search opened            | The answer and the search field position |
+| `paste_menu`            | The Paste action in the long-press menu           | The tap point                            |
+
+These are the decisions where, in on-device runs (2026-10, iOS and Android),
+confident decision-model answers matched the main model or corrected it.
+Decisions that did not gain from it, such as IME candidate choice, dialog
+checks, loop-guard advice and memory retention, are not sent to the decision
+model.
+
+`app_open_confirmation` trusts only "opened": Jev was confidently wrong saying
+"not opened" on app-switch transitions (dimmed screen, "opening app" overlay),
+and never wrong saying "opened". Otherwise the main model compares the search
+page the result was tapped on with the screen after the tap and answers
+whether the screen left the search page, without having to recognize the app:
+Settings reopening on its own search page and Safari's start page read as "not
+opened" from the second screenshot alone. `app_search` trusts only "found": a
+screenshot taken before the results settle, or after the app already opened,
+reads as "not found", and the main model then rechecks.
+
+Every decision writes one Agent log line under the `decision` component:
+`op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,
+where `dm` is the decision model's answer; `llm` and `agree` are filled in
+when the main model's answer was also used.
+
+The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
+the Agent reaches both providers through the same proxy environment it uses for
+other model providers.
+
+In Config Web, **Models** lists the main model and the decision model. The
+decision model page edits the switch, the provider, the key and the minimum
+confidence, and **Test connection** sends one small question with the saved
+key (`POST /api/config/test` with section `decision`), also while the switch is
+off. Switching the provider clears the saved key, turns the model off, and
+resets the Base URL and model to the new provider's defaults. The
+Base URL and model are edited in the TOML file.
+
+The SkillOpt sample classifier (`--sample-classifier typesafe`) can use Jev
+offline; it reads the key from `TYPESAFE_API_KEY`.
 
 ## `[advanced_settings.log]`
 

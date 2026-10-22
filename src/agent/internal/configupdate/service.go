@@ -123,6 +123,19 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 	if err != nil {
 		return Result{}, internalConfigUpdate(err)
 	}
+	if commit {
+		// Re-read under the lock so a concurrent writer's save is the base
+		// this patch merges onto, rather than one this rename would discard.
+		unlock, err := lockConfigUpdates(resolvedPath)
+		if err != nil {
+			return Result{}, internalConfigUpdate(err)
+		}
+		defer unlock()
+		resolvedPath, original, fileMode, err = prepareConfigUpdateFile(path)
+		if err != nil {
+			return Result{}, internalConfigUpdate(err)
+		}
+	}
 	current, err := agent.LoadResolvedConfig(resolvedPath)
 	if err != nil {
 		// A persisted config can be invalid before this update (for example,
@@ -1226,6 +1239,8 @@ func tomlPathForWebPath(path []string) []string {
 		}
 	case "model_providers":
 		prefix = []string{"model_settings", "providers"}
+	case "decision":
+		prefix = []string{"model_settings", "decision"}
 	case "voice_model":
 		prefix = []string{"voice_settings", "realtime"}
 	case "voice_model_providers":

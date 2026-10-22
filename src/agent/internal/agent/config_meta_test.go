@@ -115,7 +115,7 @@ func TestConfigMeta_Valid(t *testing.T) {
 		t.Errorf("expected device section first, got %q", ConfigMeta().Sections[0].Name)
 	}
 
-	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "telemetry", "live_activity", "agent"} {
+	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "decision", "telemetry", "live_activity", "agent"} {
 		if !seenSections[name] {
 			t.Errorf("expected section %q to be present", name)
 		}
@@ -517,6 +517,7 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_max_turns", defaults.VoiceMaxTurns},
 		{"agent.voice_interrupt_on_wakeup", defaults.VoiceInterruptOnWakeupOrDefault()},
 		{"agent.tap_wakeup_enabled", defaults.TapWakeupEnabledOrDefault()},
+		{"agent.mcp_enabled", defaults.MCPEnabledOrDefault()},
 		{"agent.voice_streaming_tts_enabled", defaults.VoiceStreamingTTSEnabledOrDefault()},
 		{"agent.voice_tool_call_speech", defaults.VoiceToolCallSpeechOrDefault()},
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},
@@ -1135,6 +1136,7 @@ func TestConfigMeta_CoversConfigFields(t *testing.T) {
 		{"device", reflect.TypeOf(DeviceConfig{}), map[string]bool{"backend": true}},
 		{"hid", reflect.TypeOf(HIDConfig{}), map[string]bool{"pointer_mode": true}},
 		{"search", reflect.TypeOf(SearchConfig{}), nil},
+		{"decision", reflect.TypeOf(DecisionModelConfig{}), nil},
 		{"log", reflect.TypeOf(LogConfig{}), nil},
 		{"telemetry", reflect.TypeOf(TelemetryConfig{}), nil},
 		{"live_activity", reflect.TypeOf(LiveActivityConfig{}), nil},
@@ -1203,6 +1205,8 @@ func TestConfigMeta_CoversConfigFields(t *testing.T) {
 		"model": true, "tts": true, "stt": true, "device": true, "hid": true,
 		"audio": true, "search": true, "log": true, "telemetry": true, "termination_policy": true, "live_activity": true,
 		"skills_dirs": true, "bundled_skills_dir": true,
+		// TOML-only MCP knobs; not in configupdate.Agent / Config Web this release.
+		"mcp_shell_enabled": true, "mcp_config_web_base_url": true,
 	}
 	cfgType := reflect.TypeOf(Config{})
 	for name, f := range tomlKeys(cfgType) {

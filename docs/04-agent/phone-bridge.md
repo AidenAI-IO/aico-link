@@ -110,6 +110,13 @@ tap, and app-open confirmation then continue as before. If PiP is unavailable
 or its clipboard/paste command fails, query entry uses the existing local
 HID/IME path; a failed clipboard attempt clears the field before typing.
 
+After a system-search launch is confirmed, the Agent checks the opened app for
+a dialog. A paste-permission prompt ("Allow Paste") or an ad's close button is
+tapped automatically; any other dialog (system permission, login, privacy
+consent, update prompt) is left open and reported in the `open_app` result as
+`popup` with its kind and a short summary, so the Agent decides from the task.
+The same check runs when a paste leaves the field empty.
+
 On iOS, the relay app is not a background-resident system agent. It's more like a foreground fast-path executor; Dynamic Island can be used as the automatic entry point back to the Aiden App, while lock-screen Live Activity cards need visual confirmation:
 
 ```text

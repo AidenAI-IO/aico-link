@@ -97,14 +97,6 @@ func containsHanRunes(text string) bool {
 	return false
 }
 
-func compositionSegmentsForText(text string, segments []string) ([]string, error) {
-	segs := normalizeCompositionSegments(segments)
-	if len(segs) == 0 {
-		return nil, fmt.Errorf("composition input requires segments (IME romanization syllables); none provided for %q", text)
-	}
-	return segs, nil
-}
-
 // textInputCompositionPlanner derives the ASCII keystrokes required by the
 // active IME for a non-ASCII target. It is intentionally internal to the text
 // entry workflow so the main agent never has to construct pinyin/IME segments.

@@ -14,7 +14,7 @@ import {
   searchProviderPage,
   websearchPage,
 } from './pages/conversation.js';
-import {modelPage, modelsPage, providerEditPage, providersPage} from './pages/model.js';
+import {decisionPage, mainModelPage, modelPage, modelsPage, providerEditPage, providersPage} from './pages/model.js';
 import {voiceExtraPage, voiceModelPage, voicePage, voiceProviderEditPage, voiceProvidersPage} from './pages/voice.js';
 import {memoryPage} from './pages/memory.js';
 import {storagePage} from './pages/storage.js';
@@ -33,6 +33,8 @@ export const routes = [
   {path: '/conversation/tools', name: 'conversation-websearch', page: websearchPage},
   {path: '/conversation/tools/provider', name: 'conversation-search-provider', page: searchProviderPage},
   {path: '/model', name: 'model', page: modelPage},
+  {path: '/model/main', name: 'model-main', page: mainModelPage},
+  {path: '/model/decision', name: 'model-decision', page: decisionPage},
   {path: '/model/providers', name: 'model-providers', page: providersPage},
   {path: '/model/providers/edit', name: 'model-provider-edit', page: providerEditPage},
   {path: '/model/models', name: 'model-models', page: modelsPage},

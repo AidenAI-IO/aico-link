@@ -76,16 +76,24 @@ type textInputProbeCleanupVision interface {
 
 type llmTextInputVision struct {
 	models model.Model
+	// decider optionally routes fixed-choice decisions to the decision model;
+	// nil keeps every decision on the main model.
+	decider *decisionAdvisor
 }
 
-func newLLMTextInputVision(models model.Model) textInputVision {
+func newDecidingTextInputVision(models model.Model, decider *decisionAdvisor) textInputVision {
 	if models == nil {
 		return nil
 	}
-	return &llmTextInputVision{models: models}
+	return &llmTextInputVision{models: models, decider: decider}
 }
 
 func (v *llmTextInputVision) AnalyzeScreen(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
+	analysis, _, err := decide(ctx, v.decider, v.screenAnalysisDecision(screenshot, req))
+	return analysis, err
+}
+
+func (v *llmTextInputVision) analyzeScreenLLM(ctx context.Context, screenshot screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
 	prompt := buildTextInputAnalysisPrompt(req)
 	raw, err := v.visionDecisionJSON(ctx, "screen_analysis", prompt, []string{"observed_mode", "target_matched", "composition_pending"}, screenshot)
 	if err != nil {
@@ -140,6 +148,11 @@ func (v *llmTextInputVision) DecideCandidateAction(ctx context.Context, screensh
 }
 
 func (v *llmTextInputVision) ProbeInputMode(ctx context.Context, screenshot screenshotResult, platform string, focus focusPointArgs) (textInputProbeAnalysis, error) {
+	analysis, _, err := decide(ctx, v.decider, v.probeDecision(screenshot, platform, focus))
+	return analysis, err
+}
+
+func (v *llmTextInputVision) probeInputModeLLM(ctx context.Context, screenshot screenshotResult, platform string, focus focusPointArgs) (textInputProbeAnalysis, error) {
 	prompt := buildTextInputProbePrompt(platform, focus)
 	raw, err := v.visionJSON(ctx, "ime_probe", prompt, screenshot)
 	if err != nil {
@@ -204,6 +217,11 @@ Classification rules:
 }
 
 func (v *llmTextInputVision) VerifyProbeCleanup(ctx context.Context, before, after screenshotResult, platform string, focus focusPointArgs) (bool, error) {
+	remove, _, err := decide(ctx, v.decider, v.probeCleanupDecision(before, after, platform, focus))
+	return remove, err
+}
+
+func (v *llmTextInputVision) verifyProbeCleanupLLM(ctx context.Context, before, after screenshotResult, platform string, focus focusPointArgs) (bool, error) {
 	prompt := buildTextInputProbeCleanupPrompt(platform, focus)
 	raw, err := v.visionJSONWithScreenshots(ctx, "probe_cleanup", prompt, before, after)
 	if err != nil {

@@ -21,7 +21,6 @@ package agent
 //
 // 2. Array parameters:
 //    stringArrayArgSchema("Keys to press", []string{"ctrl", "c"})
-//    integerArrayArgSchema("Indices", []int{0, 1, 2})
 //
 //    Why: LLMs may pass comma-separated strings like "ctrl,c" instead of proper arrays.
 //         Examples clarify the array structure.
@@ -146,20 +145,6 @@ func stringArrayArgSchema(description string, examples ...[]string) map[string]a
 	schema := map[string]any{
 		"type":  "array",
 		"items": map[string]any{"type": "string"},
-	}
-	if description != "" {
-		schema["description"] = description
-	}
-	if len(examples) > 0 {
-		schema["examples"] = examples
-	}
-	return schema
-}
-
-func integerArrayArgSchema(description string, examples ...[]int) map[string]any {
-	schema := map[string]any{
-		"type":  "array",
-		"items": map[string]any{"type": "integer"},
 	}
 	if description != "" {
 		schema["description"] = description
