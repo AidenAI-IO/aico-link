@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -14,6 +13,7 @@ import (
 
 	"aiden-agent/internal/logging"
 	"aiden-agent/internal/mcp"
+	"aiden-agent/internal/netproxy"
 
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -275,12 +275,8 @@ func validateMCPConfigWebBaseURL(raw string) error {
 	if parsed.Scheme != "http" {
 		return fmt.Errorf("mcp_config_web_base_url: only http loopback is allowed")
 	}
-	host := parsed.Hostname()
-	if host != "127.0.0.1" && !strings.EqualFold(host, "localhost") {
-		ip := net.ParseIP(host)
-		if ip == nil || !ip.IsLoopback() {
-			return fmt.Errorf("mcp_config_web_base_url: host must be loopback")
-		}
+	if !netproxy.IsLoopbackHost(parsed.Hostname()) {
+		return fmt.Errorf("mcp_config_web_base_url: host must be loopback")
 	}
 	if parsed.User != nil || parsed.Opaque != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("mcp_config_web_base_url: invalid URL")

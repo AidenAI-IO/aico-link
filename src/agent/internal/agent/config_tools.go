@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -334,13 +334,8 @@ func selfConfigSavedNote(state string, apply ApplyLevel) string {
 // selfConfigPatch validates allowlisted settings and nests them into a
 // Config Web merge patch.
 func selfConfigPatch(settings map[string]json.RawMessage) (json.RawMessage, error) {
-	paths := make([]string, 0, len(settings))
-	for path := range settings {
-		paths = append(paths, path)
-	}
-	sort.Strings(paths)
 	root := map[string]any{}
-	for _, path := range paths {
+	for _, path := range slices.Sorted(maps.Keys(settings)) {
 		setting, ok := lookupSelfConfigSetting(path)
 		if !ok {
 			return nil, fmt.Errorf("setting %q cannot be changed by the agent; allowed: %s", path, strings.Join(SelfConfigSettingPaths(), ", "))

@@ -155,8 +155,7 @@ func validateListenAddress(address string) error {
 	if err != nil || port < 1 || port > 65535 {
 		return fmt.Errorf("invalid Wi-Fi proxy listen port %q", portText)
 	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+	if !netproxy.IsLoopbackHost(host) {
 		return errors.New("Wi-Fi proxy must listen on a loopback address")
 	}
 	return nil

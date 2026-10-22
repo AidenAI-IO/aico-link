@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -160,9 +161,7 @@ func askOne(ctx context.Context, client *decision.Client, shot screenshotResult,
 		return decision.Response{}, err
 	}
 	state := map[string]any{"screen": img.Ref}
-	for key, value := range extra {
-		state[key] = value
-	}
+	maps.Copy(state, extra)
 	return client.Ask(ctx, decision.Request{
 		State:     state,
 		Assets:    map[string]decision.Asset{img.Ref: img.Asset},
@@ -180,8 +179,7 @@ func pointsAgree(jev, llm *focusPointArgs) bool {
 	if llm == nil {
 		return false
 	}
-	a, b := jev, llm
-	dx, dy := a.X-b.X, a.Y-b.Y
+	dx, dy := jev.X-llm.X, jev.Y-llm.Y
 	return dx*dx+dy*dy <= 60*60
 }
 
@@ -201,17 +199,20 @@ func boxPoint(answer decision.Answer) *focusPointArgs {
 	return &focusPointArgs{X: x, Y: y}
 }
 
+// jevResult is the decision model's answer as decideRace and decideMerge
+// receive it, with its latency since both models were asked.
+type jevResult[T any] struct {
+	outcome decisionOutcome[T]
+	err     error
+	ms      int64
+}
+
 // decideRace asks the decision model and the main model at the same time. A
 // confident decision-model answer is used as soon as it arrives and the main
 // model call is canceled; otherwise the main model's answer is used. An
 // unconfident answer therefore never adds latency over the main model alone.
 func decideRace[T any](ctx context.Context, p decisionPoint[T], cfg DecisionModelConfig, client *decision.Client) (T, bool, error) {
 	minConfidence := cfg.MinConfidenceOrDefault()
-	type jevResult struct {
-		outcome decisionOutcome[T]
-		err     error
-		ms      int64
-	}
 	type llmResult struct {
 		value T
 		err   error
@@ -220,18 +221,18 @@ func decideRace[T any](ctx context.Context, p decisionPoint[T], cfg DecisionMode
 	provider := cfg.ProviderOrDefault()
 	llmCtx, cancelLLM := context.WithCancel(ctx)
 	started := time.Now()
-	jevDone := make(chan jevResult, 1)
+	jevDone := make(chan jevResult[T], 1)
 	llmDone := make(chan llmResult, 1)
 	go func() {
 		outcome, err := p.ask(ctx, client, minConfidence)
-		jevDone <- jevResult{outcome: outcome, err: err, ms: time.Since(started).Milliseconds()}
+		jevDone <- jevResult[T]{outcome: outcome, err: err, ms: time.Since(started).Milliseconds()}
 	}()
 	go func() {
 		value, err := p.llm(llmCtx)
 		llmDone <- llmResult{value: value, err: err, ms: time.Since(started).Milliseconds()}
 	}()
 
-	var jev *jevResult
+	var jev *jevResult[T]
 	select {
 	case got := <-jevDone:
 		jev = &got
@@ -283,18 +284,13 @@ const decisionMergeGrace = 2 * time.Second
 // answer is used, with a confident decision-model answer merged into it.
 func decideMerge[T any](ctx context.Context, p decisionPoint[T], cfg DecisionModelConfig, client *decision.Client) (T, bool, error) {
 	minConfidence := cfg.MinConfidenceOrDefault()
-	type jevResult struct {
-		outcome decisionOutcome[T]
-		err     error
-		ms      int64
-	}
 	started := time.Now()
 	askCtx, cancelAsk := context.WithCancel(ctx)
 	defer cancelAsk()
-	jevDone := make(chan jevResult, 1)
+	jevDone := make(chan jevResult[T], 1)
 	go func() {
 		outcome, err := p.ask(askCtx, client, minConfidence)
-		jevDone <- jevResult{outcome: outcome, err: err, ms: time.Since(started).Milliseconds()}
+		jevDone <- jevResult[T]{outcome: outcome, err: err, ms: time.Since(started).Milliseconds()}
 	}()
 	value, err := p.llm(ctx)
 	llmMS := time.Since(started).Milliseconds()
@@ -305,7 +301,7 @@ func decideMerge[T any](ctx context.Context, p decisionPoint[T], cfg DecisionMod
 	// answer but not hold it up for long.
 	grace := time.NewTimer(decisionMergeGrace)
 	defer grace.Stop()
-	var jev jevResult
+	var jev jevResult[T]
 	select {
 	case jev = <-jevDone:
 	case <-ctx.Done():

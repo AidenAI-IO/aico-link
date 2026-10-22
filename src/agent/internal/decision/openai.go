@@ -3,7 +3,8 @@ package decision
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 )
 
 // OpenAI Decisions API wire types (POST /v1/decisions).
@@ -62,12 +63,7 @@ func encodeOpenAI(req Request) ([]byte, error) {
 	var parts []openAIInput
 	text := map[string]any{}
 	if state, ok := req.State.(map[string]any); ok {
-		keys := make([]string, 0, len(state))
-		for key := range state {
-			keys = append(keys, key)
-		}
-		sort.Strings(keys)
-		for _, key := range keys {
+		for _, key := range slices.Sorted(maps.Keys(state)) {
 			if ref, isString := state[key].(string); isString {
 				if asset, isAsset := req.Assets[ref]; isAsset {
 					parts = append(parts,
@@ -89,11 +85,7 @@ func encodeOpenAI(req Request) ([]byte, error) {
 		parts = append([]openAIInput{{Type: "input_text", Text: string(encoded)}}, parts...)
 	}
 
-	ids := make([]string, 0, len(req.Questions))
-	for id := range req.Questions {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
+	ids := slices.Sorted(maps.Keys(req.Questions))
 	questions := make([]openAIQuestion, 0, len(ids))
 	for _, id := range ids {
 		q := req.Questions[id]
@@ -109,11 +101,7 @@ func encodeOpenAI(req Request) ([]byte, error) {
 			if !ok {
 				return nil, fmt.Errorf("choice %q needs a criteria map", id)
 			}
-			values := make([]string, 0, len(criteria))
-			for value := range criteria {
-				values = append(values, value)
-			}
-			sort.Strings(values)
+			values := slices.Sorted(maps.Keys(criteria))
 			choices := make([]openAIChoice, 0, len(values))
 			for _, value := range values {
 				description, _ := criteria[value].(string)
