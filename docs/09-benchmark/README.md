@@ -458,6 +458,7 @@ below.
 - Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
   `BENCHMARK_AGENT_BASE_URL`, `BENCHMARK_JUDGE_MODEL`,
   `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `ANDROID_SERIAL`,
+  `BENCHMARK_ANDROID_SDK_DIR`,
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
   `BENCHMARK_IOS_ENVIRONMENT_URL`, `BENCHMARK_MAC_ENVIRONMENT_URL`,
   `BENCHMARK_VPHONE_ENVIRONMENT_URL`,
@@ -471,6 +472,15 @@ Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 `repeats` input overrides that variable for one run; leave it blank to use the
 repository setting. If neither is set, the workflow uses `1`. The report derives
 `metrics_k` from the planned task repeats; no separate metrics variable is needed.
+
+ADB cases need a booted Android device or emulator reachable from the runner
+host. Set `ANDROID_SERIAL` to its adb serial, for example `emulator-5554`. When
+`adb` is not already on the runner's `PATH`, the workflow uses
+`<sdk>/platform-tools/adb`, where `<sdk>` is the optional
+`BENCHMARK_ANDROID_SDK_DIR` variable and defaults to `~/android-sdk`. Before any
+ADB case starts, the workflow waits up to ten minutes for the device and
+`sys.boot_completed`; a device that never finishes booting fails the job
+early.
 
 The benchmark job uses the `aiden-hosted-02` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,

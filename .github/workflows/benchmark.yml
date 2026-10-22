@@ -263,6 +263,36 @@ jobs:
           docker version
           docker compose version
           docker info
+      - name: Validate Android device
+        # The ADB bridge runs on the host and shells out to adb, so the runner needs
+        # platform-tools on PATH and a booted device before any adb case starts.
+        if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
+        env:
+          ANDROID_SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
+        run: |
+          set -euo pipefail
+          sdk_dir="${ANDROID_SDK_DIR/#\~/$HOME}"
+          if [[ -z "${ANDROID_SERIAL:-}" ]]; then
+            echo "ADB cases require the ANDROID_SERIAL repository variable" >&2
+            exit 1
+          fi
+          if ! command -v adb >/dev/null 2>&1; then
+            [[ -x "$sdk_dir/platform-tools/adb" ]] || { echo "adb not found under $sdk_dir/platform-tools" >&2; exit 1; }
+            export PATH="$sdk_dir/platform-tools:$PATH"
+            echo "$sdk_dir/platform-tools" >> "$GITHUB_PATH"
+          fi
+          adb start-server
+          timeout 300 adb -s "$ANDROID_SERIAL" wait-for-device
+          for _ in $(seq 1 100); do
+            if [[ "$(adb -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == "1" ]]; then
+              echo "$ANDROID_SERIAL is booted (Android $(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.release | tr -d '\r'))"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "$ANDROID_SERIAL did not finish booting" >&2
+          adb devices >&2
+          exit 1
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-
