@@ -103,13 +103,6 @@ const (
 
 const defaultMemoryDeviceID = "default"
 
-type memorySearchQuery struct {
-	Terms    []string
-	Tags     []string
-	Entities []string
-	Limit    int
-}
-
 type FilesystemMemoryPlaneOption func(*FilesystemMemoryPlane)
 
 // WithMemoryPlaneLongTermStore shares an existing long-term memory store with

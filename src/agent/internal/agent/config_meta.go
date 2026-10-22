@@ -220,9 +220,6 @@ func providerTypeIs(field, value string) Condition {
 func in(field string, vs ...string) Condition {
 	return Condition{Field: field, Op: "in", Values: vs}
 }
-func notIn(field string, vs ...string) Condition {
-	return Condition{Field: field, Op: "notIn", Values: vs}
-}
 
 func all(conds ...Condition) *VisibleRule { return &VisibleRule{All: conds} }
 

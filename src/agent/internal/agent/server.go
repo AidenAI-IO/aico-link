@@ -67,7 +67,6 @@ type Server struct {
 	userFilesSkillStateDir  string
 	userFilesGenerateMu     sync.Mutex
 	userFilesGeneration     *userFilesReportGeneration
-	mu                      sync.Mutex
 	episodeStore            *TaskEpisodeStore
 	sttClient               STTClient
 	ttsManager              *tts.ProviderManager // Borrowed from Runtime.
@@ -3989,8 +3988,6 @@ func (s *Server) handleKeyboardTapAndroidKeys(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(keyboardTapAndroidKeysGuideHTML))
 }
-
-const coordinateDebugNavLink = `<a href="/coordinate-debug" class="new-chat-btn" style="text-decoration:none;display:inline-flex;align-items:center;">🎯 Coordinate Debug</a>`
 
 const keyboardTapAndroidKeysGuideHTML = `<!DOCTYPE html>
 <html lang="en">
