@@ -85,17 +85,11 @@ func (b mcpServerBackend) CallRuntimeTool(ctx context.Context, name string, argu
 	// Recheck under the lock: tools/call may have passed ShellEnabled() before a
 	// reload disabled mcp_shell_enabled.
 	if name == "shell" && !b.server.runtime.ConfigSnapshot().MCPShellEnabledOrDefault() {
-		return mcp.CallResult{
-			IsError: true,
-			Content: []mcp.ContentBlock{{Type: "text", Text: "shell is disabled (mcp_shell_enabled=false)"}},
-		}, nil
+		return mcp.ErrorResult("shell is disabled (mcp_shell_enabled=false)"), nil
 	}
 	spec, ok := b.server.lookupOwnedToolSpec(name)
 	if !ok {
-		return mcp.CallResult{
-			IsError: true,
-			Content: []mcp.ContentBlock{{Type: "text", Text: "unknown tool: " + name}},
-		}, nil
+		return mcp.ErrorResult("unknown tool: " + name), nil
 	}
 	rawInput := "{}"
 	if len(arguments) > 0 && string(arguments) != "null" {
@@ -141,14 +135,14 @@ func mcpContentFromToolOutput(output string) []mcp.ContentBlock {
 	data, _ := obj["data"].(string)
 	format, _ := obj["format"].(string)
 	data = strings.TrimSpace(data)
-	format = strings.ToLower(strings.TrimSpace(format))
-	if data == "" || format == "" {
+	if data == "" || strings.TrimSpace(format) == "" {
 		return []mcp.ContentBlock{{Type: "text", Text: output}}
 	}
-	mime, ok := mcpImageMIME(format)
+	format, ok := normalizeScreenshotFormat(format)
 	if !ok {
 		return []mcp.ContentBlock{{Type: "text", Text: output}}
 	}
+	mime := "image/" + format
 	delete(obj, "data")
 	meta, err := json.Marshal(obj)
 	if err != nil {
@@ -157,21 +151,6 @@ func mcpContentFromToolOutput(output string) []mcp.ContentBlock {
 	return []mcp.ContentBlock{
 		{Type: "image", MIMEType: mime, Data: data},
 		{Type: "text", Text: string(meta)},
-	}
-}
-
-func mcpImageMIME(format string) (string, bool) {
-	switch format {
-	case "jpeg", "jpg":
-		return "image/jpeg", true
-	case "png":
-		return "image/png", true
-	case "webp":
-		return "image/webp", true
-	case "gif":
-		return "image/gif", true
-	default:
-		return "", false
 	}
 }
 
