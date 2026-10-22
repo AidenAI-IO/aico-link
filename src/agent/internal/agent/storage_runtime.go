@@ -118,6 +118,10 @@ func runtimeStorageMonitorParts(cfg Config) (StorageMonitorConfig, []StorageClea
 		priority++
 		cleaners = append(cleaners, withMinimumStorageLevel(temporaryCleaner, StorageLevelNormal))
 
+		episodeCleaner := NewEpisodeRetentionCleaner(filepath.Join(cfg.ConfigDir, "memory"), priority)
+		priority++
+		cleaners = append(cleaners, withMinimumStorageLevel(episodeCleaner, StorageLevelNormal))
+
 		for index, retentionDays := range regularNotifications {
 			cleaner := NewNotificationContextCleaner(filepath.Join(cfg.ConfigDir, "memory"), retentionDays, priority)
 			priority++

@@ -17,7 +17,6 @@ import (
 )
 
 type TaskEpisodeStore struct {
-	mu         sync.Mutex
 	rootDir    string
 	cacheMu    sync.Mutex
 	indexCache taskEpisodeIndexCache
@@ -157,6 +156,19 @@ func EpisodeRecorderFromContext(ctx context.Context) *EpisodeRecorder {
 		return recorder
 	}
 	return nil
+}
+
+// taskEpisodeStoreLocks serializes writers per episodes directory. Several
+// stores open the same directory (the runtime's, lifecycle verification, the
+// storage cleaner), so a per-instance mutex would not protect the index.
+var taskEpisodeStoreLocks sync.Map
+
+// lock takes the directory's write lock and returns the unlock function.
+func (s *TaskEpisodeStore) lock() func() {
+	value, _ := taskEpisodeStoreLocks.LoadOrStore(filepath.Clean(s.rootDir), &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func NewTaskEpisodeStore(rootDir string) *TaskEpisodeStore {
@@ -477,8 +489,7 @@ func (s *TaskEpisodeStore) AddEpisode(ctx context.Context, episode TaskEpisode) 
 	if s == nil || s.rootDir == "" {
 		return "", nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	now := time.Now().UTC()
 	if strings.TrimSpace(episode.ID) == "" {
@@ -529,8 +540,7 @@ func (s *TaskEpisodeStore) StartEpisode(ctx context.Context, episode TaskEpisode
 	if s == nil || s.rootDir == "" {
 		return "", nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	now := time.Now().UTC()
 	if strings.TrimSpace(episode.ID) == "" {
@@ -569,8 +579,7 @@ func (s *TaskEpisodeStore) AppendEpisodeEvent(ctx context.Context, episode TaskE
 	if s == nil || s.rootDir == "" || strings.TrimSpace(episode.ID) == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	if strings.TrimSpace(episode.Status) == "" {
 		episode.Status = "running"
@@ -637,8 +646,7 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	index, err := s.loadIndex()
 	if err != nil {
@@ -824,8 +832,7 @@ func (s *TaskEpisodeStore) RebuildIndex(ctx context.Context) error {
 	if s == nil || s.rootDir == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	var entries []episodeIndexEntry
 	if _, err := os.Stat(s.rootDir); err != nil {

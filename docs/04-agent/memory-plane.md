@@ -126,9 +126,20 @@ for the next read instead of parsing the file again.
 
 ### Episode Storage Retention
 
-The current Episode implementation does not register a retention cleaner for
-`memory/episodes/`. Episode metadata, events, and artifacts remain on disk until
-the whole memory plane is explicitly cleared.
+The storage monitor's `episode_retention` cleaner runs with the routine
+maintenance check (at every storage level). It deletes whole Episode
+directories, together with their index entries:
+
+- Episodes that ended more than 30 days ago.
+- The oldest Episodes beyond the newest 1,000 in the index.
+- Episode directories missing from the index whose last change is more than
+  30 days old.
+
+It never deletes a running Episode or one that an active Long-Term or Device
+Memory cites as evidence (`episode` source or evidence references). Episode
+Memory distills what later runs need into Device Memory within minutes of a
+run, so older Episodes are only execution evidence. The cleaner takes the same
+per-directory lock as every Episode writer.
 
 The consolidation ledger is bounded separately. It retains the latest 64
 `done` or `ignored` terminal statuses while preserving processing and retry
