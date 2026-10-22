@@ -102,6 +102,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
     -o "${DIST_DIR}/bin/ble_service" ./cmd/ble_service
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
+    go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+    -o "${DIST_DIR}/bin/mcu_service" ./cmd/mcu_service
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags "${AGENT_LDFLAGS}" \
     -o "${DIST_DIR}/bin/ota" ./cmd/ota
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \

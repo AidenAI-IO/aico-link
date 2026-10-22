@@ -143,6 +143,29 @@ class RuntimeConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "Unsafe runtime configuration path"):
                     standalone_release.verify_runtime_config(archive, 1)
 
+    def test_mcu_upgrade_retires_logger_and_installs_final_hook(self):
+        logger = "usr/lib/aiden/aiden-mcu-event"
+        hook = "usr/lib/systemd/system-shutdown/aiden-mcu-shutdown"
+        hook_source = self.source / "overlay-debian" / hook
+        hook_bytes = hook_source.read_bytes()
+        hook_source.unlink()
+        self.change(logger, "#!/bin/sh\nexit 0\n")
+        logger_source = self.source / "overlay-debian" / logger
+        logger_source.chmod(0o755)
+        self.dpkg("-i", self.package("0.0.2"))
+        self.boot()
+        before = self.fixture.states()
+        logger_source.unlink()
+        hook_source.write_bytes(hook_bytes)
+        hook_source.chmod(0o755)
+        self.dpkg("-i", self.package("0.0.3"))
+        self.assertFalse((self.device / logger).exists())
+        installed_hook = self.device / hook
+        self.assertEqual(installed_hook.read_bytes(), hook_bytes)
+        self.assertEqual(installed_hook.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(self.fixture.states(), before)
+        self.assertFalse(any("poweroff" in op or "reboot" in op for op in self.fixture.operations()))
+
     def test_upgrade_downgrade_and_reinstall_restart_only_previous_services(self):
         old = self.package("0.0.2")
         self.dpkg("-i", old)
@@ -243,7 +266,7 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_production_packager_builds_one_verified_package(self):
         apps = self.root / "apps"
         (apps / "bin").mkdir(parents=True)
-        for name in "agent audio_service audio_service_cli ble_service cpu_vad frame_service frame_service_cli rknn_vad ota abctl aiden-environment ttyd".split():
+        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service frame_service_cli rknn_vad ota abctl aiden-environment ttyd".split():
             binary = apps / "bin" / name
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o755)

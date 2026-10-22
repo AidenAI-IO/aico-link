@@ -21,6 +21,7 @@ Build, configure, operate, and extend Aiden hardware and its Agent runtime.
 
 - [Architecture](02-architecture/overview.md): system boundaries, boot services, source layout, and runtime paths.
 - [Device Services](03-services/agent.md): Agent, configuration, terminal, frame capture, audio, BLE, and USB HID services.
+- [MCU Service](03-services/mcu-service.md): power handshake, wake long polling, hardware APIs and post-flash validation.
 - [Agent](04-agent/overview.md): runtime configuration, tools, skills, memory, voice, and phone integration.
 - [Agent Files Report](04-agent/user-files.md): inspect generated memory and
   Skills file reports and their cross-file references.

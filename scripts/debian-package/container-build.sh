@@ -8,7 +8,7 @@ readonly REVISION=${AIDEN_BUSINESS_REVISION}
 readonly PACKAGE_VERSION=${VERSION}-${REVISION}
 readonly PACKAGE_NAME=aiden-business
 readonly BINARIES=(
-  agent audio_service audio_service_cli ble_service cpu_vad frame_service
+  agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service
   frame_service_cli rknn_vad ota abctl aiden-environment ttyd
 )
 rm -rf "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_"*.deb

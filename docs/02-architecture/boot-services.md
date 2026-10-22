@@ -30,6 +30,7 @@ relationships rather than filename order.
 | `aiden-frame.service` | Run the HDMI frame service |
 | `aiden-audio.service` | Run audio capture and playback |
 | `aiden-ble.service` | Run BLE Wake and ANCS integration |
+| `aiden-mcu-event.service` | Run MCU UART, wake events, hardware queries and shutdown coordination |
 | `aiden-wifi-proxy.service` | Run the fixed loopback proxy and select a per-Wi-Fi upstream |
 | `aiden-agent.service` | Run the Go Agent |
 | `aiden-config-web.service` | Serve the local configuration portal |

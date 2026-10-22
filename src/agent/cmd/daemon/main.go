@@ -25,7 +25,7 @@ const (
 	wakeupListenTimeout                     = 10 * time.Second
 	wakeupDebounceInterval                  = 500 * time.Millisecond
 	defaultVoiceSteerListenTimeout          = 45 * time.Second
-	voiceWakeupInterruptedCorrectionContext = "Voice interruption: the user pressed the physical wakeup button " +
+	voiceWakeupInterruptedCorrectionContext = "Voice interruption: the user triggered ASR wakeup " +
 		"while the previous voice turn was still running. The previous task was interrupted and did NOT complete. " +
 		"Based on the user's new input, judge the relationship to the interrupted task:\n" +
 		"- If the new input replaces the old task (e.g. \"don't do that\", \"do B instead\") → only execute the new request.\n" +
@@ -36,21 +36,6 @@ const (
 var voiceSteerListenTimeout = defaultVoiceSteerListenTimeout
 var voiceTurnCancelWaitTimeout = 2 * time.Second
 var wakeupDebounceNow = time.Now
-
-var wakeupGPIOPins = boardWakeupGPIOPins()
-
-func wakeupGPIOPinsForModel(model string) []int {
-	if strings.TrimRight(model, "\x00\n") == "Aiden SCH v1" {
-		// GPIO32/33 are RK628 power/reset on SCH v1, not wakeup inputs.
-		return nil
-	}
-	return []int{33, 32}
-}
-
-func boardWakeupGPIOPins() []int {
-	model, _ := os.ReadFile("/proc/device-tree/model")
-	return wakeupGPIOPinsForModel(string(model))
-}
 
 func main() {
 	exitCode := 0
@@ -299,6 +284,8 @@ type wakeupWatcher interface {
 
 type wakeupWatcherFactory func(pin int, callback func()) (wakeupWatcher, error)
 
+type voiceWakeupWatcherFactory func(callback func()) (wakeupWatcher, error)
+
 func newGPIOWatcher(pin int, callback func()) (wakeupWatcher, error) {
 	return agent.NewGPIOWatcher(pin, callback)
 }
@@ -333,14 +320,7 @@ func startQuickCaptureGPIOWatcher(cfg agent.Config, trigger quickCaptureTrigger,
 	return watcher, nil
 }
 
-func wakeupGPIOPinsLabel() string {
-	if len(wakeupGPIOPins) == 0 {
-		return "no legacy GPIO inputs on this board"
-	}
-	return "GPIO 33/GPIO 32"
-}
-
-func startWakeupWatchers(newWatcher wakeupWatcherFactory, callback func()) ([]wakeupWatcher, error) {
+func startWakeupWatchers(newWatcher voiceWakeupWatcherFactory, callback func()) ([]wakeupWatcher, error) {
 	return startWakeupWatchersWithDebounce(newWatcher, callback, wakeupDebounceInterval, wakeupDebounceNow)
 }
 
@@ -380,30 +360,23 @@ func (d *wakeupDebouncer) allow() bool {
 	return true
 }
 
-func startWakeupWatchersWithDebounce(newWatcher wakeupWatcherFactory, callback func(), debounceInterval time.Duration, now func() time.Time) ([]wakeupWatcher, error) {
-	watchers := make([]wakeupWatcher, 0, len(wakeupGPIOPins))
+func startWakeupWatchersWithDebounce(newWatcher voiceWakeupWatcherFactory, callback func(), debounceInterval time.Duration, now func() time.Time) ([]wakeupWatcher, error) {
 	debouncer := newWakeupDebouncer(debounceInterval, now)
-	for _, pin := range wakeupGPIOPins {
-		pin := pin
-		watcher, err := newWatcher(pin, func() {
-			if !debouncer.allow() {
-				logging.Warnf("agent", "wakeup", "GPIO %d wakeup event ignored by %s debounce", pin, debounceInterval)
-				return
-			}
-			logging.Infof("agent", "wakeup", "GPIO %d wakeup event", pin)
-			callback()
-		})
-		if err != nil {
-			stopWakeupWatchers(watchers)
-			return nil, fmt.Errorf("create GPIO %d watcher: %w", pin, err)
+	watcher, err := newWatcher(func() {
+		if !debouncer.allow() {
+			logging.Warnf("agent", "wakeup", "ASR wakeup event ignored by %s debounce", debounceInterval)
+			return
 		}
-		if err := watcher.Start(); err != nil {
-			stopWakeupWatchers(append(watchers, watcher))
-			return nil, fmt.Errorf("start GPIO %d watcher: %w", pin, err)
-		}
-		watchers = append(watchers, watcher)
+		callback()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create MCU ASR watcher: %w", err)
 	}
-	return watchers, nil
+	if err := watcher.Start(); err != nil {
+		watcher.Stop()
+		return nil, fmt.Errorf("start MCU ASR watcher: %w", err)
+	}
+	return []wakeupWatcher{watcher}, nil
 }
 
 func stopWakeupWatchers(watchers []wakeupWatcher) {
@@ -450,7 +423,7 @@ type voiceTurnResult struct {
 	followUpContext        agent.VoiceTurnContext
 }
 
-func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
+func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	if cfg.InputModeOrDefault() == "stt" && !cfg.VoiceFollowupEnabledOrDefault() {
 		runSingleTurnSTTWakeupMode(cfg, dialog, runtime, sigChan, newWatcher, reload...)
 		return
@@ -460,7 +433,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -469,12 +442,12 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start GPIO wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
 
 	for {
 		if reloadRequested(reload) {
@@ -487,7 +460,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 			logging.Infof("agent", "exit", "Stopped.")
 			return
 		case <-events:
-			logging.Infof("agent", "wakeup", "GPIO wakeup triggered, opening voice session...")
+			logging.Infof("agent", "wakeup", "ASR wakeup triggered, opening voice session...")
 			if exit := runVoiceSession(cfg, dialog, runtime, sigChan, events); exit {
 				logging.Infof("agent", "exit", "Stopped.")
 				return
@@ -497,8 +470,8 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 	}
 }
 
-func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
+	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
 
 	ctx := context.Background()
 	wakeupEvents := make(chan struct{}, 1)
@@ -508,12 +481,12 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 		signalWakeupEvent(wakeupEvents)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start GPIO wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
 
 	pendingWakeup := false
 	for {
@@ -531,7 +504,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 				logging.Infof("agent", "exit", "Stopped.")
 				return
 			case <-wakeupEvents:
-				logging.Infof("agent", "wakeup", "GPIO wakeup triggered, starting to listen...")
+				logging.Infof("agent", "wakeup", "ASR wakeup triggered, starting to listen...")
 			}
 		} else {
 			pendingWakeup = false
@@ -572,8 +545,8 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 }
 
-func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
+func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
+	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -582,12 +555,12 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start GPIO wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
+	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
 
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext
@@ -608,7 +581,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 					logging.Infof("agent", "exit", "Stopped.")
 					return
 				case <-events:
-					logging.Infof("agent", "wakeup", "GPIO wakeup triggered, starting to listen...")
+					logging.Infof("agent", "wakeup", "ASR wakeup triggered, starting to listen...")
 				}
 			} else {
 				pendingWakeup = false
@@ -666,7 +639,7 @@ func signalVoiceWakeupEvent(events chan<- voiceEvent) {
 	select {
 	case events <- voiceEventWakeup:
 	default:
-		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate GPIO wakeup event")
+		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate ASR wakeup event")
 	}
 }
 
@@ -674,7 +647,7 @@ func signalWakeupEvent(wakeupEvents chan<- struct{}) {
 	select {
 	case wakeupEvents <- struct{}{}:
 	default:
-		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate GPIO wakeup event")
+		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate ASR wakeup event")
 	}
 }
 
@@ -789,7 +762,7 @@ thinking:
 			return voiceTurnResult{exit: true}
 		case <-events:
 			if interruptOnWakeup {
-				logging.Infof("agent", "interrupt", "GPIO wakeup during active turn, immediately canceling")
+				logging.Infof("agent", "interrupt", "ASR wakeup during active turn, immediately canceling")
 				dialog.InterruptOutput()
 				cancel()
 				canceledInfo := waitForTurnCancellation(dialog, resultCh)

@@ -257,6 +257,7 @@ touch \
     "${apps_dir}/bin/abctl" \
     "${apps_dir}/bin/agent" \
     "${apps_dir}/bin/ble_service" \
+    "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/frame_service" \
     "${apps_dir}/bin/ota" \
     "${apps_dir}/bin/rknn_vad" \
@@ -266,6 +267,7 @@ chmod +x \
     "${apps_dir}/bin/abctl" \
     "${apps_dir}/bin/agent" \
     "${apps_dir}/bin/ble_service" \
+    "${apps_dir}/bin/mcu_service" \
     "${apps_dir}/bin/ota"
 chmod +x "${apps_dir}/bin/ttyd"
 printf '%s\n' \
@@ -281,7 +283,7 @@ mode=${1:-}
 file=${!#}
 is_go=no
 case "${file}" in
-*/bin/abctl | */bin/agent | */bin/ble_service | */bin/ota | */bin/ttyd) is_go=yes ;;
+*/bin/abctl | */bin/agent | */bin/ble_service | */bin/mcu_service | */bin/ota | */bin/ttyd) is_go=yes ;;
 esac
 case "${mode}" in
 -hW)
@@ -389,7 +391,11 @@ expect_audit_failure() {
 
 run_audit "${TEST_ROOT}/report-pass"
 grep -qx 'status=pass' "${TEST_ROOT}/report-pass/summary.txt"
-grep -qx 'elf_count=8' "${TEST_ROOT}/report-pass/summary.txt"
+grep -qx 'elf_count=9' "${TEST_ROOT}/report-pass/summary.txt"
+
+chmod -x "${apps_dir}/bin/mcu_service"
+expect_audit_failure nonexecutable-mcu-service
+chmod +x "${apps_dir}/bin/mcu_service"
 
 expect_audit_failure bad-runpath MOCK_BAD_RUNPATH=1
 expect_audit_failure opencv-needed MOCK_OPENCV_NEEDED=1

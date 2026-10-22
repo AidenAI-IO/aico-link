@@ -62,6 +62,9 @@ sidebar_position: 4
 | `/run/frame_service/frame_service.sock` | Frame service socket |
 | `/run/audio_service/audio_service.sock` | Audio service socket |
 | `/run/ble_service/ble_service.sock` | BLE service socket |
+| `/run/mcu_service/mcu_service.sock` | MCU service socket |
+| `/run/aiden/agent-mcu-wakeup.json` | Agent ASR event cursor, retained across Agent restarts within a boot |
+| `/run/aiden-mcu-poweroff/intent.json` | Current-boot shutdown intent, retained until final poweroff |
 | `/run/aiden/storage.state` | StorageManager state shared by Config Web and Agent |
 | `/run/agent/storage_level` | Current StorageMonitor level |
 

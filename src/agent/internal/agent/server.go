@@ -39,6 +39,7 @@ import (
 	_ "aiden-agent/internal/agent/tts/adapters/openrouter"
 	_ "aiden-agent/internal/agent/tts/adapters/volcengine"
 	"aiden-agent/internal/ble"
+	"aiden-agent/internal/mcu"
 )
 
 const (
@@ -80,6 +81,7 @@ type Server struct {
 	sttConfigTestSession    *sttConfigTestLiveSession
 	bridge                  *PhoneBridge
 	bleSocketPath           string
+	mcuRequest              func(context.Context, mcu.Request) (mcu.Response, error)
 	bleStatusRequest        func(context.Context, string) (ble.RuntimeStatus, error)
 	blePairingStartRequest  func(context.Context, string) (ble.RuntimeStatus, error)
 	blePairingForgetRequest func(context.Context, string) (ble.ForgetResult, error)
@@ -565,6 +567,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/phone-bridge/results", s.handlePhoneBridgeResults)
 	mux.HandleFunc("/api/phone-bridge/results/", s.handlePhoneBridgeResults)
 	mux.HandleFunc("/api/bluetooth/status", s.handleBluetoothStatus)
+	mux.HandleFunc("/api/mcu/", s.handleMCU)
 	mux.HandleFunc("/api/bluetooth/pairing/start", s.handleBluetoothPairingStart)
 	mux.HandleFunc("/api/bluetooth/pairing/reset", s.handleBluetoothPairingReset)
 	mux.HandleFunc("/api/bluetooth/disconnect", s.handleBluetoothDisconnect)
