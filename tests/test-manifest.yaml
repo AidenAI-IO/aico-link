@@ -168,15 +168,18 @@ suites:
 
   - name: tf-card-dtb
     class: deterministic
-    paths: [pico-sdk, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]
+    paths: [pico-sdk, tests/test_tf_pinctrl.py, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]
     command: |
       python3 pico-sdk/project/scripts/test_aiden_custom_dts.py AidenCustomBoardTest.test_tf_card_on_sdmmc0
+      python3 tests/test_tf_pinctrl.py
       bash scripts/test_tf_dtb.sh
     quick: true
     dependencies: [bash, python3, gcc, dtc, fdtget, fdtput]
     required_inputs:
       - pico-sdk/project/scripts/test_aiden_custom_dts.py
       - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+      - pico-sdk/sysdrv/source/kernel/drivers/pinctrl/pinctrl-rockchip.c
+      - pico-sdk/sysdrv/source/kernel/drivers/pinctrl/pinctrl-rockchip.h
     required: true
     timeout_seconds: 60
 

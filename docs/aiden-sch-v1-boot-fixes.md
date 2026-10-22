@@ -73,10 +73,10 @@ and card detect is GPIO3_A1 through R126 (100 ohms), active low. GPIO0_A1
 enables U20 (WS4622C), switching VCC_3V3 to VCC3V3_SD. VCCIO4 is fixed
 at 3.3 V through R185.
 
-The board DTS keeps `bus-width = <1>` and `max-frequency = <25000000>`.
+The board DTS uses `bus-width = <4>` and `max-frequency = <50000000>`.
 This takes effect at the first kernel probe, without a startup service or
-runtime overlay. The tested pinctrl groups are retained; the controller uses
-DAT0 only. The independent eMMC and Wi-Fi buses remain 8-bit and 4-bit.
+runtime overlay. The controller uses DAT0-3 with the pinctrl fix described
+below. The independent eMMC and Wi-Fi buses remain 8-bit and 4-bit.
 SD-only enumeration and a fixed 3.3 V I/O supply avoid probing other card
 protocols or negotiating an unsupported signaling voltage.
 
@@ -87,6 +87,15 @@ with a pull-up in both states. The switched regulator declares its GPIO and
 upstream supply, a 10 ms startup delay and a 200 ms off/on delay. The host
 uses a 20 ms power-on delay and a 200 ms power-off delay. These conservative
 settings preserve the tested power sequence.
+
+The RV1106 pinctrl driver also clears
+`GPIO3_IOC_FORCE_JTAG_SDMMC.JTAG_SDMMC_AUTO_SWITCH_EN` when DAT2/DAT3
+(GPIO3_A7/A6) select SDMMC function 1. The automatic JTAG override can steal
+these lines even with correct IOMUX settings, causing 4-bit reads to fail.
+The pinctrl routes write `0x00010000` to IOC offset `0x202f4` (physical
+`0xff5582f4`), using the high-half mask to clear only bit 0. Normal pin
+selection applies the fix at probe and after an idle/power-cycle transition;
+regmap write failures propagate through the existing route path.
 
 Storage discovery now selects the SD card by `/sys/block/mmcblk*/device/type`
 instead of assuming `mmcblk2`; this board exposes `/dev/mmcblk1p1`. Mount
@@ -99,10 +108,14 @@ explicit device overrides and the default 64 MiB minimum free space.
 ### Validation
 
 `scripts/test_tf_dtb.sh` compiles the source DTB and checks TF mode, supplies,
-card detect and pinctrl states, including regressions for wider modes and
-higher clocks. The BSP and factory-image audits apply the same contract to
+card detect and pinctrl states, including regressions for incorrect bus widths
+and clock limits. The BSP and factory-image audits apply the same contract to
 both packaged boot slots. The SDK's focused TF board test is also part of
-the local quick checks. Temporary controller tracing is not included.
+the local quick checks. `tests/test_tf_pinctrl.py` compiles the production
+RV1106 route table and lookup to verify both DAT2/DAT3 selections, the masked
+register update and exclusion of unrelated pins/functions. It runs in the
+same `tf-card-dtb` suite in both quick and full profiles. Temporary controller
+tracing is not included.
 
 On 2026-10-15, the flashed firmware reported 1-bit, actual 24.75 MHz and
 3.3 V. FAT32 file tests used a 32 MiB direct-I/O write including `fdatasync`,
@@ -116,9 +129,19 @@ followed by two SHA-256-verified direct reads:
 Both tests passed data verification without new TF I/O errors; temporary
 files were removed and the cards remained mounted read-write. A 128 MB card
 also passed direct reads, but its free space was below the application's
-64 MiB threshold. These short checks do not qualify 4-bit operation or 50 MHz;
-keep the verified 1-bit / 25 MHz configuration until those modes pass separate
-hardware testing.
+64 MiB threshold. These historical checks cover only 1-bit / 25 MHz; the
+subsequent JTAG investigation below covers sampled reads in the wider modes.
+
+On 2026-10-22, the separate debug firmware investigation in Codex session
+`01a15ddf-f96f-7eb3-a1c3-181507b1c5c2` isolated the JTAG override: enabling
+bit 0 reproduced the 4-bit read failure, and clearing it restored reads.
+With the bit cleared, one 123 MiB card passed sampled reads in both bus
+widths at requested 100 kHz, 400 kHz, 1 MHz, 25 MHz and 50 MHz. This project
+ports that session's permanent pinctrl fix directly into the vendored SDK.
+The debug results do not validate writes or automatic application after a
+cold boot of this project's rebuilt firmware. The production default is now
+4-bit / 50 MHz with the JTAG fix; cold-boot and write validation of the rebuilt
+image remain pending.
 
 To inspect a flashed board:
 
@@ -128,8 +151,9 @@ ssh aiden@192.168.42.1 'curl -fsS http://127.0.0.1/api/storage/status'
 ssh aiden@192.168.42.1 'sudo -n journalctl -k -b --no-pager'
 ```
 
-The TF setting lives in the SDK board DTS and requires the BSP boot images
-to be rebuilt; updating the Agent alone does not change the kernel's bus mode.
+The TF setting lives in the SDK board DTS and the JTAG fix lives in the kernel
+pinctrl driver. Both require the BSP boot images to be rebuilt; updating the
+Agent alone does not change the kernel's bus mode or apply the pinctrl fix.
 
 ## Media initialization
 

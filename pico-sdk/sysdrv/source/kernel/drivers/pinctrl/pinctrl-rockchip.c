@@ -4367,6 +4367,17 @@ static struct rockchip_pin_ctrl px30_pin_ctrl __maybe_unused = {
 		.slew_rate_calc_reg	= px30_calc_slew_rate_reg_and_bit,
 };
 
+/*
+ * Selecting SDMMC DAT2/DAT3 must also disable the automatic JTAG override.
+ * With GPIO card detection, that override can otherwise steal these lines
+ * even when their IOMUX registers select SDMMC (1-bit reads still work).
+ * GPIO3_IOC_FORCE_JTAG_SDMMC is at IOC offset 0x202f4, bit 0, hiword masked.
+ */
+static struct rockchip_mux_route_data rv1106_sdmmc_mux_route_data[] = {
+	RK_MUXROUTE_GRF(3, RK_PA6, 1, 0x202f4, WRITE_MASK_VAL(0, 0, 0)),
+	RK_MUXROUTE_GRF(3, RK_PA7, 1, 0x202f4, WRITE_MASK_VAL(0, 0, 0)),
+};
+
 static struct rockchip_pin_bank rv1106_pin_banks[] = {
 	PIN_BANK_IOMUX_FLAGS(0, 32, "gpio0",
 			     IOMUX_WIDTH_4BIT | IOMUX_SOURCE_PMU,
@@ -4404,6 +4415,8 @@ static struct rockchip_pin_ctrl rv1106_pin_ctrl __maybe_unused = {
 	.nr_banks		= ARRAY_SIZE(rv1106_pin_banks),
 	.label			= "RV1106-GPIO",
 	.type			= RV1106,
+	.iomux_routes		= rv1106_sdmmc_mux_route_data,
+	.niomux_routes		= ARRAY_SIZE(rv1106_sdmmc_mux_route_data),
 	.pull_calc_reg		= rv1106_calc_pull_reg_and_bit,
 	.drv_calc_reg		= rv1106_calc_drv_reg_and_bit,
 	.schmitt_calc_reg	= rv1106_calc_schmitt_reg_and_bit,

@@ -20,7 +20,7 @@ for property in bus-width max-frequency pinctrl-2 vqmmc-supply; do
         exit 1
     fi
 done
-for width in 4 8; do
+for width in 1 8; do
     cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"
     fdtput -t u "${work_dir}/bad.dtb" /mmc@ffaa0000 bus-width "${width}"
     if bash "${audit}" "${work_dir}/bad.dtb" >"${work_dir}/failure.log" 2>&1; then
@@ -28,12 +28,14 @@ for width in 4 8; do
         exit 1
     fi
 done
-cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"
-fdtput -t u "${work_dir}/bad.dtb" /mmc@ffaa0000 max-frequency 50000000
-if bash "${audit}" "${work_dir}/bad.dtb" >"${work_dir}/failure.log" 2>&1; then
-    echo 'TF audit accepted a 50 MHz limit' >&2
-    exit 1
-fi
+for frequency in 25000000 100000000; do
+    cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"
+    fdtput -t u "${work_dir}/bad.dtb" /mmc@ffaa0000 max-frequency "${frequency}"
+    if bash "${audit}" "${work_dir}/bad.dtb" >"${work_dir}/failure.log" 2>&1; then
+        echo "TF audit accepted a ${frequency} Hz limit" >&2
+        exit 1
+    fi
+done
 for entry in '/mmc@ffaa0000 rockchip,tf-diagnostics' '/vcc3v3-sd-regulator regulator-always-on'; do
     read -r node property <<<"${entry}"
     cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"

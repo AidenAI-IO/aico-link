@@ -141,8 +141,8 @@ class AidenCustomBoardTest(unittest.TestCase):
             'pinctrl-names = "default", "normal", "idle";',
             "pinctrl-1 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4 &sdmmc0_card_detect>;",
             "pinctrl-2 = <&sdmmc0_idle_pins &sdmmc0_card_detect>;",
-            "max-frequency = <25000000>;",
-            "bus-width = <1>;",
+            "max-frequency = <50000000>;",
+            "bus-width = <4>;",
             "vqmmc-supply = <&vcc_3v3>;",
             "no-sdio;", "no-mmc;",
         ):
