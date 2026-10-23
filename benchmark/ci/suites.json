@@ -6,6 +6,7 @@
     {"id": "shell-utility", "suite": "suites/shell_utility_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "mobilegym-scroll", "suite": "suites/mobilegym_scroll_regression.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 240},
     {"id": "phone-bridge-policy", "suite": "suites/aiden_app/phone_bridge_data_policy_v1.json", "environment": "isolated"},
+    {"id": "tool-recovery", "suite": "suites/tool_recovery_v1.json", "environment": "isolated", "target_platform": "android", "runnable": false},
 
     {"id": "episode-reflection-v1", "suite": "suites/episode_reflection_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "episode-reflection-v2", "suite": "suites/episode_reflection_v2.json", "environment": "isolated", "max_concurrency": 2},

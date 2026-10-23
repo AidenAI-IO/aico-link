@@ -51,7 +51,7 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert all_cases == catalog.cases
     assert len(runnable) == 13
     assert len(hardware) == 13
-    assert len(all_cases) == 28
+    assert len(all_cases) == 29
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
@@ -60,23 +60,26 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     )
     assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
         {case.suite for case in catalog.cases}
-        - {"suites/mobilegym_scroll_sweep.json"}
+        - {"suites/mobilegym_scroll_sweep.json", "suites/tool_recovery_v1.json"}
     )
 
 
-def test_scroll_sweep_stays_out_of_runnable_but_is_explicitly_selectable() -> None:
+@pytest.mark.parametrize("case_id,suite", [
+    ("mobilegym-scroll-sweep", "suites/mobilegym_scroll_sweep.json"),
+    ("tool-recovery", "suites/tool_recovery_v1.json"),
+])
+def test_manual_suite_stays_out_of_runnable_but_is_explicitly_selectable(case_id, suite) -> None:
     catalog = load_catalog()
 
     runnable = select_cases(catalog, profile="runnable")
-    sweep_ids = {case.id for case in runnable}
-    assert "mobilegym-scroll-sweep" not in sweep_ids
+    assert case_id not in {case.id for case in runnable}
 
     selected = select_cases(
         catalog,
         profile="runnable",
-        suite="suites/mobilegym_scroll_sweep.json",
+        suite=suite,
     )
-    assert [case.id for case in selected] == ["mobilegym-scroll-sweep"]
+    assert [case.id for case in selected] == [case_id]
     assert selected[0].runnable is False
 
 
