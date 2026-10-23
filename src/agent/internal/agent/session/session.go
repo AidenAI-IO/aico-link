@@ -61,7 +61,7 @@ func NewWithTokenPersistence(sessionID, parentSessionID string, messageList []me
 	s := &Session{
 		sessionID:       sessionID,
 		parentSessionID: parentSessionID,
-		messageList:     cloneMessages(messageList),
+		messageList:     messages.CloneList(messageList),
 		attachmentStore: attachmentStore,
 		artifactStore:   artifactStore,
 		persist:         persist,
@@ -160,7 +160,7 @@ func (s *Session) CloneMessageList() []messages.Message {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneMessages(s.messageList)
+	return messages.CloneList(s.messageList)
 }
 
 // Snapshot returns a deep copy of the messages and the generation from the
@@ -171,7 +171,7 @@ func (s *Session) Snapshot() ([]messages.Message, uint64) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneMessages(s.messageList), s.version
+	return messages.CloneList(s.messageList), s.version
 }
 
 // ViewMessages calls fn with a read-only view of the current message slice
@@ -221,9 +221,9 @@ func (s *Session) AppendMessages(messageList []messages.Message) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	messageList = cloneMessages(messageList)
+	messageList = messages.CloneList(messageList)
 	if s.persist != nil {
-		if err := s.persist(cloneMessages(messageList)); err != nil {
+		if err := s.persist(messages.CloneList(messageList)); err != nil {
 			return err
 		}
 	}
@@ -264,15 +264,4 @@ func (s *Session) ArtifactStoreRoot() string {
 		return rooted.Root()
 	}
 	return ""
-}
-
-func cloneMessages(messageList []messages.Message) []messages.Message {
-	if len(messageList) == 0 {
-		return nil
-	}
-	cloned := make([]messages.Message, len(messageList))
-	for i, message := range messageList {
-		cloned[i] = message.Clone()
-	}
-	return cloned
 }
