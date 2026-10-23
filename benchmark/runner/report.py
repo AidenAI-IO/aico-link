@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from runner.models import TaskResult
 from runner.metrics import aggregate
+from runner.execution_environment import environment_label
 
 
 _ERROR_METRIC_LABELS = {
@@ -100,6 +101,7 @@ def write_summary(path: Path, suite_name: str, manifest: dict[str, Any],
     lines = [
         f"# {suite_name} — {manifest.get('run_id', '')}",
         "",
+        f"Environment: {environment_label(manifest)}",
         f"Agent: {agent_label}",
         f"Judge: {(manifest.get('judge_config') or {}).get('provider', 'none')}"
         f" / {(manifest.get('judge_config') or {}).get('model', 'none')}",

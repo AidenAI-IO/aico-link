@@ -131,3 +131,32 @@ repeat a representative subset on physical devices using the production input
 path. Until those runs exist, this profile provides no evidence of OEM-launcher
 or USB-HID compatibility. No new Agent performance claim follows from the suite
 definitions or their unit tests alone.
+
+## Reading results by execution environment
+
+Actions Summary lists task outcomes separately under **Android (ADB)**,
+**MobileGym**, and other recorded environments. Case completion means the runner
+finished; consult the passed, failed, timeout, skipped, and judge-error counts.
+Each environment's attempt success rate includes diagnostic UI task outcomes.
+
+In `dashboard.html`, use **Execution environment → Android (ADB)** for native
+Android results or **MobileGym** for synthetic app scenarios. Cards show each
+environment/platform's latest workflow run. The same suite executed through two
+backends has separate histories and comparison baselines. Weekly reports also
+separate environments and platforms; their capability rates exclude skill
+discovery diagnostics, as before. They do not report a pooled cross-environment
+pass rate. Older records without environment metadata remain **Unknown**.
+
+The ADB label identifies a native Android execution backend. It does not prove
+whether the connected target was an emulator or a physical phone. That distinction
+still requires device metadata; do not infer it from a suite name.
+
+The existing `app_workflow_v1` suite is a separate, external-device suite with
+13 end-to-end workflows: messaging/publishing, notes persistence, browser search,
+maps, camera/gallery, calendar, commerce, and cross-app price comparison. It is
+not included in the stock ADB profile. Notes, browser, and camera/gallery are
+candidates for future native Android coverage after verifying installed apps,
+onboarding, network/camera prerequisites, input support, and repeatable data
+setup/cleanup. Account-dependent and publishing workflows need dedicated test
+accounts and fixtures. Their absence from this profile is a coverage gap, not
+evidence that those workflows pass on Android.

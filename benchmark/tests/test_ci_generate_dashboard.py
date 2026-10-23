@@ -71,6 +71,32 @@ def test_group_into_runs_separates_workflow_runs_and_orders_them_oldest_first() 
     assert [run["commit_sha"] for run in runs] == ["aaaa", "bbbb"]
 
 
+def test_same_workflow_and_suite_keep_environment_and_platform_results_separate():
+    records = [
+        _record(suite="phone_control_v1", execution_environment="mobilegym", target_platform="android",
+                passed=4, pass_at_1=1.0),
+        _record(suite="phone_control_v1", execution_environment="adb", target_platform="android",
+                passed=1, pass_at_1=0.25),
+        _record(suite="phone_control_v1", execution_environment="external", target_platform="ios"),
+        _record(suite="phone_control_v1", execution_environment="external", target_platform="android"),
+        # A newer MobileGym score must not become the ADB comparison baseline.
+        _record(suite="phone_control_v1", workflow_run_id=2, timestamp="2026-10-11T00:00:00+00:00",
+                execution_environment="mobilegym", target_platform="android", passed=2, pass_at_1=0.5),
+        _record(suite="phone_control_v1"),
+    ]
+    runs = _group_into_runs(records)
+    assert len(runs) == 6
+    assert sorted(r["passed"] for r in runs if r["workflow_run_id"] == 1) == [1, 2, 2, 2, 4]
+    series = _summarize_suites(runs)
+    assert len(series) == 5
+    adb = next(s for s in series if s["execution_environment"] == "adb")
+    gym = next(s for s in series if s["execution_environment"] == "mobilegym")
+    assert adb["environment_label"] == "Android (ADB)"
+    assert adb["previous"] is None and adb["delta"] is None
+    assert len(gym["points"]) == 2 and gym["delta"] == -0.5
+    assert any(s["environment_label"] == "Unknown" for s in series)
+
+
 def test_group_into_runs_sums_failure_classes_across_suites() -> None:
     history = [
         _record(suite="a", failure_classes={"agent": 2}),
@@ -354,7 +380,7 @@ def test_workflow_attempts_are_separate():
 
 
 @pytest.mark.parametrize("field", ["agent_model", "suite_sha256", "workload_sha256",
-    "metrics_k", "judge_model", "git_branch", "target_platform", "active_skills"])
+    "metrics_k", "judge_model", "git_branch", "active_skills"])
 def test_configuration_changes_keep_inline_deltas(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
                _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]
@@ -399,7 +425,7 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         pytest.skip("Node.js is unavailable")
     output = tmp_path / "dashboard.html"
     generate_dashboard(history=[
-        _k_record(suite='<img src=x onerror=alert(1)>', eligible_attempts=4,
+        _k_record(suite='<img src=x onerror=alert(1)>', eligible_attempts=4, execution_environment="mobilegym",
                   distributions={"task_wall_ms": {"p50": 14200, "p90": 31500, "count": 3},
                                  "tool_calls": {"mean": 4.5, "count": 3},
                                  "llm_calls": {"mean": 0, "count": 4},
@@ -411,8 +437,8 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
                     "status": "failed", "agent_eligible": True,
                     "evidence": [{"kind": "Rubric", "label": "answer", "reason": '<script>alert(1)</script>'}],
                     "final_response": '<img src=x>', "trace_url": 'javascript:alert(1)'}]),
-        _k_record(suite="other", workflow_run_id=2, pass_at_1=0.25, passed=1),
-        _k_record(suite="other", workflow_run_id=3, timestamp="2026-10-12T00:00:00+00:00",
+        _k_record(suite="other", execution_environment="adb", workflow_run_id=2, pass_at_1=0.25, passed=1),
+        _k_record(suite="other", execution_environment="adb", workflow_run_id=3, timestamp="2026-10-12T00:00:00+00:00",
                   pass_at_1=None, passed=None, eligible_tasks=None),
         _k_record(suite="no_failures", eligible_failures=0, failure_stages={},
                   failure_details_status="available", failure_details=[], failure_details_inspected=4,
@@ -602,5 +628,26 @@ assert(el('latest').innerHTML.includes('Skill read observation'));
 assert.equal(skillReadRate({skill_discovery:{read:0,observed:4}}),0);
 assert.equal(skillReadRate({skill_discovery:{read:2,observed:1}}),null);
 assert.equal(skillReadRate({}),null);
+activeFilter = 'all';
+el('environment-select').listeners.change({target:{value:'adb'}});
+assert.equal(activeEnvironment, 'adb');
+assert.deepEqual(matchingDatasetIndices('all').map(i => datasets[i].suite), ['other']);
+assert.equal(selected.suite, 'other');
+assert(el('environment-results').innerHTML.includes('Android (ADB)'));
+assert(!el('environment-results').innerHTML.includes('MobileGym'));
+assert(!el('dataset-select').innerHTML.includes('memory_v1'));
+el('environment-select').listeners.change({target:{value:'mobilegym'}});
+assert.equal(selected.execution_environment, 'mobilegym');
+assert(!el('environment-results').innerHTML.includes('Android (ADB)'));
+assert(el('environment-results').innerHTML.includes('MobileGym'));
+assert(!el('environment-results').innerHTML.includes('<img'));
+activeFilter = 'Memory';
+applyDatasetFilters();
+assert.equal(matchingDatasetIndices('Memory').length, 0);
+assert.equal(el('dataset-select').disabled, true);
+assert.equal(el('suites').hidden, true);
+el('environment-select').listeners.change({target:{value:'all'}});
+assert.equal(selected.capability, 'Memory');
+
 """
     subprocess.run(["node", "-e", prefix + script + verification], check=True)

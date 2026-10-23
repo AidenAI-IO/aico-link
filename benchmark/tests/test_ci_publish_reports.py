@@ -1,4 +1,5 @@
 import os
+import json
 import time
 from pathlib import Path
 
@@ -101,3 +102,18 @@ def test_publish_reports_prunes_only_expired_ci_runs(tmp_path: Path) -> None:
     assert not old_run.exists()
     assert current_run.exists()
     assert unrelated.exists()
+
+
+def test_report_index_groups_by_metadata_even_without_static_host(tmp_path: Path):
+    runs_dir = tmp_path / "runs"
+    for case, environment in [("phone", "adb"), ("same-suite", "mobilegym"), ("legacy", None)]:
+        _write_report(runs_dir, f"ci-123-1-{case}", "<html></html>")
+        (runs_dir / f"ci-123-1-{case}" / "manifest.json").write_text(json.dumps({
+            "suite_path": "suites/phone_control_v1.json", "execution_environment": environment,
+        }))
+    path = tmp_path / "summary.md"
+    publish_reports(runs_dir=runs_dir, run_id_prefix="ci-123-1", summary_path=path)
+    text = path.read_text()
+    assert "### Android (ADB)" in text and "### MobileGym" in text and "### Unknown" in text
+    assert "`runs/ci-123-1-phone/report.html`" in text
+    assert "`runs/ci-123-1-same-suite/report.html`" in text

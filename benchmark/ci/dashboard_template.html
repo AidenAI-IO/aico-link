@@ -154,6 +154,12 @@
 <div class="wrap">
   <h1>Benchmark Dashboard</h1>
   <div class="sub" id="sub"></div>
+  <div class="panel">
+    <label for="environment-select">Execution environment</label>
+    <select id="environment-select" aria-label="Execution environment"></select>
+    <p class="empty">Android (ADB) runs native Android on an emulator or device. MobileGym runs synthetic app scenarios. Their results and histories are separate.</p>
+    <div id="environment-results" class="cards"></div>
+  </div>
   <div class="tabs" id="dashboard-tabs" role="tablist" aria-label="Dashboard view">
     <button id="tab-latest" role="tab" type="button" aria-selected="true" aria-controls="view-latest" tabindex="0">Latest results</button>
     <button id="tab-trends" role="tab" type="button" aria-selected="false" aria-controls="view-trends" tabindex="-1">Weekly trends</button>
@@ -213,9 +219,27 @@ el("availability").innerHTML = `Data coverage: ${DATA.dataCompleteness.measured}
     DATA.warnings.map(w => `<div class="alert">${esc(w)}</div>`).join("") + '</div></details>' : '');
 el("reading-notes-label").textContent = `Metric definitions${DATA.warnings.length ? ` · ${DATA.warnings.length} data warnings` : ""}`;
 
-el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${runs.length} workflow runs · ${DATA.suites.length} datasets`;
+const workflowCount = new Set(runs.map(run => JSON.stringify([run.workflow_run_id || run.timestamp, run.workflow_run_attempt]))).size;
+el("sub").textContent = `Last 7 days · ${when(DATA.windowStart)} — ${when(DATA.generatedAt)} · ${workflowCount} workflow runs · ${DATA.suites.length} datasets`;
 
 const datasets = DATA.suites;
+const environmentNames = new Map(datasets.map(s => [s.execution_environment, s.execution_environment === "adb" ? "Android (ADB)" : s.execution_environment === "mobilegym" ? "MobileGym" : s.environment_label]));
+let activeEnvironment = "all";
+el("environment-select").innerHTML = '<option value="all">All environments (separate results)</option>' +
+  [...environmentNames].sort(([a], [b]) => a.localeCompare(b)).map(([key, label]) => `<option value="${esc(key)}">${esc(label)}</option>`).join("");
+function renderEnvironmentResults() {
+  const latest = new Map();
+  for (const run of runs) {
+    if (activeEnvironment !== "all" && run.execution_environment !== activeEnvironment) continue;
+    const key = JSON.stringify([run.execution_environment, run.target_platform]);
+    if (!latest.has(key) || latest.get(key).timestamp <= run.timestamp) latest.set(key, run);
+  }
+  el("environment-results").innerHTML = [...latest.values()].map(run =>
+    `<div><div class="cap">${esc(run.environment_label)}</div><div class="num">${pct(run.pass_at_1)}</div>` +
+    `<div>${count(run.passed)} / ${count(run.eligible_tasks)} eligible first attempts</div>` +
+    `<div class="empty">Latest run · ${when(run.timestamp)} · ${commitLink(run.commit_sha)}</div></div>`).join("") +
+    '<p class="empty">UI task outcomes, including diagnostic suites. Each environment shows its own latest workflow run; task selections may differ.</p>';
+}
 const newestDataset = datasets.reduce((newest, dataset) =>
   !newest || dataset.latest.timestamp > newest.latest.timestamp ? dataset : newest, null);
 el("latest-run-note").innerHTML = `Latest commit · ${commitLink(newestDataset?.latest.commit_sha)}`;
@@ -248,7 +272,7 @@ el("failure-details").innerHTML = detailDatasets.map(dataset => {
   const note = available || !rows.length ? "" : latest.failure_details_status === "partial" ? " · Partial details" : " · Details unavailable";
   const index = datasets.indexOf(dataset);
   return `<details class="failure-dataset" id="failure-dataset-${index}" data-filter-dataset="${index}"${dataset === expandedDataset ? " open" : ""}>
-    <summary><b>${esc(dataset.suite)}</b> · ${headline}${note}</summary>
+    <summary><b>${esc(dataset.suite)}</b> · ${esc(dataset.environment_label)} · ${headline}${note}</summary>
     <div class="section-actions"><p class="sub">${coverage}${!available ? ". Missing outputs may contain additional failures." : ""}</p><button class="action" type="button" data-trend-dataset="${index}">View dataset trends →</button></div>
     ${Object.entries(latest.failure_details_errors || {}).map(([reason, count]) => `<p class="empty">${esc(reason)} · ${count}</p>`).join("")}
     ${rows.length ? `<div class="scroll"><table class="failure-table"><thead><tr><th>Task / attempt</th><th>Outcome</th><th>Failure reason / evidence</th><th>Trace</th></tr></thead><tbody>` + rows.map(row => {
@@ -368,10 +392,16 @@ for (const id of capabilityControls) {
 }
 function matchingDatasetIndices(filterId) {
   const matches = (datasetFilters.find(filter => filter.id === filterId) || datasetFilters[0]).matches;
-  return datasets.flatMap((dataset, index) => matches(dataset) ? [index] : []);
+  return datasets.flatMap((dataset, index) => matches(dataset) &&
+    (activeEnvironment === "all" || dataset.execution_environment === activeEnvironment) ? [index] : []);
 }
 function applyDatasetFilters() {
+  renderEnvironmentResults();
   const indices = matchingDatasetIndices(activeFilter);
+  const newestVisible = indices.reduce((best, i) => !best ||
+    datasets[i].latest.timestamp > best.latest.timestamp ? datasets[i] : best, null);
+  el("latest-run-note").innerHTML = newestVisible
+    ? `Latest commit · ${commitLink(newestVisible.latest.commit_sha)}` : "No results for this environment and test area.";
   document.querySelectorAll("[data-filter-dataset]").forEach(node => { node.hidden = !indices.includes(Number(node.dataset.filterDataset)); });
   document.querySelectorAll("button[data-filter]").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.filter === activeFilter)));
   el("filter-count").textContent = `${indices.length} of ${datasets.length} datasets · Declined and mixed changes appear first`;
@@ -379,7 +409,7 @@ function applyDatasetFilters() {
   el("suites").hidden = !indices.some(i => !datasets[i].diagnostic);
   el("failures-empty").hidden = indices.length > 0;
   el("dataset-select").innerHTML = indices.length
-    ? indices.map(i => `<option value="${i}">${esc(datasets[i].suite)}</option>`).join("")
+    ? indices.map(i => `<option value="${i}">${esc(datasets[i].suite)} · ${esc(datasets[i].environment_label)}</option>`).join("")
     : '<option value="">No datasets available</option>';
   el("dataset-select").disabled = !indices.length;
   // Retain the current dataset when possible, otherwise use the newest match.
@@ -395,7 +425,7 @@ el("suites").innerHTML = `
     const details = s.latest.failure_details || [];
     const detailLabel = details.length ? `${details.length} failed / excluded` : s.latest.failure_details_status === "available" ? "No failures" : "Details unavailable";
     if (s.diagnostic) return "";
-    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button><div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
+    return `<tr class="${s.change_direction}" data-filter-dataset="${s.index}"><td><button class="dataset" data-dataset="${s.index}" aria-pressed="false" title="View dataset trends">${esc(s.suite)}</button><div class="empty">${esc(s.environment_label)}</div><div class="row-actions"><button type="button" class="action" data-failure-dataset="${s.index}" aria-label="Failure details for ${esc(s.suite)}">${detailLabel} →</button></div></td>
       ${metrics.map(m => `<td class="n">${pct(s.latest[m.key])}<span class="delta ${deltaClass(s.metric_deltas[m.key])}" title="${esc(comparisonExplanation(s))}">${deltaLabel(s.metric_deltas[m.key])}</span></td>`).join("")}
       <td class="n">${overviewMeasure(s, "tool_calls", "mean", 1, "calls")}</td>
       <td class="n">${overviewMeasure(s, "llm_calls", "mean", 1, "calls")}</td>
@@ -408,7 +438,7 @@ const skillReadRate = point => {
   return Number.isInteger(read) && Number.isInteger(observed) && observed > 0 && read >= 0 && read <= observed ? read / observed : null;
 };
 el("diagnostic-results").innerHTML = datasets.map((s, index) => s.diagnostic
-  ? `<div data-filter-dataset="${index}"><h3>Diagnostics</h3><button type="button" class="dataset" data-dataset="${index}">${esc(s.suite)}</button><p>Skill read: ${pct(skillReadRate(s.latest))}. Observation only; excluded from test-area pass rates. Open trends for UI task outcomes.</p></div>` : "").join("");
+  ? `<div data-filter-dataset="${index}"><h3>Diagnostics · ${esc(s.environment_label)}</h3><button type="button" class="dataset" data-dataset="${index}">${esc(s.suite)}</button><p>Skill read: ${pct(skillReadRate(s.latest))}. Observation only; excluded from test-area pass rates. Open trends for UI task outcomes.</p></div>` : "").join("");
 
 function selectDataset(index) {
   selected = datasets[index];
@@ -602,6 +632,10 @@ function openFailures(index) {
   detail.scrollIntoView({ block: "start" });
 }
 el("dataset-select").addEventListener("change", event => selectDataset(Number(event.target.value)));
+el("environment-select").addEventListener("change", event => {
+  activeEnvironment = event.target.value;
+  applyDatasetFilters();
+});
 el("suites").addEventListener("click", event => {
   const failure = event.target.closest("button[data-failure-dataset]");
   if (failure) { openFailures(Number(failure.dataset.failureDataset)); return; }

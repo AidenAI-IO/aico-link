@@ -8,6 +8,7 @@ from typing import Any
 
 from runner.agent_client import AgentClient
 from runner.report import task_error_details
+from runner.execution_environment import environment_label
 
 
 def _esc(s: str) -> str:
@@ -685,6 +686,7 @@ def generate_report_html(run_dir: Path) -> str:
 
     return HTML_TEMPLATE.format(
         run_id=run_id, suite=suite_name, passed=passed, total=total,
+        environment=_esc(environment_label(manifest)),
         failed=failed, skipped=skipped, pass_rate=pass_rate,
         agent_url=agent_url, started=started, finished=finished,
         rows_html=rows_html, tasks_json=tasks_json,
@@ -918,7 +920,7 @@ pre.block-body {{ margin: 0; white-space: pre-wrap; word-break: break-word; font
 <main class="page">
 <header class="topbar">
   <div class="brand"><div class="mark"></div><strong>Agent Benchmark</strong></div>
-  <div class="meta-info">{agent_url} &middot; {started} ~ {finished}</div>
+  <div class="meta-info"><strong>{environment}</strong> &middot; {agent_url} &middot; {started} ~ {finished}</div>
 </header>
 <section class="summary">
   <article class="summary-card"><div class="label">Total</div><div class="value">{total}</div></article>
