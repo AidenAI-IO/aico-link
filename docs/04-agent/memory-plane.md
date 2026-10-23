@@ -118,11 +118,21 @@ Screenshot binary data is stored as an Episode artifact. Event records contain r
 
 The recorded `outcome.success` value is not treated as verified truth. It is input evidence for later assessment.
 
-`memory/episodes/index.yaml` lists every Episode with a short user goal and
-summary (each capped at 300 characters) for lookups; the full goal and trace
-stay in the Episode's own `episode.yaml` and `events.jsonl`. Each run reads and
-rewrites the index, so it is kept small, and the copy just written is reused
-for the next read instead of parsing the file again.
+The Episode index lists every Episode with a short user goal and summary
+(each capped at 300 characters) for lookups; the full goal and trace stay in
+the Episode's own `episode.yaml` and `events.jsonl`. It has two files:
+
+- `memory/episodes/index.yaml` is a snapshot.
+- `memory/episodes/index-log.jsonl` is an append-only log of entries written
+  since the snapshot. A later line replaces an earlier one with the same id.
+
+Starting and finishing a run appends one line to the log and never rewrites
+the snapshot, so a run's cost does not grow with the number of stored
+Episodes. The log is folded back into the snapshot at agent startup, and by
+the `episode_retention` cleaner once the log reaches 256 KiB or when it
+deletes Episodes. The snapshot records the id of the log it absorbed, so a log
+left behind by an interrupted fold is not replayed. Each process keeps the
+merged index in memory and updates it on its own appends.
 
 ### Episode Storage Retention
 

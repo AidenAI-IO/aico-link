@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -18,6 +19,10 @@ import (
 const (
 	defaultEpisodeRetention  = 30 * 24 * time.Hour
 	defaultEpisodeMaxEntries = 1000
+	// episodeIndexLogCompactBytes is the update-log size at which the cleaner
+	// folds the log back into index.yaml (about a hundred tasks). Startup
+	// always folds it, so this only bounds the log on a long-running agent.
+	episodeIndexLogCompactBytes = 256 << 10
 )
 
 // EpisodeRetentionCleaner deletes whole episode directories, with their index
@@ -63,7 +68,7 @@ func (c *EpisodeRetentionCleaner) EstimateReclaimable(ctx context.Context) (uint
 	if err != nil {
 		return 0, err
 	}
-	var total uint64
+	total := plan.indexBytes
 	for _, dir := range plan.dirs {
 		total += directoryBytes(dir)
 	}
@@ -78,19 +83,19 @@ func (c *EpisodeRetentionCleaner) Clean(ctx context.Context) (uint64, error) {
 	unlock := store.lock()
 	defer unlock()
 	plan, err := c.plan(ctx, store)
-	if err != nil || len(plan.dirs) == 0 {
+	if err != nil {
 		return 0, err
 	}
 	// Drop the index entries first: a directory that then fails to delete is
 	// only an unindexed orphan, which a later run removes, rather than an
 	// index entry pointing at nothing.
-	if plan.indexChanged {
+	if plan.rewriteIndex {
 		plan.index.UpdatedAt = c.now().UTC().Format(time.RFC3339Nano)
 		if err := store.writeIndex(plan.index); err != nil {
 			return 0, err
 		}
 	}
-	var freed uint64
+	freed := plan.indexBytes
 	for _, dir := range plan.dirs {
 		if err := ctx.Err(); err != nil {
 			return freed, err
@@ -106,9 +111,15 @@ func (c *EpisodeRetentionCleaner) Clean(ctx context.Context) (uint64, error) {
 
 type episodeRetentionPlan struct {
 	// index is the index without the deleted entries.
-	index        episodeIndex
-	indexChanged bool
-	dirs         []string
+	index episodeIndex
+	// rewriteIndex is set when entries are dropped or the update log is due
+	// to be folded into the snapshot.
+	rewriteIndex bool
+	// indexBytes approximates what the rewrite frees: the dropped entries and
+	// a folded log. It keeps the estimate non-zero when only the index
+	// changes, since the storage monitor skips cleaners that estimate 0.
+	indexBytes uint64
+	dirs       []string
 }
 
 // plan picks what to delete. The caller holds the store lock.
@@ -148,10 +159,17 @@ func (c *EpisodeRetentionCleaner) plan(ctx context.Context, store *TaskEpisodeSt
 		tooOld := !at.IsZero() && at.Before(cutoff)
 		if deletable && (tooOld || len(kept) >= c.maxEntries) {
 			plan.dirs = append(plan.dirs, dir)
-			plan.indexChanged = true
+			plan.rewriteIndex = true
+			if line, err := json.Marshal(entry); err == nil {
+				plan.indexBytes += uint64(len(line))
+			}
 			continue
 		}
 		kept = append(kept, entry)
+	}
+	if info, err := os.Stat(store.indexLogPath()); err == nil && info.Size() >= episodeIndexLogCompactBytes {
+		plan.rewriteIndex = true
+		plan.indexBytes += uint64(info.Size())
 	}
 
 	orphans, err := c.orphanDirs(ctx, store.rootDir, indexed, referenced, cutoff)

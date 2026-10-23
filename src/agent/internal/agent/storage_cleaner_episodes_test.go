@@ -197,3 +197,65 @@ func TestEpisodeRetentionDropsIndexEntriesBeforeDeleting(t *testing.T) {
 		t.Fatal("index still lists an episode the cleaner was deleting")
 	}
 }
+
+func TestEpisodeRetentionFoldsLargeIndexLog(t *testing.T) {
+	memoryDir, store, now := episodeCleanerFixture(t)
+	cleaner := NewEpisodeRetentionCleaner(memoryDir, 1)
+	cleaner.now = func() time.Time { return now }
+
+	addCleanerEpisode(t, store, "ep_small", "active", now.Add(-time.Hour))
+	if estimate, err := cleaner.EstimateReclaimable(context.Background()); err != nil || estimate != 0 {
+		t.Fatalf("estimate for a small update log = %d, %v; want 0", estimate, err)
+	}
+	if _, err := cleaner.Clean(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !store.indexLogExists() {
+		t.Fatal("a small update log was folded; that rewrites index.yaml on every maintenance check")
+	}
+
+	for i := 0; store.indexLogExists(); i++ {
+		if info, _ := os.Stat(store.indexLogPath()); info.Size() >= episodeIndexLogCompactBytes {
+			break
+		}
+		addCleanerEpisode(t, store, fmt.Sprintf("ep_fill_%04d", i), "active", now.Add(-time.Duration(i)*time.Second))
+	}
+	want := len(indexedIDs(t, store))
+	// The storage monitor only calls Clean when the estimate is non-zero.
+	if estimate, err := cleaner.EstimateReclaimable(context.Background()); err != nil || estimate == 0 {
+		t.Fatalf("estimate for a large update log = %d, %v; want > 0", estimate, err)
+	}
+	if _, err := cleaner.Clean(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if store.indexLogExists() {
+		t.Fatal("a large update log was not folded into index.yaml")
+	}
+	if got := len(indexedIDs(t, NewTaskEpisodeStore(store.rootDir))); got != want {
+		t.Fatalf("index after folding has %d entries, want %d", got, want)
+	}
+}
+
+func TestEpisodeRetentionDropsOldEntriesWithoutDirectories(t *testing.T) {
+	memoryDir, store, now := episodeCleanerFixture(t)
+	addCleanerEpisode(t, store, "ep_recent", "active", now.Add(-time.Hour))
+	addCleanerEpisode(t, store, "ep_gone", "active", now.Add(-40*24*time.Hour))
+	gone, _ := store.entryDir(episodeIndexEntry{File: "2026/ep_gone/episode.yaml"})
+	if err := os.RemoveAll(gone); err != nil {
+		t.Fatal(err)
+	}
+
+	cleaner := NewEpisodeRetentionCleaner(memoryDir, 1)
+	cleaner.now = func() time.Time { return now }
+	// Nothing is left on disk to free, but the storage monitor skips a
+	// cleaner that estimates 0, so the stale entry would never be dropped.
+	if estimate, err := cleaner.EstimateReclaimable(context.Background()); err != nil || estimate == 0 {
+		t.Fatalf("estimate = %d, %v; want > 0", estimate, err)
+	}
+	if _, err := cleaner.Clean(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if ids := indexedIDs(t, NewTaskEpisodeStore(store.rootDir)); ids["ep_gone"] || !ids["ep_recent"] {
+		t.Fatalf("index after cleaning: %v", ids)
+	}
+}

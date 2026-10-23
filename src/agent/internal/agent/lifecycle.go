@@ -217,20 +217,17 @@ func (lm *LifecycleManager) verifyLongTermMemoryFiles(ctx context.Context, store
 
 func (lm *LifecycleManager) verifyEpisodeIndex(ctx context.Context, store *TaskEpisodeStore) (VerifyReport, error) {
 	var report VerifyReport
-	indexPath := store.indexPath()
-	data, err := os.ReadFile(indexPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			if err := store.RebuildIndex(ctx); err != nil {
-				return report, err
-			}
-			report.EpisodeIndexRebuilt = true
-			return report, nil
+	if _, err := os.Stat(store.indexPath()); os.IsNotExist(err) && !store.indexLogExists() {
+		if err := store.RebuildIndex(ctx); err != nil {
+			return report, err
 		}
+		report.EpisodeIndexRebuilt = true
+		return report, nil
+	} else if err != nil && !os.IsNotExist(err) {
 		return report, err
 	}
-	var index episodeIndex
-	if err := yaml.Unmarshal(data, &index); err != nil {
+	index, err := store.loadIndex()
+	if err != nil {
 		if err := store.RebuildIndex(ctx); err != nil {
 			return report, err
 		}
@@ -262,7 +259,7 @@ func (lm *LifecycleManager) verifyEpisodeIndex(ctx context.Context, store *TaskE
 		report.EpisodeIndexRebuilt = true
 	} else if indexChanged {
 		index.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		if err := writeYAMLAtomic(indexPath, index); err != nil {
+		if err := store.writeIndex(index); err != nil {
 			return report, err
 		}
 		report.EpisodeIndexRebuilt = true
@@ -280,6 +277,7 @@ func (lm *LifecycleManager) pruneEpisodeTraces(ctx context.Context, longTerm *Lo
 	if !ok || compactAfter <= 0 || episodes == nil || episodes.rootDir == "" {
 		return 0, nil
 	}
+	defer episodes.lock()()
 	index, err := episodes.loadIndex()
 	if err != nil {
 		return 0, err
@@ -330,7 +328,7 @@ func (lm *LifecycleManager) pruneEpisodeTraces(ctx context.Context, longTerm *Lo
 	}
 	if indexChanged {
 		index.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-		if err := writeYAMLAtomic(episodes.indexPath(), index); err != nil {
+		if err := episodes.writeIndex(index); err != nil {
 			return pruned, err
 		}
 	}
