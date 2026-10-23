@@ -12,7 +12,6 @@ from typing import Any
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
 from ci.weekly_report import AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, summarize_weekly, render_weekly
 from ci.dashboard_metrics import METRIC_CHARTS
-from runner.execution_environment import environment_key
 
 
 # Plain HTML (no Python format braces); the JSON payload replaces one marker.
@@ -82,17 +81,17 @@ def generate_dashboard(
     )
 
     print(f"Dashboard generated: {output_file}")
-    print(f"  Workflow/environment groups: {len(runs)} ({len(history)} suite records)")
-    latest_by_environment = {environment_key(run): run for run in runs}
-    for latest in latest_by_environment.values():
-        print(f"  {latest['environment_label']}: latest {latest['commit_sha'][:8]} on {latest['git_branch']}")
+    print(f"  Workflow runs: {len(runs)} ({len(history)} suite records)")
+    if runs:
+        latest = runs[-1]
+        print(f"  Latest: {latest['commit_sha'][:8]} on {latest['git_branch']}")
         print(f"    pass@1 {_percent(latest['pass_at_1'])}"
               f" ({latest['passed']}/{latest['eligible_tasks']} eligible first attempts)")
 
 
 def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
-    Collapse per-suite records into one entry per workflow run and environment.
+    Collapse per-suite records into one entry per workflow run.
 
     A single workflow run executes every suite in the profile, so the dashboard's
     headline rate weights suites by eligible first attempts. Unavailable metrics
@@ -102,12 +101,11 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         history: Per-suite run records, sorted oldest first
 
     Returns:
-        One record per workflow run and environment/platform, sorted oldest first
+        One record per workflow run, sorted oldest first
     """
     grouped: dict[Any, dict[str, Any]] = {}
     for record in history:
-        workflow_key = (record.get("workflow_run_id"), record.get("workflow_run_attempt")) if record.get("workflow_run_id") else record.get("run_id")
-        key = (workflow_key, environment_key(record))
+        key = (record.get("workflow_run_id"), record.get("workflow_run_attempt")) if record.get("workflow_run_id") else record.get("run_id")
         run = grouped.get(key)
         if run is None:
             run = {
@@ -118,9 +116,6 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "commit_sha": record.get("commit_sha") or "unknown",
                 "git_branch": record.get("git_branch"),
                 "agent_model": record.get("agent_model"),
-                "execution_environment": environment_key(record)[0],
-                "target_platform": environment_key(record)[1],
-                "environment_label": environment_of(record),
                 "tasks": 0,
                 "passed": 0,
                 "eligible_tasks": 0,
@@ -234,10 +229,10 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     Returns:
         Suite summaries sorted worst-performing first
     """
-    series: dict[tuple[str, tuple[str, str]], list[dict[str, Any]]] = {}
+    series: dict[str, list[dict[str, Any]]] = {}
     for run in runs:
         for suite in run["suites"]:
-            series.setdefault((suite["suite"], environment_key(suite)), []).append({
+            series.setdefault(suite["suite"], []).append({
                 **suite,
                 "timestamp": suite.get("timestamp") or run["timestamp"],
                 "commit_sha": suite.get("commit_sha") or run["commit_sha"],
@@ -246,7 +241,7 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
             })
 
     summaries = []
-    for (name, _), points in series.items():
+    for name, points in series.items():
         points.sort(key=lambda point: point["timestamp"] or "")
         latest = points[-1]
         # Compare with the immediately previous run even when its configuration
@@ -269,8 +264,6 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         )
         summaries.append({
             "suite": name,
-            "execution_environment": environment_key(latest)[0],
-            "environment_label": environment_of(latest),
             "capability": capability_of(name),
             "diagnostic": name in DIAGNOSTIC_SUITES,
             "latest": latest,

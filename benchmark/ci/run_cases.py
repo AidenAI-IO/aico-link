@@ -31,7 +31,6 @@ from ci.plan import (
     SuiteCase,
 )
 from ci.run_case import _incomplete_run_reasons, run_case
-from runner.execution_environment import environment_label
 
 DEFAULT_MAX_PARALLEL = 2
 LOG_TAIL_LINES = 40
@@ -45,8 +44,6 @@ class CaseOutcome:
     duration_seconds: float
     log_path: Path
     error_summary: str = ""
-    environment: str = "unknown"
-    target_platform: str = "auto"
 
     @property
     def ok(self) -> bool:
@@ -173,8 +170,6 @@ def run_cases(
             duration_seconds=duration,
             log_path=outcome_log_path,
             error_summary=error_summary,
-            environment=case.environment,
-            target_platform=case.target_platform,
         )
 
     workers = max(1, min(max_parallel, len(cases)))
@@ -199,42 +194,12 @@ def _write_step_summary(outcomes: list[CaseOutcome]) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY", "")
     if not summary_path:
         return
-    lines = ["## Benchmark results by execution environment", "",
-             "Android (ADB) and MobileGym are separate execution environments. "
-             "A completed case means the runner finished, not that all tasks passed.", ""]
-    groups: dict[tuple[str, str], list[CaseOutcome]] = {}
+    lines = ["## Benchmark cases", "", "| Case | Result | Duration |", "| --- | --- | --- |"]
     for outcome in outcomes:
-        groups.setdefault((outcome.environment, outcome.target_platform), []).append(outcome)
-    for (environment, platform), group in groups.items():
-        label = environment_label({"execution_environment": environment, "target_platform": platform})
-        lines.extend([f"### {label}", "",
-                      "| Case | Runner | Passed / attempts | Failed | Timeout | Skipped | Judge errors | Duration |",
-                      "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |"])
-        counts = {key: 0 for key in ("passed", "tasks", "failed", "timeout", "skipped", "judge_error")}
-        complete = True
-        for outcome in group:
-            verdict = "complete" if outcome.ok else f"error ({outcome.error_summary})"
-            try:
-                manifest = json.loads((BENCHMARK_ROOT / "runs" / outcome.run_id / "manifest.json").read_text())
-                totals = manifest["totals"]
-                values = {key: int(totals.get(key, 0)) for key in counts}
-                if not all(key in totals for key in ("passed", "tasks", "failed", "skipped")):
-                    raise ValueError("incomplete totals")
-                for key in counts:
-                    counts[key] += values[key]
-                result = f"{values['passed']} / {values['tasks']} | {values['failed']} | {values['timeout']} | {values['skipped']} | {values['judge_error']}"
-            except (OSError, ValueError, KeyError, TypeError):
-                complete = False
-                result = "Unavailable | — | — | — | —"
-            complete = complete and outcome.ok
-            lines.append(f"| {outcome.case_id} | {verdict} | {result} | {outcome.duration_seconds / 60:.1f}m |")
-        if complete and counts["tasks"]:
-            lines.extend(["", f"**{label}: {counts['passed']} / {counts['tasks']} attempts passed "
-                          f"({counts['passed'] / counts['tasks']:.1%}); {counts['failed']} failed, "
-                          f"{counts['timeout']} timed out, {counts['skipped']} skipped, "
-                          f"{counts['judge_error']} judge errors.**", ""])
-        else:
-            lines.extend(["", "Results are incomplete; no environment-wide rate is reported.", ""])
+        verdict = "complete" if outcome.ok else f"error ({outcome.error_summary})"
+        lines.append(
+            f"| {outcome.case_id} | {verdict} | {outcome.duration_seconds / 60:.1f}m |"
+        )
     for outcome in outcomes:
         case_summary = BENCHMARK_ROOT / "runs" / outcome.run_id / "summary.md"
         if not case_summary.is_file():

@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import argparse
-import json
 import shutil
 import time
 import urllib.parse
 from pathlib import Path
-from typing import TextIO
-from runner.execution_environment import environment_label
 
 
 DEFAULT_RETENTION_DAYS = 14
@@ -88,38 +85,17 @@ def publish_reports(
                 if artifact_url:
                     summary.write(f"\n[Download run artifacts]({artifact_url})\n")
             elif links:
-                urls = dict(links)
-                _write_report_groups(summary, reports, run_id_prefix, urls)
+                for label, url in links:
+                    summary.write(f"- [{label}]({url})\n")
                 if artifact_url:
                     summary.write(f"\n[Download all artifacts]({artifact_url})\n")
             else:
                 summary.write("Direct HTML hosting is not configured.\n")
-                _write_report_groups(summary, reports, run_id_prefix, {})
                 if artifact_url:
                     summary.write(
                         f"\n[Download interactive reports]({artifact_url})\n"
                     )
     return len(links)
-
-
-def _write_report_groups(summary: TextIO, reports: list[Path], prefix: str, urls: dict[str, str]) -> None:
-    groups: dict[str, list[Path]] = {}
-    for report in reports:
-        try:
-            manifest = json.loads((report.parent / "manifest.json").read_text())
-        except (OSError, ValueError):
-            manifest = {}
-        if not isinstance(manifest, dict):
-            manifest = {}
-        groups.setdefault(environment_label(manifest), []).append(report)
-    for label, group in sorted(groups.items()):
-        summary.write(f"\n### {label}\n\n")
-        for report in group:
-            case_id = report.parent.name.removeprefix(f"{prefix}-")
-            if case_id in urls:
-                summary.write(f"- [{case_id}]({urls[case_id]})\n")
-            else:
-                summary.write(f"- `{case_id}`: `runs/{report.parent.name}/report.html` in the artifact\n")
 
 
 def cli(argv: list[str] | None = None) -> int:

@@ -140,7 +140,7 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     markdown = render_weekly(report, [])
     assert "### By test area" in markdown
     # Tasks: latest eligible count per suite; first attempts: every run summed.
-    assert "| Memory | Unknown | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
 
 
 def test_capability_counts_separate_tasks_from_repetitions():
@@ -155,7 +155,7 @@ def test_capability_counts_separate_tasks_from_repetitions():
     assert memory["task_count"] == 26
     assert memory["run_count"] == 3
     assert memory["eligible_tasks"] == 78
-    assert "| Memory | Unknown | memory_v1, quick_capture_v1 | 26 | 3 | 78 | 100.0% |" in render_weekly(report, [])
+    assert "| Memory | memory_v1, quick_capture_v1 | 26 | 3 | 78 | 100.0% |" in render_weekly(report, [])
 
 
 def test_capability_run_count_distinguishes_workflow_reruns_and_groups_suites():
@@ -176,7 +176,7 @@ def test_capability_table_labels_first_attempt_denominator_when_k_exceeds_one():
     ], end=END)
     markdown = render_weekly(report, [])
     assert "| Runs | Eligible first attempts |" in markdown
-    assert "| Memory | Unknown | memory_v1 | 8 | 1 | 8 | 50.0% |" in markdown
+    assert "| Memory | memory_v1 | 8 | 1 | 8 | 50.0% |" in markdown
 
 
 def test_every_ci_suite_has_a_capability():
@@ -230,7 +230,7 @@ def test_diagnostics_use_observations_and_do_not_inflate_scored_results():
     assert [c["capability"] for c in report["capabilities"]] == ["Memory"]
     assert [s["suite"] for s in report["suites"]] == ["memory_v1"]
     assert report["diagnostics"] == [{"suite": "skill_discovery_v1", "read": 1, "observed": 4,
-                                      "environment_label": "Unknown", "rate": 0.25, "change": 0.25}]
+                                      "rate": 0.25, "change": 0.25}]
     markdown = render_weekly(report, [])
     assert "### Diagnostics" in markdown and "skill read 25.0%" in markdown
 
@@ -247,28 +247,6 @@ def test_missing_or_invalid_diagnostic_observations_remain_unknown(observation):
 def test_environment_is_independent_of_suite_objective():
     from ci.weekly_report import capability_of, environment_of
     assert capability_of("phone_control_v1") == "UI operation"
-    assert environment_of({"suite": "phone_control_v1", "execution_environment": "mobilegym"}) == "MobileGym"
+    assert environment_of({"suite": "phone_control_v1", "execution_environment": "mobilegym"}) == "Simulator"
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "external"}) == "External device"
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
-
-
-def test_weekly_report_never_pools_android_and_mobilegym_or_compares_their_baselines():
-    records = [
-        _record(suite="phone_control_v1", execution_environment="adb", target_platform="android", passed=2),
-        _record(suite="phone_control_v1", execution_environment="mobilegym", target_platform="android", passed=8),
-        _record("2026-10-01T00:00:00+00:00", suite="phone_control_v1",
-                execution_environment="mobilegym", target_platform="android", passed=4),
-    ]
-    report = summarize_weekly(records, end=END)
-    assert report["totals"]["pass_at_1"] is None
-    assert report["change"] is None
-    assert len(report["suites"]) == len(report["capabilities"]) == len(report["environments"]) == 2
-    adb, gym = sorted(report["suites"], key=lambda s: s["environment_label"])
-    assert adb["environment_label"] == "Android (ADB)"
-    assert adb["pass_at_1"] == 0.25 and adb["change"] is None
-    assert gym["pass_at_1"] == 1.0 and gym["change"] == 0.5
-    markdown = render_weekly(report, [])
-    assert "Android (ADB)" in markdown and "MobileGym / android" in markdown
-    # Even single-environment windows must not compare two different backends.
-    report = summarize_weekly([records[0], records[2]], end=END)
-    assert report["change"] is None

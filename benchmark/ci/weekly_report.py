@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp
-from runner.execution_environment import environment_key, environment_label
 
 
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
@@ -29,11 +28,10 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     # eligible_tasks sums every run in the window. task_count is the distinct
     # task count (each suite's latest run) and run_count the workflow runs, so
     # readers can tell many tasks from many repetitions.
-    latest: dict[tuple[str, tuple[str, str]], dict[str, Any]] = {}
+    latest: dict[str, dict[str, Any]] = {}
     for r in measured:
-        key = (r["suite"], environment_key(r))
-        if key not in latest or parse_timestamp(r["timestamp"]) > parse_timestamp(latest[key]["timestamp"]):
-            latest[key] = r
+        if r["suite"] not in latest or parse_timestamp(r["timestamp"]) > parse_timestamp(latest[r["suite"]]["timestamp"]):
+            latest[r["suite"]] = r
     return {
         "suite_runs": len(records),
         "measured_suite_runs": len(measured),
@@ -43,18 +41,17 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
         "run_count": len({(r["workflow_run_id"], r.get("workflow_run_attempt")) if r.get("workflow_run_id")
                           else (r.get("run_id") or r["timestamp"], None) for r in measured}),
         "passed": sum(r["passed"] for r in measured),
-        "pass_at_1": sum(r["passed"] for r in measured) / eligible
-        if eligible and len({environment_key(r) for r in records}) == 1 else None,
+        "pass_at_1": sum(r["passed"] for r in measured) / eligible if eligible else None,
         # Missing cost/token measurements must not silently become zero.
         **{f"{metric}_sum": _complete_resource_sum(records, metric)
            for metric in ("cost_usd", "total_tokens")},
     }
 
 
-def _by_suite(records: list[dict[str, Any]]) -> dict[tuple[str, tuple[str, str]], list[dict[str, Any]]]:
-    groups: dict[tuple[str, tuple[str, str]], list[dict[str, Any]]] = {}
+def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
     for record in records:
-        groups.setdefault((record["suite"], environment_key(record)), []).append(record)
+        groups.setdefault(record["suite"], []).append(record)
     return groups
 
 
@@ -104,8 +101,7 @@ CAPABILITY_SUITES = {
     "Visual grounding": ("perception_v1",),
     "UI operation": ("mobilegym_basic", "mobilegym_scroll_regression", "mobilegym_scroll_sweep",
                      "phone_control_v1", "adb_android_basic", "vphone_ios_basic",
-                     "app_workflow_v1", "quick_action_v1", "adb_android_navigation",
-                     "adb_android_text_editing"),
+                     "app_workflow_v1", "quick_action_v1"),
     "Device integration": ("aiden_app_connection_capabilities_v1",
                            "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
@@ -115,6 +111,10 @@ DIAGNOSTIC_AREA = "Diagnostics"
 OTHER_CAPABILITY = "Other"
 _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
 AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
+ENVIRONMENT_LABELS = {
+    "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
+    "adb": "ADB device", "external": "External device", "mixed": "Mixed",
+}
 
 
 def capability_of(suite: str) -> str:
@@ -123,18 +123,18 @@ def capability_of(suite: str) -> str:
     return _CAPABILITY_BY_SUITE.get(suite, OTHER_CAPABILITY)
 
 
-def _by_capability(records: list[dict[str, Any]]) -> dict[tuple[str, tuple[str, str]], list[dict[str, Any]]]:
-    groups: dict[tuple[str, tuple[str, str]], list[dict[str, Any]]] = {}
+def _by_capability(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
     for record in records:
         if record["suite"] in DIAGNOSTIC_SUITES:
             continue
-        groups.setdefault((capability_of(record["suite"]), environment_key(record)), []).append(record)
+        groups.setdefault(capability_of(record["suite"]), []).append(record)
     return groups
 
 
 def environment_of(record: dict[str, Any]) -> str:
     """Use recorded execution metadata; never infer an environment from a suite name."""
-    return environment_label(record)
+    return ENVIRONMENT_LABELS.get(record.get("execution_environment"), "Unknown")
 
 
 def skill_discovery_totals(records: list[dict[str, Any]]) -> dict[str, Any]:
@@ -166,18 +166,17 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     previous_by_suite = _by_suite(previous)
     suites = []
     diagnostics = []
-    for key, group in _by_suite(current).items():
-        name = key[0]
+    for name, group in _by_suite(current).items():
         totals = _totals(group)
-        prior = previous_by_suite.get(key, [])
+        prior = previous_by_suite.get(name, [])
         before = _totals(prior)["pass_at_1"]
         if name in DIAGNOSTIC_SUITES:
             observation = skill_discovery_totals(group)
             previous_observation = skill_discovery_totals(prior)
-            diagnostics.append({"suite": name, "environment_label": environment_of(group[0]), **observation,
+            diagnostics.append({"suite": name, **observation,
                                 "change": _change(observation["rate"], previous_observation["rate"])})
             continue
-        suites.append({"suite": name, "environment_label": environment_of(group[0]), **totals, "previous_pass_at_1": before,
+        suites.append({"suite": name, **totals, "previous_pass_at_1": before,
                        "change": _change(totals["pass_at_1"], before),
                        "config_changes": _config_changes(group, prior)})
     # Weakest suites first; unknown rates last.
@@ -186,29 +185,19 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     capabilities = []
     current_by_capability = _by_capability(current)
     order = AREA_ORDER
-    for key in sorted(current_by_capability, key=lambda item: (order.index(item[0]), item[1])):
-        name = key[0]
-        group = current_by_capability[key]
+    for name in sorted(current_by_capability, key=order.index):
+        group = current_by_capability[name]
         totals = _totals(group)
-        before = _totals(previous_by_capability.get(key, []))["pass_at_1"]
-        capabilities.append({"capability": name, "environment_label": environment_of(group[0]), **totals, "previous_pass_at_1": before,
+        before = _totals(previous_by_capability.get(name, []))["pass_at_1"]
+        capabilities.append({"capability": name, **totals, "previous_pass_at_1": before,
                              "change": _change(totals["pass_at_1"], before),
                              "suites": sorted({r["suite"] for r in group})})
     totals = _totals([r for r in current if r["suite"] not in DIAGNOSTIC_SUITES])
     previous_totals = _totals([r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES])
-    environments = []
-    for key in sorted({environment_key(r) for r in current}):
-        group = [r for r in current if environment_key(r) == key and r["suite"] not in DIAGNOSTIC_SUITES]
-        prior = [r for r in previous if environment_key(r) == key and r["suite"] not in DIAGNOSTIC_SUITES]
-        environments.append({"environment_label": environment_of({"execution_environment": key[0], "target_platform": key[1]}),
-                             **_totals(group), "previous_pass_at_1": _totals(prior)["pass_at_1"]})
     return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
             "totals": totals, "previous_totals": previous_totals,
-            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"])
-            if len({environment_key(r) for r in current + previous
-                    if r["suite"] not in DIAGNOSTIC_SUITES}) == 1 else None,
-            "capabilities": capabilities, "suites": suites, "diagnostics": diagnostics,
-            "environments": environments}
+            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]),
+            "capabilities": capabilities, "suites": suites, "diagnostics": diagnostics}
 
 
 def _pct(value: float | None) -> str:
@@ -244,26 +233,20 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
         "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
-        "Pass rates are separated by execution environment and platform; no combined rate is reported across environments.",
         "Configuration changes list settings that differ between the two windows' latest runs.", "",
-        "### By execution environment", "",
-        "| Environment | Eligible first attempts | Passed | pass@1 | Previous 7 days |",
-        "| --- | ---: | ---: | ---: | ---: |",
-        *[f"| {_cell(e['environment_label'])} | {e['eligible_tasks']} | {e['passed']} | {_pct(e['pass_at_1'])} | {_pct(e['previous_pass_at_1'])} |"
-          for e in report.get("environments", [])], "",
         "### By test area", "",
-        "| Test area | Environment | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-        *[f"| {_cell(c['capability'])} | {_cell(c['environment_label'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
+        "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
           f"{c['run_count']} | {c['eligible_tasks']:.0f} | "
           f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} |"
           for c in report.get("capabilities", [])],
         "", "### By suite", "",
-        "| Suite | Environment | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
+        "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: |",
     ]
     for suite in report["suites"]:
-        lines.append(f"| {_cell(suite['suite'])} | {_cell(suite['environment_label'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
+        lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
                      f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_pp(suite['change'])} | "
                      f"{_cell(describe_config_changes(suite.get('config_changes') or [])) or '—'} | "
                      f"{_resources(suite)[0]} |")
@@ -272,7 +255,7 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
     if report.get("diagnostics"):
         lines.extend(["", "### Diagnostics", "", "Skill discovery is an observation, not UI task pass@1. Excluded from test-area and overall pass rates.", ""])
         for diagnostic in report["diagnostics"]:
-            lines.append(f"- {_cell(diagnostic['suite'])} ({_cell(diagnostic['environment_label'])}): skill read {_pct(diagnostic['rate'])} ({_pp(diagnostic['change'])}); "
+            lines.append(f"- {_cell(diagnostic['suite'])}: skill read {_pct(diagnostic['rate'])} ({_pp(diagnostic['change'])}); "
                          + (f"{diagnostic['read']:.0f}/{diagnostic['observed']:.0f} observed attempts."
                             if diagnostic["observed"] is not None else "observation data unavailable."))
     lines.append("")

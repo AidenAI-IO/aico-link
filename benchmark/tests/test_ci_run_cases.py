@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import subprocess
-import json
 import threading
 from pathlib import Path
 
@@ -210,28 +209,3 @@ def test_run_json_terminates_environment_startup_process_group_on_timeout(
     assert captured["timeout"] == 1
     assert captured["kwargs"]["start_new_session"] is True
     assert captured["terminated"] is not None
-
-
-def test_actions_summary_separates_environment_scores_and_keeps_missing_results_unknown(monkeypatch, tmp_path):
-    monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
-    summary = tmp_path / "summary.md"
-    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(summary))
-    outcomes = []
-    for case, environment, totals in [
-        ("adb-basic", "adb", {"tasks": 8, "passed": 5, "failed": 1, "timeout": 2, "skipped": 0}),
-        ("gym", "mobilegym", {"tasks": 10, "passed": 10, "failed": 0, "skipped": 0}),
-        ("missing", "external", None),
-    ]:
-        run_id = f"ci-123-1-{case}"
-        path = tmp_path / "runs" / run_id
-        path.mkdir(parents=True)
-        if totals:
-            (path / "manifest.json").write_text(json.dumps({"totals": totals}))
-        outcomes.append(run_cases_module.CaseOutcome(case, run_id, 0 if totals else 1, 60,
-                                                   path / "ci-case.log", environment=environment))
-    run_cases_module._write_step_summary(outcomes)
-    text = summary.read_text()
-    assert "Android (ADB): 5 / 8 attempts passed (62.5%)" in text
-    assert "MobileGym: 10 / 10 attempts passed (100.0%)" in text
-    assert "15 / 18" not in text
-    assert "Unavailable" in text and "Results are incomplete" in text
