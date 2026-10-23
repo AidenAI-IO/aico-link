@@ -1339,17 +1339,17 @@ func TestNavigationCandidateLinksResultEvidenceToToolCalls(t *testing.T) {
 	episode := TaskEpisode{Events: []TaskEpisodeEvent{
 		{EventID: "ethernet_call", Type: runEventToolCall, ToolName: "touch_gesture", ToolInput: `{"type":"tap","target":"Ethernet"}`},
 		{EventID: "ethernet_result", Type: "tool_result", ToolName: "touch_gesture", Observation: "The Ethernet page is visible."},
-		{EventID: "interface_call", Type: runEventToolCall, ToolName: "touch_gesture", ToolInput: `{"type":"tap","target":"Aiden HID+ECM"}`},
+		{EventID: "interface_call", Type: runEventToolCall, ToolName: "touch_gesture", ToolInput: `{"type":"tap","target":"Aico HID+ECM"}`},
 		{EventID: "interface_result", Type: "tool_result", ToolName: "touch_gesture", Observation: "The IPv4 details page is visible."},
 	}}
 	candidate := episodeMemoryCandidate{
-		LessonKey:      "ios_aiden_ethernet_path",
+		LessonKey:      "ios_aico_ethernet_path",
 		Type:           episodeMemoryTypeNavigation,
 		Action:         episodeMemoryActionCreate,
 		Retention:      episodeMemoryRetentionDurable,
 		MemoryRevision: 1,
-		Situation:      "When opening the Aiden USB Ethernet details on iOS",
-		Guidance:       "Open Ethernet, then Aiden HID+ECM",
+		Situation:      "When opening the Aico USB Ethernet details on iOS",
+		Guidance:       "Open Ethernet, then Aico HID+ECM",
 		ExpectedEffect: "The IPv4 details page is visible",
 		Scope:          map[string]string{"app_name": "Settings"},
 		EvidenceRefs:   []string{"ethernet_result", "interface_result"},

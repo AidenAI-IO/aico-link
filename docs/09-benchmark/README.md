@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # Agent Benchmark
 
-Agent benchmark evaluates the Aiden Go agent on phone UI, memory, planning,
+Agent benchmark evaluates the Aico Go agent on phone UI, memory, planning,
 perception, and environment-control tasks. The current recommended entry points
 are:
 
@@ -98,7 +98,7 @@ uv run python -m runner run \
 `--auto-agent-setup` ignores `--agent-url`, reads bridge capacity from
 `/api/concurrent`, and starts one isolated agent daemon per active task worker.
 
-### Aiden App Policy Without a Phone
+### Companion App Policy Without a Phone
 
 Use suite-level defaults or task-level `mock_environment` fixtures for
 deterministic Phone Bridge strategy tests. The runner simulates platform/app state
@@ -107,20 +107,20 @@ phone or emulator. Task-level fixtures let one suite hold a runtime policy matri
 without creating a JSON file for every case:
 
 In the WebUI, select one or more mock suites and click `Run selected suites`. The
-run configuration changes to `Mock Aiden App environment`, skips the device
+run configuration changes to `Mock Aico companion app environment`, skips the device
 picker, and starts the task-level fixtures automatically. Mock and external-device
 suites must be run as separate jobs.
 
 ```bash
 cd benchmark
 uv run python -m runner run \
-  --suite suites/aiden_app/phone_bridge_data_policy_v1.json \
+  --suite suites/aico_app/phone_bridge_data_policy_v1.json \
   --auto-agent-setup \
   --no-judge \
   --verbose
 ```
 
-The Aiden App cases are consolidated into two suites:
+The Aico companion app cases are consolidated into two suites:
 
 - `notes_entry_policy_v1.json`: Notes is already open, its icon is visible, or
   neither is visible. The Agent respectively enters text directly, clicks the
@@ -134,7 +134,7 @@ so they do not cover the BLE Wake-specific allowlist or runtime tool filtering.
 
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the
-tool restores the Aiden App internally before executing, so the Agent must not click the
+tool restores the Aico companion app internally before executing, so the Agent must not click the
 Dynamic Island or call `bridge_open_app`. With iOS PiP or Android FGS enabled,
 background-safe data tools execute directly through the background queue.
 `bridge_open_app` remains excluded because PiP/FGS do not provide background app
@@ -247,7 +247,7 @@ Suites with suite-level or task-level `mock_environment` require
 the scripted bridge itself and activates the matching fixture before each task.
 
 Auto-started Docker workers receive a host-resolved, read-only `agent.toml`.
-Credential references such as `api_key = "$AIDEN_BENCHMARK_AGENT_API_KEY"` must resolve on the
+Credential references such as `api_key = "$AICO_BENCHMARK_AGENT_API_KEY"` must resolve on the
 host before the daemon starts. MobileGym endpoints also pass a functional
 `setup` / `release` preflight before workers are created.
 
@@ -257,7 +257,7 @@ bridge gateway interface; the simulator web UI remains bound to loopback.
 The bridge is unauthenticated. Gateway binding does not isolate it from other
 containers on the same host; use a trusted benchmark host without untrusted
 workloads sharing the Docker daemon.
-Override `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
+Override `AICO_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
 daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
 `/health` success alone does not establish worker connectivity.
 
@@ -317,7 +317,7 @@ different suite versions can still be inspected in Langfuse, but their aggregate
 scores should not be treated as a like-for-like regression unless the unchanged
 item intersection is used or the old product version is rerun against the new
 suite definition. When an Agent episode ID is present, the experiment trace also
-records the deterministic Agent trace ID for correlation with Aiden telemetry.
+records the deterministic Agent trace ID for correlation with Aico telemetry.
 
 Publishing is idempotent by run ID. A retry verifies the Dataset Run Item set,
 adds any missing items, and rewrites scores with stable IDs. A conflicting run ID
@@ -428,7 +428,7 @@ external environment to the schedule after its bridge has at least 99% health
 availability over that baseline period.
 
 The workflow expects these GitHub configuration values. GitHub-facing names omit
-the `AIDEN_` prefix; the workflow maps them to the runner variables documented
+the `AICO_` prefix; the workflow maps them to the runner variables documented
 below.
 
 - Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
@@ -437,8 +437,8 @@ below.
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
   `BENCHMARK_IOS_ENVIRONMENT_URL`, `BENCHMARK_MAC_ENVIRONMENT_URL`,
   `BENCHMARK_VPHONE_ENVIRONMENT_URL`,
-  `BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL`, and
-  `BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL`.
+  `BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL`, and
+  `BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL`.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
 
@@ -448,7 +448,7 @@ Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 repository setting. If neither is set, the workflow uses `1`. The report derives
 `metrics_k` from the planned task repeats; no separate metrics variable is needed.
 
-The benchmark job uses the dedicated `aiden-hosted-01` runner because the
+The benchmark job uses the dedicated `aico-hosted-01` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the
 selected cases out with a configurable concurrency limit. MobileGym cases are
@@ -465,17 +465,17 @@ credentials.
 
 ## Runner and Local CLI Environment Variables
 
-- `AIDEN_BENCHMARK_AGENT_PROVIDER` - Agent provider type for the default config template.
-- `AIDEN_BENCHMARK_AGENT_MODEL` - Agent model for the default config template and run manifest.
-- `AIDEN_BENCHMARK_AGENT_BASE_URL` - Agent model endpoint for the default config template.
-- `AIDEN_BENCHMARK_AGENT_API_KEY` - Agent credential embedded in the generated read-only config.
-- `AIDEN_BENCHMARK_JUDGE_MODEL` - Default judge model.
-- `AIDEN_BENCHMARK_JUDGE_BASE_URL` - Default OpenAI-compatible judge endpoint.
-- `AIDEN_BENCHMARK_JUDGE_API_KEY` - Required when judge is enabled.
-- `AIDEN_BENCHMARK_ANALYSIS_API_KEY` - Optional post-run analysis credential; defaults to the Judge key.
-- `AIDEN_AGENT_URL` - Default `--agent-url`.
-- `AIDEN_ENVIRONMENT_URL` - Default `--environment-url`.
-- `AIDEN_DAEMON_IMAGE` - Default daemon worker image for auto agent setup.
+- `AICO_BENCHMARK_AGENT_PROVIDER` - Agent provider type for the default config template.
+- `AICO_BENCHMARK_AGENT_MODEL` - Agent model for the default config template and run manifest.
+- `AICO_BENCHMARK_AGENT_BASE_URL` - Agent model endpoint for the default config template.
+- `AICO_BENCHMARK_AGENT_API_KEY` - Agent credential embedded in the generated read-only config.
+- `AICO_BENCHMARK_JUDGE_MODEL` - Default judge model.
+- `AICO_BENCHMARK_JUDGE_BASE_URL` - Default OpenAI-compatible judge endpoint.
+- `AICO_BENCHMARK_JUDGE_API_KEY` - Required when judge is enabled.
+- `AICO_BENCHMARK_ANALYSIS_API_KEY` - Optional post-run analysis credential; defaults to the Judge key.
+- `AICO_AGENT_URL` - Default `--agent-url`.
+- `AICO_ENVIRONMENT_URL` - Default `--environment-url`.
+- `AICO_DAEMON_IMAGE` - Default daemon worker image for auto agent setup.
 - `LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS` - Maximum publication read-back wait; defaults to 660 seconds to cover Langfuse asynchronous ingestion lag.
 
 ## Execution Modes

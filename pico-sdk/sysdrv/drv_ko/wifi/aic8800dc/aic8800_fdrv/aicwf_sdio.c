@@ -944,7 +944,7 @@ static void aicwf_sdio_remove(struct sdio_func *func)
 	host = func->card->host;
 	/* The retained board owns this capability across driver reloads. */
 	if (!device_property_read_bool(host->parent,
-				       "aiden,aic8800d80-retained-sdio"))
+				       "aico,aic8800d80-retained-sdio"))
 		host->caps &= ~MMC_CAP_NONREMOVABLE;
 	bus_if = dev_get_drvdata(&func->dev);
 	if (!bus_if) {

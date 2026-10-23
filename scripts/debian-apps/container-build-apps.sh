@@ -62,9 +62,9 @@ printf 'version=%s\nasset=%s\nsha256=%s\nurl=%s\n' \
 cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="${REPO_ROOT}/cmake/toolchains/armhf-debian.cmake" \
-    -DAIDEN_TARGET_PLATFORM=rv1106-debian-glibc \
-    -DAIDEN_DEBIAN_OPENCV_DIR="${OPENCV_DIR}" \
-    -DAIDEN_ENABLE_LINK_MAPS=ON
+    -DAICO_TARGET_PLATFORM=rv1106-debian-glibc \
+    -DAICO_DEBIAN_OPENCV_DIR="${OPENCV_DIR}" \
+    -DAICO_ENABLE_LINK_MAPS=ON
 cmake --build "${BUILD_DIR}" --parallel "${JOBS}" --verbose \
     2>&1 | tee "${DIST_DIR}/metadata/build.log"
 
@@ -88,11 +88,11 @@ export PATH=/usr/local/go/bin:${PATH}
 export GOTOOLCHAIN=local
 export GOCACHE=/go-build-cache
 export GOMODCACHE=/go-mod-cache
-export GOPATH=/tmp/aiden-go-path
+export GOPATH=/tmp/aico-go-path
 readonly AGENT_COMMIT=$(git -C "${REPO_ROOT}" rev-parse --short=12 HEAD)
 readonly AGENT_BUILD_TIME=$(date -u -d "@${SOURCE_EPOCH}" +%Y%m%d-%H%M%S)
 readonly AGENT_BUILD_VERSION=${AGENT_BUILD_TIME}-${AGENT_COMMIT}
-readonly AGENT_LDFLAGS="-s -w -buildid= -X aiden-agent/internal/agent.buildCommit=${AGENT_COMMIT} -X aiden-agent/internal/agent.buildVersion=${AGENT_BUILD_VERSION}"
+readonly AGENT_LDFLAGS="-s -w -buildid= -X aico-agent/internal/agent.buildCommit=${AGENT_COMMIT} -X aico-agent/internal/agent.buildVersion=${AGENT_BUILD_VERSION}"
 
 pushd "${REPO_ROOT}/src/agent" >/dev/null
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \

@@ -3,8 +3,8 @@ SYSDRV_DIR=$(shell pwd)
 export LC_ALL=C
 SOURCE_DATE_EPOCH ?= 0
 export SOURCE_DATE_EPOCH
-AIDEN_BUILDROOT_REPRODUCIBLE_STATE_VERSION := 2
-AIDEN_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION := 1
+AICO_BUILDROOT_REPRODUCIBLE_STATE_VERSION := 2
+AICO_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION := 1
 SHELL:=/bin/bash
 MAKE=make
 AT?=@
@@ -325,9 +325,9 @@ define sync_buildroot_board_config
 	cp ${HCITOOL_TOOL_PATH}/*.patch $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/bluez5_utils/
 	cp ${MPV_PATCH_PATH}/*.patch $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/mpv/
 	cp ${BUSYBOX_PATCH_PATH}/*.patch $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/busybox/
-	$(call inject_android_tools_aiden_pkg)
-	$(call inject_opkg_aiden_pkg)
-	$(call inject_python_charset_normalizer_aiden_pkg)
+	$(call inject_android_tools_aico_pkg)
+	$(call inject_opkg_aico_pkg)
+	$(call inject_python_charset_normalizer_aico_pkg)
 	$(call pin_libarchive_optouts)
 	$(call pin_libsolv_semantics)
 endef
@@ -411,36 +411,36 @@ define pin_libarchive_optouts
 		fi
 endef
 
-# android-tools-aiden is an out-of-tree Buildroot package (modern adb
+# android-tools-aico is an out-of-tree Buildroot package (modern adb
 # client, reports 1.0.41). The buildroot tree is extracted fresh from a
 # tarball at build time, so the package source, its vendored tarball and
 # its registration in package/Config.in must be re-injected after every
 # extraction.
-ANDROID_TOOLS_AIDEN_SRC := $(SYSDRV_DIR)/tools/board/buildroot/android-tools-aiden
-ANDROID_TOOLS_AIDEN_TARBALL := android-tools-aiden-30.0.5p1.tar.xz
-define inject_android_tools_aiden_pkg
-	mkdir -p $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/android-tools-aiden
-	cp $(ANDROID_TOOLS_AIDEN_SRC)/Config.in \
-		$(ANDROID_TOOLS_AIDEN_SRC)/android-tools-aiden.mk \
-		$(ANDROID_TOOLS_AIDEN_SRC)/android-tools-aiden.hash \
-		$(ANDROID_TOOLS_AIDEN_SRC)/*.patch \
-		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/android-tools-aiden/
-	mkdir -p $(BUILDROOT_DIR)/$(BUILDROOT_VER)/dl/android-tools-aiden
-	cp $(ANDROID_TOOLS_AIDEN_SRC)/$(ANDROID_TOOLS_AIDEN_TARBALL) \
-		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/dl/android-tools-aiden/
-	grep -q 'package/android-tools-aiden/Config.in' \
+ANDROID_TOOLS_AICO_SRC := $(SYSDRV_DIR)/tools/board/buildroot/android-tools-aico
+ANDROID_TOOLS_AICO_TARBALL := android-tools-aico-30.0.5p1.tar.xz
+define inject_android_tools_aico_pkg
+	mkdir -p $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/android-tools-aico
+	cp $(ANDROID_TOOLS_AICO_SRC)/Config.in \
+		$(ANDROID_TOOLS_AICO_SRC)/android-tools-aico.mk \
+		$(ANDROID_TOOLS_AICO_SRC)/android-tools-aico.hash \
+		$(ANDROID_TOOLS_AICO_SRC)/*.patch \
+		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/android-tools-aico/
+	mkdir -p $(BUILDROOT_DIR)/$(BUILDROOT_VER)/dl/android-tools-aico
+	cp $(ANDROID_TOOLS_AICO_SRC)/$(ANDROID_TOOLS_AICO_TARBALL) \
+		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/dl/android-tools-aico/
+	grep -q 'package/android-tools-aico/Config.in' \
 		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/Config.in || \
 		{ \
-			sed -i 's|\(\s*\)source "package/android-tools/Config.in"|\1source "package/android-tools/Config.in"\n\1source "package/android-tools-aiden/Config.in"|' \
+			sed -i 's|\(\s*\)source "package/android-tools/Config.in"|\1source "package/android-tools/Config.in"\n\1source "package/android-tools-aico/Config.in"|' \
 				$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/Config.in; \
-			grep -q 'package/android-tools-aiden/Config.in' \
+			grep -q 'package/android-tools-aico/Config.in' \
 				$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/Config.in || \
-				{ echo "failed to inject android-tools-aiden into package/Config.in" >&2; exit 1; }; \
+				{ echo "failed to inject android-tools-aico into package/Config.in" >&2; exit 1; }; \
 		}
 endef
 
 # opkg is an in-tree Buildroot package, but 2023.02.6 carries an older release
-# (0.4.5). opkg-aiden holds a verbatim backport of Buildroot master's recipe
+# (0.4.5). opkg-aico holds a verbatim backport of Buildroot master's recipe
 # for 0.7.0, which is still autotools, so the integration is an in-place
 # overwrite of package/opkg rather than an out-of-tree package: both
 # BR2_PACKAGE_OPKG and its package/Config.in registration already exist, so no
@@ -451,25 +451,25 @@ endef
 # plain buildroot target only extracts when the tree is absent, and the
 # `make clean` triggered by a config-state change clears output/ and leaves
 # package/ alone. So the patch set has to be *synced*, not merely topped up --
-# removing or renaming a patch under opkg-aiden must remove it from the tree
+# removing or renaming a patch under opkg-aico must remove it from the tree
 # too, or a stale patch keeps being applied and V10 reproducibility breaks.
 # Upstream 2023.02.6 ships no patches for this package, so clearing them all is
 # what restores the baseline.
-OPKG_AIDEN_SRC := $(SYSDRV_DIR)/tools/board/buildroot/opkg-aiden
-define inject_opkg_aiden_pkg
-	cp $(OPKG_AIDEN_SRC)/opkg.mk \
-		$(OPKG_AIDEN_SRC)/opkg.hash \
-		$(OPKG_AIDEN_SRC)/Config.in \
+OPKG_AICO_SRC := $(SYSDRV_DIR)/tools/board/buildroot/opkg-aico
+define inject_opkg_aico_pkg
+	cp $(OPKG_AICO_SRC)/opkg.mk \
+		$(OPKG_AICO_SRC)/opkg.hash \
+		$(OPKG_AICO_SRC)/Config.in \
 		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/opkg/
 	@set -e; \
 		rm -f $(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/opkg/*.patch; \
-		if ls $(OPKG_AIDEN_SRC)/*.patch >/dev/null 2>&1; then \
-			cp $(OPKG_AIDEN_SRC)/*.patch \
+		if ls $(OPKG_AICO_SRC)/*.patch >/dev/null 2>&1; then \
+			cp $(OPKG_AICO_SRC)/*.patch \
 				$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/opkg/; \
 		fi; \
 		grep -q '^OPKG_VERSION = 0.7.0$$' \
 			$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/opkg/opkg.mk || \
-			{ echo "failed to inject opkg-aiden into package/opkg" >&2; exit 1; }
+			{ echo "failed to inject opkg-aico into package/opkg" >&2; exit 1; }
 endef
 
 # Buildroot 2023.02.6 combines aiohttp 3.8.3, whose package metadata requires
@@ -483,10 +483,10 @@ endef
 # retain files from a previous branch. The project-owned directory is also part
 # of buildroot_config_state_value below so changing the pin invalidates cached
 # package output.
-PYTHON_CHARSET_NORMALIZER_AIDEN_SRC := $(SYSDRV_DIR)/tools/board/buildroot/python-charset-normalizer-aiden
-define inject_python_charset_normalizer_aiden_pkg
-	cp $(PYTHON_CHARSET_NORMALIZER_AIDEN_SRC)/python-charset-normalizer.mk \
-		$(PYTHON_CHARSET_NORMALIZER_AIDEN_SRC)/python-charset-normalizer.hash \
+PYTHON_CHARSET_NORMALIZER_AICO_SRC := $(SYSDRV_DIR)/tools/board/buildroot/python-charset-normalizer-aico
+define inject_python_charset_normalizer_aico_pkg
+	cp $(PYTHON_CHARSET_NORMALIZER_AICO_SRC)/python-charset-normalizer.mk \
+		$(PYTHON_CHARSET_NORMALIZER_AICO_SRC)/python-charset-normalizer.hash \
 		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/python-charset-normalizer/
 	grep -q '^PYTHON_CHARSET_NORMALIZER_VERSION = 2.1.1$$' \
 		$(BUILDROOT_DIR)/$(BUILDROOT_VER)/package/python-charset-normalizer/python-charset-normalizer.mk || \
@@ -496,7 +496,7 @@ endef
 define buildroot_config_state_value
 $$( \
 	{ \
-		printf '%s\n' "AIDEN_BUILDROOT_REPRODUCIBLE_STATE_VERSION=$(AIDEN_BUILDROOT_REPRODUCIBLE_STATE_VERSION)"; \
+		printf '%s\n' "AICO_BUILDROOT_REPRODUCIBLE_STATE_VERSION=$(AICO_BUILDROOT_REPRODUCIBLE_STATE_VERSION)"; \
 		printf '%s\n' "SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)"; \
 		sha256sum "$(SYSDRV_DIR)/Makefile"; \
 		sha256sum "$(BUILDROOT_DIR)/$(BUILDROOT_VER)/.config"; \
@@ -504,7 +504,7 @@ $$( \
 		sha256sum "$(SYSDRV_DIR)/tools/board/buildroot/luckfox_pico_w_defconfig"; \
 		sha256sum "$(SYSDRV_DIR)/tools/board/buildroot/busybox.config"; \
 		find "$(HCITOOL_TOOL_PATH)" "$(MPV_PATCH_PATH)" "$(BUSYBOX_PATCH_PATH)" -type f -name '*.patch' -print | sort | xargs -r sha256sum; \
-		find "$(ANDROID_TOOLS_AIDEN_SRC)" "$(OPKG_AIDEN_SRC)" "$(PYTHON_CHARSET_NORMALIZER_AIDEN_SRC)" -type f -print | sort | xargs -r sha256sum; \
+		find "$(ANDROID_TOOLS_AICO_SRC)" "$(OPKG_AICO_SRC)" "$(PYTHON_CHARSET_NORMALIZER_AICO_SRC)" -type f -print | sort | xargs -r sha256sum; \
 	} | sha256sum | awk '{print $$1}' \
 )
 endef
@@ -528,7 +528,7 @@ endef
 # splitting it back out is what let the two drift apart in the first place.
 define refresh_buildroot_config_state
 	@set -e; \
-		stamp="$(BUILDROOT_DIR)/$(BUILDROOT_VER)/output/.aiden_buildroot_config_state"; \
+		stamp="$(BUILDROOT_DIR)/$(BUILDROOT_VER)/output/.aico_buildroot_config_state"; \
 		state="$(call buildroot_config_state_value)"; \
 		needs_rebuild=0; \
 		if [ -d "$(BUILDROOT_DIR)/$(BUILDROOT_VER)/output/build" ]; then \
@@ -548,7 +548,7 @@ endef
 
 define refresh_boardtools_config_state
 	@set -e; \
-		stamp="$(SYSDRV_DIR)/out/.aiden_boardtools_config_state"; \
+		stamp="$(SYSDRV_DIR)/out/.aico_boardtools_config_state"; \
 		board_tool_state_files="$$( \
 			if git -C "$(SYSDRV_DIR)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then \
 				git -C "$(SYSDRV_DIR)" ls-files \
@@ -588,7 +588,7 @@ define refresh_boardtools_config_state
 		)"; \
 		state="$$( \
 			{ \
-				printf '%s\n' "AIDEN_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION=$(AIDEN_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION)"; \
+				printf '%s\n' "AICO_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION=$(AICO_BOARDTOOLS_REPRODUCIBLE_STATE_VERSION)"; \
 				printf '%s\n' "SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)"; \
 				printf '%s\n' "CHIP=$(CHIP)"; \
 				printf '%s\n' "ARCH=$(ARCH)"; \

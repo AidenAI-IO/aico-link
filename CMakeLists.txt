@@ -1,36 +1,36 @@
 cmake_minimum_required(VERSION 3.16)
-project(aiden_sdk LANGUAGES C CXX)
+project(aico_link_sdk DESCRIPTION "Aico Link hardware SDK (https://aico.link)" LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(AIDEN_TESTS "Build host-native unit tests only (skips Pico targets)" OFF)
-option(AIDEN_ENABLE_LINK_MAPS "Write a linker map for each target executable" OFF)
+option(AICO_TESTS "Build host-native unit tests only (skips Pico targets)" OFF)
+option(AICO_ENABLE_LINK_MAPS "Write a linker map for each target executable" OFF)
 
-if(AIDEN_TESTS)
+if(AICO_TESTS)
     enable_testing()
     add_subdirectory(tests)
     return()
 endif()
 
-set(AIDEN_TARGET_PLATFORM "rv1106-debian-glibc" CACHE STRING
+set(AICO_TARGET_PLATFORM "rv1106-debian-glibc" CACHE STRING
     "Target userspace platform")
-set_property(CACHE AIDEN_TARGET_PLATFORM PROPERTY STRINGS
+set_property(CACHE AICO_TARGET_PLATFORM PROPERTY STRINGS
     rv1106-debian-glibc
 )
 
 set(SDK_PATH "${CMAKE_SOURCE_DIR}/pico-sdk" CACHE PATH "Luckfox Pico SDK path")
-set(_aiden_platform_file
-    "${CMAKE_SOURCE_DIR}/cmake/platforms/${AIDEN_TARGET_PLATFORM}.cmake")
-if(NOT EXISTS "${_aiden_platform_file}")
-    message(FATAL_ERROR "Unsupported AIDEN_TARGET_PLATFORM: ${AIDEN_TARGET_PLATFORM}")
+set(_aico_platform_file
+    "${CMAKE_SOURCE_DIR}/cmake/platforms/${AICO_TARGET_PLATFORM}.cmake")
+if(NOT EXISTS "${_aico_platform_file}")
+    message(FATAL_ERROR "Unsupported AICO_TARGET_PLATFORM: ${AICO_TARGET_PLATFORM}")
 endif()
-include("${_aiden_platform_file}")
+include("${_aico_platform_file}")
 
-# Build-tree executables resolve ../lib. Packaged executables live in /usr/lib/aiden;
-# the rootfs registers /usr/lib/aiden/platform/lib with ldconfig.
+# Build-tree executables resolve ../lib. Packaged executables live in /usr/lib/aico;
+# the rootfs registers /usr/lib/aico/platform/lib with ldconfig.
 set(CMAKE_BUILD_RPATH "\$ORIGIN/../lib")
 set(CMAKE_INSTALL_RPATH "\$ORIGIN/../lib")
 set(CMAKE_BUILD_RPATH_USE_ORIGIN ON)
@@ -41,14 +41,14 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
 
 if(NOT OpenCV_DIR)
-    set(OpenCV_DIR "${AIDEN_OPENCV_DIR}" CACHE PATH "OpenCV CMake package path" FORCE)
+    set(OpenCV_DIR "${AICO_OPENCV_DIR}" CACHE PATH "OpenCV CMake package path" FORCE)
 endif()
 find_package(OpenCV REQUIRED)
 
 if(TARGET opencv_imgcodecs)
-    set(AIDEN_OPENCV_CODEC_TARGET opencv_imgcodecs)
+    set(AICO_OPENCV_CODEC_TARGET opencv_imgcodecs)
 elseif(TARGET opencv_highgui)
-    set(AIDEN_OPENCV_CODEC_TARGET opencv_highgui)
+    set(AICO_OPENCV_CODEC_TARGET opencv_highgui)
 else()
     message(FATAL_ERROR "OpenCV must provide imgcodecs or the opencv-mobile highgui shim")
 endif()
@@ -67,31 +67,31 @@ if(APPLE)
     endforeach()
 endif()
 
-add_library(aiden_image STATIC
+add_library(aico_image STATIC
     src/image_process.cpp
 )
-target_include_directories(aiden_image
+target_include_directories(aico_image
     PUBLIC
         ${CMAKE_SOURCE_DIR}/src
         ${OpenCV_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/third_party/stb
 )
-target_link_libraries(aiden_image PUBLIC opencv_imgproc)
+target_link_libraries(aico_image PUBLIC opencv_imgproc)
 
 add_executable(image_process src/image_process_cli.cpp)
-target_link_libraries(image_process PRIVATE aiden_image)
+target_link_libraries(image_process PRIVATE aico_image)
 
 add_library(cjson STATIC src/cJSON/cJSON.c)
 target_include_directories(cjson PUBLIC ${CMAKE_SOURCE_DIR}/src)
 
-if(AIDEN_PLATFORM_COMPAT_SOURCES)
-    add_library(aiden_platform_compat STATIC ${AIDEN_PLATFORM_COMPAT_SOURCES})
-    set(AIDEN_PLATFORM_COMPAT_TARGET aiden_platform_compat)
+if(AICO_PLATFORM_COMPAT_SOURCES)
+    add_library(aico_platform_compat STATIC ${AICO_PLATFORM_COMPAT_SOURCES})
+    set(AICO_PLATFORM_COMPAT_TARGET aico_platform_compat)
 endif()
 
-add_library(aiden STATIC
-    src/aiden_log.cpp
-    src/aiden_sdk.cpp
+add_library(aico STATIC
+    src/aico_log.cpp
+    src/aico_sdk.cpp
     src/rockit_system.cpp
     src/service_status.cpp
     src/uds_message.cpp
@@ -117,89 +117,89 @@ add_library(aiden STATIC
     src/frame_jpeg_encoder.cpp
 )
 
-target_include_directories(aiden
+target_include_directories(aico
     PUBLIC
         ${CMAKE_SOURCE_DIR}/src
-        ${AIDEN_ROCKIT_INCLUDE_DIR}
+        ${AICO_ROCKIT_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
 )
 
-target_link_libraries(aiden
+target_link_libraries(aico
     PRIVATE
         cjson
-        aiden_image
+        aico_image
     PUBLIC
         Rockchip::Rockit
         Rockchip::MPP
         Rockchip::RGA
-        ${AIDEN_OPTIONAL_MEDIA_TARGETS}
-        ${AIDEN_PLATFORM_COMPAT_TARGET}
+        ${AICO_OPTIONAL_MEDIA_TARGETS}
+        ${AICO_PLATFORM_COMPAT_TARGET}
         pthread
         dl
         rt
         m
         opencv_core
         opencv_imgproc
-        ${AIDEN_OPENCV_CODEC_TARGET}
+        ${AICO_OPENCV_CODEC_TARGET}
 )
 
 add_executable(hello src/hello.c)
 add_executable(trigger src/trigger.c)
 
 add_executable(example_wakeup src/example_wakeup.cpp)
-target_link_libraries(example_wakeup PRIVATE aiden)
+target_link_libraries(example_wakeup PRIVATE aico)
 
 add_executable(example_audio_capture src/example_audio_capture.cpp)
-target_link_libraries(example_audio_capture PRIVATE aiden)
+target_link_libraries(example_audio_capture PRIVATE aico)
 
 add_executable(example_audio_play src/example_audio_play.cpp)
-target_link_libraries(example_audio_play PRIVATE aiden)
+target_link_libraries(example_audio_play PRIVATE aico)
 
 add_executable(example_camera_capture src/example_camera_capture.cpp)
-target_link_libraries(example_camera_capture PRIVATE aiden)
+target_link_libraries(example_camera_capture PRIVATE aico)
 
 add_executable(example_usb_hid src/example_usb_hid.cpp src/hid_server.cpp)
 target_include_directories(example_usb_hid PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(example_usb_hid PRIVATE aiden aiden_image)
+target_link_libraries(example_usb_hid PRIVATE aico aico_image)
 
 add_executable(frame_service src/frame_service_main.cpp)
 target_include_directories(frame_service PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(frame_service PRIVATE aiden pthread)
-if(AIDEN_FRAME_SERVICE_LINK_OPTIONS)
-    target_link_options(frame_service PRIVATE ${AIDEN_FRAME_SERVICE_LINK_OPTIONS})
+target_link_libraries(frame_service PRIVATE aico pthread)
+if(AICO_FRAME_SERVICE_LINK_OPTIONS)
+    target_link_options(frame_service PRIVATE ${AICO_FRAME_SERVICE_LINK_OPTIONS})
 endif()
 
 add_executable(frame_service_cli src/frame_service_cli.cpp)
 target_include_directories(frame_service_cli PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(frame_service_cli PRIVATE aiden)
+target_link_libraries(frame_service_cli PRIVATE aico)
 
 add_executable(audio_service src/audio_service_main.cpp)
 target_include_directories(audio_service PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(audio_service PRIVATE aiden pthread)
+target_link_libraries(audio_service PRIVATE aico pthread)
 
 add_executable(audio_service_cli src/audio_service_cli.cpp)
 target_include_directories(audio_service_cli PRIVATE ${CMAKE_SOURCE_DIR}/src)
-target_link_libraries(audio_service_cli PRIVATE aiden)
+target_link_libraries(audio_service_cli PRIVATE aico)
 
 add_executable(audio_stream src/audio_stream.cpp)
-target_link_libraries(audio_stream PRIVATE aiden)
+target_link_libraries(audio_stream PRIVATE aico)
 
 add_executable(rknn_vad
     src/rknn_vad.cpp
-    src/aiden_log.cpp
-    ${AIDEN_RKNN_COMPAT_SOURCES}
+    src/aico_log.cpp
+    ${AICO_RKNN_COMPAT_SOURCES}
 )
 target_include_directories(rknn_vad PRIVATE
     ${CMAKE_SOURCE_DIR}/src
-    ${AIDEN_RKNN_INCLUDE_DIR}
+    ${AICO_RKNN_INCLUDE_DIR}
 )
-target_compile_definitions(rknn_vad PRIVATE ${AIDEN_RKNN_COMPILE_DEFINITIONS})
-target_link_libraries(rknn_vad PRIVATE ${AIDEN_RKNN_TARGET} pthread dl m)
-if(AIDEN_RKNN_COMPAT_SOURCES)
-    target_compile_definitions(rknn_vad PRIVATE AIDEN_RKNN_GLIBC_COMPAT=1)
+target_compile_definitions(rknn_vad PRIVATE ${AICO_RKNN_COMPILE_DEFINITIONS})
+target_link_libraries(rknn_vad PRIVATE ${AICO_RKNN_TARGET} pthread dl m)
+if(AICO_RKNN_COMPAT_SOURCES)
+    target_compile_definitions(rknn_vad PRIVATE AICO_RKNN_GLIBC_COMPAT=1)
 endif()
 
-add_executable(cpu_vad src/cpu_vad.cpp src/aiden_log.cpp)
+add_executable(cpu_vad src/cpu_vad.cpp src/aico_log.cpp)
 target_include_directories(cpu_vad PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cpu_vad PRIVATE pthread m)
 
@@ -214,17 +214,17 @@ foreach(_vad_target rknn_vad cpu_vad)
     endif()
 endforeach()
 
-add_executable(aiden_environment
+add_executable(aico_environment
     src/system_env_generator_main.cpp
     src/system_env_generator.cpp
     src/system_env_parser.cpp
 )
-target_include_directories(aiden_environment PRIVATE ${CMAKE_SOURCE_DIR}/src)
-set_target_properties(aiden_environment PROPERTIES OUTPUT_NAME aiden-environment)
+target_include_directories(aico_environment PRIVATE ${CMAKE_SOURCE_DIR}/src)
+set_target_properties(aico_environment PROPERTIES OUTPUT_NAME aico-environment)
 
-if(AIDEN_ENABLE_LINK_MAPS)
+if(AICO_ENABLE_LINK_MAPS)
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/maps")
-    foreach(_aiden_executable
+    foreach(_aico_executable
             hello
             trigger
             image_process
@@ -240,8 +240,8 @@ if(AIDEN_ENABLE_LINK_MAPS)
             audio_stream
             rknn_vad
             cpu_vad
-            aiden_environment)
-        target_link_options(${_aiden_executable} PRIVATE
-            "LINKER:-Map,${CMAKE_BINARY_DIR}/maps/${_aiden_executable}.map")
+            aico_environment)
+        target_link_options(${_aico_executable} PRIVATE
+            "LINKER:-Map,${CMAKE_BINARY_DIR}/maps/${_aico_executable}.map")
     endforeach()
 endif()

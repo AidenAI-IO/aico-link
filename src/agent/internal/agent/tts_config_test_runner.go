@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 const DefaultTTSPlaybackTestText = "test passed"

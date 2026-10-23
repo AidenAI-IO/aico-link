@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -24,8 +24,8 @@ import (
 const (
 	absMouseMaxPos = 32767
 
-	defaultHIDRefreshStatePath        = "/run/aiden_usb_ecm_watchdog.state"
-	defaultUSBCompositeRefreshCommand = "/usr/lib/aiden/aiden-usb-ecm-watchdog"
+	defaultHIDRefreshStatePath        = "/run/aico_usb_ecm_watchdog.state"
+	defaultUSBCompositeRefreshCommand = "/usr/lib/aico/aico-usb-ecm-watchdog"
 
 	// defaultTapHoldMs is the dwell between a touch press and release so iOS
 	// registers a tap rather than dropping the sub-millisecond event or
@@ -619,7 +619,7 @@ func (d *HIDDevice) reopenStaleFileLocked() error {
 }
 
 func usbCompositeRefreshCommand() string {
-	if command := strings.TrimSpace(os.Getenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
+	if command := strings.TrimSpace(os.Getenv("AICO_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
 		return command
 	}
 	return defaultUSBCompositeRefreshCommand

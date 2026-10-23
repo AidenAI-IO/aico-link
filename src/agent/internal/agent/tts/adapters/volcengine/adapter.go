@@ -18,9 +18,9 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/netproxy"
 )
 
 const (
@@ -30,7 +30,7 @@ const (
 	defaultSpeaker    = "zh_female_vv_uranus_bigtts"
 	connectTimeout    = 10 * time.Second
 	synthesisTimeout  = 60 * time.Second
-	defaultUserID     = "aiden-agent"
+	defaultUserID     = "aico-agent"
 	statusCodeOK      = 20000000
 )
 

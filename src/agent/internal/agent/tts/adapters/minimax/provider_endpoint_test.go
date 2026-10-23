@@ -3,7 +3,7 @@ package minimax
 import (
 	"testing"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestWebSocketUsesProviderDefaultEndpoint(t *testing.T) {

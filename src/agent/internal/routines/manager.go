@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/mcu"
 	"github.com/google/uuid"
 )
 

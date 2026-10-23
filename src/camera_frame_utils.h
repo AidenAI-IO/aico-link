@@ -1,15 +1,15 @@
 #pragma once
 
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 
 #include <cstdint>
 #include <cstring>
 #include <limits>
 #include <vector>
 
-namespace aiden_demo {
+namespace aico_demo {
 
-inline void set_default_camera_config(aiden::CameraConfig* config) {
+inline void set_default_camera_config(aico::CameraConfig* config) {
     if (!config) {
         return;
     }
@@ -52,7 +52,7 @@ inline void yuv_to_rgb(uint8_t y, uint8_t u, uint8_t v, uint8_t* rgb) {
     rgb[2] = clamp_u8((c298 + 516 * d + 128) >> 8);
 }
 
-inline bool convert_frame_to_rgb(const aiden::VideoFrame& frame,
+inline bool convert_frame_to_rgb(const aico::VideoFrame& frame,
                                  const char* pixel_format,
                                  const std::vector<uint8_t>& buffer,
                                  std::vector<uint8_t>* rgb) {
@@ -190,4 +190,4 @@ inline bool encode_rgb_to_bmp(const std::vector<uint8_t>& rgb,
     return true;
 }
 
-}  // namespace aiden_demo
+}  // namespace aico_demo

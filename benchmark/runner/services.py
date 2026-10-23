@@ -134,7 +134,7 @@ def cmd_start_agent_daemon(args: argparse.Namespace) -> int:
 
     host_port = int(args.port or 0)
     service_id = _service_id("agent", args.name)
-    project = f"aiden-benchmark-agent-{service_id}"
+    project = f"aico-benchmark-agent-{service_id}"
     service_dir = Path(args.runs_dir) / service_id
     config_dir = service_dir / "config"
     log_path = service_dir / "agent-daemon.log"
@@ -284,7 +284,7 @@ def cmd_start_mobilegym_env(args: argparse.Namespace) -> int:
     web_port = int(args.web_port or 0)
     bridge_port = int(args.bridge_port or 0)
     service_id = _service_id("mobilegym", args.name)
-    container_name = f"aiden-mobilegym-env-{service_id}"
+    container_name = f"aico-mobilegym-env-{service_id}"
     service_dir = Path(args.runs_dir) / service_id
     log_path = service_dir / "mobilegym-env.log"
     service_dir.mkdir(parents=True, exist_ok=True)
@@ -474,7 +474,7 @@ def cmd_start_desktop_env(args: argparse.Namespace) -> int:
     else:
         print("Desktop environment started", flush=True)
         for key in ("environment_url", "platform", "backend", "pid", "log_path", "stop_command", "agent_daemon_command"): _print_kv(key, payload[key])
-        print(f"\nexport AIDEN_ENVIRONMENT_URL={endpoint}", flush=True)
+        print(f"\nexport AICO_ENVIRONMENT_URL={endpoint}", flush=True)
     return 0
 
 
@@ -503,7 +503,7 @@ def _print_adb_android_payload(payload: dict[str, Any], *, json_output: bool) ->
     _print_kv("stop_command", payload["stop_command"])
     _print_kv("agent_daemon_command", payload["agent_daemon_command"])
     print("", flush=True)
-    print(f"export AIDEN_ENVIRONMENT_URL={payload['environment_url']}", flush=True)
+    print(f"export AICO_ENVIRONMENT_URL={payload['environment_url']}", flush=True)
 
 
 def _wait_for_agent(agent_url: str, timeout_sec: int) -> None:
@@ -575,9 +575,9 @@ def _print_agent_payload(payload: dict[str, Any], *, json_output: bool) -> None:
     _print_kv("stop_command", payload["stop_command"])
     _print_kv("run_command", payload["run_command"])
     print("", flush=True)
-    print(f"export AIDEN_AGENT_URL={payload['agent_url']}", flush=True)
+    print(f"export AICO_AGENT_URL={payload['agent_url']}", flush=True)
     if payload.get("benchmark_task_id"):
-        print(f"export AIDEN_BENCHMARK_TASK_ID={payload['benchmark_task_id']}", flush=True)
+        print(f"export AICO_BENCHMARK_TASK_ID={payload['benchmark_task_id']}", flush=True)
 
 
 def _print_mobilegym_payload(payload: dict[str, Any], *, json_output: bool) -> None:
@@ -596,9 +596,9 @@ def _print_mobilegym_payload(payload: dict[str, Any], *, json_output: bool) -> N
     _print_kv("stop_command", payload["stop_command"])
     _print_kv("agent_daemon_command", payload["agent_daemon_command"])
     print("", flush=True)
-    print(f"export AIDEN_ENVIRONMENT_URL={payload['environment_url']}", flush=True)
+    print(f"export AICO_ENVIRONMENT_URL={payload['environment_url']}", flush=True)
     if payload.get("benchmark_task_id"):
-        print(f"export AIDEN_BENCHMARK_TASK_ID={payload['benchmark_task_id']}", flush=True)
+        print(f"export AICO_BENCHMARK_TASK_ID={payload['benchmark_task_id']}", flush=True)
 
 
 def _print_kv(key: str, value: Any) -> None:

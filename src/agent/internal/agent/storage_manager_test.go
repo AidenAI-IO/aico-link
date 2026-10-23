@@ -1122,7 +1122,7 @@ func TestParseBlkidLine(t *testing.T) {
 		wantPT string
 	}{
 		{`/dev/mmcblk2p1: UUID="0a1b2c3d" TYPE="apfs" PARTUUID="deadbeef-01"`, "apfs", ""},
-		{`/dev/mmcblk2p1: LABEL="AIDEN" UUID="ABCD-1234" TYPE="vfat"`, "vfat", ""},
+		{`/dev/mmcblk2p1: LABEL="AICO" UUID="ABCD-1234" TYPE="vfat"`, "vfat", ""},
 		{`/dev/mmcblk2p1: TYPE="hfsplus"`, "hfsplus", ""},
 		// Whole-device probe of a card whose volumes were deleted on a PC:
 		// a partition table signature but no filesystem.
@@ -1228,7 +1228,7 @@ func TestStorageStateViewReadsConfigWebMirrorWithoutStartingHardwarePoller(t *te
 		t.Fatalf("status=%+v", status)
 	}
 	roots := view.ReadRoots(StorageClassAudio)
-	if len(roots) != 2 || roots[1] != "/media/card/aiden/audio" {
+	if len(roots) != 2 || roots[1] != "/media/card/aico/audio" {
 		t.Fatalf("roots=%v", roots)
 	}
 	view.Stop()

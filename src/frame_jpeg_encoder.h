@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 /**
  * Encode frame data to JPEG using opencv-mobile hardware encoder.
@@ -92,4 +92,4 @@ void cancel_jpeg_encoder_warmup();
 void warmup_jpeg_encoder(const FrameMetadata& metadata,
                          const std::vector<uint8_t>& yuv_data);
 
-}  // namespace aiden
+}  // namespace aico

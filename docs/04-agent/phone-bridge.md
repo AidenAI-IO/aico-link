@@ -8,7 +8,7 @@ sidebar_position: 11
 
 # Purpose
 
-The Aiden companion app connects to the hardware board over USB ECM and executes phone-side operations available through public iOS and Android APIs.
+The Aico companion app connects to the hardware board over USB ECM and executes phone-side operations available through public iOS and Android APIs.
 
 The board remains responsible for screen observation, task planning, and HID fallback. Phone Bridge is a software fast path for operations such as launching apps, accessing the clipboard, and working with calendars, contacts, and notifications.
 
@@ -33,7 +33,7 @@ Phone relay app -> ws://192.168.42.1:8080/api/phone-bridge
 
 The board is the WebSocket server, so it does not need to discover the phone's DHCP address and the app does not need to expose a local server. The Agent HTTP APIs use the same port, `8080`.
 
-The board also exposes `/api/phone-bridge/commands` and `/api/phone-bridge/results` HTTP queue endpoints, but React Native JS, WebSocket, and polling timers in the iOS background must not be treated as a general tool execution path. On iOS, Phone Bridge is normally a foreground fast path: if the Aiden App is backgrounded and the app has reported `return_entry=dynamic_island`, Agent restores the Aiden App through Dynamic Island, waits for foreground WebSocket bridge reconnection, then executes the requested tool command. Lock-screen Live Activity entries require visual confirmation rather than fixed-coordinate tapping.
+The board also exposes `/api/phone-bridge/commands` and `/api/phone-bridge/results` HTTP queue endpoints, but React Native JS, WebSocket, and polling timers in the iOS background must not be treated as a general tool execution path. On iOS, Phone Bridge is normally a foreground fast path: if the Aico companion app is backgrounded and the app has reported `return_entry=dynamic_island`, Agent restores the Aico companion app through Dynamic Island, waits for foreground WebSocket bridge reconnection, then executes the requested tool command. Lock-screen Live Activity entries require visual confirmation rather than fixed-coordinate tapping.
 
 PiP Bridge is a narrow exception. When the app reports `pip_bridge_enabled=true` while backgrounded, iOS gives PiP priority over the Dynamic Island, so the Dynamic Island return entry is not visible. `pip_bridge_enabled` is the authoritative PiP transport signal for background-safe data commands; ordinary foreground app-state timestamps are not an additional PiP expiry. The HTTP/Tool Lab catalog remains complete for direct diagnostics, while the conversational Agent catalog is filtered from live runtime capabilities before each run. `open_app` remains exposed because it can fall back to SearchLaunchApp; only executable background-safe data tools (`bridge_clipboard`, `bridge_calendar`, `bridge_contacts`, `bridge_notification`) are exposed through the HTTP queue, and unavailable App actions are omitted.
 
@@ -110,13 +110,13 @@ tap, and app-open confirmation then continue as before. If PiP is unavailable
 or its clipboard/paste command fails, query entry uses the existing local
 HID/IME path; a failed clipboard attempt clears the field before typing.
 
-On iOS, the relay app is not a background-resident system agent. It's more like a foreground fast-path executor; Dynamic Island can be used as the automatic entry point back to the Aiden App, while lock-screen Live Activity cards need visual confirmation:
+On iOS, the relay app is not a background-resident system agent. It's more like a foreground fast-path executor; Dynamic Island can be used as the automatic entry point back to the Aico companion app, while lock-screen Live Activity cards need visual confirmation:
 
 ```text
-Aiden App foreground
+Aico companion app foreground
 -> Receives board command
 -> openURL opens WeChat
--> Aiden App enters background
+-> Aico companion app enters background
 -> Subsequent operations continue via hardware HDMI observation + HID operation
 ```
 
@@ -196,7 +196,7 @@ disconnect invalidates the cache before a new host session can reuse it.
 
 When `app_state=background|inactive`, `return_entry=dynamic_island`,
 `return_entry_available=true`, and PiP Bridge mode is not enabled, `open_url`
-and bridge data tools can click the Aiden App Dynamic Island entry, wait for Phone
+and bridge data tools can click the Aico companion app Dynamic Island entry, wait for Phone
 Bridge recovery, then send their commands. `open_app` instead selects
 SearchLaunchApp whenever foreground Bridge app launch is unavailable.
 Lock-screen Live Activity entries are not blind-tapped because their screen
@@ -479,7 +479,7 @@ Reply:
 ```
 
 On iOS, `notes` is ignored for contact create/update because
-`CNContactNoteKey` requires an entitlement Aiden does not request. Android
+`CNContactNoteKey` requires an entitlement the companion app does not request. Android
 supports the field.
 
 ##### 9. `contacts_update` — Update Contact
@@ -539,7 +539,7 @@ notification sending and board-side shared system-notification querying:
 the current generation, and cursor fields. Omitting `since` returns the latest
 retained events. Pass `since=0` to page forward from the oldest retained event;
 incremental queries pass the prior `last_id` as `since` together with the prior
-`generation`. Querying does not require Aiden to be foregrounded or Phone
+`generation`. Querying does not require the companion app to be foregrounded or Phone
 Bridge to be connected. On iOS the
 events come from ANCS; the same ring can contain Android events forwarded over
 the phone-notification ingestion path when that feature is installed.
@@ -573,7 +573,7 @@ Use the phone environment timezone when it is available. The Agent can use `shel
 - **Notification permission**: iOS requests authorization through
   `UNUserNotificationCenter`; Android 13+ needs `POST_NOTIFICATIONS`.
 - **Notification reading**: Android system-notification ingestion separately
-  requires the user to enable Aiden under Settings > Notification access.
+  requires the user to enable the companion app (currently listed as `Aiden`) under Settings > Notification access.
   `POST_NOTIFICATIONS` alone does not grant access to other apps' notifications.
 
 ### Runtime Routing
@@ -581,7 +581,7 @@ Use the phone environment timezone when it is available. The Agent can use `shel
 1. `open_app` reads live companion-app state. When foreground Phone Bridge is
    ready it uses BridgeOpenApp; otherwise it uses SearchLaunchApp through the
    visible system UI.
-2. `open_url` and bridge data tools may restore a backgrounded iOS Aiden App
+2. `open_url` and bridge data tools may restore a backgrounded iOS Aico companion app
    through a confirmed Dynamic Island entry before sending their command.
 3. PiP/FGS background routes allow clipboard, calendar, contacts, and local
    notification commands through the HTTP queue. BLE Wake uses only calendar

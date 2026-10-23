@@ -46,7 +46,7 @@ const DEFAULT_TIMEZONE = 'UTC';
 
 /** Mirror the top bar to the companion app's native navigation bar. */
 function notifyHost(title, dirty) {
-  postToHost({type: 'aiden_config_save_state', title: resolve(title), dirty, apply: 'live', action_label: resolve(saveLabel('live'))});
+  postToHost({type: 'aico_config_save_state', title: resolve(title), dirty, apply: 'live', action_label: resolve(saveLabel('live'))});
 }
 
 function configValue(snapshot, section, key, fallback) {
@@ -67,7 +67,7 @@ function languageIntro() {
   return el('div', {class: 'basic-intro'}, [
     languageTile(),
     text(msg('basic.language_title', '语言与时区'), 'page__title'),
-    text(msg('basic.language_description', '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
+    text(msg('basic.language_description', '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
   ]);
 }
 

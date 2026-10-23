@@ -57,7 +57,7 @@ Some fields may exceed JavaScript safe integer range. Cross-language clients sho
 
 ## Status Values
 
-Services share `AidenServiceStatus`, common values include:
+Services share `AicoServiceStatus`, common values include:
 
 - `OK`
 - `NO_NEW_FRAME`

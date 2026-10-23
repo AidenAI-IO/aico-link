@@ -1,7 +1,7 @@
 package contextmanager
 
 import (
-	"aiden-agent/internal/agent/session"
+	"aico-agent/internal/agent/session"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"

@@ -1,7 +1,7 @@
 # Contribution Guide
 
-This repository contains the Aiden development-board firmware, C++ hardware
-services and SDK, the Go Agent runtime, Debian and OTA tooling, web
+This repository contains the Aico Link development-board firmware, C++ hardware
+services and SDK, the Aico AI Agent runtime, Debian and OTA tooling, web
 applications, benchmarks, and their tests. Keep changes focused on the
 component being modified and preserve the interfaces between these parts.
 
@@ -11,7 +11,7 @@ The test commands in this section apply when the current task changes this
 repository's source, tests, scripts, configuration, or documentation, or when
 the user explicitly asks to test this repository. Work confined to sibling
 repositories (for example, `aiden-mcu` or `aiden-design`) does not trigger
-`aiden-firmware` checks. An edit limited to this `AGENTS.md` guidance does not
+`aico-link-firmware` checks. An edit limited to this `AGENTS.md` guidance does not
 require a firmware test run.
 
 1. Work from the repository root unless a component's documentation says

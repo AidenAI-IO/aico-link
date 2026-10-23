@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/screen"
 	langtools "github.com/tmc/langchaingo/tools"
 )
 

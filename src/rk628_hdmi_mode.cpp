@@ -1,5 +1,5 @@
 #include "rk628_hdmi_mode.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <array>
 #include <cerrno>
 #include <cstdio>
@@ -7,7 +7,7 @@
 #include <linux/v4l2-subdev.h>
 #include <sys/ioctl.h>
 
-namespace aiden {
+namespace aico {
 
 static int mode_ioctl(int fd, unsigned long request, void* data) {
     int ret;
@@ -31,13 +31,13 @@ bool prepare_rk628_hdmi_mode(
         fclose(file);
         if (read_failed || fields != 1 ||
             (strcmp(selected, "1080p30") && strcmp(selected, "1080p60"))) {
-            AIDEN_LOG_ERROR("hdmi", "mode_invalid", "path=%s", mode_file.c_str());
+            AICO_LOG_ERROR("hdmi", "mode_invalid", "path=%s", mode_file.c_str());
             errno = EINVAL;
             return false;
         }
         mode = selected;
     } else if (errno != ENOENT) {
-        AIDEN_LOG_ERROR("hdmi", "mode_read_failed", "path=%s error=%s",
+        AICO_LOG_ERROR("hdmi", "mode_read_failed", "path=%s error=%s",
                         mode_file.c_str(), strerror(errno));
         return false;
     }
@@ -45,7 +45,7 @@ bool prepare_rk628_hdmi_mode(
     const std::string path = edid_directory + "/hdmi_" + mode + "_cta.hex";
     file = fopen(path.c_str(), "r");
     if (!file) {
-        AIDEN_LOG_ERROR("hdmi", "mode_edid_open_failed", "path=%s error=%s",
+        AICO_LOG_ERROR("hdmi", "mode_edid_open_failed", "path=%s error=%s",
                         path.c_str(), strerror(errno));
         return false;
     }
@@ -74,7 +74,7 @@ bool prepare_rk628_hdmi_mode(
         valid = valid && sum % 256 == 0;
     }
     if (!valid) {
-        AIDEN_LOG_ERROR("hdmi", "mode_edid_invalid", "path=%s", path.c_str());
+        AICO_LOG_ERROR("hdmi", "mode_edid_invalid", "path=%s", path.c_str());
         errno = EINVAL;
         return false;
     }
@@ -89,24 +89,24 @@ bool prepare_rk628_hdmi_mode(
     const int ret = ioctl_fn(fd, VIDIOC_SUBDEV_G_EDID, &edid);
     if (ret < 0 && errno != ENODATA) {
         // Do not turn a transient read failure into a destructive HPD retry.
-        AIDEN_LOG_WARN("hdmi", "mode_edid_read_pending", "error=%s", strerror(errno));
+        AICO_LOG_WARN("hdmi", "mode_edid_read_pending", "error=%s", strerror(errno));
         return false;
     }
     *selected_edid = path;
     if (ret == 0 && edid.blocks == 2 && current == desired) {
-        AIDEN_LOG_INFO("hdmi", "mode_ready", "mode=%s changed=0", mode.c_str());
+        AICO_LOG_INFO("hdmi", "mode_ready", "mode=%s changed=0", mode.c_str());
         return true;
     }
     edid = {};
     edid.blocks = 2;
     edid.edid = desired.data();
     if (ioctl_fn(fd, VIDIOC_SUBDEV_S_EDID, &edid) < 0) {
-        AIDEN_LOG_WARN("hdmi", "mode_edid_write_pending", "mode=%s error=%s",
+        AICO_LOG_WARN("hdmi", "mode_edid_write_pending", "mode=%s error=%s",
                        mode.c_str(), strerror(errno));
         return false;
     }
-    AIDEN_LOG_INFO("hdmi", "mode_ready", "mode=%s changed=1", mode.c_str());
+    AICO_LOG_INFO("hdmi", "mode_ready", "mode=%s changed=1", mode.c_str());
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

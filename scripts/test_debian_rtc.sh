@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly HELPER="${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-rtc"
+readonly HELPER="${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-rtc"
 readonly TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 readonly REAL_DATE=$(command -v date)

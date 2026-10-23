@@ -12,10 +12,10 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/mcu"
-	"aiden-agent/internal/routines"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/mcu"
+	"aico-agent/internal/routines"
 )
 
 // StartRoutines installs the schedule tool before the daemon accepts requests.
@@ -29,7 +29,7 @@ func (r *Runtime) StartRoutines() error {
 		return errors.New("routines require a configured runtime directory and tools")
 	}
 	m, err := routines.Open(filepath.Join(cfg.ConfigDir, "routines", "state.json"),
-		mcu.Client{Socket: strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET"))},
+		mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))},
 		func(ctx context.Context, routine routines.Routine) (string, error) {
 			prompt := fmt.Sprintf("Scheduled task %s is due (scheduled for %s). Continue this task in the existing conversation, checking prior results and current device state before acting. Execute this occurrence now; do not create another schedule for it.\n\n%s", routine.ID, routine.RunAt.Format(time.RFC3339), routine.Task)
 			result, err := r.Run(ctx, RunRequest{Input: prompt, WaitForIdle: true, ResumeSessionID: routine.SessionID, AsyncEpisodeMaintenance: true})

@@ -31,7 +31,7 @@ def _json_request(url: str, method: str = "GET", payload: dict | None = None) ->
 
 def _task_mock_environment(suite_name: str, task_id: str):
     suite_path = (
-        Path(__file__).resolve().parents[1] / "suites" / "aiden_app" / suite_name
+        Path(__file__).resolve().parents[1] / "suites" / "aico_app" / suite_name
     )
     suite = load_suite(suite_path)
     task = next(task for task in suite.tasks if task.id == task_id)
@@ -52,7 +52,7 @@ def test_mock_environment_wildcard_bind_advertises_loopback(tmp_path):
         assert server._httpd.server_address[0] == "0.0.0.0"
         parsed = urllib.parse.urlparse(base_url)
         assert parsed.hostname == "127.0.0.1"
-        assert parsed.path == f"/_aiden_mock/{server.auth_token}"
+        assert parsed.path == f"/_aico_mock/{server.auth_token}"
         health = _json_request(f"{base_url}/health")
         assert health["ok"] is True
         assert health["data"]["platform"] == "ios"

@@ -15,9 +15,9 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/wifiproxy"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/wifiproxy"
 )
 
 func (s *Server) runAgentCLI(timeout time.Duration, input []byte, args ...string) commandResult {

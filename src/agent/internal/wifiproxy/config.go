@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/netproxy"
 )
 
 const (

@@ -23,7 +23,7 @@ The Debian production package set installs `/usr/bin/python3` and
 `/usr/bin/pip3`. Runtime code must not upgrade the rootfs copies of pip,
 setuptools, or wheel.
 
-Before `aiden-agent.service` starts, `aiden-python-prepare` validates and
+Before `aico-agent.service` starts, `aico-python-prepare` validates and
 prepares:
 
 | Path | Mode | Purpose |
@@ -36,7 +36,7 @@ directory override. Symlinks are rejected when used as either managed root.
 
 ## Environment
 
-`/etc/profile.d/aiden-python.sh` exports the shared Python environment:
+`/etc/profile.d/aico-python.sh` exports the shared Python environment:
 
 ```text
 PYTHONUSERBASE=/userdata/agent/python
@@ -47,7 +47,7 @@ PIP_BREAK_SYSTEM_PACKAGES=1
 ```
 
 Login shells source this profile normally. The systemd unit sets the same fixed
-values after loading `/run/aiden/system.env`, so external environment settings
+values after loading `/run/aico/system.env`, so external environment settings
 cannot redirect Agent package writes. `PIP_BREAK_SYSTEM_PACKAGES=1` only bypasses
 Debian's externally-managed check; `PIP_USER=1` and `PYTHONUSERBASE` still keep
 writes under `/userdata/agent/python`.

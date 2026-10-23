@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"

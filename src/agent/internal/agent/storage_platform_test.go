@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 func TestDiscoverSDCard(t *testing.T) {
@@ -90,9 +90,9 @@ func TestStorageFormatCommandForcesFAT32(t *testing.T) {
 		fs, tool string
 		args     []string
 	}{
-		{StorageFormatFAT32, "mkfs.vfat", []string{"-F", "32", "-n", "AIDEN"}},
-		{StorageFormatExt4, "mkfs.ext4", []string{"-F", "-L", "AIDEN"}},
-		{StorageFormatExFAT, "mkfs.exfat", []string{"-L", "AIDEN"}},
+		{StorageFormatFAT32, "mkfs.vfat", []string{"-F", "32", "-n", "AICO"}},
+		{StorageFormatExt4, "mkfs.ext4", []string{"-F", "-L", "AICO"}},
+		{StorageFormatExFAT, "mkfs.exfat", []string{"-L", "AICO"}},
 	} {
 		path := filepath.Join(dir, tc.tool)
 		if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -107,7 +107,7 @@ func TestStorageFormatCommandForcesFAT32(t *testing.T) {
 
 func TestStorageWriteProbePreservesExistingFiles(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, ".aiden-write-probe")
+	path := filepath.Join(dir, ".aico-write-probe")
 	if err := os.WriteFile(path, []byte("user data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -162,10 +162,10 @@ func TestBlankCardSignatureCheckFailsClosed(t *testing.T) {
 func TestStoragePreparePreservesIOFailure(t *testing.T) {
 	dir := storageCommandFixture(t, map[string]string{
 		"fsck.vfat": "echo 'Input/output error' >&2\nexit 8",
-		"mount":     "echo 'MOUNT MUST NOT RUN' > \"$AIDEN_STORAGE_TEST_TRACE\"\nexit 1",
+		"mount":     "echo 'MOUNT MUST NOT RUN' > \"$AICO_STORAGE_TEST_TRACE\"\nexit 1",
 	})
 	trace := filepath.Join(dir, "commands")
-	t.Setenv("AIDEN_STORAGE_TEST_TRACE", trace)
+	t.Setenv("AICO_STORAGE_TEST_TRACE", trace)
 	err := (&realStorageOps{}).Prepare("/dev/nonexistent-test-card", filepath.Join(dir, "mountpoint"))
 	if !errors.Is(err, errStorageIO) || !strings.Contains(err.Error(), "Input/output error") || strings.Contains(err.Error(), "format the card") {
 		t.Fatalf("I/O failure lost or replaced by format advice: %v", err)
@@ -200,11 +200,11 @@ func TestStoragePrepareCheckerExitStatus(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", fsType, status), func(t *testing.T) {
 				dir := storageCommandFixture(t, map[string]string{
 					"blkid":          fmt.Sprintf(`echo '/dev/test: TYPE="%s"'`, fsType),
-					"fsck." + fsType: fmt.Sprintf("echo checker >> \"$AIDEN_STORAGE_TEST_TRACE\"\nexit %d", status),
-					"mount":          "echo mount >> \"$AIDEN_STORAGE_TEST_TRACE\"",
+					"fsck." + fsType: fmt.Sprintf("echo checker >> \"$AICO_STORAGE_TEST_TRACE\"\nexit %d", status),
+					"mount":          "echo mount >> \"$AICO_STORAGE_TEST_TRACE\"",
 				})
 				trace := filepath.Join(dir, "commands")
-				t.Setenv("AIDEN_STORAGE_TEST_TRACE", trace)
+				t.Setenv("AICO_STORAGE_TEST_TRACE", trace)
 				err := (&realStorageOps{}).Prepare("/dev/test", filepath.Join(dir, "mountpoint"))
 				wantMounted := status <= 3 && (fsType != "vfat" || status <= 1)
 				if (err == nil) != wantMounted {
@@ -222,13 +222,13 @@ func TestStoragePrepareCheckerExitStatus(t *testing.T) {
 func TestStoragePrepareFallsBackWithoutChecker(t *testing.T) {
 	for _, unknown := range []bool{false, true} {
 		t.Run(fmt.Sprintf("unknown-filesystem=%t", unknown), func(t *testing.T) {
-			commands := map[string]string{"mount": "echo mount >> \"$AIDEN_STORAGE_TEST_TRACE\""}
+			commands := map[string]string{"mount": "echo mount >> \"$AICO_STORAGE_TEST_TRACE\""}
 			if unknown {
 				commands["blkid"] = "exit 2"
 			}
 			dir := storageCommandFixture(t, commands)
 			trace := filepath.Join(dir, "commands")
-			t.Setenv("AIDEN_STORAGE_TEST_TRACE", trace)
+			t.Setenv("AICO_STORAGE_TEST_TRACE", trace)
 			ops := &realStorageOps{}
 			if err := ops.Prepare("/dev/test", filepath.Join(dir, "mountpoint")); err != nil {
 				t.Fatalf("missing checker rejected the mount/probe gate: %v", err)
@@ -259,11 +259,11 @@ func TestStorageUnmountContinuesAfterSyncFailure(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := storageCommandFixture(t, map[string]string{
-				"sync":   "echo sync >> \"$AIDEN_STORAGE_TEST_TRACE\"\necho 'Input/output error' >&2\nexit 1",
-				"umount": fmt.Sprintf("echo umount >> \"$AIDEN_STORAGE_TEST_TRACE\"\necho 'target busy' >&2\nexit %d", tc.unmountExit),
+				"sync":   "echo sync >> \"$AICO_STORAGE_TEST_TRACE\"\necho 'Input/output error' >&2\nexit 1",
+				"umount": fmt.Sprintf("echo umount >> \"$AICO_STORAGE_TEST_TRACE\"\necho 'target busy' >&2\nexit %d", tc.unmountExit),
 			})
 			trace := filepath.Join(dir, "commands")
-			t.Setenv("AIDEN_STORAGE_TEST_TRACE", trace)
+			t.Setenv("AICO_STORAGE_TEST_TRACE", trace)
 			var output bytes.Buffer
 			defer logging.SetOutput(&output)()
 			ops := &realStorageOps{}

@@ -16,10 +16,10 @@ BIN_DIR := $(BUILD_DIR)/bin
 
 CFLAGS := -Wall -O2
 CXXFLAGS := -Wall -O2 -std=c++11 -I$(ROCKIT_PATH)/mpi/sdk/include
-LDFLAGS := -L$(ROCKIT_PATH)/lib/lib32 -L$(MPP_PATH)/lib -L$(RGA_PATH)/lib -L$(IVE_PATH)/lib -Wl,-rpath,/usr/lib/aiden/platform/lib -lrockit -lrockchip_mpp -lrga -lrve -lpthread -lstdc++ -lm
+LDFLAGS := -L$(ROCKIT_PATH)/lib/lib32 -L$(MPP_PATH)/lib -L$(RGA_PATH)/lib -L$(IVE_PATH)/lib -Wl,-rpath,/usr/lib/aico/platform/lib -lrockit -lrockchip_mpp -lrga -lrve -lpthread -lstdc++ -lm
 
-SDK_LIBRARY := $(LIB_DIR)/libaiden.a
-SDK_OBJECT := $(OBJ_DIR)/aiden_sdk.o
+SDK_LIBRARY := $(LIB_DIR)/libaico.a
+SDK_OBJECT := $(OBJ_DIR)/aico_sdk.o
 C_BINARIES := $(BIN_DIR)/hello $(BIN_DIR)/trigger
 TOOL_BINARIES := $(BIN_DIR)/audio_service_cli
 EXAMPLE_BINARIES := \
@@ -54,20 +54,20 @@ $(SDK_LIBRARY): $(SDK_OBJECT) | directories
 	rm -f $@
 	$(AR) rcs $@ $^
 
-$(OBJ_DIR)/aiden_sdk.o: aiden_sdk.cpp aiden_sdk.h | directories
+$(OBJ_DIR)/aico_sdk.o: aico_sdk.cpp aico_sdk.h aico_log.h | directories
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 $(BIN_DIR)/example_wakeup: example_wakeup.cpp $(SDK_LIBRARY) | directories
-	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laiden $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laico $(LDFLAGS) -o $@
 
 $(BIN_DIR)/example_audio_capture: example_audio_capture.cpp $(SDK_LIBRARY) | directories
-	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laiden $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laico $(LDFLAGS) -o $@
 
 $(BIN_DIR)/example_audio_play: example_audio_play.cpp $(SDK_LIBRARY) | directories
-	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laiden $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laico $(LDFLAGS) -o $@
 
 $(BIN_DIR)/example_camera_capture: example_camera_capture.cpp $(SDK_LIBRARY) | directories
-	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laiden $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) $< -L$(LIB_DIR) -laico $(LDFLAGS) -o $@
 
 $(BIN_DIR)/audio_service_cli: $(AUDIO_SERVICE_CLI_OBJECTS) | directories
 	$(CXX) $(CXXFLAGS) $^ -lpthread -o $@
@@ -95,7 +95,7 @@ $(OBJ_DIR)/cjson.o: cJSON/cJSON.c cJSON/cJSON.h | directories
 
 clean:
 	rm -rf $(BUILD_DIR)
-	rm -f aiden_sdk.o libaiden.a
+	rm -f aico_sdk.o libaico.a
 	rm -f ../output/hello ../output/trigger
 	rm -f ../output/example_wakeup ../output/example_audio_capture ../output/example_audio_play ../output/example_camera_capture
 

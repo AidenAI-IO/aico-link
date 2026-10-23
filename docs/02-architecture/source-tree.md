@@ -5,7 +5,7 @@ sidebar_position: 2
 # Source Code and Directory Structure
 
 ```text
-aiden-firmware/
+aico-link-firmware/
 ├── CMakeLists.txt                 # C/C++ targets; Debian/glibc is the device default
 ├── Makefile                       # Host test shortcut
 ├── debian_build.sh                # Complete Debian firmware build entry point
@@ -32,7 +32,7 @@ aiden-firmware/
 
 | File / Module | Description |
 | --- | --- |
-| `aiden_sdk.*` | C++ SDK entry point for wakeup, audio, camera, and HID capabilities |
+| `aico_sdk.*` | C++ SDK entry point for wakeup, audio, camera, and HID capabilities |
 | `frame_*` | Frame service, capture lifecycle, JPEG encoding, protocol, and client |
 | `audio_*` | Audio service, recording/playback sessions, protocol, and client |
 | `uds_*` | Unix domain socket transport |
@@ -65,15 +65,15 @@ aiden-firmware/
 ```text
 overlay-debian/
 ├── etc/
-│   ├── aiden_*.conf
-│   ├── systemd/system/aiden-*.service
-│   ├── systemd/system/aiden.target
+│   ├── aico_*.conf
+│   ├── systemd/system/aico-*.service
+│   ├── systemd/system/aico.target
 │   ├── systemd/network/
-│   └── profile.d/aiden-python.sh
-└── usr/lib/aiden/
-    ├── aiden-frame-start
-    ├── aiden-usb-gadget
-    ├── aiden-userdata-migrate
+│   └── profile.d/aico-python.sh
+└── usr/lib/aico/
+    ├── aico-frame-start
+    ├── aico-usb-gadget
+    ├── aico-userdata-migrate
     └── ...
 ```
 
@@ -83,13 +83,13 @@ to deterministic modes and root ownership.
 
 ## Platform and Business Files
 
-`overlay-debian/usr/lib/aiden/` contains base-owned startup helpers and
+`overlay-debian/usr/lib/aico/` contains base-owned startup helpers and
 `platform/lib/` contains the pinned VQE libraries. Rootfs assembly adds audited
 RGA libraries to `platform/lib/` and SDK modules/firmware to `platform/modules/`.
-EDID and VQE configuration live under `overlay-debian/usr/share/aiden/`.
+EDID and VQE configuration live under `overlay-debian/usr/share/aico/`.
 
 `assets/business/models/` and `assets/business/audio/voice-notifications/` are
-inputs to `aiden-business`, together with application binaries, web files and
+inputs to `aico-business`, together with application binaries, web files and
 skills. They are installed by dpkg into rootfs. The package does not own platform
 libraries, modules, EDID, VQE configuration, or the OTA trust key.
 

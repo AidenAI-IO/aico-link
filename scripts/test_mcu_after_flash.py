@@ -175,7 +175,7 @@ def validate(client, args, report=None):
             if not timer["active"] or not 0 < timer["remaining_s"] <= delay:
                 raise RuntimeError("timer was not armed")
             if args.power_cycle:
-                print("Timer armed. Keep the maintained switch ON and run sudo /usr/lib/aiden/mcu_service poweroff on the board. "
+                print("Timer armed. Keep the maintained switch ON and run sudo /usr/lib/aico/mcu_service poweroff on the board. "
                       "Keep this host running; switch OFF cancels the timer and inhibits every wake source.", flush=True)
             report["timer_wake"] = wait_for_source(client, cursor, event_generation, "rtc_timer",
                                                    delay + 90 if args.power_cycle else 10, args.power_cycle)

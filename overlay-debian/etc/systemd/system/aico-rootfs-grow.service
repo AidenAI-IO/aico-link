@@ -1,0 +1,17 @@
+[Unit]
+Description=Grow active Debian A/B filesystems to their partitions
+DefaultDependencies=no
+# Keep manual stop/restart jobs from propagating to live data mounts.
+RefuseManualStop=yes
+Requires=aico-slot-resolve.service
+After=aico-slot-resolve.service systemd-remount-fs.service
+Before=userdata.mount userdata-ota.mount systemd-timesyncd.service local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-rootfs-grow
+RemainAfterExit=yes
+TimeoutStartSec=90s
+
+[Install]
+WantedBy=local-fs-pre.target

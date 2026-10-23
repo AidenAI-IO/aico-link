@@ -1,0 +1,18 @@
+[Unit]
+Description=Recover protected Aico Link configuration before userdata consumers start
+Requires=userdata.mount userdata-ota.mount aico-platform-ldconfig.service
+After=userdata.mount userdata-ota.mount aico-platform-ldconfig.service
+Before=aico-userdata-migrate.service
+
+[Service]
+Type=oneshot
+# Recovery restores the environment input; do not load that input before it runs.
+ExecStart=/usr/lib/aico/ota --config /userdata/debian/ota/config.json recover
+RemainAfterExit=yes
+TimeoutStartSec=60s
+LogsDirectory=ota
+StandardOutput=append:/var/log/ota/ota-recovery.log
+StandardError=append:/var/log/ota/ota-recovery.log
+
+[Install]
+WantedBy=multi-user.target

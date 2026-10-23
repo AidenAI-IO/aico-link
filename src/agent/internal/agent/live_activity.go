@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"aiden-agent/internal/agent/speech"
+	"aico-agent/internal/agent/speech"
 )
 
 const (
@@ -73,12 +73,12 @@ type LiveActivityManager struct {
 
 // liveActivityText defines localized strings for Live Activity display.
 type liveActivityText struct {
-	AidenTask                        string
+	AicoTask                         string
 	ProcessingRequest                string
 	AnalyzingTask                    string
 	PlanningNextStep                 string
 	PleaseTakeOverOnPhone            string
-	OpenAidenToContinue              string
+	OpenCompanionAppToContinue       string
 	LaunchRequestSentVerifyingScreen string
 	UpdatingPlanFromUserInput        string
 	Completed                        string
@@ -175,7 +175,7 @@ func (m *LiveActivityManager) localizeToolProgressContent(content string) string
 	}
 	text := m.getLiveActivityText()
 	switch content {
-	case "Preparing to switch apps; restoring Aiden App":
+	case "Preparing to switch apps; restoring the companion app":
 		return text.PreparingToSwitchApps
 	case "Preparing to switch apps; opening the target app":
 		return text.PreparingToOpenTargetApp
@@ -202,12 +202,12 @@ func getLiveActivityTextForLocale(locale string) liveActivityText {
 	if locale == "" || strings.HasPrefix(locale, "en") {
 		// English (default)
 		return liveActivityText{
-			AidenTask:                        "Aiden task",
+			AicoTask:                         "Aico task",
 			ProcessingRequest:                "Processing request",
 			AnalyzingTask:                    "Analyzing the task and preparing the next action",
 			PlanningNextStep:                 "Planning next step",
 			PleaseTakeOverOnPhone:            "Please take over on the phone",
-			OpenAidenToContinue:              "Open Aiden to continue",
+			OpenCompanionAppToContinue:       "Open the companion app to continue",
 			LaunchRequestSentVerifyingScreen: "Launch request sent; verifying the target screen",
 			UpdatingPlanFromUserInput:        "Updating plan from user input",
 			Completed:                        "Completed",
@@ -264,7 +264,7 @@ func getLiveActivityTextForLocale(locale string) liveActivityText {
 			OpeningPhone:                     "Opening phone",
 			Mail:                             "Mail",
 			Phone:                            "Phone",
-			PreparingToSwitchApps:            "Preparing to switch apps; restoring Aiden App",
+			PreparingToSwitchApps:            "Preparing to switch apps; restoring the companion app",
 			PreparingToOpenTargetApp:         "Preparing to switch apps; opening the target app",
 			ActionSentWaitingScreenStable:    "Action sent; waiting for the screen to stabilize",
 			ReadingScreenAfterAction:         "Reading the screen after the action",
@@ -272,12 +272,12 @@ func getLiveActivityTextForLocale(locale string) liveActivityText {
 	}
 	// Simplified Chinese
 	return liveActivityText{
-		AidenTask:                        "Aiden 任务",
+		AicoTask:                         "Aico 任务",
 		ProcessingRequest:                "处理请求中",
 		AnalyzingTask:                    "正在分析任务并准备下一步操作",
 		PlanningNextStep:                 "规划下一步",
 		PleaseTakeOverOnPhone:            "请在手机上继续操作",
-		OpenAidenToContinue:              "打开 Aiden 以继续",
+		OpenCompanionAppToContinue:       "打开配套应用以继续",
 		LaunchRequestSentVerifyingScreen: "启动请求已发送；正在验证目标屏幕",
 		UpdatingPlanFromUserInput:        "根据用户输入更新计划",
 		Completed:                        "已完成",
@@ -334,7 +334,7 @@ func getLiveActivityTextForLocale(locale string) liveActivityText {
 		OpeningPhone:                     "正在打开拨号",
 		Mail:                             "邮件",
 		Phone:                            "电话",
-		PreparingToSwitchApps:            "即将跳转，正在尝试唤回 Aiden App",
+		PreparingToSwitchApps:            "即将跳转，正在尝试唤回配套应用",
 		PreparingToOpenTargetApp:         "即将跳转，正在打开目标应用",
 		ActionSentWaitingScreenStable:    "操作已发送，正在等待页面稳定",
 		ReadingScreenAfterAction:         "正在读取操作后的屏幕",
@@ -425,7 +425,7 @@ func (m *LiveActivityManager) StartTask(requestID, title string, phoneIDs ...str
 		Locale:        m.currentLocale(),
 		Status:        LiveActivityStatusRunning,
 		Phase:         LiveActivityPhasePlanning,
-		TaskTitle:     truncateLiveActivityText(firstNonEmptyString([]string{title, text.AidenTask}), 80),
+		TaskTitle:     truncateLiveActivityText(firstNonEmptyString([]string{title, text.AicoTask}), 80),
 		CurrentStep:   text.ProcessingRequest,
 		CurrentAction: "process",
 		ToolStatus:    "processing",
@@ -527,7 +527,7 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 		} else if state.ToolStatus == "waiting_app" {
 			state.Status = LiveActivityStatusNeedsApp
 			state.Phase = LiveActivityPhaseWaitingApp
-			state.CurrentAction = "open_aiden"
+			state.CurrentAction = "open_aico"
 		}
 		state.LastError = ""
 	case runEventToolCall:
@@ -590,8 +590,8 @@ func (m *LiveActivityManager) UpdateFromRunEvent(requestID string, event RunEven
 			if liveActivityResultNeedsApp(event, errText) {
 				state.Status = LiveActivityStatusNeedsApp
 				state.Phase = LiveActivityPhaseWaitingApp
-				state.CurrentAction = "open_aiden"
-				state.CurrentStep = text.OpenAidenToContinue
+				state.CurrentAction = "open_aico"
+				state.CurrentStep = text.OpenCompanionAppToContinue
 				state.RequiresApp = true
 				state.ShowsProgress = false
 				state.ToolStatus = "waiting_app"

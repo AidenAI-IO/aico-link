@@ -24,7 +24,7 @@
 #include "aicsdio_txrxif.h"
 #include "aicsdio.h"
 #include "aic_bsp_driver.h"
-#include "aiden_fw_state.h"
+#include "aico_fw_state.h"
 #include "md5.h"
 #include "aic8800dc_compat.h"
 #include "aic8800d80_compat.h"
@@ -351,7 +351,7 @@ free_msg:
 }
 
 int rwnx_send_mm_version_req(struct aic_sdio_dev *sdiodev,
-			     struct aiden_fw_version_cfm *cfm)
+			     struct aico_fw_version_cfm *cfm)
 {
 	void *req = rwnx_msg_zalloc(4, TASK_MM, DRV_TASK_ID, 0);
 
@@ -2213,10 +2213,10 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 	int ret = 0;
 
 	mem_addr = 0x40500000;
-	if (aiden_fw_state_enabled(sdiodev) &&
+	if (aico_fw_state_enabled(sdiodev) &&
 	    (sdiodev->chipid != PRODUCT_ID_AIC8800D80 ||
 	     aicbsp_info.cpmode != AICBSP_CPMODE_WORK || adap_test)) {
-		aiden_fw_state_failed();
+		aico_fw_state_failed();
 		return -EOPNOTSUPP;
 	}
 
@@ -2300,15 +2300,15 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 			    aicbsp_info.chip_rev == CHIP_REV_U03)
 				aicbsp_firmware_list = fw_8800d80_u02;
 		}
-		if (aiden_fw_state_enabled(sdiodev)) {
-			ret = aiden_fw_prepare(sdiodev);
+		if (aico_fw_state_enabled(sdiodev)) {
+			ret = aico_fw_prepare(sdiodev);
 			if (ret < 0)
 				return ret;
 			if (ret == 1)
 				return 0;
 		}
 		if (aicbsp_system_config_8800d80(sdiodev)) {
-			aiden_fw_state_failed();
+			aico_fw_state_failed();
 			return -EIO;
 		}
 	} else if (sdiodev->chipid == PRODUCT_ID_AIC8800D80X2) {
@@ -2335,7 +2335,7 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 	if (testmode != 4) {
 		if (btenable == 1) {
 			if (aicbt_init(sdiodev)) {
-				aiden_fw_state_failed();
+				aico_fw_state_failed();
 				return -EIO;
 			}
 		}
@@ -2344,11 +2344,11 @@ int aicbsp_driver_fw_init(struct aic_sdio_dev *sdiodev)
 
 	ret = aicwifi_init(sdiodev);
 	if (ret) {
-		aiden_fw_state_failed();
+		aico_fw_state_failed();
 		return ret;
 	}
-	if (aiden_fw_state_enabled(sdiodev))
-		return aiden_fw_finish(sdiodev);
+	if (aico_fw_state_enabled(sdiodev))
+		return aico_fw_finish(sdiodev);
 
 	return 0;
 }

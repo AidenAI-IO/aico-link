@@ -37,7 +37,7 @@ def replace_page_conversion(source, pool, offset, register):
     ).format(pool=pool, offset=offset, next_offset=offset + 4, register=register)
     new = (
         "\tlsr\tr0, {register}, #12\n"
-        "\tbl\taiden_media_pfn_to_page\n"
+        "\tbl\taico_media_pfn_to_page\n"
         "\tmov\tr3, r0\n"
         "\tadd\t{register}, {register}, #4096\n"
     ).format(register=register)
@@ -71,7 +71,7 @@ def patch_page_conversions(kmpp, rockit):
     # Four saved registers retain the ARM EABI's eight-byte stack alignment.
     new = (
         "\tpush\t{r0, r1, r2, r3}\n"
-        "\tbl\taiden_media_sg_phys\n"
+        "\tbl\taico_media_sg_phys\n"
         "\tmov\tr4, r0\n"
         "\tpop\t{r0, r1, r2, r3}\n"
         "\tadds\tr7, r7, #1\n"
@@ -152,12 +152,12 @@ def stage(sdk, output):
     for _, release in releases:
         if not (release / "Makefile").is_file():
             raise ValueError("Missing vendor media assembly: {}".format(release))
-    if output.exists() and not (output / ".aiden-media-compat").is_file():
+    if output.exists() and not (output / ".aico-media-compat").is_file():
         raise ValueError("Refusing to replace an unrecognized output directory: {}".format(output))
     if output.exists():
         shutil.rmtree(str(output))
     output.mkdir(parents=True)
-    (output / ".aiden-media-compat").write_text("1\n")
+    (output / ".aico-media-compat").write_text("1\n")
     for name, release in releases:
         shutil.copytree(str(release), str(output / name))
     kmpp, rockit = output / "kmpp", output / "rockit"
@@ -166,7 +166,7 @@ def stage(sdk, output):
         for path in directory.rglob("*.S"):
             path.write_text(module_assembly(path.read_text()))
         shutil.copyfile(str(pathlib.Path(__file__).with_name("media-page-compat.c")),
-                        str(directory / "aiden-media-pages.c"))
+                        str(directory / "aico-media-pages.c"))
 
     for path, init, exit_ in (
         (kmpp / "vcodec/mpp_vcodec_driver.S", "vcodec_init", "vcodec_exit"),
@@ -189,7 +189,7 @@ def stage(sdk, output):
         objects = object_files(directory / "Makefile", variable)
         if not objects:
             raise ValueError("Vendor media object list is empty: {}".format(directory))
-        objects.append("aiden-media-pages.o")
+        objects.append("aico-media-pages.o")
         if module == "rockit":
             lines.extend(["ifneq ($(CONFIG_ROCKCHIP_THUNDER_BOOT_SERVICE),y)",
                           "rockit-y += rockit/fakecode.o", "endif"])

@@ -651,7 +651,7 @@ static int mmc_sdio_pre_init(struct mmc_host *host, u32 ocr,
 bool mmc_sdio_aic_retained_host(struct mmc_host *host)
 {
 	return device_property_read_bool(host->parent,
-					 "aiden,aic8800d80-retained-sdio");
+					 "aico,aic8800d80-retained-sdio");
 }
 
 static bool mmc_sdio_aic_fixed_supply(struct mmc_host *host,

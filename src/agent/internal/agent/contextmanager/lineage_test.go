@@ -3,7 +3,7 @@ package contextmanager
 import (
 	"testing"
 
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 )
 
 func TestHasSessionAncestorFollowsCompactionAndClearedRoot(t *testing.T) {

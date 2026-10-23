@@ -6,7 +6,7 @@
 #include <linux/version.h>
 #include <linux/platform_device.h>
 #include "aic_bsp_driver.h"
-#include "aiden_fw_state.h"
+#include "aico_fw_state.h"
 #include "rwnx_version_gen.h"
 #include "aicwf_txq_prealloc.h"
 
@@ -346,7 +346,7 @@ static ssize_t fwdebug_store(struct device *dev, struct device_attribute *attr,
 static ssize_t fw_state_show(struct device *dev,
 			    struct device_attribute *attr, char *buf)
 {
-	return scnprintf(buf, PAGE_SIZE, "%s\n", aiden_fw_state_name());
+	return scnprintf(buf, PAGE_SIZE, "%s\n", aico_fw_state_name());
 }
 static DEVICE_ATTR_RO(fw_state);
 

@@ -13,7 +13,7 @@ implemented. Future-tense sections below preserve the
 original design requirements; follow the linked service page for current
 interfaces and deployment. Physical shutdown acceptance remains outstanding.
 
-Replace the diagnostic implementation behind `aiden-mcu-event.service` with a
+Replace the diagnostic implementation behind `aico-mcu-event.service` with a
 production MCU service. It will handle the RV startup/shutdown handshake,
 forward wake events through long polling, and expose typed timer, state,
 battery and LED operations to applications.
@@ -24,7 +24,7 @@ battery and LED operations to applications.
 | --- | --- |
 | `aiden-design`, `7ee65bc` | `MCU 与 RV1106 电源与通信接口方案/MCU 与 RV1106 电源与通信接口方案.md`, especially sections 6.1–6.5 |
 | `aiden-mcu`, `1bf1776` | `docs/protocol-v1.md`, `docs/application.md`, `include/aiden/v1.h`, `src/protocol/v1.c`, `src/app.c`, `src/power/supervisor.c` |
-| This checkout, `5d3a447d` | Diagnostic UART service (`overlay-debian/usr/lib/aiden/aiden-mcu-event` at the recorded revision), [systemd unit](../../overlay-debian/etc/systemd/system/aiden-mcu-event.service), protocol tests (`tests/test_mcu_event_service.py` at the recorded revision), and [deployment description](../01-getting-started/deployment.md) |
+| This checkout, `5d3a447d` | Diagnostic UART service (`overlay-debian/usr/lib/aiden/aiden-mcu-event` at the recorded revision), [systemd unit](../../overlay-debian/etc/systemd/system/aico-mcu-event.service), protocol tests (`tests/test_mcu_event_service.py` at the recorded revision), and [deployment description](../01-getting-started/deployment.md) |
 | Existing application integration | [BLE service](ble-service.md), `src/agent/internal/ble/{event_store,uds,client}.go`, and the Agent HTTP routes in `src/agent/internal/agent/server.go` |
 
 The design defines wire semantics; the MCU source supplies implementation
@@ -71,10 +71,10 @@ Implement a dedicated Go executable at `src/agent/cmd/mcu_service/`, backed by
 the envelope for other local application languages. The Agent provides a thin
 HTTP adapter for companion applications; local applications can use UDS directly.
 
-Keep the installed unit name **`aiden-mcu-event.service`** and change its
-`ExecStart` to `/usr/lib/aiden/mcu_service`. Retire the Python logger and its
+Keep the installed unit name **`aico-mcu-event.service`** and change its
+`ExecStart` to `/usr/lib/aico/mcu_service`. Retire the Python logger and its
 package-managed copy. Do not install a second service competing for ttyS5.
-Preserve journal logging and the existing `aiden.target` activation entry.
+Preserve journal logging and the existing `aico.target` activation entry.
 
 The daemon exclusively owns UART during normal operation, using an advisory
 lock plus terminal exclusivity where supported. UART RX, frame TX and request
@@ -83,7 +83,7 @@ responses take priority over application queries. The late shutdown helper
 opens UART only after the daemon has exited and relinquished ownership.
 
 Run the small standalone daemon as root, with its application socket owned by
-`root:aiden`, mode `0660`. This is an explicit change from the logger's `aiden`
+`root:aico`, mode `0660`. This is an explicit change from the logger's `aico`
 user: the daemon must schedule system poweroff and create a protected shutdown
 marker. The API exposes typed operations only; no raw UART, arbitrary command,
 `RV_READY`, `SHUTDOWN_READY` or poweroff operation is exposed to applications.
@@ -91,7 +91,7 @@ marker. The API exposes typed operations only; no raw UART, arbitrary command,
 Start the service after the UART device exists, independently of Agent startup,
 networking, BLE, models and application configuration. Initialize event storage,
 request dispatch and the shutdown coordinator before announcing READY. The
-Agent uses a configurable `AIDEN_MCU_SERVICE_SOCKET` and reconnects when the
+Agent uses a configurable `AICO_MCU_SERVICE_SOCKET` and reconnects when the
 service is unavailable; desktop operation without MCU hardware remains possible.
 
 ## UART transport and recovery
@@ -149,7 +149,7 @@ For a valid MCU `SHUTDOWN_REQUEST` (`0x09`, payload `01 00 00 00`):
    before acknowledging acceptance, so a crash after ACK cannot lose the
    transaction. Keep this bounded work on tmpfs, outside userdata I/O.
 2. Store that intent in a separate directory
-   under `/run/aiden-mcu-poweroff/`. This directory must survive ordinary
+   under `/run/aico-mcu-poweroff/`. This directory must survive ordinary
    daemon stop/RuntimeDirectory cleanup. Store the first receipt time and
    transaction identity; a daemon restart must resume this intent and must
    never reannounce READY while it is pending. Cache and send SUCCESS within
@@ -193,8 +193,8 @@ clock when its supervisor enters SHUTTING_DOWN, before UART enqueue/delivery.
 After SHUTDOWN_READY, it waits **75 ms** before cutting power. ACK only confirms
 receipt.
 
-The implementation reduces `aiden-agent.service` to `TimeoutStopSec=10s` and
-`aiden-swap.service` to 5s; several dependent services each still have 10s.
+The implementation reduces `aico-agent.service` to `TimeoutStopSec=10s` and
+`aico-swap.service` to 5s; several dependent services each still have 10s.
 Their shutdown dependency chain can compound these delays, so these settings
 alone do not demonstrate that the full path satisfies the budget.
 
@@ -435,7 +435,7 @@ Validation and behavior:
   expiry, requested mode is auto and timing/remaining fields are zero.
 - Admit SET overrides only while the MCU considers RV READY. Read current
   state without changing it. Implement pattern selection in
-  `aiden_app_leds()`; preserve `board_led_write()` as the hardware abstraction.
+  `aico_app_leds()`; preserve `board_led_write()` as the hardware abstraction.
 
 Example application mutation:
 
@@ -469,7 +469,7 @@ unchanged and version the additive command contract in documentation.
 | 3. Integrate applications | `src/agent/internal/agent/server.go`, dedicated MCU handlers/tests, Agent socket configuration, client example | Local UDS and USB HTTP clients independently receive the same wake and can query/control supported features |
 | 4. Complete shutdown | Daemon shutdown coordinator, final static helper, service ordering and stop budgets, Agent cancellation and swap cleanup | Measured full cleanup fits below 25 seconds and READY is emitted only at the final safe point |
 | 5. Implement LED extension | MCU `include/aiden/v1.h`, `include/aiden/app.h`, `src/app.c`, protocol/peer tools and tests; RV codec/API | Old MCU remains usable; new MCU implements queries, leases, duplicate replay and priority rules |
-| 6. Replace installed logger | Existing `aiden-mcu-event.service`, remove Python implementation, build/audit/package lists, config catalog and deployment docs | Upgrade/restart/rollback have one UART owner; all required artifacts and tests are packaged |
+| 6. Replace installed logger | Existing `aico-mcu-event.service`, remove Python implementation, build/audit/package lists, config catalog and deployment docs | Upgrade/restart/rollback have one UART owner; all required artifacts and tests are packaged |
 
 Shutdown coordination must be complete before deploying a replacement that
 ACKs production shutdown. Phases 2–3 can be tested with injected transports
@@ -480,7 +480,7 @@ Packaging updates include `scripts/debian-apps/container-build-apps.sh`,
 `scripts/debian-package/maintainer-script.sh`,
 `scripts/debian-system/config-package.json`, image audits and overlay tests.
 The final shutdown-hook path is outside the catalog's current
-`usr/lib/aiden/aiden-*` include, so it needs explicit staging, executable mode,
+`usr/lib/aico/aico-*` include, so it needs explicit staging, executable mode,
 upgrade/removal ownership and validation. Ensure the old logger cannot be
 restored from a managed-config copy during upgrade. Keep the stable service
 name in lifecycle/rollback handling and test rollback without poweroff.

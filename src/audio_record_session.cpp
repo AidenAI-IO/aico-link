@@ -1,12 +1,12 @@
 #include "audio_record_session.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <chrono>
 #include <cmath>
 #include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 static int16_t mono_sample_at(const int16_t* src, size_t frame_index, int channels) {
     if (channels == 2) {
@@ -118,12 +118,12 @@ AudioConfig AudioRecordSession::hardware_capture_config() const {
 bool AudioRecordSession::start() {
     AudioConfig cfg = hardware_capture_config();
     if (cfg.sample_rate != static_cast<int>(fmt_.sample_rate)) {
-        AIDEN_LOG_INFO("recording", "capture_rate_resampled",
+        AICO_LOG_INFO("recording", "capture_rate_resampled",
                        "hardware_rate=%d target_rate=%u",
                        cfg.sample_rate, fmt_.sample_rate);
     }
     if (!capture_.init(cfg)) {
-        AIDEN_LOG_ERROR("recording", "capture_init_failed", "session_id=%llu",
+        AICO_LOG_ERROR("recording", "capture_init_failed", "session_id=%llu",
                         static_cast<unsigned long long>(session_id_));
         return false;
     }
@@ -144,7 +144,7 @@ void AudioRecordSession::stop() {
     cv_.notify_all();
 }
 
-AidenServiceStatus AudioRecordSession::pop_chunk(uint32_t timeout_ms, AudioChunkResult* out) {
+AicoServiceStatus AudioRecordSession::pop_chunk(uint32_t timeout_ms, AudioChunkResult* out) {
     std::unique_lock<std::mutex> lock(mutex_);
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(timeout_ms);
@@ -153,17 +153,17 @@ AidenServiceStatus AudioRecordSession::pop_chunk(uint32_t timeout_ms, AudioChunk
         if (stopped_.load()) {
             out->pcm.clear();
             out->end_of_stream = true;
-            return AidenServiceStatus::OK;
+            return AicoServiceStatus::OK;
         }
         if (cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
-            return AidenServiceStatus::TIMEOUT;
+            return AicoServiceStatus::TIMEOUT;
         }
     }
 
     out->pcm = std::move(queue_.front());
     queue_.pop();
     out->end_of_stream = false;
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
 void AudioRecordSession::maybe_update_hw_sample_rate(uint64_t timestamp_us,
@@ -180,7 +180,7 @@ void AudioRecordSession::maybe_update_hw_sample_rate(uint64_t timestamp_us,
     int snapped = snap_sample_rate(observed);
     int diff = std::abs(snapped - hw_sample_rate_);
     if (diff > hw_sample_rate_ / 10) {
-        AIDEN_LOG_WARN("recording", "sample_rate_adjusted",
+        AICO_LOG_WARN("recording", "sample_rate_adjusted",
                        "previous_rate=%d sample_rate=%d observed_rate=%d frame_samples=%zu delta_us=%llu",
                        hw_sample_rate_, snapped, observed, frame_samples_per_channel,
                        static_cast<unsigned long long>(delta_us));
@@ -196,14 +196,14 @@ void AudioRecordSession::capture_loop() {
         if (!capture_.get_frame(frame)) {
             consecutive_failures++;
             if (consecutive_failures >= 5) {
-                AIDEN_LOG_WARN("recording", "capture_restart_requested",
+                AICO_LOG_WARN("recording", "capture_restart_requested",
                                "session_id=%llu consecutive_failures=%d",
                                static_cast<unsigned long long>(session_id_),
                                consecutive_failures);
                 capture_.stop();
                 AudioConfig cfg = hardware_capture_config();
                 if (!capture_.init(cfg)) {
-                    AIDEN_LOG_ERROR("recording", "capture_reinit_failed", "session_id=%llu",
+                    AICO_LOG_ERROR("recording", "capture_reinit_failed", "session_id=%llu",
                                     static_cast<unsigned long long>(session_id_));
                     usleep(20000);
                 } else {
@@ -253,4 +253,4 @@ void AudioRecordSession::capture_loop() {
     capture_.stop();
 }
 
-}  // namespace aiden
+}  // namespace aico

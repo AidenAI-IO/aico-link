@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/mcu"
-	"aiden-agent/internal/routines"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/mcu"
+	"aico-agent/internal/routines"
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -124,7 +124,7 @@ func TestScheduleToolRequiresBackendForRealtime(t *testing.T) {
 
 func TestStartRoutinesRegistersToolAndPreservesMCUError(t *testing.T) {
 	configDir := t.TempDir()
-	t.Setenv("AIDEN_MCU_SERVICE_SOCKET", filepath.Join(configDir, "missing.sock"))
+	t.Setenv("AICO_MCU_SERVICE_SOCKET", filepath.Join(configDir, "missing.sock"))
 	runtime := NewRuntimeWithDeps(Config{ConfigDir: configDir}, nil, nil, &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
 	defer runtime.Close()
 	if err := runtime.StartRoutines(); err != nil {

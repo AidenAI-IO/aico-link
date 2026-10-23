@@ -3,7 +3,7 @@
 # vendor-android-tools.sh
 #
 # Reproducibly regenerate the vendored source tarball for the
-# android-tools-aiden Buildroot package (modern adb client, reports
+# android-tools-aico Buildroot package (modern adb client, reports
 # version 1.0.41).
 #
 # The board build is offline / reproducible, so we cannot rely on
@@ -18,16 +18,16 @@
 #   scripts/vendor-android-tools.sh [output-dir]
 #
 # The resulting tarball + sha256 go to:
-#   <output-dir>/android-tools-aiden-<version>.tar.xz
+#   <output-dir>/android-tools-aico-<version>.tar.xz
 # Copy it into:
-#   sysdrv/source/buildroot/buildroot-2023.02.6/dl/android-tools-aiden/
+#   sysdrv/source/buildroot/buildroot-2023.02.6/dl/android-tools-aico/
 # and update the package .hash file if the version changes.
 
 set -euo pipefail
 
 VERSION="30.0.5p1"          # nmeum/android-tools release tag (adb 1.0.41)
 REPO="https://github.com/nmeum/android-tools.git"
-PKG="android-tools-aiden-${VERSION}"
+PKG="android-tools-aico-${VERSION}"
 OUT_DIR="${1:-$(pwd)}"
 
 # Submodules required to build only the adb client.
@@ -92,7 +92,7 @@ include(CMakeLists.adb.txt)
 include(CMakeLists.sparse.txt)
 include(CMakeLists.fastboot.txt)
 include(CMakeLists.mke2fs.txt)"""
-new_includes = """# Aiden: board uses adb client (host mode) only.
+new_includes = """# Aico: board uses adb client (host mode) only.
 include(CMakeLists.libbase.txt)
 include(CMakeLists.adb.txt)"""
 old_install = 'install(TARGETS adb fastboot "${ANDROID_MKE2FS_NAME}"\n\tsimg2img img2simg append2simg DESTINATION bin)'

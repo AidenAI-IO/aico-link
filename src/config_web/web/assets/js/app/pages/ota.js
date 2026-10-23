@@ -80,7 +80,7 @@ export async function otaPage(context) {
     timer = setTimeout(async () => {
       if (!body.isConnected) return;
       try { status = await readStatus(); } catch (_error) {
-        // aiden-business stops and restores Config Web during unpack/configure.
+        // aico-business stops and restores Config Web during unpack/configure.
         // Keep polling through that temporary loss of the status endpoint.
       }
       render();
@@ -92,14 +92,14 @@ export async function otaPage(context) {
     if (rebooting) return;
     rebooting = true;
     render();
-    postToHost({type: 'aiden_config_restart', apply: 'reboot', phase: 'started'});
+    postToHost({type: 'aico_config_restart', apply: 'reboot', phase: 'started'});
     try {
       await waitForReboot();
-      postToHost({type: 'aiden_config_restart', apply: 'reboot', phase: 'finished'});
+      postToHost({type: 'aico_config_restart', apply: 'reboot', phase: 'finished'});
       window.location.reload();
     } catch (error) {
       rebooting = false;
-      postToHost({type: 'aiden_config_restart', apply: 'reboot', phase: 'failed'});
+      postToHost({type: 'aico_config_restart', apply: 'reboot', phase: 'failed'});
       toast(error && error.message ? error.message : resolve(msg('apply.restart_timeout', '等待重启超时，请检查设备。')), {durationMs: 5000});
       render();
     }
@@ -108,7 +108,7 @@ export async function otaPage(context) {
   async function start() {
     const confirmed = await confirmSheet({
       title: msg('ota.confirm_title', '检查并安装更新？'),
-      body: msg('ota.confirm_body', '检查 GitHub 固件和 aiden-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。'),
+      body: msg('ota.confirm_body', '检查 GitHub 固件和 aico-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。'),
       confirmLabel: msg('ota.update', '检查并安装更新'),
       action: 'confirm-ota',
     });

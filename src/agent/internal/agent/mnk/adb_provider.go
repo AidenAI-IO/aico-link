@@ -1,7 +1,7 @@
 package mnk
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"fmt"
 	"math"
@@ -656,7 +656,7 @@ func parseADBTouchDevices(output string) []adbTouchDevice {
 				break
 			}
 		}
-		for _, virtualHint := range []string{"aiden", "hid", "uinput", "virtual"} {
+		for _, virtualHint := range []string{"aico", "hid", "uinput", "virtual"} {
 			if strings.Contains(lowerName, virtualHint) {
 				score -= 12
 			}
@@ -916,16 +916,16 @@ func buildADBInputMotionScript(actions []TouchAction, size adbInputScreenSize) (
 
 	var script strings.Builder
 	script.WriteString("set -e\n")
-	script.WriteString("aiden_touch_active=0\naiden_touch_x=0\naiden_touch_y=0\n")
-	script.WriteString("trap 'if [ \"$aiden_touch_active\" = 1 ]; then input touchscreen motionevent UP \"$aiden_touch_x\" \"$aiden_touch_y\"; fi' EXIT\n")
+	script.WriteString("aico_touch_active=0\naico_touch_x=0\naico_touch_y=0\n")
+	script.WriteString("trap 'if [ \"$aico_touch_active\" = 1 ]; then input touchscreen motionevent UP \"$aico_touch_x\" \"$aico_touch_y\"; fi' EXIT\n")
 	emit := func(kind string, x, y int) {
-		fmt.Fprintf(&script, "aiden_touch_x=%d\naiden_touch_y=%d\n", x, y)
+		fmt.Fprintf(&script, "aico_touch_x=%d\naico_touch_y=%d\n", x, y)
 		if kind == "DOWN" {
-			script.WriteString("aiden_touch_active=1\n")
+			script.WriteString("aico_touch_active=1\n")
 		}
 		appendADBInputMotionEvent(&script, kind, x, y)
 		if kind == "UP" {
-			script.WriteString("aiden_touch_active=0\n")
+			script.WriteString("aico_touch_active=0\n")
 		}
 	}
 	currentX, currentY := 0, 0
@@ -1510,7 +1510,7 @@ func (c *ADBScreenClient) ADBPath() (string, error) {
 		return c.adbPath, nil
 	}
 
-	if configured := strings.TrimSpace(os.Getenv("AIDEN_ADB_PATH")); configured != "" {
+	if configured := strings.TrimSpace(os.Getenv("AICO_ADB_PATH")); configured != "" {
 		c.adbPath = configured
 		return c.adbPath, nil
 	}
@@ -1526,7 +1526,7 @@ func (c *ADBScreenClient) ADBPath() (string, error) {
 }
 
 func (c *ADBScreenClient) ResolveSerial(ctx context.Context, adbPath string) (string, error) {
-	for _, key := range []string{"AIDEN_ADB_SERIAL", "ANDROID_SERIAL"} {
+	for _, key := range []string{"AICO_ADB_SERIAL", "ANDROID_SERIAL"} {
 		if serial := strings.TrimSpace(os.Getenv(key)); serial != "" {
 			return serial, nil
 		}
@@ -1576,7 +1576,7 @@ func (c *ADBScreenClient) ResolveSerial(ctx context.Context, adbPath string) (st
 	}
 
 	if len(devices) > 1 {
-		return "", fmt.Errorf("multiple adb devices connected; set AIDEN_ADB_SERIAL or ANDROID_SERIAL")
+		return "", fmt.Errorf("multiple adb devices connected; set AICO_ADB_SERIAL or ANDROID_SERIAL")
 	}
 
 	// There is exactly one connected device, so it is safe to cache it.

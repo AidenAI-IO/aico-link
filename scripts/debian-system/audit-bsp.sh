@@ -20,8 +20,8 @@ readonly MODULE_DIR=${SDK_DIR}/output/out/sysdrv_out/kernel_drv_ko
 readonly DUMPIMAGE=${SDK_DIR}/sysdrv/source/uboot/u-boot/tools/dumpimage
 readonly KERNEL_IMAGE=${SDK_DIR}/sysdrv/source/objs_kernel/arch/arm/boot/zImage
 readonly KERNEL_CONFIG=${SDK_DIR}/sysdrv/source/objs_kernel/.config
-readonly BSP_DTB=${SDK_DIR}/output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aiden-custom.dtb
-readonly EXPECTED_MODEL='Aiden SCH v1'
+readonly BSP_DTB=${SDK_DIR}/output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aico-custom.dtb
+readonly EXPECTED_MODEL='Aico Link SCH v1'
 readonly -a EXPECTED_SERIAL_CONTRACTS=(
     '0:/serial@ff4a0000:okay'
     '1:/serial@ff4b0000:disabled'
@@ -143,8 +143,8 @@ audit_boot() {
             || fail "boot_${slot}.img has the wrong partition command line"
         grep -qw "root=PARTLABEL=${root_label}" <<<"${bootargs}" \
             || fail "boot_${slot}.img has the wrong root PARTLABEL"
-        grep -qw "aiden.slot_suffix=${suffix}" <<<"${bootargs}" \
-            || fail "boot_${slot}.img has the wrong Aiden slot suffix"
+        grep -qw "aico.slot_suffix=${suffix}" <<<"${bootargs}" \
+            || fail "boot_${slot}.img has the wrong Aico Link slot suffix"
         grep -qw 'rootfstype=ext4' <<<"${bootargs}" \
             || fail "boot_${slot}.img is missing rootfstype=ext4"
         grep -qw 'net.ifnames=0' <<<"${bootargs}" \
@@ -153,7 +153,7 @@ audit_boot() {
             || fail "boot_${slot}.img is missing the production CMA setting"
         [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^root=')" -eq 1 ] \
             || fail "boot_${slot}.img contains multiple root arguments"
-        [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^aiden\.slot_suffix=')" -eq 1 ] \
+        [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^aico\.slot_suffix=')" -eq 1 ] \
             || fail "boot_${slot}.img contains multiple slot suffixes"
         {
             printf 'slot=%s\n' "${slot}"
@@ -184,7 +184,7 @@ audit_modules() {
         require_file "${MODULE_DIR}/${module}"
     done
     for module in mpp_vcodec.ko rockit.ko; do
-        grep -aq 'aiden_page_abi=kernel-helpers-v1' "${MODULE_DIR}/${module}" \
+        grep -aq 'aico_page_abi=kernel-helpers-v1' "${MODULE_DIR}/${module}" \
             || fail "media module lacks Debian kernel page compatibility: ${module}"
     done
     for firmware in \
@@ -217,7 +217,7 @@ write_hashes() {
             output/image/boot_a.img \
             output/image/boot_b.img \
             output/image/download.bin \
-            output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aiden-custom.dtb \
+            output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aico-custom.dtb \
             sysdrv/source/objs_kernel/arch/arm/boot/zImage \
             sysdrv/source/objs_kernel/.config
         find output/out/sysdrv_out/kernel_drv_ko -type f -print0 \

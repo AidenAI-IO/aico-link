@@ -167,7 +167,7 @@ def test_run_case_terminates_the_runner_process_group_on_timeout(
         "-f",
         str(tmp_path / "docker" / "docker-compose.agent-daemon.yml"),
         "-p",
-        "aiden-benchmark-agent-ci-timeout-worker-token",
+        "aico-benchmark-agent-ci-timeout-worker-token",
         "down",
         "--volumes",
         "--remove-orphans",

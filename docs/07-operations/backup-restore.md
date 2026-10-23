@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # User Data Backup and Restore
 
-This document describes the supported backup and restore contract for Aiden
+This document describes the supported backup and restore contract for Aico Link
 firmware. It is the operational reference for Config Web, the Bridge App
 WebView, and the computer CLI. Detailed implementation notes and historical
 design alternatives are intentionally kept out of this document.
@@ -16,7 +16,7 @@ after the first boot of the new image. It covers:
 
 - `/userdata`, including Agent configuration, memory, sessions, skills,
   identity, audio, and the persistent user home;
-- Aiden-managed SD-card data under `/mnt/sdcard`;
+- Aico Link-managed SD-card data under `/mnt/sdcard`;
 - configuration and credentials that are explicitly listed in the backup
   manifest; and
 - integrity verification, transactional restore, rollback, and interrupted
@@ -86,8 +86,8 @@ available.
 | `preferences` | Local playback preferences |
 | `device_identity` | Machine, SSH, and Bluetooth identity in same-device mode |
 | `audio_archive` | eMMC audio archive |
-| `sd_managed_audio` | Aiden-managed SD audio archive |
-| `sd_user_files` | User files on the SD card outside Aiden-managed directories |
+| `sd_managed_audio` | Aico Link-managed SD audio archive |
+| `sd_user_files` | User files on the SD card outside Aico Link-managed directories |
 | `python_environment` | Dynamically installed user Python environment |
 | `diagnostics` | Agent and system diagnostic logs |
 
@@ -107,6 +107,14 @@ The archive manifest records the format version, firmware contract, hardware
 identity, component list, sizes, and checksums. A restore must reject an
 unsupported schema, incompatible platform contract, missing component, or
 failed checksum before committing any component.
+
+Archives use the `aico-backup` identity and `AICOBKP1` header. Managed SD audio
+is stored in `aico/audio`, and restore transactions use `.aico-restore`.
+Backup excludes these managed roots from `sd_user_files`; restore rejects
+user files that overlap them, including FAT case, trailing-dot, and short-name
+aliases. Top-level DOS 8.3 names containing a tilde and numeric suffix are
+reserved because an archive cannot identify their long-name targets. Move
+such user files to another directory before creating an archive.
 
 ## Transaction model
 

@@ -14,11 +14,11 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/backup"
-	"aiden-agent/internal/configweb"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/wifiproxy"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/backup"
+	"aico-agent/internal/configweb"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/wifiproxy"
 )
 
 const (
@@ -80,7 +80,7 @@ func main() {
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
 	flag.Parse()
-	environmentPath := os.Getenv("AIDEN_SYSTEM_ENV")
+	environmentPath := os.Getenv("AICO_SYSTEM_ENV")
 	if environmentPath == "" {
 		environmentPath = "/userdata/system/env"
 	}

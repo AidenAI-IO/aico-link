@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"strings"
 
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/netproxy"
 )
 
 func newProxyHTTPClient(proxy ProxyConfig) *http.Client {

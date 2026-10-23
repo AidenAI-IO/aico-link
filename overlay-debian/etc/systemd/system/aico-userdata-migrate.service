@@ -1,0 +1,17 @@
+[Unit]
+Description=Migrate persistent Aico Link userdata for Debian 13
+Requires=userdata.mount userdata-ota.mount
+After=userdata.mount userdata-ota.mount
+Requires=aico-ota-recovery.service
+After=aico-ota-recovery.service
+Before=aico-root-home.service aico-ssh-identity.service aico-environment.service
+Before=wpa_supplicant@wlan0.service ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-userdata-migrate
+RemainAfterExit=yes
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=multi-user.target

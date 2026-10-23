@@ -16,8 +16,8 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/model"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/model"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
@@ -114,7 +114,7 @@ func TestAudioDialogStartRecordingRetriesUntilAudioServiceAvailable(t *testing.T
 		recordingStartRetryInterval = oldInterval
 	})
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-audio-dialog-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-dialog-*")
 	if err != nil {
 		t.Fatalf("create temp socket dir: %v", err)
 	}

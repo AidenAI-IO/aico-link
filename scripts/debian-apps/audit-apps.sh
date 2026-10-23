@@ -40,7 +40,7 @@ readonly RKNN_RUNTIME_VERSION='librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T
 readonly RKNN_STATIC_SYMBOLS=(
     __ctype_b
     __ctype_tolower
-    aiden_rknn_glibc_compat_init
+    aico_rknn_glibc_compat_init
     rknn_create_mem
     rknn_destroy
     rknn_destroy_mem

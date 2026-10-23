@@ -90,7 +90,7 @@ def test_benchmark_runner_backend_invokes_current_runner_and_reads_rollouts(tmp_
         base_config_dir=base_config,
         shared_skills_dir=shared_skills,
         environment_url="http://127.0.0.1:50196",
-        daemon_image="aiden-agent-daemon:local",
+        daemon_image="aico-agent-daemon:local",
         build_daemon_image=False,
         agent_config_path=tmp_path / "agent.toml",
     )
@@ -111,7 +111,7 @@ def test_benchmark_runner_backend_invokes_current_runner_and_reads_rollouts(tmp_
     assert captured["cwd"] == benchmark_root
     assert "--auto-agent-setup" in cmd
     assert cmd[cmd.index("--environment-url") + 1] == "http://127.0.0.1:50196"
-    assert cmd[cmd.index("--daemon-image") + 1] == "aiden-agent-daemon:local"
+    assert cmd[cmd.index("--daemon-image") + 1] == "aico-agent-daemon:local"
     assert cmd[cmd.index("--agent-config") + 1] == str(tmp_path / "agent.toml")
     assert "--no-build-daemon-image" in cmd
     assert "--no-judge" in cmd

@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -249,7 +249,7 @@ func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, syste
 // Only the date line emitted at the beginning of buildProfile is volatile.
 // Preserve the timezone and every instruction, including date-like user text,
 // so actual configuration changes still start a new conversation.
-var generatedPromptDate = regexp.MustCompile(`^(You are the Aiden agent\.\nCurrent date: )[0-9]{4}-[0-9]{2}-[0-9]{2} \((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|星期[一二三四五六日]), timezone: ([^)\n]+)\)\n`)
+var generatedPromptDate = regexp.MustCompile(`^(` + regexp.QuoteMeta(agentIdentityPrompt) + `\nCurrent date: )[0-9]{4}-[0-9]{2}-[0-9]{2} \((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|星期[一二三四五六日]), timezone: ([^)\n]+)\)\n`)
 
 func systemPromptIdentity(prompt string) string {
 	return generatedPromptDate.ReplaceAllString(strings.TrimSpace(prompt), "${1}(timezone: ${2})\n")

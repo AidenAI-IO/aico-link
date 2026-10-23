@@ -8,7 +8,7 @@ package agent
 //
 // Run against a local stack (`deploy/langfuse`):
 //
-//	AIDEN_LANGFUSE_LIVE=1 \
+//	AICO_LANGFUSE_LIVE=1 \
 //	LANGFUSE_BASE_URL=http://localhost:3000 \
 //	LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 //	go test ./internal/agent/ -run TestLangfuseLiveEpisodeExport -v -count=1
@@ -25,10 +25,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const langfuseLiveSkipMessage = "set AIDEN_LANGFUSE_LIVE=1 with LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to verify against a real Langfuse"
+const langfuseLiveSkipMessage = "set AICO_LANGFUSE_LIVE=1 with LANGFUSE_BASE_URL, LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to verify against a real Langfuse"
 
 func TestLangfuseLiveEpisodeExport(t *testing.T) {
-	if os.Getenv("AIDEN_LANGFUSE_LIVE") != "1" {
+	if os.Getenv("AICO_LANGFUSE_LIVE") != "1" {
 		t.Skip(langfuseLiveSkipMessage)
 	}
 	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("LANGFUSE_BASE_URL")), "/")
@@ -47,7 +47,7 @@ func TestLangfuseLiveEpisodeExport(t *testing.T) {
 		UploadTimeoutSec:  30,
 		UploadScreenshots: boolPtr(true),
 		Environment:       "verification",
-		Tags:              []string{"aiden-live-verification"},
+		Tags:              []string{"aico-live-verification"},
 	}, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
@@ -79,8 +79,8 @@ func TestLangfuseLiveEpisodeExport(t *testing.T) {
 	if got := langfuseLiveString(trace, "release"); got != "live-verify-commit" {
 		t.Errorf("trace release = %q, want live-verify-commit", got)
 	}
-	if tags := langfuseLiveStrings(trace["tags"]); !langfuseLiveContains(tags, "aiden-live-verification") || !langfuseLiveContains(tags, "success") {
-		t.Errorf("trace tags = %v, want aiden-live-verification and success", tags)
+	if tags := langfuseLiveStrings(trace["tags"]); !langfuseLiveContains(tags, "aico-live-verification") || !langfuseLiveContains(tags, "success") {
+		t.Errorf("trace tags = %v, want aico-live-verification and success", tags)
 	}
 	metadata := langfuseLiveMap(trace["metadata"])
 	if metadata["tool_call_count"] != float64(1) {

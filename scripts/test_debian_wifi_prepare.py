@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-HELPERS = REPO / "overlay-debian/usr/lib/aiden"
+HELPERS = REPO / "overlay-debian/usr/lib/aico"
 
 
 class StartupFixture(unittest.TestCase):
@@ -21,14 +21,14 @@ class StartupFixture(unittest.TestCase):
         self.control = self.host / "power/control"
         self.state = self.root / "sys/devices/platform/aic-bsp/aicbsp_info/fw_state"
         self.model = self.root / "proc/device-tree/model"
-        self.optin = self.root / "sys/firmware/devicetree/base/mmc@ff9a0000/aiden,aic8800d80-retained-sdio"
-        self.lib = self.root / "usr/lib/aiden"
+        self.optin = self.root / "sys/firmware/devicetree/base/mmc@ff9a0000/aico,aic8800d80-retained-sdio"
+        self.lib = self.root / "usr/lib/aico"
         self.modules = self.lib / "platform/modules"
         self.bin = self.root / "bin"
         for path in (self.driver, self.control.parent, self.model.parent,
                      self.optin.parent, self.modules, self.bin):
             path.mkdir(parents=True, exist_ok=True)
-        self.model.write_bytes(b"Aiden SCH v1\0")
+        self.model.write_bytes(b"Aico Link SCH v1\0")
         self.optin.touch()
         self.control.write_text("auto\n")
         (self.driver / "ff9a0000.mmc").touch()
@@ -43,15 +43,15 @@ class StartupFixture(unittest.TestCase):
         self.add_function("390b", 2, "0x0182")
         for name in ("cfg80211", "aic8800_bsp", "aic8800_fdrv"):
             (self.modules / (name + ".ko")).touch()
-        for name in ("aiden-wifi-prepare", "aiden-wifi-driver", "aiden-bluetooth-prepare"):
+        for name in ("aico-wifi-prepare", "aico-wifi-driver", "aico-bluetooth-prepare"):
             script = (HELPERS / name).read_text()
-            for prefix in ("/sys/", "/proc/", "/usr/lib/aiden/", "/userdata/"):
+            for prefix in ("/sys/", "/proc/", "/usr/lib/aico/", "/userdata/"):
                 script = script.replace(prefix, str(self.root) + prefix)
             script = script.replace("/dev/ttyS0", "/dev/null")
             path = self.lib / name
             path.write_text(script)
             path.chmod(0o755)
-        for path in (self.lib / "aiden-boot-timeline", self.lib / "agent",
+        for path in (self.lib / "aico-boot-timeline", self.lib / "agent",
                      self.bin / "logger"):
             path.write_text("#!/bin/sh\nexit 0\n")
             path.chmod(0o755)
@@ -93,7 +93,7 @@ if module == "aic8800_fdrv":
         (node / "vendor").write_text(vendor + "\n")
         (node / "device").write_text(device + "\n")
 
-    def run_helper(self, name="aiden-wifi-prepare", **extra_env):
+    def run_helper(self, name="aico-wifi-prepare", **extra_env):
         return subprocess.run(["sh", str(self.lib / name)], text=True, capture_output=True,
                               env={**os.environ, "PATH": str(self.bin) + ":" + os.environ["PATH"],
                                    "FIXTURE": str(self.root), **extra_env}, timeout=15)
@@ -163,7 +163,7 @@ class WifiPrepareTest(StartupFixture):
 
 class WifiDriverTest(StartupFixture):
     def run_driver(self, **env):
-        result = self.run_helper("aiden-wifi-driver", **env)
+        result = self.run_helper("aico-wifi-driver", **env)
         self.assert_no_reset()
         return result
 
@@ -232,21 +232,21 @@ class WifiDriverTest(StartupFixture):
 
     def test_invalid_he_does_not_touch_hardware(self):
         before = self.sysfs_snapshot()
-        result = self.run_driver(AIDEN_WIFI_HE="invalid")
+        result = self.run_driver(AICO_WIFI_HE="invalid")
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.sysfs_snapshot(), before)
         self.assertEqual(self.load_names(), [])
 
     def test_invalid_low_power_does_not_touch_hardware(self):
         before = self.sysfs_snapshot()
-        result = self.run_driver(AIDEN_WIFI_LOW_POWER="invalid")
+        result = self.run_driver(AICO_WIFI_LOW_POWER="invalid")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("invalid-lp_on", result.stderr)
         self.assertEqual(self.sysfs_snapshot(), before)
         self.assertEqual(self.load_names(), [])
 
     def test_low_power_option_reaches_module_loader(self):
-        result = self.run_driver(AIDEN_WIFI_LOW_POWER="1")
+        result = self.run_driver(AICO_WIFI_LOW_POWER="1")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("params=he_on=0 custregd=1 lp_on=1", result.stderr)
         self.assertEqual(self.control.read_text(), "auto\n")
@@ -258,7 +258,7 @@ class BluetoothPrepareTest(StartupFixture):
         for state in ("provisioned", "reused"):
             with self.subTest(state=state):
                 self.state.write_text(state + "\n")
-                result = self.run_helper("aiden-bluetooth-prepare")
+                result = self.run_helper("aico-bluetooth-prepare")
                 self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.root / "sys/module/aic8800_fdrv").exists())
 
@@ -269,7 +269,7 @@ class BluetoothPrepareTest(StartupFixture):
             with self.subTest(state=state):
                 if state is not None:
                     self.state.write_text(state + "\n")
-                result = self.run_helper("aiden-bluetooth-prepare")
+                result = self.run_helper("aico-bluetooth-prepare")
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("firmware is not ready", result.stderr)
 
@@ -295,7 +295,7 @@ class BluetoothClearAdvertisingTest(unittest.TestCase):
             (self.bin / name).chmod(0o755)
 
     def run_helper(self, **extra_env):
-        return subprocess.run(["sh", str(HELPERS / "aiden-bluetooth-clear-adv")],
+        return subprocess.run(["sh", str(HELPERS / "aico-bluetooth-clear-adv")],
                               text=True, capture_output=True,
                               env={**os.environ, "PATH": str(self.bin) + ":" + os.environ["PATH"],
                                    "FIXTURE": str(self.root), **extra_env}, timeout=15)

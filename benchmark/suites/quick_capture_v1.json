@@ -53,10 +53,10 @@
             "id": "mem_1700000000000000200_qc_dense_payment",
             "type": "screen_snapshot",
             "title": "支付宝企业付款确认页",
-            "content": "支付宝企业付款确认页。\n\n- 金额：￥12,480.60\n- 时间：2026/08/19 09:07\n- 账户：AIDEN-cn_HZ.7F-02\n- 地址：荔信三街 18 号 B 座 1206",
+            "content": "支付宝企业付款确认页。\n\n- 金额：￥12,480.60\n- 时间：2026/08/19 09:07\n- 账户：AICO-cn_HZ.7F-02\n- 地址：荔信三街 18 号 B 座 1206",
             "tags": ["付款", "金额", "账户", "地址"],
             "entities": ["支付宝", "杭州智联科技"],
-            "evidence": ["￥12,480.60", "2026/08/19 09:07", "AIDEN-cn_HZ.7F-02", "荔信三街 18 号 B 座 1206"],
+            "evidence": ["￥12,480.60", "2026/08/19 09:07", "AICO-cn_HZ.7F-02", "荔信三街 18 号 B 座 1206"],
             "priority": 85
           }
         ]
@@ -65,7 +65,7 @@
       "expected_recalled_memory_ids": ["mem_1700000000000000200_qc_dense_payment"],
       "rubric": [
         {"id": "recalls_dense_snapshot", "check": "The trace recalls the dense payment screen_snapshot."},
-        {"id": "keeps_all_exact_values", "check": "The final answer contains all four exact values: ￥12,480.60, 2026/08/19 09:07, AIDEN-cn_HZ.7F-02, and 荔信三街 18 号 B 座 1206. It must preserve punctuation and case."}
+        {"id": "keeps_all_exact_values", "check": "The final answer contains all four exact values: ￥12,480.60, 2026/08/19 09:07, AICO-cn_HZ.7F-02, and 荔信三街 18 号 B 座 1206. It must preserve punctuation and case."}
       ],
       "hard_assertions": {
         "min_tool_calls": 1,

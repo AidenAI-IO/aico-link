@@ -18,7 +18,7 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-var archiveMagic = [8]byte{'A', 'I', 'D', 'E', 'N', 'B', 'K', 'P'}
+var archiveMagic = [8]byte{'A', 'I', 'C', 'O', 'B', 'K', 'P', '1'}
 
 const (
 	headerPrefixSize    = 8 + 2 + 4
@@ -67,7 +67,7 @@ func (checksumFrames) Open(dst, _nonce, payload, additionalData []byte) ([]byte,
 }
 func frameChecksum(additionalData, plaintext []byte) [sha256.Size]byte {
 	h := sha256.New()
-	_, _ = h.Write([]byte("aiden-backup-sha256-frame-v1"))
+	_, _ = h.Write([]byte("aico-backup-sha256-frame-v1"))
 	_, _ = h.Write(additionalData)
 	_, _ = h.Write(plaintext)
 	var result [sha256.Size]byte
@@ -205,7 +205,7 @@ func ReadPublicHeader(reader io.Reader) (PublicHeader, []byte, error) {
 		return header, nil, errorf("archive_truncated", err, "backup header is truncated")
 	}
 	if !bytes.Equal(prefix[:8], archiveMagic[:]) {
-		return header, nil, errorf("unsupported_format", nil, "file is not an Aiden backup")
+		return header, nil, errorf("unsupported_format", nil, "file is not an Aico Link backup")
 	}
 	if version := binary.BigEndian.Uint16(prefix[8:10]); version != FormatVersion {
 		return header, nil, errorf("unsupported_format", nil, "unsupported backup container version %d", version)

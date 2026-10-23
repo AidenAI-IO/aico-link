@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestStorageEjectDistinguishesFlushWarnings(t *testing.T) {

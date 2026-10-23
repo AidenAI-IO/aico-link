@@ -1,0 +1,21 @@
+[Unit]
+Description=Aico Link device services
+Requires=aico-userdata-migrate.service aico-machine-id.service aico-environment.service
+Requires=aico-backup-recover.service
+Wants=aico-zram.service aico-swap.service aico-media-modules.service
+Wants=aico-wifi-driver.service aico-bluetooth-attach.service bluetooth.service
+Wants=aico-usb-gadget.service aico-usb-dnsmasq.service aico-usb-ecm-watchdog.service
+Wants=aico-frame.service aico-audio.service aico-ble.service aico-agent.service
+Wants=aico-mcu-event.service
+Wants=aico-agent-log-retention.timer
+Wants=aico-wifi-proxy.service aico-wifi-proxy-agent-restart.path
+Wants=aico-config-web.service aico-ota-health-marker.service aico-ota-health.service
+Wants=aico-hybrid-update.service
+Wants=aico-ttyd.service
+Wants=aico-adb-host.service
+Wants=aico-wlan-guard.service
+After=aico-userdata-migrate.service aico-machine-id.service aico-environment.service
+After=aico-backup-recover.service
+
+[Install]
+WantedBy=multi-user.target

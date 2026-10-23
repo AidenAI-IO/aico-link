@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 )
 
 func TestAnthropicScreenshotPrunerDisabledIsNoop(t *testing.T) {

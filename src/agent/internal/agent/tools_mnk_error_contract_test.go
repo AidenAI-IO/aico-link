@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"

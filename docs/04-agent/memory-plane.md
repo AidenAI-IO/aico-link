@@ -4,7 +4,7 @@ sidebar_position: 9
 
 # Memory Plane
 
-This document describes the current filesystem-backed memory architecture used by the Aiden Agent. Session memory is documented separately in [Session Memory Compaction](session-memory.md).
+This document describes the current filesystem-backed memory architecture used by Aico. Session memory is documented separately in [Session Memory Compaction](session-memory.md).
 
 ## Responsibilities
 

@@ -1,5 +1,5 @@
 version: 1
-name: aiden-firmware
+name: aico-link-firmware
 
 # This manifest is executed inside docker/test/Dockerfile. "quick" selects
 # short local feedback; the full profile remains the CI gate. Keep commands
@@ -31,14 +31,14 @@ suites:
     class: deterministic
     paths: [CMakeLists.txt, cmake, src, tests]
     command: |
-      cmake -S . -B build-docker-host -DAIDEN_TESTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
-      cmake --build build-docker-host --parallel "${AIDEN_TEST_JOBS:-2}"
+      cmake -S . -B build-docker-host -DAICO_TESTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      cmake --build build-docker-host --parallel "${AICO_TEST_JOBS:-2}"
       ctest --test-dir build-docker-host --output-on-failure
     quick: true
     quick_command: |
-      cmake -S . -B build-docker-host -DAIDEN_TESTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
-      cmake --build build-docker-host --parallel "${AIDEN_TEST_JOBS:-2}"
-      ctest --test-dir build-docker-host --output-on-failure -R '^aiden_tests$'
+      cmake -S . -B build-docker-host -DAICO_TESTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo
+      cmake --build build-docker-host --parallel "${AICO_TEST_JOBS:-2}"
+      ctest --test-dir build-docker-host --output-on-failure -R '^aico_tests$'
     dependencies: [cmake, c++, ctest]
     required: true
     timeout_seconds: 900
@@ -142,7 +142,7 @@ suites:
 
   - name: mcu-event-service
     class: deterministic
-    paths: [src/agent/internal/mcu, src/agent/cmd/mcu_service, src/agent/cmd/daemon, src/agent/internal/agent/mcu_http.go, scripts/test_mcu_after_flash.py, tests/test_mcu_after_flash.py, overlay-debian/etc/systemd/system/aiden-mcu-event.service]
+    paths: [src/agent/internal/mcu, src/agent/cmd/mcu_service, src/agent/cmd/daemon, src/agent/internal/agent/mcu_http.go, scripts/test_mcu_after_flash.py, tests/test_mcu_after_flash.py, overlay-debian/etc/systemd/system/aico-mcu-event.service]
     command: |
       cd src/agent && go test -race -count=1 -timeout=2m ./internal/mcu ./cmd/mcu_service
       go test -count=1 -timeout=2m -run '^TestMCUHTTP' ./internal/agent
@@ -159,25 +159,25 @@ suites:
     paths:
       - overlay-debian/usr/bin/aico-power
       - tests/test_aico_power.py
-      - pico-sdk/project/scripts/test_aiden_custom_dts.py
-      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+      - pico-sdk/project/scripts/test_aico_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts
       - pico-sdk/sysdrv/source/kernel/arch/arm/configs/rv1106-pm.config
     command: |
       python3 tests/test_aico_power.py
-      python3 pico-sdk/project/scripts/test_aiden_custom_dts.py AidenCustomBoardTest.test_suspend_uses_the_board_power_and_pin_configuration
+      python3 pico-sdk/project/scripts/test_aico_custom_dts.py AicoCustomBoardTest.test_suspend_uses_the_board_power_and_pin_configuration
     quick: true
     dependencies: [python3]
     required_inputs:
       - overlay-debian/usr/bin/aico-power
       - tests/test_aico_power.py
-      - pico-sdk/project/scripts/test_aiden_custom_dts.py
-      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+      - pico-sdk/project/scripts/test_aico_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts
     required: true
     timeout_seconds: 60
 
   - name: debian-rootfs-grow
     class: deterministic
-    paths: [overlay-debian/usr/lib/aiden/aiden-rootfs-grow, overlay-debian/etc/systemd/system/aiden-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]
+    paths: [overlay-debian/usr/lib/aico/aico-rootfs-grow, overlay-debian/etc/systemd/system/aico-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]
     command: bash scripts/test_debian_rootfs_grow.sh
     quick: true
     dependencies: [bash, sh, awk, sed, date, dumpe2fs, e2fsck, mke2fs, resize2fs, debugfs, stat, truncate]
@@ -186,7 +186,7 @@ suites:
 
   - name: debian-media-modules
     class: deterministic
-    paths: [overlay-debian/usr/lib/aiden/aiden-media-modules, overlay-debian/etc/systemd/system/aiden-media-modules.service, scripts/test_debian_media_modules.sh]
+    paths: [overlay-debian/usr/lib/aico/aico-media-modules, overlay-debian/etc/systemd/system/aico-media-modules.service, scripts/test_debian_media_modules.sh]
     command: bash scripts/test_debian_media_modules.sh
     dependencies: [bash, sh, awk, sed]
     required: true
@@ -196,14 +196,14 @@ suites:
     class: deterministic
     paths: [pico-sdk, tests/test_tf_pinctrl.py, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]
     command: |
-      python3 pico-sdk/project/scripts/test_aiden_custom_dts.py AidenCustomBoardTest.test_tf_card_on_sdmmc0
+      python3 pico-sdk/project/scripts/test_aico_custom_dts.py AicoCustomBoardTest.test_tf_card_on_sdmmc0
       python3 tests/test_tf_pinctrl.py
       bash scripts/test_tf_dtb.sh
     quick: true
     dependencies: [bash, python3, gcc, dtc, fdtget, fdtput]
     required_inputs:
-      - pico-sdk/project/scripts/test_aiden_custom_dts.py
-      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aiden-custom.dts
+      - pico-sdk/project/scripts/test_aico_custom_dts.py
+      - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts
       - pico-sdk/sysdrv/source/kernel/drivers/pinctrl/pinctrl-rockchip.c
       - pico-sdk/sysdrv/source/kernel/drivers/pinctrl/pinctrl-rockchip.h
     required: true
@@ -220,7 +220,7 @@ suites:
 
   - name: rk628-recovery
     class: deterministic
-    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, tests/rk628_edid_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aiden/aiden-hdmi-mode, edid, overlay-debian/usr/share/aiden/hdmi]
+    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, tests/rk628_edid_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aico/aico-hdmi-mode, edid, overlay-debian/usr/share/aico/hdmi]
     command: |
       python3 tests/test_rk628_recovery.py
       bash scripts/test_rk628d_driver.sh

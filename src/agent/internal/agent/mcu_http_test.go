@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/mcu"
 )
 
 func TestMCUHTTPRoutesAndRestriction(t *testing.T) {
@@ -121,7 +121,7 @@ func TestMCUHTTPLostResponsePreservesUnknownOutcome(t *testing.T) {
 						_, _ = conn.Write(wire)
 					}
 				}()
-				t.Setenv("AIDEN_MCU_SERVICE_SOCKET", path)
+				t.Setenv("AICO_MCU_SERVICE_SOCKET", path)
 				ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 				defer cancel()
 				request := httptest.NewRequest(op.method, op.path, strings.NewReader(op.body)).WithContext(ctx)
@@ -144,7 +144,7 @@ func TestMCUHTTPLostResponsePreservesUnknownOutcome(t *testing.T) {
 }
 
 func TestMCUHTTPConnectionFailureDoesNotClaimUnknownOutcome(t *testing.T) {
-	t.Setenv("AIDEN_MCU_SERVICE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
+	t.Setenv("AICO_MCU_SERVICE_SOCKET", filepath.Join(t.TempDir(), "missing.sock"))
 	request := httptest.NewRequest("PUT", "/api/mcu/wakeup-timer", strings.NewReader(`{"delay_s":120,"generation":"g","request_id":"set"}`))
 	request.RemoteAddr = "127.0.0.1:1234"
 	recorder := httptest.NewRecorder()

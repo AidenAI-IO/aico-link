@@ -2,8 +2,9 @@
 // native adapter is intentionally message based so large files never enter
 // the React Native JavaScript heap.
 import {sha256Hex} from './backup-checksum.js';
+import {postToHost} from '../app/host.js';
 
-const hostCapabilities = () => window.AidenHostCapabilities || {};
+const hostCapabilities = () => window.AicoHostCapabilities || {};
 
 export function hasNativeTransfer() {
   const caps = hostCapabilities();
@@ -15,30 +16,25 @@ export function hasNativeFilePicker() {
   return hasNativeTransfer() && !!caps.nativeFilePicker;
 }
 
-function postToHost(message) {
-  if (!window.ReactNativeWebView) return false;
-  window.ReactNativeWebView.postMessage(JSON.stringify(message));
-  return true;
-}
 
 export function requestNativeFile() {
   if (!hasNativeFilePicker()) return false;
-  return postToHost({type: 'aiden_restore_pick_file'});
+  return postToHost({type: 'aico_restore_pick_file'});
 }
 
 export function requestNativeDownload(payload) {
   if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_backup_download', ...payload});
+  return postToHost({type: 'aico_backup_download', ...payload});
 }
 
 export function requestNativeUpload(payload) {
   if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_restore_upload', ...payload});
+  return postToHost({type: 'aico_restore_upload', ...payload});
 }
 
 export function cancelNativeTransfer(jobId) {
   if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_transfer_cancel', job_id: jobId});
+  return postToHost({type: 'aico_transfer_cancel', job_id: jobId});
 }
 
 // The browser's download manager receives the archive straight from the
@@ -54,7 +50,7 @@ export function triggerBrowserDownload(url, filename) {
   setTimeout(() => link.remove(), 1000);
 }
 
-export const ARCHIVE_MAGIC = 'AIDENBKP';
+export const ARCHIVE_MAGIC = 'AICOBKP1';
 const HEADER_PREFIX_LENGTH = 14;
 const MAX_PUBLIC_HEADER = 64 * 1024;
 
@@ -62,8 +58,9 @@ const MAX_PUBLIC_HEADER = 64 * 1024;
 // the device can bound the KDF parameters before any chunk is uploaded.
 export async function readArchiveHeader(file) {
   const prefix = new Uint8Array(await file.slice(0, HEADER_PREFIX_LENGTH).arrayBuffer());
-  if (prefix.length < HEADER_PREFIX_LENGTH || new TextDecoder().decode(prefix.slice(0, 8)) !== ARCHIVE_MAGIC) {
-    throw new Error('not_aiden_backup');
+  const magic = new TextDecoder().decode(prefix.slice(0, 8));
+  if (prefix.length < HEADER_PREFIX_LENGTH || magic !== ARCHIVE_MAGIC) {
+    throw new Error('not_aico_backup');
   }
   const view = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
   if (view.getUint16(8) !== 1) throw new Error('unsupported_format');

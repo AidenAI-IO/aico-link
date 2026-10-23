@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/mcu"
 )
 
 // inputLifecycle owns the input listeners and voice loop, independently of the
@@ -37,7 +37,7 @@ type inputLifecycle struct {
 }
 
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
-	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
+	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
 	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher, newVoiceWatcher: source.newWatcher}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()

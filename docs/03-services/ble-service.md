@@ -4,10 +4,10 @@ sidebar_position: 6
 
 # BLE Service: Pairing, Phone Notifications, and Background Wake
 
-`ble_service` owns Aiden's Bluetooth Low Energy integration. It uses BlueZ on
+`ble_service` owns Aico Link's Bluetooth Low Energy integration. It uses BlueZ on
 `hci0` in two roles at the same time:
 
-- BLE Peripheral: advertises an Aiden Wake service that the iOS companion app
+- BLE Peripheral: advertises an Aico Link Wake service that the iOS companion app
   subscribes to.
 - ANCS Consumer: subscribes to Apple's Notification Center Service exposed by
   the paired iPhone and normalizes system notification events.
@@ -25,16 +25,16 @@ native layer to read the newest task snapshot over USB ECM.
 The Pico Zero kernel must merge both fragments:
 
 ```text
-aiden-zram.config rv1106-bt.config
+aico-zram.config rv1106-bt.config
 ```
 
 Runtime startup order is:
 
 ```text
-aiden-wifi-driver.service -> aiden-bluetooth-attach.service -> bluetooth.service -> aiden-ble.service
+aico-wifi-driver.service -> aico-bluetooth-attach.service -> bluetooth.service -> aico-ble.service
 ```
 
-`aiden-bluetooth-attach.service` loads the AES/CMAC crypto required by LE SMP, then attaches the
+`aico-bluetooth-attach.service` loads the AES/CMAC crypto required by LE SMP, then attaches the
 AIC8800D80 controller on `/dev/ttyS0` at 1.5 Mbaud without powering it through the
 legacy `HCIDEVUP` ioctl. Debian `bluetooth.service` bind-mounts the BlueZ state directory,
 starts the daemon, and lets BlueZ power `hci0` through the management API. This
@@ -48,7 +48,7 @@ the same initialization sequence before restarting BlueZ:
 
 This preserves the iPhone bond across reboot and firmware rootfs replacement.
 
-Before `ble_service` starts, `aiden-bluetooth-clear-adv` waits up to 10 seconds
+Before `ble_service` starts, `aico-bluetooth-clear-adv` waits up to 10 seconds
 for `hci0` to come up, then disables and clears every extended advertising set
 in the controller. A warm reboot reuses the running AIC8800 firmware
 (`fw_state=reused`), and the controller keeps the previous boot's advertising
@@ -77,7 +77,7 @@ allocation.
 ## Pairing and Bonding
 
 The advertised name is derived from the configured base name and the final
-four hexadecimal digits of the adapter address, for example `Aiden-12AB`.
+four hexadecimal digits of the adapter address, for example `Aico Link-12AB`.
 This is display-only. The full adapter identity is exposed as `board_identity`
 over the USB status API and as six bytes of manufacturer-specific data in the BLE
 advertisement. The app requires the service UUID, display name, and full
@@ -103,7 +103,7 @@ window at that point would make the kernel answer the phone's next SMP Pairing
 Request with "Pairing not supported". An existing bond does not prevent an
 explicit Connect action from reopening the window. Outside that window, only
 the selected trusted phone is authorized. `PAIRING_WINDOW_SECONDS` in
-`/etc/aiden_ble_service.conf` controls the maximum user-initiated window.
+`/etc/aico_ble_service.conf` controls the maximum user-initiated window.
 
 The five-minute value is an upper bound that tolerates Bluetooth permission and
 iOS confirmation delays; the app starts scanning immediately and successful
@@ -180,7 +180,7 @@ changes the iOS/BlueZ GATT initialization order and can leave attribute reads
 without Data Source responses.
 
 On Android, the companion app uses `NotificationListenerService` after the
-user grants Notification Access. It filters the Aiden app's own notifications
+user grants Notification Access. It filters the Aico companion app's own notifications
 and group summaries, queues added/modified/removed events locally, and posts
 batches to `/api/phone-notifications/events` over USB ECM. Each source event has
 a stable `source_event_id`; `ble_service` deduplicates retries while that event
@@ -315,15 +315,15 @@ through these endpoints.
 ## Operations
 
 ```bash
-systemctl status aiden-bluetooth-attach.service
+systemctl status aico-bluetooth-attach.service
 systemctl status bluetooth.service
-systemctl status aiden-ble.service
+systemctl status aico-ble.service
 ```
 
 Logs:
 
 ```text
-/var/log/aiden-hciattach.log
+/var/log/aico-hciattach.log
 /var/log/ble_service/ble_service.log
 /userdata/agent/log/agent.log
 ```

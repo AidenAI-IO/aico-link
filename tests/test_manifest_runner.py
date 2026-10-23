@@ -43,7 +43,7 @@ class ManifestRunnerTest(unittest.TestCase):
         self.assertIn("docker-sandbox-contract", full)
         self.assertNotIn("production-cross-smoke", full)
         by_name = {suite["name"]: suite for suite in suites}
-        self.assertIn("-R '^aiden_tests$'", by_name["cpp-host"]["quick_command"])
+        self.assertIn("-R '^aico_tests$'", by_name["cpp-host"]["quick_command"])
         self.assertIn("-run '^TestShared'", by_name["go-unit"]["quick_command"])
         self.assertIn("tests/test_suite.py", by_name["benchmark-python"]["quick_command"])
 

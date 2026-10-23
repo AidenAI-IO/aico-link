@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/mcu"
 )
 
 func (s *Server) handleMCU(w http.ResponseWriter, r *http.Request) {
@@ -104,7 +104,7 @@ func (s *Server) handleMCU(w http.ResponseWriter, r *http.Request) {
 	}
 	do := s.mcuRequest
 	if do == nil {
-		client := mcu.Client{Socket: strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET"))}
+		client := mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}
 		do = client.Do
 	}
 	var response mcu.Response

@@ -1,5 +1,5 @@
 #include "frame_jpeg_encoder.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_crop_bounds.h"
 #include "frame_processing.h"
 #include "image_process.h"
@@ -24,7 +24,7 @@ extern "C" {
 #include "rk_mpi_venc.h"
 }
 
-namespace aiden {
+namespace aico {
 
 namespace {
 void crop_black_bars_bgr(const cv::Mat& bgr, cv::Mat& dst,
@@ -121,7 +121,7 @@ public:
 
         RK_S32 ret = RK_MPI_VENC_SendFrame(channel_, &frame, 2000);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_send_failed", "ret=%#x", ret);
+            AICO_LOG_WARN("jpeg", "venc_send_failed", "ret=%#x", ret);
             reset_resources();
             return false;
         }
@@ -134,7 +134,7 @@ public:
         stream.u32PackCount = 1;
         ret = RK_MPI_VENC_GetStream(channel_, &stream, 2000);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_get_stream_failed", "ret=%#x", ret);
+            AICO_LOG_WARN("jpeg", "venc_get_stream_failed", "ret=%#x", ret);
             reset_resources();
             return false;
         }
@@ -154,7 +154,7 @@ public:
         }
         const RK_S32 release_ret = RK_MPI_VENC_ReleaseStream(channel_, &stream);
         if (release_ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_release_stream_failed", "ret=%#x", release_ret);
+            AICO_LOG_WARN("jpeg", "venc_release_stream_failed", "ret=%#x", release_ret);
             ok = false;
         }
         if (!ok) {
@@ -171,7 +171,7 @@ private:
         }
         if (!acquire_rockit_system()) {
             permanently_unavailable_ = true;
-            AIDEN_LOG_WARN("jpeg", "mpi_sys_init_failed", "acquire failed");
+            AICO_LOG_WARN("jpeg", "mpi_sys_init_failed", "acquire failed");
             return false;
         }
         system_acquired_ = true;
@@ -199,13 +199,13 @@ private:
         pool_config.bPreAlloc = RK_TRUE;
         input_pool_ = RK_MPI_MB_CreatePool(&pool_config);
         if (input_pool_ == MB_INVALID_POOLID) {
-            AIDEN_LOG_WARN("jpeg", "venc_input_pool_create_failed",
+            AICO_LOG_WARN("jpeg", "venc_input_pool_create_failed",
                            "bytes=%zu", input_bytes);
             return false;
         }
         input_block_ = RK_MPI_MB_GetMB(input_pool_, input_bytes, RK_TRUE);
         if (input_block_ == RK_NULL) {
-            AIDEN_LOG_WARN("jpeg", "venc_input_buffer_get_failed",
+            AICO_LOG_WARN("jpeg", "venc_input_buffer_get_failed",
                            "bytes=%zu", input_bytes);
             reset_resources();
             return false;
@@ -242,7 +242,7 @@ private:
             if (ret == RK_ERR_VENC_NOT_SUPPORT) {
                 permanently_unavailable_ = true;
             }
-            AIDEN_LOG_WARN("jpeg", "venc_channel_create_failed", "ret=%#x", ret);
+            AICO_LOG_WARN("jpeg", "venc_channel_create_failed", "ret=%#x", ret);
             reset_resources();
             return false;
         }
@@ -270,11 +270,11 @@ private:
         receive.s32RecvPicNum = -1;
         const RK_S32 ret = RK_MPI_VENC_StartRecvFrame(channel_, &receive);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_start_failed", "ret=%#x", ret);
+            AICO_LOG_WARN("jpeg", "venc_start_failed", "ret=%#x", ret);
             return false;
         }
         receiving_ = true;
-        AIDEN_LOG_INFO("jpeg", "venc_fast_path_ready",
+        AICO_LOG_INFO("jpeg", "venc_fast_path_ready",
                        "width=%u height=%u pixel_format=%d", width_, height_,
                        static_cast<int>(pixel_format_));
         return true;
@@ -289,7 +289,7 @@ private:
         jpeg.u32Qfactor = static_cast<RK_U32>(quality);
         const RK_S32 ret = RK_MPI_VENC_SetJpegParam(channel_, &jpeg);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_quality_failed", "ret=%#x quality=%d", ret, quality);
+            AICO_LOG_WARN("jpeg", "venc_quality_failed", "ret=%#x quality=%d", ret, quality);
             return false;
         }
         quality_ = quality;
@@ -306,7 +306,7 @@ private:
         if (receiving_) {
             const RK_S32 stop_ret = RK_MPI_VENC_StopRecvFrame(channel_);
             if (stop_ret != RK_SUCCESS) {
-                AIDEN_LOG_WARN("jpeg", "venc_stop_for_crop_failed", "ret=%#x", stop_ret);
+                AICO_LOG_WARN("jpeg", "venc_stop_for_crop_failed", "ret=%#x", stop_ret);
                 return false;
             }
             receiving_ = false;
@@ -315,7 +315,7 @@ private:
         memset(&parameter, 0, sizeof(parameter));
         const RK_S32 get_ret = RK_MPI_VENC_GetChnParam(channel_, &parameter);
         if (get_ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_get_param_failed", "ret=%#x", get_ret);
+            AICO_LOG_WARN("jpeg", "venc_get_param_failed", "ret=%#x", get_ret);
             return false;
         }
         // RV1106 keeps the previous crop offset when a running JPEG channel is
@@ -329,7 +329,7 @@ private:
         parameter.stCropCfg.stCropRect.u32Height = crop_height;
         const RK_S32 ret = RK_MPI_VENC_SetChnParam(channel_, &parameter);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_WARN("jpeg", "venc_crop_failed",
+            AICO_LOG_WARN("jpeg", "venc_crop_failed",
                            "ret=%#x x=%u y=%u width=%u height=%u",
                            ret, crop_x, crop_y, crop_width, crop_height);
             return false;
@@ -404,7 +404,7 @@ std::vector<VENC_CHN> venc_channel_candidates() {
         if (end && *end == '\0' && value >= 0 && value < VENC_MAX_CHN_NUM) {
             candidates.push_back(static_cast<VENC_CHN>(value));
         } else {
-            AIDEN_LOG_WARN("jpeg", "venc_channel_config_invalid",
+            AICO_LOG_WARN("jpeg", "venc_channel_config_invalid",
                            "value=%s valid_range=0..%d", configured,
                            VENC_MAX_CHN_NUM - 1);
         }
@@ -419,7 +419,7 @@ std::vector<VENC_CHN> venc_channel_candidates() {
 
 unsigned int media_module_page_size(const char* module) {
     const std::string path = std::string("/sys/module/") + module +
-                             "/parameters/aiden_page_size";
+                             "/parameters/aico_page_size";
     FILE* file = std::fopen(path.c_str(), "r");
     if (!file) {
         return 0;
@@ -440,7 +440,7 @@ bool compatible_media_modules() {
     }
     // Business-package upgrades can retain an older BSP. Its vendor assembly
     // assumes 32-byte struct page objects and faults on Debian's MEMCG kernel.
-    AIDEN_LOG_WARN("jpeg", "venc_kernel_abi_unsupported",
+    AICO_LOG_WARN("jpeg", "venc_kernel_abi_unsupported",
                    "mpp_page_size=%u rockit_page_size=%u rebuild_debian_bsp=1",
                    venc_page_size, rockit_page_size);
     return false;
@@ -494,7 +494,7 @@ public:
             if (ensure_channel_locked(width, height) &&
                 encode_once_locked(nv12, width, height, pts, quality, output)) {
                 retry_after_ = std::chrono::steady_clock::time_point();
-                AIDEN_LOG_INFO("jpeg", "venc_encoded",
+                AICO_LOG_INFO("jpeg", "venc_encoded",
                                "channel=%d width=%u height=%u quality=%d bytes=%zu elapsed_us=%lld",
                                channel_, width, height, quality, output->size(),
                                static_cast<long long>(std::chrono::duration_cast<
@@ -504,12 +504,12 @@ public:
             }
             reset_locked();
             if (attempt == 0) {
-                AIDEN_LOG_WARN("jpeg", "venc_retry", "width=%u height=%u", width, height);
+                AICO_LOG_WARN("jpeg", "venc_retry", "width=%u height=%u", width, height);
             }
         }
         retry_after_ = std::chrono::steady_clock::now() +
             std::chrono::milliseconds(kNv12VencRetryCooldownMs);
-        AIDEN_LOG_ERROR("jpeg", "venc_cooldown",
+        AICO_LOG_ERROR("jpeg", "venc_cooldown",
                         "retry_after_ms=%d", kNv12VencRetryCooldownMs);
         return false;
     }
@@ -527,7 +527,7 @@ private:
                             std::vector<uint8_t>* output) {
         uint8_t* destination = static_cast<uint8_t*>(RK_MPI_MB_Handle2VirAddr(input_block_));
         if (!destination) {
-            AIDEN_LOG_ERROR("jpeg", "venc_input_mapping_failed", "channel=%d", channel_);
+            AICO_LOG_ERROR("jpeg", "venc_input_mapping_failed", "channel=%d", channel_);
             return false;
         }
         std::memset(destination, 0, input_size_);
@@ -544,7 +544,7 @@ private:
                         source_uv + static_cast<size_t>(y) * width, width);
         }
         if (RK_MPI_SYS_MmzFlushCache(input_block_, RK_FALSE) != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_input_cache_flush_failed", "channel=%d", channel_);
+            AICO_LOG_ERROR("jpeg", "venc_input_cache_flush_failed", "channel=%d", channel_);
             return false;
         }
 
@@ -555,7 +555,7 @@ private:
             jpeg_param.u32Qfactor = static_cast<RK_U32>(qfactor);
             ret = RK_MPI_VENC_SetJpegParam(channel_, &jpeg_param);
             if (ret != RK_SUCCESS) {
-                AIDEN_LOG_ERROR("jpeg", "venc_quality_failed",
+                AICO_LOG_ERROR("jpeg", "venc_quality_failed",
                                 "channel=%d quality=%d status=%#x", channel_, qfactor, ret);
                 return false;
             }
@@ -566,7 +566,7 @@ private:
         receive.s32RecvPicNum = 1;
         ret = RK_MPI_VENC_StartRecvFrame(channel_, &receive);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_start_failed",
+            AICO_LOG_ERROR("jpeg", "venc_start_failed",
                             "channel=%d status=%#x", channel_, ret);
             return false;
         }
@@ -583,7 +583,7 @@ private:
 
         ret = RK_MPI_VENC_SendFrame(channel_, &input_frame, kNv12VencTimeoutMs);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_send_failed",
+            AICO_LOG_ERROR("jpeg", "venc_send_failed",
                             "channel=%d status=%#x", channel_, ret);
             return false;
         }
@@ -594,19 +594,19 @@ private:
         stream.u32PackCount = 1;
         ret = RK_MPI_VENC_GetStream(channel_, &stream, kNv12VencTimeoutMs);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_stream_failed",
+            AICO_LOG_ERROR("jpeg", "venc_stream_failed",
                             "channel=%d status=%#x", channel_, ret);
             return false;
         }
 
         bool copied = false;
         if (stream.u32PackCount != 1) {
-            AIDEN_LOG_ERROR("jpeg", "venc_stream_pack_count_invalid",
+            AICO_LOG_ERROR("jpeg", "venc_stream_pack_count_invalid",
                             "channel=%d pack_count=%u", channel_, stream.u32PackCount);
         } else if (!pack.pMbBlk) {
-            AIDEN_LOG_ERROR("jpeg", "venc_stream_block_missing", "channel=%d", channel_);
+            AICO_LOG_ERROR("jpeg", "venc_stream_block_missing", "channel=%d", channel_);
         } else if ((ret = RK_MPI_SYS_MmzFlushCache(pack.pMbBlk, RK_TRUE)) != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_output_cache_flush_failed",
+            AICO_LOG_ERROR("jpeg", "venc_output_cache_flush_failed",
                             "channel=%d status=%#x", channel_, ret);
         } else {
             void* stream_address = RK_MPI_MB_Handle2VirAddr(pack.pMbBlk);
@@ -622,10 +622,10 @@ private:
                     output->assign(jpeg, jpeg + pack.u32Len);
                     copied = true;
                 } else {
-                    AIDEN_LOG_ERROR("jpeg", "venc_jpeg_invalid", "channel=%d", channel_);
+                    AICO_LOG_ERROR("jpeg", "venc_jpeg_invalid", "channel=%d", channel_);
                 }
             } else {
-                AIDEN_LOG_ERROR("jpeg", "venc_stream_invalid",
+                AICO_LOG_ERROR("jpeg", "venc_stream_invalid",
                                 "channel=%d offset=%u length=%u capacity=%llu", channel_,
                                 pack.u32Offset, pack.u32Len,
                                 static_cast<unsigned long long>(stream_capacity));
@@ -633,7 +633,7 @@ private:
         }
         ret = RK_MPI_VENC_ReleaseStream(channel_, &stream);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_release_stream_failed",
+            AICO_LOG_ERROR("jpeg", "venc_release_stream_failed",
                             "channel=%d status=%#x", channel_, ret);
             copied = false;
         }
@@ -659,7 +659,7 @@ private:
         RK_S32 ret = RK_MPI_CAL_COMM_GetPicBufferSize(&picture, &calculated);
         if (ret != RK_SUCCESS || calculated.u32MBSize == 0 ||
             calculated.u32VirWidth == 0 || calculated.u32VirHeight == 0) {
-            AIDEN_LOG_ERROR("jpeg", "venc_buffer_calculation_failed",
+            AICO_LOG_ERROR("jpeg", "venc_buffer_calculation_failed",
                             "width=%u height=%u status=%#x", width, height, ret);
             reset_locked();
             return false;
@@ -673,7 +673,7 @@ private:
         input_size_ = calculated.u32MBSize;
         if (horizontal_stride_ < width ||
             static_cast<size_t>(horizontal_stride_) * virtual_height_ * 3U / 2U > input_size_) {
-            AIDEN_LOG_ERROR("jpeg", "venc_buffer_layout_invalid",
+            AICO_LOG_ERROR("jpeg", "venc_buffer_layout_invalid",
                             "width=%u height=%u vir_width=%u vir_height=%u stride=%u size=%u",
                             width, height, virtual_width_, virtual_height_,
                             horizontal_stride_, input_size_);
@@ -688,13 +688,13 @@ private:
         pool_config.bPreAlloc = RK_TRUE;
         input_pool_ = RK_MPI_MB_CreatePool(&pool_config);
         if (input_pool_ == MB_INVALID_POOLID) {
-            AIDEN_LOG_ERROR("jpeg", "venc_input_pool_create_failed", "bytes=%u", input_size_);
+            AICO_LOG_ERROR("jpeg", "venc_input_pool_create_failed", "bytes=%u", input_size_);
             reset_locked();
             return false;
         }
         input_block_ = RK_MPI_MB_GetMB(input_pool_, input_size_, RK_TRUE);
         if (!input_block_) {
-            AIDEN_LOG_ERROR("jpeg", "venc_input_alloc_failed", "bytes=%u", input_size_);
+            AICO_LOG_ERROR("jpeg", "venc_input_alloc_failed", "bytes=%u", input_size_);
             reset_locked();
             return false;
         }
@@ -705,7 +705,7 @@ private:
         attribute.stVencAttr.enMirror = MIRROR_NONE;
         const uint64_t stream_size = static_cast<uint64_t>(width) * height * 3U / 2U;
         if (stream_size > std::numeric_limits<RK_U32>::max()) {
-            AIDEN_LOG_ERROR("jpeg", "venc_stream_size_invalid",
+            AICO_LOG_ERROR("jpeg", "venc_stream_size_invalid",
                             "width=%u height=%u", width, height);
             reset_locked();
             return false;
@@ -741,14 +741,14 @@ private:
                 last_collision = ret;
                 continue;
             }
-            AIDEN_LOG_ERROR("jpeg", "venc_channel_create_failed",
+            AICO_LOG_ERROR("jpeg", "venc_channel_create_failed",
                             "channel=%d width=%u height=%u status=%#x",
                             candidate, width, height, ret);
             reset_locked();
             return false;
         }
         if (channel_ < 0) {
-            AIDEN_LOG_ERROR("jpeg", "venc_channels_unavailable",
+            AICO_LOG_ERROR("jpeg", "venc_channels_unavailable",
                             "candidates=%zu status=%#x", candidates.size(), last_collision);
             reset_locked();
             return false;
@@ -762,7 +762,7 @@ private:
         channel_param.stFrameRate.s32DstFrmRateDen = 1;
         ret = RK_MPI_VENC_SetChnParam(channel_, &channel_param);
         if (ret != RK_SUCCESS) {
-            AIDEN_LOG_ERROR("jpeg", "venc_channel_param_failed",
+            AICO_LOG_ERROR("jpeg", "venc_channel_param_failed",
                             "channel=%d status=%#x", channel_, ret);
             reset_locked();
             return false;
@@ -770,7 +770,7 @@ private:
         width_ = width;
         height_ = height;
         quality_ = 0;
-        AIDEN_LOG_INFO("jpeg", "venc_channel_ready",
+        AICO_LOG_INFO("jpeg", "venc_channel_ready",
                        "channel=%d width=%u height=%u stride=%u",
                        channel_, width_, height_, horizontal_stride_);
         return true;
@@ -1121,7 +1121,7 @@ bool encode_yuv_to_jpeg_hw(const std::vector<uint8_t>& yuv_data,
         return true;
     }
     if (try_hardware) {
-        AIDEN_LOG_WARN("jpeg", "software_fallback",
+        AICO_LOG_WARN("jpeg", "software_fallback",
                        "format=%s width=%u height=%u",
                        encoded_metadata.pixel_format.c_str(),
                        encoded_metadata.width, encoded_metadata.height);
@@ -1179,11 +1179,11 @@ void warmup_jpeg_encoder(const FrameMetadata& metadata,
     if (nv12_jpeg_encoder().encode(yuv_data, metadata.width, metadata.height,
                                    metadata.capture_ts_ns / 1000ULL,
                                    80, &discarded, true)) {
-        AIDEN_LOG_INFO("jpeg", "venc_warmup_complete",
+        AICO_LOG_INFO("jpeg", "venc_warmup_complete",
                        "width=%u height=%u bytes=%zu", metadata.width,
                        metadata.height, discarded.size());
     } else {
-        AIDEN_LOG_WARN("jpeg", "venc_warmup_failed",
+        AICO_LOG_WARN("jpeg", "venc_warmup_failed",
                        "width=%u height=%u", metadata.width, metadata.height);
     }
     nv12_jpeg_encoder().set_warmup_pending(false);
@@ -1201,4 +1201,4 @@ void cancel_jpeg_encoder_warmup() {
     nv12_jpeg_encoder().set_warmup_pending(false);
 }
 
-}  // namespace aiden
+}  // namespace aico

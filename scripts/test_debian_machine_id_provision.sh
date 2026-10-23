@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-machine-id-provision
+readonly HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-machine-id-provision
 readonly TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 

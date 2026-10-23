@@ -46,11 +46,11 @@ struct scatterlist { struct page *page; unsigned int offset; };
 #include "helper.c"
 int main(void) {
     unsigned long pfn;
-    assert(aiden_page_size == TEST_PAGE_SIZE);
+    assert(aico_page_size == TEST_PAGE_SIZE);
     for (pfn = TEST_PFN_BASE; pfn < TEST_PFN_BASE + 32; pfn++) {
         struct scatterlist sg = { pfn_to_page(pfn), 123 };
-        assert(aiden_media_pfn_to_page(pfn) == &test_pages[pfn - TEST_PFN_BASE]);
-        assert(aiden_media_sg_phys(&sg) == (pfn << 12) + 123);
+        assert(aico_media_pfn_to_page(pfn) == &test_pages[pfn - TEST_PFN_BASE]);
+        assert(aico_media_sg_phys(&sg) == (pfn << 12) + 123);
     }
     return 0;
 }
@@ -76,11 +76,11 @@ int main(void) {
             second = {path.relative_to(output): path.read_bytes()
                       for path in output.rglob("*") if path.is_file()}
             self.assertEqual(first, second)
-            calls = sum(data.count(b"\tbl\taiden_media_pfn_to_page\n")
+            calls = sum(data.count(b"\tbl\taico_media_pfn_to_page\n")
                         for path, data in first.items() if path.suffix == ".S")
             self.assertEqual(calls, 3)
             valloc = (output / "rockit/valloc/valloc.S").read_text()
-            self.assertIn("\tbl\taiden_media_sg_phys\n", valloc)
+            self.assertIn("\tbl\taico_media_sg_phys\n", valloc)
             self.assertNotIn("\tadd\tr4, r3, r4, asr #5\n", valloc)
             self.assertIn("mpp_vcodec-y += kmpp/mpp/mpp_service.o\n", first[pathlib.Path("Makefile")].decode())
             self.assertIn("rockit-y += rockit/fakecode.o\n", first[pathlib.Path("Makefile")].decode())

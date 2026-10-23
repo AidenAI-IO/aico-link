@@ -37,7 +37,7 @@ jobs:
         run: scripts/debian-package/release.sh build
       - uses: actions/upload-artifact@v4
         with:
-          name: aiden-business-${{ github.sha }}
+          name: aico-business-${{ github.sha }}
           path: output/debian-package/release/
           if-no-files-found: error
           retention-days: 30

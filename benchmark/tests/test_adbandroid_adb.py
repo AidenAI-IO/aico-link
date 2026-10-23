@@ -54,13 +54,13 @@ def test_input_text_switches_to_preferred_ascii_ime_and_restores(monkeypatch):
     monkeypatch.setattr(device, "_run", fake_run)
     monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _seconds: None)
 
-    device.input_text("hello aiden")
+    device.input_text("hello aico")
 
     assert calls == [
         ("text", ["shell", "settings", "get", "secure", "default_input_method"], 5),
         ("text", ["shell", "ime", "list", "-s"], 5),
         ("text", ["shell", "ime", "set", "org.pocketworkstation.pckeyboard/.LatinIME"], 5),
-        ("run", ["shell", "input", "text", "'hello%saiden'"], None, False),
+        ("run", ["shell", "input", "text", "'hello%saico'"], None, False),
         (
             "text",
             [

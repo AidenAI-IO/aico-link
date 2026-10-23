@@ -2523,7 +2523,7 @@ function build_slot_boot_img() {
 
 	mkdir -p $kernel_obj_dir/arch/$RK_ARCH/boot/dts
 	slot_dtb=$kernel_obj_dir/arch/$RK_ARCH/boot/dts/${dtb_name%.dtb}${slot_suffix}.dtb
-	slot_cmdline="$RK_PARTITION_ARGS root=PARTLABEL=$root_label rootfstype=$RK_PROJECT_ROOTFS_TYPE aiden.slot_suffix=$slot_suffix"
+	slot_cmdline="$RK_PARTITION_ARGS root=PARTLABEL=$root_label rootfstype=$RK_PROJECT_ROOTFS_TYPE aico.slot_suffix=$slot_suffix"
 	[ -n "$RK_KERNEL_CMDLINE_EXTRA" ] && slot_cmdline="$slot_cmdline $RK_KERNEL_CMDLINE_EXTRA"
 	[ -n "$RK_BOOTARGS_CMA_SIZE" ] && slot_cmdline="$slot_cmdline rk_dma_heap_cma=$RK_BOOTARGS_CMA_SIZE"
 	$RK_PROJECT_PATH_PC_TOOLS/update_dtb_bootargs.sh --dtb "$base_dtb" --cmdline "$slot_cmdline" --output "$slot_dtb"

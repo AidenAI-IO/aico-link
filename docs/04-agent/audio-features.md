@@ -29,7 +29,7 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 | Component | Files | Description |
 | --- | --- | --- |
 | Audio client | `audio_client.go` | Connects to `audio_service`, starts recording/playback sessions, reads/writes PCM chunks |
-| VAD | `vad.go` + `/usr/lib/aiden/rknn_vad` or `/usr/lib/aiden/cpu_vad` | Silero VAD inference; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
+| VAD | `vad.go` + `/usr/lib/aico/rknn_vad` or `/usr/lib/aico/cpu_vad` | Silero VAD inference; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
 | STT | `stt.go`, provider-specific clients | OpenAI Whisper, OpenRouter, Tencent Cloud ASR, Qwen ASR, and Google Cloud STT; `tencent` / `tencent_asr` remain compatibility aliases for `tencent-asr` |
 | TTS | `tts/`, `tts_helpers.go` | Pluggable TTS provider, outputs PCM for the configured playback backend; automatically resamples to the target playback sample rate when necessary |
 | Dialog manager | `audio_dialog.go` | Orchestrates recording, VAD, STT/LLM/TTS flow |
@@ -72,8 +72,8 @@ input_mode = "stt"
 
 [voice_settings.classic.runtime]
 vad_backend = "rknn"
-vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-vad_helper_path = "/usr/lib/aiden/rknn_vad"
+vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
@@ -190,15 +190,15 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - `audio.backend` selects both recording and playback. `auto` uses `audio_service` on the board and the local backend in desktop/PC Agent mode through the ADB input backend or environment bridge;
 - `audio_service` must be running when `audio.backend = "audio_service"`;
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
-- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aiden/cpu_vad`;
+- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aico/cpu_vad`;
 - STT/TTS require external API keys;
 - STT mode requires a GPIO 33 or GPIO 32 hardware wakeup trigger condition.
 
 VAD helper can be verified directly on the board:
 
 ```bash
-/usr/lib/aiden/rknn_vad --model /usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
-/usr/lib/aiden/cpu_vad --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/rknn_vad --model /usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/cpu_vad --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
 ```
 
 On success, it will output a line `P <probability>`; if there are still RKNN input configuration issues, it will directly output `ERR ...`.

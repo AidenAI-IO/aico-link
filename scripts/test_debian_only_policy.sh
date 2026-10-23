@@ -29,10 +29,10 @@ if rg --no-ignore -n \
     fail "the Debian build depends on a retired repository userspace path"
 fi
 
-grep -Fq 'set(AIDEN_TARGET_PLATFORM "rv1106-debian-glibc"' \
+grep -Fq 'set(AICO_TARGET_PLATFORM "rv1106-debian-glibc"' \
     "${REPO_ROOT}/CMakeLists.txt" \
     || fail "CMake does not default to Debian/glibc"
-if sed -n '/set_property(CACHE AIDEN_TARGET_PLATFORM PROPERTY STRINGS/,/)/p' \
+if sed -n '/set_property(CACHE AICO_TARGET_PLATFORM PROPERTY STRINGS/,/)/p' \
     "${REPO_ROOT}/CMakeLists.txt" | rg -i 'buildroot|uclibc'; then
     fail "CMake still advertises a retired userspace platform"
 fi

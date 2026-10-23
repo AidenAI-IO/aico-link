@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 var (
@@ -69,7 +69,7 @@ func (b *localAudioPlaybackBackend) StartPlayback(format tts.AudioFormat) (uint6
 	if err != nil {
 		return 0, err
 	}
-	file, err := os.CreateTemp("", "aiden-tts-*.wav")
+	file, err := os.CreateTemp("", "aico-tts-*.wav")
 	if err != nil {
 		return 0, fmt.Errorf("create local playback wav: %w", err)
 	}

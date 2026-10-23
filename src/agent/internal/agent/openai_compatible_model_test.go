@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/util"
 	"context"
 	"encoding/base64"
 	"encoding/json"

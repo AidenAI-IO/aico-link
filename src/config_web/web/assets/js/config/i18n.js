@@ -4,12 +4,12 @@ const request = runtimeFunction('request');
 const setBanner = runtimeFunction('setBanner');
 const setDetails = runtimeFunction('setDetails');
 const loadAuthoritativeLocale = runtimeFunction('loadAuthoritativeLocale');
-const LOCALE_STORAGE_KEY = 'aiden.config.locale';
+const LOCALE_STORAGE_KEY = 'aico.config.locale';
 const DEFAULT_LOCALE = 'en-US';
 
 const messages = {
   'en-US': {
-    'document.title': 'Aiden Setup',
+    'document.title': 'Aico Link Setup',
     'page.title': 'Device Settings',
     'page.language': 'Language',
     'page.timezone': 'Time zone',
@@ -231,7 +231,7 @@ const messages = {
     'storage.ejected_with_warning': 'Card ejected and can be removed. Some pending data may not have been saved.',
     'storage.last_flush_warning': 'A previous card flush failed. Some pending data may not have been saved.',
     'storage.eject_failed': 'Failed to eject card.',
-    'storage.backup_help': 'Back up Agent data and settings to this computer or phone, or restore a validated Aiden backup.',
+    'storage.backup_help': 'Back up Agent data and settings to this computer or phone, or restore a validated Aico Link backup.',
     'storage.backup_exporting': 'Exporting configuration backup...',
     'storage.backup_exported': 'Configuration backup exported.',
     'storage.backup_export_failed': 'Failed to export configuration backup.',
@@ -363,7 +363,7 @@ const messages = {
     'backup.error.archive_authentication_failed': 'The backup file failed integrity validation; it may be corrupted.',
     'backup.error.manifest_invalid': 'The backup manifest is invalid.',
     'backup.error.unsupported_format': 'This backup format is not supported by this firmware.',
-    'backup.error.not_aiden_backup': 'This file is not an Aiden backup.',
+    'backup.error.not_aico_backup': 'This file is not an Aico Link backup.',
     'backup.error.source_device_mismatch': 'This backup belongs to a different device. Use portable mode or deselect the device identity.',
     'backup.error.identity_confirmation_required': 'Confirm the identity restore explicitly before continuing.',
     'backup.error.identity_not_portable': 'Portable backups cannot restore a device identity.',
@@ -725,7 +725,7 @@ const messages = {
     'ui.network_name_placeholder': 'Enter network name',
     'ui.connect_failed': 'Could not connect',
     'ui.wifi_join_failed': 'Could not join this network. Check the name and password.',
-    'ui.wifi_intro': 'Once connected, Aiden can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
+    'ui.wifi_intro': 'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
     'ui.not_connected': 'Not connected',
     'ui.voice_unset': 'Off',
     'ui.other_networks_more': 'Others…',
@@ -734,7 +734,7 @@ const messages = {
     'ui.load_failed': 'Failed to load',
     'ui.retry': 'Retry',
     'basic.language_title': 'Language & Time Zone',
-    'basic.language_description': 'Connect Aiden to receive messages, capture information, and simplify repetitive tasks with automation that learns how you work.',
+    'basic.language_description': 'Connect Aico Link to receive messages, capture information, and simplify repetitive tasks with automation that learns how you work.',
     'basic.timezone': 'Time zone',
     'basic.device_type': 'Device type',
     'basic.keyboard_layout': 'Keyboard layout',
@@ -748,10 +748,10 @@ const messages = {
     'storage.full_restore_confirm_body': '{{name}} (created {{created}}) replaces the data and settings on the device. Services pause while it runs and the device may need to restart. Only restore backups from a source you trust.',
     'storage.restore_backup': 'Restore backup',
     'storage.backup_app_hint': 'Backups can be restored in the app; to create one, open this page in a computer browser.',
-    'storage.full_backup_intro': 'Back up all Agent data and settings (memory, sessions, device identity and more) to this computer or phone, or restore an Aiden backup.',
+    'storage.full_backup_intro': 'Back up all Agent data and settings (memory, sessions, device identity and more) to this computer or phone, or restore an Aico Link backup.',
     'storage.config_backup_caption': 'Agent configuration only (.toml)',
     'memory.screen_enabled': 'Screen memory',
-    'memory.screen_enabled_help': 'When on, pressing the capture button on the device saves what is on screen so Aiden can recall it later.',
+    'memory.screen_enabled_help': 'When on, pressing the capture button on the device saves what is on screen so Aico can recall it later.',
     'advanced.terminal': 'Terminal',
     'advanced.terminal_hint': 'Device command line',
     'model.delete_title': 'Delete the {{name}} configuration?',
@@ -775,7 +775,7 @@ const messages = {
     'ota.no_log': 'No updates yet',
     'ota.build_time': 'Built',
     'ota.checked_at': 'Checked {{time}}: up to date',
-    'ota.confirm_body': 'Check GitHub firmware and aiden-business updates. New firmware installs and restarts first; business packages are checked after boot health is confirmed. Package updates briefly restart affected services.',
+    'ota.confirm_body': 'Check GitHub firmware and aico-business updates. New firmware installs and restarts first; business packages are checked after boot health is confirmed. Package updates briefly restart affected services.',
     'ota.confirm_title': 'Check for and install updates?',
     'ota.health': 'Boot status',
     'ota.health_failed': 'Failed',
@@ -952,7 +952,7 @@ const messages = {
     'conversation.reset_done': 'Current conversation reset.',
     'conversation.reset_failed': 'Reset failed.',
     'websearch.title': 'Web search',
-    'websearch.description': 'Once connected, Aiden can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
+    'websearch.description': 'Once connected, Aico can push messages, capture information and learn how you operate your devices, so automation can take over repetitive work.',
     'websearch.provider': 'Provider',
     'websearch.api_key': 'Search API key',
     'websearch.api_key_placeholder': 'Enter key',
@@ -972,7 +972,7 @@ const messages = {
     'basic.save_failed': 'Failed to save.',
   },
   'zh-CN': {
-    'document.title': 'Aiden 设置',
+    'document.title': 'Aico Link 设置',
     'page.title': '设备设置',
     'page.language': '语言',
     'page.timezone': '时区',
@@ -1194,7 +1194,7 @@ const messages = {
     'storage.ejected_with_warning': '存储卡已弹出，可以取出；部分待写入数据可能未保存。',
     'storage.last_flush_warning': '此前存储卡同步失败，部分待写入数据可能未保存。',
     'storage.eject_failed': '弹出存储卡失败。',
-    'storage.backup_help': '将 Agent 数据和设置备份到当前电脑或手机，或恢复经过验证的 Aiden 备份。',
+    'storage.backup_help': '将 Agent 数据和设置备份到当前电脑或手机，或恢复经过验证的 Aico Link 备份。',
     'storage.backup_exporting': '正在导出配置备份…',
     'storage.backup_exported': '配置备份已导出。',
     'storage.backup_export_failed': '导出配置备份失败。',
@@ -1326,7 +1326,7 @@ const messages = {
     'backup.error.archive_authentication_failed': '备份文件完整性校验失败，可能已损坏。',
     'backup.error.manifest_invalid': '备份清单无效。',
     'backup.error.unsupported_format': '当前固件不支持此备份格式。',
-    'backup.error.not_aiden_backup': '该文件不是 Aiden 备份。',
+    'backup.error.not_aico_backup': '该文件不是 Aico Link 备份。',
     'backup.error.source_device_mismatch': '该备份来自其他设备。请使用可移植模式或取消勾选设备身份。',
     'backup.error.identity_confirmation_required': '请先明确确认恢复设备身份。',
     'backup.error.identity_not_portable': '可移植备份不能恢复设备身份。',
@@ -1688,7 +1688,7 @@ const messages = {
     'ui.network_name_placeholder': '输入网络名称',
     'ui.connect_failed': '连接失败',
     'ui.wifi_join_failed': '无法加入该网络，请检查名称与密码',
-    'ui.wifi_intro': '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'ui.wifi_intro': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'ui.not_connected': '未连接',
     'ui.voice_unset': '未启用',
     'ui.other_networks_more': '其他…',
@@ -1697,7 +1697,7 @@ const messages = {
     'ui.load_failed': '加载失败',
     'ui.retry': '重试',
     'basic.language_title': '语言与时区',
-    'basic.language_description': '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'basic.language_description': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'basic.timezone': '时区',
     'basic.device_type': '设备类型',
     'basic.keyboard_layout': '键盘布局',
@@ -1711,10 +1711,10 @@ const messages = {
     'storage.full_restore_confirm_body': '{{name}}（创建于 {{created}}）会替换设备上现有的数据和设置，过程中服务会暂停，完成后可能需要重启。请只恢复来自可信来源的备份。',
     'storage.restore_backup': '恢复备份',
     'storage.backup_app_hint': '在 App 中可以恢复备份；创建备份需要在电脑浏览器中打开本页。',
-    'storage.full_backup_intro': '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aiden 备份恢复。',
+    'storage.full_backup_intro': '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aico Link 备份恢复。',
     'storage.config_backup_caption': '仅 Agent 配置（.toml）',
     'memory.screen_enabled': '屏幕记忆',
-    'memory.screen_enabled_help': '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aiden 之后回忆。',
+    'memory.screen_enabled_help': '开启后，按下设备上的截屏按键会保存当前屏幕内容，供 Aico 之后回忆。',
     'advanced.terminal': '终端',
     'advanced.terminal_hint': '设备命令行',
     'model.delete_title': '删除 {{name}} 的配置？',
@@ -1738,7 +1738,7 @@ const messages = {
     'ota.no_log': '还没有更新记录',
     'ota.build_time': '构建时间',
     'ota.checked_at': '{{time}} 检查过，已是最新版本',
-    'ota.confirm_body': '检查 GitHub 固件和 aiden-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。',
+    'ota.confirm_body': '检查 GitHub 固件和 aico-business 业务包更新。有新固件时先安装并重启，启动确认后继续检查业务包；仅业务包更新时会短暂重启相关服务。',
     'ota.confirm_title': '检查并安装更新？',
     'ota.health': '启动状态',
     'ota.health_failed': '失败',
@@ -1915,7 +1915,7 @@ const messages = {
     'conversation.reset_done': '当前对话已重置',
     'conversation.reset_failed': '重置失败',
     'websearch.title': 'Web 搜索',
-    'websearch.description': '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
+    'websearch.description': '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。',
     'websearch.provider': '服务商',
     'websearch.api_key': '搜索 API 密钥',
     'websearch.api_key_placeholder': '请输入',
@@ -1984,7 +1984,7 @@ function translatePage() {
   translateElements('data-i18n-title', 'title');
   translateElements('data-i18n-aria-label', 'aria-label');
   if (document.dispatchEvent && typeof CustomEvent !== 'undefined') {
-    document.dispatchEvent(new CustomEvent('aiden:locale-changed', {detail: {locale: activeLocale}}));
+    document.dispatchEvent(new CustomEvent('aico:locale-changed', {detail: {locale: activeLocale}}));
   }
 }
 

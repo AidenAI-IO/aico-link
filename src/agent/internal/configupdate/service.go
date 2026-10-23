@@ -15,8 +15,8 @@ import (
 	"strconv"
 	"strings"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/configdoc"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/configdoc"
 	"github.com/BurntSushi/toml"
 )
 

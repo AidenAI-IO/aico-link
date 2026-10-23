@@ -39,7 +39,7 @@ Plays back a PCM audio file (`audio_capture_debug.pcm`) through the specified AL
 ```bash
 example_camera_capture
 example_camera_capture --output /mnt/tmp/frame.raw
-example_camera_capture --edid /usr/share/aiden/edid/hdmi_1080p30_cta.hex
+example_camera_capture --edid /usr/share/aico/edid/hdmi_1080p30_cta.hex
 ```
 
 Common parameters:

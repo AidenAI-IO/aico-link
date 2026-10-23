@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Agent Context Lifecycle
 
-This document gives the end-to-end view of what enters an Aiden Agent run, where each context layer comes from, and when it is refreshed. It complements [Session Memory Compaction](session-memory.md), which focuses on conversation-window compression, and [Memory Plane](memory-plane.md), which focuses on device, long-term, and task-episode memory.
+This document gives the end-to-end view of what enters an Aico Agent run, where each context layer comes from, and when it is refreshed. It complements [Session Memory Compaction](session-memory.md), which focuses on conversation-window compression, and [Memory Plane](memory-plane.md), which focuses on device, long-term, and task-episode memory.
 
 ## Context Layers
 

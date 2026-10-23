@@ -29,7 +29,7 @@ LOCAL_DIR="$REPO_ROOT/benchmark/suites/perception"
 DEVICE_DIR="/userdata/agent/benchmark/suites/perception"
 
 if [ ! -d "$LOCAL_DIR" ]; then
-    echo "Error: $LOCAL_DIR not found. Are you in the aiden-firmware repo?" >&2
+    echo "Error: $LOCAL_DIR not found. Are you in the aico-link-firmware repo?" >&2
     exit 1
 fi
 

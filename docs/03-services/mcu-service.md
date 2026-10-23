@@ -5,10 +5,10 @@ sidebar_position: 7
 # MCU Service and Post-Flash Validation
 
 `mcu_service` replaces the diagnostic Python logger under the existing
-`aiden-mcu-event.service` unit. It exclusively owns `/dev/ttyS5` at 115200 8N1,
+`aico-mcu-event.service` unit. It exclusively owns `/dev/ttyS5` at 115200 8N1,
 answers MCU state probes, forwards hardware events, and coordinates Linux
 poweroff requested by the MCU or by the local root-only CLI. Local applications use
-`/run/mcu_service/mcu_service.sock` (`0660 root:aiden`); the Agent exposes the
+`/run/mcu_service/mcu_service.sock` (`0660 root:aico`); the Agent exposes the
 same operations over USB ECM or loopback HTTP.
 
 The MCU implementation is maintained in `aiden-mcu`. Install both the new RV
@@ -109,14 +109,14 @@ existing 500 ms debounce and pending-event coalescing. Touch, timer, plug and
 unknown events advance the cursor without activating voice. Quick Capture's
 configured GPIO3 input is independent. Text mode does not start this consumer.
 
-The consumer uses `AIDEN_MCU_SERVICE_SOCKET`, or the default service socket.
+The consumer uses `AICO_MCU_SERVICE_SOCKET`, or the default service socket.
 It long-polls with a 25-second wait, retries service failures every second,
 and handles pagination, generation resets and truncated history. Stopping or
 reloading the voice loop cancels the pending UDS request and joins the watcher.
 Applications retain independent event cursors.
 
 The Agent atomically checkpoints `(generation,id)` before each action in
-`/run/aiden/agent-mcu-wakeup.json` (mode `0600`), preserving its cursor across
+`/run/aico/agent-mcu-wakeup.json` (mode `0600`), preserving its cursor across
 configuration reloads and Agent process restarts within the same boot. A fresh
 boot or MCU-service generation starts from retained history, so an ASR wake
 that started RV can reach voice after Agent initialization. Events received
@@ -169,12 +169,12 @@ shutdown. The corrected MCU waits in OFF after observing RV SHUTTING_DOWN and
 receiving safe SHUTDOWN_READY, until a fresh wake arrives. Use the local CLI:
 
 ```sh
-sudo /usr/lib/aiden/mcu_service poweroff
+sudo /usr/lib/aico/mcu_service poweroff
 ```
 
 The CLI queries the current service generation and submits an idempotent UDS
 `poweroff` operation. The daemon checks Linux `SO_PEERCRED` and accepts this
-operation only from UID 0; ordinary `aiden` group clients receive `DENIED`.
+operation only from UID 0; ordinary `aico` group clients receive `DENIED`.
 Credential lookup failures also deny access. Poweroff has no HTTP endpoint.
 The daemon persists current-boot intent, enters
 SHUTTING_DOWN, closes event waits and stops application UART requests. It waits
@@ -193,7 +193,7 @@ older firmware behavior and are not acceptance evidence for the corrected policy
 
 The daemon persists current-boot intent on tmpfs before ACK, then schedules
 systemd poweroff after writing the response (with a bounded fallback if UART
-cannot deliver it). `/usr/lib/systemd/system-shutdown/aiden-mcu-shutdown`
+cannot deliver it). `/usr/lib/systemd/system-shutdown/aico-mcu-shutdown`
 invokes the statically linked service binary at the final shutdown stage.
 It sends SHUTDOWN_READY only for `poweroff` with a valid root-owned intent,
 inactive swap and no writable persistent filesystems. Service restarts,
@@ -215,8 +215,8 @@ measure the last write and rail cutoff. Do not claim this physical timing
 from passing host tests or a network reconnect alone.
 
 ```sh
-systemctl status aiden-mcu-event.service
-journalctl -u aiden-mcu-event.service -f
+systemctl status aico-mcu-event.service
+journalctl -u aico-mcu-event.service -f
 ```
 
 Stop the service before using the MCU repository's direct serial peer.
@@ -248,7 +248,7 @@ python3 scripts/test_mcu_after_flash.py --expect-source asr \
   --timeout 60 --report /tmp/mcu-asr.json
 
 # Select this scenario on an external host. Keep the switch ON; after timer
-# arming, run sudo /usr/lib/aiden/mcu_service poweroff on the board.
+# arming, run sudo /usr/lib/aico/mcu_service poweroff on the board.
 python3 scripts/test_mcu_after_flash.py --url http://192.168.42.1:8080 \
   --power-cycle --allow-power-cycle --wake-delay 120 \
   --report /tmp/mcu-power-cycle.json

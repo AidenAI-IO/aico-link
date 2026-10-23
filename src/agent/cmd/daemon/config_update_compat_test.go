@@ -1,6 +1,6 @@
 package main
 
-import "aiden-agent/internal/configupdate"
+import "aico-agent/internal/configupdate"
 
 type configUpdateResult = configupdate.Result
 

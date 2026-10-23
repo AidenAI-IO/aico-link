@@ -46,16 +46,16 @@ class ReleaseTests(unittest.TestCase):
         pkg = self.output / "fixture"
         (pkg / "DEBIAN").mkdir(parents=True)
         (pkg / "DEBIAN/control").write_text(
-            "Package: aiden-business\nVersion: 0.0.1-1\nArchitecture: armhf\n"
+            "Package: aico-business\nVersion: 0.0.1-1\nArchitecture: armhf\n"
             "Maintainer: Test <test@example.invalid>\nDescription: Test package\n"
         )
-        manifest = pkg / "usr/share/doc/aiden-business/release-manifest.json"
+        manifest = pkg / "usr/share/doc/aico-business/release-manifest.json"
         manifest.parent.mkdir(parents=True)
         manifest.write_text(json.dumps({"business_release": "0.0.1", "package_revision": "1",
                                         "required_platform_contract": {"min": 1, "max_exclusive": 2}}))
         subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(pkg),
-                        str(self.output / "aiden-business_0.0.1-1_armhf.deb")], check=True, stdout=subprocess.DEVNULL)
-        with patch.dict(os.environ, AIDEN_BUSINESS_VERSION="0.0.1", AIDEN_BUSINESS_REVISION="1"):
+                        str(self.output / "aico-business_0.0.1-1_armhf.deb")], check=True, stdout=subprocess.DEVNULL)
+        with patch.dict(os.environ, AICO_BUSINESS_VERSION="0.0.1", AICO_BUSINESS_REVISION="1"):
             release.stage(self.root, self.apps, self.output)
         self.assets = self.output / "release"
 
@@ -66,7 +66,7 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(release.verify(self.assets)["tag"], "business-v0.0.1-1")
 
     def test_corrupted_asset_is_rejected(self):
-        with (self.assets / "aiden-business_0.0.1-1_armhf.deb").open("ab") as f:
+        with (self.assets / "aico-business_0.0.1-1_armhf.deb").open("ab") as f:
             f.write(b"corrupt")
         with self.assertRaisesRegex(ValueError, "checksum"):
             release.verify(self.assets)
@@ -113,15 +113,15 @@ class ReleaseTests(unittest.TestCase):
 
 class VersionTests(unittest.TestCase):
     def test_defaults(self):
-        env = {k: v for k, v in os.environ.items() if k not in ("AIDEN_BUSINESS_VERSION", "AIDEN_BUSINESS_REVISION")}
-        result = subprocess.check_output(["bash", "-c", 'source "$1"; echo "$AIDEN_BUSINESS_VERSION-$AIDEN_BUSINESS_REVISION"',
+        env = {k: v for k, v in os.environ.items() if k not in ("AICO_BUSINESS_VERSION", "AICO_BUSINESS_REVISION")}
+        result = subprocess.check_output(["bash", "-c", 'source "$1"; echo "$AICO_BUSINESS_VERSION-$AICO_BUSINESS_REVISION"',
                                           "bash", str(ROOT / "scripts/debian-package/version.sh")], env=env, text=True)
         self.assertEqual(result.strip(), "0.0.1-2")
 
     def test_unsafe_version_is_rejected(self):
         for version in ("../escape", "1.0.0\nInjected: value", "01.0.0", "1.0.0;echo bad"):
             result = subprocess.run(["bash", "-c", 'source "$1"', "bash", str(ROOT / "scripts/debian-package/version.sh")],
-                                    env={**os.environ, "AIDEN_BUSINESS_VERSION": version}, capture_output=True)
+                                    env={**os.environ, "AICO_BUSINESS_VERSION": version}, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
 
 

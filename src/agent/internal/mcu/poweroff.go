@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-const IntentDirectory = "/run/aiden-mcu-poweroff"
+const IntentDirectory = "/run/aico-mcu-poweroff"
 
 type shutdownIntent struct {
 	BootID     string `json:"boot_id"`

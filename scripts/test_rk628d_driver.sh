@@ -8,8 +8,8 @@ DRIVER="$KERNEL_DIR/drivers/media/i2c/rk628/rk628_csi_v4l2.c"
 BT1120="$KERNEL_DIR/drivers/media/i2c/rk628/rk628_bt1120_v4l2.c"
 HDMIRX="$KERNEL_DIR/drivers/media/i2c/rk628/rk628_hdmirx.c"
 HDMIRX_HEADER="$KERNEL_DIR/drivers/media/i2c/rk628/rk628_hdmirx.h"
-KERNEL_FRAGMENT="$KERNEL_DIR/arch/arm/configs/aiden-rk628.config"
-DTS="$KERNEL_DIR/arch/arm/boot/dts/rv1106g-aiden-custom.dts"
+KERNEL_FRAGMENT="$KERNEL_DIR/arch/arm/configs/aico-rk628.config"
+DTS="$KERNEL_DIR/arch/arm/boot/dts/rv1106g-aico-custom.dts"
 BOARD_CONFIG="$ROOT_DIR/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
 
 require_pattern() {
@@ -44,29 +44,29 @@ require_pattern '^# CONFIG_VIDEO_TC358743 is not set$' "$KERNEL_FRAGMENT" \
     "the RK628F production image must disable the unused TC358743 driver"
 require_pattern '^# CONFIG_VIDEO_TC358743_CEC is not set$' "$KERNEL_FRAGMENT" \
     "the unused TC358743 CEC path must stay disabled"
-require_pattern 'RK_KERNEL_DEFCONFIG_FRAGMENT=.*aiden-rk628\.config' "$BOARD_CONFIG" \
+require_pattern 'RK_KERNEL_DEFCONFIG_FRAGMENT=.*aico-rk628\.config' "$BOARD_CONFIG" \
     "the board build must apply the HDMI bridge kernel fragment"
 
 require_pattern 'compatible = "rockchip,rk628-csi-v4l2";' "$DTS" \
-    "Aiden DTS must bind the RK628 CSI driver"
+    "Aico Link DTS must bind the RK628 CSI driver"
 require_pattern 'rk628: rk628@50' "$DTS" \
-    "Aiden DTS must use the strapped RK628 address 0x50"
+    "Aico Link DTS must use the strapped RK628 address 0x50"
 reject_pattern 'tc358743' "$DTS" \
-    "Aiden RK628F hardware must not retain the legacy TC358743 node"
+    "Aico Link RK628F hardware must not retain the legacy TC358743 node"
 require_pattern 'clock-frequency = <100000>;' "$DTS" \
     "RK628F I2C4 must run at the validated 100 kHz rate"
 require_pattern 'pinctrl-0 = <&i2c4m1_xfer>;' "$DTS" \
-    "RK628F must use the Aiden I2C4 M1 pin group"
+    "RK628F must use the Aico Link I2C4 M1 pin group"
 require_pattern 'reset-gpios = <&gpio1 RK_PA1 GPIO_ACTIVE_LOW>;' "$DTS" \
-    "RK628F reset must use Aiden GPIO1_A1"
+    "RK628F reset must use Aico Link GPIO1_A1"
 require_pattern 'interrupts = <RK_PB1 IRQ_TYPE_LEVEL_HIGH>;' "$DTS" \
-    "RK628F interrupt must use Aiden GPIO1_B1"
+    "RK628F interrupt must use Aico Link GPIO1_B1"
 require_pattern 'rk628_reset_pin: rk628-reset-pin' "$DTS" \
     "RK628 reset must have a dedicated pinctrl group"
 require_pattern '<1 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>' "$DTS" \
     "RK628 reset must be push-pull without an internal pull-up"
 require_pattern '<1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>' "$DTS" \
-    "RK628 interrupt must retain its Aiden GPIO pull-up"
+    "RK628 interrupt must retain its Aico Link GPIO pull-up"
 
 rk628_node="$(sed -n '/rk628: rk628@50 {/,/^[[:space:]]*};/p' "$DTS")"
 rk628_input="$(sed -n '/rk628_csi_in: endpoint@0 {/,/^[[:space:]]*};/p' "$DTS")"
@@ -82,7 +82,7 @@ if ! grep -q 'continues-clk;' <<< "$rk628_node" || \
     exit 1
 fi
 if grep -qE 'clocks = <&cru MCLK_REF_MIPI0>|clock-names = "soc_24M"|GPIO_OPEN_DRAIN' <<< "$rk628_node"; then
-    echo "FAIL: Aiden RK628F must use its onboard clock and push-pull reset" >&2
+    echo "FAIL: Aico Link RK628F must use its onboard clock and push-pull reset" >&2
     exit 1
 fi
 
@@ -164,7 +164,7 @@ import sys
 
 root = pathlib.Path(sys.argv[2])
 driver = pathlib.Path(sys.argv[1]).read_text()
-sdk = (root / "src/aiden_sdk.cpp").read_text()
+sdk = (root / "src/aico_sdk.cpp").read_text()
 fixtures = {}
 for mode, rate, vic, clock in (("1080p60", 60, 16, 148500000), ("1080p30", 30, 34, 74250000)):
     fixture = bytes.fromhex((root / f"edid/hdmi_{mode}_cta.hex").read_text())
@@ -172,7 +172,7 @@ for mode, rate, vic, clock in (("1080p60", 60, 16, 148500000), ("1080p30", 30, 3
     assert len(fixture) == 256, f"{mode}: expected two EDID blocks"
     assert all(sum(fixture[i:i+128]) % 256 == 0 for i in (0, 128)), f"{mode}: bad checksum"
     assert fixture[20] & 0x80 and fixture[126] == 1 and fixture[128] == 2
-    packaged = bytes.fromhex((root / f"overlay-debian/usr/share/aiden/hdmi/hdmi_{mode}_cta.hex").read_text())
+    packaged = bytes.fromhex((root / f"overlay-debian/usr/share/aico/hdmi/hdmi_{mode}_cta.hex").read_text())
     assert packaged == fixture, f"{mode}: installed EDID differs from fixture"
     dtd = fixture[54:72]
     pixel_clock = int.from_bytes(dtd[:2], "little") * 10000

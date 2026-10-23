@@ -1,8 +1,8 @@
 [model_settings.providers.benchmark]
-type = "{{AIDEN_BENCHMARK_AGENT_PROVIDER}}"
-base_url = "{{AIDEN_BENCHMARK_AGENT_BASE_URL}}"
-api_key = "{{AIDEN_BENCHMARK_AGENT_API_KEY}}"
+type = "{{AICO_BENCHMARK_AGENT_PROVIDER}}"
+base_url = "{{AICO_BENCHMARK_AGENT_BASE_URL}}"
+api_key = "{{AICO_BENCHMARK_AGENT_API_KEY}}"
 
 [model_settings.model]
 provider = "benchmark"
-model = "{{AIDEN_BENCHMARK_AGENT_MODEL}}"
+model = "{{AICO_BENCHMARK_AGENT_MODEL}}"

@@ -16,43 +16,43 @@ namespace {
 
 class ScopedAudioPlayerOperationBlock {
 public:
-    explicit ScopedAudioPlayerOperationBlock(aiden::test::AudioPlayerOperation operation)
+    explicit ScopedAudioPlayerOperationBlock(aico::test::AudioPlayerOperation operation)
         : operation_(operation) {
-        aiden::test::block_audio_player_operation(operation_);
+        aico::test::block_audio_player_operation(operation_);
     }
 
     ~ScopedAudioPlayerOperationBlock() {
-        aiden::test::unblock_audio_player_operation(operation_);
+        aico::test::unblock_audio_player_operation(operation_);
     }
 
 private:
-    aiden::test::AudioPlayerOperation operation_;
+    aico::test::AudioPlayerOperation operation_;
 };
 
 }  // namespace
 
 TEST_CASE("playback tail drain grace covers AO queued chunks") {
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    const auto grace = aiden::playback_tail_drain_grace(fmt, 4096);
+    const auto grace = aico::playback_tail_drain_grace(fmt, 4096);
 
     CHECK(grace >= std::chrono::milliseconds(800));
 }
 
 TEST_CASE("volume updates are serialized with active playback") {
-    using aiden::test::AudioPlayerOperation;
+    using aico::test::AudioPlayerOperation;
 
-    aiden::test::reset_audio_player_test_state();
+    aico::test::reset_audio_player_test_state();
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    aiden::AudioPlaybackSession session(1, fmt);
+    aico::AudioPlaybackSession session(1, fmt);
     REQUIRE(session.start());
     std::future<bool> volume_result;
     std::promise<void> volume_started;
@@ -60,8 +60,8 @@ TEST_CASE("volume updates are serialized with active playback") {
     ScopedAudioPlayerOperationBlock blocked_play(AudioPlayerOperation::PLAY);
 
     const uint8_t pcm[] = {0, 0};
-    REQUIRE(session.push_chunk(pcm, sizeof(pcm), false) == aiden::AidenServiceStatus::OK);
-    REQUIRE(aiden::test::wait_for_audio_player_operation(
+    REQUIRE(session.push_chunk(pcm, sizeof(pcm), false) == aico::AicoServiceStatus::OK);
+    REQUIRE(aico::test::wait_for_audio_player_operation(
         AudioPlayerOperation::PLAY, std::chrono::seconds(1)));
 
     volume_result = std::async(std::launch::async, [&session, &volume_started] {
@@ -71,28 +71,28 @@ TEST_CASE("volume updates are serialized with active playback") {
     REQUIRE(volume_started_result.wait_for(std::chrono::seconds(1)) ==
             std::future_status::ready);
 
-    CHECK_FALSE(aiden::test::wait_for_audio_player_operation(
+    CHECK_FALSE(aico::test::wait_for_audio_player_operation(
         AudioPlayerOperation::SET_VOLUME, std::chrono::milliseconds(100)));
 
-    aiden::test::unblock_audio_player_operation(AudioPlayerOperation::PLAY);
+    aico::test::unblock_audio_player_operation(AudioPlayerOperation::PLAY);
     REQUIRE(volume_result.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
     CHECK(volume_result.get());
 
     session.stop();
-    CHECK(aiden::test::max_concurrent_audio_player_operations() == 1);
+    CHECK(aico::test::max_concurrent_audio_player_operations() == 1);
 }
 
 TEST_CASE("player stop is serialized with an active volume update") {
-    using aiden::test::AudioPlayerOperation;
+    using aico::test::AudioPlayerOperation;
 
-    aiden::test::reset_audio_player_test_state();
+    aico::test::reset_audio_player_test_state();
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    aiden::AudioPlaybackSession session(2, fmt);
+    aico::AudioPlaybackSession session(2, fmt);
     REQUIRE(session.start());
     std::future<bool> volume_result;
     std::promise<void> volume_started;
@@ -105,7 +105,7 @@ TEST_CASE("player stop is serialized with an active volume update") {
     });
     REQUIRE(volume_started_result.wait_for(std::chrono::seconds(1)) ==
             std::future_status::ready);
-    REQUIRE(aiden::test::wait_for_audio_player_operation(
+    REQUIRE(aico::test::wait_for_audio_player_operation(
         AudioPlayerOperation::SET_VOLUME, std::chrono::seconds(1)));
 
     std::promise<void> stop_started;
@@ -117,43 +117,43 @@ TEST_CASE("player stop is serialized with an active volume update") {
     REQUIRE(stop_started_result.wait_for(std::chrono::seconds(1)) ==
             std::future_status::ready);
 
-    CHECK_FALSE(aiden::test::wait_for_audio_player_operation(
+    CHECK_FALSE(aico::test::wait_for_audio_player_operation(
         AudioPlayerOperation::STOP, std::chrono::milliseconds(100)));
 
-    aiden::test::unblock_audio_player_operation(AudioPlayerOperation::SET_VOLUME);
+    aico::test::unblock_audio_player_operation(AudioPlayerOperation::SET_VOLUME);
     REQUIRE(volume_result.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
     CHECK(volume_result.get());
     REQUIRE(stop_result.wait_for(std::chrono::seconds(1)) == std::future_status::ready);
     stop_result.get();
 
-    CHECK(aiden::test::max_concurrent_audio_player_operations() == 1);
+    CHECK(aico::test::max_concurrent_audio_player_operations() == 1);
 }
 
 TEST_CASE("playback session rejects chunks after final is received") {
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    aiden::AudioPlaybackSession session(1, fmt);
+    aico::AudioPlaybackSession session(1, fmt);
     REQUIRE(session.start());
 
     const uint8_t chunk[] = {1, 2, 3, 4};
     REQUIRE(session.push_chunk(chunk, sizeof(chunk), true) ==
-            aiden::AidenServiceStatus::OK);
+            aico::AicoServiceStatus::OK);
     CHECK(session.push_chunk(chunk, sizeof(chunk), false) ==
-          aiden::AidenServiceStatus::SESSION_NOT_FOUND);
+          aico::AicoServiceStatus::SESSION_NOT_FOUND);
 
     session.stop();
 }
 
 TEST_CASE("backpressure writers fail when final state is published") {
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    aiden::AudioPlaybackSession session(2, fmt);
+    aico::AudioPlaybackSession session(2, fmt);
 
     const uint8_t chunk[] = {1, 2, 3, 4};
     const size_t max_queue_chunks = 128;
@@ -167,8 +167,8 @@ TEST_CASE("backpressure writers fail when final state is published") {
     const size_t writer_count = 8;
     std::atomic<size_t> ready(0);
     std::atomic<size_t> completed(0);
-    std::vector<aiden::AidenServiceStatus> statuses(
-        writer_count, aiden::AidenServiceStatus::INTERNAL_ERROR);
+    std::vector<aico::AicoServiceStatus> statuses(
+        writer_count, aico::AicoServiceStatus::INTERNAL_ERROR);
     std::unique_lock<std::mutex> session_lock(session.mutex_);
     std::vector<std::thread> writers;
     writers.reserve(writer_count);
@@ -190,14 +190,14 @@ TEST_CASE("backpressure writers fail when final state is published") {
     session_lock.lock();
     CHECK(session.queue_.size() == max_queue_chunks);
     while (session.queue_.size() >= max_queue_chunks / 2) session.queue_.pop();
-    aiden::AidenServiceStatus final_status = aiden::AidenServiceStatus::INTERNAL_ERROR;
+    aico::AicoServiceStatus final_status = aico::AicoServiceStatus::INTERNAL_ERROR;
     std::thread final_writer([&session, &chunk, &final_status]() {
         final_status = session.push_chunk(chunk, sizeof(chunk), true);
     });
     session_lock.unlock();
 
     final_writer.join();
-    CHECK(final_status == aiden::AidenServiceStatus::OK);
+    CHECK(final_status == aico::AicoServiceStatus::OK);
 
     const auto wake_deadline = std::chrono::steady_clock::now() +
                                std::chrono::milliseconds(100);
@@ -210,6 +210,6 @@ TEST_CASE("backpressure writers fail when final state is published") {
     for (size_t i = 0; i < writers.size(); ++i) writers[i].join();
 
     for (size_t i = 0; i < writer_count; ++i) {
-        CHECK(statuses[i] == aiden::AidenServiceStatus::SESSION_NOT_FOUND);
+        CHECK(statuses[i] == aico::AicoServiceStatus::SESSION_NOT_FOUND);
     }
 }

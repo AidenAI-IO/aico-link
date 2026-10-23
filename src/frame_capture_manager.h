@@ -7,7 +7,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct CapturedFrame {
     FrameMetadata metadata;
@@ -92,4 +92,4 @@ private:
     CapturedFrame completed_frame_;
 };
 
-}  // namespace aiden
+}  // namespace aico

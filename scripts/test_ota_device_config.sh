@@ -50,11 +50,11 @@ jq -e '
 ' "$TMP_DIR/config.json" >/dev/null
 
 for repo in \
-    AidenAI-IO \
+    AicoAI-IO \
     AidenAI-IO/aiden-firmware/extra \
     /AidenAI-IO/aiden-firmware \
-    AidenAI-IO/ \
-    AidenAI-IO//aiden-firmware; do
+    AicoAI-IO/ \
+    AicoAI-IO//aico-link-firmware; do
     if bash "$GENERATOR" \
         --manifest "$TMP_DIR/manifest.json" \
         --repo "$repo" \

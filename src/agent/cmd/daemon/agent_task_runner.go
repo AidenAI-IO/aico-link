@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agenttask"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agenttask"
 )
 
 // runtimeAgentTaskRunner adapts the legacy agent Runtime to the narrow

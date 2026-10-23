@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -359,8 +359,8 @@ func (r *recordingADBRunner) run(ctx context.Context, _ string, args ...string) 
 
 func newTestADBInputController(t *testing.T, screenState *screen.ScreenState, runner *recordingADBRunner) *ADBInputController {
 	t.Helper()
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial123")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial123")
 	if screenState == nil {
 		screenState = &screen.ScreenState{}
 	}
@@ -1571,7 +1571,7 @@ func TestHIDDeviceWriteReopensWhenDeviceNodeRecreated(t *testing.T) {
 func TestHIDDeviceWriteReopensAfterWatchdogRefreshState(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hidg0")
-	statePath := filepath.Join(dir, "aiden_usb_ecm_watchdog.state")
+	statePath := filepath.Join(dir, "aico_usb_ecm_watchdog.state")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("create test hid device: %v", err)
 	}
@@ -1607,12 +1607,12 @@ func TestTriggerUSBCompositeRefreshUsesConfiguredCommand(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "usb-refresh")
 	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AIDEN_USB_REFRESH_TEST_ARGS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AICO_USB_REFRESH_TEST_ARGS\"\n"
 	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write refresh command: %v", err)
 	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
-	t.Setenv("AIDEN_USB_REFRESH_TEST_ARGS", argsPath)
+	t.Setenv("AICO_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
+	t.Setenv("AICO_USB_REFRESH_TEST_ARGS", argsPath)
 
 	if err := triggerUSBCompositeRefresh(""); err != nil {
 		t.Fatalf("triggerUSBCompositeRefresh returned error: %v", err)

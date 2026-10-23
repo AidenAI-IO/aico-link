@@ -1,16 +1,17 @@
 ---
 slug: /
 sidebar_position: 0
-title: Aiden Hardware Documentation
+title: Aico Link Hardware Documentation
 ---
 
-# Aiden Hardware Documentation
+# Aico Link Hardware Documentation
 
-Build, configure, operate, and extend Aiden hardware and its Agent runtime.
+Build, configure, operate, and extend **Aico Link** hardware and **Aico**, the
+AI Agent that runs on it. The official website is [aico.link](https://aico.link).
 
 ## Start Here
 
-- [Try Aiden on PC](01-getting-started/try-aiden-on-pc.md) with Config Web,
+- [Try Aico on PC](01-getting-started/try-aico-on-pc.md) with Config Web,
   Agent Web, and optional environment-bridge control without a development board.
 - Follow the [Newcomer Quickstart](01-getting-started/quickstart.md) for a physical device.
 - Review [Hardware & Wiring](01-getting-started/hardware.md) before powering a self-assembled device.
@@ -19,6 +20,8 @@ Build, configure, operate, and extend Aiden hardware and its Agent runtime.
 
 ## Core Reference
 
+- [Product Names and Technical Identifiers](02-architecture/naming.md): hardware and
+  Agent names, preferred SDK identifiers, and stable technical interfaces.
 - [Architecture](02-architecture/overview.md): system boundaries, boot services, source layout, and runtime paths.
 - [Device Services](03-services/agent.md): Agent, configuration, terminal, frame capture, audio, BLE, and USB HID services.
 - [MCU Service](03-services/mcu-service.md): power handshake, wake long polling, hardware APIs and post-flash validation.

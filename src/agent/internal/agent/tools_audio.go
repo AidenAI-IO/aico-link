@@ -23,7 +23,7 @@ func NewAudioVolumeTool(socketPath string) *AudioVolumeTool {
 func (t *AudioVolumeTool) Name() string { return "audio_volume" }
 
 func (t *AudioVolumeTool) Description() string {
-	return `Get or set audio playback volume for audio_service/TTS playback. Omit volume to read the current value. This controls Aiden playback/TTS volume, not phone system UI volume.`
+	return `Get or set audio playback volume for audio_service/TTS playback. Omit volume to read the current value. This controls Aico playback/TTS volume, not phone system UI volume.`
 }
 
 func (t *AudioVolumeTool) ArgsSchema() map[string]any {

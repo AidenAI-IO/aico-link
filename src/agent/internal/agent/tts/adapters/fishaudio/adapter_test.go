@@ -12,7 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestFishAudioUsesDefaultReferenceIDWhenEmpty(t *testing.T) {

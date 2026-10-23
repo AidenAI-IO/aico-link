@@ -11,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 class FrameServiceServer {
 public:
@@ -71,4 +71,4 @@ private:
     uint32_t max_payload_sends_;
 };
 
-}  // namespace aiden
+}  // namespace aico

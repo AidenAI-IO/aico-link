@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 const (

@@ -276,7 +276,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--socket", default="/run/frame_service/frame_service.sock")
-    parser.add_argument("--output-dir", default="/tmp/aiden-jpeg-smoke")
+    parser.add_argument("--output-dir", default="/tmp/aico-jpeg-smoke")
     parser.add_argument("--first-format", choices=("jpeg", "raw"), default="jpeg",
                         help="capture JPEG before the raw baseline for cold-start testing (default: jpeg)")
     parser.add_argument("--iterations", type=int, default=10,

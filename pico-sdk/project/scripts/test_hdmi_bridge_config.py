@@ -5,7 +5,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DTS = ROOT / "sysdrv/source/kernel/arch/arm/boot/dts/rv1106-luckfox-pico-zero-ipc.dtsi"
-KERNEL_FRAGMENT = ROOT / "sysdrv/source/kernel/arch/arm/configs/aiden-rk628.config"
+KERNEL_FRAGMENT = ROOT / "sysdrv/source/kernel/arch/arm/configs/aico-rk628.config"
 TC358743_DRIVER = ROOT / "sysdrv/source/kernel/drivers/media/i2c/tc358743.c"
 
 

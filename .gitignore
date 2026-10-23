@@ -11,7 +11,7 @@ CLAUDE.md
 .env
 
 # Cross-compiled agent binary
-/src/agent/aiden-agent
+/src/agent/aico-agent
 /src/agent/daemon
 /bin/
 

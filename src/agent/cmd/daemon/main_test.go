@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/agenttask"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agenttask"
+	"aico-agent/internal/logging"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )

@@ -1,6 +1,6 @@
 # RK628F hardware adaptation
 
-Aiden SCH v1 uses J3 for both USB2 ECM and Type-C video. The video path is
+Aico Link SCH v1 uses J3 for both USB2 ECM and Type-C video. The video path is
 CSA171 -> CS5366 -> RK628F HDMI RX -> four CSI lanes -> RV1106.
 `RK628_Plugin_DET` is routed to the MCU, not to an RV1106 GPIO. The device
 tree therefore deliberately has no `plugin-det-gpios` property.
@@ -10,7 +10,7 @@ The older RK628D driver cannot initialize this silicon. The board reports
 backports the coherent RK628 receiver, clock/reset, MIPI PHY and
 post-processing drivers from Rockchip commit
 `81417fbf13edb25f203ea794a723b8bf1f457d5c`. See
-`pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/README.aiden` for
+`pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/README.aico` for
 the source and local compatibility changes.
 
 The board retains its onboard 24 MHz oscillator, I2C4 M1 at 100 kHz,
@@ -19,7 +19,7 @@ and four continuous-clock CSI lanes. HPD is controlled by the receiver
 driver, not a GPIO-high startup workaround. The built-in EDID matches
 `edid/hdmi_1080p60_cta.hex` and advertises 1080p60 by default. The frame
 service applies the selected profile specifically to RK628; the generic
-libaiden fallback remains 1080p30 for TC358743 compatibility. A persistent
+libaico fallback remains 1080p30 for TC358743 compatibility. A persistent
 1080p30 compatibility profile
 preserves 1920x1080 capture while limiting the HDMI pixel clock to 74.25 MHz. With the tested Android source, the
 onboard Type-C bridge path repeatedly lost all three data-channel locks at
@@ -33,13 +33,13 @@ the higher-rate instability.
 On the board, use:
 
 ```bash
-sudo aiden-hdmi-mode 1080p30   # Apply compatibility mode and save it
-sudo aiden-hdmi-mode 1080p60   # Return to 60 Hz and save it
-aiden-hdmi-mode status        # Show the configured selection
+sudo aico-hdmi-mode 1080p30   # Apply compatibility mode and save it
+sudo aico-hdmi-mode 1080p60   # Return to 60 Hz and save it
+aico-hdmi-mode status        # Show the configured selection
 ```
 
 The command atomically saves `/userdata/system/hdmi-mode` and restarts
-`aiden-frame.service`. The selection survives reboot and rootfs slot changes;
+`aico-frame.service`. The selection survives reboot and rootfs slot changes;
 without a saved selection, the default is 1080p60. Status reports the configured
 mode, not confirmation of a locked video input. There is no automatic downgrade.
 

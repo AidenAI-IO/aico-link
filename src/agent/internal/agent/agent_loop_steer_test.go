@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/executor"
+	"aico-agent/internal/agent/executor"
 	"context"
 	"strings"
 	"testing"

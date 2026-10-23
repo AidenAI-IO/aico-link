@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 )
 
 type SelfCheckConfig struct {
@@ -97,11 +97,11 @@ func RunSelfCheck(ctx context.Context, cfg SelfCheckConfig) SelfCheckReport {
 	}
 	frameCLI := cfg.FrameCLI
 	if frameCLI == "" {
-		frameCLI = "/usr/lib/aiden/frame_service_cli"
+		frameCLI = "/usr/lib/aico/frame_service_cli"
 	}
 	audioCLI := cfg.AudioCLI
 	if audioCLI == "" {
-		audioCLI = "/usr/lib/aiden/audio_service_cli"
+		audioCLI = "/usr/lib/aico/audio_service_cli"
 	}
 	curlBin := cfg.Curl
 	if curlBin == "" {

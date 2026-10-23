@@ -3,8 +3,8 @@ package executor
 import (
 	"strings"
 
-	"aiden-agent/internal/agent/constants"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/constants"
+	"aico-agent/internal/agent/messages"
 )
 
 var _ OutboundMessageTransform = AnthropicScreenshotPruner{}

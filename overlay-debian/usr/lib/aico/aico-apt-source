@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+"""Configure signed business updates for this device's channel and OTA base."""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import tempfile
+from urllib.parse import urlsplit
+
+DEFAULT_URL = "https://aidenai-io.github.io/aiden-firmware/apt"
+KEY_PATH = "usr/share/keyrings/aico-archive-keyring.asc"
+
+
+def suite_for(platform):
+    channel = platform.get("channel")
+    contract = platform.get("platform_contract")
+    if channel not in ("dev", "staging", "prod"):
+        raise ValueError("The device must have a managed dev/staging/prod OTA base")
+    if type(contract) is not int or contract < 1:
+        raise ValueError("Platform contract must be a positive integer")
+    if (platform.get("product"), platform.get("platform_id"), platform.get("architecture")) != (
+            "aico", "luckfox-rv1106", "armhf"):
+        raise ValueError("Unexpected device platform")
+    if not re.fullmatch(channel + r"-v[0-9]+\.[0-9]+\.[0-9]+", platform.get("base_release", "")):
+        raise ValueError("Missing or invalid OTA base")
+    if not re.fullmatch(r"[0-9a-f]{64}", platform.get("system_fingerprint", "")):
+        raise ValueError("Missing system fingerprint")
+    return f"{channel}-c{contract}"
+
+
+def write_atomic(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        temporary = Path(stream.name)
+        try:
+            stream.write(content)
+            stream.flush()
+            os.fchmod(stream.fileno(), 0o644)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+
+
+def configure(root, key, url=DEFAULT_URL):
+    platform = json.loads((root / "usr/lib/aico/platform/contract.json").read_text())
+    suite = suite_for(platform)
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment or any(c.isspace() for c in url):
+        raise ValueError("Repository URL must be an HTTPS URL without query/fragment/whitespace")
+    public_key = key.read_bytes()
+    if (not public_key.startswith(b"-----BEGIN PGP PUBLIC KEY BLOCK-----\n")
+            or b"-----END PGP PUBLIC KEY BLOCK-----" not in public_key):
+        raise ValueError("Expected an ASCII-armored repository public key")
+    sources = (
+        "# Generated from /usr/lib/aico/platform/contract.json; OTA owns this selection.\n"
+        f"Types: deb\nURIs: {url.rstrip('/')}\nSuites: {suite}\n"
+        f"Components: main\nArchitectures: armhf\nSigned-By: /{KEY_PATH}\n"
+    )
+    preferences = (
+        "# Business updates must match both the signed repository and the OTA contract.\n"
+        f"Package: aico-business\nPin: release o=Aico,n={suite}\nPin-Priority: 990\n\n"
+        "Package: aico-business\nPin: release *\nPin-Priority: -1\n\n"
+        "# Installed system packages have priority 100; update them through OTA.\n"
+        "# Explicitly installing a previously absent Debian package remains possible.\n"
+        "Package: *\nPin: release o=Debian\nPin-Priority: 1\n"
+    )
+    write_atomic(root / KEY_PATH, public_key)
+    write_atomic(root / "etc/apt/preferences.d/aico-business", preferences.encode())
+    write_atomic(root / "etc/apt/sources.list.d/aico-business.sources", sources.encode())
+    return suite
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--root", type=Path, default=Path("/"))
+    parser.add_argument("--public-key", type=Path)
+    parser.add_argument("--repository-url", default=DEFAULT_URL)
+    args = parser.parse_args()
+    suite = configure(args.root, args.public_key or args.root / KEY_PATH, args.repository_url)
+    print(f"APT business source configured: {suite}; run sudo apt update && sudo apt upgrade")
+
+
+if __name__ == "__main__":
+    main()

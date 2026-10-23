@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # OTA Key Management
 
-Production OTA manifests use Ed25519 signatures. Devices verify `manifest.json` through `/usr/share/keyrings/aiden-ota.pem`, verify the downloaded archive before writing, and only activate the inactive slot after the streamed image hash and eMMC readback checks pass.
+Production OTA manifests use Ed25519 signatures. Devices verify `manifest.json` through `/usr/share/keyrings/aico-ota.pem`, verify the downloaded archive before writing, and only activate the inactive slot after the streamed image hash and eMMC readback checks pass.
 
 ## Key Generation
 
@@ -40,14 +40,14 @@ AGENT_CONFIG_PATH=/path/to/agent.toml \
 The build validates that both keys match and packages the public key into:
 
 ```text
-/usr/share/keyrings/aiden-ota.pem
+/usr/share/keyrings/aico-ota.pem
 ```
 
 ### The Committed Trust Anchor
 
 `keys/ota_pubkey.pem` holds the public half of the signing key used by the
 automated builds. A public key is not a secret: the same bytes already sit in
-`/usr/share/keyrings/aiden-ota.pem` on every device and inside every published image.
+`/usr/share/keyrings/aico-ota.pem` on every device and inside every published image.
 Committing it lets any build produce an image that accepts released updates.
 
 Keep it free of comment lines mentioning dev, test, or placeholder. The
@@ -59,14 +59,14 @@ extract it from the published `rootfs.img` and compare fingerprints (Linux):
 
 ```bash
 tar -xzf rootfs.img.tar.gz rootfs.img
-debugfs -R "dump /usr/share/keyrings/aiden-ota.pem published_pubkey.pem" rootfs.img
+debugfs -R "dump /usr/share/keyrings/aico-ota.pem published_pubkey.pem" rootfs.img
 openssl pkey -pubin -in published_pubkey.pem -outform DER | sha256sum
 openssl pkey -pubin -in keys/ota_pubkey.pem -outform DER | sha256sum
 ```
 
 ### Trusting a Signer You Cannot Sign For
 
-The key at `/usr/share/keyrings/aiden-ota.pem` decides whose manifests the device accepts.
+The key at `/usr/share/keyrings/aico-ota.pem` decides whose manifests the device accepts.
 The private key decides who signs the manifest a build produces. They are
 separate roles, and verifying a manifest needs the public half only, so an image
 can accept updates signed elsewhere without that signer's private key ever
@@ -97,7 +97,7 @@ AGENT_CONFIG_PATH=/path/to/agent.toml \
 ```
 
 A device already in the field can be moved to a different signer by replacing
-`/usr/share/keyrings/aiden-ota.pem` with that signer's public key. That is the manual form
+`/usr/share/keyrings/aico-ota.pem` with that signer's public key. That is the manual form
 of the recovery path below, and it applies per device.
 
 ## Local Signing
@@ -120,13 +120,13 @@ publish those files without modifying or recompressing them.
 
 ## Key Rotation
 
-V1 devices trust `/usr/share/keyrings/aiden-ota.pem`. Do not switch the production signing private key before the fleet accepts the new public key, or old devices will reject manifests signed by it.
+V1 devices trust `/usr/share/keyrings/aico-ota.pem`. Do not switch the production signing private key before the fleet accepts the new public key, or old devices will reject manifests signed by it.
 
 Safe rotation process:
 
 1. Generate a new Ed25519 key pair offline.
 2. Keep the old private key in the controlled signing environment temporarily.
-3. Build a transition OTA containing the new `/usr/share/keyrings/aiden-ota.pem`.
+3. Build a transition OTA containing the new `/usr/share/keyrings/aico-ota.pem`.
 4. Sign and publish the transition release with the old private key.
 5. Confirm target devices have booted and marked successful via `ota status`, release telemetry, or field inspection.
 6. After confirming the fleet trusts the new public key, switch the signing environment to the new private key.

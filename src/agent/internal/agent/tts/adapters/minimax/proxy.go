@@ -12,8 +12,8 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/proxy"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/netproxy"
 )
 
 func websocketDialerForConfig(cfg commonConfig) (websocket.Dialer, error) {

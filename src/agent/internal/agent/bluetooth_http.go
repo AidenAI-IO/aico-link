@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/ble"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/ble"
+	"aico-agent/internal/logging"
 )
 
 const defaultBLEServiceSocketPath = "/run/ble_service/ble_service.sock"
@@ -259,7 +259,7 @@ func (s *Server) bluetoothServiceSocketPath() string {
 }
 
 func configuredBLEServiceSocketPath() string {
-	if path := strings.TrimSpace(os.Getenv("AIDEN_BLE_SERVICE_SOCKET")); path != "" {
+	if path := strings.TrimSpace(os.Getenv("AICO_BLE_SERVICE_SOCKET")); path != "" {
 		return path
 	}
 	return defaultBLEServiceSocketPath

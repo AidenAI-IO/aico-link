@@ -125,7 +125,7 @@ type SessionInfo struct {
 	OutputSampleRate  int
 	InputAudioFormat  AudioFormat
 	OutputAudioFormat AudioFormat
-	// Provider formats describe the native media contract hidden by an Aiden
+	// Provider formats describe the native media contract hidden by an Aico
 	// managed session. They equal the public formats on raw provider sessions.
 	ProviderInputAudioFormat  AudioFormat
 	ProviderOutputAudioFormat AudioFormat

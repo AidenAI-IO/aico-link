@@ -99,7 +99,7 @@ assert.equal(wifiSignalLevel({}), null, 'missing signal leaves the icon neutral'
 /* --------------------------------------------------------- other networks --- */
 
 const discovered = [
-  {ssid: 'Aiden', secured: true},
+  {ssid: 'Aico', secured: true},
   {ssid: 'Neighbour', secured: true},
   {ssid: 'Neighbour', secured: true},
   {ssid: '', secured: false},
@@ -107,13 +107,13 @@ const discovered = [
 ];
 
 assert.deepEqual(
-  otherNetworks(discovered, ['Aiden'], 'Aiden').map(network => network.ssid),
+  otherNetworks(discovered, ['Aico'], 'Aico').map(network => network.ssid),
   ['Neighbour', 'Guest'],
   'saved and connected networks are excluded, and duplicates collapse',
 );
 assert.deepEqual(
   otherNetworks(discovered, [], '').map(network => network.ssid),
-  ['Aiden', 'Neighbour', 'Guest'],
+  ['Aico', 'Neighbour', 'Guest'],
   'nothing is hidden when no profile is saved',
 );
 assert.deepEqual(otherNetworks(undefined, [], ''), []);

@@ -451,14 +451,14 @@ func TestTextInputKeyboardKeysForPlatforms(t *testing.T) {
 }
 
 func TestSplitTextInputChunksMakesEachPunctuationMarkAStandalonePart(t *testing.T) {
-	const target = "你好我是Aiden，是一个硬件智能Agent助手，现在我在混合输入各种内容，例如英文Hello和数字12345"
+	const target = "你好我是Aico，是一个硬件智能Agent助手，现在我在混合输入各种内容，例如英文Hello和数字12345"
 	chunks, err := splitTextInputChunks(target)
 	if err != nil {
 		t.Fatalf("splitTextInputChunks() error = %v", err)
 	}
 	want := []textInputChunk{
 		{text: "你好我是", ascii: false},
-		{text: "Aiden", input: "Aiden", ascii: true},
+		{text: "Aico", input: "Aico", ascii: true},
 		{text: "，", input: ",", ascii: true},
 		{text: "是一个硬件智能", ascii: false},
 		{text: "Agent", input: "Agent", ascii: true},
@@ -566,12 +566,12 @@ func TestRunSegmentedVerifiesCurrentIMEPartAtCommittedFieldSuffix(t *testing.T) 
 			{ObservedMode: textInputModeComposition, CompositionPending: true},
 			{
 				ObservedMode:       textInputModeComposition,
-				FieldText:          "Aiden 是一个接在手机上的硬件 Agent。它通过 USB 把自己模拟成",
+				FieldText:          "Aico 是一个接在手机上的硬件 Agent。它通过 USB 把自己模拟成",
 				CompositionPending: true,
 			},
 			{
 				ObservedMode: textInputModeASCII,
-				FieldText:    "Aiden 是一个接在手机上的硬件 Agent。它通过 USB 把自己模拟成键盘",
+				FieldText:    "Aico 是一个接在手机上的硬件 Agent。它通过 USB 把自己模拟成键盘",
 			},
 		}, actions: []textInputCandidateAction{{Action: textInputCandidateActionSelect, Text: "键盘"}}},
 		plans: map[string][]string{"模拟成键盘": {"mo", "ni", "cheng", "jian", "pan"}},
@@ -867,7 +867,7 @@ func TestEnterTextToolFallsBackToLocalAfterBridgeFailure(t *testing.T) {
 	}
 	tool.SetDeviceTypeFunc(hw.deviceTypeFn)
 
-	out, err := tool.Call(context.Background(), `{"text":"Aiden","focus":{"x":500,"y":120}}`)
+	out, err := tool.Call(context.Background(), `{"text":"Aico","focus":{"x":500,"y":120}}`)
 	if err != nil {
 		t.Fatalf("Call() error = %v", err)
 	}
@@ -918,7 +918,7 @@ func TestEnterTextToolFallsBackToLocalAfterDynamicIslandRestoreFailure(t *testin
 	tool.SetDeviceTypeFunc(hw.deviceTypeFn)
 	tool.iosKeyboardIsolation = newTestIOSKeyboardIsolationController(&[]string{})
 
-	out, err := tool.Call(context.Background(), `{"text":"Aiden","focus":{"x":500,"y":120}}`)
+	out, err := tool.Call(context.Background(), `{"text":"Aico","focus":{"x":500,"y":120}}`)
 	if err != nil {
 		t.Fatalf("Call() error = %v", err)
 	}

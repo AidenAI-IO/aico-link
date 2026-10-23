@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestInputLifecycleGPIOFailureCanRetrySameConfig(t *testing.T) {

@@ -20,7 +20,7 @@ readonly OUTPUT_DIR
 readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}
 readonly IMAGE_DIR=${OUTPUT_DIR}/image
 readonly APPS_OUTPUT=${DEBIAN_APPS_OUTPUT_DIR:-${REPO_ROOT}/output/debian-apps}
-readonly ROOTFS_BUILD_IMAGE=${DEBIAN_SYSTEM_BUILD_IMAGE:-aiden-debian13-armhf-builder:system}
+readonly ROOTFS_BUILD_IMAGE=${DEBIAN_SYSTEM_BUILD_IMAGE:-aico-debian13-armhf-builder:system}
 readonly BSP_BUILD_IMAGE=${DEBIAN_SYSTEM_BSP_BUILD_IMAGE:-luckfoxtech/luckfox_pico:1.0}
 readonly JOBS=${RK_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
@@ -88,11 +88,11 @@ prepare_sdk() {
         echo "Luckfox SDK has no project/build.sh: ${SDK_DIR}" >&2
         exit 1
     fi
-    # The vendored SDK carries the Aiden A/B and RockUSB changes.
+    # The vendored SDK carries the Aico Link A/B and RockUSB changes.
     # Check a file it adds so a stale checkout fails here instead of an hour
     # into the BSP build.
-    if [ ! -e "${SDK_DIR}/sysdrv/source/uboot/u-boot/configs/aiden-rv1106-rockusb.config" ]; then
-        echo "Luckfox SDK lacks the Aiden RV1106 RockUSB config; restore the SDK sources" >&2
+    if [ ! -e "${SDK_DIR}/sysdrv/source/uboot/u-boot/configs/aico-rv1106-rockusb.config" ]; then
+        echo "Luckfox SDK lacks the Aico Link RV1106 RockUSB config; restore the SDK sources" >&2
         exit 1
     fi
 
@@ -160,7 +160,7 @@ run_rootfs_container() {
 
     if [ "${script}" = scripts/debian-system/container-build-rootfs.sh ]; then
         platform_args=(-v "${OTA_PUBLIC_KEY_PATH}:/run/secrets/ota_pubkey.pem:ro"
-            -v "${OUTPUT_DIR}/aiden-business.deb:/aiden-business.deb:ro")
+            -v "${OUTPUT_DIR}/aico-business.deb:/aico-business.deb:ro")
     fi
     docker run --rm --privileged \
         ${platform_args[@]+"${platform_args[@]}"} \
@@ -172,10 +172,10 @@ run_rootfs_container() {
         -e "SOURCE_DATE_EPOCH=${BUILD_EPOCH}" \
         -e "DEBIAN_SYSTEM_BUILD_IMAGE_ID=${image_id}" \
         -e "PICO_SDK_COMMIT=${sdk_commit}" \
-        -e "AIDEN_PLATFORM_CONTRACT=${AIDEN_PLATFORM_CONTRACT:-}" \
-        -e "AIDEN_RELEASE_CHANNEL=${AIDEN_RELEASE_CHANNEL:-}" \
-        -e "AIDEN_PLATFORM_BASE=${AIDEN_PLATFORM_BASE:-}" \
-        -e "AIDEN_SYSTEM_FINGERPRINT=${AIDEN_SYSTEM_FINGERPRINT:-}" \
+        -e "AICO_PLATFORM_CONTRACT=${AICO_PLATFORM_CONTRACT:-}" \
+        -e "AICO_RELEASE_CHANNEL=${AICO_RELEASE_CHANNEL:-}" \
+        -e "AICO_PLATFORM_BASE=${AICO_PLATFORM_BASE:-}" \
+        -e "AICO_SYSTEM_FINGERPRINT=${AICO_SYSTEM_FINGERPRINT:-}" \
         -e "DEBIAN_SYSTEM_APT_CACHE_PROXY=${DEBIAN_SYSTEM_APT_CACHE_PROXY:-}" \
         -v "${REPO_ROOT}:/work:ro" \
         -v "${REPO_ROOT}:${REPO_ROOT}:ro" \
@@ -223,21 +223,21 @@ run_bsp() {
         -e "RK_JOBS=${JOBS}" \
         -e "SOURCE_DATE_EPOCH=${BUILD_EPOCH}" \
         -e "KBUILD_BUILD_TIMESTAMP=${build_timestamp}" \
-        -e KBUILD_BUILD_USER=aiden \
+        -e KBUILD_BUILD_USER=aico \
         -e KBUILD_BUILD_HOST=system \
         -v "${SDK_DIR}:/sdk" \
-        -v "${SCRIPT_DIR}:/aiden-bsp-scripts:ro" \
-        -v "${OUTPUT_DIR}:/aiden-system-output" \
+        -v "${SCRIPT_DIR}:/aico-bsp-scripts:ro" \
+        -v "${OUTPUT_DIR}:/aico-system-output" \
         -w /sdk \
         "${BSP_BUILD_IMAGE}" \
         bash -lc './build.sh uboot && ./build.sh driver &&
-            python3 /aiden-bsp-scripts/prepare-media-compat.py \
-                --sdk /sdk --output /aiden-system-output/media-compat \
+            python3 /aico-bsp-scripts/prepare-media-compat.py \
+                --sdk /sdk --output /aico-system-output/media-compat \
                 --kernel-build /sdk/sysdrv/source/objs_kernel \
                 --cross-compile /sdk/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf- \
                 --jobs "${RK_JOBS}" &&
-            install -m 0644 /aiden-system-output/media-compat/mpp_vcodec.ko \
-                /aiden-system-output/media-compat/rockit.ko \
+            install -m 0644 /aico-system-output/media-compat/mpp_vcodec.ko \
+                /aico-system-output/media-compat/rockit.ko \
                 /sdk/output/out/sysdrv_out/kernel_drv_ko/ &&
             ./build.sh env && ./build.sh abimages'
 

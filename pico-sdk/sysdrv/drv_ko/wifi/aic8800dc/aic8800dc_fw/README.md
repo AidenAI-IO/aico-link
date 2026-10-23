@@ -8,7 +8,7 @@ set from the public AIC driver repository:
 - source path: `SDIO/driver_fw/fw/aic8800D80`
 - source revision: `a870f7f15170a5899bf0b98769896fd1a7d4bf1e`
 
-The Aiden SCH v1 board uses `CONFIG_SDIO_BT=n`, so the normal-mode
+The Aico Link SCH v1 board uses `CONFIG_SDIO_BT=n`, so the normal-mode
 `fmacfw_8800d80*_u02.bin` files are selected while Bluetooth is attached over
 UART.  The `fmacfwbt_8800d80*_u02.bin` files are retained for the driver's
 SDIO-Bluetooth build variant.  Do not substitute the AIC8800DC firmware: the

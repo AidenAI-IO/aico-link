@@ -74,7 +74,7 @@ _ZERO_TOOL_MARKERS = (
     "zero tool",
     "final response empty",
     "empty final response",
-    "missing aiden_last_chat_history",
+    "missing aico_last_chat_history",
 )
 
 _EXTERNAL_BLOCKER_MARKERS = (
@@ -156,7 +156,7 @@ def task_result_sample_quality(tr: TaskResult, *, fail_reason: str = "") -> Samp
             include_in_reflect=False,
         )
     tool_calls = _safe_int(metrics.get("tool_calls"), default=-1)
-    final_response = str(metrics.get("final_response") or metrics.get("aiden_last_response") or "")
+    final_response = str(metrics.get("final_response") or metrics.get("aico_last_response") or "")
     if _looks_like_zero_tool_or_planner_format(text, tool_calls=tool_calls, final_response=final_response):
         return SampleQuality(
             kind="agent_format_error",

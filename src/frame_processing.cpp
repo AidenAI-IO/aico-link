@@ -4,7 +4,7 @@
 #include <limits>
 #include <string.h>
 
-namespace aiden {
+namespace aico {
 
 static uint8_t clamp_u8(int value) {
     if (value < 0) return 0;
@@ -930,4 +930,4 @@ bool scale_rgb_nearest(const std::vector<uint8_t>& rgb,
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

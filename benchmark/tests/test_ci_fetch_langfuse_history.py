@@ -18,7 +18,7 @@ STAMP = "2026-10-12T08:04:20Z"
 def _experiment(id="exp-1", **metadata):
     return {"id": id, "name": "ci-123-1-memory", "startTime": STAMP,
             "endTime": STAMP, "itemCount": 16, "datasetId": "dataset-1",
-            "metadata": {"aiden_benchmark": "true", "benchmark_suite": "memory_v1",
+            "metadata": {"aico_benchmark": "true", "benchmark_suite": "memory_v1",
                          "benchmark_run_id": "ci-123-1-memory", "git_branch": "main",
                          "git_sha": "abc", **metadata}}
 
@@ -125,7 +125,7 @@ def test_batched_scores_are_assigned_to_their_experiment():
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
 
 
-@pytest.mark.parametrize("metadata", [{"aiden_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
+@pytest.mark.parametrize("metadata", [{"aico_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
 def test_filter_does_not_include_nonbenchmark_or_unknown_branches(metadata):
     def handler(request):
         assert request.url.path.endswith("/experiments")
@@ -263,7 +263,7 @@ def test_failure_details_use_paginated_items_and_exact_child_observation():
     failed = {"status": "failed", "metrics": {"agent_eligible": True, "success": False,
               "failure_class": "agent", "first_failure_stage": "unknown"},
               "rubric": [{"id": "answer", "verdict": "no", "reason": "Returned 12, expected 42"}],
-              "aiden_trace_url": "https://langfuse.test/project/p/traces/trace-1"}
+              "aico_trace_url": "https://langfuse.test/project/p/traces/trace-1"}
     def handler(request):
         requests.append(request)
         if request.url.path.endswith("/experiments"):

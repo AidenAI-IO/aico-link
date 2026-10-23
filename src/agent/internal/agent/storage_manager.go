@@ -16,7 +16,7 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // StorageMode reports which storage tiers are currently available. The mode
@@ -43,7 +43,7 @@ const (
 
 // storageSDSubdir is the dedicated subtree on the card; the card's own
 // content outside it is never touched.
-const storageSDSubdir = "aiden"
+const storageSDSubdir = "aico"
 
 // StorageFormatConfirmToken must be sent by clients to confirm a destructive format.
 const StorageFormatConfirmToken = "format-sd-card"
@@ -67,7 +67,7 @@ const (
 )
 
 // storageVolumeLabel is stamped on freshly formatted cards.
-const storageVolumeLabel = "AIDEN"
+const storageVolumeLabel = "AICO"
 
 // Migration tuning. Only immutable, closed files are moved: the minimum age
 // guards against touching a file that is still being written.
@@ -75,11 +75,11 @@ const (
 	migrationMinFileAge    = 60 * time.Second
 	migrationFilePause     = 100 * time.Millisecond // throttle between files
 	migrationRetryCooldown = 10 * time.Minute       // after failed/exhausted runs
-	migrationPartialSuffix = ".aiden-partial"       // in-flight copy marker on SD
+	migrationPartialSuffix = ".aico-partial"        // in-flight copy marker on SD
 )
 
 // storageStateFileName mirrors runtime state for external consumers.
-const defaultStorageStatePath = "/run/aiden/storage.state"
+const defaultStorageStatePath = "/run/aico/storage.state"
 
 // StorageCardStatus describes the SD card as last observed.
 type StorageCardStatus struct {
@@ -222,7 +222,7 @@ type StorageManager struct {
 // by tests/board/test_storage_migration.sh to point the watermark migrator
 // at a small loop-mounted filesystem instead of the real 3 GB /userdata;
 // production deployments never set it.
-const storageEMMCRootEnv = "AIDEN_STORAGE_EMMC_ROOT"
+const storageEMMCRootEnv = "AICO_STORAGE_EMMC_ROOT"
 
 // NewStorageManager builds a manager with real platform operations.
 func NewStorageManager(cfg StorageConfig, logger *Logger) *StorageManager {
@@ -554,7 +554,8 @@ func (m *StorageManager) maybeStartMigrationLocked() {
 		m.card.FreeBytes < int64(m.cfg.MinCardFreeMBOrDefault())*1024*1024 ||
 		m.snapshotLease != nil ||
 		m.formatJob.Status == StorageFormatRunning ||
-		m.migration.Status == StorageFormatRunning {
+		m.migration.Status == StorageFormatRunning ||
+		storageRestorePending(m.cfg.MountPointOrDefault()) {
 		return
 	}
 	if !m.migrationRetryAt.IsZero() && time.Now().Before(m.migrationRetryAt) {
@@ -917,7 +918,7 @@ func (m *StorageManager) listMigratable(dir string) ([]string, error) {
 }
 
 // migrateOneFile is the idempotent per-file transaction:
-// copy to a .aiden-partial temp name → fsync → verify size → rename →
+// copy to a .aico-partial temp name → fsync → verify size → rename →
 // fsync destination dir → delete source. A crash at any point leaves either both copies (resolved by
 // the destination-exists check on the next run and by eMMC-first ReadRoots)
 // or the migrated file only.
@@ -1108,6 +1109,9 @@ func (m *StorageManager) CleanupRoots(class StorageDataClass) []string {
 	m.mu.Unlock()
 
 	if mounted {
+		if storageRestorePending(mountPoint) {
+			return nil
+		}
 		return []string{m.sdClassDir(mountPoint, class)}
 	}
 	return []string{m.emmcClassDir(class)}
@@ -1115,6 +1119,14 @@ func (m *StorageManager) CleanupRoots(class StorageDataClass) []string {
 
 func (m *StorageManager) sdClassDir(mountPoint string, class StorageDataClass) string {
 	return filepath.Join(mountPoint, storageSDSubdir, string(class))
+}
+
+// A restarted manager may mount a card before restore recovery runs. Do not
+// migrate or evict files while a transaction is pending; its checksummed
+// target and staging paths must remain unchanged.
+func storageRestorePending(mountPoint string) bool {
+	entries, err := os.ReadDir(filepath.Join(mountPoint, ".aico-restore"))
+	return (err != nil && !os.IsNotExist(err)) || len(entries) != 0
 }
 
 func (m *StorageManager) emmcClassDir(class StorageDataClass) string {
@@ -1658,13 +1670,13 @@ func checkStorageFilesystem(dev string) error {
 }
 
 func storageWriteProbe(mountPoint string) error {
-	f, err := os.CreateTemp(mountPoint, ".aiden-write-probe-*")
+	f, err := os.CreateTemp(mountPoint, ".aico-write-probe-*")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(f.Name())
 	defer f.Close()
-	data := []byte("aiden-storage-probe\n")
+	data := []byte("aico-storage-probe\n")
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("write probe: %w", err)
 	}

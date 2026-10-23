@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/mcu"
 )
 
 type mcuWakeupEventsFunc func(context.Context, string, string, int, int) (*mcu.EventPage, error)

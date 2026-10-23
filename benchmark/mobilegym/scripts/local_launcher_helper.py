@@ -15,7 +15,7 @@ from urllib.parse import urlparse
 
 HOST = "127.0.0.1"
 PORT = 4175
-LAUNCHER_LABEL = "com.aiden.mobilegym-local-launcher"
+LAUNCHER_LABEL = "com.aico.mobilegym-local-launcher"
 LAUNCHER_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{LAUNCHER_LABEL}.plist"
 LAUNCHCTL_TIMEOUT_SECONDS = 10
 

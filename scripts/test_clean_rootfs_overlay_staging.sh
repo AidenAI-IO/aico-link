@@ -16,14 +16,14 @@ dest_overlay="$tmpdir/dest-overlay"
 catalog="$tmpdir/tools.catalog"
 managed_state="$tmpdir/managed-tools.list"
 mkdir -p "$dest_overlay/etc"
-mkdir -p "$dest_overlay/usr/share/aiden/skills/planner"
-mkdir -p "$dest_overlay/usr/share/aiden/skills/device-operator"
-mkdir -p "$dest_overlay/usr/share/aiden"
+mkdir -p "$dest_overlay/usr/share/aico/skills/planner"
+mkdir -p "$dest_overlay/usr/share/aico/skills/device-operator"
+mkdir -p "$dest_overlay/usr/share/aico"
 
-printf 'config\n' > "$dest_overlay/etc/aiden_boot.conf"
-printf 'actions\n' > "$dest_overlay/usr/share/aiden/quick_actions.json"
-printf 'planner\n' > "$dest_overlay/usr/share/aiden/skills/planner/SKILL.md"
-printf 'operator\n' > "$dest_overlay/usr/share/aiden/skills/device-operator/SKILL.md"
+printf 'config\n' > "$dest_overlay/etc/aico_boot.conf"
+printf 'actions\n' > "$dest_overlay/usr/share/aico/quick_actions.json"
+printf 'planner\n' > "$dest_overlay/usr/share/aico/skills/planner/SKILL.md"
+printf 'operator\n' > "$dest_overlay/usr/share/aico/skills/device-operator/SKILL.md"
 mkdir -p "$dest_overlay/usr/bin"
 printf 'tool\n' > "$dest_overlay/usr/bin/fx"
 printf 'retired\n' > "$dest_overlay/usr/bin/retired-tool"
@@ -35,12 +35,12 @@ EOF
 
 "$CLEAN_SCRIPT" --catalog "$catalog" --managed-state "$managed_state" --dest-overlay "$dest_overlay"
 
-if [ "$(cat "$dest_overlay/usr/share/aiden/quick_actions.json")" != actions ]; then
-    echo "cleanup script must preserve Aiden rootfs assets" >&2
+if [ "$(cat "$dest_overlay/usr/share/aico/quick_actions.json")" != actions ]; then
+    echo "cleanup script must preserve Aico Link rootfs assets" >&2
     exit 1
 fi
 
-if [ "$(cat "$dest_overlay/etc/aiden_boot.conf")" != "config" ]; then
+if [ "$(cat "$dest_overlay/etc/aico_boot.conf")" != "config" ]; then
     echo "cleanup script must preserve rootfs etc staging" >&2
     exit 1
 fi

@@ -7,7 +7,7 @@ work_dir=$(mktemp -d)
 trap 'rm -rf "${work_dir}"' EXIT
 gcc -E -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
     -I "${kernel}/include" -I "${kernel}/arch/arm/boot/dts" \
-    "${kernel}/arch/arm/boot/dts/rv1106g-aiden-custom.dts" \
+    "${kernel}/arch/arm/boot/dts/rv1106g-aico-custom.dts" \
     -o "${work_dir}/board.dts"
 dtc -q -I dts -O dtb -o "${work_dir}/board.dtb" "${work_dir}/board.dts"
 audit=${repo_root}/scripts/debian-system/audit-tf-dtb.sh
@@ -49,15 +49,15 @@ done
 mkdir "${work_dir}/bin"
 cat >"${work_dir}/bin/fdtget" <<'EOF'
 #!/bin/sh
-if [ "$1" = '-p' ] && [ "$3" = "$AIDEN_FDTGET_FAIL_NODE" ]; then
+if [ "$1" = '-p' ] && [ "$3" = "$AICO_FDTGET_FAIL_NODE" ]; then
     exit 1
 fi
-exec "$AIDEN_REAL_FDTGET" "$@"
+exec "$AICO_REAL_FDTGET" "$@"
 EOF
 chmod +x "${work_dir}/bin/fdtget"
 real_fdtget=$(command -v fdtget)
 for node in /mmc@ffaa0000 /vcc3v3-sd-regulator; do
-    if PATH="${work_dir}/bin:${PATH}" AIDEN_REAL_FDTGET="${real_fdtget}" AIDEN_FDTGET_FAIL_NODE="${node}" \
+    if PATH="${work_dir}/bin:${PATH}" AICO_REAL_FDTGET="${real_fdtget}" AICO_FDTGET_FAIL_NODE="${node}" \
         bash "${audit}" "${work_dir}/board.dtb" >"${work_dir}/failure.log" 2>&1; then
         echo "TF audit accepted a failed lookup of ${node}" >&2
         exit 1

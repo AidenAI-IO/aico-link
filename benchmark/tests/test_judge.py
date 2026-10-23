@@ -48,7 +48,7 @@ def test_judge_uses_configured_api_key_env(monkeypatch):
     assert result.verdicts[0].verdict == "yes"
     assert seen == {
         "authorization": "Bearer sk-judge",
-        "user_agent": "aiden-benchmark/1.0",
+        "user_agent": "aico-benchmark/1.0",
         "url": "https://judge.example.com/v1/chat/completions",
         "timeout": 120,
     }
@@ -108,8 +108,8 @@ def test_judge_does_not_fallback_to_agent_toml_api_key(monkeypatch, tmp_path: Pa
     config = tmp_path / "agent.toml"
     config.write_text('[model]\napi_key = "sk-agent"\n', encoding="utf-8")
 
-    monkeypatch.setenv("AIDEN_AGENT_CONFIG", str(config))
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.setenv("AICO_AGENT_CONFIG", str(config))
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_AUTH_TOKEN", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
@@ -125,7 +125,7 @@ def test_judge_does_not_fallback_to_agent_toml_api_key(monkeypatch, tmp_path: Pa
             cfg=JudgeConfig(),
         )
     except RuntimeError as e:
-        assert "AIDEN_BENCHMARK_JUDGE_API_KEY" in str(e)
+        assert "AICO_BENCHMARK_JUDGE_API_KEY" in str(e)
     else:
         raise AssertionError("expected missing judge API key error")
 
@@ -154,7 +154,7 @@ def test_default_judge_uses_benchmark_specific_api_key_env(monkeypatch):
         seen["authorization"] = req.headers.get("Authorization")
         return FakeResponse()
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_JUDGE_API_KEY", "sk-benchmark-judge")
+    monkeypatch.setenv("AICO_BENCHMARK_JUDGE_API_KEY", "sk-benchmark-judge")
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
 
@@ -172,7 +172,7 @@ def test_default_judge_uses_benchmark_specific_api_key_env(monkeypatch):
 
 
 def test_default_judge_does_not_read_provider_specific_api_key_envs(monkeypatch):
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_AUTH_TOKEN", "sk-openai-compatible")
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-openrouter")
@@ -188,6 +188,6 @@ def test_default_judge_does_not_read_provider_specific_api_key_envs(monkeypatch)
             cfg=JudgeConfig(),
         )
     except RuntimeError as exc:
-        assert str(exc) == "missing env var AIDEN_BENCHMARK_JUDGE_API_KEY"
+        assert str(exc) == "missing env var AICO_BENCHMARK_JUDGE_API_KEY"
     else:
         raise AssertionError("expected provider-specific API key envs to be ignored")

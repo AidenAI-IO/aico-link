@@ -61,7 +61,7 @@ class VPhoneDevice:
         self.guest_ssh = guest_ssh
         self._screen_size: tuple[int, int] | None = None
         self._status: dict[str, Any] | None = None
-        self._tempdir = tempfile.TemporaryDirectory(prefix="aiden-vphone-bridge-")
+        self._tempdir = tempfile.TemporaryDirectory(prefix="aico-vphone-bridge-")
         self._capture_lock = threading.Lock()
 
     def close(self) -> None:

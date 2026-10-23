@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestActiveVoiceConfigIgnoresInactiveProviderSettings(t *testing.T) {
@@ -99,15 +99,15 @@ func TestInputLifecycleProviderReloadPreservesWorkingVAD(t *testing.T) {
 			cfg.InputMode, cfg.STT.Provider, cfg.TTS.Provider = "stt", "", ""
 			cfg.QuickCapture.Enabled = new(bool)
 			cfg.VADHelperPath = filepath.Join(t.TempDir(), "vad-helper")
-			t.Setenv("AIDEN_TEST_VAD_STARTED", filepath.Join(t.TempDir(), "started"))
+			t.Setenv("AICO_TEST_VAD_STARTED", filepath.Join(t.TempDir(), "started"))
 			// A second helper cannot start: post-reload inference must use the
 			// existing process, even after the old or staged dialog is closed.
 			const script = `#!/bin/sh
-if [ -e "$AIDEN_TEST_VAD_STARTED" ]; then
+if [ -e "$AICO_TEST_VAD_STARTED" ]; then
   printf 'ERR helper started again\n'
   exit 1
 fi
-printf 'started\n' > "$AIDEN_TEST_VAD_STARTED"
+printf 'started\n' > "$AICO_TEST_VAD_STARTED"
 printf 'READY\n'
 while op=$(dd bs=1 count=1 2>/dev/null); do
   case "$op" in

@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/realtimevoice"
 )
 
 type fakeRealtimeSession struct {

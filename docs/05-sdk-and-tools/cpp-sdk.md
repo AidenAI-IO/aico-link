@@ -4,11 +4,16 @@ sidebar_position: 1
 
 # C++ SDK Reference
 
-`libaiden.a` is the project's C++ hardware SDK, with the main header file:
+The Aico Link C++ hardware SDK uses the `aico` CMake target and the following
+public header and produces `libaico.a`:
 
 ```cpp
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 ```
+
+The SDK implementation uses the `aico` namespace. Consumers should rebuild
+against the renamed headers and library. See
+[Product Names and Technical Identifiers](../02-architecture/naming.md).
 
 Key capabilities:
 
@@ -59,13 +64,13 @@ EDID/HPD renegotiation, then queries the settled timings.
 ## WakeupListener
 
 ```cpp
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 
 void on_wakeup() {
     printf("Wakeup detected!\n");
 }
 
-aiden::WakeupListener listener;
+aico::WakeupListener listener;
 listener.start(33, on_wakeup);
 // ...
 listener.stop();
@@ -76,14 +81,14 @@ GPIO 33/GPIO 32 are typically used for button or wakeup signals, triggered on fa
 ## AudioCapture
 
 ```cpp
-aiden::AudioConfig config;
+aico::AudioConfig config;
 config.sample_rate = 16000;
 config.channels = 1;
 config.bit_width = 16;
 
-aiden::AudioCapture capture;
+aico::AudioCapture capture;
 capture.init(config);
-capture.start([](const aiden::AudioFrame& frame) {
+capture.start([](const aico::AudioFrame& frame) {
     printf("Got %u bytes\n", frame.length);
 });
 // ...
@@ -93,12 +98,12 @@ capture.stop();
 ## AudioPlayer
 
 ```cpp
-aiden::AudioConfig config;
+aico::AudioConfig config;
 config.sample_rate = 16000;
 config.channels = 1;
 config.bit_width = 16;
 
-aiden::AudioPlayer player;
+aico::AudioPlayer player;
 player.init(config);
 player.set_volume(80); // 0..100
 player.play(samples, sizeof(samples));
@@ -116,14 +121,14 @@ visible width and `size_image`/`length` are the compact payload size.
 Streaming capture:
 
 ```cpp
-aiden::CameraConfig config;
+aico::CameraConfig config;
 config.width = 1920;
 config.height = 1080;
 config.pixel_format = "uyvy";
 
-aiden::CameraCapture camera;
+aico::CameraCapture camera;
 camera.init(config);
-camera.start([](const aiden::VideoFrame& frame) {
+camera.start([](const aico::VideoFrame& frame) {
     printf("Frame: %ux%u, %u bytes, stride=%u\n",
            frame.width, frame.height, frame.length, frame.stride);
 });
@@ -134,13 +139,13 @@ camera.stop();
 Pause and resume streaming while retaining the open device and MMAP buffers:
 
 ```cpp
-aiden::CameraCapture camera;
+aico::CameraCapture camera;
 camera.init(config);
 camera.pause();  // VIDIOC_STREAMOFF; device and mappings remain owned
 
 // Later, when a frame is needed:
 camera.resume(); // requeue buffers and VIDIOC_STREAMON
-aiden::VideoFrame frame;
+aico::VideoFrame frame;
 std::vector<uint8_t> bytes;
 camera.capture_frame(frame, bytes);
 camera.pause();
@@ -155,11 +160,11 @@ additional warm-up frames when streaming restarts per request and six when
 One-shot capture and copy to caller-owned buffer:
 
 ```cpp
-aiden::CameraConfig config;
+aico::CameraConfig config;
 config.edid_path = nullptr; // Use built-in 1080p60-only CTA EDID
 
-aiden::CameraCapture camera;
-aiden::VideoFrame frame;
+aico::CameraCapture camera;
+aico::VideoFrame frame;
 std::vector<uint8_t> bytes;
 
 if (camera.capture_once(config, frame, bytes)) {

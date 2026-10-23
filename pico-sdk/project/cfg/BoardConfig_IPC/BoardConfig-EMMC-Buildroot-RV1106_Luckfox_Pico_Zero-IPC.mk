@@ -14,9 +14,9 @@ export RK_APP_TYPE=AGENT
 export RK_BOOTARGS_CMA_SIZE="100M"
 
 # Kernel dts
-# Aiden SCH v1 custom hardware (RV1106G): MP2720/BQ27220 PMIC on I2C1,
+# Aico Link SCH v1 custom hardware (RV1106G): MP2720/BQ27220 PMIC on I2C1,
 # RK628F/H bridge on I2C3, SDMMC0 TF card, UART0 Bluetooth, UART2 ASRPro.
-export RK_KERNEL_DTS=rv1106g-aiden-custom.dts
+export RK_KERNEL_DTS=rv1106g-aico-custom.dts
 
 #################################################
 #	BOOT_MEDIUM
@@ -89,7 +89,7 @@ export RK_KERNEL_DEFCONFIG=luckfox_rv1106_linux_defconfig
 # Keep compressed in-memory swap, enable the UART Bluetooth controller and
 # SDIO/WLAN dependencies used by the onboard AIC8800D80 combo module, and
 # enable the RK628F HDMI-to-CSI bridge.
-export RK_KERNEL_DEFCONFIG_FRAGMENT="aiden-zram.config rv1106-bt.config rv1106-sdiowifi.config aiden-rk628.config"
+export RK_KERNEL_DEFCONFIG_FRAGMENT="aico-zram.config rv1106-bt.config rv1106-sdiowifi.config aico-rk628.config"
 
 # Config sensor IQ files
 # RK_CAMERA_SENSOR_IQFILES format:
@@ -112,7 +112,7 @@ export RK_BUILD_APP_TO_OEM_PARTITION=y
 # Disabled for production boot-item slimming.
 # export RK_ENABLE_ROCKCHIP_TEST=y
 
-# Aiden uses the board as an ADB host/client for external Android devices.
+# Aico uses the board as an ADB host/client for external Android devices.
 # Keep SDK adbd gadget support disabled.
 export RK_ENABLE_ADBD=n
 
@@ -128,7 +128,7 @@ export RK_ENABLE_WIFI=y
 export RK_ENABLE_WIFI_CHIP=AIC8800D80
 
 # config wifi ssid and passwd
-export LF_WIFI_SSID="Aiden"
+export LF_WIFI_SSID="Aico Link"
 export LF_WIFI_PSK="Aiden12333"
 
 #################################################
@@ -142,4 +142,4 @@ export RK_PRE_BUILD_OEM_SCRIPT=luckfox-buildroot-oem-pre.sh
 export RK_PRE_BUILD_USERDATA_SCRIPT=luckfox-userdata-pre.sh
 
 # declare overlay directory
-export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-aiden"
+export RK_POST_OVERLAY="overlay-luckfox-config overlay-luckfox-buildroot-init overlay-luckfox-buildroot-shadow overlay-luckfox-buildroot-aico"

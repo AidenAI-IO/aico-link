@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultHIDWriteTimeout     = 750 * time.Millisecond
-	defaultHIDRefreshStatePath = "/run/aiden_usb_ecm_watchdog.state"
+	defaultHIDRefreshStatePath = "/run/aico_usb_ecm_watchdog.state"
 )
 
 // HIDDevice manages a single HID device file with lazy open and auto-reopen.

@@ -91,8 +91,8 @@ DEFAULT_SUITES_DIR = BENCHMARK_ROOT / "suites"
 DEFAULT_RUNS_DIR = BENCHMARK_ROOT / "runs" / "webui"
 DEFAULT_BASE_CONFIG_DIR = BENCHMARK_ROOT / "config"
 DEFAULT_BUNDLED_SKILLS_DIR = REPO_ROOT / "src" / "agent" / "config" / "skills"
-DEFAULT_DAEMON_IMAGE = "aiden-agent-daemon:local"
-DEFAULT_MOBILEGYM_IMAGE = "aiden-mobilegym-simulator:py311"
+DEFAULT_DAEMON_IMAGE = "aico-agent-daemon:local"
+DEFAULT_MOBILEGYM_IMAGE = "aico-mobilegym-simulator:py311"
 BENCHMARK_DOCKER_DIR = BENCHMARK_ROOT / "docker"
 MOBILEGYM_DOCKER_DIR = BENCHMARK_ROOT / "mobilegym" / "docker"
 AGENT_DAEMON_COMPOSE_FILE = BENCHMARK_DOCKER_DIR / "docker-compose.agent-daemon.yml"
@@ -545,8 +545,8 @@ class BenchmarkWebApp:
         environment_web_url = str(payload.get("environment_web_url") or environment_payload.get("web_url") or "").strip()
         parallel_tasks = parse_positive_int(payload.get("parallel_tasks"), default=1, field="parallel_tasks")
         if environment_type == "mock":
-            environment_id = "mock-aiden-app"
-            environment_name = "Mock Aiden App environment"
+            environment_id = "mock-aico-app"
+            environment_name = "Mock Aico companion app environment"
             environment_endpoint = ""
             environment_web_url = ""
             parallel_tasks = 1
@@ -628,7 +628,7 @@ class BenchmarkWebApp:
             status="queued",
             created_at=now,
             agent_url="" if environment_type == "mock" else f"http://127.0.0.1:{port}",
-            container_name=f"aiden-benchmark-agent-{job_id}",
+            container_name=f"aico-benchmark-agent-{job_id}",
             config_dir=str(job_dir / "config"),
             raw_runs_dir=str(raw_runs_dir),
             state_file=str(job_dir / "state.json"),
@@ -2140,7 +2140,7 @@ def ensure_docker_image(
 
 
 def daemon_compose_project(job: Job) -> str:
-    return job.container_name or f"aiden-benchmark-agent-{job.id}"
+    return job.container_name or f"aico-benchmark-agent-{job.id}"
 
 
 def daemon_compose_command(*args: str, project: str | None = None) -> list[str]:
@@ -2173,26 +2173,26 @@ def daemon_compose_env(
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                 "http_proxy", "https_proxy", "all_proxy"):
         env.pop(key, None)
-    env["AIDEN_DAEMON_IMAGE"] = image
+    env["AICO_DAEMON_IMAGE"] = image
     bridge_enabled = bool(environment_bridge_endpoint) if environment_bridge_mode is None else bool(environment_bridge_mode)
-    env["AIDEN_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
+    env["AICO_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
     if host_port is not None:
         # Callers use 0 for auto-selection; start_daemon_compose resolves it
         # to a concrete free port before invoking Compose. Explicit positive
         # ports remain stable for local callers that need a predictable endpoint.
-        env["AIDEN_DAEMON_HOST_PORT"] = str(host_port)
+        env["AICO_DAEMON_HOST_PORT"] = str(host_port)
     if config_dir is not None:
-        env["AIDEN_CONFIG_DIR"] = str(config_dir.resolve())
-        env["AIDEN_BENCHMARK_TOKEN_FILE"] = "/config/control_token"
+        env["AICO_CONFIG_DIR"] = str(config_dir.resolve())
+        env["AICO_BENCHMARK_TOKEN_FILE"] = "/config/control_token"
     if environment_bridge_endpoint:
         env["ENVIRONMENT_BRIDGE_ENDPOINT"] = environment_bridge_endpoint
         no_proxy = docker_no_proxy(environment_bridge_endpoint)
         env["NO_PROXY"] = no_proxy
         env["no_proxy"] = no_proxy
     if benchmark_task_id:
-        env["AIDEN_BENCHMARK_TASK_ID"] = benchmark_task_id
+        env["AICO_BENCHMARK_TASK_ID"] = benchmark_task_id
     if device_type:
-        env["AIDEN_DEVICE_TYPE"] = device_type
+        env["AICO_DEVICE_TYPE"] = device_type
     return env
 
 
@@ -2531,9 +2531,9 @@ def _run_job_analysis_if_enabled(
         cfg.enabled = True
     if not cfg.enabled:
         return None
-    if not os.environ.get("AIDEN_BENCHMARK_ANALYSIS_MODEL") and job.judge_model:
+    if not os.environ.get("AICO_BENCHMARK_ANALYSIS_MODEL") and job.judge_model:
         cfg.model = job.judge_model or DEFAULT_JUDGE_MODEL
-    if not os.environ.get("AIDEN_BENCHMARK_ANALYSIS_BASE_URL"):
+    if not os.environ.get("AICO_BENCHMARK_ANALYSIS_BASE_URL"):
         cfg.base_url = job.judge_base_url or DEFAULT_JUDGE_BASE_URL
     if analysis_api_key:
         cfg.api_key_value = analysis_api_key
@@ -2544,7 +2544,7 @@ def _run_job_analysis_if_enabled(
 
 
 def _analysis_env_is_set() -> bool:
-    return bool(os.environ.get("AIDEN_BENCHMARK_LLM_ANALYSIS", "").strip())
+    return bool(os.environ.get("AICO_BENCHMARK_LLM_ANALYSIS", "").strip())
 
 
 def merged_job_report_rows(job: Job) -> list[dict[str, Any]]:
@@ -3195,7 +3195,7 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aiden Benchmark</title>
+  <title>Aico Benchmark</title>
   <style>
     :root {
       --bg: #f4f4f4;
@@ -3892,7 +3892,7 @@ INDEX_HTML = r"""<!doctype html>
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">A</div>
-      <div class="brand-title">Aiden Benchmark</div>
+      <div class="brand-title">Aico Benchmark</div>
     </div>
     <div id="headerStatus" class="header-meta">Idle</div>
   </header>
@@ -3923,7 +3923,7 @@ INDEX_HTML = r"""<!doctype html>
               <label class="check-label"><input id="judgeEnabled" type="checkbox" checked> Enable judge</label>
               <div class="field"><label for="judgeModel">Judge model</label><input id="judgeModel" autocomplete="off" placeholder="anthropic/claude-sonnet-4-6"></div>
               <div class="field"><label for="judgeBaseUrl">Base URL</label><input id="judgeBaseUrl" autocomplete="off" placeholder="https://openrouter.ai/api/v1"></div>
-              <div class="field"><label for="judgeApiKey">API key</label><input id="judgeApiKey" type="password" autocomplete="off" placeholder="AIDEN_BENCHMARK_JUDGE_API_KEY"></div>
+              <div class="field"><label for="judgeApiKey">API key</label><input id="judgeApiKey" type="password" autocomplete="off" placeholder="AICO_BENCHMARK_JUDGE_API_KEY"></div>
             </div>
           </div>
           <div class="run-actions">
@@ -4146,7 +4146,7 @@ INDEX_HTML = r"""<!doctype html>
       document.getElementById('judgeBaseUrl').value = String(judge.base_url || DEFAULT_JUDGE_BASE_URL);
       const keyInput = document.getElementById('judgeApiKey');
       keyInput.value = '';
-      keyInput.placeholder = judge.has_api_key ? 'Saved; leave blank to keep' : 'AIDEN_BENCHMARK_JUDGE_API_KEY';
+      keyInput.placeholder = judge.has_api_key ? 'Saved; leave blank to keep' : 'AICO_BENCHMARK_JUDGE_API_KEY';
       const metricsK = parseInt(settings.metrics_k, 10) || 1;
       document.getElementById('metricsK').value = metricsK;
       syncJudgePanel();
@@ -4770,8 +4770,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function mockEnvironment(){
       return {
-        id: 'mock-aiden-app',
-        name: 'Mock Aiden App environment',
+        id: 'mock-aico-app',
+        name: 'Mock Aico companion app environment',
         endpoint: '',
         type: 'mock',
         status: 'running'
@@ -4784,7 +4784,7 @@ INDEX_HTML = r"""<!doctype html>
       const mode = selectedSuiteEnvironmentMode();
       document.getElementById('selectedSuitesLabel').textContent = `${selectedSuites.size} suites`;
       const environmentLabel = mode === 'mock'
-        ? 'Mock Aiden App environment'
+        ? 'Mock Aico companion app environment'
         : mode === 'mixed'
           ? 'Mixed environments - run separately'
           : env ? env.name : 'No environment';
@@ -4976,7 +4976,7 @@ INDEX_HTML = r"""<!doctype html>
     function renderActiveJob(job){
       const activeLabel = document.getElementById('activeJobLabel');
       const runtimeLabel = job.environment_type === 'mock'
-        ? (job.environment_name || 'Mock Aiden App environment')
+        ? (job.environment_name || 'Mock Aico companion app environment')
         : job.agent_url;
       activeLabel.textContent = `${job.id} - ${runtimeLabel}`;
       const st = document.getElementById('activeJobStatus');

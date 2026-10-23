@@ -14,7 +14,7 @@ else
     OUTPUT_DIR=${DEFAULT_OUTPUT_DIR}
 fi
 readonly OUTPUT_DIR
-readonly BUILD_IMAGE=${DEBIAN_APPS_BUILD_IMAGE:-aiden-debian13-armhf-builder:apps}
+readonly BUILD_IMAGE=${DEBIAN_APPS_BUILD_IMAGE:-aico-debian13-armhf-builder:apps}
 readonly OPENCV_ARCHIVE=opencv-mobile-4.13.0.zip
 readonly OPENCV_URL=https://github.com/nihui/opencv-mobile/releases/download/v35/${OPENCV_ARCHIVE}
 readonly OPENCV_SHA256=9304482980b3e4ff1050a8527cdb5777fadf8c5dd9c1a8620170d23e252fb150

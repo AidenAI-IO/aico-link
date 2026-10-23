@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func newTTSProviderManagerFromConfig(cfg Config, logger *Logger) (*tts.ProviderManager, error) {

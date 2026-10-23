@@ -1,8 +1,8 @@
 package ble
 
 const (
-	BlueZBusName               = "org.bluez"
-	AidenManufacturerID uint16 = 0xffff
+	BlueZBusName                  = "org.bluez"
+	AicoLinkManufacturerID uint16 = 0xffff
 
 	WakeServiceUUID        = "a1de0001-7c4b-4f52-8d9a-6b4f6e6f7469"
 	WakeCharacteristicUUID = "a1de0002-7c4b-4f52-8d9a-6b4f6e6f7469"

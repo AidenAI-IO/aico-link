@@ -19,8 +19,8 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 	"golang.org/x/net/proxy"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (

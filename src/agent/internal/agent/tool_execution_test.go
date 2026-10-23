@@ -381,7 +381,7 @@ func TestExecuteToolCallBuiltInStringErrorToolsReturnStructuredErrors(t *testing
 		{
 			name:     "web search unconfigured",
 			tool:     &WebSearchTool{provider: "brave"},
-			input:    `{"query":"aiden"}`,
+			input:    `{"query":"aico"}`,
 			wantCode: CodeModuleUnavailable,
 		},
 		{

@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/logging"
 	"errors"
 	"fmt"
 	"math"
@@ -858,7 +858,7 @@ type ModelConfig struct {
 	ResponsesInclude []string `toml:"responses_include,omitempty"`
 	// Temperature is a pointer so nil (unset) is distinct from an explicit 0.0.
 	// Unset means the effective value is resolved at runtime from model metadata
-	// or left to providers whose defaults Aiden does not know (see
+	// or left to providers whose defaults Aico does not know (see
 	// applyModelTemperatureDefault). An explicit value, including 0, is always
 	// honored and sent to the provider.
 	Temperature       *float64 `toml:"temperature,omitempty"`
@@ -941,7 +941,7 @@ func loadConfigFromDir(configDir string, load configFileLoader) (Config, error) 
 }
 
 func resolveBundledSkillsDir() string {
-	if v := os.Getenv("AIDEN_BUNDLED_SKILLS_DIR"); v != "" {
+	if v := os.Getenv("AICO_BUNDLED_SKILLS_DIR"); v != "" {
 		return v
 	}
 	for _, dir := range bundledSkillsDirCandidates() {
@@ -953,7 +953,7 @@ func resolveBundledSkillsDir() string {
 }
 
 func bundledSkillsDirCandidates() []string {
-	return []string{"/usr/share/aiden/skills"}
+	return []string{"/usr/share/aico/skills"}
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -1074,7 +1074,7 @@ func applyModelTemperatureDefault(m *ModelConfig) {
 	}
 	// Some native providers recommend using each model's own default. If the
 	// model registry has no reliable value for one of those providers, omit
-	// temperature rather than substituting Aiden's cross-provider fallback. The
+	// temperature rather than substituting Aico's cross-provider fallback. The
 	// provider has already been resolved by applyRuntimeModelProviders, including
 	// named provider records.
 	if modelProviderUsesProviderTemperatureDefault(m.Provider) {

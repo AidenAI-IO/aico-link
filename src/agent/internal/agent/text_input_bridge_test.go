@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -465,7 +465,7 @@ func TestTextInputBridgeRestoresViaSharedPhoneBridgeRestorerAndSwitchesBack(t *t
 		t.Fatalf("quick_action calls=%v", quickAction.calls)
 	}
 	if len(keyboardText.calls) != 0 {
-		t.Fatalf("keyboard_text calls=%v, want no Aiden search input", keyboardText.calls)
+		t.Fatalf("keyboard_text calls=%v, want no Aico search input", keyboardText.calls)
 	}
 }
 

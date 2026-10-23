@@ -208,19 +208,19 @@ def test_prepare_run_config_renders_template(tmp_path: Path, monkeypatch):
         '\n'.join(
             [
                 '[model]',
-                'provider = "{{AIDEN_BENCHMARK_AGENT_PROVIDER}}"',
-                'model = "{{AIDEN_BENCHMARK_AGENT_MODEL}}"',
-                'base_url = "{{AIDEN_BENCHMARK_AGENT_BASE_URL}}"',
-                'api_key = "{{AIDEN_BENCHMARK_AGENT_API_KEY}}"',
+                'provider = "{{AICO_BENCHMARK_AGENT_PROVIDER}}"',
+                'model = "{{AICO_BENCHMARK_AGENT_MODEL}}"',
+                'base_url = "{{AICO_BENCHMARK_AGENT_BASE_URL}}"',
+                'api_key = "{{AICO_BENCHMARK_AGENT_API_KEY}}"',
                 'control = "{{CONTROL_TOKEN_FILE}}"',
             ]
         ),
         encoding="utf-8",
     )
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_PROVIDER", "openai")
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_MODEL", "gpt-test")
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_BASE_URL", "https://agent.example/v1")
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_API_KEY", "sk-test")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_PROVIDER", "openai")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_MODEL", "gpt-test")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_BASE_URL", "https://agent.example/v1")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_API_KEY", "sk-test")
 
     dest = tmp_path / "dest"
     webui.prepare_run_config(base, dest)
@@ -246,10 +246,10 @@ def test_prepare_run_config_ignores_legacy_agent_model_environment(tmp_path: Pat
         '\n'.join(
             [
                 '[model]',
-                'provider = "{{AIDEN_BENCHMARK_AGENT_PROVIDER}}"',
-                'model = "{{AIDEN_BENCHMARK_AGENT_MODEL}}"',
-                'base_url = "{{AIDEN_BENCHMARK_AGENT_BASE_URL}}"',
-                'api_key = "{{AIDEN_BENCHMARK_AGENT_API_KEY}}"',
+                'provider = "{{AICO_BENCHMARK_AGENT_PROVIDER}}"',
+                'model = "{{AICO_BENCHMARK_AGENT_MODEL}}"',
+                'base_url = "{{AICO_BENCHMARK_AGENT_BASE_URL}}"',
+                'api_key = "{{AICO_BENCHMARK_AGENT_API_KEY}}"',
             ]
         ),
         encoding="utf-8",
@@ -259,19 +259,19 @@ def test_prepare_run_config_ignores_legacy_agent_model_environment(tmp_path: Pat
         "MODEL_NAME": "legacy-model",
         "MODEL_BASE_URL": "https://legacy.example/v1",
         "MODEL_API_KEY": "legacy-key",
-        "AIDEN_MODEL": "legacy-aiden-model",
-        "AIDEN_MODEL_PROVIDER": "legacy-aiden-provider",
-        "AIDEN_MODEL_BASE_URL": "https://legacy-aiden.example/v1",
-        "AIDEN_MODEL_API_KEY": "legacy-aiden-key",
+        "AICO_MODEL": "legacy-aico-model",
+        "AICO_MODEL_PROVIDER": "legacy-aico-provider",
+        "AICO_MODEL_BASE_URL": "https://legacy-aico.example/v1",
+        "AICO_MODEL_API_KEY": "legacy-aico-key",
         "OPENAI_MODEL": "legacy-openai-model",
         "OPENROUTER_API_KEY": "legacy-openrouter-key",
     }.items():
         monkeypatch.setenv(name, value)
     for name in (
-        "AIDEN_BENCHMARK_AGENT_PROVIDER",
-        "AIDEN_BENCHMARK_AGENT_MODEL",
-        "AIDEN_BENCHMARK_AGENT_BASE_URL",
-        "AIDEN_BENCHMARK_AGENT_API_KEY",
+        "AICO_BENCHMARK_AGENT_PROVIDER",
+        "AICO_BENCHMARK_AGENT_MODEL",
+        "AICO_BENCHMARK_AGENT_BASE_URL",
+        "AICO_BENCHMARK_AGENT_API_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -292,12 +292,12 @@ def test_prepare_run_config_enables_ci_telemetry_only_when_requested(tmp_path: P
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     secret = 'sk-quote"back\\slash'
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", secret)
-    monkeypatch.delenv("AIDEN_BENCHMARK_TELEMETRY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_TELEMETRY", raising=False)
     webui.prepare_run_config(base, dest, agent_config_text=config_text)
     config = tomllib.loads((dest / "agent.toml").read_text())
     assert "advanced_settings" not in config
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_TELEMETRY", "1")
+    monkeypatch.setenv("AICO_BENCHMARK_TELEMETRY", "1")
     webui.prepare_run_config(base, dest, agent_config_text=config_text)
     config = tomllib.loads((dest / "agent.toml").read_text())
     telemetry = config["advanced_settings"]["runtime"]["telemetry"]
@@ -638,11 +638,11 @@ def test_webui_agent_config_persists_under_runs_dir(tmp_path: Path, monkeypatch)
     base = tmp_path / "base"
     base.mkdir()
     (base / "agent.toml.template").write_text(
-        '[model]\nprovider = "{{AIDEN_BENCHMARK_AGENT_PROVIDER}}"\nmodel = "{{AIDEN_BENCHMARK_AGENT_MODEL}}"\n',
+        '[model]\nprovider = "{{AICO_BENCHMARK_AGENT_PROVIDER}}"\nmodel = "{{AICO_BENCHMARK_AGENT_MODEL}}"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_PROVIDER", "openai")
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_MODEL", "gpt-test")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_PROVIDER", "openai")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_MODEL", "gpt-test")
     app = webui.BenchmarkWebApp(webui.WebUIConfig(runs_dir=tmp_path / "runs", base_config_dir=base))
 
     initial = app.get_agent_config()
@@ -843,7 +843,7 @@ def test_start_job_rejects_recovered_mobilegym_environment(tmp_path: Path, monke
         public_endpoint="http://127.0.0.1:19090",
         web_url="http://127.0.0.1:18173",
         status="stale",
-        container_name="aiden-mobilegym-env-mg-old",
+        container_name="aico-mobilegym-env-mg-old",
     )
     app.env_manager._environments[recovered.id] = recovered
     monkeypatch.setattr(webui, "read_environment_bridge_concurrency", lambda endpoint: 3)
@@ -1190,7 +1190,7 @@ def test_start_job_uses_mock_environment_without_device_endpoint(
     job = app.start_job({"suites": ["mock.json"], "no_judge": True})
 
     assert job["environment_type"] == "mock"
-    assert job["environment_name"] == "Mock Aiden App environment"
+    assert job["environment_name"] == "Mock Aico companion app environment"
     assert job["endpoint"] == ""
     assert job["environment_endpoint"] == ""
     assert job["agent_url"] == ""
@@ -1287,7 +1287,7 @@ def test_run_suite_passes_judge_model_and_api_key_env(tmp_path: Path, monkeypatc
     assert "--judge-base-url" in captured["cmd"]
     assert captured["cmd"][captured["cmd"].index("--judge-base-url") + 1] == "https://judge.example.com/v1"
     assert "--no-judge" not in captured["cmd"]
-    assert captured["env"]["AIDEN_BENCHMARK_JUDGE_API_KEY"] == "sk-judge-secret"
+    assert captured["env"]["AICO_BENCHMARK_JUDGE_API_KEY"] == "sk-judge-secret"
     assert "OPENROUTER_API_KEY" not in captured["env"]
 
 
@@ -1468,7 +1468,7 @@ def test_mobilegym_task_worker_uses_task_id_for_daemon_and_runner(tmp_path: Path
         suites=["suite.json"],
         environment_type="mobilegym",
         agent_url="http://127.0.0.1:18080",
-        container_name="aiden-benchmark-agent-job-test",
+        container_name="aico-benchmark-agent-job-test",
         config_dir=str(tmp_path / "runs" / "job-test" / "config"),
         raw_runs_dir=str(raw_runs_dir),
         state_file=str(tmp_path / "runs" / "job-test" / "state.json"),
@@ -1845,7 +1845,7 @@ def test_refresh_job_report_runs_llm_analysis_by_default_with_webui_judge_key(mo
         (run_dir_arg / "llm_analysis.md").write_text("中文分析", encoding="utf-8")
         return webui.AnalysisResult(ok=True, markdown_path=run_dir_arg / "llm_analysis.md")
 
-    monkeypatch.delenv("AIDEN_BENCHMARK_LLM_ANALYSIS", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_LLM_ANALYSIS", raising=False)
     monkeypatch.setattr(webui, "analyze_run", fake_analyze)
     with app._lock:
         app._webui_judge_api_key = "ui-judge-key"
@@ -1919,7 +1919,7 @@ def test_stop_job_marks_stopping_terminates_runner_and_removes_container(tmp_pat
         docker_endpoint="http://host.docker.internal:19090",
         suites=["suite.json"],
         status="running",
-        container_name="aiden-benchmark-agent-job-test",
+        container_name="aico-benchmark-agent-job-test",
         state_file=str(tmp_path / "runs" / "job-test" / "state.json"),
         runner_log=str(tmp_path / "runs" / "job-test" / "runner.log"),
     )
@@ -1943,7 +1943,7 @@ def test_stop_job_marks_stopping_terminates_runner_and_removes_container(tmp_pat
     assert stopped["status"] == "stopping"
     assert stopped["message"] == "stop requested"
     assert terminated == [proc]
-    assert stopped_projects == ["aiden-benchmark-agent-job-test"]
+    assert stopped_projects == ["aico-benchmark-agent-job-test"]
     assert json.loads(Path(job.state_file).read_text(encoding="utf-8"))["status"] == "stopping"
     assert "STOP requested" in Path(job.runner_log).read_text(encoding="utf-8")
 
@@ -1967,7 +1967,7 @@ def test_stop_task_worker_marks_stopping_and_terminates_only_that_worker(tmp_pat
         state_file=str(worker_dir / "suite-json-t1.state.json"),
         runner_log=str(worker_dir / "suite-json-t1.runner.log"),
         daemon_log=str(worker_dir / "suite-json-t1.daemon.log"),
-        container_name="aiden-benchmark-agent-job-test-suite-json-t1",
+        container_name="aico-benchmark-agent-job-test-suite-json-t1",
         run_id="job-test-suite-json-t1",
     )
     job = webui.Job(
@@ -2037,7 +2037,7 @@ def test_run_suite_tracks_runner_process_and_finishes_stopped(tmp_path: Path, mo
         suites=["suite.json"],
         status="running",
         agent_url="http://127.0.0.1:18080",
-        container_name="aiden-benchmark-agent-job-test",
+        container_name="aico-benchmark-agent-job-test",
         raw_runs_dir=str(raw_runs_dir),
         state_file=str(tmp_path / "runs" / "job-test" / "state.json"),
         runner_log=str(tmp_path / "runs" / "job-test" / "runner.log"),
@@ -2087,7 +2087,7 @@ def test_run_suite_tracks_runner_process_and_finishes_stopped(tmp_path: Path, mo
 
     assert app._job_runner_procs == {}
     assert terminated == [captured["proc"]]
-    assert stopped_projects == ["aiden-benchmark-agent-job-test"]
+    assert stopped_projects == ["aico-benchmark-agent-job-test"]
     assert job.suite_results[-1]["stopped"] is True
     assert json.loads(Path(job.state_file).read_text(encoding="utf-8"))["status"] == "stopped"
     if webui.os.name == "posix":
@@ -2125,7 +2125,7 @@ def test_ensure_docker_image_stops_cancelable_build(tmp_path: Path, monkeypatch)
 
     try:
         webui.ensure_docker_image(
-            "aiden-test:local",
+            "aico-test:local",
             True,
             tmp_path / "build.log",
             "mobilegym-base",
@@ -2161,11 +2161,11 @@ def test_ensure_daemon_image_uses_compose_build(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(webui.subprocess, "Popen", fake_popen)
 
-    webui.ensure_daemon_image("aiden-test-daemon:local", True, tmp_path / "build.log")
+    webui.ensure_daemon_image("aico-test-daemon:local", True, tmp_path / "build.log")
 
     assert captured["cmd"] == webui.daemon_compose_command("build", "daemon")
     assert captured["cwd"] == webui.BENCHMARK_DOCKER_DIR
-    assert captured["env"]["AIDEN_DAEMON_IMAGE"] == "aiden-test-daemon:local"
+    assert captured["env"]["AICO_DAEMON_IMAGE"] == "aico-test-daemon:local"
     if webui.os.name == "posix":
         assert captured["start_new_session"] is True
 
@@ -2237,7 +2237,7 @@ def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch):
         suites=["mobilegym_basic.json"],
         environment_type="device",
         agent_url="http://127.0.0.1:18080",
-        container_name="aiden-benchmark-agent-job-test",
+        container_name="aico-benchmark-agent-job-test",
         config_dir=str(tmp_path / "runs" / "job-test" / "config"),
         raw_runs_dir=str(tmp_path / "runs" / "job-test" / "raw"),
         state_file=str(tmp_path / "runs" / "job-test" / "state.json"),
@@ -2290,10 +2290,10 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
         "-d",
         "--force-recreate",
         "daemon",
-        project="aiden-benchmark-agent-test",
+        project="aico-benchmark-agent-test",
     )
     env = webui.daemon_compose_env(
-        image="aiden-agent-daemon:local",
+        image="aico-agent-daemon:local",
         host_port=18081,
         config_dir=config,
         environment_bridge_endpoint="http://host.docker.internal:18080",
@@ -2303,28 +2303,28 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
 
     assert cmd[:4] == ["docker", "compose", "-f", str(webui.AGENT_DAEMON_COMPOSE_FILE)]
     assert "-p" in cmd
-    assert "aiden-benchmark-agent-test" in cmd
+    assert "aico-benchmark-agent-test" in cmd
     assert cmd[-4:] == ["up", "-d", "--force-recreate", "daemon"]
-    assert env["AIDEN_DAEMON_IMAGE"] == "aiden-agent-daemon:local"
-    assert env["AIDEN_DAEMON_HOST_PORT"] == "18081"
-    assert env["AIDEN_CONFIG_DIR"] == str(config.resolve())
+    assert env["AICO_DAEMON_IMAGE"] == "aico-agent-daemon:local"
+    assert env["AICO_DAEMON_HOST_PORT"] == "18081"
+    assert env["AICO_CONFIG_DIR"] == str(config.resolve())
     assert env["ENVIRONMENT_BRIDGE_ENDPOINT"] == "http://host.docker.internal:18080"
-    assert env["AIDEN_BENCHMARK_TASK_ID"] == "suite.json:t1"
-    assert env["AIDEN_ENVIRONMENT_BRIDGE_MODE"] == "1"
-    assert env["AIDEN_DEVICE_TYPE"] == "android"
+    assert env["AICO_BENCHMARK_TASK_ID"] == "suite.json:t1"
+    assert env["AICO_ENVIRONMENT_BRIDGE_MODE"] == "1"
+    assert env["AICO_DEVICE_TYPE"] == "android"
     assert "host.docker.internal" in env["NO_PROXY"]
     compose_text = webui.AGENT_DAEMON_COMPOSE_FILE.read_text(encoding="utf-8")
     entrypoint_text = (webui.BENCHMARK_DOCKER_DIR / "agent-daemon-entrypoint.sh").read_text(
         encoding="utf-8"
     )
-    assert "AIDEN_ENVIRONMENT_BRIDGE_MODE: ${AIDEN_ENVIRONMENT_BRIDGE_MODE:-0}" in compose_text
-    assert "AIDEN_ENVIRONMENT_BRIDGE_TOOLS" not in compose_text
-    assert "AIDEN_BENCHMARK_TASK_ID" in compose_text
-    assert "AIDEN_DEVICE_TYPE" in compose_text
+    assert "AICO_ENVIRONMENT_BRIDGE_MODE: ${AICO_ENVIRONMENT_BRIDGE_MODE:-0}" in compose_text
+    assert "AICO_ENVIRONMENT_BRIDGE_TOOLS" not in compose_text
+    assert "AICO_BENCHMARK_TASK_ID" in compose_text
+    assert "AICO_DEVICE_TYPE" in compose_text
     assert "--environment-bridge-mode" in entrypoint_text
     assert '--environment-bridge-endpoint "$ENVIRONMENT_BRIDGE_ENDPOINT"' in entrypoint_text
     assert "environment-bridge-tools" not in entrypoint_text
-    assert '--device-type "$AIDEN_DEVICE_TYPE"' in entrypoint_text
+    assert '--device-type "$AICO_DEVICE_TYPE"' in entrypoint_text
 
 
 def test_start_daemon_compose_leaves_auto_host_port_for_docker(tmp_path: Path, monkeypatch):
@@ -2351,7 +2351,7 @@ def test_start_daemon_compose_leaves_auto_host_port_for_docker(tmp_path: Path, m
 
     container_id = webui.start_daemon_compose(
         job,
-        image="aiden-agent-daemon:test",
+        image="aico-agent-daemon:test",
         host_port=0,
         config_dir=tmp_path / "config",
         environment_bridge_endpoint="",
@@ -2359,7 +2359,7 @@ def test_start_daemon_compose_leaves_auto_host_port_for_docker(tmp_path: Path, m
     )
 
     assert container_id == "container-id"
-    assert captured["env"]["AIDEN_DAEMON_HOST_PORT"] == "0"
+    assert captured["env"]["AICO_DAEMON_HOST_PORT"] == "0"
     assert captured["command"][-1] == "daemon"
 
 
@@ -2369,7 +2369,7 @@ def test_build_mobilegym_environment_command_starts_preview_and_bridge(tmp_path:
 
     cmd = webui.build_mobilegym_environment_command(
         image=webui.DEFAULT_MOBILEGYM_IMAGE,
-        container_name="aiden-mobilegym-env-test",
+        container_name="aico-mobilegym-env-test",
         host_web_port=18173,
         host_bridge_port=19090,
         bridge_bind_host="127.0.0.1",
@@ -2378,7 +2378,7 @@ def test_build_mobilegym_environment_command_starts_preview_and_bridge(tmp_path:
     )
 
     assert cmd[:5] == ["docker", "run", "--rm", "-d", "--name"]
-    assert "aiden-mobilegym-env-test" in cmd
+    assert "aico-mobilegym-env-test" in cmd
     assert "127.0.0.1:18173:4173" in cmd
     assert "127.0.0.1:19090:9090" in cmd
     assert f"{benchmark_dir.resolve()}:/app/benchmark:ro" in cmd
@@ -2441,7 +2441,7 @@ def test_start_mobilegym_environment_returns_docker_reachable_endpoint(tmp_path:
     assert env["container_id"] == "container-id"
     assert env["parallel_envs"] == 2
     assert health_urls == [("http://127.0.0.1:19090/health", webui.DEFAULT_MOBILEGYM_READY_TIMEOUT_SEC)]
-    assert commands and "aiden-mobilegym-env-" in commands[0][5]
+    assert commands and "aico-mobilegym-env-" in commands[0][5]
     assert "127.0.0.1::4173" in commands[0]
     assert "127.0.0.1::9090" in commands[0]
     assert "--parallel-envs 2" in commands[0][-1]
@@ -2489,7 +2489,7 @@ def test_stop_mobilegym_environment_removes_container(tmp_path: Path, monkeypatc
         public_endpoint="http://127.0.0.1:19090",
         web_url="http://127.0.0.1:18173",
         status="running",
-        container_name="aiden-mobilegym-env-mg-test",
+        container_name="aico-mobilegym-env-mg-test",
         log_path=str(tmp_path / "env.log"),
     )
     app.env_manager._environments[env.id] = env
@@ -2509,7 +2509,7 @@ def test_stop_mobilegym_environment_removes_container(tmp_path: Path, monkeypatc
 
     assert stopped is not None
     assert stopped["status"] == "stopped"
-    assert removed == [["docker", "rm", "-f", "aiden-mobilegym-env-mg-test"]]
+    assert removed == [["docker", "rm", "-f", "aico-mobilegym-env-mg-test"]]
 
 
 def test_adb_android_environment_lifecycle(tmp_path: Path, monkeypatch):
@@ -2700,9 +2700,9 @@ def test_run_mock_suite_uses_auto_agent_setup_and_updates_task_records(
         id="job-mock",
         endpoint="",
         docker_endpoint="",
-        suites=["aiden_app/notes_entry_policy_v1.json"],
+        suites=["aico_app/notes_entry_policy_v1.json"],
         environment_type="mock",
-        environment_name="Mock Aiden App environment",
+        environment_name="Mock Aico companion app environment",
         config_dir=str(config_dir),
         raw_runs_dir=str(raw_runs_dir),
         state_file=str(job_dir / "state.json"),
@@ -2739,7 +2739,7 @@ def test_run_mock_suite_uses_auto_agent_setup_and_updates_task_records(
 
     monkeypatch.setattr(app, "_run_runner_process", fake_run_runner_process)
 
-    app._run_mock_suite(job, "aiden_app/notes_entry_policy_v1.json")
+    app._run_mock_suite(job, "aico_app/notes_entry_policy_v1.json")
 
     cmd = seen["cmd"]
     assert "--auto-agent-setup" in cmd
@@ -2783,7 +2783,7 @@ def test_run_job_mock_mode_uses_runner_platform_summary(
         docker_endpoint="",
         suites=suites,
         environment_type="mock",
-        environment_name="Mock Aiden App environment",
+        environment_name="Mock Aico companion app environment",
         config_dir=str(job_dir / "config"),
         raw_runs_dir=str(job_dir / "raw"),
         state_file=str(job_dir / "state.json"),
@@ -2831,7 +2831,7 @@ def test_run_job_mock_mode_uses_runner_platform_summary(
 
 
 def test_webui_html_exposes_mock_environment_run_mode():
-    assert "Mock Aiden App environment" in webui.INDEX_HTML
+    assert "Mock Aico companion app environment" in webui.INDEX_HTML
     assert "selectedSuiteEnvironmentMode" in webui.INDEX_HTML
     assert "Mock suites and external device suites must run in separate jobs" in webui.INDEX_HTML
 

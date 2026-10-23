@@ -13,7 +13,7 @@ import (
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -36,11 +36,11 @@ const (
 	blueZAgentManagerInterface   = "org.bluez.AgentManager1"
 	blueZAgentInterface          = "org.bluez.Agent1"
 
-	applicationPath   = dbus.ObjectPath("/com/aiden/ble")
-	wakeServicePath   = dbus.ObjectPath("/com/aiden/ble/service0")
-	wakeCharPath      = dbus.ObjectPath("/com/aiden/ble/service0/char0")
-	advertisementPath = dbus.ObjectPath("/com/aiden/ble/advertisement0")
-	agentPath         = dbus.ObjectPath("/com/aiden/ble/agent0")
+	applicationPath   = dbus.ObjectPath("/com/aico/ble")
+	wakeServicePath   = dbus.ObjectPath("/com/aico/ble/service0")
+	wakeCharPath      = dbus.ObjectPath("/com/aico/ble/service0/char0")
+	advertisementPath = dbus.ObjectPath("/com/aico/ble/advertisement0")
+	agentPath         = dbus.ObjectPath("/com/aico/ble/agent0")
 	blueZRootPath     = dbus.ObjectPath("/")
 )
 
@@ -119,7 +119,7 @@ type blueZBackend struct {
 
 func newBlueZBackend(service *Service, deviceName string, pairingWindow time.Duration) *blueZBackend {
 	if strings.TrimSpace(deviceName) == "" {
-		deviceName = "Aiden"
+		deviceName = "Aico Link"
 	}
 	if pairingWindow < 0 {
 		pairingWindow = 0
@@ -1165,7 +1165,7 @@ func (a *pairingAgent) authorize(method string, device dbus.ObjectPath) *dbus.Er
 		return nil
 	}
 	logging.Warnf("ble_service", "agent", "BLE pairing agent rejected method=%s device=%s", method, device)
-	return dbus.NewError("org.bluez.Error.Rejected", []any{"only the trusted iPhone may use Aiden BLE"})
+	return dbus.NewError("org.bluez.Error.Rejected", []any{"only the trusted iPhone may use Aico Link BLE"})
 }
 
 func variantDevicePath(options map[string]dbus.Variant) dbus.ObjectPath {

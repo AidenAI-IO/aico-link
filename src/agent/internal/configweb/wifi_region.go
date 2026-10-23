@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/wifiregion"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/wifiregion"
 )
 
 type wifiRegionDriver interface {

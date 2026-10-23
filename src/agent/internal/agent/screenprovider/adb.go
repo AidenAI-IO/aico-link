@@ -130,7 +130,7 @@ func (c *ADB) capture(format string, quality int) (*FrameMetadata, []byte, error
 }
 
 func (c *ADB) ADBPath() (string, error) {
-	if configured := strings.TrimSpace(os.Getenv("AIDEN_ADB_PATH")); configured != "" {
+	if configured := strings.TrimSpace(os.Getenv("AICO_ADB_PATH")); configured != "" {
 		return configured, nil
 	}
 	path, err := adbLookPath("adb")
@@ -141,7 +141,7 @@ func (c *ADB) ADBPath() (string, error) {
 }
 
 func configuredADBSerial() string {
-	for _, key := range []string{"AIDEN_ADB_SERIAL", "ANDROID_SERIAL"} {
+	for _, key := range []string{"AICO_ADB_SERIAL", "ANDROID_SERIAL"} {
 		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
 			return value
 		}
@@ -158,12 +158,12 @@ func SetAutoConfiguredSerial(serial string) error {
 	autoADBSerialMu.Lock()
 	defer autoADBSerialMu.Unlock()
 
-	current := strings.TrimSpace(os.Getenv("AIDEN_ADB_SERIAL"))
+	current := strings.TrimSpace(os.Getenv("AICO_ADB_SERIAL"))
 	if current != "" && current != autoADBSerial {
 		return nil
 	}
-	if err := os.Setenv("AIDEN_ADB_SERIAL", serial); err != nil {
-		return fmt.Errorf("set AIDEN_ADB_SERIAL: %w", err)
+	if err := os.Setenv("AICO_ADB_SERIAL", serial); err != nil {
+		return fmt.Errorf("set AICO_ADB_SERIAL: %w", err)
 	}
 	autoADBSerial = serial
 	return nil
@@ -181,8 +181,8 @@ func ClearAutoConfiguredSerial(serial string) {
 	if autoADBSerial != serial {
 		return
 	}
-	if strings.TrimSpace(os.Getenv("AIDEN_ADB_SERIAL")) == serial {
-		_ = os.Unsetenv("AIDEN_ADB_SERIAL")
+	if strings.TrimSpace(os.Getenv("AICO_ADB_SERIAL")) == serial {
+		_ = os.Unsetenv("AICO_ADB_SERIAL")
 	}
 	autoADBSerial = ""
 }
@@ -220,7 +220,7 @@ func (c *ADB) ResolveSerial(ctx context.Context, adbPath string) (string, error)
 		return "", fmt.Errorf("no connected adb device")
 	}
 	if len(connected) > 1 {
-		return "", fmt.Errorf("multiple adb devices connected; set AIDEN_ADB_SERIAL or ANDROID_SERIAL")
+		return "", fmt.Errorf("multiple adb devices connected; set AICO_ADB_SERIAL or ANDROID_SERIAL")
 	}
 
 	serial := connected[0]

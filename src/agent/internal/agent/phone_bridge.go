@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/ble"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1316,7 +1316,7 @@ func (pb *PhoneBridge) sendProxyWebSocketCommand(ctx context.Context, cmd Bridge
 
 // handleWebSocketProxy forwards WebSocket connection to remote agent in proxy mode.
 func (pb *PhoneBridge) handleWebSocketProxy(w http.ResponseWriter, r *http.Request) {
-	// Accept connection from aiden app
+	// Accept connection from the companion app
 	appConn, err := websocket.Accept(w, r, nil)
 	if err != nil {
 		if pb.logger != nil {

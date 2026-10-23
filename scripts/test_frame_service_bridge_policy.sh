@@ -2,9 +2,9 @@
 set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-debian_config="$repo_root/overlay-debian/etc/aiden_frame_service.conf"
-debian_start="$repo_root/overlay-debian/usr/lib/aiden/aiden-frame-start"
-sdk_source="$repo_root/src/aiden_sdk.cpp"
+debian_config="$repo_root/overlay-debian/etc/aico_frame_service.conf"
+debian_start="$repo_root/overlay-debian/usr/lib/aico/aico-frame-start"
+sdk_source="$repo_root/src/aico_sdk.cpp"
 frame_main="$repo_root/src/frame_service_main.cpp"
 frame_source="$repo_root/src/frame_camera_capture_source.cpp"
 

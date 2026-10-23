@@ -22,7 +22,7 @@ Allowing multiple processes to directly open `/dev/video0` can lead to resource 
 | --- | --- | --- |
 | Socket (development direct run) | `/tmp/frame_service.sock` | Default value in `frame_service_main.cpp` |
 | Socket (Debian service) | `/run/frame_service/frame_service.sock` | Default value in systemd configuration |
-| EDID | Bridge-aware | RK628D keeps its driver-provided 1080p60 EDID; TC358743 loads `/usr/share/aiden/edid/hdmi_1080p30_cta.hex` |
+| EDID | Bridge-aware | RK628D keeps its driver-provided 1080p60 EDID; TC358743 loads `/usr/share/aico/edid/hdmi_1080p30_cta.hex` |
 | Capture mode | `on_demand` | One fresh capture for each `latest_frame` / screenshot request |
 | Warm-up frames | Mode-aware | `6` with persistent STREAMON; `0` when streaming restarts per request |
 | Production ring usage | `0` | Health reports `ring_buffer_size=0`, `ring_buffer_used=0` |
@@ -34,7 +34,7 @@ Allowing multiple processes to directly open `/dev/video0` can lead to resource 
 Development mode:
 
 ```bash
-/usr/lib/aiden/frame_service --socket /tmp/frame_service.sock
+/usr/lib/aico/frame_service --socket /tmp/frame_service.sock
 ```
 
 The service initializes HDMI/V4L2 once, pauses the stream, and waits for a
@@ -43,11 +43,11 @@ capture request.
 Debian service:
 
 ```bash
-systemctl start aiden-frame.service
+systemctl start aico-frame.service
 ```
 
 The Debian service uses the same on-demand capture lifecycle.
-`FRAME_SERVICE_PIXEL_FORMAT` in `/etc/aiden_frame_service.conf` accepts `nv12`,
+`FRAME_SERVICE_PIXEL_FORMAT` in `/etc/aico_frame_service.conf` accepts `nv12`,
 `nv16`, `uyvy`, or `yuyv` and defaults to `nv12`. `FRAME_SERVICE_FPS` remains
 accepted for configuration compatibility but is ignored in on-demand mode.
 
@@ -99,7 +99,7 @@ the manager transitions to `RUNNING` without a systemd restart. `RUNNING` is
 published as soon as the source opens, not after the first frame is served:
 on-demand clients gate their first `latest_frame` on this state, so a service
 that waited for a capture before advancing would never receive one. Set an
-explicit path in `/etc/aiden_frame_service.conf` only when automatic discovery
+explicit path in `/etc/aico_frame_service.conf` only when automatic discovery
 is not suitable.
 
 For capture, frame_service defaults to V4L2 single-plane NV12. The capture
@@ -114,7 +114,7 @@ vendor-calculated horizontal and vertical alignment, synchronizes caches,
 and retains the channel between requests. JPEG requests share the encoder
 lock, including during background warm-up, so concurrent clients continue to
 use hardware. A size change recreates the channel. Set
-`FRAME_SERVICE_JPEG_ENCODER=software` in `/etc/aiden_frame_service.conf` to
+`FRAME_SERVICE_JPEG_ENCODER=software` in `/etc/aico_frame_service.conf` to
 disable hardware encoding. Unavailable encoders and transient failures retain
 software fallback and a retry cooldown. Optionally set
 `FRAME_SERVICE_VENC_CHANNEL` to a preferred channel from 0 through 63; on a
@@ -125,7 +125,7 @@ assembly assumes 32-byte kernel `struct page` objects, while Debian's
 `CONFIG_MEMCG` kernel uses 36 bytes. The Debian BSP build stages and rebuilds
 `mpp_vcodec.ko` and `rockit.ko` with conversions compiled against the configured
 kernel headers; it also disables the unused vendor internal MCU loader.
-The service checks both modules' read-only `aiden_page_size` parameters before
+The service checks both modules' read-only `aico_page_size` parameters before
 using VENC. An application-only upgrade on an older BSP logs
 `venc_kernel_abi_unsupported` and uses software until the platform modules are
 updated. This avoids the former `jpege_seek_bits` kernel fault and subsequent
@@ -233,7 +233,7 @@ Screenshot interpretation requires the model/provider to support image input. Te
 `frame_service` exclusively owns `/dev/video0` while running. To run `example_camera_capture`:
 
 ```bash
-systemctl stop aiden-frame.service
+systemctl stop aico-frame.service
 example_camera_capture
-systemctl start aiden-frame.service
+systemctl start aico-frame.service
 ```

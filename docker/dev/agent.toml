@@ -7,7 +7,7 @@ device_type = "iOS"
 
 [model_settings.model]
 provider = "fake"
-responses = ["Aiden Docker sandbox is running. Configure an LLM provider in Config Web to handle real tasks."]
+responses = ["Aico Docker sandbox is running. Configure an LLM provider in Config Web to handle real tasks."]
 
 [conversation_settings.search]
 provider = "duckduckgo"

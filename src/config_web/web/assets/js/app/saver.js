@@ -38,9 +38,8 @@ function handleSaveRequests(handler) {
   saveRequestHandler = handler;
   if (listening) return;
   listening = true;
-  window.addEventListener('aiden:save-request', () => {
-    if (saveRequestHandler) saveRequestHandler();
-  });
+  const onSaveRequest = () => { if (saveRequestHandler) saveRequestHandler(); };
+  window.addEventListener('aico:save-request', onSaveRequest);
 }
 
 /** Merge JSON-merge-patch objects, later keys winning. */
@@ -99,7 +98,7 @@ export function createSaver(context, options) {
     if (context.header) context.header({title: options.title, onBack: () => context.navigate(options.back), action});
     const apply = pending ? level() : APPLY_LIVE;
     postToHost({
-      type: 'aiden_config_save_state',
+      type: 'aico_config_save_state',
       title: resolve(options.title),
       dirty: pending || form,
       apply,

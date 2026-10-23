@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/mcu"
 )
 
 func main() {

@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace aiden {
+namespace aico {
 
 // Apply the persistent RK628 profile once before opening capture. Reading the
 // current EDID avoids an HPD pulse when a service restart keeps the same mode.
@@ -11,4 +11,4 @@ bool prepare_rk628_hdmi_mode(
     std::string* selected_edid,
     int (*ioctl_fn)(int, unsigned long, void*) = nullptr);
 
-}  // namespace aiden
+}  // namespace aico

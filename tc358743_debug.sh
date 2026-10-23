@@ -35,16 +35,16 @@ echo
 
 echo "6. 检查 frame_service 状态："
 if command -v systemctl >/dev/null 2>&1; then
-    systemctl status aiden-frame.service --no-pager 2>/dev/null || echo "  aiden-frame.service 未运行"
+    systemctl status aico-frame.service --no-pager 2>/dev/null || echo "  aico-frame.service 未运行"
 else
     echo "  未找到 systemctl"
 fi
 echo
 
 echo "7. 检查配置文件中的桥接芯片设置："
-if [ -f /etc/aiden_frame_service.conf ]; then
-    echo "  /etc/aiden_frame_service.conf:"
-    grep -E "SUBDEV|EDID|TRIGGER" /etc/aiden_frame_service.conf | sed 's/^/    /'
+if [ -f /etc/aico_frame_service.conf ]; then
+    echo "  /etc/aico_frame_service.conf:"
+    grep -E "SUBDEV|EDID|TRIGGER" /etc/aico_frame_service.conf | sed 's/^/    /'
 fi
 echo
 

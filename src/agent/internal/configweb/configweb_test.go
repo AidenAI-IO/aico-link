@@ -20,9 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/wifiproxy"
-	"aiden-agent/internal/wifiregion"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/wifiproxy"
+	"aico-agent/internal/wifiregion"
 )
 
 type fakeStorageController struct {
@@ -120,7 +120,7 @@ func testOptions(t *testing.T) Options {
 		USBSubnet:                 "127.0.0.0/8",
 		HardwareIDPath:            filepath.Join(root, "hardware-id"),
 		SystemctlBinary:           "/bin/true",
-		HybridUpdateService:       "aiden-hybrid-update.service",
+		HybridUpdateService:       "aico-hybrid-update.service",
 		HybridUpdateMarkerPath:    filepath.Join(root, "hybrid-update.pending"),
 		OTAUpdateLockPath:         filepath.Join(root, "ota.lock"),
 		OTAUpdateLogPath:          filepath.Join(root, "ota-update.log"),
@@ -506,7 +506,7 @@ func TestStorageManagerIgnoresRejectedStorageSettings(t *testing.T) {
 	options := testOptions(t)
 	// The manager publishes its state mirror from a background goroutine, so keep
 	// that file out of the test's TempDir: cleanup would otherwise race the write.
-	options.StorageStatePath = filepath.Join(os.TempDir(), "aiden-storage-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".state")
+	options.StorageStatePath = filepath.Join(os.TempDir(), "aico-storage-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".state")
 	defer os.Remove(options.StorageStatePath)
 	config := `[model_settings.model]
 provider = "fake"
@@ -954,8 +954,8 @@ func TestSystemdWiFiConnectionStartsWithCandidateConfig(t *testing.T) {
 	options.WiFiBackend = "systemd-networkd"
 	binDir := t.TempDir()
 	candidate := options.WiFiConfigPath + ".candidate"
-	t.Setenv("AIDEN_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
-	t.Setenv("AIDEN_TEST_WIFI_CANDIDATE", candidate)
+	t.Setenv("AICO_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
+	t.Setenv("AICO_TEST_WIFI_CANDIDATE", candidate)
 	commands := map[string]string{
 		"ip":         "#!/bin/sh\nexit 0\n",
 		"networkctl": "#!/bin/sh\nexit 0\n",
@@ -964,7 +964,7 @@ func TestSystemdWiFiConnectionStartsWithCandidateConfig(t *testing.T) {
 set -eu
 [ "${1:-}" = restart ]
 [ "${2:-}" = wpa_supplicant@wlan0.service ]
-/usr/bin/grep -Fqx "AIDEN_WPA_SUPPLICANT_CONFIG=\"$AIDEN_TEST_WIFI_CANDIDATE\"" "$AIDEN_TEST_WIFI_SELECTOR"
+/usr/bin/grep -Fqx "AICO_WPA_SUPPLICANT_CONFIG=\"$AICO_TEST_WIFI_CANDIDATE\"" "$AICO_TEST_WIFI_SELECTOR"
 `,
 	}
 	for name, script := range commands {
@@ -1000,15 +1000,15 @@ func TestConfigUpdatesAreSerialized(t *testing.T) {
 	fakeAgent := filepath.Join(t.TempDir(), "fake-agent")
 	guardDir := filepath.Join(t.TempDir(), "active")
 	overlapPath := filepath.Join(t.TempDir(), "overlap")
-	t.Setenv("AIDEN_TEST_CONFIG_GUARD", guardDir)
-	t.Setenv("AIDEN_TEST_CONFIG_OVERLAP", overlapPath)
+	t.Setenv("AICO_TEST_CONFIG_GUARD", guardDir)
+	t.Setenv("AICO_TEST_CONFIG_OVERLAP", overlapPath)
 	script := `#!/bin/sh
 cat >/dev/null
-if mkdir "$AIDEN_TEST_CONFIG_GUARD" 2>/dev/null; then
+if mkdir "$AICO_TEST_CONFIG_GUARD" 2>/dev/null; then
   /bin/sleep 0.15
-  rmdir "$AIDEN_TEST_CONFIG_GUARD"
+  rmdir "$AICO_TEST_CONFIG_GUARD"
 else
-  : > "$AIDEN_TEST_CONFIG_OVERLAP"
+  : > "$AICO_TEST_CONFIG_OVERLAP"
 fi
 printf '%s\n' '{"ok":true,"config":{},"changed_paths":[],"reboot_required":false,"persisted":true}'
 `
@@ -1104,7 +1104,7 @@ func TestAPIRouteHeaders(t *testing.T) {
 			if resp.Code != http.StatusOK {
 				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 			}
-			if got := resp.Header().Get("X-Aiden-API-Version"); got != "1" {
+			if got := resp.Header().Get("X-Aico-API-Version"); got != "1" {
 				t.Fatalf("API version header=%q", got)
 			}
 		})
@@ -1279,7 +1279,7 @@ func TestSystemEnvironmentRejectsVariablesDroppedByDebianGenerator(t *testing.T)
 }
 
 func TestSystemEnvironmentAllowsProviderCredentialsAndWiFiProxyBypass(t *testing.T) {
-	for _, key := range []string{"DASHSCOPE_API_KEY", "SPEKO_KEY", "VERTEX_TOKEN", "CUSTOM_SECRET", "AIDEN_WIFI_PROXY_ENABLED"} {
+	for _, key := range []string{"DASHSCOPE_API_KEY", "SPEKO_KEY", "VERTEX_TOKEN", "CUSTOM_SECRET", "AICO_WIFI_PROXY_ENABLED"} {
 		if !isAllowedSystemEnvKey(key) {
 			t.Fatalf("expected %s to be allowed", key)
 		}
@@ -1564,7 +1564,7 @@ func TestReadFileLimitedRejectsOversizedFiles(t *testing.T) {
 }
 
 func TestSystemEnvParserAndWiFiConfigDefaults(t *testing.T) {
-	assignments, err := parseSystemEnv("export HTTP_PROXY='http://proxy.example:8080'\nAIDEN_TEST=ok\n")
+	assignments, err := parseSystemEnv("export HTTP_PROXY='http://proxy.example:8080'\nAICO_TEST=ok\n")
 	if err != nil || len(assignments) != 2 || assignments[0].Value != "http://proxy.example:8080" {
 		t.Fatalf("parsed assignments=%#v err=%v", assignments, err)
 	}
@@ -1653,7 +1653,7 @@ func TestAgentCommandEnvironmentIgnoresStaleWiFiNoProxyWhenDisabled(t *testing.T
 		t.Setenv(key, "")
 	}
 	options := testOptions(t)
-	systemEnv := "HTTP_PROXY=http://proxy.example:8080\nAIDEN_WIFI_PROXY_ENABLED=0\n"
+	systemEnv := "HTTP_PROXY=http://proxy.example:8080\nAICO_WIFI_PROXY_ENABLED=0\n"
 	if err := os.WriteFile(options.SystemEnvPath, []byte(systemEnv), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -2021,8 +2021,8 @@ func TestFrameConfigRestartsOnlyFrameServiceAndRetriesFailures(t *testing.T) {
 		t.Fatal(err)
 	}
 	init := filepath.Join(dir, "frame-init")
-	t.Setenv("AIDEN_CONFIG_TEST_RESTART_MARKER", marker)
-	if err := os.WriteFile(init, []byte("#!/bin/sh\nprintf '%s' frame >\"$AIDEN_CONFIG_TEST_RESTART_MARKER\"\nexit 1\n"), 0755); err != nil {
+	t.Setenv("AICO_CONFIG_TEST_RESTART_MARKER", marker)
+	if err := os.WriteFile(init, []byte("#!/bin/sh\nprintf '%s' frame >\"$AICO_CONFIG_TEST_RESTART_MARKER\"\nexit 1\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	var reloads atomic.Int64
@@ -2048,7 +2048,7 @@ func TestFrameConfigRestartsOnlyFrameServiceAndRetriesFailures(t *testing.T) {
 	if failed.Code != http.StatusServiceUnavailable || reloads.Load() != 0 {
 		t.Fatalf("failed service restart was applied: %d %s", failed.Code, failed.Body.String())
 	}
-	if err := os.WriteFile(init, []byte("#!/bin/sh\nprintf '%s' frame >\"$AIDEN_CONFIG_TEST_RESTART_MARKER\"\n"), 0755); err != nil {
+	if err := os.WriteFile(init, []byte("#!/bin/sh\nprintf '%s' frame >\"$AICO_CONFIG_TEST_RESTART_MARKER\"\n"), 0755); err != nil {
 		t.Fatal(err)
 	}
 	// An unchanged retry still has to finish the failed frame restart.
@@ -2177,10 +2177,10 @@ func TestConfigPlanRunsDryRunAndReportsApplyLevel(t *testing.T) {
 	options := testOptions(t)
 	fakeAgent := filepath.Join(t.TempDir(), "fake-agent")
 	argsPath := filepath.Join(t.TempDir(), "args")
-	t.Setenv("AIDEN_TEST_CONFIG_ARGS", argsPath)
+	t.Setenv("AICO_TEST_CONFIG_ARGS", argsPath)
 	script := `#!/bin/sh
 cat >/dev/null
-printf '%s\n' "$@" > "$AIDEN_TEST_CONFIG_ARGS"
+printf '%s\n' "$@" > "$AICO_TEST_CONFIG_ARGS"
 printf '%s\n' '{"ok":true,"config":{},"changed_paths":["basic_settings.device.hid.keyboard_layout"],"reboot_required":true,"persisted":false,"apply":"reboot","apply_reasons":["keyboard_layout"]}'
 `
 	if err := os.WriteFile(fakeAgent, []byte(script), 0o755); err != nil {

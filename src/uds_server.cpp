@@ -8,7 +8,7 @@
 #include <utility>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 UdsServer::UdsServer(const char* socket_path, const Handler& handler)
     : socket_path_(socket_path ? socket_path : ""),
@@ -54,9 +54,9 @@ FrameServiceStatus UdsServer::start() {
     }
 
     // UNIX sockets inherit the process umask (0755 with Debian's default),
-    // which prevents the non-root Aiden user from reaching the service.  Set
+    // which prevents the non-root device user from reaching the service.  Set
     // the intended API mode explicitly; the systemd units provide the
-    // matching `aiden` group ownership.
+    // matching `aico` group ownership.
     if (::chmod(socket_path_.c_str(), S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP) != 0) {
         ::close(server_fd_);
         server_fd_ = -1;
@@ -157,4 +157,4 @@ void UdsServer::handle_client(int fd) {
     ::close(fd);
 }
 
-}  // namespace aiden
+}  // namespace aico

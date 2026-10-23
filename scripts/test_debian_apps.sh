@@ -25,8 +25,8 @@ for apps_script in "${apps_scripts[@]}"; do
     bash -n "${apps_script}"
 done
 
-grep -Fq 'aiden@192.168.76.153' "${APPS_DIR}/run-board-g0.sh"
-grep -Fq '/home/aiden/debian-apps-g0' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq 'aico@192.168.76.153' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/run-board-g0.sh"
 grep -Fq 'volatile sig_atomic_t quit' "${REPO_ROOT}/src/example_audio_capture.cpp"
 grep -Fq 'signal(SIGTERM, signal_handler)' "${REPO_ROOT}/src/example_audio_capture.cpp"
 
@@ -81,9 +81,9 @@ grep -Fq 'bin/ttyd' "${APPS_DIR}/prepare-board-g0.sh"
 if grep -Fq '${REPO_ROOT}/overlay/oem' "${APPS_DIR}/prepare-board-g0.sh"; then
     fail "Debian board bundle depends on the Buildroot OEM overlay"
 fi
-grep -Fq 'set(AIDEN_TARGET_PLATFORM "rv1106-debian-glibc"' \
+grep -Fq 'set(AICO_TARGET_PLATFORM "rv1106-debian-glibc"' \
     "${REPO_ROOT}/CMakeLists.txt"
-if sed -n '/set_property(CACHE AIDEN_TARGET_PLATFORM PROPERTY STRINGS/,/)/p' \
+if sed -n '/set_property(CACHE AICO_TARGET_PLATFORM PROPERTY STRINGS/,/)/p' \
     "${REPO_ROOT}/CMakeLists.txt" | grep -q buildroot; then
     fail "CMake still advertises Buildroot as a supported target platform"
 fi
@@ -302,7 +302,7 @@ case "${mode}" in
     if [[ "${file}" == */bin/* ]]; then
         runpath='$ORIGIN/../lib'
         if [ "${MOCK_BAD_RUNPATH:-0}" = 1 ]; then
-            runpath=/usr/lib/aiden/platform/lib
+            runpath=/usr/lib/aico/platform/lib
         fi
         printf ' 0x0000001d (RUNPATH) Library runpath: [%s]\n' "${runpath}"
     fi
@@ -351,7 +351,7 @@ case "${mode}" in
     symbols=(
         __ctype_b
         __ctype_tolower
-        aiden_rknn_glibc_compat_init
+        aico_rknn_glibc_compat_init
         rknn_create_mem
         rknn_destroy
         rknn_destroy_mem
@@ -417,7 +417,7 @@ bundle_dir=${TEST_ROOT}/bundle
 mkdir -p "${bundle_apps}/bin" "${bundle_apps}/lib" "${bundle_audit}"
 
 bundle_payload=(
-    bin/aiden-environment
+    bin/aico-environment
     bin/audio_service
     bin/audio_service_cli
     bin/audio_stream
@@ -515,7 +515,7 @@ SSH_BIN="${TEST_ROOT}/board-mock-bin/ssh" \
 SCP_BIN="${TEST_ROOT}/board-mock-bin/scp" \
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
-AIDEN_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
+AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
     "${APPS_DIR}/run-board-g0.sh" deploy >/dev/null
 grep -q '^scp' "${TEST_ROOT}/board-command-log"
 grep -q '^ssh' "${TEST_ROOT}/board-command-log"
@@ -549,10 +549,10 @@ fi
 
 BOARD_COMMAND_LOG="${TEST_ROOT}/board-command-log" \
 SSH_BIN="${TEST_ROOT}/board-mock-bin/ssh" \
-AIDEN_G0_ALLOW_STRESS=1 \
-AIDEN_G0_STRESS_SECONDS=7200 \
+AICO_G0_ALLOW_STRESS=1 \
+AICO_G0_STRESS_SECONDS=7200 \
     "${APPS_DIR}/run-board-g0.sh" stress >/dev/null
-grep -q 'AIDEN_G0_STRESS_SECONDS=7200' "${TEST_ROOT}/board-command-log"
+grep -q 'AICO_G0_STRESS_SECONDS=7200' "${TEST_ROOT}/board-command-log"
 grep -q $'\tstress$' "${TEST_ROOT}/board-command-log"
 
 remote_bundle=${TEST_ROOT}/remote-bundle
@@ -591,11 +591,11 @@ chmod +x "${remote_bundle}/bin/"*
         xargs -0 sha256sum >MANIFEST.sha256
 )
 stress_log=${TEST_ROOT}/stress-run.log
-if ! AIDEN_G0_DEVICE_ROOT="${remote_bundle}/dev" \
-    AIDEN_G0_RESULTS_DIR="${remote_bundle}/results" \
-    AIDEN_G0_STRESS_SECONDS=2 \
-    AIDEN_G0_STRESS_RKNN_FRAMES=1 \
-    AIDEN_G0_STRESS_SAMPLE_SECONDS=1 \
+if ! AICO_G0_DEVICE_ROOT="${remote_bundle}/dev" \
+    AICO_G0_RESULTS_DIR="${remote_bundle}/results" \
+    AICO_G0_STRESS_SECONDS=2 \
+    AICO_G0_STRESS_RKNN_FRAMES=1 \
+    AICO_G0_STRESS_SAMPLE_SECONDS=1 \
         "${remote_bundle}/board-g0-remote.sh" stress >"${stress_log}" 2>&1; then
     # board-g0-remote.sh routes its own stdout and stderr through tee, so its
     # failure message arrives here rather than on this script's stderr.

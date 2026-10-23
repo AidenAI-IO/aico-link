@@ -1,10 +1,10 @@
 #pragma once
 
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "frame_capture_manager.h"
 #include <string>
 
-namespace aiden {
+namespace aico {
 
 class FrameCameraCaptureSource : public FrameCaptureSource {
 public:
@@ -38,4 +38,4 @@ private:
     CameraCapture camera_;
 };
 
-}  // namespace aiden
+}  // namespace aico

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/mcu"
 )
 
 type testClock struct {

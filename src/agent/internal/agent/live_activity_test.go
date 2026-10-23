@@ -261,8 +261,8 @@ func TestLiveActivityManagerNeedsAppWhenBridgeUnavailable(t *testing.T) {
 	if state == nil || state.Status != LiveActivityStatusNeedsApp || state.Phase != LiveActivityPhaseWaitingApp || !state.RequiresApp {
 		t.Fatalf("bridge unavailable state = %#v, want needs_app", state)
 	}
-	if state.CurrentStep != "Open Aiden to continue" || state.ShowsProgress {
-		t.Fatalf("bridge unavailable display = %#v, want open Aiden without progress", state)
+	if state.CurrentStep != "Open the companion app to continue" || state.ShowsProgress {
+		t.Fatalf("bridge unavailable display = %#v, want open companion app without progress", state)
 	}
 }
 

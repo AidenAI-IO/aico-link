@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 
 	"github.com/gorilla/websocket"
 )
@@ -69,14 +69,14 @@ func classifyTransportError(err error) error {
 	return fmt.Errorf("%w: %w", ErrSessionIdleTimeout, err)
 }
 
-// DeviceMediaConfig is the PCM contract between Aiden's audio device and the
+// DeviceMediaConfig is the PCM contract between Aico Link's audio device and the
 // managed realtime session. Provider-native formats stay behind this seam.
 type DeviceMediaConfig struct {
 	Input  AudioFormat
 	Output AudioFormat
 }
 
-// Conversation is Aiden's provider-neutral realtime session plus the optional
+// Conversation is Aico's provider-neutral realtime session plus the optional
 // operations actually implemented by the selected provider. Optional fields
 // remain nil when unavailable so callers cannot mistake a forwarding shim for
 // real protocol support.
@@ -90,7 +90,7 @@ type Conversation struct {
 	ContextReplayer                ContextReplayer
 }
 
-// Open constructs the selected provider adapter and wraps it with Aiden's
+// Open constructs the selected provider adapter and wraps it with Aico's
 // media and capability normalization.
 func (r *ProviderRegistry) Open(
 	ctx context.Context,

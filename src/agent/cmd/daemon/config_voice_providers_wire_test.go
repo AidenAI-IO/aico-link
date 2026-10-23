@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // Voice provider records must reach the wire, but their credentials are

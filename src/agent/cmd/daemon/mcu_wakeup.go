@@ -11,12 +11,12 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/mcu"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/mcu"
 )
 
 const (
-	defaultMCUVoiceCursorPath = "/run/aiden/agent-mcu-wakeup.json"
+	defaultMCUVoiceCursorPath = "/run/aico/agent-mcu-wakeup.json"
 	mcuVoiceWakeupMaxAge      = 30 * time.Second
 )
 

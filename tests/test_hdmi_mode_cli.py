@@ -13,7 +13,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 LOADER = importlib.machinery.SourceFileLoader(
-    "hdmi_mode", str(ROOT / "overlay-debian/usr/lib/aiden/aiden-hdmi-mode"))
+    "hdmi_mode", str(ROOT / "overlay-debian/usr/lib/aico/aico-hdmi-mode"))
 SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
 CLI = importlib.util.module_from_spec(SPEC)
 LOADER.exec_module(CLI)
@@ -25,7 +25,7 @@ class HdmiModeTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.patch("MODE_FILE", self.root / "system/hdmi-mode")
-        self.patch("EDID_DIR", ROOT / "overlay-debian/usr/share/aiden/hdmi")
+        self.patch("EDID_DIR", ROOT / "overlay-debian/usr/share/aico/hdmi")
 
     def patch(self, name, value):
         patch = mock.patch.object(CLI, name, value)
@@ -39,11 +39,11 @@ class HdmiModeTests(unittest.TestCase):
         config = importlib.util.module_from_spec(spec)
         loader.exec_module(config)
         inventory = config.inventory()
-        for name in ("usr/lib/aiden/aiden-hdmi-mode",
-                     "usr/share/aiden/hdmi/hdmi_1080p30_cta.hex",
-                     "usr/share/aiden/hdmi/hdmi_1080p60_cta.hex"):
+        for name in ("usr/lib/aico/aico-hdmi-mode",
+                     "usr/share/aico/hdmi/hdmi_1080p30_cta.hex",
+                     "usr/share/aico/hdmi/hdmi_1080p60_cta.hex"):
             self.assertEqual(inventory[name]["activation"], "live")
-        self.assertEqual(inventory["usr/lib/aiden/aiden-hdmi-mode"]["mode"], "0755")
+        self.assertEqual(inventory["usr/lib/aico/aico-hdmi-mode"]["mode"], "0755")
 
     def test_default_and_persistent_switches(self):
         self.assertEqual(CLI.read_mode(), ("1080p60", "default"))
@@ -79,12 +79,12 @@ class HdmiModeTests(unittest.TestCase):
         with tempfile.TemporaryFile() as lock, \
                 mock.patch("builtins.open", return_value=lock), \
                 mock.patch.object(CLI.os, "geteuid", return_value=0), \
-                mock.patch.object(CLI.sys, "argv", ["aiden-hdmi-mode", "1080p30"]), \
+                mock.patch.object(CLI.sys, "argv", ["aico-hdmi-mode", "1080p30"]), \
                 mock.patch.object(CLI.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)) as run, \
                 contextlib.redirect_stderr(io.StringIO()) as errors:
             self.assertEqual(CLI.main(), 1)
         self.assertEqual(CLI.read_mode(), ("1080p30", "saved"))
-        run.assert_called_once_with(["systemctl", "restart", "aiden-frame.service"], check=False)
+        run.assert_called_once_with(["systemctl", "restart", "aico-frame.service"], check=False)
         self.assertIn("capture restart failed", errors.getvalue())
 
 

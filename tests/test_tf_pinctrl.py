@@ -94,7 +94,7 @@ int main(void)
     return 0;
 }
 """
-    with tempfile.TemporaryDirectory(prefix="aiden-tf-pinctrl-") as temporary:
+    with tempfile.TemporaryDirectory(prefix="aico-tf-pinctrl-") as temporary:
         work = Path(temporary)
         program = work / "pinctrl.c"
         executable = work / "pinctrl"

@@ -178,7 +178,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 	"web_search": {
 		Category:     "web",
 		InputMode:    toolInputModeText,
-		ExampleInput: `{"query":"Aiden hardware agent"}`,
+		ExampleInput: `{"query":"Aico Link AI agent"}`,
 	},
 	"wikipedia": {
 		Category:     "web",

@@ -105,25 +105,25 @@ def cli(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_run = sub.add_parser("run")
     p_run.add_argument("--suite", required=True)
-    p_run.add_argument("--agent-url", default=os.environ.get("AIDEN_AGENT_URL", "http://localhost:8080"))
-    p_run.add_argument("--environment-url", default=os.environ.get("AIDEN_ENVIRONMENT_URL", ""),
+    p_run.add_argument("--agent-url", default=os.environ.get("AICO_AGENT_URL", "http://localhost:8080"))
+    p_run.add_argument("--environment-url", default=os.environ.get("AICO_ENVIRONMENT_URL", ""),
                        help="Optional environment bridge endpoint; when set, each task calls /api/setup, POST /api/providers/screenshot, and /api/release")
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
     p_run.add_argument("--max-concurrency", type=int, default=0,
                        help="Cap auto-agent-setup worker concurrency; 0 means no explicit cap")
-    p_run.add_argument("--daemon-image", default=os.environ.get("AIDEN_DAEMON_IMAGE", "aiden-agent-daemon:local"))
+    p_run.add_argument("--daemon-image", default=os.environ.get("AICO_DAEMON_IMAGE", "aico-agent-daemon:local"))
     p_run.add_argument("--no-build-daemon-image", action="store_true")
     p_run.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
     p_run.add_argument("--agent-config", default="")
     p_run.add_argument("--benchmark-token-file", default="")
     p_run.add_argument(
         "--judge-model",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
     )
     p_run.add_argument(
         "--judge-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
         help="OpenAI-compatible base URL for judge requests",
     )
     p_run.add_argument("--agent-model", default=os.environ.get(BENCHMARK_AGENT_MODEL_ENV, ""))
@@ -141,7 +141,7 @@ def cli(argv: list[str] | None = None) -> int:
                        help="Optional run directory name under --out")
     p_run.add_argument("--benchmark-task-id", default="",
                        help="Task routing id to use for environment setup, providers/screenshot, and release")
-    p_run.add_argument("--target-platform", default=os.environ.get("AIDEN_BENCHMARK_TARGET_PLATFORM", "auto"),
+    p_run.add_argument("--target-platform", default=os.environ.get("AICO_BENCHMARK_TARGET_PLATFORM", "auto"),
                        choices=["auto", "ios", "android", "mac", "windows", "linux"],
                        help="Filter suite tasks by platform; auto resolves platform from environment bridge health")
     p_run.add_argument("--skip-clock-wait", action="store_true")
@@ -153,27 +153,27 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--llm-analysis", action="store_true", help="Run post-run LLM RCA analysis")
     p_run.add_argument(
         "--analysis-model",
-        default=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_MODEL"),
+        default=os.environ.get("AICO_BENCHMARK_ANALYSIS_MODEL"),
     )
     p_run.add_argument(
         "--analysis-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_BASE_URL"),
+        default=os.environ.get("AICO_BENCHMARK_ANALYSIS_BASE_URL"),
         help="OpenAI-compatible base URL for post-run LLM analysis; defaults to judge base URL",
     )
     p_run.add_argument(
         "--analysis-max-log-bytes",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", 64 * 1024),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", 64 * 1024),
     )
     p_run.add_argument(
         "--analysis-max-code-bytes",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", 128 * 1024),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", 128 * 1024),
     )
     p_run.add_argument(
         "--analysis-timeout-sec",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", 180),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", 180),
     )
     p_run.add_argument("--verbose", "-v", action="store_true",
                        help="Show detailed rubric results for each task")
@@ -181,17 +181,17 @@ def cli(argv: list[str] | None = None) -> int:
     p_rejudge.add_argument("--run-dir", required=True)
     p_rejudge.add_argument(
         "--judge-model",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
     )
     p_rejudge.add_argument(
         "--judge-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
     )
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("--runs", nargs=2, required=True)
     p_publish = sub.add_parser("publish-langfuse")
     p_publish.add_argument("--run-dir", required=True)
-    p_publish.add_argument("--dataset-prefix", default="aiden-benchmark")
+    p_publish.add_argument("--dataset-prefix", default="aico-benchmark")
     p_webui = sub.add_parser("webui")
     p_webui.add_argument("--host", default="127.0.0.1")
     p_webui.add_argument("--port", type=int, default=8765)
@@ -199,8 +199,8 @@ def cli(argv: list[str] | None = None) -> int:
     p_webui.add_argument("--runs-dir", default=str(REPO_ROOT / "benchmark" / "runs" / "webui"))
     p_webui.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
     p_webui.add_argument("--agent-config", default="")
-    p_webui.add_argument("--daemon-image", default="aiden-agent-daemon:local")
-    p_webui.add_argument("--mobilegym-image", default="aiden-mobilegym-simulator:py311")
+    p_webui.add_argument("--daemon-image", default="aico-agent-daemon:local")
+    p_webui.add_argument("--mobilegym-image", default="aico-mobilegym-simulator:py311")
     p_webui.add_argument("--no-build-daemon-image", action="store_true")
     p_webui.add_argument("--no-build-mobilegym-image", action="store_true")
     from runner.services import add_service_parsers
@@ -726,7 +726,7 @@ def _cmd_run_auto_agent_setup_inner(
             suites=[str(suite.source_path)],
             environment_endpoint=args.environment_url.rstrip("/") if args.environment_url else "",
             agent_url=agent_url,
-            container_name=f"aiden-benchmark-agent-{run_id}-{token}",
+            container_name=f"aico-benchmark-agent-{run_id}-{token}",
             config_dir=str(config_dir),
             runner_log=str(runner_log),
             daemon_log=str(daemon_log),
@@ -1200,7 +1200,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             max_log_bytes=args.analysis_max_log_bytes,
             max_code_bytes=args.analysis_max_code_bytes,
             timeout_sec=args.analysis_timeout_sec,
-            api_key_env=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
+            api_key_env=os.environ.get("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
         ))
         if not analysis_result.ok:
             print(

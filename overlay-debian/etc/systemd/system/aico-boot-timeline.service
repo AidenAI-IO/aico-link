@@ -1,0 +1,14 @@
+[Unit]
+Description=Capture and archive the Aico Link systemd boot timeline
+Wants=aico.target
+Requires=aico-boot-timeline-init.service
+After=aico.target aico-boot-timeline-init.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-boot-timeline finalize-systemd
+RemainAfterExit=yes
+TimeoutStartSec=15s
+
+[Install]
+WantedBy=multi-user.target

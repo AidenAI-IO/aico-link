@@ -12,7 +12,7 @@ on:
   workflow_call:
     inputs:
       runner:
-        description: 'Runner to execute the build on (runs-on value)'
+        description: 'Runner to execute the build on (Aico runner alias or runs-on value)'
         type: string
         required: true
       dry_run:
@@ -50,13 +50,15 @@ jobs:
     # never execute pull request code on one. scripts/test_github_actions_self_hosted_safety.sh
     # enforces that a job with a dynamic runs-on carries this expression. The
     # first arm keeps non-self-hosted (hosted) fallback runners running.
-    if: ${{ (inputs.runner != 'self-hosted' && !startsWith(inputs.runner, 'aiden-hosted-')) || (startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target') }}
-    runs-on: ${{ inputs.runner }}
+    if: ${{ (inputs.runner != 'self-hosted' && !startsWith(inputs.runner, 'aico-hosted-') && !startsWith(inputs.runner, 'aiden-hosted-')) || (startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target') }}
+    # Keep canonical workflow inputs independent of the runners' external labels.
+    # Repository variables can switch registrations after the runners are renamed.
+    runs-on: ${{ inputs.runner == 'aico-hosted-01' && (vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-01') || inputs.runner == 'aico-hosted-02' && (vars.AICO_RUNNER_BACKUP || 'aiden-hosted-02') || inputs.runner }}
     timeout-minutes: 300
 
     steps:
     - name: Reclaim workspace ownership
-      if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aiden-hosted-') }}
+      if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aico-hosted-') || startsWith(inputs.runner, 'aiden-hosted-') }}
       # The system stage assembles images in privileged containers, so output/ and
       # pico-sdk build outputs can be owned by root. actions/checkout's clean phase
       # now cleans the tracked SDK tree too and would fail with EACCES,
@@ -86,7 +88,7 @@ jobs:
         done
 
     - name: Remove legacy pico-sdk Git metadata
-      if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aiden-hosted-') }}
+      if: ${{ inputs.runner == 'self-hosted' || startsWith(inputs.runner, 'aico-hosted-') || startsWith(inputs.runner, 'aiden-hosted-') }}
       # Runners may still have the former submodule checkout. Remove it before
       # checkout replaces the gitlink with the SDK files tracked in this repository.
       # An ordinary SDK directory has no nested Git metadata and is left for
@@ -180,7 +182,7 @@ jobs:
     - name: Install hosted runner prerequisites
       # The Debian build host preflight below requires these; the dedicated
       # self-hosted runners already provide them.
-      if: ${{ inputs.runner != 'self-hosted' && !startsWith(inputs.runner, 'aiden-hosted-') }}
+      if: ${{ inputs.runner != 'self-hosted' && !startsWith(inputs.runner, 'aico-hosted-') && !startsWith(inputs.runner, 'aiden-hosted-') }}
       shell: bash
       run: |
         set -euo pipefail
@@ -349,7 +351,7 @@ jobs:
       shell: bash
       run: |
         set -euo pipefail
-        cache="$HOME/aiden-ci"
+        cache="$HOME/aico-ci"
         # Everything the apps stage caches defaults into the workspace, which
         # actions/checkout wipes with `git clean -ffdx` before every run. Point
         # the caches at the runner's home so they actually survive. On a hosted
@@ -400,7 +402,7 @@ jobs:
     - name: Verify production ARM build in the pinned test image
       if: ${{ !inputs.dry_run && inputs.release_plan_artifact == '' }}
       env:
-        AIDEN_TEST_IMAGE: aiden-firmware-test:build-${{ github.run_id }}
+        AICO_TEST_IMAGE: aico-link-firmware-test:build-${{ github.run_id }}
       run: bash scripts/run_tests_in_docker.sh --production --suite production-cross-smoke
 
     - name: Upload production smoke summary

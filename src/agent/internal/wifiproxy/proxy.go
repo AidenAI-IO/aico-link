@@ -21,8 +21,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/netproxy"
 	xproxy "golang.org/x/net/proxy"
 )
 
@@ -450,7 +450,7 @@ func (s *Server) writeLocalProxyEnvironment() error {
 		noProxyFlag = "1"
 	}
 	contents := []byte(fmt.Sprintf(
-		"HTTP_PROXY=%s://%s\nHTTPS_PROXY=%s://%s\nALL_PROXY=%s://%s\nhttp_proxy=%s://%s\nhttps_proxy=%s://%s\nall_proxy=%s://%s\nNO_PROXY=%s\nno_proxy=%s\nAIDEN_WIFI_PROXY_NO_PROXY_SET=%s\n",
+		"HTTP_PROXY=%s://%s\nHTTPS_PROXY=%s://%s\nALL_PROXY=%s://%s\nhttp_proxy=%s://%s\nhttps_proxy=%s://%s\nall_proxy=%s://%s\nNO_PROXY=%s\nno_proxy=%s\nAICO_WIFI_PROXY_NO_PROXY_SET=%s\n",
 		httpScheme, address, httpsScheme, address, allScheme, address,
 		httpScheme, address, httpsScheme, address, allScheme, address,
 		shellQuote(normalizedNoProxy), shellQuote(normalizedNoProxy), noProxyFlag,

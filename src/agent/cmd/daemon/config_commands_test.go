@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/configupdate"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/configupdate"
 )
 
 func TestRunConfigUpdateIODelegatesToService(t *testing.T) {

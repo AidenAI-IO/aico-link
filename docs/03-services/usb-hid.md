@@ -5,7 +5,7 @@ sidebar_position: 7
 # USB HID and Device Control
 
 The project configures the Luckfox Pico Zero's USB-C port through the Linux USB
-gadget framework. `aiden-usb-gadget.service` creates a composite gadget with
+gadget framework. `aico-usb-gadget.service` creates a composite gadget with
 keyboard HID, pointer/touch HID, Consumer Control, and CDC ECM networking; the
 HID nodes are used to simulate keyboard, mouse, and touch input.
 
@@ -14,14 +14,14 @@ HID nodes are used to simulate keyboard, mouse, and touch input.
 The Debian firmware owns gadget startup through systemd:
 
 ```bash
-systemctl status aiden-usb-gadget.service --no-pager
-systemctl restart aiden-usb-gadget.service
+systemctl status aico-usb-gadget.service --no-pager
+systemctl restart aico-usb-gadget.service
 ```
 
 The unit executes the Debian rootfs helper directly:
 
 ```bash
-/usr/lib/aiden/aiden-usb-gadget start
+/usr/lib/aico/aico-usb-gadget start
 ```
 
 It will:
@@ -31,7 +31,7 @@ It will:
 3. Load the `libcomposite` module;
 4. Create and bind the composite gadget.
 
-`aiden-usb-gadget.service` is the authoritative production startup path. It also
+`aico-usb-gadget.service` is the authoritative production startup path. It also
 brings up `usb0` at `192.168.42.1` for the config page and local USB networking.
 The completed keyboard + pointer + Consumer Control + ECM composite is bound to
 the UDC exactly once. Do not add a same-identity startup unbind/rebind: while the
@@ -207,7 +207,7 @@ releases. The former one-call `type:"drag"` gesture is no longer supported.
 
 It is recommended to use normalized coordinates (`0..1000`, with center at `500,500`) to avoid click position shifts due to display resolution changes.
 For dense targets such as small buttons, list items, and input boxes, prioritize estimating the normalized coordinates of the target center. After successful input tool execution, a post-action screenshot is returned; screen changes should be confirmed before proceeding to avoid duplicate clicks.
-`keyboard_layout` must match how the phone interprets the external USB HID keyboard. Supported values are `qwerty` (default), `azerty`, and `qwertz`. The visible soft-keyboard layout is not authoritative: a phone can display an AZERTY soft keyboard while still interpreting Aiden's USB HID reports as QWERTY. Both `keyboard_text` and standard text-like keys in `keyboard_tap` use this mapping. The mapping itself is loaded by the Agent and does not change USB descriptors, but Config Web requires a board restart after saving so the host starts a clean USB session.
+`keyboard_layout` must match how the phone interprets the external USB HID keyboard. Supported values are `qwerty` (default), `azerty`, and `qwertz`. The visible soft-keyboard layout is not authoritative: a phone can display an AZERTY soft keyboard while still interpreting Aico's USB HID reports as QWERTY. Both `keyboard_text` and standard text-like keys in `keyboard_tap` use this mapping. The mapping itself is loaded by the Agent and does not change USB descriptors, but Config Web requires a board restart after saving so the host starts a clean USB session.
 
 Select the matching layout under `[advanced_settings.hardware.hid]` in Config Web (`qwerty`, `azerty`, or `qwertz`). Most users keep the default `qwerty`; only change it if typed characters come out transposed (for example "shape" becomes "shqpe").
 
@@ -228,7 +228,7 @@ keyboard and pointer are advertised by the same USB composite. Plain key input
 may work while shortcuts such as `Cmd+A` or `Cmd+V` are ignored.
 
 When `[basic_settings.device].device_type` derives `pointer_mode = "absolute"`, firmware builds that include
-`/usr/lib/aiden/aiden-dynamic-keyboard` automatically isolate keyboard actions
+`/usr/lib/aico/aico-dynamic-keyboard` automatically isolate keyboard actions
 whose HID reports contain Ctrl, Shift, Option/Alt, or Cmd/Meta. This includes
 `keyboard_text` values containing uppercase letters or symbols that require
 Shift or AltGr on the configured keyboard layout. Plain key taps, unmodified text, pointer input, and
@@ -273,7 +273,7 @@ Bridge is unavailable or backgrounded.
 
 The Luckfox board has one UDC, so isolation and restore briefly disconnect the
 complete composite, including ECM. The dynamic controller and ECM watchdog
-share `/run/aiden_dynamic_keyboard.lock` to prevent overlapping UDC resets. The
+share `/run/aico_dynamic_keyboard.lock` to prevent overlapping UDC resets. The
 controller also publishes a short post-switch grace deadline so the watchdog
 does not count the planned ECM interruption toward its stall threshold. Normal
 watchdog probes resume after the grace window and still recover persistent ECM
@@ -284,9 +284,9 @@ refresh during the planned switch.
 Inspect or exercise the profiles manually with:
 
 ```bash
-/usr/lib/aiden/aiden-dynamic-keyboard status
-/usr/lib/aiden/aiden-dynamic-keyboard isolate
-/usr/lib/aiden/aiden-dynamic-keyboard restore
+/usr/lib/aico/aico-dynamic-keyboard status
+/usr/lib/aico/aico-dynamic-keyboard isolate
+/usr/lib/aico/aico-dynamic-keyboard restore
 ```
 
 After any test, `status` should report `mode=normal` and list `hid.usb0`,

@@ -7,8 +7,8 @@ sidebar_position: 5
 ## Clone the Project
 
 ```bash
-git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git
-cd aiden-firmware
+git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git aico-link-firmware
+cd aico-link-firmware
 ```
 
 The BSP is vendored directly in `pico-sdk/` and is included in a normal clone.
@@ -168,8 +168,8 @@ compiler or host language runtime is required. CI always uses the full profile.
 
 | Target | Description |
 | --- | --- |
-| `libaiden.a` | C++ hardware SDK and service common library |
-| `libaiden_image.a` | Image processing library |
+| `libaico.a` | C++ hardware SDK and service common library |
+| `libaico_image.a` | Image processing library |
 | `frame_service` / `frame_service_cli` | HDMI frame capture service and CLI |
 | `audio_service` / `audio_service_cli` | Audio recording/playback service and CLI |
 | `image_process` | Image processing CLI |

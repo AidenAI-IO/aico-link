@@ -29,13 +29,13 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
-	speechtext "aiden-agent/internal/agent/speech"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
+	speechtext "aico-agent/internal/agent/speech"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 type stubSTTClient struct {
@@ -462,7 +462,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 			&llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: "The current audio volume is 42.", ReasoningContent: "read the volume"}}},
 		},
 	}
-	configDir, err := os.MkdirTemp("", "aiden-server-chat-stream-*")
+	configDir, err := os.MkdirTemp("", "aico-server-chat-stream-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
 	}
@@ -491,7 +491,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"What is the current volume?"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -590,7 +590,7 @@ func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"What is the current volume?","request_id":"`+requestID+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -989,7 +989,7 @@ func TestServerHandleChatStreamBroadcastsRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"hello","request_id":"web-req-1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -1266,7 +1266,7 @@ func TestHandleProviderScreenshotIncludesADBDeviceWhenFallbackUsed(t *testing.T)
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = \"-s\" ] && [ \"$2\" = \"serial123\" ] && [ \"$3\" = \"exec-out\" ] && [ \"$4\" = \"screencap\" ] && [ \"$5\" = \"-p\" ]; then\n" +
-		"  cat \"$AIDEN_TEST_PNG\"\n" +
+		"  cat \"$AICO_TEST_PNG\"\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"echo \"unexpected args: $@\" >&2\n" +
@@ -1275,9 +1275,9 @@ func TestHandleProviderScreenshotIncludesADBDeviceWhenFallbackUsed(t *testing.T)
 		t.Fatalf("WriteFile(%s) error = %v", adbPath, err)
 	}
 
-	t.Setenv("AIDEN_ADB_PATH", adbPath)
-	t.Setenv("AIDEN_TEST_PNG", pngPath)
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_PATH", adbPath)
+	t.Setenv("AICO_TEST_PNG", pngPath)
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	defer clearAutoConfiguredADBSerial("serial123")
 
@@ -3082,7 +3082,7 @@ func TestServerHandleChatStreamRejectsDuplicateRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"hello","request_id":" req-1 "}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -4459,7 +4459,7 @@ func TestServerToolSkillsEndpointReturnsGeneratedSkills(t *testing.T) {
 	}
 
 	skill := resp.Skills[0]
-	if skill.Name != "aiden-http-tool-suite" {
+	if skill.Name != "aico-http-tool-suite" {
 		t.Fatalf("unexpected skill name: %#v", skill)
 	}
 	hasShell := false
@@ -4515,7 +4515,7 @@ func TestWebUIRedactsScreenshotBase64Payloads(t *testing.T) {
 func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audioResponse, []byte)) string {
 	t.Helper()
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-audio-test-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-test-*")
 	if err != nil {
 		t.Fatalf("create fake audio socket dir: %v", err)
 	}
@@ -4573,7 +4573,7 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 func startFakeFrameServiceSocket(t *testing.T, handler func(map[string]any) (string, []byte)) string {
 	t.Helper()
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-frame-test-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-frame-test-*")
 	if err != nil {
 		t.Fatalf("create fake frame socket dir: %v", err)
 	}

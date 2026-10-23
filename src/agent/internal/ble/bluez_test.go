@@ -78,7 +78,7 @@ func TestConnectionWindowRequiresSubscriptionAndAuthenticatedReadInSameWindow(t 
 }
 
 func newOpenWindowBackend(openedAt time.Time) *blueZBackend {
-	backend := newBlueZBackend(NewService(8), "Aiden", time.Minute)
+	backend := newBlueZBackend(NewService(8), "Aico Link", time.Minute)
 	backend.pairingOpen = true
 	backend.pairingOpenedAt = openedAt
 	backend.pairingDeadline = openedAt.Add(time.Minute)
@@ -174,7 +174,7 @@ func TestANCSRescanDoesNotWaitForWakeSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backend := newBlueZBackend(service, "Aiden", 0)
+	backend := newBlueZBackend(service, "Aico Link", 0)
 	backend.ancs = ancsPaths{
 		device:             dbus.ObjectPath("/org/bluez/hci0/dev_phone"),
 		notificationSource: dbus.ObjectPath("/org/bluez/hci0/dev_phone/service/notification"),

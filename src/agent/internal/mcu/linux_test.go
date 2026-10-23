@@ -31,7 +31,7 @@ func TestUDSPoweroffPeerCredentials(t *testing.T) {
 			t.Fatalf("unprivileged poweroff: %+v %v", response, err)
 		}
 	}
-	if socket := os.Getenv("AIDEN_MCU_PEER_TEST_SOCKET"); socket != "" {
+	if socket := os.Getenv("AICO_MCU_PEER_TEST_SOCKET"); socket != "" {
 		if os.Geteuid() == 0 {
 			t.Fatal("test client did not drop root privileges")
 		}
@@ -79,7 +79,7 @@ func TestUDSPoweroffPeerCredentials(t *testing.T) {
 			t.Fatal(err)
 		}
 		child := exec.CommandContext(ctx, childPath, "-test.run=^TestUDSPoweroffPeerCredentials$", "-test.v")
-		child.Env = append(os.Environ(), "AIDEN_MCU_PEER_TEST_SOCKET="+socket)
+		child.Env = append(os.Environ(), "AICO_MCU_PEER_TEST_SOCKET="+socket)
 		child.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
 		if output, err := child.CombinedOutput(); err != nil {
 			t.Fatalf("unprivileged client: %v\n%s", err, output)

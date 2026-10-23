@@ -34,14 +34,14 @@ int fake_ioctl(int, unsigned long request, void* data) {
 struct ModeFixture {
     std::string root, mode_file, selected;
     ModeFixture() {
-        char path[] = "/tmp/aiden-hdmi-mode-XXXXXX";
+        char path[] = "/tmp/aico-hdmi-mode-XXXXXX";
         const char* result = mkdtemp(path);
         REQUIRE(result != nullptr);
         root = result;
         mode_file = root + "/mode";
         reads = writes = read_error = write_error = 0;
         for (const char* mode : {"1080p30", "1080p60"}) {
-            std::ifstream source(std::string(AIDEN_SOURCE_DIR) + "/edid/hdmi_" + mode + "_cta.hex");
+            std::ifstream source(std::string(AICO_SOURCE_DIR) + "/edid/hdmi_" + mode + "_cta.hex");
             REQUIRE(source.good());
             std::ofstream target(root + "/hdmi_" + mode + "_cta.hex");
             target << source.rdbuf();
@@ -62,7 +62,7 @@ struct ModeFixture {
         rmdir(root.c_str());
     }
     void save(const char* mode) { std::ofstream(mode_file) << mode << '\n'; }
-    bool apply() { return aiden::prepare_rk628_hdmi_mode(-1, mode_file, root, &selected, fake_ioctl); }
+    bool apply() { return aico::prepare_rk628_hdmi_mode(-1, mode_file, root, &selected, fake_ioctl); }
 };
 }
 

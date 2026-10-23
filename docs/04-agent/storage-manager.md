@@ -57,7 +57,7 @@ removal. When a card appears, it:
 The default mount point is `/mnt/sdcard`, the default device setting is `auto`,
 and the default minimum free space is 64 MiB. Discovery selects exactly one
 `/sys/block/mmcblk*/device/type` with value `SD`; it excludes eMMC (`MMC`) and
-Wi-Fi (`SDIO`). It does not rely on the kernel's `removable` flag. Aiden SCH v1
+Wi-Fi (`SDIO`). It does not rely on the kernel's `removable` flag. Aico Link SCH v1
 uses `mmcblk1`; older Pico Zero configurations can use `mmcblk2`. An explicit
 device override is preserved; ambiguous discovery requires an override.
 A card normally becomes usable only after it passes the mount and write checks;
@@ -75,7 +75,7 @@ requires a successful low-level signature check and zeroed initial sectors;
 failed reads and I/O failures never trigger automatic formatting.
 
 The manager mirrors card, format, migration, and effective-mode state to
-`/run/aiden/storage.state` for the Agent and other device services. This state
+`/run/aico/storage.state` for the Agent and other device services. This state
 file is separate from the StorageMonitor level file at
 `/run/agent/storage_level`.
 
@@ -87,8 +87,8 @@ uses this routing for audio archives:
 | Operation | No mounted SD card | Mounted SD card |
 | --- | --- | --- |
 | New audio archive | `/userdata/audio` | `/userdata/audio` |
-| Read audio archives | `/userdata/audio` | eMMC first, then `/mnt/sdcard/aiden/audio` |
-| Retention cleanup roots | `/userdata/audio` | `/mnt/sdcard/aiden/audio` |
+| Read audio archives | `/userdata/audio` | eMMC first, then `/mnt/sdcard/aico/audio` |
+| Retention cleanup roots | `/userdata/audio` | `/mnt/sdcard/aico/audio` |
 
 Keeping new writes on eMMC avoids making active recording depend on removable
 media. When the SD tier is available and eMMC free space falls below the start
@@ -104,7 +104,7 @@ The default migration watermarks are:
 - Stop when eMMC free space reaches 50%.
 
 Only regular files at least 60 seconds old are eligible. Each file is copied to
-an `.aiden-partial` path, synced, size-checked, renamed into place, and only then
+an `.aico-partial` path, synced, size-checked, renamed into place, and only then
 removed from eMMC. Readers prefer the eMMC copy during the brief window where
 both copies may exist. Failed or exhausted runs use a ten-minute retry cooldown.
 
@@ -129,7 +129,7 @@ The page also displays a localized reminder while this historical warning is
 present; it does not mark a later successful eject as having failed to flush.
 
 Manual formatting is destructive: it rewrites the whole card with a fresh MBR,
-one partition, and a new filesystem labeled `AIDEN`. Supported filesystems are
+one partition, and a new filesystem labeled `AICO`. Supported filesystems are
 FAT32, ext4, and exFAT. Formatting runs asynchronously. After `FormatDisk`
 succeeds, the manager attempts to mount the new filesystem; check `card.mounted`
 and `effective_mode` to confirm that dual-storage mode was restored, because the
@@ -513,7 +513,7 @@ Capabilities are recalculated after every successful check and recover automatic
 #### Agent Main Log
 
 The Agent main log is not completely disabled through AllowWrite. The
-`aiden-agent-log-retention.timer` checks it once per minute. During normal
+`aico-agent-log-retention.timer` checks it once per minute. During normal
 operation, a log larger than 10 MiB is trimmed to its newest 5 MiB. At Critical
 or Emergency, the timer instead trims it to
 `storage_settings.storage.degraded_mode.max_agent_log_mb`, which defaults to 1

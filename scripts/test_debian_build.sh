@@ -58,7 +58,7 @@ grep -Fq 'scripts/generate_ota_manifest.sh' "${BUILD_SCRIPT}" \
     || fail "local signed manifest generation is missing"
 grep -Fq 'scripts/generate_ota_device_config.sh' "${BUILD_SCRIPT}" \
     || fail "factory OTA config generation is missing"
-grep -Fq 'aiden_ota_manifest_max_download_bytes' "${BUILD_SCRIPT}" \
+grep -Fq 'aico_ota_manifest_max_download_bytes' "${BUILD_SCRIPT}" \
     || fail "signed manifests do not enforce the OTA partition download limit"
 grep -Fq 'scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk' \
     "${BUILD_SCRIPT}" \

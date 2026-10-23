@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +12,7 @@ import (
 )
 
 func TestBundledQuickActionsPathUsesBusinessPackage(t *testing.T) {
-	if BundledQuickActionsPath != "/usr/share/aiden/quick_actions.json" {
+	if BundledQuickActionsPath != "/usr/share/aico/quick_actions.json" {
 		t.Fatalf("BundledQuickActionsPath = %q, want business package path", BundledQuickActionsPath)
 	}
 }

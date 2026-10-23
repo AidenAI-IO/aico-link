@@ -15,7 +15,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/backup"
+	"aico-agent/internal/backup"
 	"github.com/google/uuid"
 )
 
@@ -109,7 +109,7 @@ func (c *restoreClient) chunk(index int, data []byte) *httptest.ResponseRecorder
 	req := httptest.NewRequest(http.MethodPut, "/api/restore/jobs/"+c.jobID+"/chunks/"+strconv.Itoa(index), bytes.NewReader(data))
 	req.RemoteAddr = "127.0.0.2:1234"
 	req.Header.Set("Authorization", "Bearer "+c.transfer)
-	req.Header.Set("X-Aiden-Chunk-SHA256", hex.EncodeToString(digest[:]))
+	req.Header.Set("X-Aico-Chunk-SHA256", hex.EncodeToString(digest[:]))
 	resp := httptest.NewRecorder()
 	c.server.ServeHTTP(resp, req)
 	return resp
@@ -151,7 +151,7 @@ func chunked(archive []byte, size int) [][]byte {
 
 func TestRestoreJobEndToEnd(t *testing.T) {
 	for _, plain := range []bool{false, true} {
-		name := "legacy_encrypted"
+		name := "encrypted"
 		if plain {
 			name = "password_free"
 		}
@@ -221,6 +221,44 @@ func testRestoreJobEndToEnd(t *testing.T, plain bool) {
 	}
 	if server.maintenance.active() {
 		t.Fatal("maintenance lock still held after completion")
+	}
+}
+
+func TestRestoreAcceptedPlanReceivesChunksBeforeParserResumes(t *testing.T) {
+	source := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(source, "agent/memory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "agent/memory/profile.md"), []byte("remember\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := backup.NewPlanner(backup.Roots{Userdata: source, SD: filepath.Join(source, "sd")}).Plan(context.Background(), backup.PlanOptions{
+		Mode: backup.ModePortable, Components: []backup.ComponentID{backup.ComponentAgentMemory},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	material := backup.NewPlainMaterial(plan.Manifest.CreatedAt)
+	server := newRestoreTestServer(t, t.TempDir())
+	client := newRestoreClient(t, server)
+	if resp := client.create([]byte("pending archive data"), material.Header, ""); resp.Code != http.StatusAccepted {
+		t.Fatalf("create status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	job, _ := server.restoreJobs.get(client.jobID)
+	defer job.material.Destroy()
+	// Model the parser paused at the manifest without starting its goroutine:
+	// accepting a plan must enable uploads even before that goroutine resumes.
+	job.mu.Lock()
+	job.manifest, job.manifestOK = plan.Manifest, true
+	job.state, job.phase = restoreJobAwaitingPlan, restoreJobAwaitingPlan
+	job.receivedChunkIndex = 1
+	job.mu.Unlock()
+	resp := client.post("plan", map[string]any{})
+	if resp.Code != http.StatusOK || decodeJSON(t, resp)["state"] != restoreJobUploading {
+		t.Fatalf("accepted plan did not enable uploads: status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if resp := client.chunk(2, []byte("later block")); resp.Code != http.StatusConflict || !strings.Contains(resp.Body.String(), "chunk_out_of_order") {
+		t.Fatalf("next chunk was gated on parser scheduling: status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
 
@@ -677,7 +715,7 @@ func createRestoreTestSession(t *testing.T, server *Server) (string, string) {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/api/maintenance/sessions", nil)
 	req.RemoteAddr = "127.0.0.2:1234"
-	req.Header.Set("X-Aiden-Client", "test/1")
+	req.Header.Set("X-Aico-Client", "test/1")
 	resp := httptest.NewRecorder()
 	server.ServeHTTP(resp, req)
 	if resp.Code != http.StatusOK {
@@ -694,9 +732,9 @@ func serveRestoreTestRequest(server *Server, method, path string, body []byte, t
 	req := httptest.NewRequest(method, path, bytes.NewReader(body))
 	req.RemoteAddr = "127.0.0.2:1234"
 	if session {
-		req.AddCookie(&http.Cookie{Name: "aiden_maintenance", Value: token})
-		req.Header.Set("X-Aiden-CSRF-Token", csrf)
-		req.Header.Set("X-Aiden-Request-ID", uuid.NewString())
+		req.AddCookie(&http.Cookie{Name: "aico_maintenance", Value: token})
+		req.Header.Set("X-Aico-CSRF-Token", csrf)
+		req.Header.Set("X-Aico-Request-ID", uuid.NewString())
 	} else {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

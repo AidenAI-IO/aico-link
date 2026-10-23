@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+OTA_BIN=${OTA_BIN:-/usr/lib/aico/ota}
+OTA_CONFIG=${OTA_CONFIG:-/userdata/debian/ota/config.json}
+SYSTEMCTL_BIN=${SYSTEMCTL_BIN:-/usr/bin/systemctl}
+
+result=$(${OTA_BIN} --config "${OTA_CONFIG}" provision-identity)
+printf '%s\n' "${result}"
+
+if printf '%s\n' "${result}" \
+    | grep -Eq '"reboot_required"[[:space:]]*:[[:space:]]*true'; then
+    "${SYSTEMCTL_BIN}" reboot --no-block
+    exit 75
+fi

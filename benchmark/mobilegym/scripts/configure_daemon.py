@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Configure Aiden daemon to use MobileGym bridge.
+"""Configure Aico daemon to use MobileGym bridge.
 
-This script configures an Aiden daemon to connect to a MobileGym bridge
+This script configures the Aico daemon to connect to a MobileGym bridge
 by setting the bridge URL and device token as environment variables or
 via the /api/mobilegym/bridge/configure endpoint.
 """
@@ -24,10 +24,10 @@ def configure_daemon_bridge(
     bridge_device_token: str,
     control_token: str | None = None,
 ) -> dict:
-    """Configure Aiden daemon to use MobileGym bridge.
+    """Configure Aico daemon to use MobileGym bridge.
 
     Args:
-        daemon_url: Aiden daemon base URL
+        daemon_url: Aico daemon base URL
         bridge_url: MobileGym bridge URL
         bridge_device_token: Device token for bridge authentication
         control_token: Optional control token for daemon API
@@ -63,12 +63,12 @@ def configure_daemon_bridge(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Configure Aiden daemon to use MobileGym bridge"
+        description="Configure Aico daemon to use MobileGym bridge"
     )
     parser.add_argument(
         "--daemon-url",
         required=True,
-        help="Aiden daemon base URL (e.g., http://localhost:8080)",
+        help="Aico daemon base URL (e.g., http://localhost:8080)",
     )
     parser.add_argument(
         "--bridge-url",

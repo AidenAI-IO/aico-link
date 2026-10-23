@@ -230,7 +230,7 @@ PERL
 mkfs_ext4_uuid_opt=()
 case "$(basename "$dst")" in
 	rootfs*.img | system*.img)
-		mkfs_ext4_uuid_opt=(-U "${AIDEN_EXT4_UUID:-00000000-0000-4000-8000-000000000000}")
+		mkfs_ext4_uuid_opt=(-U "${AICO_EXT4_UUID:-00000000-0000-4000-8000-000000000000}")
 		;;
 esac
 

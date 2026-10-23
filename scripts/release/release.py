@@ -43,7 +43,7 @@ def file_hash(path):
 
 
 def notes(plan):
-    text = (f"# Aiden {plan['tag']}\n\n"
+    text = (f"# Aico Link {plan['tag']}\n\n"
             f"Channel: `{plan['channel']}`; kind: `{plan['kind']}`.\n\n"
             f"Source: `{plan['source_commit']}`. Previous release: `{plan['previous_tag'] or 'none'}`.\n\n"
             f"Platform contract: `{plan['platform']['contract']}`; base OTA: `{plan['platform']['base_release']}`.\n\n")
@@ -125,7 +125,7 @@ def verify(directory):
     validate_record(record)
     if record["kind"] == "none":
         raise ValueError("A no-change plan cannot be published")
-    package = f"aiden-business_{record['version']}-1_armhf.deb"
+    package = f"aico-business_{record['version']}-1_armhf.deb"
     expected = {package, "release-manifest.json", "platform-contract.json", "RELEASE-NOTES.md"}
     if record["kind"] == "ota":
         expected |= IMAGE_ASSETS
@@ -143,7 +143,7 @@ def verify(directory):
     if (directory / "SHA256SUMS").read_text() != expected_sums:
         raise ValueError("SHA256SUMS mismatch")
     package_path = directory / package
-    for field, value in (("Package", "aiden-business"), ("Architecture", "armhf"), ("Version", record["version"] + "-1")):
+    for field, value in (("Package", "aico-business"), ("Architecture", "armhf"), ("Version", record["version"] + "-1")):
         if command("dpkg-deb", "--field", str(package_path), field) != value:
             raise ValueError(f"Package {field} mismatch")
     embedded = business.package_manifest(package_path)
@@ -194,7 +194,7 @@ def stage(plan, destination):
     destination.mkdir(parents=True, exist_ok=True)
     if any(destination.iterdir()):
         raise ValueError("Use an empty release staging directory")
-    package = f"aiden-business_{plan['version']}-1_armhf.deb"
+    package = f"aico-business_{plan['version']}-1_armhf.deb"
     source = ROOT / ("output/debian-system" if plan["kind"] == "ota" else "output/debian-package")
     shutil.copyfile(source / package, destination / package)
     manifest = business.package_manifest(destination / package)
@@ -264,7 +264,7 @@ def publish(directory):
                 raise ValueError("Draft has different build assets; resume with the original artifacts")
     else:
         command("gh", "release", "create", tag, "--repo", repo, "--target", commit,
-                "--title", "Aiden " + tag, "--notes-file", str(directory / "RELEASE-NOTES.md"),
+                "--title", "Aico Link " + tag, "--notes-file", str(directory / "RELEASE-NOTES.md"),
                 "--draft", "--latest=false")
     gh_retry("release", "upload", tag, str(directory / "release.json"), "--repo", repo, "--clobber")
     for asset in sorted(directory.iterdir()):

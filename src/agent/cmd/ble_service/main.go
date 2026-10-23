@@ -10,17 +10,17 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/ble"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/ble"
+	"aico-agent/internal/logging"
 )
 
 func main() {
 	socketPath := flag.String("socket", "/run/ble_service/ble_service.sock", "Unix domain socket path")
-	deviceName := flag.String("device-name", "Aiden", "BLE advertised device name")
+	deviceName := flag.String("device-name", "Aico Link", "BLE advertised device name")
 	eventCapacity := flag.Int("event-capacity", 512, "maximum in-memory ANCS events")
 	pairingWindow := flag.Duration("pairing-window", 5*time.Minute, "first-device BLE pairing window")
 	clearAdvHelper := flag.String(
-		"clear-adv-helper", "/usr/lib/aiden/aiden-bluetooth-clear-adv",
+		"clear-adv-helper", "/usr/lib/aico/aico-bluetooth-clear-adv",
 		"helper that clears stale controller advertising sets; empty disables it",
 	)
 	flag.Parse()
