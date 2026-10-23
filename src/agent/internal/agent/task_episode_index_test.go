@@ -227,3 +227,29 @@ func TestEpisodeIndexCacheSurvivesOwnWritesAndSeesOthers(t *testing.T) {
 		t.Fatalf("stale cached index returned: %+v", index.Episodes)
 	}
 }
+
+func TestEpisodeIndexVerifyWaitsForStoreLock(t *testing.T) {
+	store := NewTaskEpisodeStore(t.TempDir())
+	addTestEpisode(t, store, "ep_1", "open Settings", time.Date(2026, 10, 22, 8, 0, 0, 0, time.UTC))
+
+	// A writer holds the lock; the index check must not load and rewrite the
+	// index underneath it, or the writer's appended entry could be dropped.
+	unlock := store.lock()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _, _ = checkEpisodeIndex(store)
+	}()
+	select {
+	case <-done:
+		unlock()
+		t.Fatal("checkEpisodeIndex ran while another writer held the store lock")
+	case <-time.After(50 * time.Millisecond):
+	}
+	unlock()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("checkEpisodeIndex did not finish after the lock was released")
+	}
+}

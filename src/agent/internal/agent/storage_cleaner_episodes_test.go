@@ -18,9 +18,15 @@ func episodeCleanerFixture(t *testing.T) (string, *TaskEpisodeStore, time.Time) 
 func addCleanerEpisode(t *testing.T, store *TaskEpisodeStore, id, status string, ended time.Time) {
 	t.Helper()
 	episode := TaskEpisode{ID: id, Status: status, UserGoal: "open " + id, StartedAt: ended.Add(-time.Minute).Format(time.RFC3339Nano)}
-	if status != "running" {
-		episode.EndedAt = ended.Format(time.RFC3339Nano)
+	// AddEpisode stamps an empty EndedAt with the current time, which would
+	// make an old running episode look recent; StartEpisode keeps it old.
+	if status == "running" {
+		if _, err := store.StartEpisode(context.Background(), episode); err != nil {
+			t.Fatalf("StartEpisode(%s): %v", id, err)
+		}
+		return
 	}
+	episode.EndedAt = ended.Format(time.RFC3339Nano)
 	if _, err := store.AddEpisode(context.Background(), episode); err != nil {
 		t.Fatalf("AddEpisode(%s): %v", id, err)
 	}

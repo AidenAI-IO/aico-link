@@ -216,23 +216,34 @@ func (lm *LifecycleManager) verifyLongTermMemoryFiles(ctx context.Context, store
 }
 
 func (lm *LifecycleManager) verifyEpisodeIndex(ctx context.Context, store *TaskEpisodeStore) (VerifyReport, error) {
-	var report VerifyReport
-	if _, err := os.Stat(store.indexPath()); os.IsNotExist(err) && !store.indexLogExists() {
+	report, needsRebuild, err := checkEpisodeIndex(store)
+	if err != nil {
+		return report, err
+	}
+	if needsRebuild {
 		if err := store.RebuildIndex(ctx); err != nil {
 			return report, err
 		}
 		report.EpisodeIndexRebuilt = true
-		return report, nil
+	}
+	return report, nil
+}
+
+// checkEpisodeIndex clears references to missing event files and reports
+// whether the index must be rebuilt. It holds the store lock from load to
+// write, so an entry appended in between is not dropped; the caller runs
+// RebuildIndex afterwards, since it takes the same lock.
+func checkEpisodeIndex(store *TaskEpisodeStore) (VerifyReport, bool, error) {
+	var report VerifyReport
+	defer store.lock()()
+	if _, err := os.Stat(store.indexPath()); os.IsNotExist(err) && !store.indexLogExists() {
+		return report, true, nil
 	} else if err != nil && !os.IsNotExist(err) {
-		return report, err
+		return report, false, err
 	}
 	index, err := store.loadIndex()
 	if err != nil {
-		if err := store.RebuildIndex(ctx); err != nil {
-			return report, err
-		}
-		report.EpisodeIndexRebuilt = true
-		return report, nil
+		return report, true, nil
 	}
 	needsRebuild := false
 	indexChanged := false
@@ -253,18 +264,16 @@ func (lm *LifecycleManager) verifyEpisodeIndex(ctx context.Context, store *TaskE
 		}
 	}
 	if needsRebuild {
-		if err := store.RebuildIndex(ctx); err != nil {
-			return report, err
-		}
-		report.EpisodeIndexRebuilt = true
-	} else if indexChanged {
+		return report, true, nil
+	}
+	if indexChanged {
 		index.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 		if err := store.writeIndex(index); err != nil {
-			return report, err
+			return report, false, err
 		}
 		report.EpisodeIndexRebuilt = true
 	}
-	return report, nil
+	return report, false, nil
 }
 
 func (lm *LifecycleManager) pruneEpisodeTraces(ctx context.Context, longTerm *LongTermMemoryStore, episodes *TaskEpisodeStore) (int, error) {
