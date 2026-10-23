@@ -250,6 +250,34 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 			result.Steps = steps
 			return result, err
 		}
+		if entry.appIcon != nil {
+			result.Steps = steps
+			if err := tapSearchOpenResult(ctx, cfg.hw, *entry.appIcon); err != nil {
+				return result, err
+			}
+			result.Steps = append(result.Steps, "tapped visible app icon")
+			if err := sleep(ctx, launchDelay); err != nil {
+				return result, err
+			}
+			// This is a launcher icon, not a search result. Keep target-app
+			// confirmation instead of the search-page transition comparison.
+			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, searchTerm, screenshotResult{})
+			result.VLMCalls += calls
+			if err != nil {
+				return result, err
+			}
+			result.Opened = opened.Opened
+			result.Reason = strings.TrimSpace(opened.Reason)
+			if opened.Opened {
+				result.Steps = append(result.Steps, "app open confirmed")
+				if cfg.afterOpenFn != nil {
+					if err := cfg.afterOpenFn(); err != nil {
+						return result, err
+					}
+				}
+			}
+			return result, nil
+		}
 	} else {
 		if err := callQuickAction("spotlight_search"); err != nil {
 			return result, err

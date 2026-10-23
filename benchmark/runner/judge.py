@@ -55,7 +55,17 @@ does not clearly show the required state, answer "no".
 A tool call is an attempt, not proof of execution. Check its result: errors,
 is_error=true, and ok=false are failures. Never credit a failed call as a
 successfully performed action. For device execution, the final reply alone is not
-proof of success. For knowledge, classification, or confirmation tasks, evaluate
+proof of success. Evaluate the complete sequence: an earlier failed attempt does
+not invalidate a later successful retry or alternative action. Credit recovery
+when subsequent successful actions and screenshots establish the required state.
+For example, a failed open_app followed by successful taps that reach Settings
+satisfies "opened Settings"; the failed open_app itself receives no credit.
+has_screenshot=true means that tool returned a screenshot observation, including
+an automatic post-action screenshot. This satisfies a screenshot requirement;
+a separate screenshot tool call is needed only if the rubric explicitly asks for
+that specific tool. A runner-provided post-screenshot alone does not prove that
+the agent took a screenshot.
+For knowledge, classification, or confirmation tasks, evaluate
 the requested answer itself; do not invent a requirement to execute an action.
 Judge only the stated rubric. Accept semantically equivalent formats unless an
 exact format is explicitly required. A requested option-only answer needs no

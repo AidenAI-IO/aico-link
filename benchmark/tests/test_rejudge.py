@@ -6,6 +6,38 @@ from runner import rejudge
 from runner.models import RubricVerdict
 
 
+def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
+    attempt = tmp_path / "tasks" / "home"
+    attempt.mkdir(parents=True)
+    history = [
+        {"type": "tool_call", "tool_name": "quick_action", "tool_input": '{"action":"home"}'},
+        {"type": "tool_result", "tool_name": "quick_action", "content": "ok"},
+    ]
+    episode = {"events": [{"type": "tool_result", "tool_name": "quick_action", "screenshot_ref": "artifacts/step_004.jpeg"}]}
+    trace = {"tool_calls": [{"tool": "quick_action", "has_screenshot": False, "is_error": False,
+                              "input": {"action": "home"}}], "final_response": "done", "extra_evidence": "keep"}
+    for name, value in [("history", history), ("episode", episode), ("trace", trace)]:
+        (attempt / f"{name}.json").write_text(json.dumps(value))
+    row = {"task_id": "home", "attempt": 1, "status": "failed", "rubric_total": 1,
+           "rubric_spec": [{"id": "home", "check": "Home and screenshot"}],
+           "hard_assertions": {"timeout": True}, "metrics": {"screenshots_taken": 0}}
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    seen = []
+
+    def judge(**kwargs):
+        seen.append(kwargs["trace"])
+        return type("Verdict", (), {"verdicts": [RubricVerdict("home", "yes", "Screenshot evidence present")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    expected = {**trace, "tool_calls": [{**trace["tool_calls"][0], "has_screenshot": True}]}
+    assert seen == [expected]
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert result["metrics"]["screenshots_taken"] == 1
+    assert result["hard_assertions"] == row["hard_assertions"]
+    assert json.loads((attempt / "trace.json").read_text()) == trace
+
+
 @pytest.mark.parametrize("case", ["text", "hard_failure", "missing_image", "missing_memory", "judge_error"])
 def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, monkeypatch, case):
     attempt = tmp_path / "tasks" / "task" / "attempt_1"
