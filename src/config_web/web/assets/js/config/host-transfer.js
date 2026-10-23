@@ -1,45 +1,5 @@
-// Browser and Bridge App transfer adapters share the same job protocol.  The
-// native adapter is intentionally message based so large files never enter
-// the React Native JavaScript heap.
+// Browser transfer helpers for backup download and restore upload.
 import {sha256Hex} from './backup-checksum.js';
-
-const hostCapabilities = () => window.AidenHostCapabilities || {};
-
-export function hasNativeTransfer() {
-  const caps = hostCapabilities();
-  return !!(caps.nativeStreaming && window.ReactNativeWebView && Number(caps.backupTransferVersion) >= 1);
-}
-
-export function hasNativeFilePicker() {
-  const caps = hostCapabilities();
-  return hasNativeTransfer() && !!caps.nativeFilePicker;
-}
-
-function postToHost(message) {
-  if (!window.ReactNativeWebView) return false;
-  window.ReactNativeWebView.postMessage(JSON.stringify(message));
-  return true;
-}
-
-export function requestNativeFile() {
-  if (!hasNativeFilePicker()) return false;
-  return postToHost({type: 'aiden_restore_pick_file'});
-}
-
-export function requestNativeDownload(payload) {
-  if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_backup_download', ...payload});
-}
-
-export function requestNativeUpload(payload) {
-  if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_restore_upload', ...payload});
-}
-
-export function cancelNativeTransfer(jobId) {
-  if (!hasNativeTransfer()) return false;
-  return postToHost({type: 'aiden_transfer_cancel', job_id: jobId});
-}
 
 // The browser's download manager receives the archive straight from the
 // device; the page never holds the archive in memory.
