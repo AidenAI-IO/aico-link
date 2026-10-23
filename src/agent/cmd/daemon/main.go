@@ -179,6 +179,11 @@ func main() {
 
 	// HTTP server runs in all input modes so the web UI is available even
 	// during voice (audio/stt) interactions.
+	if err := runtime.StartRoutines(); err != nil {
+		logging.Errorf("agent", "routines", "startup failed: %v", err)
+		exitCode = 1
+		return
+	}
 	server := agent.NewServer(runtime, *addr)
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)

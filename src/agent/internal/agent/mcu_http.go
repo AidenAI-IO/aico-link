@@ -107,7 +107,16 @@ func (s *Server) handleMCU(w http.ResponseWriter, r *http.Request) {
 		client := mcu.Client{Socket: strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET"))}
 		do = client.Do
 	}
-	response, err := do(r.Context(), request)
+	var response mcu.Response
+	var err error
+	if (op == "set_wakeup_timer" || op == "cancel_wakeup_timer") && s.runtime != nil && s.runtime.routines != nil {
+		err = s.runtime.routines.WithExternalTimer(func() error {
+			response, err = do(r.Context(), request)
+			return err
+		})
+	} else {
+		response, err = do(r.Context(), request)
+	}
 	if err != nil {
 		var api *mcu.APIError
 		if errors.As(err, &api) {

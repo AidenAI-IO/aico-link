@@ -26,6 +26,7 @@ import (
 	"aiden-agent/internal/agent/tokencounter"
 	"aiden-agent/internal/agent/tts"
 	"aiden-agent/internal/logging"
+	"aiden-agent/internal/routines"
 	"aiden-agent/internal/util"
 
 	"github.com/google/uuid"
@@ -104,6 +105,7 @@ type Runtime struct {
 	episodeMaintenance      asyncRuntimeWork
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
+	routines                *routines.Manager
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
@@ -127,6 +129,9 @@ type asyncRuntimeWork struct {
 }
 
 type RunRequest struct {
+	// Scheduled work waits for the current run and retains its conversation.
+	WaitForIdle       bool
+	ResumeSessionID   string
 	Input             string
 	Attachments       []InputAttachment
 	Turn              TurnInput
@@ -924,7 +929,9 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 
 	// Preempt any currently active run and its resources.
-	r.Preempt()
+	if !req.WaitForIdle {
+		r.Preempt()
+	}
 
 	unlockRun, err := r.lockRun(ctx)
 	if err != nil {
@@ -1201,6 +1208,15 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
+	}
+	if req.ResumeSessionID != "" {
+		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if !matches {
+			return RunResult{}, errors.New("scheduled task session was cleared or replaced; reschedule it in the current conversation")
+		}
 	}
 	// append runtime context as assistant message if present (e.g., voice interruption notification)
 	if runtimeContext := strings.TrimSpace(req.RuntimeContext); runtimeContext != "" {
@@ -2954,6 +2970,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.routines != nil {
+		r.routines.Close()
+	}
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

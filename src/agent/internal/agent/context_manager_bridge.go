@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"aiden-agent/internal/agent/contextmanager"
@@ -215,6 +216,14 @@ func InitializeContextManager(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create context manager: %w", err)
 		}
+	} else if strings.TrimSpace(manager.MessageListDump().Messages[0].Content) != strings.TrimSpace(systemPrompt) {
+		// The generated date is runtime context, not a configuration change.
+		// Keep the append-only transcript and provider continuation intact while
+		// supplying the new date before the next task resumes this conversation.
+		dateContext := strings.SplitN(strings.TrimSpace(systemPrompt), "\n", 3)[1]
+		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleState, Content: dateContext}); err != nil {
+			return nil, fmt.Errorf("refresh session date: %w", err)
+		}
 	}
 
 	if manager == nil {
@@ -234,5 +243,14 @@ func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, syste
 	messageList := manager.MessageListDump().Messages
 	return len(messageList) > 0 &&
 		messageList[0].Role == messages.MessageRoleSystem &&
-		strings.TrimSpace(messageList[0].Content) == strings.TrimSpace(systemPrompt)
+		systemPromptIdentity(messageList[0].Content) == systemPromptIdentity(systemPrompt)
+}
+
+// Only the date line emitted at the beginning of buildProfile is volatile.
+// Preserve the timezone and every instruction, including date-like user text,
+// so actual configuration changes still start a new conversation.
+var generatedPromptDate = regexp.MustCompile(`^(You are the Aiden agent\.\nCurrent date: )[0-9]{4}-[0-9]{2}-[0-9]{2} \((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|星期[一二三四五六日]), timezone: ([^)\n]+)\)\n`)
+
+func systemPromptIdentity(prompt string) string {
+	return generatedPromptDate.ReplaceAllString(strings.TrimSpace(prompt), "${1}(timezone: ${2})\n")
 }
