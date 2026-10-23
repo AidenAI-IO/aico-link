@@ -1,0 +1,130 @@
+{
+  "name": "adb_android_text_editing",
+  "version": "1.0",
+  "description": "ASCII text-entry diagnostics in Settings search: spaces, punctuation, replacement, and clearing. Requires editable Settings search; unsupported backend input remains a failure, not a skipped capability.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "trace_observations": [],
+  "tasks": [
+    {
+      "id": "search_ascii_with_spaces",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open Settings search, clear any existing query, and enter exactly: hello android. Leave the query visible without submitting it or changing any setting. Report the text that is actually visible.",
+      "description_for_judge": "Open Settings search, clear any existing query, and enter exactly: hello android. Leave the query visible without submitting it or changing any setting. Report the text that is actually visible. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "exact_query",
+          "check": "The final screenshot visibly shows the editable Settings search query exactly as hello android, including the space, without a duplicate or a leftover prefix."
+        },
+        {
+          "id": "grounded_reply",
+          "check": "The final answer reports the text actually visible in the search field, not merely the requested text."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "search_ascii_punctuation",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open Settings search, clear any existing query, and enter exactly: Aiden-2026_42. Leave the query visible without submitting it or changing any setting.",
+      "description_for_judge": "Open Settings search, clear any existing query, and enter exactly: Aiden-2026_42. Leave the query visible without submitting it or changing any setting. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "exact_query",
+          "check": "The final screenshot visibly shows the editable Settings search query exactly as Aiden-2026_42, preserving case, hyphen, underscore, and digits."
+        },
+        {
+          "id": "stayed_in_search",
+          "check": "The final screenshot remains in Settings search, without entering a result or modifying a setting."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "replace_search_query",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open Settings search, clear any existing query, and enter alpha beta. Observe the query, then replace it completely with gamma delta. Leave the final query visible without submitting or changing any setting.",
+      "description_for_judge": "Open Settings search, clear any existing query, and enter alpha beta. Observe the query, then replace it completely with gamma delta. Leave the final query visible without submitting or changing any setting. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "initial_entry_attempted",
+          "check": "The trace contains an entry attempt for alpha beta and a subsequent screen observation before replacement."
+        },
+        {
+          "id": "replacement_exact",
+          "check": "The final screenshot shows the editable search query exactly as gamma delta, with no residual alpha beta text or duplicates."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "clear_search_query",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open Settings search, clear any existing query, and enter ClearMe-2026. Observe the query, then remove all of that text. Keep the empty search interface open; do not navigate back to hide the query.",
+      "description_for_judge": "Open Settings search, clear any existing query, and enter ClearMe-2026. Observe the query, then remove all of that text. Keep the empty search interface open; do not navigate back to hide the query. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "initial_entry_attempted",
+          "check": "The trace contains an entry attempt for ClearMe-2026 and a subsequent observation before clearing."
+        },
+        {
+          "id": "empty_field",
+          "check": "The final screenshot shows an empty editable Settings search field. Placeholder text is permitted; typed query text is not."
+        },
+        {
+          "id": "search_still_open",
+          "check": "The final screenshot still shows the search interface, rather than the Settings main page, Home, or another app."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1
+    }
+  ]
+}

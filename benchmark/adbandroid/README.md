@@ -167,6 +167,13 @@ remain unchanged.
 
 ## Test suite
 
+The `adb` CI profile expands coverage to six cases and 32 task executions per
+repeat: the original eight tasks, twelve selected tasks reused unchanged from
+existing suites, and twelve new native Android tasks. See
+[Android coverage](coverage.md) for the compatibility matrix, exact selection,
+device prerequisites, and commands. The `adb` profile uses a connected emulator
+or physical device; it does not provision an emulator or run MobileGym apps.
+
 `benchmark/suites/adb_android_basic.json`, 8 tasks:
 
 - Basic capabilities (5): screenshot, go Home, open Settings, swipe, enter

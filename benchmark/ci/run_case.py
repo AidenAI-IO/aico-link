@@ -419,6 +419,8 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
+        for task_id in case.task_ids:
+            command.extend(["--task-id", task_id])
         repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()
         if repeats:
             try:

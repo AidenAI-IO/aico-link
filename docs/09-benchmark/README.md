@@ -423,7 +423,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (17 cases) |
+| Manual dispatch | `adb` | Six serial native-Android cases, 32 task executions per repeat; requires a connected emulator or device |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -436,7 +437,7 @@ dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
 
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
-single-suite run must use the matching `runnable` or `hardware` profile; use
+single-suite run must use the matching `runnable`, `hardware`, or `adb` profile; use
 `all` when intentionally overriding that boundary.
 
 For a phone-control baseline in MobileGym, manually dispatch with profile
@@ -445,8 +446,18 @@ the Android-style MobileGym simulator automatically; no external iOS bridge is
 required. This case is excluded from the scheduled sweep while its baseline is
 being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
-from Agent capability failures. The same suite with profile `hardware` selects
-the existing external iOS case; profile `all` selects both environments.
+from Agent capability failures. The same suite with profile `adb` selects seven
+existing tasks suitable for the ADB environment, without changing their prompts
+or scoring rules. Profile `hardware` selects both the ADB subset and the external
+iOS case; profile `all` also includes MobileGym.
+
+Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
+exist, be unique, and support the case's target platform. The matrix preserves
+the selection and passes repeated `--task-id` options to the runner; the run
+manifest records the selected IDs. An empty list means the entire suite, subject
+to the runner's normal platform filtering. ADB cases always use concurrency 1.
+See the [native Android coverage plan](../../benchmark/adbandroid/coverage.md)
+for reused tasks, new navigation/text scenarios, prerequisites, and limitations.
 
 When a suite has cases in multiple environment profiles, an explicit suite
 selection runs only cases belonging to the requested profile. A selection with
