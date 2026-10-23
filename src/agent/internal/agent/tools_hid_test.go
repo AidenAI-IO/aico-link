@@ -2292,8 +2292,8 @@ func TestTouchGestureSchemaRequiresNamedCoordinateObjectsAndValidExamples(t *tes
 	}
 
 	examples, ok := schema["examples"].([]map[string]any)
-	if !ok || len(examples) != 3 {
-		t.Fatalf("schema examples = %#v, want three complete examples", schema["examples"])
+	if !ok || len(examples) != 5 {
+		t.Fatalf("schema examples = %#v, want tap, both swipe forms, and both drag phases", schema["examples"])
 	}
 	encoded, err := json.Marshal(examples)
 	if err != nil || !json.Valid(encoded) {
@@ -2301,6 +2301,8 @@ func TestTouchGestureSchemaRequiresNamedCoordinateObjectsAndValidExamples(t *tes
 	}
 	for _, want := range []string{
 		`{"point":{"x":500,"y":500},"type":"tap"}`,
+		`{"direction":"up","start":{"x":500,"y":900},"type":"swipe"}`,
+		`{"end":{"x":500,"y":300},"start":{"x":500,"y":900},"type":"swipe"}`,
 		`"type":"drag_start"`,
 		`"type":"drag_release"`,
 	} {

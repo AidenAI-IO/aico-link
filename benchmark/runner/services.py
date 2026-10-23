@@ -105,7 +105,11 @@ def add_service_parsers(subparsers: argparse._SubParsersAction[argparse.Argument
     p_adb.add_argument("--adb-path", default="adb")
     p_adb.add_argument("--name", default="", help="Stable name suffix for the environment")
     p_adb.add_argument("--runs-dir", default=str(DEFAULT_CLI_RUNS_DIR))
-    p_adb.add_argument("--bridge-host", default="127.0.0.1")
+    p_adb.add_argument(
+        "--bridge-host",
+        default="",
+        help="Bridge bind address (default: the host interface reachable through host.docker.internal)",
+    )
     p_adb.add_argument("--bridge-port", type=int, default=0, help="Host port for the bridge API (default: auto)")
     p_adb.add_argument("--ready-timeout-sec", type=int, default=DEFAULT_ADB_BRIDGE_READY_TIMEOUT_SEC)
     p_adb.add_argument("--json", action="store_true", help="Print machine-readable JSON")
@@ -371,8 +375,16 @@ def cmd_start_adb_android_env(args: argparse.Namespace) -> int:
 
     service_dir.mkdir(parents=True, exist_ok=True)
 
+    # The agent daemon reaches the bridge from a container. On Linux,
+    # host.docker.internal is the Docker gateway, which a loopback-only listener
+    # never accepts, so bind where MobileGym publishes its bridge.
+    try:
+        bridge_host = str(args.bridge_host or "").strip() or mobilegym_bridge_bind_host()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"Error: failed to resolve the ADB bridge bind host: {exc}", file=sys.stderr)
+        return 1
     bridge_port = int(args.bridge_port or 0) or reserve_free_port()
-    environment_url = f"http://{args.bridge_host}:{bridge_port}"
+    environment_url = f"http://{bridge_host}:{bridge_port}"
     docker_environment_url = endpoint_for_docker_host(environment_url)
 
     pid = 0
@@ -382,7 +394,7 @@ def cmd_start_adb_android_env(args: argparse.Namespace) -> int:
             bridge_port=bridge_port,
             log_path=log_path,
             adb_path=args.adb_path,
-            bridge_host=args.bridge_host,
+            bridge_host=bridge_host,
         )
         pid = proc.pid
         pid_path.write_text(str(pid), encoding="utf-8")

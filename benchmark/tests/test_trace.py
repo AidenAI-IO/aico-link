@@ -40,6 +40,51 @@ def test_extract_trace_detects_case_insensitive_screenshot_observation_text():
 
     assert trace.tool_calls[0].has_screenshot is True
 
+
+def test_post_action_state_screenshot_is_associated_with_completed_tool():
+    # Current daemon history separates the result from its screenshot observation.
+    history = [
+        {"type": "state", "attachments": [{"kind": "image"}]},
+        {"type": "tool_call", "tool_name": "quick_action", "tool_input": '{"action":"home"}'},
+        {"type": "tool_result", "tool_name": "quick_action", "content": '{"ok":true}'},
+        {"type": "state", "content": "This image is the screenshot observation returned by the quick_action tool.",
+         "attachments": [{"kind": "image", "mime_type": "image/jpeg"}]},
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "touch_gesture", "content": "type is required"},
+        {"type": "assistant", "content": "done"},
+    ]
+    trace = extract_trace(history)
+    assert [call.has_screenshot for call in trace.tool_calls] == [True, False]
+
+
+@pytest.mark.parametrize("state", [
+    {"type": "state", "content": "Device state", "attachments": [{"kind": "image"}]},
+    {"type": "state", "content": "This image is the screenshot observation returned by the other_tool tool.",
+     "attachments": [{"kind": "image"}]},
+    {"type": "state", "content": "This image is the screenshot observation returned by the quick_action tool."},
+])
+def test_unrelated_or_missing_state_image_is_not_screenshot_evidence(state):
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "quick_action", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "quick_action", "content": "ok"},
+        state,
+    ])
+    assert not trace.tool_calls[0].has_screenshot
+
+
+def test_episode_recovers_screenshot_evidence_without_changing_failed_action():
+    from runner.trace import apply_episode_tool_evidence
+
+    trace = extract_trace([
+        {"type": "tool_call", "tool_name": "open_app", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "open_app", "content": '{"ok":false}'},
+    ])
+    assert apply_episode_tool_evidence(trace, {"events": [
+        {"type": "tool_result", "tool_name": "open_app", "screenshot_ref": "artifacts/step_004.jpeg"},
+    ]})
+    assert trace.tool_calls[0].has_screenshot
+    assert trace.tool_calls[0].is_error
+
 def test_extract_step_screenshots_returns_base64_payloads():
     shots = extract_step_screenshots(HISTORY)
     assert len(shots) == 2

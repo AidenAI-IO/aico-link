@@ -1,4 +1,148 @@
-from adbandroid.bridge.adb import ADBAndroidDevice, WINDOW_XML_REMOTE_PATH
+import pytest
+
+from adbandroid.bridge.adb import ADBAndroidDevice, ADBCommandError, WINDOW_XML_REMOTE_PATH
+
+
+def test_text_editing_chords_use_native_keycombination(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+
+    def run_text(args, **kwargs):
+        calls.append(args)
+        return "keycombination [-t duration] <key code 1> <key code 2> ..." if args == ["shell", "input"] else ""
+
+    monkeypatch.setattr(device, "_run_text", run_text)
+    device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+    device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_Z"])
+    assert calls == [
+        ["shell", "input"],
+        ["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_A"],
+        ["shell", "input", "keycombination", "KEYCODE_CTRL_LEFT", "KEYCODE_Z"],
+    ]
+
+
+def test_old_android_does_not_silently_execute_plain_keys(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+
+    def run_text(args, **kwargs):
+        calls.append(args)
+        return "Available commands: text keyevent tap swipe"
+
+    monkeypatch.setattr(device, "_run_text", run_text)
+    with pytest.raises(ADBCommandError, match="keycombination"):
+        device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+    assert calls == [["shell", "input"]]
+
+
+@pytest.mark.parametrize("output", ["Error: Unknown command: keycombination", "Error: Invalid arguments for command: keycombination"])
+def test_keycombination_checks_errors_even_with_zero_exit_status(monkeypatch, output):
+    device = ADBAndroidDevice("serial-1")
+    monkeypatch.setattr(device, "_run_text", lambda args, **kw: "keycombination" if args == ["shell", "input"] else output)
+    with pytest.raises(ADBCommandError):
+        device.keycombination(["KEYCODE_CTRL_LEFT", "KEYCODE_A"])
+
+
+@pytest.mark.parametrize("initial", [
+    "mInputShown=true",
+    "mInputShown=false\nInput method service state for example.LatinIME:\n  mWindowVisible=true",
+])
+def test_reset_home_dismisses_and_checks_keyboard(monkeypatch, initial):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+    states = iter([initial, "mInputShown=false\nInput method service state for example.LatinIME:\n  mWindowVisible=false"])
+
+    def run_text(args, **kwargs):
+        calls.append(args)
+        assert args == ["shell", "dumpsys", "input_method"]
+        return next(states)
+
+    monkeypatch.setattr(device, "_run_text", run_text)
+    monkeypatch.setattr(device, "_run", lambda args, **kw: calls.append(args))
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _: None)
+    device.reset_home()
+    assert calls == [
+        ["shell", "cmd", "statusbar", "collapse"],
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+        ["shell", "dumpsys", "input_method"],
+        ["shell", "input", "keyevent", "KEYCODE_BACK"],
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+        ["shell", "dumpsys", "input_method"],
+    ]
+
+
+@pytest.mark.parametrize("history", ["mStartInputHistory:", "mSoftInputShowHideHistory:", "mImeTrackerService#History:"])
+@pytest.mark.parametrize("current", ["mInputShown=false", "mShowRequested=false mInputShown=false"])
+def test_reset_ignores_stale_view_flag_and_historical_visibility(monkeypatch, history, current):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+    dump = f"""Current Input Method Manager state:
+  {current}
+  {history}
+    mInputShown=true
+Input method service state for example.LatinIME:
+  mWindowVisible=false
+  mIsInputViewShown=true
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    monkeypatch.setattr(device, "_run", lambda args, **kw: calls.append(args))
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _: None)
+    device.reset_home()
+    assert calls == [
+        ["shell", "cmd", "statusbar", "collapse"],
+        ["shell", "input", "keyevent", "KEYCODE_HOME"],
+    ]
+
+
+@pytest.mark.parametrize("visible", [True, False])
+def test_keyboard_visibility_uses_service_window_when_manager_field_absent(monkeypatch, visible):
+    device = ADBAndroidDevice("serial-1")
+    dump = f"""Current Input Method Manager state:
+  mStartInputHistory:
+    mInputShown=true
+Input method service state for example.LatinIME:
+  mDecorViewVisible={str(visible).lower()} mWindowVisible={str(visible).lower()} mInShowWindow=false
+  mIsInputViewShown=true
+Last computed insets:
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    assert device.keyboard_visible() is visible
+
+
+@pytest.mark.parametrize("manager,window,expected", [
+    (False, False, False),
+    (False, True, True),
+    (True, False, True),
+    (True, True, True),
+])
+def test_keyboard_visibility_reconciles_current_signals(monkeypatch, manager, window, expected):
+    device = ADBAndroidDevice("serial-1")
+    dump = f"""Current Input Method Manager state:
+  mInputShown={str(manager).lower()}
+Input method service state for example.LatinIME:
+  mWindowVisible={str(window).lower()}
+  mIsInputViewShown=true
+Last computed insets:
+"""
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: dump)
+    assert device.keyboard_visible() is expected
+
+
+def test_keyboard_visibility_does_not_accept_view_state_alone(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: "mIsInputViewShown=true")
+    with pytest.raises(ADBCommandError, match="current keyboard window visibility"):
+        device.keyboard_visible()
+
+
+@pytest.mark.parametrize("state", ["mInputShown=true", "unrecognized input method dump"])
+def test_reset_home_rejects_stuck_or_unverifiable_keyboard(monkeypatch, state):
+    device = ADBAndroidDevice("serial-1")
+    monkeypatch.setattr(device, "_run_text", lambda *args, **kw: state)
+    monkeypatch.setattr(device, "_run", lambda *args, **kw: b"")
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _: None)
+    with pytest.raises(ADBCommandError, match="keyboard"):
+        device.reset_home()
 
 
 def test_dump_window_xml_reads_dumped_temp_file_and_cleans_up(monkeypatch):

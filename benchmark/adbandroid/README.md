@@ -158,6 +158,13 @@ uv run python -m runner rejudge \
 This saves a full round of device operations when tuning rubric wording, or when
 you ran `--no-judge` first to verify the pipeline and want to score afterward.
 
+Rejudging refreshes screenshot flags from saved history and episode references
+when they align with the recorded trace. Automatic post-action screenshots count
+as screenshot evidence; a separate `screenshot` call is not required unless the
+rubric explicitly requests that tool. Earlier failed attempts do not invalidate
+a later successful recovery. Recorded execution gates and original trace files
+remain unchanged.
+
 ## Test suite
 
 `benchmark/suites/adb_android_basic.json`, 8 tasks:
@@ -233,10 +240,21 @@ a gesture on failure). Pass `{"list": true}` to see the full catalog.
 - **Single-device, serial**: one bridge drives one device and does not support
   concurrent tasks. For multiple devices run multiple bridge instances (different
   ports + different serials).
-- **`keyboard_tap` does not support ctrl/alt/shift combos**: adb has no reliable
-  way to inject them, so such combos are rejected with an error rather than
-  silently executing a different key. `hold_ms` is accepted but ignored — adb
-  `input keyevent` cannot hold a key for an arbitrary duration.
+- **Text-editing shortcuts require native support**: `keyboard_tap` sends
+  `Ctrl+A` and `Ctrl+Z` through Android's `input keycombination` when the device
+  advertises it. These shortcuts let the Go text engine clear fields and undo
+  input probes. Older devices and other Ctrl/Alt/Shift combinations return an
+  explicit error; modifiers are never silently dropped. Nonzero `hold_ms` is
+  rejected because `input keyevent` cannot hold a key for an arbitrary duration.
+- **Reset verifies keyboard visibility**: setup returns Home, checks
+  the current manager's `mInputShown` and the IME service's `mWindowVisible`
+  in `dumpsys input_method`, and uses Back/Home to dismiss a remaining keyboard.
+  Either available signal reporting visible keeps reset in its retry loop;
+  all available signals must report hidden before setup proceeds.
+  Historical records and `mIsInputViewShown` are ignored:
+  the latter can remain true after the IME window has been hidden.
+  Setup fails if the keyboard remains visible or its visibility cannot be
+  determined, preventing state leakage into the next task.
 - After an action the bridge waits 0.6s before taking the screenshot
   (`DEFAULT_ACTION_SETTLE_SEC`); on slow emulators a transition animation may
   still be in flight, and the agent can call `screenshot` again to confirm.

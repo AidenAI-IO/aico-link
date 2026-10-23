@@ -117,6 +117,21 @@ The HTTP catalog is a separate policy. It exposes registered operational and spe
 
 For app launch requests, inspect the latest screenshot first. If the requested app icon or card is clearly visible, unique, and unobscured, use `touch_gesture` on its visible non-overlapping center instead of `open_app`; use `open_app` only when the target is not clearly tappable or a direct tap did not produce a verified result. Both `open_app` and `open_url` return a post-action screenshot; always inspect it before answering or continuing. `ok:true` only means that the OS accepted the launch request, not that the requested app or page is visible.
 
+The Android visible-UI fallback starts with the remembered launcher search entry,
+or the app drawer on first use. Its entry screenshot check also looks for the
+requested app icon. A clearly identified launcher icon is tapped directly and
+the resulting app screen is verified before success is returned. If no target
+icon is visible, the existing search-field and alternative-entry flow continues.
+This avoids searching for an app that is already visible in the drawer.
+
+Conversational `touch_gesture` calls with missing standard-gesture fields are
+rejected before baseline capture. A swipe must include `type:"swipe"`, `start`,
+and either `end` or `direction` together. Every supplied `point`, `start`, or
+`end` must be an object containing both numeric `x` and `y`; zero is valid,
+while missing or null coordinates are rejected before capture. The error
+includes complete tap and swipe examples so a retry can retain all required
+fields.
+
 ## curl Examples
 
 ```bash
