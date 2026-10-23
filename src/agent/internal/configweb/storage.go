@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"net/http"
 	"os"
@@ -174,7 +173,7 @@ func (s *Server) handleConfigBackupImport(w http.ResponseWriter, r *http.Request
 		_ = directory.Close()
 	}
 
-	revision := configDataRevision(data)
+	revision := agent.ConfigRevision(data)
 	s.configMu.Lock()
 	s.configSavePending = true
 	if currentErr != nil || current.FrameService != candidate.FrameService {
@@ -341,12 +340,6 @@ func rejectUnknownChildTables(root map[string]any, path, allowed []string) error
 		}
 	}
 	return nil
-}
-
-func configDataRevision(data []byte) uint64 {
-	hash := fnv.New64a()
-	_, _ = hash.Write(data)
-	return hash.Sum64()
 }
 
 func storageStatusMap(status agent.StorageStatus) map[string]any {
