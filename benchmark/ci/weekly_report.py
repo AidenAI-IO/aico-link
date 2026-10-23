@@ -106,7 +106,7 @@ CAPABILITY_SUITES = {
                            "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
 }
-DIAGNOSTIC_SUITES = ("skill_discovery_v1",)
+DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"
 OTHER_CAPABILITY = "Other"
 _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
