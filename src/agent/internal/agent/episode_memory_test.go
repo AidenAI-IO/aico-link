@@ -911,6 +911,9 @@ func TestEpisodeMemoryModelInputUsesDirectEvidenceWithoutVerifierState(t *testin
 	if !strings.Contains(prompt, "must emit at least one candidate") {
 		t.Fatal("Episode Memory model input does not require retention of directly verified reusable lessons")
 	}
+	if !strings.Contains(prompt, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatal("Episode Memory model input does not exclude guidance the tools already give the Agent")
+	}
 	if !model.firstCallHasImage() {
 		t.Fatal("Episode Memory model input did not attach the persisted screenshot")
 	}
@@ -1929,5 +1932,34 @@ func TestProcessEpisodeMemoryNowDrainsScheduledRetry(t *testing.T) {
 				t.Fatalf("unrelated retry changed: %#v", got)
 			}
 		})
+	}
+}
+
+func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
+	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
+	// A failed enter_text already returns "Inspect the latest screen and correct
+	// or clear the existing field text before retrying enter_text."; a memory
+	// that repeats it adds nothing the Agent does not already receive.
+	if !strings.Contains(prompt, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatalf("retention audit does not discard built-in tool guidance:\n%s", prompt)
+	}
+}
+
+func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
+	model := &episodeMemoryScriptedModel{responses: []string{`{"episode_assessment":{"goal_result":"unknown","reason":"no proof","evidence_refs":[]},"candidates":[]}`}}
+	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+	processor := newEpisodeMemoryProcessor(plane, model)
+
+	if _, err := processor.reviewEpisodeMemoryOmission(context.Background(), TaskEpisode{ID: "ep_omission_rule"}, episodeMemoryProposal{}, nil, 0); err != nil {
+		t.Fatalf("reviewEpisodeMemoryOmission: %v", err)
+	}
+	var review string
+	for _, part := range strings.Split(model.firstCallText(), "\n") {
+		if strings.HasPrefix(part, "Review this first-pass assessment once") {
+			review = part
+		}
+	}
+	if !strings.Contains(review, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatalf("omission review does not discount built-in tool guidance:\n%s", review)
 	}
 }
