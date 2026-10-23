@@ -99,7 +99,7 @@ func (p GeminiProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 		jsonWebSocketTransport: transport,
 		toolNames:              make(map[string]string),
 		info: newPCM16SessionInfo(cfg.SessionID, inputRate, outputRate, Capabilities{
-			ServerAuthoritativeInterruption:  IsGemini38ExtendedThinkingModel(model),
+			ServerAuthoritativeInterruption:  true,
 			ServerAuthoritativeTurnDetection: IsGemini38ExtendedThinkingModel(model),
 		}),
 		inputRate:        inputRate,

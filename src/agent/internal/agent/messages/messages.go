@@ -141,6 +141,19 @@ func (msg Message) Clone() Message {
 	return cloned
 }
 
+// CloneList deep-copies every message in messageList. An empty list clones
+// to nil.
+func CloneList(messageList []Message) []Message {
+	if len(messageList) == 0 {
+		return nil
+	}
+	cloned := make([]Message, len(messageList))
+	for i, message := range messageList {
+		cloned[i] = message.Clone()
+	}
+	return cloned
+}
+
 // Attachment tracks file metadata for message attachments. Binary content is stored on disk
 // and only loaded when ConvertToStandardMessageList is called.
 type Attachment struct {
