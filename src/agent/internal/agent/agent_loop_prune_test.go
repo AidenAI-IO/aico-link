@@ -64,68 +64,53 @@ func countBinaryAndOmitted(messages []llms.MessageContent) (binaryCount, omitted
 	return binaryCount, omitted
 }
 
-func TestAgentLoopExecutorPrunesForAnthropicModel(t *testing.T) {
-	manager := newScreenshotObservationManager(t, 6)
-	model := &pruneRecordingModel{}
-	pruner := executor.AnthropicScreenshotPruner{
-		Enabled: IsAnthropicModel("openrouter", "anthropic/claude-test"),
-		Config:  executor.ScreenshotPruningConfig{}.WithDefaults(),
-	}
-	exec := executor.NewLLMExecutor(model, manager, pruner)
-	if _, err := exec.GenerateContent(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	binaryCount, omitted := countBinaryAndOmitted(model.last)
-	if binaryCount != 4 || omitted != 2 {
-		t.Fatalf("binary=%d omitted=%d messages=%#v", binaryCount, omitted, model.last)
-	}
-	if got := len(manager.MessageListDump().Messages); got != 6 {
-		t.Fatalf("persisted message count = %d", got)
-	}
-	for _, msg := range manager.MessageListDump().Messages {
-		if len(msg.Attachments) != 1 {
-			t.Fatalf("persisted attachments mutated: %#v", msg)
-		}
-	}
-}
-
-func TestAgentLoopExecutorSkipsPruneForNonAnthropic(t *testing.T) {
-	manager := newScreenshotObservationManager(t, 6)
-	model := &pruneRecordingModel{}
-	pruner := executor.AnthropicScreenshotPruner{
-		Enabled: IsAnthropicModel("openrouter", "openai/gpt-4o"),
-		Config:  executor.ScreenshotPruningConfig{}.WithDefaults(),
-	}
-	exec := executor.NewLLMExecutor(model, manager, pruner)
-	if _, err := exec.GenerateContent(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	binaryCount, omitted := countBinaryAndOmitted(model.last)
-	if binaryCount != 6 || omitted != 0 {
-		t.Fatalf("binary=%d omitted=%d messages=%#v", binaryCount, omitted, model.last)
+func TestAgentLoopExecutorPrunesScreenshotsForEveryProvider(t *testing.T) {
+	// Pruning used to be enabled for Anthropic models only, so every other
+	// provider resent each turn's screenshot for the whole conversation.
+	for _, cfg := range []ModelConfig{
+		{Provider: "anthropic", Model: "claude-test"},
+		{Provider: "openrouter", Model: "anthropic/claude-test"},
+		{Provider: "openrouter", Model: "openai/gpt-4o"},
+		{Provider: "openai", Model: "gpt-5.5"},
+		{Provider: "deepseek", Model: "deepseek-flash"},
+		{Provider: "gemini", Model: "gemini-3.7-flash"},
+	} {
+		t.Run(cfg.Provider+"/"+cfg.Model, func(t *testing.T) {
+			loop := &AgentLoop{
+				Model:             &ModelManager{config: cfg},
+				ScreenshotPruning: executor.ScreenshotPruningConfig{}.WithDefaults(),
+			}
+			manager := newScreenshotObservationManager(t, 6)
+			model := &pruneRecordingModel{}
+			exec := executor.NewLLMExecutor(model, manager, loop.outboundTransforms()...)
+			if _, err := exec.GenerateContent(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			binaryCount, omitted := countBinaryAndOmitted(model.last)
+			if binaryCount != 4 || omitted != 2 {
+				t.Fatalf("binary=%d omitted=%d messages=%#v", binaryCount, omitted, model.last)
+			}
+			if got := len(manager.MessageListDump().Messages); got != 6 {
+				t.Fatalf("persisted message count = %d", got)
+			}
+			for _, msg := range manager.MessageListDump().Messages {
+				if len(msg.Attachments) != 1 {
+					t.Fatalf("persisted attachments mutated: %#v", msg)
+				}
+			}
+		})
 	}
 }
 
-func TestAgentLoopOutboundTransformsEnableForAnthropic(t *testing.T) {
+func TestAgentLoopOutboundTransformsUseConfiguredScreenshotPruning(t *testing.T) {
+	want := executor.ScreenshotPruningConfig{KeepN: 5, Interval: 4}
 	loop := &AgentLoop{
-		Model:             &ModelManager{config: ModelConfig{Provider: "openrouter", Model: "anthropic/x"}},
-		ScreenshotPruning: executor.ScreenshotPruningConfig{}.WithDefaults(),
+		Model:             &ModelManager{config: ModelConfig{Provider: "deepseek", Model: "deepseek-flash"}},
+		ScreenshotPruning: want,
 	}
 	transforms := loop.outboundTransforms()
-	pruner, ok := transforms[0].(executor.AnthropicScreenshotPruner)
-	if !ok || !pruner.Enabled {
-		t.Fatalf("transforms = %#v", transforms)
-	}
-}
-
-func TestAgentLoopOutboundTransformsDisableForNonAnthropic(t *testing.T) {
-	loop := &AgentLoop{
-		Model:             &ModelManager{config: ModelConfig{Provider: "openrouter", Model: "openai/gpt-4o"}},
-		ScreenshotPruning: executor.ScreenshotPruningConfig{}.WithDefaults(),
-	}
-	transforms := loop.outboundTransforms()
-	pruner, ok := transforms[0].(executor.AnthropicScreenshotPruner)
-	if !ok || pruner.Enabled {
+	pruner, ok := transforms[0].(executor.ScreenshotPruner)
+	if !ok || pruner.Config != want {
 		t.Fatalf("transforms = %#v", transforms)
 	}
 }

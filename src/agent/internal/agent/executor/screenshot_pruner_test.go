@@ -8,20 +8,9 @@ import (
 	"aiden-agent/internal/agent/messages"
 )
 
-func TestAnthropicScreenshotPrunerDisabledIsNoop(t *testing.T) {
-	msgs := screenshotObservationMessages(4)
-	out := AnthropicScreenshotPruner{Enabled: false, Config: ScreenshotPruningConfig{}.WithDefaults()}.Transform(msgs)
-	if countScreenshotSources(out) != 4 {
-		t.Fatalf("disabled pruner changed messages: %#v", out)
-	}
-	if len(out) == 0 || &out[0] != &msgs[0] {
-		t.Fatal("disabled pruner must return the same slice (pointer identity)")
-	}
-}
-
-func TestAnthropicScreenshotPrunerBatchesLikePrunedCount(t *testing.T) {
+func TestScreenshotPrunerBatchesLikePrunedCount(t *testing.T) {
 	// Defaults KeepN=3 Interval=2: total 6 → pruned 2 (same as scratchpad batch tests).
-	pruner := AnthropicScreenshotPruner{Enabled: true, Config: ScreenshotPruningConfig{}.WithDefaults()}
+	pruner := ScreenshotPruner{Config: ScreenshotPruningConfig{}.WithDefaults()}
 	msgs := screenshotObservationMessages(6)
 	snapshot := cloneMessagesForAssert(msgs)
 	out := pruner.Transform(msgs)
@@ -37,10 +26,10 @@ func TestAnthropicScreenshotPrunerBatchesLikePrunedCount(t *testing.T) {
 	})
 }
 
-func TestAnthropicScreenshotPrunerConfiguredKeepNInterval(t *testing.T) {
+func TestScreenshotPrunerConfiguredKeepNInterval(t *testing.T) {
 	// KeepN=2 Interval=4: total 7 → pruned 4, remaining marked attachments 3
 	// (mirrors TestFunctionAgentScratchpadUsesConfiguredScreenshotPruning).
-	pruner := AnthropicScreenshotPruner{Enabled: true, Config: ScreenshotPruningConfig{KeepN: 2, Interval: 4}}
+	pruner := ScreenshotPruner{Config: ScreenshotPruningConfig{KeepN: 2, Interval: 4}}
 	msgs := screenshotObservationMessages(7)
 	snapshot := cloneMessagesForAssert(msgs)
 	out := pruner.Transform(msgs)
@@ -56,7 +45,7 @@ func TestAnthropicScreenshotPrunerConfiguredKeepNInterval(t *testing.T) {
 	})
 }
 
-func TestAnthropicScreenshotPrunerIgnoresUnmarkedAttachments(t *testing.T) {
+func TestScreenshotPrunerIgnoresUnmarkedAttachments(t *testing.T) {
 	msgs := []messages.Message{
 		{Role: messages.MessageRoleUser, Content: "upload", Attachments: []messages.Attachment{{
 			MIMEType: "image/png", FilePath: "/tmp/user.png",
@@ -68,7 +57,7 @@ func TestAnthropicScreenshotPrunerIgnoresUnmarkedAttachments(t *testing.T) {
 	}
 	snapshot := cloneMessagesForAssert(msgs)
 	// With KeepN=3, a single marked shot should never prune; unmarked must remain.
-	out := AnthropicScreenshotPruner{Enabled: true, Config: ScreenshotPruningConfig{KeepN: 3, Interval: 2}}.Transform(msgs)
+	out := ScreenshotPruner{Config: ScreenshotPruningConfig{KeepN: 3, Interval: 2}}.Transform(msgs)
 	assertMessagesUnchanged(t, msgs, snapshot)
 	if len(out[0].Attachments) != 1 || out[0].Attachments[0].Source != "" {
 		t.Fatalf("user upload mutated: %#v", out[0])
@@ -78,7 +67,7 @@ func TestAnthropicScreenshotPrunerIgnoresUnmarkedAttachments(t *testing.T) {
 	}
 }
 
-func TestAnthropicScreenshotPrunerRewritesPairedToolResultWhenPruning(t *testing.T) {
+func TestScreenshotPrunerRewritesPairedToolResultWhenPruning(t *testing.T) {
 	msgs := []messages.Message{
 		{
 			Role: messages.MessageRoleToolResult,
@@ -150,9 +139,8 @@ func TestAnthropicScreenshotPrunerRewritesPairedToolResultWhenPruning(t *testing
 		},
 	}
 
-	out := AnthropicScreenshotPruner{
-		Enabled: true,
-		Config:  ScreenshotPruningConfig{KeepN: 2, Interval: 1},
+	out := ScreenshotPruner{
+		Config: ScreenshotPruningConfig{KeepN: 2, Interval: 1},
 	}.Transform(msgs)
 
 	if got := out[0].ToolResults[0].Content; !strings.Contains(got, "replaced with a placeholder") {

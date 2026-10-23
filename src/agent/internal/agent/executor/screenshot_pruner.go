@@ -7,7 +7,7 @@ import (
 	"aiden-agent/internal/agent/messages"
 )
 
-var _ OutboundMessageTransform = AnthropicScreenshotPruner{}
+var _ OutboundMessageTransform = ScreenshotPruner{}
 
 type ScreenshotPruningConfig struct {
 	KeepN    int
@@ -41,13 +41,17 @@ const (
 	screenshotPlaceholderText = "The image is replaced with a placeholder in the next message."
 )
 
-type AnthropicScreenshotPruner struct {
-	Enabled bool
-	Config  ScreenshotPruningConfig
+// ScreenshotPruner replaces all but the newest screenshot observations in the
+// outbound message list with placeholders. It applies to every provider: the
+// persisted history keeps every screenshot, and without pruning each request
+// resends all of them (one per turn from the <state> hook), which grows the
+// request, its token cost, and the agent's memory with the conversation.
+type ScreenshotPruner struct {
+	Config ScreenshotPruningConfig
 }
 
-func (p AnthropicScreenshotPruner) Transform(messageList []messages.Message) []messages.Message {
-	if !p.Enabled || len(messageList) == 0 {
+func (p ScreenshotPruner) Transform(messageList []messages.Message) []messages.Message {
+	if len(messageList) == 0 {
 		return messageList
 	}
 	cfg := p.Config.WithDefaults()
