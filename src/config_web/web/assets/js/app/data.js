@@ -35,6 +35,25 @@ export async function fetchSnapshot() {
 }
 
 /**
+ * The snapshot a route was opened with, or a fresh one; a page that cannot
+ * read it still renders, with an empty config.
+ */
+export async function ensureSnapshot(context) {
+  return context.snapshot || fetchSnapshot().catch(() => ({config: {}}));
+}
+
+/**
+ * A saver `onSaved` handler that adopts the saved config into `snapshot`, then
+ * runs `after` when given.
+ */
+export function adoptSaved(snapshot, after) {
+  return payload => {
+    if (payload && payload.config) snapshot.config = payload.config;
+    if (after) after();
+  };
+}
+
+/**
  * Read the snapshot without failing the caller.
  *
  * Every settings surface is still usable without live values, so a snapshot

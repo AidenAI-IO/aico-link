@@ -28,7 +28,7 @@
  * they are edited in the TOML file when they ever need to change.
  */
 
-import {fetchSnapshot, request, t} from '../data.js';
+import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
 import {getActiveLocale} from '../../config/i18n.js';
 import {customValueField, inlineValueRow, parse} from '../fields.js';
 import {createSaver} from '../saver.js';
@@ -139,10 +139,6 @@ export function newRecordName(record, records) {
   return base;
 }
 
-async function ensureSnapshot(context) {
-  return context.snapshot || fetchSnapshot().catch(() => ({config: {}}));
-}
-
 const modelConfig = snapshot => (snapshot && snapshot.config && snapshot.config.model) || {};
 const records = snapshot => (snapshot && snapshot.config && snapshot.config.model_providers) || {};
 const currentRecord = snapshot => records(snapshot)[modelConfig(snapshot).provider] || null;
@@ -158,12 +154,6 @@ export const DECISION_PROVIDERS = [
 
 function decisionProvider(value) {
   return DECISION_PROVIDERS.find(entry => entry.value === value) || DECISION_PROVIDERS[0];
-}
-
-function adoptSaved(snapshot) {
-  return payload => {
-    if (payload && payload.config) snapshot.config = payload.config;
-  };
 }
 
 /** The catalogue for a provider type; one model, when given, adds its `spec`. */

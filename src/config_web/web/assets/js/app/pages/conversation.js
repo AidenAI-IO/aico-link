@@ -16,7 +16,7 @@
  * so only the supplementary prompt is offered.
  */
 
-import {fetchSnapshot, request} from '../data.js';
+import {adoptSaved, ensureSnapshot, request} from '../data.js';
 import {inlineValueRow, parse} from '../fields.js';
 import {createSaver} from '../saver.js';
 import {confirmSheet} from '../../ui/confirm.js';
@@ -66,16 +66,6 @@ export const LIMIT_FIELDS = [
 
 function agentValue(snapshot, key) {
   return snapshot?.config?.agent?.[key];
-}
-
-async function ensureSnapshot(context) {
-  return context.snapshot || fetchSnapshot().catch(() => ({config: {}}));
-}
-
-function adoptSaved(snapshot) {
-  return payload => {
-    if (payload && payload.config) snapshot.config = payload.config;
-  };
 }
 
 function limitRow(field, snapshot, saver) {
