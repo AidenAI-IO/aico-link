@@ -39,10 +39,7 @@ func (p *pendingSessionChunk) WriteChunk(ctx context.Context, sessionID string, 
 		return err
 	}
 	p.sessionID = sessionID
-	p.messages = make([]messages.Message, len(msgs))
-	for i, msg := range msgs {
-		p.messages[i] = msg.Clone()
-	}
+	p.messages = messages.CloneList(msgs)
 	p.summary = summary
 	return nil
 }
