@@ -8,7 +8,9 @@ import (
 	_ "image/png"
 )
 
-func encodeEncodedImageToJPEG(frame []byte, quality int) ([]byte, error) {
+// EncodeImageToJPEG re-encodes a PNG or JPEG image as JPEG. A non-positive
+// quality uses DefaultJPEGQuality.
+func EncodeImageToJPEG(frame []byte, quality int) ([]byte, error) {
 	img, _, err := image.Decode(bytes.NewReader(frame))
 	if err != nil {
 		return nil, fmt.Errorf("decode encoded image: %w", err)
