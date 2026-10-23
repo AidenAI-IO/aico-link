@@ -84,14 +84,18 @@ func Open(path string, client MCU, run Runner) (*Manager, error) {
 			return nil, errors.New("unsupported routines version")
 		}
 		// Never replay a run whose side effects may have happened before a crash.
+		changed := false
 		for i := range m.state.Routines {
 			r := &m.state.Routines[i]
 			if r.Status == "running" {
 				r.Status, r.Error = "interrupted", "Agent restarted during execution; inspect the session before rescheduling"
+				changed = true
 			}
 		}
-		if err = m.commit(m.state); err != nil {
-			return nil, err
+		if changed {
+			if err = m.commit(m.state); err != nil {
+				return nil, err
+			}
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
@@ -478,12 +482,13 @@ func (m *Manager) worker() {
 			m.activeID, m.activeStop = r.ID, stop
 			m.mu.Unlock()
 			result, err := m.run(ctx, r)
+			shutdown := m.ctx.Err() != nil
 			if ctx.Err() != nil && err == nil {
 				err = ctx.Err()
 			}
 			stop()
 			for {
-				if saveErr := m.finish(i, result, err); saveErr == nil {
+				if saveErr := m.finish(i, result, err, shutdown); saveErr == nil {
 					break
 				}
 				// Keep the result in memory while retrying a transient disk error.
@@ -501,7 +506,7 @@ func (m *Manager) worker() {
 	}
 }
 
-func (m *Manager) finish(i int, result string, runErr error) error {
+func (m *Manager) finish(i int, result string, runErr error, shutdown bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.activeID, m.activeStop = "", nil
@@ -511,7 +516,9 @@ func (m *Manager) finish(i int, result string, runErr error) error {
 		return nil
 	}
 	current.Result, current.Error, current.Status = limitText(result), "", "completed"
-	if runErr != nil {
+	if shutdown {
+		current.Error, current.Status = "Agent stopped during execution; inspect the session before rescheduling", "interrupted"
+	} else if runErr != nil {
 		current.Error, current.Status = runErr.Error(), "failed"
 	} else if current.IntervalS > 0 {
 		interval := time.Duration(current.IntervalS) * time.Second

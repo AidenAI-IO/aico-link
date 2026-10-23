@@ -87,6 +87,13 @@ event cursor, pending work, schedule/session mapping, and latest result. The
 normal configuration directory is `/userdata/agent`. State files have mode
 `0600`. No model credentials are stored in them.
 
+If loading or recovering the routine state fails, the daemon logs the error and
+continues serving HTTP and voice requests without the `schedule` tool. It keeps
+the state file intact for inspection and recovery. Fix the reported state or
+storage problem and restart the Agent to re-enable scheduling. Loading unchanged
+state does not rewrite it; persisting recovered interrupted work still requires
+writable storage.
+
 The normal lifecycle is:
 
 ```text
@@ -94,7 +101,7 @@ scheduled -> queued -> running -> completed
                               -> scheduled (next repetition)
                               -> failed
 scheduled / queued / running -> cancelled
-running at process restart   -> interrupted
+running at shutdown/restart  -> interrupted
 ```
 
 The MCU wake event (`rtc_timer`, source code 4) makes due work eligible for
@@ -114,11 +121,13 @@ has no per-client timer lease.
 
 Repeated wake delivery does not rerun a completed occurrence. A delayed routine
 runs once and skips missed intervals, preserving its original cadence. A failed
-run stops the routine until it is explicitly updated. A process restart during
-execution records `interrupted` rather than automatically replaying potentially
-completed device actions. Inspect the session before updating that routine.
-Queued work survives restart. These rules do not promise exactly-once external
-side effects.
+run stops the routine until it is explicitly updated. A graceful shutdown during
+execution records `interrupted` and retains any partial result. Recovery after a
+crash also marks unfinished execution as `interrupted`. Neither automatically
+replays potentially completed device actions. Inspect the session before
+updating that routine. This also applies to a running occurrence waiting for the
+backend runtime to become idle; work still in the queue survives restart.
+These rules do not promise exactly-once external side effects.
 
 The MCU countdown is not a battery-backed calendar alarm and does not survive
 loss of MCU power. Persisted schedules are reconciled when the Agent and MCU

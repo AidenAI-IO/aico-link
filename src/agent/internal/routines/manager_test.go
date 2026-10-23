@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -374,6 +375,126 @@ func TestRoutineRestartDoesNotReplayInterruptedWork(t *testing.T) {
 	got := waitRoutine(t, resumed, r.ID, "interrupted")
 	if got.Error == "" {
 		t.Fatal("missing restart explanation")
+	}
+}
+
+func TestRoutineOpenUnchangedStateNeedsNoWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "state.json")
+	state := State{Version: 1, Generation: "generation-1", Cursor: "42"}
+	for _, status := range []string{"scheduled", "queued", "completed", "cancelled", "failed", "interrupted"} {
+		state.Routines = append(state.Routines, Routine{ID: status, Status: status})
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0400); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0700) })
+	m, err := Open(path, &fakeMCU{}, func(context.Context, Routine) (string, error) { return "", nil })
+	if err != nil {
+		t.Fatalf("read-only startup failed: %v", err)
+	}
+	defer m.Close()
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Also catch rewrites when the test is run with permission to bypass chmod.
+	if !os.SameFile(before, after) || string(got) != string(data) {
+		t.Fatal("opening unchanged state rewrote the file")
+	}
+	items, _ := m.List()
+	if len(items) != len(state.Routines) || m.state.Cursor != state.Cursor {
+		t.Fatal("read-only startup lost persisted work or event cursor")
+	}
+}
+
+func TestRoutineShutdownPersistsInterruptedAndPreservesQueuedWork(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		interval int64
+		runErr   error
+	}{
+		{"one-off", 0, context.Canceled},
+		{"repeating", 30, context.Canceled},
+		{"runner-returns-nil", 30, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			started := make(chan struct{})
+			m, fake, clock := newTestManager(t, func(ctx context.Context, _ Routine) (string, error) {
+				close(started)
+				<-ctx.Done()
+				return "partial result", tc.runErr
+			})
+			active := saveRoutine(t, m, time.Second, tc.interval)
+			queued := saveRoutine(t, m, time.Second, 0)
+			clock.add(time.Second)
+			m.Start()
+			select {
+			case <-started:
+			case <-time.After(3 * time.Second):
+				t.Fatal("run did not start")
+			}
+			m.Close()
+			data, err := os.ReadFile(m.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved State
+			if err := json.Unmarshal(data, &saved); err != nil {
+				t.Fatal(err)
+			}
+			got := saved.Routines[0]
+			if got.Status != "interrupted" || !strings.Contains(got.Error, "stopped during execution") || got.Result != "partial result" {
+				t.Fatalf("shutdown result was not persisted: %+v", got)
+			}
+			if saved.Routines[1].Status != "queued" {
+				t.Fatalf("shutdown changed queued work: %+v", saved.Routines[1])
+			}
+			resumed, err := Open(m.path, fake, func(_ context.Context, r Routine) (string, error) {
+				if r.ID == active.ID {
+					t.Error("interrupted task replayed")
+				}
+				return "done", nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resumed.Close()
+			resumed.now = clock.now
+			resumed.Start()
+			waitRoutine(t, resumed, queued.ID, "completed")
+			waitRoutine(t, resumed, active.ID, "interrupted")
+		})
+	}
+}
+
+func TestRoutineRunErrorWithoutShutdownRemainsFailed(t *testing.T) {
+	for _, runErr := range []error{errors.New("model unavailable"), context.Canceled} {
+		t.Run(runErr.Error(), func(t *testing.T) {
+			m, _, clock := newTestManager(t, func(context.Context, Routine) (string, error) { return "partial result", runErr })
+			r := saveRoutine(t, m, time.Second, 30)
+			clock.add(time.Second)
+			m.Start()
+			got := waitRoutine(t, m, r.ID, "failed")
+			if got.Error != runErr.Error() || got.Result != "partial result" {
+				t.Fatalf("run error changed: %+v", got)
+			}
+		})
 	}
 }
 

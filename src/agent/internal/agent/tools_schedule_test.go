@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"aiden-agent/internal/agent/contextmanager"
 	"aiden-agent/internal/mcu"
 	"aiden-agent/internal/routines"
+	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
@@ -141,6 +143,40 @@ func TestStartRoutinesRegistersToolAndPreservesMCUError(t *testing.T) {
 	}
 	if _, err := tool.Call(context.Background(), `{"action":"create","task":"Check it","delay_s":10}`); err == nil {
 		t.Fatal("reported success without MCU")
+	}
+}
+
+func TestStartRoutinesInvalidStateLeavesRuntimeUsable(t *testing.T) {
+	for _, data := range []string{`{broken`, `{"version":99}`} {
+		t.Run(data, func(t *testing.T) {
+			configDir := t.TempDir()
+			path := filepath.Join(configDir, "routines", "state.json")
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
+				return contentResponse("still available"), nil
+			}}
+			runtime := NewRuntimeWithDeps(Config{ConfigDir: configDir, Model: ModelConfig{Provider: "fake"}}, &testModelResolver{model: model}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+			defer runtime.Close()
+			if err := runtime.StartRoutines(); err == nil {
+				t.Fatal("accepted invalid routines state")
+			}
+			if _, ok := runtime.Tool("schedule"); ok || runtime.routines != nil {
+				t.Fatal("failed startup installed scheduling")
+			}
+			result, err := runtime.Run(context.Background(), RunRequest{Input: "Reply still available."})
+			if err != nil || result.Output != "still available" {
+				t.Fatalf("ordinary task failed: result=%+v err=%v", result, err)
+			}
+			stored, err := os.ReadFile(path)
+			if err != nil || string(stored) != data {
+				t.Fatalf("failed startup modified the routines file: data=%q err=%v", stored, err)
+			}
+		})
 	}
 }
 
