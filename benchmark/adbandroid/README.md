@@ -175,16 +175,25 @@ The `adb` CI profile runs two suites and 20 tasks per repeat:
 - `adb_android_text_editing` (`suites/adb_android_text_editing.json`), 4 tasks: spaces,
   punctuation, query replacement, and clearing in Settings search.
 
-CI runs each suite in full, with the same contents as a direct local run. The
-basic suite consolidates the earlier smoke, phone-control, quick-action, and
-navigation cases. Its three `quick_action_*` tasks require successful named-tool execution; other action tasks allow any supported route unless the goal
-explicitly requires recents. Every action tool already returns a post-action
-screenshot, so a separate screenshot call is generally unnecessary.
+Use an unlocked device with an app drawer, Settings search, and Clock's alarm
+list available. Complete first-run onboarding before running the suites. Tasks
+use English instructions and accept equivalent localized Android screens.
 
-See [Android coverage](coverage.md) for exact coverage, migration details,
-device prerequisites, and commands. The profile uses a connected emulator or
-physical device; it does not provision an emulator or run MobileGym apps.
-UI correctness requires judging; `--no-judge` only exercises execution gates.
+The bridge returns Home and dismisses the keyboard before each task; it does
+not reset app data or launcher layout. Task setup prepares the required screen
+or search query. Both suites run serially on the connected device.
+
+The three `quick_action_*` tasks require successful execution of the named
+shortcut. Other tasks accept any supported route unless the goal explicitly
+requires recents. Judging uses pre/post screenshots and the execution trace;
+`--no-judge` checks execution only, not UI correctness.
+
+In GitHub Actions, select profile `adb` and leave `suite` empty to run both
+suites, or enter one suite path to run it alone. The workflow requires an
+already booted device and `BENCHMARK_ANDROID_SERIAL`; see
+[CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
+For local runs, use either suite path in the quick-start command above. Add
+`--task-id <id>` to select individual tasks and `--repeats <count>` to repeat them.
 
 ## HTTP protocol
 

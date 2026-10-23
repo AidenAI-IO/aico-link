@@ -424,7 +424,7 @@ The execution policy is based only on whether CI can prepare the environment:
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (13 cases) |
-| Manual dispatch | `adb` | Two serial native-Android suites (`adb_android_basic` and `adb_android_text_editing`), 20 task executions per repeat; requires a connected emulator or device |
+| Manual dispatch | `adb` | Native Android UI and text editing; requires a connected emulator or device |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -443,23 +443,21 @@ single-suite run must use the matching `runnable`, `hardware`, or `adb` profile;
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
 the Android-style MobileGym simulator automatically; no external iOS bridge is
-required. This case is excluded from the scheduled sweep while its baseline is
-being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+required. This case is available through manual dispatch only. The iOS-only
+Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
-from Agent capability failures. For native Android, dispatch profile `adb` with
+from Agent capability failures. The same suite with profile `hardware` selects
+the external iOS case; profile `all` selects both environments.
+
+For native Android, dispatch profile `adb` with
 `suites/adb_android_basic.json` for general operations or
 `suites/adb_android_text_editing.json` for text editing. Leave the suite input
-blank to run both. The shared `phone_control_v1` suite remains available through
-profile `hardware` for its external iOS case and profile `all` for both iOS and
-MobileGym; it has no ADB case.
+blank to run both. See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
+for coverage and device prerequisites.
 
 Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
-exist, be unique, and support the case's target platform. The matrix preserves
-the selection and passes repeated `--task-id` options to the runner; the run
-manifest records the selected IDs. An empty list means the entire suite, subject
-to the runner's normal platform filtering. ADB cases always use concurrency 1.
-See the [native Android coverage plan](../../benchmark/adbandroid/coverage.md)
-for reused tasks, new navigation/text scenarios, prerequisites, and limitations.
+exist, be unique, and support the case's target platform. An empty list selects
+the entire suite, subject to platform filtering. ADB cases require concurrency 1.
 
 When a suite has cases in multiple environment profiles, an explicit suite
 selection runs only cases belonging to the requested profile. A selection with
@@ -470,12 +468,6 @@ do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
-
-Treat the first two weeks as a baseline period. Review each scheduled case's run
-duration, Langfuse cost, and failure class before deciding whether the policy of
-running every locally runnable case needs to change. Only add VPhone or another
-external environment to the schedule after its bridge has at least 99% health
-availability over that baseline period.
 
 The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AIDEN_` prefix; the workflow maps them to the runner variables documented
