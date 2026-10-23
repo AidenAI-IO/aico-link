@@ -17,16 +17,16 @@ import (
 )
 
 type TaskEpisodeStore struct {
-	mu         sync.Mutex
 	rootDir    string
 	cacheMu    sync.Mutex
 	indexCache taskEpisodeIndexCache
 }
 
 type taskEpisodeIndexCache struct {
-	signature memoryFileSignature
-	index     episodeIndex
-	valid     bool
+	signature    memoryFileSignature
+	logSignature memoryFileSignature
+	index        episodeIndex
+	valid        bool
 }
 
 type TaskEpisodeWriter struct {
@@ -104,25 +104,28 @@ type EpisodeQuery struct {
 }
 
 type episodeIndex struct {
-	Version   int                 `yaml:"version"`
-	UpdatedAt string              `yaml:"updated_at"`
-	Episodes  []episodeIndexEntry `yaml:"episodes"`
+	Version   int    `yaml:"version"`
+	UpdatedAt string `yaml:"updated_at"`
+	// AbsorbedLog is the id of the update log this snapshot already contains.
+	// A log with this id left behind by an interrupted compaction is skipped.
+	AbsorbedLog string              `yaml:"absorbed_log,omitempty"`
+	Episodes    []episodeIndexEntry `yaml:"episodes"`
 }
 
 type episodeIndexEntry struct {
-	ID             string   `yaml:"id"`
-	File           string   `yaml:"file"`
-	EventsFile     string   `yaml:"events_file"`
-	Status         string   `yaml:"status"`
-	UserGoal       string   `yaml:"user_goal"`
-	Summary        string   `yaml:"summary"`
-	Success        bool     `yaml:"success"`
-	StartedAt      string   `yaml:"started_at"`
-	EndedAt        string   `yaml:"ended_at"`
-	Tags           []string `yaml:"tags,omitempty"`
-	Entities       []string `yaml:"entities,omitempty"`
-	FailureReason  string   `yaml:"failure_reason,omitempty"`
-	VerifierReason string   `yaml:"verifier_reason,omitempty"`
+	ID             string   `yaml:"id" json:"id"`
+	File           string   `yaml:"file" json:"file"`
+	EventsFile     string   `yaml:"events_file" json:"events_file"`
+	Status         string   `yaml:"status" json:"status"`
+	UserGoal       string   `yaml:"user_goal" json:"user_goal"`
+	Summary        string   `yaml:"summary" json:"summary"`
+	Success        bool     `yaml:"success" json:"success"`
+	StartedAt      string   `yaml:"started_at" json:"started_at"`
+	EndedAt        string   `yaml:"ended_at" json:"ended_at"`
+	Tags           []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+	Entities       []string `yaml:"entities,omitempty" json:"entities,omitempty"`
+	FailureReason  string   `yaml:"failure_reason,omitempty" json:"failure_reason,omitempty"`
+	VerifierReason string   `yaml:"verifier_reason,omitempty" json:"verifier_reason,omitempty"`
 }
 
 type EpisodeRecorder struct {
@@ -157,6 +160,19 @@ func EpisodeRecorderFromContext(ctx context.Context) *EpisodeRecorder {
 		return recorder
 	}
 	return nil
+}
+
+// taskEpisodeStoreLocks serializes writers per episodes directory. Several
+// stores open the same directory (the runtime's, lifecycle verification, the
+// storage cleaner), so a per-instance mutex would not protect the index.
+var taskEpisodeStoreLocks sync.Map
+
+// lock takes the directory's write lock and returns the unlock function.
+func (s *TaskEpisodeStore) lock() func() {
+	value, _ := taskEpisodeStoreLocks.LoadOrStore(filepath.Clean(s.rootDir), &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 func NewTaskEpisodeStore(rootDir string) *TaskEpisodeStore {
@@ -477,8 +493,7 @@ func (s *TaskEpisodeStore) AddEpisode(ctx context.Context, episode TaskEpisode) 
 	if s == nil || s.rootDir == "" {
 		return "", nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	now := time.Now().UTC()
 	if strings.TrimSpace(episode.ID) == "" {
@@ -529,8 +544,7 @@ func (s *TaskEpisodeStore) StartEpisode(ctx context.Context, episode TaskEpisode
 	if s == nil || s.rootDir == "" {
 		return "", nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	now := time.Now().UTC()
 	if strings.TrimSpace(episode.ID) == "" {
@@ -569,8 +583,7 @@ func (s *TaskEpisodeStore) AppendEpisodeEvent(ctx context.Context, episode TaskE
 	if s == nil || s.rootDir == "" || strings.TrimSpace(episode.ID) == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	if strings.TrimSpace(episode.Status) == "" {
 		episode.Status = "running"
@@ -629,16 +642,15 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 	if strings.TrimSpace(reason) == "" {
 		reason = "agent stopped before the task episode completed"
 	}
-	if _, err := os.Stat(s.indexPath()); os.IsNotExist(err) {
+	if _, err := os.Stat(s.indexPath()); os.IsNotExist(err) && !s.indexLogExists() {
 		if err := s.RebuildIndex(ctx); err != nil {
 			return nil, err
 		}
-	} else if err != nil {
+	} else if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	index, err := s.loadIndex()
 	if err != nil {
@@ -686,7 +698,9 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 		interrupted = append(interrupted, record)
 		changed = true
 	}
-	if changed {
+	// This runs once at startup, so it also folds the update log back into the
+	// snapshot.
+	if changed || s.indexLogExists() {
 		index.UpdatedAt = now
 		if err := s.writeIndex(index); err != nil {
 			return interrupted, err
@@ -824,8 +838,7 @@ func (s *TaskEpisodeStore) RebuildIndex(ctx context.Context) error {
 	if s == nil || s.rootDir == "" {
 		return nil
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.lock()()
 
 	var entries []episodeIndexEntry
 	if _, err := os.Stat(s.rootDir); err != nil {
@@ -889,54 +902,117 @@ func (s *TaskEpisodeStore) indexPath() string {
 	return filepath.Join(s.rootDir, "index.yaml")
 }
 
+// indexLogPath is the append-only log of index entries written since the
+// last snapshot. Starting and finishing a task appends one line here instead
+// of rewriting index.yaml, so a task's cost does not grow with the number of
+// stored Episodes. Startup and the retention cleaner fold it back into the
+// snapshot.
+func (s *TaskEpisodeStore) indexLogPath() string {
+	return filepath.Join(s.rootDir, "index-log.jsonl")
+}
+
+func (s *TaskEpisodeStore) indexLogExists() bool {
+	_, err := os.Stat(s.indexLogPath())
+	return err == nil
+}
+
+// indexSignatures identifies the snapshot and the log on disk. A missing file
+// has the zero signature.
+func (s *TaskEpisodeStore) indexSignatures() (memoryFileSignature, memoryFileSignature, error) {
+	signature, _, err := memoryFileSignatureForPath(s.indexPath())
+	if err != nil {
+		return memoryFileSignature{}, memoryFileSignature{}, fmt.Errorf("stat episode index: %w", err)
+	}
+	logSignature, _, err := memoryFileSignatureForPath(s.indexLogPath())
+	if err != nil {
+		return memoryFileSignature{}, memoryFileSignature{}, fmt.Errorf("stat episode index log: %w", err)
+	}
+	return signature, logSignature, nil
+}
+
 func (s *TaskEpisodeStore) loadIndex() (episodeIndex, error) {
-	signature, ok, err := memoryFileSignatureForPath(s.indexPath())
+	signature, logSignature, err := s.indexSignatures()
 	if err != nil {
-		return episodeIndex{}, fmt.Errorf("stat episode index: %w", err)
+		return episodeIndex{}, err
 	}
-	if ok {
-		if index, hit := s.cachedIndex(signature); hit {
-			return index, nil
-		}
+	if index, hit := s.cachedIndex(signature, logSignature); hit {
+		return index, nil
 	}
+	index := episodeIndex{Version: 1, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	data, err := os.ReadFile(s.indexPath())
-	if err != nil {
-		if os.IsNotExist(err) {
-			return episodeIndex{Version: 1, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}, nil
-		}
+	if err != nil && !os.IsNotExist(err) {
 		return episodeIndex{}, fmt.Errorf("read episode index: %w", err)
 	}
-	var index episodeIndex
-	if err := yaml.Unmarshal(data, &index); err != nil {
-		return episodeIndex{}, fmt.Errorf("decode episode index: %w", err)
+	if err == nil {
+		if err := yaml.Unmarshal(data, &index); err != nil {
+			return episodeIndex{}, fmt.Errorf("decode episode index: %w", err)
+		}
 	}
-	if ok {
-		s.storeIndexCache(signature, index)
+	logID, entries, err := readEpisodeIndexLog(s.indexLogPath())
+	if err != nil {
+		return episodeIndex{}, err
 	}
+	if logID == "" || logID != index.AbsorbedLog {
+		mergeEpisodeIndexEntries(&index, entries)
+	}
+	s.storeIndexCache(signature, logSignature, index)
 	return cloneEpisodeIndex(index), nil
 }
 
+// episodeIndexTextLimit caps the user goal and summary kept in the index, in
+// runes, so a pasted document does not bloat the index that startup, Episode
+// Memory, and retention read. The full text stays in each episode's own
+// episode.yaml, which Get reads.
+const episodeIndexTextLimit = 300
+
+func shortenEpisodeIndexEntry(entry episodeIndexEntry) episodeIndexEntry {
+	entry.UserGoal = truncateForLog(entry.UserGoal, episodeIndexTextLimit)
+	entry.Summary = truncateForLog(entry.Summary, episodeIndexTextLimit)
+	return entry
+}
+
+// writeIndex replaces the snapshot with index, which must already include the
+// update log, and then removes the log. The snapshot records the log's id
+// first, so a crash before the removal does not replay entries it replaced.
 func (s *TaskEpisodeStore) writeIndex(index episodeIndex) error {
+	for i := range index.Episodes {
+		index.Episodes[i] = shortenEpisodeIndexEntry(index.Episodes[i])
+	}
+	logID, _, err := readEpisodeIndexLog(s.indexLogPath())
+	if err != nil {
+		return err
+	}
+	index.AbsorbedLog = logID
 	if err := writeYAMLAtomic(s.indexPath(), index); err != nil {
 		return err
 	}
-	s.invalidateIndexCache()
+	if err := os.Remove(s.indexLogPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove episode index log: %w", err)
+	}
+	// Keep what was just written as the cache, so the next read does not parse
+	// the file again. The signatures still detect writes from elsewhere.
+	signature, logSignature, err := s.indexSignatures()
+	if err != nil {
+		s.invalidateIndexCache()
+		return nil
+	}
+	s.storeIndexCache(signature, logSignature, index)
 	return nil
 }
 
-func (s *TaskEpisodeStore) cachedIndex(signature memoryFileSignature) (episodeIndex, bool) {
+func (s *TaskEpisodeStore) cachedIndex(signature, logSignature memoryFileSignature) (episodeIndex, bool) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	if !s.indexCache.valid || s.indexCache.signature != signature {
+	if !s.indexCache.valid || s.indexCache.signature != signature || s.indexCache.logSignature != logSignature {
 		return episodeIndex{}, false
 	}
 	return cloneEpisodeIndex(s.indexCache.index), true
 }
 
-func (s *TaskEpisodeStore) storeIndexCache(signature memoryFileSignature, index episodeIndex) {
+func (s *TaskEpisodeStore) storeIndexCache(signature, logSignature memoryFileSignature, index episodeIndex) {
 	s.cacheMu.Lock()
 	defer s.cacheMu.Unlock()
-	s.indexCache = taskEpisodeIndexCache{signature: signature, index: cloneEpisodeIndex(index), valid: true}
+	s.indexCache = taskEpisodeIndexCache{signature: signature, logSignature: logSignature, index: cloneEpisodeIndex(index), valid: true}
 }
 
 func (s *TaskEpisodeStore) invalidateIndexCache() {
@@ -963,21 +1039,47 @@ func cloneEpisodeIndexEntries(entries []episodeIndexEntry) []episodeIndexEntry {
 	return cloned
 }
 
+// upsertIndexEntry appends the episode's entry to the update log. The cached
+// index is updated in place when it was current before the append, so neither
+// this nor the next read parses the index again.
 func (s *TaskEpisodeStore) upsertIndexEntry(episode TaskEpisode, dir string, events []TaskEpisodeEvent) error {
-	index, err := s.loadIndex()
+	entry := shortenEpisodeIndexEntry(s.indexEntryForEpisode(episode, dir, events))
+	signature, before, err := s.indexSignatures()
 	if err != nil {
 		return err
 	}
-	entry := s.indexEntryForEpisode(episode, dir, events)
-	found := false
-	for i := range index.Episodes {
-		if index.Episodes[i].ID == entry.ID {
-			index.Episodes[i] = entry
-			found = true
-			break
-		}
+	if err := appendEpisodeIndexLog(s.indexLogPath(), entry); err != nil {
+		return err
 	}
-	if !found {
+	_, after, err := s.indexSignatures()
+	s.cacheMu.Lock()
+	defer s.cacheMu.Unlock()
+	cache := &s.indexCache
+	if err != nil || !cache.valid || cache.signature != signature || cache.logSignature != before {
+		*cache = taskEpisodeIndexCache{}
+		return nil
+	}
+	mergeEpisodeIndexEntries(&cache.index, []episodeIndexEntry{entry})
+	cache.logSignature = after
+	return nil
+}
+
+// mergeEpisodeIndexEntries applies entries in order, a later entry replacing
+// an earlier one with the same id, and keeps the newest episodes first.
+func mergeEpisodeIndexEntries(index *episodeIndex, entries []episodeIndexEntry) {
+	if len(entries) == 0 {
+		return
+	}
+	positions := make(map[string]int, len(index.Episodes))
+	for i, entry := range index.Episodes {
+		positions[entry.ID] = i
+	}
+	for _, entry := range entries {
+		if i, ok := positions[entry.ID]; ok {
+			index.Episodes[i] = entry
+			continue
+		}
+		positions[entry.ID] = len(index.Episodes)
 		index.Episodes = append(index.Episodes, entry)
 	}
 	sort.SliceStable(index.Episodes, func(i, j int) bool {
@@ -985,7 +1087,87 @@ func (s *TaskEpisodeStore) upsertIndexEntry(episode TaskEpisode, dir string, eve
 	})
 	index.Version = 1
 	index.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	return s.writeIndex(index)
+}
+
+// episodeIndexLogLine is one line of the update log: the first line of a log
+// carries only its id, every later line one index entry.
+type episodeIndexLogLine struct {
+	LogID string `json:"log_id,omitempty"`
+	episodeIndexEntry
+}
+
+func appendEpisodeIndexLog(path string, entry episodeIndexEntry) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
+	if err != nil {
+		return fmt.Errorf("open episode index log: %w", err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return fmt.Errorf("stat episode index log: %w", err)
+	}
+	var data []byte
+	if info.Size() == 0 {
+		header, err := json.Marshal(map[string]string{"log_id": "log_" + strconvTimeID(time.Now())})
+		if err != nil {
+			return err
+		}
+		data = append(header, '\n')
+	} else {
+		// A crash mid-append leaves a partial last line; start a fresh line so
+		// this entry is not glued onto it.
+		last := make([]byte, 1)
+		if _, err := file.ReadAt(last, info.Size()-1); err != nil {
+			return fmt.Errorf("read episode index log: %w", err)
+		}
+		if last[0] != '\n' {
+			data = append(data, '\n')
+		}
+	}
+	line, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("encode episode index entry: %w", err)
+	}
+	data = append(append(data, line...), '\n')
+	if _, err := file.Write(data); err != nil {
+		return fmt.Errorf("append episode index log: %w", err)
+	}
+	return nil
+}
+
+// readEpisodeIndexLog returns the log's id and its entries in append order.
+// Lines that do not decode, such as one cut short by a crash, are skipped:
+// the episode's own directory still has the full record.
+func readEpisodeIndexLog(path string) (string, []episodeIndexEntry, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil, nil
+		}
+		return "", nil, fmt.Errorf("read episode index log: %w", err)
+	}
+	var logID string
+	var entries []episodeIndexEntry
+	for _, raw := range strings.Split(string(data), "\n") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		var line episodeIndexLogLine
+		if err := json.Unmarshal([]byte(raw), &line); err != nil {
+			continue
+		}
+		if line.LogID != "" {
+			if logID == "" {
+				logID = line.LogID
+			}
+			continue
+		}
+		if line.ID != "" {
+			entries = append(entries, line.episodeIndexEntry)
+		}
+	}
+	return logID, entries, nil
 }
 
 func (s *TaskEpisodeStore) indexEntryForEpisode(episode TaskEpisode, dir string, events []TaskEpisodeEvent) episodeIndexEntry {

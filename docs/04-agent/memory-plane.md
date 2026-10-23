@@ -118,11 +118,38 @@ Screenshot binary data is stored as an Episode artifact. Event records contain r
 
 The recorded `outcome.success` value is not treated as verified truth. It is input evidence for later assessment.
 
+The Episode index lists every Episode with a short user goal and summary
+(each capped at 300 characters) for lookups; the full goal and trace stay in
+the Episode's own `episode.yaml` and `events.jsonl`. It has two files:
+
+- `memory/episodes/index.yaml` is a snapshot.
+- `memory/episodes/index-log.jsonl` is an append-only log of entries written
+  since the snapshot. A later line replaces an earlier one with the same id.
+
+Starting and finishing a run appends one line to the log and never rewrites
+the snapshot, so a run's cost does not grow with the number of stored
+Episodes. The log is folded back into the snapshot at agent startup, and by
+the `episode_retention` cleaner once the log reaches 256 KiB or when it
+deletes Episodes. The snapshot records the id of the log it absorbed, so a log
+left behind by an interrupted fold is not replayed. Each process keeps the
+merged index in memory and updates it on its own appends.
+
 ### Episode Storage Retention
 
-The current Episode implementation does not register a retention cleaner for
-`memory/episodes/`. Episode metadata, events, and artifacts remain on disk until
-the whole memory plane is explicitly cleared.
+The storage monitor's `episode_retention` cleaner runs with the routine
+maintenance check (at every storage level). It deletes whole Episode
+directories, together with their index entries:
+
+- Episodes that ended more than 30 days ago.
+- The oldest Episodes beyond the newest 1,000 in the index.
+- Episode directories missing from the index whose last change is more than
+  30 days old.
+
+It never deletes a running Episode or one that an active Long-Term or Device
+Memory cites as evidence (`episode` source or evidence references). Episode
+Memory distills what later runs need into Device Memory within minutes of a
+run, so older Episodes are only execution evidence. The cleaner takes the same
+per-directory lock as every Episode writer.
 
 The consolidation ledger is bounded separately. It retains the latest 64
 `done` or `ignored` terminal statuses while preserving processing and retry
