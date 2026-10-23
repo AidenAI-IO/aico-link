@@ -1,6 +1,6 @@
 {
   "name": "adb_android_text_editing",
-  "version": "1.0",
+  "version": "1.1",
   "description": "ASCII text-entry diagnostics in Settings search: spaces, punctuation, replacement, and clearing. Requires editable Settings search; unsupported backend input remains a failure, not a skipped capability.",
   "prompt_prefix": "",
   "global_reset": {},
@@ -70,16 +70,16 @@
       "platforms": [
         "android"
       ],
-      "prompt": "Open Settings search, clear any existing query, and enter alpha beta. Observe the query, then replace it completely with gamma delta. Leave the final query visible without submitting or changing any setting.",
-      "description_for_judge": "Open Settings search, clear any existing query, and enter alpha beta. Observe the query, then replace it completely with gamma delta. Leave the final query visible without submitting or changing any setting. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "prompt": "Replace the current Settings search query completely with exactly: gamma delta. Leave the final query visible without submitting or changing settings.",
+      "description_for_judge": "Replace the current Settings search query completely with exactly: gamma delta. Leave the final query visible without submitting or changing settings. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
       "rubric": [
         {
-          "id": "initial_entry_attempted",
-          "check": "The trace contains an entry attempt for alpha beta and a subsequent screen observation before replacement."
+          "id": "initial_query_visible",
+          "check": "The pre-screenshot visibly shows the editable Settings search query exactly as alpha beta; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {
           "id": "replacement_exact",
-          "check": "The final screenshot shows the editable search query exactly as gamma delta, with no residual alpha beta text or duplicates."
+          "check": "The post-screenshot shows the editable query exactly as gamma delta, with no residual original text or duplicate."
         }
       ],
       "hard_assertions": {
@@ -91,7 +91,13 @@
           "request_user_action"
         ]
       },
-      "repeats": 1
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Settings search, clear any existing query, and enter exactly: alpha beta. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
+        "timeout_sec": 180,
+        "clear_history_after": true
+      }
     },
     {
       "id": "clear_search_query",
@@ -99,20 +105,16 @@
       "platforms": [
         "android"
       ],
-      "prompt": "Open Settings search, clear any existing query, and enter ClearMe-2026. Observe the query, then remove all of that text. Keep the empty search interface open; do not navigate back to hide the query.",
-      "description_for_judge": "Open Settings search, clear any existing query, and enter ClearMe-2026. Observe the query, then remove all of that text. Keep the empty search interface open; do not navigate back to hide the query. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "prompt": "Remove all text from the current Settings search field. Keep the empty editable search interface open; do not navigate back to hide the query.",
+      "description_for_judge": "Remove all text from the current Settings search field. Keep the empty editable search interface open; do not navigate back to hide the query. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
       "rubric": [
         {
-          "id": "initial_entry_attempted",
-          "check": "The trace contains an entry attempt for ClearMe-2026 and a subsequent observation before clearing."
+          "id": "initial_query_visible",
+          "check": "The pre-screenshot visibly shows the editable Settings search query exactly as ClearMe-2026; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {
           "id": "empty_field",
-          "check": "The final screenshot shows an empty editable Settings search field. Placeholder text is permitted; typed query text is not."
-        },
-        {
-          "id": "search_still_open",
-          "check": "The final screenshot still shows the search interface, rather than the Settings main page, Home, or another app."
+          "check": "The post-screenshot shows the same Settings search interface open with an empty editable field. Placeholder text is permitted; typed query text is not."
         }
       ],
       "hard_assertions": {
@@ -124,7 +126,13 @@
           "request_user_action"
         ]
       },
-      "repeats": 1
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Settings search, clear any existing query, and enter exactly: ClearMe-2026. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
+        "timeout_sec": 180,
+        "clear_history_after": true
+      }
     }
   ]
 }

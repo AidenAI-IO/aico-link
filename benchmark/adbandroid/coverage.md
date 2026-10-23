@@ -1,25 +1,49 @@
 # Native Android benchmark coverage
 
-The eight-task `adb_android_basic` suite is a smoke test. It cannot establish
-launcher independence, text editing reliability, or recovery across app and
-system-panel transitions. The `adb` CI profile adds coverage without changing
-Agent prompts, routing logic, or the existing suites' scoring contracts.
+The `adb` CI profile has two suites: general Android UI operations and text
+editing diagnostics. Both run over the same ADB bridge on an emulator or a
+physical device. The suites organize capabilities; they do not imply different
+Android environments.
 
 ## Compatibility and selection
 
 | Suite / CI case | Tasks per repeat | What runs on the ADB device |
 | --- | ---: | --- |
-| `adb_android_basic` / `adb-android` | 8 | Original smoke baseline, unchanged |
-| `phone_control_v1` / `adb-phone-control` | 7 | Settings, Clock, Back, Settings scrolling, notification shade, bottom of list, device information |
-| `quick_action_v1` / `adb-quick-action` | 3 | Home, removing Settings from recents, notification panel and dismissal |
-| `skill_discovery_v1` / `adb-skill-discovery` | 2 | Settings entry and screenshot-guided device-information navigation |
-| `adb_android_navigation` / `adb-navigation` | 8 | Cross-app entry, panel recovery, Back, scroll round trip, app resume context, recents selection |
-| `adb_android_text_editing` / `adb-text-editing` | 4 | ASCII spaces, punctuation, replacing a query, clearing a query |
+| `adb_android_basic` | 16 | Screen reading, Settings, Wi-Fi status, app drawer, Back, scrolling, quick-action contracts, cross-app navigation, panel recovery, app resume, and recents |
+| `adb_android_text_editing` | 4 | ASCII spaces, punctuation, replacing a query, clearing a query |
 
-These are 32 task executions per repeat, not 32 independent capabilities: some
-existing suites deliberately overlap while evaluating different tool policies.
-The authoritative task-ID allowlists are in `../ci/suites.json`. CI passes these
-IDs through to the normal runner rather than duplicating existing task JSON.
+These are 20 task executions per repeat. CI and direct local runs use the same
+suite contents, without task-ID allowlists. Both CI case IDs match their suite names. `adb_android_basic` incorporates the
+earlier `adb-android`, `adb-phone-control`, `adb-quick-action`, and
+`adb-navigation` cases. The navigation tasks now live in `adb_android_basic.json`; there is no
+separate navigation suite. Text editing stays separate because it needs an
+editable Settings search interface and exercises keyboard/input limitations.
+
+The basic suite is version 2.0 and text editing is version 1.1. These workloads
+are not directly comparable with the earlier eight-task smoke or 32-task profile.
+Shared cross-platform suites retain their original definitions. The three
+`quick_action_*` tasks require a successfully executed named shortcut; ordinary
+UI tasks accept any supported route, except when recents is explicitly requested.
+All tasks forbid shell commands and user handoff. Skill-read observations remain
+informational.
+
+Setup leaves evidence needed for judging in the pre-screenshot: device information
+before reading a model and returning Back, notifications before dismissing the
+panel to Settings, and the exact original query before replacement or clearing.
+The rubric requires that precondition to be visible; an attempted setup alone
+is insufficient. The shortcut notification task leaves its panel open so the
+post-screenshot verifies its content. The recents shortcut leaves Settings visible
+in recents; it does not claim to verify global removal of an app card from one
+carousel viewport. No minimum of three scroll calls is imposed when fewer scrolls
+reach the bottom.
+
+The bridge resets Home before each task. Per-task setup then prepares a Settings
+page or input field where required. Opening a panel or app during setup is not
+counted as a scored action. Cross-app and recents-return tasks still exercise
+navigation and recovery; their traces establish action order while final images
+establish the resulting UI. Intermediate screenshots are not supplied to the
+judge, so these traces do not independently prove every intermediate screen's
+contents.
 
 Other suites are not automatically compatible:
 
@@ -50,14 +74,15 @@ models alongside each run. Compare identical configurations first.
 
 ADB reset returns Home and verifies keyboard dismissal. It is not a data or
 launcher-layout reset. The new tasks avoid network toggles, adding alarms,
-moving icons, accounts, and publishing content; each text task clears the query
-before typing. The reused recents task removes a Settings card, so run it only
-on the dedicated test device. Some reused tasks use Agent-driven setup; inspect
-setup failures and pre-screenshots separately from scored task execution.
+moving icons, clearing app cards, accounts, and publishing content. Text entry
+clears any existing query; replacement/clearing setup seeds the exact original
+query. Inspect setup failures and pre-screenshots separately from scored task
+execution. A visible wrong seed fails the precondition rubric rather than
+counting as successful editing.
 
 The new tasks name outcomes and accept localized/equivalent Android screens.
 They do not specify package names, icon positions, a launcher brand, or an
-app-drawer route. The old smoke suite still has an explicit app-drawer task and
+app-drawer route. The basic suite includes an explicit app-drawer task and
 therefore requires a launcher mode supporting that interaction. Report that
 precondition when comparing launchers; do not claim the entire profile supports
 every launcher mode.
@@ -82,7 +107,7 @@ Preview selection without a device or model credentials, from the repository roo
 ```bash
 python3 benchmark/ci/plan.py validate
 python3 benchmark/ci/plan.py matrix --profile adb
-python3 benchmark/ci/plan.py matrix --profile adb --suite suites/phone_control_v1.json
+python3 benchmark/ci/plan.py matrix --profile adb --suite suites/adb_android_basic.json
 ```
 
 For a focused local run, start the bridge as described in `README.md`, then:
@@ -90,13 +115,13 @@ For a focused local run, start the bridge as described in `README.md`, then:
 ```bash
 cd benchmark
 uv run python -m runner run \
-  --suite suites/adb_android_navigation.json \
+  --suite suites/adb_android_basic.json \
   --environment-url http://127.0.0.1:8899 \
   --auto-agent-setup --target-platform android --max-concurrency 1 --repeats 3
 
 uv run python -m runner run \
-  --suite suites/phone_control_v1.json \
-  --task-id tap_back --task-id find_and_tap_specific_item \
+  --suite suites/adb_android_basic.json \
+  --task-id tap_back --task-id about_device_and_back \
   --environment-url http://127.0.0.1:8899 \
   --auto-agent-setup --target-platform android --max-concurrency 1 --repeats 3
 ```
@@ -112,12 +137,12 @@ separate. Compare task success together with wall time, model time, tool errors,
 and actual traces. Composite tools such as `open_app` contain internal visual
 decisions and device actions: fewer outer calls alone do not prove less work.
 
-New tasks allow a one-call solution and do not require a particular tool route
-except when the user goal explicitly asks for recents. Final-state rubrics rely
-on the device screenshot; intermediate behavior is assessed from available tool
-trace and observation evidence. The unchanged legacy suites retain their original
-minimum-call and tool-policy rules. Report legacy-policy failures separately;
-do not lower their thresholds in order to improve the new run's headline score.
+The navigation and editing tasks allow a one-call solution and do not require
+a particular tool route except when the user goal explicitly asks for recents.
+Visual rubrics use the pre/post screenshots. Action ordering uses successful
+tool results and observation flags; those flags establish an observation occurred,
+not its visual contents. The shared legacy suites retain their original scoring
+contracts. Report setup and input-backend failures alongside task outcomes.
 
 Text cases are diagnostic even when the backend cannot complete them. The current
 bridge lacks some keyboard keys (including `space` for `keyboard_tap`) and does

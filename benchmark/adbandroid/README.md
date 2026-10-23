@@ -167,26 +167,24 @@ remain unchanged.
 
 ## Test suite
 
-The `adb` CI profile expands coverage to six cases and 32 task executions per
-repeat: the original eight tasks, twelve selected tasks reused unchanged from
-existing suites, and twelve new native Android tasks. See
-[Android coverage](coverage.md) for the compatibility matrix, exact selection,
-device prerequisites, and commands. The `adb` profile uses a connected emulator
-or physical device; it does not provision an emulator or run MobileGym apps.
+The `adb` CI profile runs two suites and 20 tasks per repeat:
 
-`benchmark/suites/adb_android_basic.json`, 8 tasks:
+- `adb_android_basic` (`suites/adb_android_basic.json`), 16 tasks: screen reading,
+  Settings, Wi-Fi status, app drawer, Back, scrolling, Home, recents entry,
+  notifications, cross-app navigation, and state recovery.
+- `adb_android_text_editing` (`suites/adb_android_text_editing.json`), 4 tasks: spaces,
+  punctuation, query replacement, and clearing in Settings search.
 
-- Basic capabilities (5): screenshot, go Home, open Settings, swipe, enter
-  English text.
-- Multi-step tasks (3, ported from mobilegym_basic): count alarms in Clock,
-  check WiFi status, open the app drawer.
+CI runs each suite in full, with the same contents as a direct local run. The
+basic suite consolidates the earlier smoke, phone-control, quick-action, and
+navigation cases. Its three `quick_action_*` tasks require successful named-tool execution; other action tasks allow any supported route unless the goal
+explicitly requires recents. Every action tool already returns a post-action
+screenshot, so a separate screenshot call is generally unnecessary.
 
-Note: `required_tools` for the action tasks is intentionally left empty — every
-action tool on the daemon already returns a post-action screenshot, and the
-agent may reach the same outcome with either `quick_action` or `touch_gesture`.
-The correctness of the multi-step tasks is judged mainly by the rubric; under
-`--no-judge` the hard assertions can only check "an action ran and it did not
-time out".
+See [Android coverage](coverage.md) for exact coverage, migration details,
+device prerequisites, and commands. The profile uses a connected emulator or
+physical device; it does not provision an emulator or run MobileGym apps.
+UI correctness requires judging; `--no-judge` only exercises execution gates.
 
 ## HTTP protocol
 

@@ -15,7 +15,7 @@ from runner.suite import load_suite
 def test_adb_profile_selects_only_serial_native_android_cases():
     catalog = load_catalog()
     cases = select_cases(catalog, profile="adb")
-    assert len(cases) == 6
+    assert len(cases) == 2
     assert all(case.environment == "adb" and case.target_platform == "android"
                and case.max_concurrency == 1 for case in cases)
     assert not set(case.id for case in cases) & {
@@ -33,7 +33,7 @@ def test_adb_profile_selects_only_serial_native_android_cases():
             assert not task.environment_assertions  # ADB has no MobileGym state API.
             assert task.mock_environment is None and suite.mock_environment is None
             assert task.input_screenshot is None  # Observe the real device.
-    assert total == 32
+    assert total == 20
 
 
 def test_adb_profile_rejects_non_adb_suite():
@@ -41,11 +41,17 @@ def test_adb_profile_rejects_non_adb_suite():
         select_cases(load_catalog(), profile="adb", suite="suites/mobilegym_basic.json")
 
 
-@pytest.mark.parametrize("name", ["adb_android_navigation", "adb_android_text_editing"])
+@pytest.mark.parametrize("name", ["adb_android_basic", "adb_android_text_editing"])
 def test_new_android_tasks_use_outcome_judging_without_required_routes(name):
     suite = load_suite(BENCHMARK_ROOT / "suites" / f"{name}.json")
-    assert suite.tasks
-    for task in suite.tasks:
+    navigation_ids = {
+        "clock_from_settings", "notification_round_trip", "about_device_and_back",
+        "settings_scroll_round_trip", "reopen_settings_context", "return_to_settings_via_recents",
+    }
+    tasks = [task for task in suite.tasks
+             if name == "adb_android_text_editing" or task.id in navigation_ids]
+    assert tasks
+    for task in tasks:
         assert task.rubric
         assert task.hard_assertions.min_tool_calls == 1
         assert not task.hard_assertions.required_tools
@@ -80,7 +86,7 @@ def test_catalog_rejects_parallel_tasks_on_one_adb_device(tmp_path: Path):
         load_catalog(catalog_path=catalog, suites_dir=tmp_path)
 
 
-@pytest.mark.parametrize("case_id", ["adb-phone-control", "adb-quick-action", "adb-skill-discovery", "adb-navigation"])
+@pytest.mark.parametrize("case_id", ["adb_android_basic", "adb_android_text_editing"])
 def test_task_selection_survives_matrix_and_reaches_runner(monkeypatch, tmp_path, case_id):
     original = next(case for case in load_catalog().cases if case.id == case_id)
     matrix = json.dumps({"include": [original.matrix_entry()]})

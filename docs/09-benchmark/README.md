@@ -423,8 +423,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (17 cases) |
-| Manual dispatch | `adb` | Six serial native-Android cases, 32 task executions per repeat; requires a connected emulator or device |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (13 cases) |
+| Manual dispatch | `adb` | Two serial native-Android suites (`adb_android_basic` and `adb_android_text_editing`), 20 task executions per repeat; requires a connected emulator or device |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -446,10 +446,12 @@ the Android-style MobileGym simulator automatically; no external iOS bridge is
 required. This case is excluded from the scheduled sweep while its baseline is
 being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
-from Agent capability failures. The same suite with profile `adb` selects seven
-existing tasks suitable for the ADB environment, without changing their prompts
-or scoring rules. Profile `hardware` selects both the ADB subset and the external
-iOS case; profile `all` also includes MobileGym.
+from Agent capability failures. For native Android, dispatch profile `adb` with
+`suites/adb_android_basic.json` for general operations or
+`suites/adb_android_text_editing.json` for text editing. Leave the suite input
+blank to run both. The shared `phone_control_v1` suite remains available through
+profile `hardware` for its external iOS case and profile `all` for both iOS and
+MobileGym; it has no ADB case.
 
 Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
 exist, be unique, and support the case's target platform. The matrix preserves

@@ -18,24 +18,8 @@
     {"id": "mobilegym-scroll-sweep", "suite": "suites/mobilegym_scroll_sweep.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 4, "timeout_minutes": 360, "runnable": false},
     {"id": "phone-control-mobilegym", "suite": "suites/phone_control_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360, "runnable": false},
 
-    {"id": "adb-android", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
-    {
-      "id": "adb-phone-control", "suite": "suites/phone_control_v1.json",
-      "environment": "adb", "target_platform": "android", "timeout_minutes": 240,
-      "task_ids": ["open_settings", "open_clock", "tap_back", "scroll_page_down", "open_notification_shade", "scroll_to_bottom", "find_and_tap_specific_item"]
-    },
-    {
-      "id": "adb-quick-action", "suite": "suites/quick_action_v1.json",
-      "environment": "adb", "target_platform": "android", "timeout_minutes": 180,
-      "task_ids": ["quick_action_home", "quick_action_app_switch_clear", "quick_action_notification_center"]
-    },
-    {
-      "id": "adb-skill-discovery", "suite": "suites/skill_discovery_v1.json",
-      "environment": "adb", "target_platform": "android", "timeout_minutes": 180,
-      "task_ids": ["discover_device_operator_for_settings", "discover_device_operator_for_scrolling_navigation"]
-    },
-    {"id": "adb-navigation", "suite": "suites/adb_android_navigation.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
-    {"id": "adb-text-editing", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
+    {"id": "adb_android_basic", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
+    {"id": "adb_android_text_editing", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
     {"id": "app-workflow", "suite": "suites/app_workflow_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL", "timeout_minutes": 360},
     {"id": "episode-memory-before-ios", "suite": "suites/episode_memory_before_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},
     {"id": "episode-memory-after-ios", "suite": "suites/episode_memory_after_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},

@@ -1,15 +1,16 @@
 {
   "name": "adb_android_basic",
-  "version": "1.0",
-  "description": "Basic and multi-step ADB Android bridge tests for a Genymotion emulator",
+  "version": "2.0",
+  "description": "General Android UI operations over ADB: screen reading, Settings, launcher, Back, scrolling, quick-action contracts, cross-app navigation, and state recovery. Requires Settings, Clock, and a launcher with a swipe-up app drawer. Text-entry diagnostics are in adb_android_text_editing.",
   "prompt_prefix": "",
-  "global_reset": {
-    "type": "agent_prompt",
-    "prompt": "回到 Android 主屏幕，确认一下。",
-    "timeout_sec": 30,
-    "clear_history_after": true
-  },
-  "trace_observations": [],
+  "global_reset": {},
+  "trace_observations": [
+    {
+      "id": "skill_read_device_operator",
+      "description": "Agent loaded device-operator via skill_read before operating the phone UI (informational only).",
+      "skill_name": "device-operator"
+    }
+  ],
   "tasks": [
     {
       "id": "screenshot_home",
@@ -31,27 +32,16 @@
         "min_tool_calls": 1,
         "required_tools": [
           "screenshot"
+        ],
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
         ]
       },
-      "repeats": 1
-    },
-    {
-      "id": "go_home",
-      "category": "device_operation",
-      "prompt": "回到主屏幕。",
-      "description_for_judge": "Agent 应该返回 Android 主屏幕并截图确认。",
-      "rubric": [
-        {
-          "id": "home_and_screenshot",
-          "description": "返回主屏幕并截图"
-        }
-      ],
-      "hard_assertions": {
-        "must_complete_within_sec": 60,
-        "min_tool_calls": 1,
-        "required_tools": []
-      },
-      "repeats": 1
+      "repeats": 1,
+      "platforms": [
+        "android"
+      ]
     },
     {
       "id": "open_settings",
@@ -71,75 +61,16 @@
       "hard_assertions": {
         "must_complete_within_sec": 90,
         "min_tool_calls": 1,
-        "required_tools": []
+        "required_tools": [],
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
       },
-      "repeats": 1
-    },
-    {
-      "id": "swipe_screen",
-      "category": "device_operation",
-      "prompt": "在页面里向上滑一下，看看有什么变化。",
-      "description_for_judge": "Agent 应该执行一次向上滑动手势并截图。",
-      "rubric": [
-        {
-          "id": "swiped_and_screenshot",
-          "description": "执行滑动并截图"
-        }
-      ],
-      "hard_assertions": {
-        "must_complete_within_sec": 60,
-        "min_tool_calls": 1,
-        "required_tools": []
-      },
-      "repeats": 1
-    },
-    {
-      "id": "type_english_text",
-      "category": "device_operation",
-      "prompt": "找个能打字的地方，输入 hello android。",
-      "description_for_judge": "Agent 应该找到一个文本输入位置（如搜索框），输入英文文本 hello android，并用截图确认。",
-      "rubric": [
-        {
-          "id": "typed_text",
-          "description": "输入了 hello android"
-        },
-        {
-          "id": "confirmed_with_screenshot",
-          "description": "用截图确认了输入结果"
-        }
-      ],
-      "hard_assertions": {
-        "must_complete_within_sec": 120,
-        "min_tool_calls": 1,
-        "required_tools": []
-      },
-      "repeats": 1
-    },
-    {
-      "id": "clock_count_alarms",
-      "category": "device_operation",
-      "prompt": "打开时钟应用，告诉我现在有几个闹钟。",
-      "description_for_judge": "Agent 应该：1) 打开时钟应用（通过应用抽屉或主屏幕图标） 2) 查看闹钟列表页面 3) 正确报告闹钟数量（没有闹钟时应报告没有/0 个）",
-      "rubric": [
-        {
-          "id": "opened_clock_app",
-          "description": "成功打开时钟应用（通过点击图标或应用列表）"
-        },
-        {
-          "id": "viewed_alarm_list",
-          "description": "查看了闹钟列表页面"
-        },
-        {
-          "id": "counted_correctly",
-          "description": "正确识别并报告了闹钟数量"
-        }
-      ],
-      "hard_assertions": {
-        "must_complete_within_sec": 180,
-        "min_tool_calls": 2,
-        "required_tools": []
-      },
-      "repeats": 1
+      "repeats": 1,
+      "platforms": [
+        "android"
+      ]
     },
     {
       "id": "settings_check_wifi",
@@ -163,33 +94,501 @@
       "hard_assertions": {
         "must_complete_within_sec": 180,
         "min_tool_calls": 1,
-        "required_tools": []
+        "required_tools": [],
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
       },
-      "repeats": 1
+      "repeats": 1,
+      "platforms": [
+        "android"
+      ]
     },
     {
       "id": "open_app_drawer",
       "category": "device_operation",
-      "prompt": "先回主屏幕，再向上滑打开应用抽屉，看看里面都有哪些应用。",
-      "description_for_judge": "Agent 应该：1) 返回主屏幕 2) 执行向上滑动手势打开应用抽屉 3) 描述应用抽屉中可见的应用（如电话、短信、设置、时钟、相机等）",
+      "prompt": "From the Home screen, swipe up to open the app drawer. Leave the drawer visible and name two applications actually displayed. Do not open an app.",
+      "description_for_judge": "From the Home screen, swipe up to open the app drawer. Leave the drawer visible and name two applications actually displayed. Do not open an app. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
       "rubric": [
         {
-          "id": "returned_home",
-          "description": "先返回了主屏幕"
+          "id": "home_before",
+          "check": "The pre-screenshot shows the launcher Home screen."
         },
         {
           "id": "opened_app_drawer",
-          "description": "通过向上滑动成功打开了应用抽屉"
+          "check": "A successful upward swipe is recorded and the post-screenshot shows the app drawer, rather than Home, search results, or another app."
         },
         {
           "id": "listed_apps",
-          "description": "描述了应用抽屉中可见的应用"
+          "check": "The two applications named in the answer are visible in the post-screenshot."
         }
       ],
       "hard_assertions": {
         "must_complete_within_sec": 120,
-        "min_tool_calls": 2,
-        "required_tools": []
+        "min_tool_calls": 1,
+        "required_tools": [],
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1,
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "tap_back",
+      "category": "single_step",
+      "description_for_judge": "Agent must navigate back from a settings sub-page to the parent settings page.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "先打开系统设置，进入一个有返回按钮的子页面（比如 Wi-Fi、蓝牙、关于手机之类），然后停在那个子页面。",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      },
+      "prompt": "返回上一层。",
+      "rubric": [
+        {
+          "id": "returned_parent",
+          "check": "Post-screenshot shows the parent or top-level Settings page after leaving the settings sub-page visible in the pre-screenshot."
+        }
+      ],
+      "hard_assertions": {
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 90
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "scroll_page_down",
+      "category": "single_step",
+      "description_for_judge": "Agent must perform a vertical scroll downward on the current page.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "先打开系统设置，停在设置列表靠上的位置，别进具体设置项。",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      },
+      "prompt": "向下滑动一屏。",
+      "rubric": [
+        {
+          "id": "page_scrolled",
+          "check": "Post-screenshot shows lower content from the same settings list than the pre-screenshot, consistent with one downward scroll."
+        }
+      ],
+      "hard_assertions": {
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 90
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "scroll_to_bottom",
+      "category": "multi_step",
+      "description_for_judge": "Scroll the current Settings list down until its bottom is reached. Stop when further scrolling reveals no additional entries, and leave the last entries visible. Do not change settings. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "先打开系统设置，停在设置列表靠上的位置，别进具体设置项。",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      },
+      "prompt": "Scroll the current Settings list down until its bottom is reached. Stop when further scrolling reveals no additional entries, and leave the last entries visible. Do not change settings.",
+      "rubric": [
+        {
+          "id": "list_before",
+          "check": "The pre-screenshot shows the main Settings list near its top."
+        },
+        {
+          "id": "scrolled_list",
+          "check": "The trace contains successful scrolling of that list; any sufficient number of scrolls is valid."
+        },
+        {
+          "id": "stopped_at_bottom",
+          "check": "The post-screenshot shows the recognizable last entries of the same Settings list, rather than the initial top or middle. Blank padding alone does not prove the bottom was reached."
+        },
+        {
+          "id": "agent_acknowledged",
+          "check": "The final reply says the bottom was reached or no additional entries appeared."
+        }
+      ],
+      "hard_assertions": {
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "min_tool_calls": 1,
+        "max_tool_calls": 25,
+        "must_complete_within_sec": 300
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "quick_action_home",
+      "category": "single_step",
+      "description_for_judge": "Use quick_action with action=home to return from Settings to Home. Leave Home visible. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open the main Settings page and leave it visible without a panel or dialog.",
+        "timeout_sec": 90,
+        "clear_history_after": true
+      },
+      "prompt": "Use quick_action with action=home to return from Settings to Home. Leave Home visible.",
+      "rubric": [
+        {
+          "id": "settings_before",
+          "check": "The pre-screenshot shows Settings."
+        },
+        {
+          "id": "on_home_screen",
+          "check": "The post-screenshot shows the launcher Home screen, not Settings, recents, or a system panel."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 8,
+        "must_complete_within_sec": 90,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "quick_action",
+            "input_contains": {
+              "action": "home"
+            }
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "quick_action_app_switch",
+      "category": "multi_step",
+      "description_for_judge": "Use quick_action with action=app_switch to open recent apps. Leave recent apps open with the Settings card visible. Do not dismiss any app cards. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open the main Settings page and leave it visible without a panel or dialog.",
+        "timeout_sec": 90,
+        "clear_history_after": true
+      },
+      "prompt": "Use quick_action with action=app_switch to open recent apps. Leave recent apps open with the Settings card visible. Do not dismiss any app cards.",
+      "rubric": [
+        {
+          "id": "settings_before",
+          "check": "The pre-screenshot shows Settings."
+        },
+        {
+          "id": "recents_visible",
+          "check": "The post-screenshot shows recent apps with a recognizable Settings card visible; Home or a running app is insufficient."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 15,
+        "must_complete_within_sec": 120,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "quick_action",
+            "input_contains": {
+              "action": "app_switch"
+            }
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "quick_action_notification_center",
+      "category": "multi_step",
+      "description_for_judge": "Use quick_action with action=notification_center to open notifications. Describe the visible notifications, or explicitly report that there are none. Leave the notification panel open and do not clear notifications. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Return to the launcher Home screen and dismiss any notification or quick-settings panel.",
+        "timeout_sec": 90,
+        "clear_history_after": true
+      },
+      "prompt": "Use quick_action with action=notification_center to open notifications. Describe the visible notifications, or explicitly report that there are none. Leave the notification panel open and do not clear notifications.",
+      "rubric": [
+        {
+          "id": "home_before",
+          "check": "The pre-screenshot shows Home without the notification panel."
+        },
+        {
+          "id": "panel_visible",
+          "check": "The post-screenshot shows the notification panel."
+        },
+        {
+          "id": "notification_content_reported",
+          "check": "The answer accurately describes notifications visible in the post-screenshot or its visible empty state; do not credit claims about unseen notifications."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 12,
+        "must_complete_within_sec": 120,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ],
+        "required_tool_calls": [
+          {
+            "tool": "quick_action",
+            "input_contains": {
+              "action": "notification_center"
+            }
+          }
+        ]
+      },
+      "platforms": [
+        "android"
+      ]
+    },
+    {
+      "id": "clock_from_settings",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "From Settings, open Clock and show its alarm list. Tell me how many alarms are displayed and leave the list visible. Do not change alarms.",
+      "description_for_judge": "From Settings, open Clock and show its alarm list. Tell me how many alarms are displayed and leave the list visible. Do not change alarms. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "settings_before",
+          "check": "The pre-screenshot shows the main Settings page."
+        },
+        {
+          "id": "alarm_list_visible",
+          "check": "The post-screenshot shows the Clock alarm list, including its empty state if applicable."
+        },
+        {
+          "id": "grounded_count",
+          "check": "The answer correctly reports the alarms displayed in the post-screenshot without claiming a total for unseen entries."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open the main Settings page and leave it visible without changing settings.",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      }
+    },
+    {
+      "id": "notification_round_trip",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Read the notifications in the currently open panel and tell me what is visible, or that there are none. Close the panel to return to the main Settings page. Do not clear notifications.",
+      "description_for_judge": "Read the notifications in the currently open panel and tell me what is visible, or that there are none. Close the panel to return to the main Settings page. Do not clear notifications. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "panel_before",
+          "check": "The pre-screenshot shows the notification panel."
+        },
+        {
+          "id": "reported_observation",
+          "check": "The answer accurately describes notifications visible in the pre-screenshot, or its visible empty state. Do not credit unsupported claims."
+        },
+        {
+          "id": "returned_to_settings",
+          "check": "The post-screenshot shows the main Settings page with the notification panel dismissed."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open the main Settings page, then open the notification panel over it. Leave the notification panel open without clearing notifications.",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      }
+    },
+    {
+      "id": "about_device_and_back",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Read the device model on the current device-information page, then return one level to its parent Settings page. Tell me the model you observed, or explicitly say if the page did not show a model. Do not modify settings.",
+      "description_for_judge": "Read the device model on the current device-information page, then return one level to its parent Settings page. Tell me the model you observed, or explicitly say if the page did not show a model. Do not modify settings. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "device_info_before",
+          "check": "The pre-screenshot shows the device-information page; a different starting page does not satisfy the precondition."
+        },
+        {
+          "id": "returned_parent",
+          "check": "The post-screenshot shows the parent Settings page, not Home or the initial device-information page."
+        },
+        {
+          "id": "reported_model",
+          "check": "The answer matches the model visible in the pre-screenshot, or correctly says none was shown when that screenshot contains no model."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Settings and navigate to About phone or the equivalent device-information page. Make the device model visible if the page lists one. Leave this page open without changing settings.",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      }
+    },
+    {
+      "id": "settings_scroll_round_trip",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open the main Settings list and go to its top. Note two visible setting names. Scroll down until different entries are visible and observe them, then return to the top. Tell me the two names you first noted and leave them visible. Do not change settings.",
+      "description_for_judge": "Open the main Settings list and go to its top. Note two visible setting names. Scroll down until different entries are visible and observe them, then return to the top. Tell me the two names you first noted and leave them visible. Do not change settings. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "scrolled_and_observed",
+          "check": "The trace shows a downward list exploration followed by screen observation and navigation back to the top; a final success claim alone is insufficient."
+        },
+        {
+          "id": "top_restored",
+          "check": "The final screenshot shows the top of the main Settings list."
+        },
+        {
+          "id": "labels_match",
+          "check": "The two names reported in the answer are visible in the final screenshot; localized names are accepted."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "reopen_settings_context",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Return to Home, then reopen Settings. Tell me which page Settings actually reopened on and leave it visible. Do not change settings.",
+      "description_for_judge": "Return to Home, then reopen Settings. Tell me which page Settings actually reopened on and leave it visible. Do not change settings. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "device_info_before",
+          "check": "The pre-screenshot shows the device-information page in Settings."
+        },
+        {
+          "id": "reopened_after_home",
+          "check": "Successful tool results record returning Home and subsequently opening Settings; an unsuccessful attempt alone is insufficient."
+        },
+        {
+          "id": "reported_actual_page",
+          "check": "The post-screenshot shows Settings without an overlay, and the answer identifies that visible page. Either the main page or a restored subpage is valid."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
+      },
+      "repeats": 1,
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Settings and navigate to About phone or equivalent device information. Leave that page visible without changing settings.",
+        "timeout_sec": 120,
+        "clear_history_after": true
+      }
+    },
+    {
+      "id": "return_to_settings_via_recents",
+      "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "prompt": "Open the main Settings page, then open Clock. Use the recent-apps screen to return to Settings. Leave Settings visible; do not dismiss app cards.",
+      "description_for_judge": "Open the main Settings page, then open Clock. Use the recent-apps screen to return to Settings. Leave Settings visible; do not dismiss app cards. Evaluate the observed UI and tool trace, not the final claim alone. Accept localized labels and equivalent Android layouts.",
+      "rubric": [
+        {
+          "id": "two_apps_opened",
+          "check": "The trace shows Settings opened before Clock."
+        },
+        {
+          "id": "used_recents",
+          "check": "The trace shows the recent-apps screen being opened, observed, and used to select Settings. Simply opening Settings again from Home does not satisfy this task."
+        },
+        {
+          "id": "settings_restored",
+          "check": "The final screenshot shows Settings without the recent-apps overlay."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": [
+          "shell",
+          "request_user_action"
+        ]
       },
       "repeats": 1
     }
