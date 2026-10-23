@@ -199,6 +199,15 @@ One Episode can produce zero to three independent candidates.
 
 An Episode-level failure does not automatically create Failure Memory. A Failure candidate must contain reusable guidance for a future task.
 
+Candidates hold knowledge specific to the device, app, or page that the Agent
+cannot get elsewhere. The Agent already has every tool definition and every
+tool result, including the `suggestion` a failed tool returns, so guidance
+that only restates those or describes generic tool use (take a screenshot
+after a failure, refocus the field, retry) is not stored. A workaround for a
+tool that misbehaved is a defect to fix in the tool; it is stored only when it
+also records a device-, app-, or page-specific fact. The extraction prompt,
+the omission review, and the retention audit all apply this rule.
+
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
 ## Create, Update, And Conflict

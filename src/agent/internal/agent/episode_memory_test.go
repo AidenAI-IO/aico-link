@@ -911,6 +911,9 @@ func TestEpisodeMemoryModelInputUsesDirectEvidenceWithoutVerifierState(t *testin
 	if !strings.Contains(prompt, "must emit at least one candidate") {
 		t.Fatal("Episode Memory model input does not require retention of directly verified reusable lessons")
 	}
+	if !strings.Contains(prompt, "only restates a tool result suggestion") {
+		t.Fatal("Episode Memory model input does not exclude guidance the tools already give the Agent")
+	}
 	if !model.firstCallHasImage() {
 		t.Fatal("Episode Memory model input did not attach the persisted screenshot")
 	}
@@ -1929,5 +1932,15 @@ func TestProcessEpisodeMemoryNowDrainsScheduledRetry(t *testing.T) {
 				t.Fatalf("unrelated retry changed: %#v", got)
 			}
 		})
+	}
+}
+
+func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
+	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
+	// A failed enter_text already returns "Inspect the latest screen and correct
+	// or clear the existing field text before retrying enter_text."; a memory
+	// that repeats it adds nothing the Agent does not already receive.
+	if !strings.Contains(prompt, "only restates a tool result suggestion, documented tool behavior, or generic tool use") {
+		t.Fatalf("retention audit does not discard built-in tool guidance:\n%s", prompt)
 	}
 }
