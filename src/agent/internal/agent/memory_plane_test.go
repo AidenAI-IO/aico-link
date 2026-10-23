@@ -121,7 +121,7 @@ func TestTaskEpisodeIndexSummaryOmitsScreenshotBase64(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		filepath.Join("episodes", "index.yaml"),
+		filepath.Join("episodes", "index-log.jsonl"),
 		filepath.Join("episodes", "2026", "ep_screenshot_summary", "episode.yaml"),
 		filepath.Join("episodes", "2026", "ep_screenshot_summary", "events.jsonl"),
 	} {

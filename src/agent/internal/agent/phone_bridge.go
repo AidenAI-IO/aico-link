@@ -1174,15 +1174,6 @@ func (pb *PhoneBridge) ApplyBenchmarkStatus(status PhoneBridgeStatus) error {
 	return nil
 }
 
-func firstNonEmptyPhoneField(values ...string) string {
-	for _, value := range values {
-		if trimmed := strings.TrimSpace(value); trimmed != "" {
-			return trimmed
-		}
-	}
-	return ""
-}
-
 // handleBenchmarkWebSocketRelay serves an outbound connection from a benchmark
 // daemon. The device-side Agent remains the sole owner of the App WebSocket;
 // SendCommand multiplexes relay commands onto that connection and readLoop

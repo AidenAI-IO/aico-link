@@ -1,6 +1,6 @@
 /** Basic settings routes. */
 
-import {fetchSnapshot, request} from '../data.js';
+import {ensureSnapshot, request} from '../data.js';
 import {postToHost} from '../host.js';
 import {saveLabel} from '../apply.js';
 import {createSaver} from '../saver.js';
@@ -94,8 +94,7 @@ async function saveTimezone(snapshot, timezone) {
 
 /** Language and time zone detail page. Both controls apply immediately. */
 export async function languagePage(context) {
-  let snapshot = context.snapshot;
-  if (!snapshot) snapshot = await fetchSnapshot().catch(() => ({config: {}}));
+  const snapshot = await ensureSnapshot(context);
   const locale = () => configValue(snapshot, 'agent', 'locale', 'zh-CN');
   const timezone = () => configValue(snapshot, 'agent', 'timezone', DEFAULT_TIMEZONE);
   let timezoneOptions = TIMEZONE_FALLBACKS.slice();
@@ -147,8 +146,7 @@ export async function languagePage(context) {
  * keyboard layout) is staged behind "保存并重启".
  */
 export async function basicPage(context) {
-  let snapshot = context.snapshot;
-  if (!snapshot) snapshot = await fetchSnapshot().catch(() => ({config: {}}));
+  const snapshot = await ensureSnapshot(context);
   const saved = () => ({
     deviceType: configValue(snapshot, 'device', 'device_type', 'iOS'),
     keyboardLayout: configValue(snapshot, 'hid', 'keyboard_layout', 'qwerty'),

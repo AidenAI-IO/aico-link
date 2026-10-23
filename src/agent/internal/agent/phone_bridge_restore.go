@@ -64,7 +64,7 @@ func (r *PhoneBridgeRestorer) EnsureForeground(ctx context.Context) (bool, error
 	}
 
 	if bridge.logger != nil {
-		bridge.logger.Info("phone-bridge: restoring foreground via %s before app command", firstNonEmptyPhoneField(status.ReturnEntry, "return_entry"))
+		bridge.logger.Info("phone-bridge: restoring foreground via %s before app command", firstNonEmptyString([]string{status.ReturnEntry, "return_entry"}))
 	}
 	if err := r.tap(ctx, status); err != nil {
 		return false, fmt.Errorf("tap Dynamic Island return entry: %w", err)

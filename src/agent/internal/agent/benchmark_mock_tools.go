@@ -91,7 +91,7 @@ func (t *benchmarkMockTool) Call(ctx context.Context, input string) (string, err
 		return "", fmt.Errorf("decode benchmark mock tool %s: %w", t.Name(), err)
 	}
 	if result.IsError {
-		te := NewToolError(CodeToolExecutionFailed, firstNonEmptyPhoneField(result.Error, result.Output, "mock tool failed"))
+		te := NewToolError(CodeToolExecutionFailed, firstNonEmptyString([]string{result.Error, result.Output, "mock tool failed"}))
 		SetToolError(ctx, te)
 		return toolErrorString(te), nil
 	}

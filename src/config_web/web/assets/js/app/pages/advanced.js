@@ -14,7 +14,7 @@
  * page's manual editor uses.
  */
 
-import {fetchSnapshot, request, t} from '../data.js';
+import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
 import {isEmbedded} from '../../ui/environment.js';
 import {postToHost} from '../host.js';
 import {createSaver} from '../saver.js';
@@ -39,17 +39,6 @@ export const LOG_LEVELS = [
 export const RETENTION_PRESETS = [1, 3, 7, 14, 30];
 
 const days = n => t('memory.days', {n, defaultValue: '{{n}} 天'});
-
-async function ensureSnapshot(context) {
-  return context.snapshot || fetchSnapshot().catch(() => ({config: {}}));
-}
-
-function adoptSaved(snapshot, after) {
-  return payload => {
-    if (payload && payload.config) snapshot.config = payload.config;
-    if (after) after();
-  };
-}
 
 /** How often the live Agent log is re-read while its page is open. */
 const AGENT_LOG_POLL_MS = 2000;

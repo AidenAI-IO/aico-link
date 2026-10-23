@@ -23,7 +23,7 @@
  * the mode into the first provider selection that makes it valid.
  */
 
-import {fetchSnapshot, t, voiceMode} from '../data.js';
+import {adoptSaved, ensureSnapshot, t, voiceMode} from '../data.js';
 import {customValueField, inlineValueRow} from '../fields.js';
 import {createSaver} from '../saver.js';
 import {fieldHelp, fieldLabel, loadSchema, matches, optionLabel, optionsFor, placeholderFor, rangeOptions, sectionFields} from '../schema.js';
@@ -140,16 +140,10 @@ function uniqueName(base, records) {
 
 async function load(context) {
   const [snapshot, schema] = await Promise.all([
-    context.snapshot || fetchSnapshot().catch(() => ({config: {}})),
+    ensureSnapshot(context),
     loadSchema().catch(() => ({sections: []})),
   ]);
   return {snapshot, schema};
-}
-
-function adoptSaved(snapshot) {
-  return payload => {
-    if (payload && payload.config) snapshot.config = payload.config;
-  };
 }
 
 const modeQuery = mode => (mode ? `&mode=${encodeURIComponent(mode)}` : '');
