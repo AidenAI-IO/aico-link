@@ -610,8 +610,8 @@ func TestConfigBackupImportValidatesPersistsAndReloads(t *testing.T) {
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"persisted":true`) || !strings.Contains(resp.Body.String(), `"pending":true`) {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	if reloadRevision != configDataRevision(restored) {
-		t.Fatalf("reload revision=%d, want %d", reloadRevision, configDataRevision(restored))
+	if reloadRevision != agent.ConfigRevision(restored) {
+		t.Fatalf("reload revision=%d, want %d", reloadRevision, agent.ConfigRevision(restored))
 	}
 	written, err := os.ReadFile(options.AgentConfigPath)
 	if err != nil || !bytes.Equal(written, restored) {

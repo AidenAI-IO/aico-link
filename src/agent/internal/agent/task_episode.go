@@ -29,10 +29,6 @@ type taskEpisodeIndexCache struct {
 	valid        bool
 }
 
-type TaskEpisodeWriter struct {
-	plane *FilesystemMemoryPlane
-}
-
 type TaskEpisode struct {
 	ID                  string                 `yaml:"id" json:"id"`
 	Status              string                 `yaml:"status" json:"status"`
@@ -93,15 +89,6 @@ type TaskEpisodeEvent struct {
 }
 
 const sensitiveToolResultRedaction = "[sensitive tool result omitted]"
-
-type EpisodeQuery struct {
-	Terms          []string `json:"terms,omitempty"`
-	Tags           []string `json:"tags,omitempty"`
-	Entities       []string `json:"entities,omitempty"`
-	Success        *bool    `json:"success,omitempty"`
-	Limit          int      `json:"limit,omitempty"`
-	IncludeExpired bool     `json:"include_expired,omitempty"`
-}
 
 type episodeIndex struct {
 	Version   int    `yaml:"version"`
@@ -177,20 +164,6 @@ func (s *TaskEpisodeStore) lock() func() {
 
 func NewTaskEpisodeStore(rootDir string) *TaskEpisodeStore {
 	return &TaskEpisodeStore{rootDir: rootDir}
-}
-
-func NewTaskEpisodeWriter(plane *FilesystemMemoryPlane) *TaskEpisodeWriter {
-	if plane == nil {
-		return nil
-	}
-	return &TaskEpisodeWriter{plane: plane}
-}
-
-func (w *TaskEpisodeWriter) Write(ctx context.Context, episode TaskEpisode) error {
-	if w == nil || w.plane == nil {
-		return nil
-	}
-	return w.plane.CommitEpisode(ctx, episode)
 }
 
 func NewEpisodeRecorder(req MemoryRetrieveRequest, retrieved MemoryContext) *EpisodeRecorder {
@@ -497,7 +470,7 @@ func (s *TaskEpisodeStore) AddEpisode(ctx context.Context, episode TaskEpisode) 
 
 	now := time.Now().UTC()
 	if strings.TrimSpace(episode.ID) == "" {
-		episode.ID = "ep_" + strconvTimeID(now)
+		episode.ID = newTaskEpisodeID(now)
 	}
 	if strings.TrimSpace(episode.Status) == "" {
 		episode.Status = "active"
@@ -707,71 +680,6 @@ func (s *TaskEpisodeStore) MarkRunningEpisodesInterruptedWithDetails(ctx context
 		}
 	}
 	return interrupted, nil
-}
-
-func (s *TaskEpisodeStore) Search(ctx context.Context, query EpisodeQuery) ([]MemoryHit, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-	}
-	if s == nil || s.rootDir == "" {
-		return nil, nil
-	}
-	index, err := s.loadIndex()
-	if err != nil {
-		return nil, err
-	}
-	limit := query.Limit
-	if limit <= 0 {
-		limit = 5
-	}
-	terms := normalizeSearchTerms(append(append([]string(nil), query.Terms...), append(query.Tags, query.Entities...)...))
-	var matches []episodeIndexEntry
-	for _, entry := range index.Episodes {
-		if entry.Status != "active" {
-			continue
-		}
-		if query.Success != nil && entry.Success != *query.Success {
-			continue
-		}
-		if len(query.Tags) > 0 && !matchesAny(query.Tags, entry.Tags) {
-			continue
-		}
-		if len(query.Entities) > 0 && !matchesAny(query.Entities, entry.Entities) {
-			continue
-		}
-		if len(terms) > 0 && scoreEpisodeEntry(entry, terms) == 0 {
-			continue
-		}
-		matches = append(matches, entry)
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		scoreI := scoreEpisodeEntry(matches[i], terms)
-		scoreJ := scoreEpisodeEntry(matches[j], terms)
-		if scoreI == scoreJ {
-			return matches[i].StartedAt > matches[j].StartedAt
-		}
-		return scoreI > scoreJ
-	})
-	if len(matches) > limit {
-		matches = matches[:limit]
-	}
-	hits := make([]MemoryHit, 0, len(matches))
-	for _, entry := range matches {
-		hits = append(hits, MemoryHit{
-			ID:       entry.ID,
-			Type:     "task_episode",
-			Title:    entry.UserGoal,
-			Summary:  entry.Summary,
-			Content:  entry.Summary,
-			Tags:     append([]string(nil), entry.Tags...),
-			Entities: append([]string(nil), entry.Entities...),
-			Source:   "episodes",
-			FilePath: filepath.Join(s.rootDir, entry.File),
-		})
-	}
-	return hits, nil
 }
 
 func (s *TaskEpisodeStore) Get(ctx context.Context, id string) (TaskEpisode, error) {
@@ -1352,13 +1260,7 @@ func summarizeEpisodeForIndex(episode TaskEpisode, events []TaskEpisodeEvent) st
 	if goal != "" {
 		parts = append(parts, "Goal: "+goal)
 	}
-	var tools []string
-	for _, event := range events {
-		if event.Type == runEventToolCall && strings.TrimSpace(event.ToolName) != "" {
-			tools = append(tools, event.ToolName)
-		}
-	}
-	if len(tools) > 0 {
+	if tools := episodeToolSequence(events); len(tools) > 0 {
 		parts = append(parts, "Path: "+strings.Join(tools, " -> "))
 	}
 	if episode.Outcome.Success {
@@ -1379,27 +1281,6 @@ func summarizeEpisodeForIndex(episode TaskEpisode, events []TaskEpisodeEvent) st
 		}
 	}
 	return strings.Join(parts, ". ")
-}
-
-func scoreEpisodeEntry(entry episodeIndexEntry, terms []string) int {
-	if len(terms) == 0 {
-		return 1
-	}
-	haystack := strings.ToLower(strings.Join([]string{
-		entry.UserGoal,
-		entry.Summary,
-		strings.Join(entry.Tags, " "),
-		strings.Join(entry.Entities, " "),
-		entry.FailureReason,
-		entry.VerifierReason,
-	}, " "))
-	score := 0
-	for _, term := range terms {
-		if term != "" && strings.Contains(haystack, strings.ToLower(term)) {
-			score++
-		}
-	}
-	return score
 }
 
 func inferEpisodeFinalState(events []TaskEpisodeEvent) string {
