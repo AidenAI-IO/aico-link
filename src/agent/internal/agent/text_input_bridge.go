@@ -102,7 +102,7 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
 		}
 		if phoneBridgeCanUsePiPBackground(status, "clipboard_write") {
-			return t.runBackgroundClipboardQueueFlow(ctx, platform, args)
+			return t.runClipboardWritePasteFlow(ctx, platform, args)
 		}
 		if phoneBridgeCanRestoreFromReturnEntry(status) || phoneBridgeReadyForCommand(status) {
 			return t.runLegacyBridgeFlow(ctx, platform, args)
@@ -112,7 +112,7 @@ func (t *textInputBridge) runClipboardFirstFlow(ctx context.Context, platform st
 		if bridge.ClipboardRecentlyEquals(args.Text, preparedClipboardMaxAge) {
 			return t.runPreparedClipboardPasteFlow(ctx, platform, args)
 		}
-		return t.runTargetPreservingClipboardFlow(ctx, platform, args)
+		return t.runClipboardWritePasteFlow(ctx, platform, args)
 	default:
 		return textViaBridgeResult{}
 	}
@@ -134,24 +134,6 @@ func textViaBridgeResultToTextInputResult(bridgeResult textViaBridgeResult) text
 	return result
 }
 
-func (t *textInputBridge) runTargetPreservingClipboardFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
-	bridge := t.currentBridge()
-	if bridge == nil {
-		return textViaBridgeResult{Err: fmt.Errorf("phone bridge is not configured")}
-	}
-	engine := newTextInputEngineWithSleep(*t.hw, t.vision, t.sleep)
-	preserved, preserveErr := t.writeClipboardPreservingTarget(ctx, bridge, platform, args.Text)
-	if preserveErr != nil {
-		return textViaBridgeResult{Attempted: true, Err: preserveErr}
-	}
-	if !preserved {
-		return textViaBridgeResult{}
-	}
-	result := t.focusPasteVerify(ctx, engine, platform, args)
-	result.Attempted = true
-	return result
-}
-
 func (t *textInputBridge) runPreparedClipboardPasteFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
 	engine := newTextInputEngineWithSleep(*t.hw, t.vision, t.sleep)
 	result := t.focusPasteVerify(ctx, engine, platform, args)
@@ -159,7 +141,7 @@ func (t *textInputBridge) runPreparedClipboardPasteFlow(ctx context.Context, pla
 	return result
 }
 
-func (t *textInputBridge) runBackgroundClipboardQueueFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
+func (t *textInputBridge) runClipboardWritePasteFlow(ctx context.Context, platform string, args textInputArgs) textViaBridgeResult {
 	bridge := t.currentBridge()
 	if bridge == nil {
 		return textViaBridgeResult{Attempted: true, Err: fmt.Errorf("phone bridge is not configured")}
@@ -221,22 +203,29 @@ func (t *textInputBridge) canUseClipboardFirst(platform string, text string) boo
 	}
 }
 
-func (t *textInputBridge) writeClipboardPreservingTarget(ctx context.Context, bridge *PhoneBridge, platform, text string) (bool, error) {
-	if !t.canWriteClipboardPreservingTarget(platform) {
-		return false, nil
-	}
-	if err := t.writeClipboard(ctx, bridge, text); err != nil {
-		return true, err
-	}
-	return true, nil
-}
-
-func (t *textInputBridge) canWriteClipboardPreservingTarget(platform string) bool {
-	return strings.EqualFold(strings.TrimSpace(platform), "android")
-}
-
 func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInputEngine, platform string, args textInputArgs) textViaBridgeResult {
 	var result textViaBridgeResult
+	// settled waits for the paste to land, then records what the field holds.
+	// It reports true once the result is final: an error, a verified commit,
+	// or any text in the field.
+	settled := func() bool {
+		if err := t.sleepAfterPaste(ctx); err != nil {
+			result.Err = err
+			return true
+		}
+		analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
+		if err != nil {
+			result.Err = err
+			return true
+		}
+		if committed, committedFieldText := evaluateFieldCommit(analysis); committed {
+			result.Committed = true
+			result.FieldText = committedFieldText
+			return true
+		}
+		result.FieldText = analysis.FieldText
+		return strings.TrimSpace(analysis.FieldText) != ""
+	}
 	for attempt := 1; attempt <= textViaBridgePasteAttempts; attempt++ {
 		if err := engine.applyFocus(ctx, args.Focus); err != nil {
 			result.Err = err
@@ -250,24 +239,8 @@ func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInpu
 				return result
 			}
 		}
-		if err := t.sleepAfterPaste(ctx); err != nil {
-			result.Err = err
+		if settled() {
 			return result
-		}
-		analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
-		if err != nil {
-			result.Err = err
-			return result
-		}
-		if committed, committedFieldText := evaluateFieldCommit(analysis); committed {
-			result.Committed = true
-			result.FieldText = committedFieldText
-			return result
-		} else {
-			result.FieldText = analysis.FieldText
-			if strings.TrimSpace(analysis.FieldText) != "" {
-				return result
-			}
 		}
 		// Nothing landed in the field. A dialog can hold the paste back, most
 		// often iOS "Allow Paste" when the user skipped the onboarding
@@ -282,25 +255,8 @@ func (t *textInputBridge) focusPasteVerify(ctx context.Context, engine *textInpu
 			result.Err = fmt.Errorf("%s dialog is blocking input: %s", popup.Kind, popup.Summary)
 			return result
 		}
-		if popup.Handled {
-			if err := t.sleepAfterPaste(ctx); err != nil {
-				result.Err = err
-				return result
-			}
-			analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
-			if err != nil {
-				result.Err = err
-				return result
-			}
-			if committed, committedFieldText := evaluateFieldCommit(analysis); committed {
-				result.Committed = true
-				result.FieldText = committedFieldText
-				return result
-			}
-			result.FieldText = analysis.FieldText
-			if strings.TrimSpace(analysis.FieldText) != "" {
-				return result
-			}
+		if popup.Handled && settled() {
+			return result
 		}
 	}
 	return result
