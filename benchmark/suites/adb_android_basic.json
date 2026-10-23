@@ -1,6 +1,6 @@
 {
   "name": "adb_android_basic",
-  "version": "2.0",
+  "version": "2.1",
   "description": "General Android UI operations over ADB: screen reading, Settings, launcher, Back, scrolling, quick-action contracts, cross-app navigation, and state recovery. Requires Settings, Clock, and a launcher with a swipe-up app drawer. Text-entry diagnostics are in adb_android_text_editing.",
   "prompt_prefix": "",
   "global_reset": {},
@@ -15,16 +15,16 @@
     {
       "id": "screenshot_home",
       "category": "device_operation",
-      "prompt": "看一眼当前屏幕，跟我说说上面有什么。",
-      "description_for_judge": "Agent 应该调用 screenshot 并描述当前 Android 屏幕。",
+      "prompt": "Look at the current screen and tell me what is on it.",
+      "description_for_judge": "The agent should call screenshot and describe the current Android screen.",
       "rubric": [
         {
           "id": "took_screenshot",
-          "description": "进行了截图"
+          "description": "The agent took a screenshot."
         },
         {
           "id": "described_screen",
-          "description": "对屏幕内容做了简要描述"
+          "description": "The agent briefly described the screen contents."
         }
       ],
       "hard_assertions": {
@@ -46,16 +46,16 @@
     {
       "id": "open_settings",
       "category": "device_operation",
-      "prompt": "打开系统设置。",
-      "description_for_judge": "Agent 应该打开系统设置页面（通过 quick_action open_settings 或点击设置图标），最终截图应显示设置界面。",
+      "prompt": "Open system Settings.",
+      "description_for_judge": "The agent should open system Settings (using quick_action open_settings or tapping the Settings icon). The final screenshot should show Settings.",
       "rubric": [
         {
           "id": "opened_settings",
-          "description": "打开了设置应用"
+          "description": "The agent opened the Settings app."
         },
         {
           "id": "confirmed_with_screenshot",
-          "description": "用截图确认了设置界面"
+          "description": "The agent confirmed the Settings screen with a screenshot."
         }
       ],
       "hard_assertions": {
@@ -75,20 +75,20 @@
     {
       "id": "settings_check_wifi",
       "category": "device_operation",
-      "prompt": "打开设置，看看 WiFi 现在开着没，告诉我状态。",
-      "description_for_judge": "Agent 应该：1) 打开设置应用 2) 进入网络和互联网（或 WLAN/互联网）设置 3) 正确报告 WiFi 当前是启用还是禁用状态",
+      "prompt": "Open Settings, check whether Wi-Fi is currently enabled, and tell me its status.",
+      "description_for_judge": "The agent should open Settings, navigate to Network & Internet (or WLAN/Internet), and correctly report whether Wi-Fi is currently enabled or disabled.",
       "rubric": [
         {
           "id": "opened_settings",
-          "description": "成功打开设置应用"
+          "description": "The agent successfully opened Settings."
         },
         {
           "id": "found_wifi_settings",
-          "description": "找到并查看了 WiFi/网络设置"
+          "description": "The agent found and viewed the Wi-Fi/network settings."
         },
         {
           "id": "reported_status",
-          "description": "正确报告了 WiFi 的启用/禁用状态"
+          "description": "The agent correctly reported whether Wi-Fi was enabled or disabled."
         }
       ],
       "hard_assertions": {
@@ -144,11 +144,11 @@
       "description_for_judge": "Agent must navigate back from a settings sub-page to the parent settings page.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "先打开系统设置，进入一个有返回按钮的子页面（比如 Wi-Fi、蓝牙、关于手机之类），然后停在那个子页面。",
+        "prompt": "Open system Settings, navigate to a subpage with a Back button (such as Wi-Fi, Bluetooth, or About phone), and leave that subpage open.",
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "返回上一层。",
+      "prompt": "Go back one level.",
       "rubric": [
         {
           "id": "returned_parent",
@@ -174,11 +174,11 @@
       "description_for_judge": "Agent must perform a vertical scroll downward on the current page.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "先打开系统设置，停在设置列表靠上的位置，别进具体设置项。",
+        "prompt": "Open system Settings and stay near the top of the main Settings list. Do not open an individual settings page.",
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "向下滑动一屏。",
+      "prompt": "Scroll down by one screen.",
       "rubric": [
         {
           "id": "page_scrolled",
@@ -204,7 +204,7 @@
       "description_for_judge": "Scroll the current Settings list down until its bottom is reached. Stop when further scrolling reveals no additional entries, and leave the last entries visible. Do not change settings. Judge only the supplied pre/post screenshots and successful tool results. Accept localized labels and equivalent Android layouts.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "先打开系统设置，停在设置列表靠上的位置，别进具体设置项。",
+        "prompt": "Open system Settings and stay near the top of the main Settings list. Do not open an individual settings page.",
         "timeout_sec": 120,
         "clear_history_after": true
       },

@@ -19,7 +19,10 @@ earlier `adb-android`, `adb-phone-control`, `adb-quick-action`, and
 separate navigation suite. Text editing stays separate because it needs an
 editable Settings search interface and exercises keyboard/input limitations.
 
-The basic suite is version 2.0 and text editing is version 1.1. These workloads
+The basic suite is version 2.1 and text editing is version 1.1. Both suites use
+English for task prompts, setup instructions, and judging criteria. Basic 2.1
+translates the remaining Chinese instructions from 2.0; account for that language
+change when comparing results. These workloads
 are not directly comparable with the earlier eight-task smoke or 32-task profile.
 Shared cross-platform suites retain their original definitions. The three
 `quick_action_*` tasks require a successfully executed named shortcut; ordinary
