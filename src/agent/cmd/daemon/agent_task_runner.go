@@ -30,6 +30,7 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		}
 	}
 	request := agent.RunRequest{
+		WaitForIdle:             true,
 		Input:                   prompt,
 		Turn:                    agent.NewTextTurnInput(prompt, nil),
 		AsyncEpisodeMaintenance: true,
