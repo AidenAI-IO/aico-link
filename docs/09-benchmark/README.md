@@ -260,7 +260,7 @@ Common options:
 - `--environment-url URL` - Environment bridge URL for setup, pre/post screen capture, and release.
 - `--auto-agent-setup` - Start isolated agent daemon workers and schedule by bridge concurrency.
 - `--agent-config PATH` - Agent config used for auto-started daemon workers.
-- `--no-judge` - Skip LLM judge and only run hard assertions.
+- `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.

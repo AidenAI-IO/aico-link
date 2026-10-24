@@ -114,9 +114,10 @@ correct?"), over an OpenAI-compatible endpoint. The judge model is
 completely independent of the agent-under-test model (the agent model is set in
 `agent.toml`).
 
-- **`--no-judge`**: no judging; rubrics record 0/N and pass/fail depends only on
-  the hard assertions (an action ran, no timeout). Good for first verifying that
-  the pipeline works end to end.
+- **`--no-judge`**: runs hard assertions to check the execution pipeline. Tasks
+  with a rubric remain unscored (`skipped`) and are excluded from success rates
+  until rejudged; known assertion failures still fail. Tasks without a rubric
+  are decided by their deterministic assertions.
 - **Judge enabled** (the default for `run`, i.e. without `--no-judge`): you must
   provide `AIDEN_BENCHMARK_JUDGE_API_KEY`, otherwise it fails with
   `missing env var AIDEN_BENCHMARK_JUDGE_API_KEY`.
