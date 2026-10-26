@@ -52,8 +52,8 @@ def test_card_summarizes_the_last_week():
 
 def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "memory: 50.0% (2/4, 2 runs)" in text
-    assert "perception: 90.0% (9/10, 1 run)" in text
+    assert "memory: 50.0%" in text.splitlines()
+    assert "perception: 90.0%" in text.splitlines()
     assert text.index("memory") < text.index("perception")
 
 
@@ -64,11 +64,24 @@ def test_changes_from_the_previous_week_are_colored_by_direction():
                                 _suite("flat", 0.5, 5, 10, change=0.0004), _suite("new", 0.5, 5, 10)]
     text = _text(_build_card(data, "https://example.com/d.html"))
     assert "75.0% <font color='red'>-5.0pp</font> (18/24" in text
-    assert "up: 90.0% <font color='green'>+10.0pp</font> (9/10, 1 run)" in text
+    assert "up: 90.0% <font color='green'>+10.0pp</font>" in text.splitlines()
     assert "down: 40.0% <font color='red'>-20.0pp</font>" in text
     assert "flat: 50.0% <font color='grey'>±0.0pp</font>" in text
     # Without a previous-week rate, no change is shown.
-    assert "new: 50.0% (5/10, 1 run)" in text
+    assert "new: 50.0%" in text.splitlines()
+    assert "Config changed" not in text
+
+
+def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
+    data = _data()
+    suite = _suite("perception", 0.75, 9, 12, change=-0.08)
+    suite["config_changes"] = [{"field": "agent model", "previous": "google/a", "current": "anthropic/b"}]
+    data["weekly"]["suites"] = [suite]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "perception: 75.0% <font color='red'>-8.0pp</font>" in text.splitlines()
+    assert "Config changed" not in text
+    assert "google/a" not in text and "anthropic/b" not in text
+    assert "9/12" not in text and "1 run" not in text
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():
@@ -85,11 +98,12 @@ def test_cost_is_shown_only_when_known():
     assert "$1.250" in _text(_build_card(data, "https://example.com/d.html"))
 
 
-def test_regressions_are_listed_and_turn_the_header_red():
+def test_legacy_regression_data_does_not_add_a_separate_alert():
     data = _data(regressions=[{"suite": "memory", "previous": 0.8, "current": 0.5}])
     card = _build_card(data, "https://example.com/d.html")
-    assert "memory: 80.0% → 50.0%" in _text(card)
-    assert card["header"]["template"] == "red"
+    assert "Regressions" not in _text(card)
+    assert "80.0% → 50.0%" not in _text(card)
+    assert card["header"]["template"] == "blue"
     assert _build_card(_data(), "https://example.com/d.html")["header"]["template"] == "blue"
 
 
@@ -103,3 +117,25 @@ def test_button_opens_the_dashboard():
     card = _build_card(_data(), "https://example.com/d.html")
     action = next(e for e in card["elements"] if e.get("tag") == "action")
     assert action["actions"][0]["url"] == "https://example.com/d.html"
+
+
+def test_card_leads_with_capability_rates():
+    data = _data()
+    data["weekly"]["capabilities"] = [
+        {"capability": "Memory", "pass_at_1": 0.75, "passed": 12, "eligible_tasks": 16,
+         "task_count": 8, "run_count": 2, "change": 0.25},
+        {"capability": "Visual grounding", "pass_at_1": 0.5, "passed": 6, "eligible_tasks": 12,
+         "task_count": 12, "run_count": 1, "change": None},
+    ]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks, 2 runs, 12/16 eligible first attempts passed)" in text
+    assert "**Visual grounding**: 50.0% (12 tasks, 1 run, 6/12 eligible first attempts passed)" in text
+    assert text.index("**Memory**") < text.index("memory: 50.0%")
+
+
+def test_card_labels_skill_discovery_as_a_diagnostic_observation():
+    data = _data()
+    data["weekly"]["diagnostics"] = [{"suite": "skill_discovery_v1", "rate": 0.25, "change": -0.25}]
+    text = _text(_build_card(data, "https://example.com/d.html"))
+    assert "**Diagnostics** (skill read observation, not task pass@1)" in text
+    assert "skill_discovery_v1: skill read 25.0% <font color='red'>-25.0pp</font>" in text

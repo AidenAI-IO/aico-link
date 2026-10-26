@@ -4,7 +4,6 @@
 
 #include <cstdint>
 #include <cstring>
-#include <limits>
 #include <vector>
 
 namespace aico_demo {
@@ -126,68 +125,6 @@ inline bool convert_frame_to_rgb(const aico::VideoFrame& frame,
     }
 
     return false;
-}
-
-inline void write_u16_le(std::vector<uint8_t>* out, size_t offset, uint16_t value) {
-    (*out)[offset] = static_cast<uint8_t>(value & 0xff);
-    (*out)[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
-}
-
-inline void write_u32_le(std::vector<uint8_t>* out, size_t offset, uint32_t value) {
-    (*out)[offset] = static_cast<uint8_t>(value & 0xff);
-    (*out)[offset + 1] = static_cast<uint8_t>((value >> 8) & 0xff);
-    (*out)[offset + 2] = static_cast<uint8_t>((value >> 16) & 0xff);
-    (*out)[offset + 3] = static_cast<uint8_t>((value >> 24) & 0xff);
-}
-
-inline bool encode_rgb_to_bmp(const std::vector<uint8_t>& rgb,
-                              uint32_t width,
-                              uint32_t height,
-                              std::vector<uint8_t>* bmp) {
-    if (!bmp || width == 0 || height == 0) {
-        return false;
-    }
-
-    const size_t pixels = static_cast<size_t>(width) * height;
-    if (rgb.size() < pixels * 3) {
-        return false;
-    }
-
-    const uint32_t row_stride = (width * 3U + 3U) & ~3U;
-    const uint64_t image_size = static_cast<uint64_t>(row_stride) * height;
-    const uint64_t file_size = 54U + image_size;
-
-    if (height > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
-        width > static_cast<uint32_t>(std::numeric_limits<int32_t>::max()) ||
-        file_size > std::numeric_limits<uint32_t>::max()) {
-        return false;
-    }
-
-    bmp->assign(static_cast<size_t>(file_size), 0);
-    (*bmp)[0] = 'B';
-    (*bmp)[1] = 'M';
-    write_u32_le(bmp, 2, static_cast<uint32_t>(file_size));
-    write_u32_le(bmp, 10, 54);
-    write_u32_le(bmp, 14, 40);
-    write_u32_le(bmp, 18, width);
-    write_u32_le(bmp, 22, static_cast<uint32_t>(-static_cast<int32_t>(height)));
-    write_u16_le(bmp, 26, 1);
-    write_u16_le(bmp, 28, 24);
-    write_u32_le(bmp, 34, static_cast<uint32_t>(image_size));
-
-    for (uint32_t y = 0; y < height; ++y) {
-        const size_t src_row = static_cast<size_t>(y) * width * 3;
-        const size_t dst_row = 54 + static_cast<size_t>(y) * row_stride;
-        for (uint32_t x = 0; x < width; ++x) {
-            const size_t src = src_row + static_cast<size_t>(x) * 3;
-            const size_t dst = dst_row + static_cast<size_t>(x) * 3;
-            (*bmp)[dst] = rgb[src + 2];
-            (*bmp)[dst + 1] = rgb[src + 1];
-            (*bmp)[dst + 2] = rgb[src];
-        }
-    }
-
-    return true;
 }
 
 }  // namespace aico_demo

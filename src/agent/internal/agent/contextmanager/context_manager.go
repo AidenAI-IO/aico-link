@@ -225,7 +225,7 @@ func newContextManagerFromMessageList(sessionFolder, sessionID, parentSessionID 
 	if parentSessionID != "" {
 		metadata.UsageStartIndex = len(messageList)
 	}
-	initialMessages := cloneMessages(messageList)
+	initialMessages := messages.CloneList(messageList)
 	for i := range initialMessages {
 		if initialMessages[i].Timestamp.IsZero() {
 			initialMessages[i].Timestamp = now
@@ -484,6 +484,34 @@ func (c *ContextManager) StoreArtifact(mimeType string, data []byte, metadata Ar
 	return c.currentSession.StoreArtifact(mimeType, data, metadata)
 }
 
+// ScreenshotStateCount returns how many <state> messages in the active session
+// carry a screenshot, without copying the message list.
+func (c *ContextManager) ScreenshotStateCount() int {
+	if c == nil {
+		return 0
+	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if c.currentSession == nil {
+		return 0
+	}
+	count := 0
+	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		for _, message := range currentMessages {
+			if message.Role != messages.MessageRoleState {
+				continue
+			}
+			for _, attachment := range message.Attachments {
+				if attachment.Source == messages.AttachmentSourceScreenshotObservation {
+					count++
+					break
+				}
+			}
+		}
+	})
+	return count
+}
+
 func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
@@ -533,16 +561,16 @@ func (c *ContextManager) AppendMessages(messagesToAppend []messages.Message) err
 	hooks := append([]AppendMessageHook(nil), c.appendHooks...)
 	c.hooksMu.RUnlock()
 
-	messageList := cloneMessages(messagesToAppend)
+	messageList := messages.CloneList(messagesToAppend)
 	for _, entry := range hooks {
 		var next []messages.Message
 		for _, current := range messageList {
 			result := entry(current.Clone())
-			next = append(next, cloneMessages(result.Before)...)
+			next = append(next, messages.CloneList(result.Before)...)
 			if result.Message != nil {
 				next = append(next, result.Message.Clone())
 			}
-			next = append(next, cloneMessages(result.After)...)
+			next = append(next, messages.CloneList(result.After)...)
 		}
 		messageList = next
 	}
@@ -683,15 +711,4 @@ func (c *ContextManager) ReadAttachment(attachmentID string) ([]byte, error) {
 		return nil, fmt.Errorf("attachment is empty")
 	}
 	return data, nil
-}
-
-func cloneMessages(messageList []messages.Message) []messages.Message {
-	if len(messageList) == 0 {
-		return nil
-	}
-	cloned := make([]messages.Message, len(messageList))
-	for i, message := range messageList {
-		cloned[i] = message.Clone()
-	}
-	return cloned
 }

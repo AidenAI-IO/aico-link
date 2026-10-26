@@ -68,6 +68,7 @@ class ADBAndroidDevice:
         self.screenshot_max_width = max(1, int(screenshot_max_width))
         self.jpeg_quality = min(95, max(1, int(jpeg_quality)))
         self._screen_size: tuple[int, int] | None = None
+        self._supports_keycombination: bool | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -170,6 +171,18 @@ class ADBAndroidDevice:
     def keyevent(self, keycode: str | int) -> None:
         self._run(["shell", "input", "keyevent", str(keycode)])
 
+    def keycombination(self, keycodes: list[str]) -> None:
+        """Send simultaneous keys only when the device advertises native support."""
+        if self._supports_keycombination is None:
+            help_text = self._run_text(["shell", "input"])
+            self._supports_keycombination = bool(re.search(r"\bkeycombination\b", help_text))
+        if not self._supports_keycombination:
+            raise ADBCommandError("device does not support input keycombination; cannot execute text-editing shortcuts")
+        output = self._run_text(["shell", "input", "keycombination", *keycodes])
+        # Some Android input implementations print an error but exit zero.
+        if "error" in output.lower() or "unknown command" in output.lower():
+            raise ADBCommandError(f"input keycombination failed: {output.strip()}")
+
     def input_text(self, text: str) -> None:
         """Type ASCII text via `input text`.
 
@@ -250,14 +263,43 @@ class ADBAndroidDevice:
     def collapse_statusbar(self) -> None:
         self._run(["shell", "cmd", "statusbar", "collapse"])
 
+    def keyboard_visible(self) -> bool:
+        """Read current IME visibility, excluding histories and retained view state."""
+        dump = self._run_text(["shell", "dumpsys", "input_method"], timeout=5)
+        # The dump appends request histories and client/service state. In
+        # particular mIsInputViewShown can stay true after hideWindow() has
+        # hidden the IME window, so it is not a visibility signal.
+        manager = re.split(
+            r"(?m)^\s*(?:m\w*History\b|mImeTrackerService#History\b|Input method (?:client|service) state\b)",
+            dump,
+            maxsplit=1,
+        )[0]
+        shown = re.search(r"\bmInputShown=(true|false)\b", manager)
+        service = re.search(r"(?ms)^Input method service state for [^\n]+:\n(.*?)(?:^Last computed insets:|\Z)", dump)
+        visible = re.search(r"\bmWindowVisible=(true|false)\b", service.group(1)) if service else None
+        # Manager and service visibility can disagree while a hide is in flight.
+        # Do not accept reset until every available current signal is hidden.
+        signals = [match.group(1) == "true" for match in (shown, visible) if match]
+        if signals:
+            return any(signals)
+        raise ADBCommandError("cannot verify current keyboard window visibility during reset")
+
     def reset_home(self) -> None:
-        """Best-effort reset to a neutral home screen."""
+        """Return home and verify that no keyboard leaks into the next task."""
         try:
             self.collapse_statusbar()
         except ADBCommandError:
             pass
         self.keyevent("KEYCODE_HOME")
         time.sleep(0.3)
+        for attempt in range(3):
+            if not self.keyboard_visible():
+                return
+            if attempt < 2:
+                self.keyevent("KEYCODE_BACK")
+                self.keyevent("KEYCODE_HOME")
+                time.sleep(0.3)
+        raise ADBCommandError("keyboard is still visible after reset; refusing to start a contaminated task")
 
 
 def unsupported_adb_text_chars(text: str) -> str:

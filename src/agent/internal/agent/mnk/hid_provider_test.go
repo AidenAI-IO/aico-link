@@ -1,6 +1,7 @@
 package mnk
 
 import (
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/binary"
 	"math"
@@ -251,5 +252,79 @@ func TestHIDProviderTouchActionsRejectsExcessiveTotalDurationBeforeWriting(t *te
 	}
 	if report := pointer.bytes(); len(report) != 0 {
 		t.Fatalf("excessive total duration wrote %d bytes before validation", len(report))
+	}
+}
+
+func TestHIDProviderNormalizedToAbsoluteFallsBackToWholeSurface(t *testing.T) {
+	provider := NewHIDProvider(nil, nil, nil, nil, false, "qwerty", nil)
+	x, y, err := provider.normalizedToAbsolute(500, 250)
+	if err != nil {
+		t.Fatalf("normalizedToAbsolute returned error: %v", err)
+	}
+	if x != 16384 || y != 8192 {
+		t.Fatalf("point = (%d,%d), want (16384,8192)", x, y)
+	}
+	if wantX, wantY := NormalizedToAbsolutePoint(500, 250); x != wantX || y != wantY {
+		t.Fatalf("point = (%d,%d), want NormalizedToAbsolutePoint (%d,%d)", x, y, wantX, wantY)
+	}
+}
+
+func TestHIDProviderNormalizedToAbsoluteRejectsNonFiniteCoordinates(t *testing.T) {
+	provider := NewHIDProvider(nil, nil, nil, nil, false, "qwerty", nil)
+	for _, value := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+		if _, _, err := provider.normalizedToAbsolute(value, 500); err == nil || !strings.Contains(err.Error(), "finite") {
+			t.Fatalf("normalizedToAbsolute(%v, 500) error = %v, want finite-coordinate error", value, err)
+		}
+	}
+}
+
+func TestHIDProviderNormalizedToAbsoluteUsesActiveArea(t *testing.T) {
+	screenState := &screen.ScreenState{}
+	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
+	provider := NewHIDProvider(nil, nil, nil, screenState, false, "qwerty", nil)
+
+	x, y, err := provider.normalizedToAbsolute(0, 500)
+	if err != nil {
+		t.Fatalf("normalizedToAbsolute returned error: %v", err)
+	}
+	if x != 0 {
+		t.Fatalf("x = %d, want 0 at left edge of active_area", x)
+	}
+	if wantY := scalePixelToAbsolute(float64(1079)/2, 1080); y != wantY {
+		t.Fatalf("y = %d, want %d", y, wantY)
+	}
+}
+
+func TestHIDProviderTouchscreenNormalizedToAbsoluteUsesFrameSpaceWithinActiveArea(t *testing.T) {
+	screenState := &screen.ScreenState{}
+	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 656, Y: 0, Width: 608, Height: 1080, Valid: true})
+	provider := NewHIDProvider(nil, nil, nil, screenState, true, "qwerty", nil)
+
+	x, y, err := provider.normalizedToAbsolute(627, 180)
+	if err != nil {
+		t.Fatalf("normalizedToAbsolute returned error: %v", err)
+	}
+	wantX := scalePixelToAbsolute(float64(656)+(627.0/1000.0)*float64(608-1), 1920)
+	wantY := scalePixelToAbsolute((180.0/1000.0)*float64(1080-1), 1080)
+	if x != wantX || y != wantY {
+		t.Fatalf("point = (%d,%d), want (%d,%d)", x, y, wantX, wantY)
+	}
+}
+
+func TestHIDProviderNormalizedToAbsolutePreservesNearlyFullAxisOffset(t *testing.T) {
+	screenState := &screen.ScreenState{}
+	screenState.UpdateActiveArea(1920, 1080, screen.ScreenActiveArea{X: 711, Y: 28, Width: 498, Height: 1052, Valid: true})
+	provider := NewHIDProvider(nil, nil, nil, screenState, false, "qwerty", nil)
+
+	x, y, err := provider.normalizedToAbsolute(500, 220)
+	if err != nil {
+		t.Fatalf("normalizedToAbsolute returned error: %v", err)
+	}
+	localX := 0.5 * float64(498-1)
+	localY := 0.22 * float64(1052-1)
+	wantX := scalePixelToAbsolute(localX, 498)
+	wantY := scalePixelToAbsolute(28+localY, 1080)
+	if x != wantX || y != wantY {
+		t.Fatalf("point = (%d,%d), want (%d,%d)", x, y, wantX, wantY)
 	}
 }

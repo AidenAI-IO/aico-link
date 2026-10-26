@@ -678,7 +678,7 @@ func TestFunctionAgentCompactsInvalidVisualObservation(t *testing.T) {
 	toolContent, followups := agent.observationMessagesForStep(schema.AgentStep{
 		Action:      schema.AgentAction{Tool: "screenshot"},
 		Observation: observation,
-	}, true)
+	})
 
 	if followups != nil {
 		t.Fatalf("expected no followup messages for invalid visual observation, got %#v", followups)
@@ -698,7 +698,7 @@ func TestFunctionAgentPreservesFullSkillReadObservation(t *testing.T) {
 	toolContent, followups := agent.observationMessagesForStep(schema.AgentStep{
 		Action:      schema.AgentAction{Tool: "skill_read"},
 		Observation: observation,
-	}, true)
+	})
 
 	if followups != nil {
 		t.Fatalf("expected no followup messages, got %#v", followups)
@@ -715,7 +715,7 @@ func TestFunctionAgentCapsOversizedSkillReadObservation(t *testing.T) {
 	toolContent, _ := agent.observationMessagesForStep(schema.AgentStep{
 		Action:      schema.AgentAction{Tool: "skill_read"},
 		Observation: observation,
-	}, true)
+	})
 
 	if !strings.Contains(toolContent, "[truncated 10 chars]") {
 		t.Fatalf("oversized skill_read observation was not capped: %q", toolContent[len(toolContent)-40:])
@@ -735,7 +735,7 @@ func TestFunctionAgentRejectsEmptyVisualObservationData(t *testing.T) {
 	if agent.countVisualObservations([]schema.AgentStep{step}) != 0 {
 		t.Fatal("empty screenshot data counted as a visual observation")
 	}
-	toolContent, followups := agent.observationMessagesForStep(step, true)
+	toolContent, followups := agent.observationMessagesForStep(step)
 	if followups != nil {
 		t.Fatalf("expected no followup messages for empty screenshot data, got %#v", followups)
 	}
@@ -758,7 +758,7 @@ func TestFunctionAgentRejectsVisualObservationWithoutDimensions(t *testing.T) {
 	if agent.countVisualObservations([]schema.AgentStep{step}) != 0 {
 		t.Fatal("screenshot with invalid dimensions counted as a visual observation")
 	}
-	toolContent, followups := agent.observationMessagesForStep(step, true)
+	toolContent, followups := agent.observationMessagesForStep(step)
 	if followups != nil {
 		t.Fatalf("expected no followup messages for invalid screenshot dimensions, got %#v", followups)
 	}
@@ -777,7 +777,7 @@ func TestFunctionAgentUsesSharedActionOutputFlowForScreenshot(t *testing.T) {
 	toolContent, followups := agent.observationMessagesForStep(schema.AgentStep{
 		Action:      schema.AgentAction{Tool: "screenshot"},
 		Observation: observation,
-	}, true)
+	})
 
 	if toolContent != "ok" {
 		t.Fatalf("tool result = %q, want shared action_output", toolContent)
@@ -802,7 +802,7 @@ func TestFunctionAgentPostActionScreenshotPreservesActionOutput(t *testing.T) {
 		Observation: observation,
 	}
 
-	toolContent, followups := agent.observationMessagesForStep(step, true)
+	toolContent, followups := agent.observationMessagesForStep(step)
 
 	if toolContent != "  ok\nwith details  " {
 		t.Fatalf("toolContent = %q, want original action output", toolContent)
@@ -822,7 +822,7 @@ func TestFunctionAgentPostActionScreenshotPreservesEmptyActionOutput(t *testing.
 	toolContent, followups := agent.observationMessagesForStep(schema.AgentStep{
 		Action:      schema.AgentAction{Tool: "keyboard_tap"},
 		Observation: observation,
-	}, true)
+	})
 
 	if toolContent != "" {
 		t.Fatalf("toolContent = %q, want empty original action output", toolContent)
@@ -844,7 +844,7 @@ func TestFunctionAgentWaitStableScreenDoesNotTreatMotionAsActionResult(t *testin
 		Observation: observation,
 	}
 
-	toolContent, followups := agent.observationMessagesForStep(step, true)
+	toolContent, followups := agent.observationMessagesForStep(step)
 	if toolContent != actionOutput {
 		t.Fatalf("toolContent = %q, want stable-screen action_output %q", toolContent, actionOutput)
 	}
@@ -884,7 +884,7 @@ func TestFunctionAgentUsesMarkedTouchGestureScreenshotForModel(t *testing.T) {
 		t.Fatal("model screenshot did not preserve the marked image")
 	}
 
-	toolContent, followups := agent.observationMessagesForStep(step, true)
+	toolContent, followups := agent.observationMessagesForStep(step)
 	if strings.Contains(toolContent, "requested tap coordinate") {
 		t.Fatalf("tool content should not carry marker metadata: %s", toolContent)
 	}

@@ -1,6 +1,6 @@
 /** Basic settings routes. */
 
-import {fetchSnapshot, request} from '../data.js';
+import {ensureSnapshot, request} from '../data.js';
 import {postToHost} from '../host.js';
 import {saveLabel} from '../apply.js';
 import {createSaver} from '../saver.js';
@@ -10,6 +10,7 @@ import {choiceSheet, localeOptions, optionLabel} from '../../ui/choice-sheet.js'
 import {dropdown} from '../../ui/dropdown.js';
 import {group, row, screen, separator} from '../../ui/list.js';
 import {icon, languageTile} from '../../ui/icon.js';
+import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
@@ -93,8 +94,7 @@ async function saveTimezone(snapshot, timezone) {
 
 /** Language and time zone detail page. Both controls apply immediately. */
 export async function languagePage(context) {
-  let snapshot = context.snapshot;
-  if (!snapshot) snapshot = await fetchSnapshot().catch(() => ({config: {}}));
+  const snapshot = await ensureSnapshot(context);
   const locale = () => configValue(snapshot, 'agent', 'locale', 'zh-CN');
   const timezone = () => configValue(snapshot, 'agent', 'timezone', DEFAULT_TIMEZONE);
   let timezoneOptions = TIMEZONE_FALLBACKS.slice();
@@ -146,14 +146,19 @@ export async function languagePage(context) {
  * keyboard layout) is staged behind "保存并重启".
  */
 export async function basicPage(context) {
-  let snapshot = context.snapshot;
-  if (!snapshot) snapshot = await fetchSnapshot().catch(() => ({config: {}}));
+  const snapshot = await ensureSnapshot(context);
   const saved = () => ({
     deviceType: configValue(snapshot, 'device', 'device_type', 'iOS'),
     keyboardLayout: configValue(snapshot, 'hid', 'keyboard_layout', 'qwerty'),
   });
   // What the rows show: the saved value, or a staged one awaiting a restart.
   const draft = saved();
+  // Do not use configValue(): false || fallback would treat "off" as unset.
+  const tapSaved = () => snapshot?.config?.agent?.tap_wakeup_enabled !== false;
+  // Keep pending tap-wakeup state across render() so a device/keyboard choose()
+  // cannot reset the switch mid-save.
+  let tapDraft = tapSaved();
+  let tapSaving = false;
   const body = el('div');
   const saver = createSaver(context, {
     title: msg('ui.nav_basic', '基础设置'),
@@ -161,7 +166,14 @@ export async function basicPage(context) {
     root: body,
     onSaved: payload => {
       snapshot.config = payload.config || snapshot.config;
-      Object.assign(draft, saved());
+      // A live tap-wakeup save must not wipe device/keyboard values that are
+      // still staged for restart; the saver keeps those patches until commit.
+      const persisted = saved();
+      Object.assign(draft, {
+        deviceType: saver.isStaged('deviceType') ? draft.deviceType : persisted.deviceType,
+        keyboardLayout: saver.isStaged('keyboardLayout') ? draft.keyboardLayout : persisted.keyboardLayout,
+      });
+      if (!tapSaving) tapDraft = tapSaved();
       render();
     },
   });
@@ -176,6 +188,22 @@ export async function basicPage(context) {
       render();
     }
   };
+
+  async function saveTapWakeup(next) {
+    if (tapSaving) return;
+    const previous = tapDraft;
+    tapDraft = next;
+    tapSaving = true;
+    render();
+    try {
+      const outcome = await saver.change('agent.tap_wakeup_enabled', {agent: {tap_wakeup_enabled: next}});
+      if (outcome === 'invalid' || outcome === 'failed') tapDraft = previous;
+      else tapDraft = tapSaved();
+    } finally {
+      tapSaving = false;
+      render();
+    }
+  }
 
   function render() {
     const language = row({
@@ -203,7 +231,29 @@ export async function basicPage(context) {
         onSelect: choose('keyboardLayout', value => ({hid: {keyboard_layout: value}})),
       }),
     });
-    replace(body, [group({rows: [language]}), group({rows: [device, keyboard]})]);
+    const tapToggle = switchControl({
+      checked: tapDraft,
+      label: msg('config.fields.agent.tap_wakeup_enabled.label', '轻触唤醒'),
+      onChange: next => {
+        if (tapSaving) {
+          setChecked(tapToggle, tapDraft);
+          return;
+        }
+        saveTapWakeup(next);
+      },
+    });
+    if (tapSaving) tapToggle.disabled = true;
+    const tapWakeup = row({
+      label: msg('config.fields.agent.tap_wakeup_enabled.label', '轻触唤醒'),
+      description: msg('config.fields.agent.tap_wakeup_enabled.help', '开启后，MCU 轻触按键可唤醒 Aico。关闭后不影响 ASR 等其它唤醒方式。'),
+      accessory: tapToggle,
+      action: 'toggle-tap-wakeup',
+    });
+    replace(body, [
+      group({rows: [language]}),
+      group({rows: [device, keyboard]}),
+      group({rows: [tapWakeup]}),
+    ]);
     saver.refreshChrome();
   }
   render();

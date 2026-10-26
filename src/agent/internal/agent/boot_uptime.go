@@ -109,8 +109,10 @@ func withBootTimelineLock(fn func()) {
 	fn()
 }
 
-// refreshBootTimelineArchive mirrors boot_timeline_refresh_archive in
-// overlay-debian/usr/lib/aico/aico-boot-timeline.
+// refreshBootTimelineArchiveLocked mirrors boot_timeline_refresh_archive in
+// overlay-debian/usr/lib/aico/aico-boot-timeline. It replaces the archive
+// from a consistent point in the append/archive sequence. The caller holds
+// bootTimelineLockPath.
 //
 // The boot timeline archives when the systemd target finishes, but the agent is
 // started by a background watchdog and can reach "listening" after that point —
@@ -120,12 +122,6 @@ func withBootTimelineLock(fn func()) {
 //
 // Best-effort, like the rest of the timeline: no archive yet (the usual case
 // during early boot) simply means there is nothing to refresh.
-func refreshBootTimelineArchive() {
-	withBootTimelineLock(refreshBootTimelineArchiveLocked)
-}
-
-// refreshBootTimelineArchiveLocked replaces the archive from a consistent
-// point in the append/archive sequence. The caller holds bootTimelineLockPath.
 func refreshBootTimelineArchiveLocked() {
 	state, err := os.ReadFile(bootTimelineArchiveStatePath)
 	if err != nil {

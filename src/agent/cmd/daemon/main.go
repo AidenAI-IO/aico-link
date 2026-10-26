@@ -16,6 +16,7 @@ import (
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/backup"
+	"aico-agent/internal/configupdate"
 	"aico-agent/internal/configweb"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/wifiproxy"
@@ -25,7 +26,7 @@ const (
 	wakeupListenTimeout                     = 10 * time.Second
 	wakeupDebounceInterval                  = 500 * time.Millisecond
 	defaultVoiceSteerListenTimeout          = 45 * time.Second
-	voiceWakeupInterruptedCorrectionContext = "Voice interruption: the user triggered ASR wakeup " +
+	voiceWakeupInterruptedCorrectionContext = "Voice interruption: the user triggered MCU wakeup " +
 		"while the previous voice turn was still running. The previous task was interrupted and did NOT complete. " +
 		"Based on the user's new input, judge the relationship to the interrupted task:\n" +
 		"- If the new input replaces the old task (e.g. \"don't do that\", \"do B instead\") → only execute the new request.\n" +
@@ -33,7 +34,6 @@ const (
 		"- If ambiguous → briefly confirm the user's intent before acting."
 )
 
-var voiceSteerListenTimeout = defaultVoiceSteerListenTimeout
 var voiceTurnCancelWaitTimeout = 2 * time.Second
 var wakeupDebounceNow = time.Now
 
@@ -77,6 +77,8 @@ func main() {
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
+		benchmarkHeadless         = flag.Bool("benchmark-headless", false, "Hide unavailable device tools in a benchmark container without an environment bridge")
+		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
 	flag.Parse()
@@ -142,6 +144,20 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if *benchmarkHeadless {
+		if cfg.Benchmark.Token == "" || cfg.EnvironmentBridge.Enabled {
+			fmt.Fprintln(os.Stderr, "benchmark-headless requires benchmark-token-file and no environment bridge")
+			os.Exit(1)
+		}
+		cfg.Benchmark.Headless = true
+	}
+	if *benchmarkMockTools {
+		if cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled || cfg.EnvironmentBridge.Endpoint == "" {
+			fmt.Fprintln(os.Stderr, "benchmark-mock-tools requires benchmark-token-file and environment-bridge-mode with an endpoint")
+			os.Exit(1)
+		}
+		cfg.Benchmark.MockTools = true
+	}
 	proxyConfig := agent.ProxyConfigFromEnvironment()
 	if err := proxyConfig.Validate(); err != nil {
 		_ = logging.LogEvent(logging.Error, "agent", "startup", "proxy_environment_invalid",
@@ -167,6 +183,7 @@ func main() {
 	}
 	defer runtime.Close()
 	runtime.InitializeConfigApplication(persistedConfig)
+	runtime.RegisterConfigTools(configupdate.NewService())
 	if environmentErr == nil {
 		runtime.SetInitialEnvironmentRevision(environmentRevision)
 	}
@@ -367,17 +384,17 @@ func startWakeupWatchersWithDebounce(newWatcher voiceWakeupWatcherFactory, callb
 	debouncer := newWakeupDebouncer(debounceInterval, now)
 	watcher, err := newWatcher(func() {
 		if !debouncer.allow() {
-			logging.Warnf("agent", "wakeup", "ASR wakeup event ignored by %s debounce", debounceInterval)
+			logging.Warnf("agent", "wakeup", "MCU wakeup event ignored by %s debounce", debounceInterval)
 			return
 		}
 		callback()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create MCU ASR watcher: %w", err)
+		return nil, fmt.Errorf("create MCU wakeup watcher: %w", err)
 	}
 	if err := watcher.Start(); err != nil {
 		watcher.Stop()
-		return nil, fmt.Errorf("start MCU ASR watcher: %w", err)
+		return nil, fmt.Errorf("start MCU wakeup watcher: %w", err)
 	}
 	return []wakeupWatcher{watcher}, nil
 }
@@ -436,7 +453,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
+	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -445,12 +462,12 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	for {
 		if reloadRequested(reload) {
@@ -463,7 +480,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 			logging.Infof("agent", "exit", "Stopped.")
 			return
 		case <-events:
-			logging.Infof("agent", "wakeup", "ASR wakeup triggered, opening voice session...")
+			logging.Infof("agent", "wakeup", "MCU wakeup triggered, opening voice session...")
 			if exit := runVoiceSession(cfg, dialog, runtime, sigChan, events); exit {
 				logging.Infof("agent", "exit", "Stopped.")
 				return
@@ -474,7 +491,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
+	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
 
 	ctx := context.Background()
 	wakeupEvents := make(chan struct{}, 1)
@@ -484,12 +501,12 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 		signalWakeupEvent(wakeupEvents)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	pendingWakeup := false
 	for {
@@ -507,7 +524,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 				logging.Infof("agent", "exit", "Stopped.")
 				return
 			case <-wakeupEvents:
-				logging.Infof("agent", "wakeup", "ASR wakeup triggered, starting to listen...")
+				logging.Infof("agent", "wakeup", "MCU wakeup triggered, starting to listen...")
 			}
 		} else {
 			pendingWakeup = false
@@ -548,8 +565,15 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 	}
 }
 
+func wakeupReadyLabel(cfg agent.Config) string {
+	if cfg.TapWakeupEnabledOrDefault() {
+		return "MCU ASR or touch key"
+	}
+	return "MCU ASR; tap wakeup disabled"
+}
+
 func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting MCU ASR wakeup listener...")
+	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -558,12 +582,12 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start ASR wakeup listeners: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
 
-	logging.Infof("agent", "ready", "Waiting for MCU ASR wakeup... Ctrl+C to quit")
+	logging.Infof("agent", "ready", "Waiting for wakeup event (%s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext
@@ -584,7 +608,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 					logging.Infof("agent", "exit", "Stopped.")
 					return
 				case <-events:
-					logging.Infof("agent", "wakeup", "ASR wakeup triggered, starting to listen...")
+					logging.Infof("agent", "wakeup", "MCU wakeup triggered, starting to listen...")
 				}
 			} else {
 				pendingWakeup = false
@@ -642,7 +666,7 @@ func signalVoiceWakeupEvent(events chan<- voiceEvent) {
 	select {
 	case events <- voiceEventWakeup:
 	default:
-		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate ASR wakeup event")
+		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate MCU wakeup event")
 	}
 }
 
@@ -650,7 +674,7 @@ func signalWakeupEvent(wakeupEvents chan<- struct{}) {
 	select {
 	case wakeupEvents <- struct{}{}:
 	default:
-		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate ASR wakeup event")
+		logging.Warnf("agent", "wakeup", "pending wakeup already queued, coalescing duplicate MCU wakeup event")
 	}
 }
 
@@ -765,7 +789,7 @@ thinking:
 			return voiceTurnResult{exit: true}
 		case <-events:
 			if interruptOnWakeup {
-				logging.Infof("agent", "interrupt", "ASR wakeup during active turn, immediately canceling")
+				logging.Infof("agent", "interrupt", "MCU wakeup during active turn, immediately canceling")
 				dialog.InterruptOutput()
 				cancel()
 				canceledInfo := waitForTurnCancellation(dialog, resultCh)
@@ -880,9 +904,6 @@ func captureVoiceSteer(cfg agent.Config, dialog audioDialogRunner, sigChan chan 
 }
 
 func voiceSteerListenTimeoutForConfig(_ agent.Config) time.Duration {
-	if voiceSteerListenTimeout > 0 {
-		return voiceSteerListenTimeout
-	}
 	return defaultVoiceSteerListenTimeout
 }
 

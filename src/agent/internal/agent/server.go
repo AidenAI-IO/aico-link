@@ -68,7 +68,6 @@ type Server struct {
 	userFilesSkillStateDir  string
 	userFilesGenerateMu     sync.Mutex
 	userFilesGeneration     *userFilesReportGeneration
-	mu                      sync.Mutex
 	episodeStore            *TaskEpisodeStore
 	sttClient               STTClient
 	ttsManager              *tts.ProviderManager // Borrowed from Runtime.
@@ -466,6 +465,10 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		s.episodeStore = NewTaskEpisodeStore(filepath.Join(s.userFilesMemoryDir, "episodes"))
 	}
 	loadQuickActionsForConfig(runtime.ConfigSnapshot().ConfigDir, runtime.logger)
+	configureAndroidSearchEntryStore(runtime.ConfigSnapshot().ConfigDir)
+	if cache := newPhoneScreenCache(runtime.ConfigSnapshot().ConfigDir, runtime.deviceTypeFromState); cache != nil {
+		runtime.screenState.SetPhoneScreenFallback(cache)
+	}
 	s.quickCapture = newServerQuickCapture(runtime, s.screenCaptureClient)
 	runtime.toolSnapshot().RegisterPhoneBridge(s.bridge)
 	// Initialize speech clients if configured.
@@ -550,6 +553,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/skills/reload", s.handleSkillsReload)
 	mux.HandleFunc("/api/tools", s.handleTools)
 	mux.HandleFunc("/api/tools/", s.handleTools)
+	mux.HandleFunc("/mcp", s.handleMCP)
 	mux.HandleFunc("/api/providers/screenshot", s.handleProviderScreenshot)
 	mux.HandleFunc("/api/providers/mnk", s.handleProviderMNK)
 	mux.HandleFunc("/api/concurrent", s.handleConcurrent)
@@ -599,6 +603,9 @@ func (s *Server) Handler() http.Handler {
 			http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
 			return
 		}
+		// /mcp is intentionally omitted: long support_bundle/device_status calls must
+		// not hold configOperations for the whole request. Runtime tool paths take
+		// the lock inside mcpServerBackend.CallRuntimeTool / DescribeRuntimeTool.
 		if s.runtime != nil && (strings.HasPrefix(r.URL.Path, "/api/tools/") || r.URL.Path == "/api/providers/mnk" || r.URL.Path == "/api/providers/screenshot" || r.URL.Path == "/api/coordinate-debug/tap") {
 			s.runtime.configOperations.RLock()
 			defer s.runtime.configOperations.RUnlock()
@@ -2875,6 +2882,7 @@ type benchmarkProcessEpisodeMemoryRequest struct {
 }
 
 type benchmarkProcessEpisodeMemoryResponse struct {
+	LastError  string                   `json:"last_error,omitempty"`
 	EpisodeID  string                   `json:"episode_id"`
 	Status     string                   `json:"status"`
 	Assessment *episodeMemoryAssessment `json:"assessment,omitempty"`
@@ -3011,6 +3019,7 @@ func (s *Server) handleBenchmarkProcessEpisodeMemory(w http.ResponseWriter, r *h
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(benchmarkProcessEpisodeMemoryResponse{
 		EpisodeID:  req.EpisodeID,
+		LastError:  status.LastError,
 		Status:     string(status.Status),
 		Assessment: status.Assessment,
 		MemoryIDs:  memoryIDs,
@@ -3982,8 +3991,6 @@ func (s *Server) handleKeyboardTapAndroidKeys(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Write([]byte(keyboardTapAndroidKeysGuideHTML))
 }
-
-const coordinateDebugNavLink = `<a href="/coordinate-debug" class="new-chat-btn" style="text-decoration:none;display:inline-flex;align-items:center;">🎯 Coordinate Debug</a>`
 
 const keyboardTapAndroidKeysGuideHTML = `<!DOCTYPE html>
 <html lang="en">

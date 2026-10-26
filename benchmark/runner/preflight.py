@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import concurrent.futures
 import uuid
+import time
 from collections.abc import Callable
 from typing import Any
 
+from runner.environment_endpoint import EnvironmentEndpoint
+from runner.environment_state import read_environment_state
 from runner.platform import read_environment_health
 from runner.recovery import DEFAULT_ENVIRONMENT_SETUP_TIMEOUT_SEC
-from runner.reset import call_environment_release, call_environment_setup
+from runner.reset import call_environment_release, call_environment_setup, _post_environment, _environment_headers
 
 
 MOBILEGYM_PREFLIGHT_COMPLETE_ENV = "AICO_BENCHMARK_MOBILEGYM_PREFLIGHT_COMPLETE"
@@ -73,7 +76,7 @@ def preflight_mobilegym_environment(
     ]
 
     setup_errors = _call_for_task_ids(
-        call_environment_setup,
+        _setup_mobilegym_slot,
         environment_url,
         timeout,
         task_ids,
@@ -95,3 +98,36 @@ def preflight_mobilegym_environment(
             "MobileGym environment failed release preflight; remove it and start "
             "a fresh MobileGym environment"
         ) from release_errors[0][1]
+
+
+def _setup_mobilegym_slot(environment_url: str, *, timeout: int, task_id: str) -> None:
+    call_environment_setup(environment_url, timeout=timeout, task_id=task_id,
+                           app_ids=["scroll_lab"], foreground_app_id="scroll_lab")
+    _verify_mobilegym_scroll(environment_url, timeout=timeout, task_id=task_id)
+
+
+def _verify_mobilegym_scroll(environment_url: str, *, timeout: int, task_id: str) -> None:
+    def ordinal() -> int:
+        state = read_environment_state(environment_url, benchmark_task_id=task_id, timeout=timeout)
+        if state.get("route", {}).get("app") != "scroll_lab":
+            raise RuntimeError("MobileGym preflight did not open Scroll Lab")
+        value = state.get("apps", {}).get("scroll_lab", {}).get("firstVisibleOrdinal")
+        if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+            raise RuntimeError("MobileGym preflight is missing Scroll Lab state")
+        return value
+
+    before = ordinal()
+    result = _post_environment(
+        EnvironmentEndpoint(environment_url).base + "/api/tools/touch_gesture",
+        timeout=timeout, headers=_environment_headers(task_id), action="scroll preflight",
+        payload={"input": {"type": "swipe", "start": {"x": 500, "y": 800},
+                           "end": {"x": 500, "y": 300}, "duration_ms": 500}},
+    )
+    if result.get("is_error") or result.get("error"):
+        raise RuntimeError(f"MobileGym scroll preflight action failed: {result}")
+    # Wait for the UI state to settle; an 'ok' action response alone is not proof.
+    for _ in range(10):
+        if ordinal() > before:
+            return
+        time.sleep(0.2)
+    raise RuntimeError("MobileGym scroll preflight action did not move the list")

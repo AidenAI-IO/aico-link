@@ -29,6 +29,9 @@ func (v *retryingTextInputVision) AnalyzeScreen(_ context.Context, _ screenshotR
 }
 
 type textInputVisionRecordingModel struct {
+	// delay makes the model answer after the fake decision model, as the real
+	// main model does; a call canceled during the delay is not recorded.
+	delay    time.Duration
 	options  []llms.CallOption
 	content  string
 	contents []string
@@ -36,7 +39,14 @@ type textInputVisionRecordingModel struct {
 	messages [][]llms.MessageContent
 }
 
-func (m *textInputVisionRecordingModel) GenerateContent(_ context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+func (m *textInputVisionRecordingModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	if m.delay > 0 {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(m.delay):
+		}
+	}
 	m.options = options
 	m.messages = append(m.messages, messages)
 	m.calls++
@@ -253,6 +263,28 @@ func TestAnalyzeScreenRetriesFormatEchoWithFeedback(t *testing.T) {
 	retry := fmt.Sprint(model.messages[1][1].Parts[0])
 	if !strings.Contains(retry, "missing required fields: observed_mode, target_matched, composition_pending") {
 		t.Fatalf("retry prompt lacks validation feedback: %s", retry)
+	}
+}
+
+func TestVisionDecisionJSONRetriesMalformedJSON(t *testing.T) {
+	model := &textInputVisionRecordingModel{contents: []string{
+		`{"found": true, "tap_point": {"x": 170, "y": 175}}}`,
+		`{"found": true, "tap_point": {"x": 170, "y": 175}}`,
+	}}
+	vision := &llmTextInputVision{models: model}
+	raw, err := vision.visionDecisionJSON(context.Background(), "app_search", "find", []string{"found"}, screenshotResult{Data: "ZmFrZQ=="})
+	if err != nil || model.calls != 2 || !json.Valid([]byte(raw)) {
+		t.Fatalf("raw=%s calls=%d err=%v", raw, model.calls, err)
+	}
+	retry := fmt.Sprint(model.messages[1][1].Parts[0])
+	if !strings.Contains(retry, "not valid JSON") {
+		t.Fatalf("retry prompt lacks validation feedback: %s", retry)
+	}
+
+	model = &textInputVisionRecordingModel{content: `{"found": true}}`}
+	vision = &llmTextInputVision{models: model}
+	if _, err := vision.visionDecisionJSON(context.Background(), "app_search", "find", []string{"found"}, screenshotResult{Data: "ZmFrZQ=="}); err == nil || !strings.Contains(err.Error(), "not valid JSON") {
+		t.Fatalf("repeated malformed JSON err = %v", err)
 	}
 }
 

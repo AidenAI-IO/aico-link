@@ -593,6 +593,29 @@ func TestRealtimeAdmissionSpeechDefersToAuthoritativeInterruptionDuringResponse(
 	}
 }
 
+func TestRealtimeGeminiTextResponseKeepsNextChatAdmissible(t *testing.T) {
+	state := realtimeTurnState{}
+	capabilities := realtimevoice.Capabilities{ServerAuthoritativeInterruption: true}
+	state.responseRequested()
+	if !state.responseStarted("") {
+		t.Fatal("anonymous Gemini text response did not start")
+	}
+
+	endpoint := newRealtimeClientTurnEndpoint(800)
+	if shouldTrackRealtimeAdmissionSpeech(&state, false, capabilities) {
+		observeRealtimeAdmissionSpeech(endpoint, &state, capabilities, loudPCMFrame(), time.Now(), true)
+	}
+	if !state.acceptsResponseEvent("") {
+		t.Fatalf("local playback echo marked the anonymous response stale: %+v", state)
+	}
+	if !state.responseFinished("") {
+		t.Fatal("anonymous Gemini text response did not finish")
+	}
+	if !state.canInjectResponse() {
+		t.Fatalf("completed text response left input admission blocked: %+v", state)
+	}
+}
+
 func TestRealtimeChatPendingCoversQueuedCommand(t *testing.T) {
 	bridge := newRealtimeChatBridge()
 	if realtimeChatPending(bridge, nil) {

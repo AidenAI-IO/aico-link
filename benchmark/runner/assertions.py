@@ -164,8 +164,12 @@ def evaluate_hard_assertions(trace: Trace, spec: HardAssertions, timed_out: bool
             tc = trace.tool_calls[trace_index]
             if tc.tool != requirement.tool:
                 continue
-            if dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
+            # A failed or unfinished call is an attempt, not the required action.
+            completed = tc.has_result and not tc.is_error
+            if completed and dict_contains(tc.input if isinstance(tc.input, dict) else {}, requirement.input_contains):
                 matched_index = trace_index
+                break
+            if requirement.first_attempt:
                 break
         if matched_index is None:
             missing_tool_calls = list(spec.required_tool_calls[req_index:])
@@ -464,7 +468,13 @@ def _parse_inline_recall_result(content: Any) -> list[str] | None:
             payload = json.loads(content)
         except (TypeError, json.JSONDecodeError):
             return None
-    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+    if not isinstance(payload, dict) or "results" not in payload:
+        return None
+    # Go encodes a nil result slice as null. This is a completed empty recall,
+    # not missing/truncated telemetry; expected IDs must fail against it.
+    if payload["results"] is None:
+        return []
+    if not isinstance(payload["results"], list):
         return None
     recalled_ids: list[str] = []
     for item in payload["results"]:

@@ -3120,28 +3120,6 @@ func TestServerSpeakToolContentUsesCallerContext(t *testing.T) {
 	}
 }
 
-type cancelAwareModel struct {
-	started chan struct{}
-	seen    chan error
-	once    sync.Once
-}
-
-func (m *cancelAwareModel) GenerateContent(ctx context.Context, _ []llms.MessageContent, _ ...llms.CallOption) (*llms.ContentResponse, error) {
-	m.once.Do(func() {
-		if m.started != nil {
-			close(m.started)
-		}
-	})
-	<-ctx.Done()
-	err := ctx.Err()
-	m.seen <- err
-	return nil, err
-}
-
-func (m *cancelAwareModel) Call(context.Context, string, ...llms.CallOption) (string, error) {
-	panic("unexpected Call invocation")
-}
-
 type blockingTTSProvider struct {
 	started   chan struct{}
 	blockText string

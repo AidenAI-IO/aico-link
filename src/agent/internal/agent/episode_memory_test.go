@@ -911,6 +911,9 @@ func TestEpisodeMemoryModelInputUsesDirectEvidenceWithoutVerifierState(t *testin
 	if !strings.Contains(prompt, "must emit at least one candidate") {
 		t.Fatal("Episode Memory model input does not require retention of directly verified reusable lessons")
 	}
+	if !strings.Contains(prompt, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatal("Episode Memory model input does not exclude guidance the tools already give the Agent")
+	}
 	if !model.firstCallHasImage() {
 		t.Fatal("Episode Memory model input did not attach the persisted screenshot")
 	}
@@ -1866,5 +1869,97 @@ func TestLimitDeviceMemoryRecallHonorsBudget(t *testing.T) {
 	}
 	if len(limited) == 0 || len(limited) > 5 {
 		t.Fatalf("limited results = %d, want 1..5", len(limited))
+	}
+}
+
+func TestProcessEpisodeMemoryNowDrainsScheduledRetry(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprintf("exhausted=%t", fail), func(t *testing.T) {
+			ctx := context.Background()
+			plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+			proposal := episodeMemoryProposal{EpisodeAssessment: episodeMemoryAssessment{GoalResult: episodeGoalAchieved, Reason: "Settings opened", EvidenceRefs: []string{"result"}}}
+			body, _ := json.Marshal(episodeMemoryBatchResponse{Results: []episodeMemoryBatchResult{{EpisodeID: "ep_pending", Proposal: proposal}}})
+			model := &episodeMemoryScriptedModel{responses: []string{string(body)}}
+			if fail {
+				model.responses = []string{`{"results":[`, `{"results":[`}
+				model.stopReason = "length"
+			}
+			processor := newEpisodeMemoryProcessor(plane, model)
+			processor.state.bootstrapAt = time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+			if err := processor.Initialize(); err != nil {
+				t.Fatal(err)
+			}
+			for _, id := range []string{"ep_pending", "ep_unrelated"} {
+				_, err := plane.episodes.AddEpisode(ctx, TaskEpisode{
+					ID: id, Status: "active", StartedAt: "2026-08-14T00:00:00Z", EndedAt: "2026-08-14T00:00:01Z", UserGoal: "Open Settings",
+					Events: []TaskEpisodeEvent{{EventID: "call", Type: runEventToolCall, ToolName: "open_app"}, {EventID: "result", Type: "tool_result", ToolName: "open_app", Observation: "Settings opened"}},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := processor.state.SetEpisode(id, episodeMemoryEpisodeStatus{
+					Status: episodeMemoryStatusRetry, ExtractorVersion: episodeMemoryExtractorVersion,
+					RetryAt: time.Now().Add(5 * time.Minute).Format(time.RFC3339Nano), AttemptCount: 1,
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Ordinary maintenance must continue respecting the retry backoff.
+			if _, err := processor.ProcessBatch(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			if model.callCount() != 0 {
+				t.Fatal("background retry ran early")
+			}
+			plane.memoryWorker = newMemoryWorker(processor, defaultMemoryWorkerIdleDelay)
+			plane.episodeProcessor = processor
+			status, _, err := plane.ProcessEpisodeMemoryNow(ctx, "ep_pending")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fail {
+				if status.Status != episodeMemoryStatusIgnored || status.AttemptCount != episodeMemoryMaxAttempts || model.callCount() != 2 || status.LastError == "" {
+					t.Fatalf("unbounded or hidden failure: status=%#v calls=%d", status, model.callCount())
+				}
+			} else if status.Status != episodeMemoryStatusDone || model.callCount() != 1 {
+				t.Fatalf("status=%#v calls=%d", status, model.callCount())
+			}
+			state, err := processor.state.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := state.Episodes[episodeMemoryStateKey("ep_unrelated", episodeMemoryExtractorVersion)]; got.Status != episodeMemoryStatusRetry || got.AttemptCount != 1 {
+				t.Fatalf("unrelated retry changed: %#v", got)
+			}
+		})
+	}
+}
+
+func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
+	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
+	// A failed enter_text already returns "Inspect the latest screen and correct
+	// or clear the existing field text before retrying enter_text."; a memory
+	// that repeats it adds nothing the Agent does not already receive.
+	if !strings.Contains(prompt, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatalf("retention audit does not discard built-in tool guidance:\n%s", prompt)
+	}
+}
+
+func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
+	model := &episodeMemoryScriptedModel{responses: []string{`{"episode_assessment":{"goal_result":"unknown","reason":"no proof","evidence_refs":[]},"candidates":[]}`}}
+	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+	processor := newEpisodeMemoryProcessor(plane, model)
+
+	if _, err := processor.reviewEpisodeMemoryOmission(context.Background(), TaskEpisode{ID: "ep_omission_rule"}, episodeMemoryProposal{}, nil, 0); err != nil {
+		t.Fatalf("reviewEpisodeMemoryOmission: %v", err)
+	}
+	var review string
+	for _, part := range strings.Split(model.firstCallText(), "\n") {
+		if strings.HasPrefix(part, "Review this first-pass assessment once") {
+			review = part
+		}
+	}
+	if !strings.Contains(review, episodeMemoryBuiltInGuidanceRule) {
+		t.Fatalf("omission review does not discount built-in tool guidance:\n%s", review)
 	}
 }

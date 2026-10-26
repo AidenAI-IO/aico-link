@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -2311,6 +2312,7 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert env["ENVIRONMENT_BRIDGE_ENDPOINT"] == "http://host.docker.internal:18080"
     assert env["AICO_BENCHMARK_TASK_ID"] == "suite.json:t1"
     assert env["AICO_ENVIRONMENT_BRIDGE_MODE"] == "1"
+    assert env["AICO_BENCHMARK_MOCK_TOOLS"] == "0"
     assert env["AICO_DEVICE_TYPE"] == "android"
     assert "host.docker.internal" in env["NO_PROXY"]
     compose_text = webui.AGENT_DAEMON_COMPOSE_FILE.read_text(encoding="utf-8")
@@ -2325,6 +2327,50 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert '--environment-bridge-endpoint "$ENVIRONMENT_BRIDGE_ENDPOINT"' in entrypoint_text
     assert "environment-bridge-tools" not in entrypoint_text
     assert '--device-type "$AICO_DEVICE_TYPE"' in entrypoint_text
+
+
+@pytest.mark.parametrize(
+    ("bridge_mode", "headless"),
+    [("0", True), ("1", False), ("true", False)],
+)
+def test_daemon_entrypoint_headless_matches_bridge_mode(
+    tmp_path: Path, bridge_mode: str, headless: bool
+):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    (config_dir / "agent.toml").write_text("", encoding="utf-8")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    daemon = fake_bin / "daemon"
+    daemon.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$AICO_TEST_ARGS"\n',
+        encoding="utf-8",
+    )
+    daemon.chmod(0o755)
+    args_file = tmp_path / "args"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "AICO_SOURCE_CONFIG_DIR": str(config_dir),
+            "AICO_RUNTIME_CONFIG_DIR": str(tmp_path / "runtime"),
+            "AICO_BENCHMARK_TOKEN_FILE": str(tmp_path / "token"),
+            "AICO_ENVIRONMENT_BRIDGE_MODE": bridge_mode,
+            "ENVIRONMENT_BRIDGE_ENDPOINT": "http://bridge:8080",
+            "AICO_TEST_ARGS": str(args_file),
+        }
+    )
+    result = subprocess.run(
+        ["sh", str(webui.BENCHMARK_DOCKER_DIR / "agent-daemon-entrypoint.sh")],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    args = args_file.read_text(encoding="utf-8").splitlines()
+    assert ("--benchmark-headless" in args) is headless
+    assert ("--environment-bridge-mode" in args) is (not headless)
 
 
 def test_start_daemon_compose_leaves_auto_host_port_for_docker(tmp_path: Path, monkeypatch):
@@ -2932,3 +2978,9 @@ def test_start_adb_android_environment_treats_port_zero_as_auto(tmp_path: Path, 
         app.start_adb_android_environment({"serial": "127.0.0.1:6555", "bridge_port": "abc"})
     with pytest.raises(ValueError, match="bridge_port"):
         app.start_adb_android_environment({"serial": "127.0.0.1:6555", "bridge_port": -1})
+
+
+def test_daemon_mock_mode_is_explicit_and_does_not_inherit_host_setting(monkeypatch):
+    monkeypatch.setenv("AICO_BENCHMARK_MOCK_TOOLS", "1")
+    assert webui.daemon_compose_env(image="test")["AICO_BENCHMARK_MOCK_TOOLS"] == "0"
+    assert webui.daemon_compose_env(image="test", benchmark_mock_tools=True)["AICO_BENCHMARK_MOCK_TOOLS"] == "1"

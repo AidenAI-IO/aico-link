@@ -122,20 +122,14 @@ func buildTTSProviderConfigFor(cfg Config, providerRef string) tts.ProviderConfi
 		delete(extra, "emotion")
 	}
 
-	proxy := ProxyConfigFromEnvironment()
 	return tts.ProviderConfig{
 		Provider:   provider,
 		APIKey:     apiKey,
 		Voice:      voice,
 		SampleRate: cfg.Audio.SampleRateOrDefault(),
 		SpeedRatio: speed,
-		Proxy: tts.ProxyConfig{
-			HTTPProxy:  proxy.HTTPProxy,
-			HTTPSProxy: proxy.HTTPSProxy,
-			AllProxy:   proxy.AllProxy,
-			NoProxy:    proxy.NoProxy,
-		},
-		Extra: extra,
+		Proxy:      ProxyConfigFromEnvironment(),
+		Extra:      extra,
 	}
 }
 

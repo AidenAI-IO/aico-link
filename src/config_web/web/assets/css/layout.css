@@ -190,6 +190,18 @@
   padding-right: env(safe-area-inset-right, 0);
 }
 
+/*
+ * Embedded, the native navigation bar already sits between the status bar and
+ * the WebView. Android 16 lays every app out edge to edge, and its WebView then
+ * reports the status bar as a top inset even below that bar, which opened a
+ * status-bar-sized gap under the native title. iOS reports 0 there, so a fixed
+ * gap renders the same on both. `:where` keeps the specificity of a plain
+ * `.app__scroll`, so the desktop rule below still wins on wide screens.
+ */
+:where(.is-embedded) .app__scroll {
+  padding-top: var(--space-lg);
+}
+
 /* ---- Desktop: list rail + detail panel ----------------------------------- */
 
 @media (min-width: 900px) {

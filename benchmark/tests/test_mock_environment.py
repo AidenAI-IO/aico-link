@@ -7,12 +7,15 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 from PIL import Image
 
 from runner import mock_environment as mock_environment_module
+from runner.assertions import evaluate_environment_state_assertions
+from runner.environment_state import read_environment_state
 from runner.mock_environment import MAX_REQUEST_BODY_BYTES, MockEnvironmentServer
 from runner.suite import MockEnvironmentSpec, MockToolResponseSpec, load_suite
 
@@ -37,6 +40,44 @@ def _task_mock_environment(suite_name: str, task_id: str):
     task = next(task for task in suite.tasks if task.id == task_id)
     assert task.mock_environment is not None
     return suite_path, task.mock_environment
+
+
+@pytest.mark.parametrize("task_id,actions,errors", [
+    ("clipboard_read_recovers", [{"action": "read"}, {"action": "read"}], [True, False]),
+    ("clipboard_read_stops_on_failure", [{"action": "read"}], [True]),
+    ("clipboard_verify_ambiguous_write", [
+        {"action": "write", "text": "Cedar room 619"}, {"action": "read"},
+    ], [True, False]),
+])
+def test_recovery_state_is_readable_through_runner_contract(task_id, actions, errors):
+    suite_path = Path(__file__).resolve().parents[1] / "suites" / "tool_recovery_v1.json"
+    task = next(t for t in load_suite(suite_path).tasks if t.id == task_id)
+    server = MockEnvironmentServer(task.mock_environment, suite_path.parent)
+    base_url = server.start()
+
+    def state_passes():
+        state = read_environment_state(base_url, benchmark_task_id="recovery-test")
+        return all(c.passed for c in evaluate_environment_state_assertions(state, task.environment_assertions))
+
+    try:
+        assert not state_passes()
+        for index, (action, error) in enumerate(zip(actions, errors)):
+            result = _json_request(f"{base_url}/api/tools/bridge_clipboard", "POST", {"input": action})
+            assert result["is_error"] is error
+            assert state_passes() is (index == len(actions) - 1)
+        if task_id == "clipboard_verify_ambiguous_write":
+            _json_request(f"{base_url}/api/tools/bridge_clipboard", "POST", {"input": actions[0]})
+            assert not state_passes()
+        _json_request(f"{base_url}/api/setup", "POST", {})
+        assert not state_passes()
+        parsed = urllib.parse.urlparse(base_url)
+        for path in ("/state", "/route"):
+            unprotected = urllib.parse.urlunparse(parsed._replace(path=path))
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                _json_request(unprotected, "POST", {})
+            assert exc_info.value.code == 404
+    finally:
+        server.stop()
 
 
 def test_mock_environment_wildcard_bind_advertises_loopback(tmp_path):
@@ -103,11 +144,18 @@ def test_mock_environment_returns_scripted_tool_result_and_updates_screen():
         assert blocked["is_error"] is True
 
         opened = _json_request(
-            f"{base_url}/api/tools/search_launch_app",
+            f"{base_url}/api/tools/open_app",
             "POST",
             {"input": json.dumps({"app": "备忘录"})},
         )
         assert json.loads(opened["output"])["ok"] is True
+
+        missing_focus = _json_request(
+            f"{base_url}/api/tools/enter_text",
+            "POST",
+            {"input": json.dumps({"text": "+1 202-555-0147"})},
+        )
+        assert missing_focus["is_error"] is True
 
         entered = _json_request(
             f"{base_url}/api/tools/enter_text",
@@ -464,4 +512,35 @@ def test_mock_environment_times_out_incomplete_request_body(tmp_path, monkeypatc
         assert payload["error"]["code"] == "bad_request"
     finally:
         connection.close()
+        server.stop()
+
+
+def test_phone_bridge_proxy_status_uses_current_fixture_and_native_shape(tmp_path):
+    _, spec = _task_mock_environment("phone_bridge_data_policy_v1.json", "ios_pip_contacts_query")
+    server = MockEnvironmentServer(spec, tmp_path)
+    url = server.start()
+    try:
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["platform"] == "ios"
+        assert status["pip_bridge_enabled"] is True
+        assert status["connected"] is False
+        assert "data" not in status
+        _, android = _task_mock_environment("phone_bridge_data_policy_v1.json", "android_fgs_calendar_query")
+        server.activate(android)
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["platform"] == "android"
+        assert status["fgs_bridge_enabled"] is True
+        assert status["pip_bridge_enabled"] is False
+        heartbeat = datetime.fromisoformat(status["fgs_bridge_updated_at"])
+        assert 0 <= (datetime.now(timezone.utc) - heartbeat).total_seconds() < 15
+        assert "fgs_bridge_updated_at" not in android.phone_bridge
+        # An explicit stale heartbeat must still exercise the runtime's gate.
+        android.phone_bridge["fgs_bridge_updated_at"] = "2000-01-01T00:00:00+00:00"
+        server.activate(android)
+        status = _json_request(f"{url}/api/phone-bridge/status")
+        assert status["fgs_bridge_updated_at"] == "2000-01-01T00:00:00+00:00"
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            _json_request(url.replace(server.base_path, "") + "/api/phone-bridge/status")
+        assert exc.value.code == 404
+    finally:
         server.stop()

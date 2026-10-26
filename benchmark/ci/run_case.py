@@ -369,6 +369,7 @@ def run_case(
     timeout_seconds: float | None = None,
 ) -> int:
     runtime_environment = _runtime_environment(environment)
+    runtime_environment["BENCHMARK_EXECUTION_ENVIRONMENT"] = case.environment
     environment_url = ""
     service: dict[str, Any] | None = None
     deadline = (
@@ -418,6 +419,8 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
+        for task_id in case.task_ids:
+            command.extend(["--task-id", task_id])
         repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()
         if repeats:
             try:

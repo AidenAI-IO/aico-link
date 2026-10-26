@@ -37,6 +37,14 @@
 # Maximum tool-call iterations
 # max_iterations = -1
 
+# MCP Streamable HTTP endpoint on the Agent (:8080/mcp). Default true.
+# Also available under Config Web → Advanced.
+# mcp_enabled = true
+# Expose the shell tool over MCP. Default false.
+# mcp_shell_enabled = false
+# Optional base URL for MCP device_status / support_bundle (config-web).
+# mcp_config_web_base_url = "http://127.0.0.1"
+
 # History pruning threshold
 # Context size management. Both values are fractions of the usable model input
 # budget: either 0 to select the default, or greater than 0 and less than 1.
@@ -48,17 +56,18 @@
 # context_compaction_threshold below.
 # context_prune_threshold = 0.5
 
+# The same stale-state cleanup also runs once more <state> messages than this
+# carry a screenshot, keeping the latest state of the current turn. It does not
+# compact tool results. Screenshots are cheap in tokens but heavy in bytes, so
+# this bounds the request size long before the token threshold above fires.
+# 0 selects the default.
+# context_prune_state_limit = 6
+
 # Context compaction threshold
 # Point at which the conversation is summarized into a compaction message by the
 # LLM. Lower it to summarize earlier and keep prompts smaller; raise it to keep
 # more raw transcript at the cost of larger prompts.
 # context_compaction_threshold = 0.8
-
-# Screenshot context pruning:
-# keep the latest N screenshots and batch-prune older screenshots every interval
-# to keep long runs bounded without changing the cached message prefix every turn.
-# screenshot_keep_n = 3
-# screenshot_prune_interval = 2
 
 # Tool Settings
 
@@ -180,6 +189,20 @@ model = "gpt-5.5"
 # context_window = 128000
 # model_max_output_tokens = 8192
 
+# Optional decision model: TypeSafe Jev ("typesafe") or OpenAI Luna ("openai").
+# It answers fixed-choice checks in deterministic workflows, asked together
+# with the main model; confident answers are used, the rest come from the main
+# model. Off by default; enabling it requires an API key.
+# base_url and model default per provider (api.typesafe.ai/v1 + jev-preview,
+# or api.openai.com/v1 + gpt-6-luna).
+[model_settings.decision]
+# enabled = false
+# provider = "typesafe"
+# api_key = ""
+# base_url = "https://api.typesafe.ai/v1"
+# model = "jev-preview"
+# min_confidence = 0.8
+
 ################################################################################
 # Voice Settings
 ################################################################################
@@ -227,6 +250,11 @@ input_mode = "stt"
 # vad_speech_threshold = 0.5
 # silence_ms = 550          # Silence duration to end utterance (ms)
 # min_speech_ms = 300       # Minimum speech duration to accept (ms)
+
+# Tap-button wakeup (Classic and Realtime). Default true.
+# Disabling this ignores the hardware tap button only; other activation
+# paths such as Realtime /api/chat still work.
+# tap_wakeup_enabled = true
 
 # Wakeup voice session parameters (for Classic Mode)
 # Only used when input_mode = "stt"

@@ -59,6 +59,34 @@ func TestMCUWakeupFiltersSourcesAndRetainsPaginationCursor(t *testing.T) {
 	}
 }
 
+func TestMCUTapWakeupSettingOnlyGatesTouchKey(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		name       string
+		tapEnabled bool
+		wantCalls  int
+	}{
+		{name: "disabled", wantCalls: 1},
+		{name: "enabled", tapEnabled: true, wantCalls: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newMCUWakeupSource(nil, filepath.Join(t.TempDir(), "cursor.json"))
+			s.now = func() time.Time { return now }
+			page := &mcu.EventPage{Generation: "g1", NextID: "2", Events: []mcu.HardwareEvent{
+				{ID: "1", Type: "wakeup", Source: "touch_key", SourceCode: 3, ReceivedAt: now.Format(time.RFC3339Nano)},
+				mcuASREvent("2", now),
+			}}
+			calls := 0
+			if err := s.consumeWithTap(context.Background(), page, func() { calls++ }, tc.tapEnabled); err != nil {
+				t.Fatal(err)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("calls=%d, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
 func TestMCUWakeupReconnectResetAndCancellation(t *testing.T) {
 	queries := make(chan mcuVoiceCursor, 8)
 	events := make(chan string, 4)

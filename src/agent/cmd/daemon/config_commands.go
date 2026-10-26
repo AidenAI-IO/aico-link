@@ -19,27 +19,13 @@ import (
 type webConfigDTO = configupdate.Config
 type modelDTO = configupdate.Model
 type modelProviderDTO = configupdate.ModelProvider
-type ttsProviderDTO = configupdate.TTSProvider
-type sttProviderDTO = configupdate.STTProvider
 type ttsDTO = configupdate.TTS
 type sttDTO = configupdate.STT
 type audioDTO = configupdate.Audio
 type audioArchiveDTO = configupdate.AudioArchive
-type frameServiceDTO = configupdate.FrameService
 type quickCaptureDTO = configupdate.QuickCapture
-type storageDTO = configupdate.Storage
-type storageDegradedModeDTO = configupdate.StorageDegradedMode
-type storageCleanupDTO = configupdate.StorageCleanup
-type deviceDTO = configupdate.Device
-type voiceNotificationsDTO = configupdate.VoiceNotifications
-type voiceNotificationResponseTailDTO = configupdate.VoiceNotificationResponseTail
-type voiceNotificationExpirationDTO = configupdate.VoiceNotificationExpiration
 type logDTO = configupdate.Log
-type otaDTO = configupdate.OTA
-type hidDTO = configupdate.HID
 type searchDTO = configupdate.Search
-type telemetryDTO = configupdate.Telemetry
-type liveActivityDTO = configupdate.LiveActivity
 type agentDTO = configupdate.Agent
 
 func webConfigDTOFromAgentConfig(cfg agent.Config) webConfigDTO {
@@ -349,7 +335,7 @@ func runConfigTest(args []string) int {
 	if section == "" {
 		section = strings.TrimSpace(*sectionFlag)
 	}
-	if section != "model" && section != "tts" && section != "stt" {
+	if section != "model" && section != "tts" && section != "stt" && section != "decision" {
 		writeConfigTestResult(configTestFailure("request", "unsupported section: "+section))
 		return 1
 	}
@@ -402,6 +388,35 @@ func executeConfigTest(ctx context.Context, cfg agent.Config, input configTestIn
 				Check:  "provider_request",
 				Passed: true,
 				Detail: fmt.Sprintf("received a response from %s (model: %s)", result.Provider, result.Model),
+			}},
+		}
+	}
+
+	if section == "decision" {
+		var values struct {
+			Provider string `json:"provider"`
+			APIKey   string `json:"api_key"`
+			BaseURL  string `json:"base_url"`
+			Model    string `json:"model"`
+		}
+		if err := json.Unmarshal(input.Values, &values); err != nil {
+			return configTestFailure("request", "invalid decision values: "+err.Error())
+		}
+		result, err := agent.RunDecisionModelTest(ctx, cfg, agent.DecisionModelConfig{
+			Provider: values.Provider,
+			APIKey:   values.APIKey,
+			BaseURL:  values.BaseURL,
+			Model:    values.Model,
+		})
+		if err != nil {
+			return configTestFailure("provider_request", fmt.Sprintf("[provider=%s model=%s] %s", result.Provider, result.Model, err.Error()))
+		}
+		return ConfigTestResult{
+			OK: true,
+			Results: []ConfigTestCheck{{
+				Check:  "provider_request",
+				Passed: true,
+				Detail: fmt.Sprintf("received an answer from %s (model: %s) in %d ms", result.Provider, result.Model, result.Latency.Milliseconds()),
 			}},
 		}
 	}

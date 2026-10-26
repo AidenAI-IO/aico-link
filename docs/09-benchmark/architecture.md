@@ -68,10 +68,33 @@ releases its env.
 ### Offline metrics
 
 Each attempt records `success`, `agent_eligible`, `failure_class`, and
-`quality_score` in the machine-readable run artifacts. Setup failures,
+`quality_score` in the machine-readable run artifacts. Fixture preparation failures,
 unavailable providers, judge failures, and deliberate skips remain in raw
 results and coverage counts but do not enter Agent success or efficiency
 denominators. Missing telemetry is represented as `null`, not zero.
+
+When setup invokes the capability being tested, mark that individual
+`seed_episode`, `seed_notification`, or `assert_memory` step with `"evaluate": true`.
+Consolidating seed steps must also set `"consolidate": true`. A behavior assertion
+or explicit semantic processing error in that step becomes an eligible Agent
+failure, with stage `setup`. Ordinary seed, connection, timeout, and evidence-read
+errors remain excluded. The default is false, so assertions that only validate
+fixtures do not penalize the Agent. Place the marker on each evaluated step; it
+does not carry forward to subsequent steps in a sequence.
+
+`setup_failure.json` records the failing step and available observed memory or
+consolidation evidence. Sequence wrapping preserves this evidence. Successful
+setup still proceeds to the normal task and its assertions; a step passing on its
+own does not make the task pass. Historical results retain their recorded
+eligibility and must be rerun to adopt the new evaluation boundary.
+
+The notification reinforcement suite verifies deduplication with post-task
+`memory_assertions`, including record count, identity, revision, and source
+references. Its language rubric checks the reported meeting time. Repeated TTS
+and display text does not imply duplicated storage. Static perception fixtures
+accept well-formed normalized taps anywhere on the image; target correctness
+remains a separate first-attempt assertion, not a mock execution result.
+
 
 For a fixed planned repeat count `k` (the common planned prefix, normally the
 smallest repeat count requested by the tasks), the runner considers only tasks

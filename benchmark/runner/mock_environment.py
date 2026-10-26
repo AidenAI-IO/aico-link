@@ -6,6 +6,7 @@ import json
 import secrets
 import threading
 import urllib.parse
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -198,6 +199,23 @@ def _handler_for(server: MockEnvironmentServer):
                     },
                 )
                 return
+            if path == "/api/phone-bridge/status":
+                # The Agent proxy decodes the native status object, without an envelope.
+                with server._lock:
+                    status = {
+                        "connected": False,
+                        **server.spec.phone_bridge,
+                        "platform": server.spec.platform,
+                    }
+                    # An enabled scripted FGS models an actively polling service.
+                    # Preserve explicit timestamps (including stale/null fixtures).
+                    if status.get("fgs_bridge_enabled"):
+                        status.setdefault(
+                            "fgs_bridge_updated_at",
+                            datetime.now(timezone.utc).isoformat(),
+                        )
+                self._json(200, status)
+                return
             if path == "/api/concurrent":
                 self._json(
                     200,
@@ -242,6 +260,13 @@ def _handler_for(server: MockEnvironmentServer):
             path = self._authorized_path()
             if path is None:
                 self._json(404, {"ok": False, "error": {"code": "not_found"}})
+                return
+            if path in {"/state", "/route"}:
+                if self._read_json() is None:
+                    return
+                # Match the state-reader contract; scripted screens have no app route.
+                data = server.snapshot() if path == "/state" else {}
+                self._json(200, {"ok": True, "data": data})
                 return
             if path == "/api/setup":
                 server.reset()

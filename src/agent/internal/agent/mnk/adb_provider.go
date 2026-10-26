@@ -392,20 +392,6 @@ func (p *ADBProvider) rejectActiveDrag(operation string) error {
 	return nil
 }
 
-func waitContext(ctx context.Context, durationMs int) error {
-	if durationMs <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(time.Duration(durationMs) * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 // TouchActions executes an atomic touch program through Linux input events.
 // Android's `input swipe` command cannot keep a contact alive across separate
 // operations, but `sendevent` can write the underlying ABS/KEY/SYN stream. We

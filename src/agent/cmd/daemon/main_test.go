@@ -950,15 +950,6 @@ type persistedVoiceTurn struct {
 	utterance []int16
 }
 
-func withVoiceSteerListenTimeout(t *testing.T, timeout time.Duration) {
-	t.Helper()
-	old := voiceSteerListenTimeout
-	voiceSteerListenTimeout = timeout
-	t.Cleanup(func() {
-		voiceSteerListenTimeout = old
-	})
-}
-
 func (d *fakeAudioDialog) addOp(op string) {
 	d.opsMu.Lock()
 	defer d.opsMu.Unlock()
@@ -1223,62 +1214,6 @@ func opsHasPrefix(ops, prefix []string) bool {
 		}
 	}
 	return true
-}
-
-func countDialogOp(ops []string, op string) int {
-	count := 0
-	for _, got := range ops {
-		if got == op {
-			count++
-		}
-	}
-	return count
-}
-
-func opOccursAfter(ops []string, op, after string, afterOccurrence int) bool {
-	afterIndex := nthDialogOpIndex(ops, after, afterOccurrence)
-	if afterIndex < 0 {
-		return false
-	}
-	nextAfterIndex := nthDialogOpIndex(ops, after, afterOccurrence+1)
-	if nextAfterIndex < 0 {
-		nextAfterIndex = len(ops)
-	}
-	for _, got := range ops[afterIndex+1 : nextAfterIndex] {
-		if got == op {
-			return true
-		}
-	}
-	return false
-}
-
-func opOccursBefore(ops []string, op, before string) bool {
-	for _, got := range ops {
-		if got == op {
-			return true
-		}
-		if got == before {
-			return false
-		}
-	}
-	return false
-}
-
-func nthDialogOpIndex(ops []string, op string, occurrence int) int {
-	if occurrence <= 0 {
-		return -1
-	}
-	seen := 0
-	for i, got := range ops {
-		if got != op {
-			continue
-		}
-		seen++
-		if seen == occurrence {
-			return i
-		}
-	}
-	return -1
 }
 
 type fakeWakeupWatcher struct {

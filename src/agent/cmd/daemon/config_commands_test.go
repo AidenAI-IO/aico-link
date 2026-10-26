@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -76,6 +78,31 @@ func TestExecuteConfigTestUsesModelRuntime(t *testing.T) {
 	}, configTestInput{Section: "model", Values: values}, "model")
 	if !result.OK || len(result.Results) != 1 || result.Results[0].Check != "provider_request" {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestExecuteConfigTestAsksDecisionModelWithSavedKey(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer ts-saved" {
+			http.Error(w, "bad key", http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"answers":{"check":{"type":"noul","noul":0.97}}}`)
+	}))
+	defer server.Close()
+	cfg := agent.Config{Decision: agent.DecisionModelConfig{APIKey: "ts-saved", BaseURL: server.URL}}
+
+	// The page sends what it shows: has_api_key, never the saved key.
+	values := []byte(`{"provider":"typesafe","has_api_key":true,"base_url":"` + server.URL + `","model":"jev-preview"}`)
+	result := executeConfigTest(context.Background(), cfg, configTestInput{Section: "decision", Values: values}, "decision")
+	if !result.OK || result.Results[0].Check != "provider_request" {
+		t.Fatalf("result = %+v", result)
+	}
+
+	values = []byte(`{"provider":"typesafe","api_key":"ts-wrong","base_url":"` + server.URL + `"}`)
+	result = executeConfigTest(context.Background(), cfg, configTestInput{Section: "decision", Values: values}, "decision")
+	if result.OK || !strings.Contains(result.Results[0].Detail, "401") {
+		t.Fatalf("wrong key result = %+v", result)
 	}
 }
 

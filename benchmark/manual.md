@@ -64,7 +64,8 @@ The main flow for a single task lives in `runner/runtask.py`:
 8. Extract the tool trace from the agent history.
 9. Run the hard assertions.
 10. If the judge is enabled, submit the rubric, trace, final response, and
-    pre/post screenshots to the judge model.
+    pre/post screenshots and the full task prompt (including answer options) to
+    the judge model.
 11. Write `manifest.json`, `results.jsonl`, `summary.md`, `report.html`, and each
     task's artifacts.
 12. If `environment_url` is set, call `/api/release` to free the task route.
@@ -268,6 +269,21 @@ may include harmless surrounding context, use `{"$contains": "substring"}` as
 the expected value. The same matcher works in mock responses and
 `hard_assertions.required_tool_calls`; for example, `{"text": {"$contains":
 "+1 202-555-0147"}}` accepts both the bare number and `Biden: +1 202-555-0147`.
+For a numeric field, `{"$gte": min, "$lte": max}` accepts an inclusive range;
+either bound may be omitted.
+
+A required call is satisfied only by a call whose result was not an error; the
+runner reads per-call error status from the recorded episode. Coordinates are
+compared as the device received them: when the agent model uses pixel
+coordinates, the runner substitutes the normalized arguments the episode
+recorded, so 0-1000 bounds apply to every model. Set
+`"first_attempt": true` on a `required_tool_calls` entry when only the next call
+to that tool counts, so a later retry cannot satisfy a missed first attempt.
+
+A task may leave `rubric` empty when `hard_assertions.required_tool_calls`
+fully decides it. Such a task is scored without the judge. The perception suite
+uses this to check the first tap's normalized coordinates against the target's
+bounds; later calls on the static frame do not affect the score.
 
 `enter_text` has its own internal decision chain in the real Go tool:
 
@@ -1165,15 +1181,18 @@ At the end of a run, the runner tries to upload the report to the agent board's
 ### Cross-run dashboard and weekly report
 
 The daily benchmark workflow generates `dashboard.html` and
-`dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
+`dashboard-data.json` for each run using history from its own branch.
+A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
-`main` history from Langfuse, writes `weekly-report.md`
+history from the workflow's branch in Langfuse by default, writes `weekly-report.md`
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
 last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
 over the week with its change from the previous seven days (green up, red down),
-flags configuration-matched regressions, and links to the dashboard. Historical data comes
+and links to the dashboard. Each dataset occupies one line with only its name,
+pass@1, and change. Run counts and configuration differences are available in
+the detailed reports. Historical data comes
 from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
 downloaded.
 
@@ -1204,8 +1223,14 @@ counts.
 The overview table compares each dataset's newest two runs across pass@1,
 pass@k, and pass^k, highlighting increases and decreases. Changed datasets
 appear first. Missing scores or a missing previous run show as unavailable.
-Expand **Run details** in Weekly trends to inspect the comparison status and the
-latest two runs' commit, branch, model, platform, and k.
+The comparison always uses the previous run, even when its configuration
+differs. Dataset rows focus on scores and changes. Select a dataset and expand
+**Run details** in Weekly trends to compare the latest two runs' agent model,
+judge model and prompt version, attempts per task, task and attempt counts,
+environment, and skills, with changed values highlighted. Branch and commit
+identify each run. A changed suite file includes a source comparison link when
+both commits are known; raw fingerprints are kept in the report data rather
+than displayed. Run history also shows each run's agent model and judge.
 
 Weekly trends also includes charts for task execution latency (p50 and p90),
 mean tool/device/LLM calls per attempt, recorded timing components (p50), token
@@ -1215,9 +1240,45 @@ the same coverage for historical points. Distributions include measured eligible
 attempts, including failures. Zero samples produce missing points; measured
 zeros remain zero.
 
-Latest results supports filters for declined/mixed scores, improvements,
-failed/excluded attempts, and incomplete data. Filters apply to both the
-overview and failure details.
+Latest results and Weekly trends share **test area** filters with the weekly
+notification card. Areas describe the primary test objective, not whether tools
+were called or which environment executed the task:
+
+| Test area | Suites | Primary objective |
+| --- | --- | --- |
+| Memory | `memory_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
+| Experience reflection | `episode_reflection_v1`, `episode_reflection_v2` | Extract evidence-backed lessons |
+| Visual grounding | `perception_v1` | Identify and locate visual targets |
+| UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |
+| Device integration | `aico_app_connection_capabilities_v1`, `aico_app_phone_bridge_data_policy_v1`, `aico_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
+| Shell utilities | `shell_utility_v1` | Time, timezone, and deterministic shell calculations |
+
+Many areas exercise tool calls. Shell utilities does not represent general tool
+use proficiency. Each suite belongs to one area; unknown suites appear in Other.
+The internal JSON keys `capabilities` and `capability` are retained for existing
+report consumers, and now describe these test areas.
+
+**Diagnostics** is separate. `skill_discovery_v1` reports the observed
+`device-operator` skill read rate from measured attempts, with missing observations
+shown as unavailable. Its UI task pass@1 remains accessible in dataset trends,
+and is explicitly not a skill discovery score. Diagnostic suites are excluded
+from weekly overall and test-area pass rates.
+
+Execution environment is separate run metadata, shown with the latest run and
+in Run details. Labels include Scripted, Simulator (MobileGym), Isolated, ADB
+device, External device, and Mixed. External and ADB connections alone do not
+prove physical hardware. Scripted/Mixed labels use the selected tasks' mock
+configuration; CI records its selected execution environment for other tasks.
+Historical records without this metadata show Unknown; environments are never
+inferred from suite names. A suite can appear in the same area across different
+execution environments.
+
+The selected area filters the
+overview, failure details, and trends dataset selector, and persists across tab
+changes. Selecting an area retains
+the current dataset if it matches, otherwise selects the most recently run
+dataset in that area. Select All to show every dataset. Per-dataset score
+changes remain visible in the overview.
 
 Metric definitions are expandable, and charts without measurements use a compact
 unavailable state while retaining latest values and sample coverage. Reading
@@ -1248,11 +1309,18 @@ Inspected/expected attempt counts distinguish complete, partial, and unavailable
 details; missing outputs do not imply that all tasks passed.
 
 Pass@1 uses first-attempt successes divided by eligible first-attempt tasks.
-Regressions require the same branch, suite hash, workload hash, metrics schema,
-`k`, agent model, judge provider/model/prompt version, platform, and active
-skills. Runs missing configuration metadata are excluded from comparisons.
+Score changes appear beside each dataset with configuration differences noted.
+Runs missing configuration metadata are still compared and labelled
+"Configuration unverified".
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
+suite's results. Scheduled and manual reports use the workflow's branch by default.
+Manual runs accept an optional `branch_filter` input to select another
+branch, or `*` to include all branches. The workflow publishes the report and
+sends its Lark notification using the configured webhook. For a report preview,
+set `send_notification` to `false` when dispatching manually.
+
+The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
 previous seven days in percentage points. Rates describe each window's task mix;
 a change is unknown when either window has no measured rate. Cost and token totals are reported only
@@ -1420,3 +1488,40 @@ Check:
 This is by design. The WebUI persists history but does not recover interrupted
 processes; on restart, non-terminal jobs are marked as stopped to avoid falsely
 showing them as still running.
+
+
+## Evaluation reliability
+
+Judge prompt `v4` includes the original task and answer options. A selected option
+is interpreted as its full option text. JSON output is requested explicitly and
+must contain exactly one `yes`/`no` verdict for each rubric ID. Transport failures,
+truncated output, malformed JSON, and invalid verdict schemas receive at most
+three attempts. Valid negative verdicts are never retried. Exhausted failures
+remain excluded evaluation errors; they are not Agent failures. Cache identity
+includes the task prompt and judge prompt version. Offline rejudging uses the
+saved task prompt, or the archived `suite.json` for older runs.
+
+Benchmark Docker workers without an environment bridge start with
+`--benchmark-headless`. Their model-facing catalog excludes unavailable input,
+Phone Bridge, and screenshot tools. Memory and shell tools remain available.
+This flag requires a benchmark token and cannot be combined with an environment
+bridge; ordinary device runs retain their normal tools.
+
+The explicit episode-memory processing endpoint drains scheduled retries for the
+requested episode immediately, preserving the existing attempt limit. Normal
+background maintenance retains its backoff. Exhausted model-processing failures
+return the terminal `ignored` result and its sanitized reason, so an evaluated
+setup records the actual behavior failure instead of a generic setup HTTP 500.
+
+MobileGym preflight opens Scroll Lab in every simulator slot, executes a known
+upward swipe, checks that `firstVisibleOrdinal` increases, and releases the slot.
+An action returning `ok` without a state change fails preflight. The basic suite
+uses `swipe_scroll_list` with observable list-state assertions; the previous
+`swipe_navigation` task required an app drawer absent from the pinned simulator.
+The new task ID keeps the changed workload distinct in historical comparisons.
+
+Langfuse score writes retry transient connection errors and HTTP 408/429/5xx
+responses up to three attempts using the same deterministic score ID. An
+uncertain write can therefore be retried without duplicating scores. Persistent
+errors still fail publication and must be resolved before treating remote
+reports as complete. Local result artifacts remain the execution evidence.

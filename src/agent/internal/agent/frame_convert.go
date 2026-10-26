@@ -7,6 +7,8 @@ import (
 	"image/color"
 	"image/jpeg"
 	_ "image/png"
+
+	"aico-agent/internal/agent/screenprovider"
 )
 
 func convertFrameToRGB(meta *frameMetadata, frame []byte) ([]byte, error) {
@@ -146,7 +148,7 @@ func encodeFrameAsJPEG(meta *frameMetadata, frame []byte, quality int) ([]byte, 
 		return append([]byte(nil), frame...), nil
 	}
 	if meta.PixelFormat == "png" {
-		return encodeEncodedImageToJPEG(frame, quality)
+		return screenprovider.EncodeImageToJPEG(frame, quality)
 	}
 
 	rgb, err := convertFrameToRGB(meta, frame)
@@ -154,16 +156,4 @@ func encodeFrameAsJPEG(meta *frameMetadata, frame []byte, quality int) ([]byte, 
 		return nil, err
 	}
 	return encodeJPEG(rgb, int(meta.Width), int(meta.Height), quality)
-}
-
-func encodeEncodedImageToJPEG(frame []byte, quality int) ([]byte, error) {
-	img, _, err := image.Decode(bytes.NewReader(frame))
-	if err != nil {
-		return nil, fmt.Errorf("decode encoded image: %w", err)
-	}
-	var buf bytes.Buffer
-	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: quality}); err != nil {
-		return nil, fmt.Errorf("jpeg encode: %w", err)
-	}
-	return buf.Bytes(), nil
 }

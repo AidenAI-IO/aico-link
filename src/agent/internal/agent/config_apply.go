@@ -55,7 +55,7 @@ func (r *Runtime) ConfigApplyStatus() ConfigApplyStatus {
 // InitializeConfigApplication records the persisted revision at daemon startup,
 // including USB changes that still await a device reboot.
 func (r *Runtime) InitializeConfigApplication(persisted Config) {
-	revision := configFileRevision(filepath.Join(persisted.ConfigDir, "agent.toml"))
+	revision := ConfigFileRevision(filepath.Join(persisted.ConfigDir, "agent.toml"))
 	r.configStatusMu.Lock()
 	defer r.configStatusMu.Unlock()
 	r.configStatus = ConfigApplyStatus{Revision: revision, AppliedRevision: revision, State: "applied", Applied: true}
@@ -252,6 +252,7 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 		}()
 		tools.RegisterEnterTextTool(r.models, r.deviceTypeFromState)
 		tools.SetRuntimeDeviceTypeFn(r.deviceTypeFromState)
+		tools.SetDecisionConfigFn(r.decisionConfig)
 		// Preserve registered memory/skill tools and their live state.
 		for name, tool := range oldTools.tools {
 			if _, exists := tools.tools[name]; !exists {

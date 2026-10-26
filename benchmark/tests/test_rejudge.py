@@ -1,9 +1,92 @@
+import dataclasses as dc
 import json
 from pathlib import Path
 import pytest
 
 from runner import rejudge
 from runner.models import RubricVerdict
+from runner.runtask import evaluate_task_history
+from runner.suite import HardAssertions, RubricItem, Suite, TaskSpec
+
+
+@pytest.mark.parametrize("outcome", ["yes", "no", "judge_error", "setup_skip", "hard_failure"])
+def test_rejudge_scores_no_judge_attempts_but_preserves_execution_gates(tmp_path, monkeypatch, outcome):
+    task = TaskSpec(
+        id="task", category="navigation", prompt="Open Settings",
+        description_for_judge="Settings is open",
+        rubric=[RubricItem(id="opened", check="Settings is open")],
+        hard_assertions=HardAssertions(min_tool_calls=0),
+    )
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    result = evaluate_task_history(
+        suite=suite, task=task, history=[{"type": "assistant", "content": "Done"}],
+        attempt=1, artifact_dir=tmp_path / "tasks" / "task" / "attempt_1",
+        judge_cfg=None, judge_cache_dir=None, run_id="test", timed_out=False,
+    )
+    assert result.status == "skipped"
+    row = dc.asdict(result)
+    if outcome == "setup_skip":
+        row["metrics"].pop("judging_disabled")
+    elif outcome == "hard_failure":
+        row["hard_assertions"]["environment_state"] = False
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs)
+        if outcome == "judge_error":
+            raise RuntimeError("judge unavailable")
+        return type("Verdict", (), {"verdicts": [RubricVerdict("opened", outcome, "Evidence checked")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    scored = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    if outcome in {"setup_skip", "hard_failure"}:
+        assert judged == []
+        assert scored == row
+    elif outcome == "judge_error":
+        assert scored["status"] == "judge_error"
+        assert scored["metrics"]["success"] is None
+        assert scored["metrics"]["agent_eligible"] is False
+    else:
+        assert len(judged) == 1
+        assert scored["status"] == ("passed" if outcome == "yes" else "failed")
+        assert scored["metrics"]["success"] is (outcome == "yes")
+        assert scored["metrics"]["agent_eligible"] is True
+        assert "judging_disabled" not in scored["metrics"]
+        assert "error" not in scored["metrics"]
+
+
+def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
+    attempt = tmp_path / "tasks" / "home"
+    attempt.mkdir(parents=True)
+    history = [
+        {"type": "tool_call", "tool_name": "quick_action", "tool_input": '{"action":"home"}'},
+        {"type": "tool_result", "tool_name": "quick_action", "content": "ok"},
+    ]
+    episode = {"events": [{"type": "tool_result", "tool_name": "quick_action", "screenshot_ref": "artifacts/step_004.jpeg"}]}
+    trace = {"tool_calls": [{"tool": "quick_action", "has_screenshot": False, "is_error": False,
+                              "input": {"action": "home"}}], "final_response": "done", "extra_evidence": "keep"}
+    for name, value in [("history", history), ("episode", episode), ("trace", trace)]:
+        (attempt / f"{name}.json").write_text(json.dumps(value))
+    row = {"task_id": "home", "attempt": 1, "status": "failed", "rubric_total": 1,
+           "rubric_spec": [{"id": "home", "check": "Home and screenshot"}],
+           "hard_assertions": {"timeout": True}, "metrics": {"screenshots_taken": 0}}
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    seen = []
+
+    def judge(**kwargs):
+        seen.append(kwargs["trace"])
+        return type("Verdict", (), {"verdicts": [RubricVerdict("home", "yes", "Screenshot evidence present")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    expected = {**trace, "tool_calls": [{**trace["tool_calls"][0], "has_screenshot": True}]}
+    assert seen == [expected]
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert result["metrics"]["screenshots_taken"] == 1
+    assert result["hard_assertions"] == row["hard_assertions"]
+    assert json.loads((attempt / "trace.json").read_text()) == trace
 
 
 @pytest.mark.parametrize("case", ["text", "hard_failure", "missing_image", "missing_memory", "judge_error"])
@@ -53,6 +136,67 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
             assert judged == []
 
 
+@pytest.mark.parametrize("required_calls,evidence,should_judge", [
+    (True, "unavailable", False),
+    (True, "applied", True),
+    (True, None, False),
+    (None, "unavailable", True),
+    (None, None, True),
+])
+def test_rejudge_preserves_unverified_required_calls(
+    tmp_path: Path, monkeypatch, required_calls, evidence, should_judge
+):
+    attempt = tmp_path / "tasks" / "task" / "attempt_1"
+    attempt.mkdir(parents=True)
+    (attempt / "trace.json").write_text('{"final_response":"done"}')
+    row = {
+        "task_id": "task", "attempt": 1, "status": "judge_error",
+        "rubric_spec": [{"id": "ok", "check": "Completed"}], "rubric_total": 1,
+        "hard_assertions": {"required_tool_calls": required_calls},
+        "hard_assertion_failures": [],
+        "metrics": {"episode_tool_evidence": evidence, "success": None,
+                    "agent_eligible": False, "quality_score": None,
+                    "failure_class": "evaluation", "first_failure_stage": "evaluation",
+                    "judge_error": "Evidence or judge unavailable"},
+    }
+    if evidence is None:
+        row["metrics"].pop("episode_tool_evidence")
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs)
+        return type("Verdict", (), {"verdicts": [RubricVerdict("ok", "yes", "Completed")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert bool(judged) is should_judge
+    if should_judge:
+        assert result["status"] == "passed"
+        assert result["metrics"]["agent_eligible"] is True
+    else:
+        assert result == row
+
+
+def test_rejudge_preserves_judge_free_rows_before_artifact_checks(tmp_path: Path, monkeypatch):
+    attempt = tmp_path / "tasks" / "zero_rubric" / "attempt_1"
+    attempt.mkdir(parents=True)
+    (attempt / "trace.json").write_text('{"final_response":"Done"}')
+    row = {
+        "task_id": "zero_rubric", "attempt": 1, "status": "passed",
+        "rubric_spec": [], "rubric_total": 0,
+        "metrics": {"success": True, "quality_score": 1.0, "post_screenshot_file": True},
+    }
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+    monkeypatch.setattr(rejudge, "judge_task", lambda **kw: judged.append(kw))
+    rejudge.rejudge_run(tmp_path, "model", "https://judge/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert result == row
+    assert judged == []
+
+
 def test_rejudge_uses_latest_legacy_step_screenshot_when_post_missing(tmp_path: Path, monkeypatch):
     run_dir = tmp_path / "run"
     attempt_dir = run_dir / "tasks" / "task-1"
@@ -93,3 +237,18 @@ def test_rejudge_uses_latest_legacy_step_screenshot_when_post_missing(tmp_path: 
     assert captured["post_screenshot"] == latest
     rows = [json.loads(line) for line in (run_dir / "results.rejudged.jsonl").read_text(encoding="utf-8").splitlines()]
     assert rows[0]["status"] == "passed"
+
+
+def test_rejudge_uses_archived_options_for_legacy_results(tmp_path, monkeypatch):
+    task_dir = tmp_path / "tasks" / "choice" / "attempt_1"
+    task_dir.mkdir(parents=True)
+    (task_dir / "trace.json").write_text(json.dumps({"final_response": "<final_answer>(a)</final_answer>"}))
+    prompt = "Choose a relaxing game: (a) Monument Valley (b) RPG"
+    (tmp_path / "suite.json").write_text(json.dumps({"name": "choices", "prompt_prefix": "Use memory.", "tasks": [{"id": "choice", "prompt": prompt, "description_for_judge": "Choose a game using stored preferences", "category": "memory", "rubric": [{"id": "ok", "check": "Avoids RPG"}]}]}))
+    (tmp_path / "results.jsonl").write_text(json.dumps({"task_id": "choice", "attempt": 1, "status": "failed", "rubric_total": 1, "rubric_spec": [{"id": "ok", "check": "Avoids RPG"}]}))
+    def judge(**kwargs):
+        assert kwargs["task_prompt"] == "Use memory.\n\n" + prompt
+        return type("Verdict", (), {"verdicts": [RubricVerdict(id="ok", verdict="yes", reason="Selected option a")]})()
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "judge", "https://judge.example")
+    assert json.loads((tmp_path / "results.rejudged.jsonl").read_text())["status"] == "passed"

@@ -39,7 +39,7 @@ PiP Bridge is a narrow exception. When the app reports `pip_bridge_enabled=true`
 
 BLE Wake provides an on-demand iOS background route for a narrower command set: calendar create/query/delete, contacts query/create, and local notification send. Clipboard read/write is not reliable in the iOS background, and contacts update is not exposed through BLE Wake; those calls return an explicit `app_backgrounded` error unless foreground Phone Bridge, PiP, or Dynamic Island restoration provides another executable route. Before each Agent run, runtime capability filtering checks whether `ble_service` reports a connected Wake subscriber and exposes only executable tools and actions. The command is then placed in the existing HTTP queue and the board makes a best-effort `wake` call. BLE carries only the wake hint: the app polls with its `phone_id`, executes the native module, and posts the structured result over HTTP. The phone must therefore remain connected to the board's USB ECM network; BLE is not a replacement command transport. If BLE is unavailable, those App-only tools are omitted unless another route such as foreground Phone Bridge, PiP/FGS polling, or Dynamic Island restoration is usable; a failed Wake notify never removes an already queued command.
 
-Android FGS Bridge follows the same HTTP queue contract without using WebSocket as a background transport. When the Android foreground service polls `/api/phone-bridge/commands` with `app_state=background` and `fgs_bridge_enabled=true`, the Agent keeps `open_app` unavailable and routes only background-safe data tools through the HTTP queue.
+Android FGS Bridge follows the same HTTP queue contract without using WebSocket as a background transport. When the Android foreground service polls `/api/phone-bridge/commands` with `app_state=background` and `fgs_bridge_enabled=true`, the Agent keeps `open_app` unavailable and routes only background-safe data tools through the HTTP queue. In both PiP and FGS mode, `open_app` system search writes its query to the clipboard through that queue and pastes it into the focused search field instead of typing it through the local IME; if the write or paste fails, it clears the field and falls back to local keyboard entry. When a paste is sent but no app result appears, the Agent checks whether the search field is still empty; if it is, it pastes once through the long-press menu and, if the field stays empty, types the query locally before moving on to fallback terms.
 
 Android system-notification ingestion is a separate one-way path. After the
 user grants Notification Access, the app's native listener posts bounded,
@@ -109,6 +109,13 @@ pastes into the already-focused search field. The existing app-result lookup,
 tap, and app-open confirmation then continue as before. If PiP is unavailable
 or its clipboard/paste command fails, query entry uses the existing local
 HID/IME path; a failed clipboard attempt clears the field before typing.
+
+After a system-search launch is confirmed, the Agent checks the opened app for
+a dialog. A paste-permission prompt ("Allow Paste") or an ad's close button is
+tapped automatically; any other dialog (system permission, login, privacy
+consent, update prompt) is left open and reported in the `open_app` result as
+`popup` with its kind and a short summary, so the Agent decides from the task.
+The same check runs when a paste leaves the field empty.
 
 On iOS, the relay app is not a background-resident system agent. It's more like a foreground fast-path executor; Dynamic Island can be used as the automatic entry point back to the Aico companion app, while lock-screen Live Activity cards need visual confirmation:
 
@@ -193,6 +200,16 @@ The Agent associates cached phone screen dimensions with
 `hid_connection_id`. A heartbeat timeout therefore does not discard the
 dimensions while the same USB HID session remains attached. A physical USB
 disconnect invalidates the cache before a new host session can reuse it.
+
+Screenshots also fall back to `phone_screen.json` in the Agent config
+directory when no live report exists, for example after an Agent restart while
+the app is closed. It holds the last reported dimensions with the capture frame
+size they cropped, or, without any report, the aspect ratio learned from a
+black-border crop whose cut edges show screen content rather than near-black
+pixels. The entry applies only to the same device type and frame size, so a
+near-black page still crops to the phone's aspect ratio instead of into the
+page. Every 20th capture that uses the entry also detects again, so a
+different phone with a verified crop of another aspect ratio replaces it.
 
 When `app_state=background|inactive`, `return_entry=dynamic_island`,
 `return_entry_available=true`, and PiP Bridge mode is not enabled, `open_url`

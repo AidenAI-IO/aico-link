@@ -73,7 +73,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
         assert request.method == "GET"
         if request.url.path == "/api/public/experiments":
             assert request.url.params["fields"] == "core,metadata"
-            return _response([_experiment()], "experiments-next") if not request.url.params.get("cursor") else _response([])
+            return _response([_experiment(workload_task_ids='["task-a"]')], "experiments-next") if not request.url.params.get("cursor") else _response([])
         assert request.url.path == "/api/public/v3/scores"
         assert request.url.params["experimentId"] == "exp-1"
         assert {"capability.pass_at_k.eligible_tasks", "capability.pass_pow_k",
@@ -87,6 +87,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
     assert not result.warnings
     assert len(requests) == 4
     record = result.records[0]
+    assert record["workload_task_ids"] == '["task-a"]'
     assert record["pass_at_1"] == 0.9375
     assert record["passed"] == 15
     assert record["eligible_tasks"] == 16
@@ -123,6 +124,20 @@ def test_batched_scores_are_assigned_to_their_experiment():
             _score("capability.pass_at_1", 0, "exp-2")])
     result = history.fetch_benchmark_history(client=_client(handler), now=NOW)
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
+
+
+def test_environment_and_diagnostic_observations_survive_history_fetch():
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([_experiment(execution_environment="mobilegym")])
+        assert "observations.skill_read_device_operator.observed_tasks" in request.url.params["name"]
+        return _response(_metrics() + [
+            _score("observations.skill_read_device_operator.passed_tasks", 0),
+            _score("observations.skill_read_device_operator.observed_tasks", 4),
+        ])
+    record = history.fetch_benchmark_history(client=_client(handler), now=NOW).records[0]
+    assert record["execution_environment"] == "mobilegym"
+    assert record["skill_discovery"] == {"read": 0, "observed": 4}
 
 
 @pytest.mark.parametrize("metadata", [{"aico_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
@@ -388,3 +403,13 @@ def test_local_preparation_logs_are_not_treated_as_failed_suite_runs(tmp_path):
     warnings = []
     assert history._read_local_runs(tmp_path, "ci-123-1", None, warnings) == []
     assert not warnings
+
+
+def test_comparison_key_accepts_isolated_runs_without_a_target_platform():
+    record = {"git_branch": "main", "suite_sha256": "s", "workload_sha256": "w",
+              "metrics_schema_version": "p0-v1", "metrics_k": "1", "agent_model": "m",
+              "target_platform": None}
+    assert history.comparison_key(record) is not None
+    # The platform still separates configurations when it is recorded.
+    assert history.comparison_key(record) != history.comparison_key({**record, "target_platform": "ios"})
+    assert history.comparison_key({**record, "agent_model": ""}) is None

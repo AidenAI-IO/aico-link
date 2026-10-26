@@ -172,16 +172,32 @@ def test_notification_memory_suite_uses_benchmark_seed_setup():
     ]
 
 
-def test_perception_v1_settings_rubric_uses_0_1000_normalized_coordinates():
+def test_perception_v1_scores_tap_coordinates_deterministically():
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "perception" / "perception_v1.json"
     suite = load_suite(suite_path)
-    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
-    check = next(item.check for item in task.rubric if item.id == "click_targets_settings")
+    for task in suite.tasks:
+        # Coordinates are checked by the runner, never by the judge.
+        assert task.rubric == []
+        assert task.hard_assertions.response_required is False
+        assert [call.tool for call in task.hard_assertions.required_tool_calls] == ["touch_gesture"]
 
-    assert "(0-1000 normalized space" in check
-    assert "normalized x in [746, 930]" in check
-    assert "y in [441, 560]" in check
-    assert "[0.75, 0.98]" not in check
+    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
+    point = task.hard_assertions.required_tool_calls[0].input_contains["point"]
+    assert point == {"x": {"$gte": 746, "$lte": 930}, "y": {"$gte": 441, "$lte": 560}}
+
+    def outcome(tool_input):
+        trace = Trace(tool_calls=[ToolCall(step=1, tool="touch_gesture", input=tool_input)],
+                      final_response="", total_tool_calls=1, total_duration_ms=0)
+        return evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+    assert outcome({"type": "tap", "point": {"x": 845, "y": 477}})
+    # Outside the band, 0-1 style values, and an untyped gesture all fail.
+    assert not outcome({"type": "tap", "point": {"x": 500, "y": 500}})
+    assert not outcome({"type": "tap", "point": {"x": 0.85, "y": 0.48}})
+    assert not outcome({"point": {"x": 845, "y": 477}})
 
 
 def test_perception_v1_uses_fixture_backed_mock_environment_for_every_task():
@@ -218,15 +234,17 @@ def test_perception_v1_describes_single_frame_environment_without_coaching():
     suite = load_suite(suite_path)
 
     prompt_prefix = suite.prompt_prefix.strip().lower()
-    assert "静态" in prompt_prefix or "static" in prompt_prefix
-    assert "找到" in prompt_prefix or "locate" in prompt_prefix
-    assert "点击" in prompt_prefix or "click" in prompt_prefix
+    assert "static" in prompt_prefix
+    assert "locate" in prompt_prefix
+    assert "click" in prompt_prefix
     for leaked_instruction in (
         "screenshot",
         "touch_gesture",
         "width",
         "height",
         "0-1000",
+        "normalized",
+        "coordinate",
         "retry",
         "verify",
     ):
@@ -267,43 +285,85 @@ def test_vphone_ios_basic_warmup_requires_screenshot():
     assert warmup.hard_assertions.required_tools == ["screenshot"]
 
 
-def test_adb_android_basic_suite_loads_device_operation_tasks():
+def test_adb_android_basic_suite_loads_general_operations_and_navigation():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json"
     suite = load_suite(suite_path)
 
     assert suite.name == "adb_android_basic"
-    assert {task.category for task in suite.tasks} == {"device_operation"}
+    assert {task.category for task in suite.tasks} == {
+        "device_operation", "single_step", "multi_step",
+    }
     assert [task.id for task in suite.tasks] == [
-        "screenshot_home",
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
+        "screenshot_home", "open_settings", "settings_check_wifi", "open_app_drawer",
+        "tap_back", "scroll_page_down", "scroll_to_bottom",
+        "quick_action_home", "quick_action_app_switch", "quick_action_notification_center",
+        "clock_from_settings", "notification_round_trip", "about_device_and_back",
+        "settings_scroll_round_trip", "reopen_settings_context", "return_to_settings_via_recents",
     ]
-    # Action tasks must not require any specific tool: every action tool
-    # already returns a post-action screenshot, so the agent legitimately
-    # completes them without ever invoking the standalone screenshot tool,
-    # and it may pick quick_action vs touch_gesture for the same outcome.
     by_id = {task.id: task for task in suite.tasks}
     assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
     assert suite.prompt_prefix == ""
-    for task_id in (
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
-    ):
-        assert by_id[task_id].hard_assertions.required_tools == []
+    for task in suite.tasks:
+        if task.id != "screenshot_home":
+            assert task.hard_assertions.required_tools == []
+        assert task.rubric and all(item.check for item in task.rubric)
+
     assert by_id["settings_check_wifi"].hard_assertions.min_tool_calls == 1
-    # These ported multi-step tasks genuinely need navigation before observing.
-    for task_id in ("clock_count_alarms", "open_app_drawer"):
-        assert by_id[task_id].hard_assertions.min_tool_calls >= 2
+
+
+@pytest.mark.parametrize("task_id,action", [
+    ("quick_action_home", "home"),
+    ("quick_action_app_switch", "app_switch"),
+    ("quick_action_notification_center", "notification_center"),
+])
+def test_adb_shortcut_contract_requires_successful_execution(task_id, action):
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="quick_action", input={"action": action})],
+                  final_response="Done", total_tool_calls=1, total_duration_ms=100)
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = True
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = False
+    trace.tool_calls[0].input = {"action": "screenshot"}
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+
+def test_adb_bottom_scroll_accepts_one_successful_scroll():
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == "scroll_to_bottom")
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="touch_gesture", input={"type": "swipe"})],
+                  final_response="Reached the bottom", total_tool_calls=1, total_duration_ms=100)
+    # The visual rubric judges whether the bottom was actually reached.
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+
+@pytest.mark.parametrize("task_id,tool,tool_input", [
+    ("swipe_scroll_list", "touch_gesture", {"type": "swipe", "start": {"x": 500, "y": 800}, "end": {"x": 500, "y": 300}}),
+    ("settings_check_wifi", "open_app", {"app": "Settings"}),
+    ("clock_count_alarms", "open_app", {"app": "Clock"}),
+])
+def test_mobilegym_basic_accepts_equivalent_navigation_tools(task_id, tool, tool_input):
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "mobilegym_basic.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    trace = Trace(
+        tool_calls=[ToolCall(step=1, tool=tool, input=tool_input)],
+        final_response="Task completed", total_tool_calls=1, total_duration_ms=100,
+    )
+    # Outcome correctness is checked by the suite's unchanged visual rubrics.
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls = []
+    trace.total_tool_calls = 0
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
 
 
 def test_quick_action_suite_marks_non_android_action_tasks():
@@ -1670,7 +1730,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
     assert all(task.mock_environment is not None for task in suite.tasks)
 
     open_task = tasks["ios_pip_notes_already_open"]
-    assert "search_launch_app" in open_task.hard_assertions.forbidden_tools
+    assert "open_app" in open_task.hard_assertions.forbidden_tools
     assert "bridge_open_app" in open_task.hard_assertions.forbidden_tools
     assert "enter_text" in open_task.hard_assertions.required_tools
     assert "enter_text" not in open_task.prompt
@@ -1679,7 +1739,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
 
     icon_task = tasks["ios_pip_notes_icon_visible"]
     assert "touch_gesture" in icon_task.hard_assertions.required_tools
-    assert "search_launch_app" in icon_task.hard_assertions.forbidden_tools
+    assert "open_app" in icon_task.hard_assertions.forbidden_tools
     assert icon_task.hard_assertions.required_tool_calls[1].input_contains == {
         "type": "tap",
         "point": {"x": 180, "y": 310},
@@ -1690,7 +1750,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
     assert "search_launch_app" not in icon_task.prompt
 
     missing_task = tasks["ios_pip_notes_icon_missing"]
-    assert "search_launch_app" in missing_task.hard_assertions.required_tools
+    assert "open_app" in missing_task.hard_assertions.required_tools
     assert "bridge_open_app" in missing_task.hard_assertions.forbidden_tools
     assert "search_launch_app" not in missing_task.prompt
     assert "enter_text" not in missing_task.prompt
@@ -1844,3 +1904,30 @@ def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
         "sound": False,
         "badge": 1,
     }
+
+
+@pytest.mark.parametrize("bounds, message", [
+    ({"$gte": "746"}, "must be a finite number"),
+    ({"$lte": None}, "must be a finite number"),
+    ({"$gte": True}, "must be a finite number"),
+    ({"$gte": 10, "$lte": 5}, "must not exceed"),
+])
+def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bounds, message):
+    task = {
+        "id": "t", "category": "perception", "prompt": "Tap", "rubric": [],
+        "hard_assertions": {"required_tool_calls": [
+            {"tool": "touch_gesture", "input_contains": {"point": {"x": bounds}}},
+        ]},
+    }
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps({"name": "s", "tasks": [task]}))
+    with pytest.raises(SuiteValidationError, match=message):
+        load_suite(path)
+    # Mock fixture matchers use the same validation.
+    task["hard_assertions"]["required_tool_calls"][0]["input_contains"] = {"type": "tap"}
+    task["mock_environment"] = {"platform": "ios", "phone_bridge": {}, "tools": {
+        "touch_gesture": {"input_contains": {"point": {"y": bounds}}, "output": {"ok": True}},
+    }}
+    path.write_text(json.dumps({"name": "s", "tasks": [task]}))
+    with pytest.raises(SuiteValidationError, match=message):
+        load_suite(path)

@@ -73,6 +73,7 @@ The conversational Agent receives every registered, currently available tool nee
 `current_time` and `calculator` are not registered built-in tools; the Agent uses `shell` for controller-local precise time, timezone, and deterministic calculations. `skill_manage` and `skill_mark_used` remain unavailable through the HTTP Tool API.
 
 For tool details and HTTP invocation methods, see [Tools HTTP API](tools-http-api.md).
+For the same Agent tools over MCP Streamable HTTP (`POST /mcp`), see [MCP](mcp.md).
 
 ## Python Package Environment
 

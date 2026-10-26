@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"aico-agent/internal/netproxy"
 	"aico-agent/internal/wifiproxy"
 )
 
@@ -213,8 +214,7 @@ func (o Options) Validate() error {
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("invalid --local-proxy-address port %q", portText)
 		}
-		ip := net.ParseIP(strings.Trim(host, "[]"))
-		if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		if !netproxy.IsLoopbackHost(host) {
 			return fmt.Errorf("--local-proxy-address must use a loopback host")
 		}
 	}

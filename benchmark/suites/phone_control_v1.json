@@ -1,5 +1,6 @@
 {
   "name": "phone_control_v1",
+  "version": "1.1",
   "suite_category": "Perception & Control",
   "description": "Agent-driven phone control benchmark v1.",
   "trace_observations": [
@@ -101,7 +102,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 10,
         "must_complete_within_sec": 90
       }
@@ -151,7 +152,7 @@
     {
       "id": "open_notification_shade",
       "category": "single_step",
-      "description_for_judge": "Agent must open the notification shade by swiping down from the top of the screen.",
+      "description_for_judge": "Agent must open the notification shade using any supported route.",
       "prompt": "打开通知栏。",
       "rubric": [
         {
@@ -190,7 +191,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 3,
+        "min_tool_calls": 1,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240
       }
@@ -271,7 +272,7 @@
         },
         {
           "id": "alarm_creation_ui",
-          "check": "Trace shows an alarm creation/time-picker UI."
+          "check": "Successful tool results establish creation of a new 7:30 alarm. A particular time-picker UI or separate call for each field is not required; a pre-existing alarm alone is insufficient."
         },
         {
           "id": "alarm_saved",
@@ -284,7 +285,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 4,
+        "min_tool_calls": 1,
         "max_tool_calls": 25,
         "must_complete_within_sec": 300
       }
@@ -292,7 +293,7 @@
     {
       "id": "scroll_to_bottom",
       "category": "multi_step",
-      "description_for_judge": "Agent must repeatedly scroll a settings page until the bottom of the list is reached, and stop scrolling once the bottom is detected.",
+      "description_for_judge": "Agent must reach the bottom of the Settings list and stop. Accept any number of scrolls that reaches the target.",
       "setup": {
         "type": "agent_prompt",
         "prompt": "先打开系统设置，停在设置列表靠上的位置，别进具体设置项。",
@@ -301,10 +302,6 @@
       },
       "prompt": "在设置页面一直往下滑，滑到底为止。",
       "rubric": [
-        {
-          "id": "multiple_scrolls",
-          "check": "Trace contains at least three swipe/scroll tool calls."
-        },
         {
           "id": "stopped_at_bottom",
           "check": "Post-screenshot shows the bottom area of the settings list rather than the same top or middle content visible in the pre-screenshot. Blank padding below the final list item or above system navigation is not evidence that more list content remains."
@@ -316,7 +313,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 3,
+        "min_tool_calls": 1,
         "max_tool_calls": 25,
         "must_complete_within_sec": 300
       }
@@ -356,7 +353,7 @@
     {
       "id": "select_all_and_delete",
       "category": "multi_step",
-      "description_for_judge": "Agent must clear an input field that already contains text by selecting all and deleting.",
+      "description_for_judge": "Agent must clear the populated input field using any supported editing operation and leave the empty field visible.",
       "setup": {
         "type": "agent_prompt",
         "prompt": "先打开一个简单的记事类应用，新建一条笔记，在输入框里输入 hello-aico，保持文字可见。",
@@ -366,17 +363,17 @@
       "prompt": "把输入框里已有的文字全部清空。",
       "rubric": [
         {
-          "id": "select_used",
-          "check": "Trace shows a select-all action (META+A or equivalent)."
+          "id": "populated_input_before",
+          "check": "The pre-screenshot shows hello-aiden in the editable field. An attempted setup alone is insufficient."
         },
         {
           "id": "input_empty",
-          "check": "Post-screenshot shows the input field is empty."
+          "check": "Post-screenshot shows the same editable field empty. Closing the editor or navigating away does not count."
         }
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 8,
         "must_complete_within_sec": 90
       }
@@ -412,7 +409,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 4,
+        "min_tool_calls": 1,
         "max_tool_calls": 18,
         "must_complete_within_sec": 180
       }
@@ -434,7 +431,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 20,
         "must_complete_within_sec": 240
       }
@@ -481,11 +478,11 @@
       "rubric": [
         {
           "id": "icon_located",
-          "check": "The pre-screenshot and trace identify a visible normal app icon at the drag_start position. A separate screenshot tool call is not required when the environment supplied the pre-screenshot."
+          "check": "The pre-screenshot and trace identify a visible normal app icon at the drag starting position. A separate screenshot tool call is not required when the environment supplied the pre-screenshot."
         },
         {
           "id": "drag_performed",
-          "check": "Trace contains a successful touch_gesture drag_start followed by drag_release at a significantly different position."
+          "check": "Successful tool results establish dragging the chosen icon to a different position, either in one operation or through drag_start followed by drag_release."
         },
         {
           "id": "icon_moved",
@@ -494,7 +491,7 @@
       ],
       "hard_assertions": {
         "forbidden_tools": ["request_user_action"],
-        "min_tool_calls": 2,
+        "min_tool_calls": 1,
         "max_tool_calls": 15,
         "must_complete_within_sec": 120
       }

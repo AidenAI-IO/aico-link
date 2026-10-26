@@ -117,7 +117,7 @@ func (c *ADB) capture(format string, quality int) (*FrameMetadata, []byte, error
 	case "", "raw", "png":
 		return meta, pngData, nil
 	case "jpeg", "jpg":
-		jpegData, err := encodeEncodedImageToJPEG(pngData, quality)
+		jpegData, err := EncodeImageToJPEG(pngData, quality)
 		if err != nil {
 			return nil, nil, err
 		}

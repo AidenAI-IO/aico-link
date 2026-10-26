@@ -3,6 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from runner.judge import JudgeConfig, JudgeOutput
+from runner.models import RubricVerdict
+import runner.runtask as runtask_mod
 from runner.suite import HardAssertions, RubricItem, Suite, TaskSpec, TraceObservationSpec
 
 
@@ -71,7 +74,7 @@ def _write_evidence(batch: Path, suite: Suite, task: TaskSpec, evidence: dict) -
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _load_results(batch: Path, suite: Suite, tmp_path: Path):
+def _load_results(batch: Path, suite: Suite, tmp_path: Path, *, judge_cfg=None):
     from skillopt import mobilegym_results
 
     return mobilegym_results.load_aico_suite_task_results(
@@ -80,7 +83,7 @@ def _load_results(batch: Path, suite: Suite, tmp_path: Path):
         tasks=suite.tasks,
         run_id="run-1",
         phase_artifact_dir=tmp_path / "phase",
-        judge_cfg=None,
+        judge_cfg=judge_cfg,
         judge_cache_dir=None,
     )
 
@@ -116,7 +119,10 @@ def test_mobilegym_passed_row_uses_execution_agent_message_as_aico_response(tmp_
 
     results = _load_results(batch, suite, tmp_path)
 
-    assert results[0].status == "passed"
+    assert results[0].status == "skipped"
+    assert results[0].metrics["success"] is None
+    assert results[0].metrics["quality_score"] is None
+    assert results[0].metrics["agent_eligible"] is False
     assert results[0].metrics["mobilegym_status"] == "passed"
     assert results[0].metrics["aico_history_source"] == "mobilegym_execution_agent_message"
 
@@ -145,7 +151,10 @@ def test_mobilegym_passed_row_with_mobilegym_judge_still_uses_aico_checks(tmp_pa
     assert "missing aico_last_chat_history" in results[0].metrics["error"]
 
 
-def test_mobilegym_passed_row_uses_meta_evidence_and_aico_checks(tmp_path: Path):
+@pytest.mark.parametrize("verdict,expected_status", [(None, "skipped"), ("yes", "passed"), ("no", "failed")])
+def test_mobilegym_passed_row_uses_meta_evidence_and_aico_checks(
+    tmp_path: Path, monkeypatch, verdict, expected_status
+):
     suite = _suite(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -162,9 +171,26 @@ def test_mobilegym_passed_row_uses_meta_evidence_and_aico_checks(tmp_path: Path)
         },
     )
 
-    results = _load_results(batch, suite, tmp_path)
+    judged = []
 
-    assert results[0].status == "passed"
+    def judge(**kwargs):
+        judged.append(kwargs)
+        return JudgeOutput([RubricVerdict("ok", verdict, "Evidence checked")], "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", judge)
+    results = _load_results(batch, suite, tmp_path, judge_cfg=JudgeConfig() if verdict else None)
+
+    assert results[0].status == expected_status
+    assert results[0].metrics["mobilegym_status"] == "passed"
+    assert results[0].metrics["success"] is (verdict == "yes" if verdict else None)
+    assert results[0].metrics["agent_eligible"] is (verdict is not None)
+    if verdict:
+        assert len(judged) == 1
+        assert judged[0]["final_response"] == "done"
+        assert judged[0]["rubric"] == suite.tasks[0].rubric
+    else:
+        assert judged == []
+        assert results[0].metrics["quality_score"] is None
 
 
 def test_mobilegym_passed_row_over_task_timeout_fails_aico_timeout_check(tmp_path: Path):

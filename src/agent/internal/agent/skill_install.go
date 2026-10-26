@@ -19,6 +19,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"aico-agent/internal/netproxy"
 )
 
 const (
@@ -126,7 +128,7 @@ func newSkillInstallHTTPClient(proxy ProxyConfig) *http.Client {
 func skillInstallProxyAddresses(proxy ProxyConfig) map[string]struct{} {
 	addresses := make(map[string]struct{})
 	for _, raw := range []string{proxy.HTTPProxy, proxy.HTTPSProxy, proxy.AllProxy} {
-		proxyURL, err := parseProxyURL(strings.TrimSpace(raw))
+		proxyURL, err := netproxy.Parse(strings.TrimSpace(raw))
 		if err != nil || proxyURL == nil {
 			continue
 		}

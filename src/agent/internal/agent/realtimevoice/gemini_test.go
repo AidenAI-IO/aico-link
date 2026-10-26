@@ -154,7 +154,7 @@ func TestGeminiProviderNormalizesLiveSession(t *testing.T) {
 	}
 }
 
-func TestGeminiExtendedThinkingSessionUsesServerAuthoritativeCapabilities(t *testing.T) {
+func TestGeminiSessionUsesServerAuthoritativeCapabilities(t *testing.T) {
 	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -176,12 +176,13 @@ func TestGeminiExtendedThinkingSessionUsesServerAuthoritativeCapabilities(t *tes
 
 	endpoint := "ws" + strings.TrimPrefix(server.URL, "http") + "/live"
 	for _, tc := range []struct {
-		model string
-		want  bool
+		model             string
+		wantInterruption  bool
+		wantTurnDetection bool
 	}{
-		{model: Gemini38ThinkingModel, want: true},
-		{model: Gemini38LiveModel, want: false},
-		{model: DefaultGeminiLiveModel, want: false},
+		{model: Gemini38ThinkingModel, wantInterruption: true, wantTurnDetection: true},
+		{model: Gemini38LiveModel, wantInterruption: true},
+		{model: DefaultGeminiLiveModel, wantInterruption: true},
 	} {
 		t.Run(tc.model, func(t *testing.T) {
 			session, err := (GeminiProvider{Endpoint: endpoint}).Open(context.Background(), SessionConfig{APIKey: "test", Model: tc.model})
@@ -189,11 +190,11 @@ func TestGeminiExtendedThinkingSessionUsesServerAuthoritativeCapabilities(t *tes
 				t.Fatal(err)
 			}
 			defer session.Close()
-			if got := session.Info().Capabilities.ServerAuthoritativeInterruption; got != tc.want {
-				t.Fatalf("ServerAuthoritativeInterruption = %t, want %t", got, tc.want)
+			if got := session.Info().Capabilities.ServerAuthoritativeInterruption; got != tc.wantInterruption {
+				t.Fatalf("ServerAuthoritativeInterruption = %t, want %t", got, tc.wantInterruption)
 			}
-			if got := session.Info().Capabilities.ServerAuthoritativeTurnDetection; got != tc.want {
-				t.Fatalf("ServerAuthoritativeTurnDetection = %t, want %t", got, tc.want)
+			if got := session.Info().Capabilities.ServerAuthoritativeTurnDetection; got != tc.wantTurnDetection {
+				t.Fatalf("ServerAuthoritativeTurnDetection = %t, want %t", got, tc.wantTurnDetection)
 			}
 		})
 	}
@@ -250,6 +251,14 @@ func TestGeminiVertexUsesOAuthHeaderAndVertexModelResource(t *testing.T) {
 			t.Errorf("Vertex model = %q, want %q", payload["model"], wantModel)
 		}
 		_ = conn.WriteJSON(map[string]any{"setupComplete": map[string]any{}})
+		// Hold the connection open until the client closes it. Returning here
+		// drops the socket without a close frame, and the client may observe
+		// that abnormal closure before setupComplete.
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
 	}))
 	defer server.Close()
 

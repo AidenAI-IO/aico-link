@@ -1020,3 +1020,35 @@ def test_clear_stale_adb_android_owner_ignores_non_adb_bridge(monkeypatch):
 
     assert clear_stale_adb_android_owner("http://127.0.0.1:9090") == ""
     assert calls == [("http://127.0.0.1:9090/health", "GET")]
+
+
+def test_seed_memory_relative_expiry_is_fresh_for_each_attempt_without_mutating_fixture():
+    from datetime import datetime, timezone
+    memory = {"id": "temporary", "content": "A current fact", "expires_in_sec": 86400}
+    client = RecordingSetupClient()
+    start = datetime.now(timezone.utc)
+    for _ in range(2):
+        per_task_setup(client, {"type": "seed_memory", "memories": [memory]})
+    end = datetime.now(timezone.utc)
+    for _, seeded, _ in client.calls:
+        expiry = datetime.fromisoformat(seeded["expires_at"])
+        assert 86400 <= (expiry - start).total_seconds()
+        assert (expiry - end).total_seconds() <= 86400
+        assert "expires_in_sec" not in seeded
+    assert "expires_at" not in memory
+    assert memory["expires_in_sec"] == 86400
+
+
+@pytest.mark.parametrize("value", [0, -1, True, "86400", 1.5, 10**18])
+def test_seed_memory_rejects_invalid_relative_expiry(value):
+    with pytest.raises(ResetError, match="expires_in_sec"):
+        per_task_setup(RecordingSetupClient(), {"type": "seed_memory", "memories": [
+            {"id": "temporary", "content": "Fact", "expires_in_sec": value}
+        ]})
+
+
+def test_seed_memory_rejects_ambiguous_expiry():
+    with pytest.raises(ResetError, match="expires_at"):
+        per_task_setup(RecordingSetupClient(), {"type": "seed_memory", "memories": [
+            {"id": "temporary", "content": "Fact", "expires_in_sec": 60, "expires_at": "2026-09-30T00:00:00Z"}
+        ]})

@@ -14,7 +14,7 @@ from runner.agent_client import AgentClient
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
-from runner.judge import DEFAULT_JUDGE_BASE_URL, JudgeConfig
+from runner.judge import DEFAULT_JUDGE_BASE_URL, JUDGE_PROMPT_VERSION, JudgeConfig
 from runner.platform import (
     TargetPlatform,
     read_environment_health,
@@ -759,6 +759,7 @@ def _cmd_run_auto_agent_setup_inner(
                 benchmark_task_id=route_id,
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
+                benchmark_mock_tools=task_mock_environment is not None,
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")
@@ -888,11 +889,12 @@ def _cmd_run_auto_agent_setup_inner(
         "agent_model": args.agent_model,
         "active_skills": active_skills,
         "judge_config": {"provider": judge_cfg.provider, "model": args.judge_model, "base_url": args.judge_base_url} if judge_cfg else None,
-        "judge_prompt_version": "v1",
+        "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": manifest_target_platform or None,
         "auto_agent_setup": True,
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
+        "execution_environment": _execution_environment(suite, selected_task_ids),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -1177,9 +1179,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         "agent_model": args.agent_model,
         "active_skills": active_skills,
         "judge_config": {"provider": judge_cfg.provider, "model": args.judge_model, "base_url": args.judge_base_url} if judge_cfg else None,
-        "judge_prompt_version": "v1",
+        "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": target_platform or None,
         "mock_environment": _mock_environment_manifest(suite),
+        "execution_environment": _execution_environment(suite, selected_task_ids),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -1241,6 +1244,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print("Warning: failed to upload report to board")
         upload_client.close()
     return _run_exit_code(manifest["totals"])
+
+
+def _execution_environment(suite: Suite, selected_task_ids: list[str]) -> str | None:
+    mocked = [suite.mock_environment is not None or task.mock_environment is not None
+              for task in suite.tasks if not selected_task_ids or task.id in selected_task_ids]
+    if mocked and all(mocked):
+        return "scripted"
+    if any(mocked):
+        return "mixed"
+    return os.environ.get("BENCHMARK_EXECUTION_ENVIRONMENT") or None
 
 
 def _mock_environment_manifest(suite: Suite) -> dict[str, object] | None:

@@ -27,7 +27,7 @@ func repairToolCallTailBeforeAppend(existing, incoming []messages.Message) []mes
 		return incoming
 	}
 	if normalized, ok := normalizeMatchingToolResult(incoming[0], call); ok {
-		result := cloneMessages(incoming)
+		result := messages.CloneList(incoming)
 		result[0] = normalized
 		return result
 	}

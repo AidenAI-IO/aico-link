@@ -508,18 +508,7 @@ func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 func (t *retryTransport) waitBeforeRetry(ctx context.Context, retryNumber, maxAttempts int) error {
 	delay := time.Duration(retryNumber) * t.retryDelayBase
 	logging.Infof("agent", "http_retry", "retrying attempt %d/%d after %v", retryNumber+1, maxAttempts, delay)
-	if delay <= 0 {
-		return nil
-	}
-
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return sleepWithContext(ctx, delay)
 }
 
 func shouldRetryTransportError(ctx context.Context, err error) bool {

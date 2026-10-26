@@ -339,6 +339,7 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"DeviceTypeOverride":         "CLI-only; already folded into Device before comparison",
 		"Model":                      "shared model manager is replaced by Runtime at Agent task boundaries",
 		"ModelProviders":             "resolved into Model at config load time",
+		"Decision":                   "decision model is read by Agent tasks, not the voice loop",
 		"TTSProviders":               "resolved into TTS / the shared TTS provider manager",
 		"STTProviders":               "resolved into STT at config load time",
 		"VoiceModelProviders":        "resolved into VoiceModel at config load time",
@@ -356,13 +357,15 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"MaxIterations":              "per-run value read from the runtime snapshot",
 		"TerminationPolicy":          "per-run value read from the runtime snapshot",
 		"ContextPruneThreshold":      "per-run value read from the runtime snapshot",
+		"ContextPruneStateLimit":     "per-run value read from the runtime snapshot",
 		"ContextCompactionThreshold": "per-run value read from the runtime snapshot",
-		"ScreenshotKeepN":            "per-run value read from the runtime snapshot",
-		"ScreenshotPruneInterval":    "per-run value read from the runtime snapshot",
 		"SkillsDirs":                 "skills reload is flagged separately",
 		"BundledSkillsDir":           "skills reload is flagged separately",
 		"Telemetry":                  "per-run value read from the runtime snapshot",
 		"ConfigDir":                  "fixed for the process; apply rejects changes",
+		"MCPEnabled":                 "HTTP /mcp gated from runtime snapshot; not used by voice loop",
+		"MCPShellEnabled":            "HTTP /mcp gated from runtime snapshot; not used by voice loop",
+		"MCPConfigWebBaseURL":        "HTTP /mcp gated from runtime snapshot; not used by voice loop",
 	}
 	filledValue := fillNonZeroValue(t, reflect.TypeOf(agent.Config{}))
 	filled := filledValue.Interface().(agent.Config)

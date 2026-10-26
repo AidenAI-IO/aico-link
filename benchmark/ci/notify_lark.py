@@ -43,9 +43,8 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     weekly = data["weekly"]
     suites = weekly["suites"]
     week = weekly["totals"]
-    regressions = data.get("regressions", [])
 
-    overview = (f"**Runs:** {len(data.get('runs', []))} workflow runs, {week['suite_runs']} dataset runs\n"
+    overview = (f"**Runs:** {week.get('run_count', len(data.get('runs', [])))} workflow runs, {week['suite_runs']} dataset runs\n"
                 f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly['change'])}"
                 f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
     if week["cost_usd_sum"] is not None:
@@ -55,20 +54,30 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         {"tag": "markdown", "content": overview},
     ]
 
+    # Group by primary test objective; diagnostics stay separate.
+    capabilities = weekly.get("capabilities", [])
+    if capabilities:
+        lines = []
+        for cap in capabilities:
+            header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
+            if cap.get("eligible_tasks"):
+                runs = cap["run_count"]
+                header += (f" ({cap['task_count']:.0f} tasks, {runs} run{'s' if runs != 1 else ''},"
+                           f" {cap['passed']:.0f}/{cap['eligible_tasks']:.0f} eligible first attempts passed)")
+            lines.append(header)
+        elements.append({"tag": "markdown", "content": "**By test area**\n" + "\n".join(lines)})
+
+    if weekly.get("diagnostics"):
+        lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s['change'])}"
+                 for s in weekly["diagnostics"]]
+        elements.append({"tag": "markdown", "content": "**Diagnostics** (skill read observation, not task pass@1)\n" + "\n".join(lines)})
+
     if suites:
-        # Weekly totals per dataset, weakest first, so datasets needing attention lead.
+        # Weakest suites first, so those needing attention lead.
         lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}{_format_change(s['change'])}"
-                 + (f" ({s['passed']:.0f}/{s['eligible_tasks']:.0f}, {s['suite_runs']} run{'s' if s['suite_runs'] != 1 else ''})"
-                    if s["eligible_tasks"] else "")
                  for s in suites]
         elements += [{"tag": "hr"},
                      {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]
-
-    if regressions:
-        lines = [f"<font color='red'>{r['suite']}: {_format_rate(r['previous'])} → {_format_rate(r['current'])}</font>"
-                 for r in regressions]
-        elements += [{"tag": "hr"},
-                     {"tag": "markdown", "content": "**Regressions** (same configuration)\n" + "\n".join(lines)}]
 
     if data.get("warnings"):
         elements.append({"tag": "markdown", "content": "⚠️ Some data is incomplete; see the dashboard."})
@@ -86,7 +95,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
     return {
         "config": {"wide_screen_mode": True},
         "header": {
-            "template": "red" if regressions else "blue",
+            "template": "blue",
             "title": {"tag": "plain_text", "content": "Benchmark Weekly Report"},
         },
         "elements": elements,

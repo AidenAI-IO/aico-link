@@ -299,6 +299,81 @@ func TestExecuteToolCallTouchGestureValidationFailureRequestsStrictRetry(t *test
 	}
 }
 
+func TestExecuteToolCallIncompleteGestureDoesNotCaptureOrExecute(t *testing.T) {
+	for _, input := range []string{
+		`{"start":{"x":500,"y":900},"direction":"up"}`,
+		`{"type":"swipe","start":{"x":500,"y":900}}`,
+		`{"type":"swipe","direction":"up"}`,
+		`{"type":"tap"}`,
+		`{"type":"tap","point":{"x":500}}`,
+		`{"type":"tap","point":{"y":500}}`,
+		`{"type":"tap","point":{}}`,
+		`{"type":"tap","point":null}`,
+		`{"type":"tap","point":[500,500]}`,
+		`{"type":"tap","point":500}`,
+		`{"type":"tap","point":"500,500"}`,
+		`{"type":"tap","point":{"x":null,"y":500}}`,
+		`{"type":"tap","point":{"x":500,"y":null}}`,
+		`{"type":"tap","point":{"x":"500","y":500}}`,
+		`{"type":"tap","point":{"x":500,"y":false}}`,
+		`{"type":"tap","point":{"X":500,"y":500}}`,
+		`{"type":"swipe","start":{"x":500},"direction":"up"}`,
+		`{"type":"swipe","start":{"y":900},"direction":"up"}`,
+		`{"type":"swipe","start":[500,900],"direction":"up"}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":{"x":500}}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":{"y":300}}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":{"x":500},"direction":"up"}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":null,"direction":"up"}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":[500,300],"direction":"up"}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			inner := &stubTool{name: "touch_gesture", output: "should-not-run"}
+			shot := &stubTool{name: "screenshot", output: "should-not-capture"}
+			wrapped := newPostActionScreenshotTool(inner, shot, 0)
+			result := executeToolCall(context.Background(), ToolCallExecution{
+				Specs:  NewToolSpecs([]langtools.Tool{wrapped}),
+				Action: schema.AgentAction{Tool: "touch_gesture", ToolInput: input},
+			})
+			if !result.Result.IsError() || result.Result.Error.Code != CodeInvalidArguments || result.ActionCompleted {
+				t.Fatalf("incomplete gesture result = %#v", result)
+			}
+			if len(inner.inputs) != 0 || len(shot.inputs) != 0 {
+				t.Fatalf("invalid gesture executed=%v captured=%v", inner.inputs, shot.inputs)
+			}
+			if !strings.Contains(result.Result.Output, `"type":"swipe","start":{"x":500,"y":900},"direction":"up"`) {
+				t.Fatalf("missing complete swipe correction: %s", result.Result.Output)
+			}
+		})
+	}
+}
+
+func TestExecuteToolCallCompleteGesturesStillExecute(t *testing.T) {
+	for _, input := range []string{
+		`{"type":"swipe","start":{"x":500,"y":900},"direction":"up"}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":{"x":500,"y":300}}`,
+		`{"type":"tap","point":{"x":0,"y":0}}`,
+		`{"type":"tap","point":{"x":500.5,"y":300.25}}`,
+		`{"type":"swipe","start":{"x":0,"y":0},"end":{"x":1000,"y":1000}}`,
+		`{"type":"swipe","start":{"x":500,"y":900},"end":{"x":500,"y":0},"direction":"up"}`,
+		`{"type":"double_tap","point":{"x":0,"y":0}}`,
+		`{"type":"long_press","point":{"x":0,"y":0}}`,
+		`{"type":"drag_start","point":{"x":0,"y":0}}`,
+		`{"type":"drag_release","point":{"x":0,"y":0}}`,
+		`{"actions":[{"action":"touch_down","point":{"x":500,"y":500}},{"action":"touch_up"}]}`,
+	} {
+		t.Run(input, func(t *testing.T) {
+			tool := &stubTool{name: "touch_gesture", output: "ok"}
+			result := executeToolCall(context.Background(), ToolCallExecution{
+				Specs:  NewToolSpecs([]langtools.Tool{tool}),
+				Action: schema.AgentAction{Tool: "touch_gesture", ToolInput: input},
+			})
+			if result.Result.IsError() || len(tool.inputs) != 1 {
+				t.Fatalf("valid gesture result=%#v inputs=%v", result, tool.inputs)
+			}
+		})
+	}
+}
+
 func TestExecuteToolCallBeforeMayRejectWithToolResult(t *testing.T) {
 	recorder := &toolExecutionCallbackRecorder{}
 	tool := &stubTool{name: "echo", description: "Echo text.", output: "should-not-run"}

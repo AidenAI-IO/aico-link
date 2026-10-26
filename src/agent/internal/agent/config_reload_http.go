@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"io"
@@ -16,14 +17,22 @@ type configReloadRequest struct {
 	Revision uint64 `json:"revision"`
 }
 
-func configFileRevision(path string) uint64 {
+// ConfigRevision is the revision of agent.toml contents that Config Web and
+// configupdate report and the reload endpoint checks against the file on disk.
+func ConfigRevision(data []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(data)
+	return h.Sum64()
+}
+
+// ConfigFileRevision returns ConfigRevision of the file at path, or 0 when it
+// cannot be read.
+func ConfigFileRevision(path string) uint64 {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
-	h := fnv.New64a()
-	_, _ = h.Write(data)
-	return h.Sum64()
+	return ConfigRevision(data)
 }
 
 func isLoopbackRequest(r *http.Request) bool {
@@ -55,7 +64,6 @@ func (s *Server) handleInternalConfigReload(w http.ResponseWriter, r *http.Reque
 		writeAgentJSON(w, http.StatusOK, s.runtime.ConfigApplyStatus())
 		return
 	}
-	current := s.runtime.ConfigSnapshot()
 	var request configReloadRequest
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
 	decoder.DisallowUnknownFields()
@@ -81,24 +89,46 @@ func (s *Server) handleInternalConfigReload(w http.ResponseWriter, r *http.Reque
 		writeAgentJSONError(w, http.StatusBadRequest, "reload request requires a nonzero revision")
 		return
 	}
-	configPath := filepath.Join(current.ConfigDir, "agent.toml")
-	revision := configFileRevision(configPath)
-	if revision == 0 {
-		writeAgentJSONError(w, http.StatusServiceUnavailable, "config file unavailable")
+	status, err := s.runtime.ReloadPersistedConfig(request.Revision)
+	switch {
+	case errors.Is(err, ErrConfigRevisionStale):
+		writeAgentJSONError(w, http.StatusConflict, err.Error())
+		return
+	case err != nil:
+		writeAgentJSONError(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	if request.Revision != revision {
-		writeAgentJSONError(w, http.StatusConflict, fmt.Sprintf("stale config revision %d (current %d)", request.Revision, revision))
-		return
+	writeAgentJSON(w, http.StatusAccepted, map[string]any{
+		"ok": status.Error == "", "applied": false, "pending": status.Pending,
+		"persisted": true, "revision": request.Revision, "state": status.State, "error": status.Error,
+		"reboot_required": status.RebootRequired,
+		"runtime_id":      s.runtime.ConfigApplyStatus().RuntimeID,
+	})
+}
+
+// ErrConfigRevisionStale reports that agent.toml no longer holds the revision a
+// caller asked to apply. A newer save superseded it and will apply on its own.
+var ErrConfigRevisionStale = errors.New("stale config revision")
+
+// ReloadPersistedConfig queues the persisted agent.toml for runtime
+// application, provided the file still holds revision. It returns before the
+// config applies: the running task keeps its config until its boundary.
+func (r *Runtime) ReloadPersistedConfig(revision uint64) (ConfigApplyStatus, error) {
+	current := r.ConfigSnapshot()
+	configPath := filepath.Join(current.ConfigDir, "agent.toml")
+	onDisk := ConfigFileRevision(configPath)
+	if onDisk == 0 {
+		return ConfigApplyStatus{}, fmt.Errorf("config file unavailable")
+	}
+	if revision != onDisk {
+		return ConfigApplyStatus{}, fmt.Errorf("%w %d (current %d)", ErrConfigRevisionStale, revision, onDisk)
 	}
 	cfg, err := LoadRuntimeConfigFromDir(current.ConfigDir)
 	if err != nil {
-		writeAgentJSONError(w, http.StatusServiceUnavailable, "reload config: "+err.Error())
-		return
+		return ConfigApplyStatus{}, fmt.Errorf("reload config: %w", err)
 	}
-	if configFileRevision(configPath) != revision {
-		writeAgentJSONError(w, http.StatusConflict, "config changed while loading; retry latest revision")
-		return
+	if ConfigFileRevision(configPath) != revision {
+		return ConfigApplyStatus{}, fmt.Errorf("%w: config changed while loading; retry latest revision", ErrConfigRevisionStale)
 	}
 	// Preserve process-only fields; the persisted config cannot overwrite CLI overrides.
 	cfg.SkillMergeModel = current.SkillMergeModel
@@ -108,13 +138,7 @@ func (s *Server) handleInternalConfigReload(w http.ResponseWriter, r *http.Reque
 	if current.DeviceTypeOverride != "" {
 		_ = cfg.OverrideDeviceType(current.DeviceTypeOverride)
 	}
-	status := s.runtime.QueueConfig(cfg, revision)
-	writeAgentJSON(w, http.StatusAccepted, map[string]any{
-		"ok": status.Error == "", "applied": false, "pending": status.Pending,
-		"persisted": true, "revision": revision, "state": status.State, "error": status.Error,
-		"reboot_required": status.RebootRequired,
-		"runtime_id":      s.runtime.ConfigApplyStatus().RuntimeID,
-	})
+	return r.QueueConfig(cfg, revision), nil
 }
 
 func writeAgentJSON(w http.ResponseWriter, status int, value any) {

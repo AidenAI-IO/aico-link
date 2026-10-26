@@ -7,20 +7,16 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
-	"golang.org/x/net/proxy"
 
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
-	"aico-agent/internal/netproxy"
 )
 
 const (
@@ -126,8 +122,8 @@ func (a *Adapter) BeginStream(ctx context.Context, sink tts.AudioSink) (tts.Stre
 }
 
 func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
-	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, HandshakeTimeout: connectTimeout}
-	if err := configureProxy(&dialer, a.proxy); err != nil {
+	dialer, err := a.websocketDialer()
+	if err != nil {
 		return nil, err
 	}
 	header := http.Header{}
@@ -146,6 +142,12 @@ func (a *Adapter) dial(ctx context.Context) (*websocket.Conn, error) {
 		logging.Infof("agent", "tts", "volcengine: connected")
 	}
 	return conn, nil
+}
+
+func (a *Adapter) websocketDialer() (websocket.Dialer, error) {
+	dialer := websocket.Dialer{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12}, HandshakeTimeout: connectTimeout}
+	err := a.proxy.ConfigureWebSocketDialer(&dialer)
+	return dialer, err
 }
 
 func (a *Adapter) startSessionPayload(format tts.AudioFormat) []byte {
@@ -353,37 +355,4 @@ func (s *session) recordErr(err error) {
 	if s.lastErr == nil {
 		s.lastErr = err
 	}
-}
-
-func configureProxy(dialer *websocket.Dialer, cfg tts.ProxyConfig) error {
-	proxyURL := strings.TrimSpace(cfg.AllProxy)
-	if strings.TrimSpace(cfg.HTTPSProxy) != "" {
-		proxyURL = cfg.HTTPSProxy
-	}
-	if proxyURL == "" {
-		return nil
-	}
-	u, err := netproxy.Parse(proxyURL, "http", "https", "socks5", "socks5h")
-	if err != nil {
-		return err
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "socks5", "socks5h":
-		d, err := proxy.FromURL(u, proxy.Direct)
-		if err != nil {
-			return err
-		}
-		ctxDialer, ok := d.(proxy.ContextDialer)
-		if !ok {
-			return fmt.Errorf("socks5 proxy does not support context dialing")
-		}
-		dialer.NetDialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return ctxDialer.DialContext(ctx, network, addr)
-		}
-	case "http", "https":
-		dialer.Proxy = func(*http.Request) (*url.URL, error) { return u, nil }
-	default:
-		return fmt.Errorf("unsupported proxy scheme: %s", u.Scheme)
-	}
-	return nil
 }

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"aico-agent/internal/agent/executor"
 	"context"
 	"strings"
 	"testing"
@@ -48,7 +47,6 @@ func TestAgentLoopSteerInterruptOnTermination(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = steerProvider
@@ -91,7 +89,6 @@ func TestAgentLoopNoSteerProviderDoesNotBlock(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	// No SteerProvider set
@@ -123,7 +120,6 @@ func TestAgentLoopPersistSteerNormalizesContentForContextAndRecorder(t *testing.
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	tracker := newSteerConversationTracker()
@@ -167,7 +163,6 @@ func TestAgentLoopBudgetBoundarySteerStartsFreshIterationBudget(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -221,7 +216,6 @@ func TestAgentLoopRetriesAfterCanceledSteerInterruptWithoutReplacementText(t *te
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerInterrupt = func() <-chan struct{} {
@@ -274,7 +268,6 @@ func TestAgentLoopRetriesAfterCanceledSteerInterruptDuringToolWithoutReplacement
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -356,7 +349,6 @@ func TestAgentLoopPersistsOneShotSteerAfterToolInterrupt(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -423,7 +415,6 @@ func TestAgentLoopPendingSteerBeforeFirstModelGetsFreshIterationBudget(t *testin
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {

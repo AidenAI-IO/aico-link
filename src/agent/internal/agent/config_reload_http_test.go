@@ -19,7 +19,7 @@ func TestInternalConfigReloadAppliesLoopbackRevision(t *testing.T) {
 	}
 	runtime := &Runtime{config: Config{ConfigDir: dir}}
 	server := &Server{runtime: runtime}
-	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, configFileRevision(filepath.Join(dir, "agent.toml")))))
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, ConfigFileRevision(filepath.Join(dir, "agent.toml")))))
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	server.handleInternalConfigReload(rec, req)
@@ -49,7 +49,7 @@ model = "gemini-2.5-flash"
 	runtime := &Runtime{config: Config{ConfigDir: dir}}
 	defer runtime.Close()
 	server := &Server{runtime: runtime}
-	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, configFileRevision(configPath))))
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, ConfigFileRevision(configPath))))
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	server.handleInternalConfigReload(rec, req)
@@ -138,7 +138,7 @@ func TestInternalConfigReloadPreservesDeviceCLIOverride(t *testing.T) {
 	runtime := &Runtime{config: cfg}
 	defer runtime.Close()
 	server := &Server{runtime: runtime}
-	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, configFileRevision(filepath.Join(dir, "agent.toml")))))
+	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(fmt.Sprintf(`{"revision":%d}`, ConfigFileRevision(filepath.Join(dir, "agent.toml")))))
 	req.RemoteAddr = "127.0.0.1:1234"
 	rec := httptest.NewRecorder()
 	server.handleInternalConfigReload(rec, req)

@@ -159,7 +159,7 @@ func (m *androidADBManager) Pair(ctx context.Context, rawReq AndroidADBPairReque
 	result.PairOutput = pairOutput
 	if pairErr != nil {
 		result.Status = m.Status(ctx, req.AppUSBIP)
-		result.Error = "adb pair failed: " + firstNonEmptyADB(strings.TrimSpace(pairOutput), pairErr.Error())
+		result.Error = "adb pair failed: " + firstNonEmptyString([]string{pairOutput, pairErr.Error()})
 		return result, &androidADBRequestError{statusCode: http.StatusBadGateway, message: result.Error}
 	}
 
@@ -365,15 +365,6 @@ func stringSliceContains(values []string, target string) bool {
 		}
 	}
 	return false
-}
-
-func firstNonEmptyADB(values ...string) string {
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
 }
 
 func androidADBStatusCode(err error) int {

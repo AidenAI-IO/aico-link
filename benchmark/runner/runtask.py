@@ -25,7 +25,7 @@ from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerd
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
 from runner.reset import ResetError, SetupAssertionError, assert_memory_results, read_memory_results
 from runner.suite import Suite, TaskSpec, effective_mock_environment
-from runner.trace import extract_trace, tool_result_evidence, human_handoff_requested
+from runner.trace import extract_trace, apply_episode_tool_evidence, tool_result_evidence, human_handoff_requested
 from runner.report import now_iso
 
 
@@ -86,6 +86,7 @@ def skipped_task_result(
         artifact_dir=str(artifact_dir),
         started_at=started,
         finished_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={
@@ -163,6 +164,7 @@ def evaluate_task_history(
         rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics={**_attempt_metric_defaults(), **(metrics or {})},
@@ -175,6 +177,8 @@ def evaluate_task_history(
             encoding="utf-8",
         )
     trace = extract_trace(history)
+    episode_evidence_applied = apply_episode_tool_evidence(trace, episode)
+    base.metrics["episode_tool_evidence"] = "applied" if episode_evidence_applied else "unavailable"
     handoff = human_handoff_requested(history)
     base.metrics["human_handoff_requested"] = handoff
     if episode and isinstance(episode.get("outcome"), dict):
@@ -276,6 +280,23 @@ def evaluate_task_history(
     if recall_outcome is not None:
         base.hard_assertions.expected_recalled_memory = recall_outcome.passed
     execution_error = bool(base.metrics.get("agent_error"))
+    # Without episode evidence, required-call matching compared unverified error
+    # status and raw (possibly pixel) arguments, so neither its pass nor its
+    # failure measures the agent. Other failed assertions still count.
+    unverified_required_calls = (
+        not episode_evidence_applied
+        and outcome.results.required_tool_calls is not None
+        and not execution_error
+        and not timed_out
+        and all(f.id == "required_tool_calls" for f in base.hard_assertion_failures)
+    )
+    if unverified_required_calls:
+        base.status = "judge_error"
+        base.metrics["judge_error"] = "Episode tool evidence is unavailable; required tool calls could not be verified."
+        base.metrics["quality_score"] = None
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="evaluation", stage="evaluation")
+        base.finished_at = now_iso()
+        return base
     if execution_error or not outcome.all_passed:
         base.status = "timeout" if timed_out else "failed"
         execution_started = (
@@ -367,15 +388,26 @@ def evaluate_task_history(
             _set_outcome_metrics(base, success=False, eligible=True, failure_class="agent", stage="unknown")
             base.finished_at = now_iso()
             return base
-    if judge_cfg is None:
+    # Tasks without a rubric are fully decided by their deterministic assertions.
+    if not task.rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)
         base.finished_at = now_iso()
         return base
+    if judge_cfg is None:
+        base.status = "skipped"
+        base.metrics["judging_disabled"] = True
+        base.metrics["error"] = "Rubric evaluation skipped because judging is disabled; run rejudge to score this attempt."
+        base.metrics["quality_score"] = None
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        base.metrics["failure_event_ref"] = None
+        base.finished_at = now_iso()
+        return base
     try:
         verdict = judge_task(
             description=task.description_for_judge,
+            task_prompt=base.task_prompt,
             rubric=task.rubric,
             pre_screenshot=pre_screenshot if pre_screenshot and pre_screenshot.exists() else None,
             post_screenshot=last_shot_path,
@@ -435,6 +467,7 @@ def run_one_task(
         attempt=attempt, status="failed",
         rubric=[], rubric_pass_count=0, rubric_total=len(task.rubric),
         artifact_dir=str(artifact_dir), started_at=started,
+        task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics=_attempt_metric_defaults(),
@@ -452,16 +485,43 @@ def run_one_task(
         )
         base.metrics["setup_ms"] = int((time.monotonic() - setup_started_mono) * 1000)
     except SetupAssertionError as e:
+        eligible = e.agent_eligible
+        evidence = {"error": str(e), "setup_step": getattr(e, "setup_step", None)}
+        for field in ("consolidation", "memory_state"):
+            value = getattr(e, field, None)
+            if value is not None:
+                evidence[field] = value
+        (artifact_dir / "setup_failure.json").write_text(
+            json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8",
+        )
+        consolidation = evidence.get("consolidation")
+        if isinstance(consolidation, dict):
+            (artifact_dir / "consolidation.json").write_text(
+                json.dumps(consolidation, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+        if eligible:
+            base.hard_assertion_failures.append(HardAssertionFailure(
+                id="setup_evaluation", label="Memory Behavior",
+                requirement="The evaluated setup step must satisfy its behavior assertions.",
+                actual=str(e),
+            ))
         base.status = "failed"
         base.metrics = {
             **_attempt_metric_defaults(),
             "error": f"setup assertion: {e}",
             "success": False,
-            "agent_eligible": False,
-            "failure_class": "environment",
+            "agent_eligible": eligible,
+            "failure_class": "agent" if eligible else "environment",
+            "quality_score": 0.0 if eligible else None,
             "first_failure_stage": "setup",
+            "failure_event_ref": "setup_failure.json",
             "setup_ms": int((time.monotonic() - started_mono) * 1000),
         }
+        if isinstance(consolidation, dict):
+            assessment = consolidation.get("assessment")
+            memory_ids = consolidation.get("memory_ids")
+            base.metrics["consolidation_goal_result"] = assessment.get("goal_result") if isinstance(assessment, dict) else None
+            base.metrics["consolidation_memory_count"] = len(memory_ids) if isinstance(memory_ids, list) else None
         base.finished_at = now_iso()
         return base
     except (ResetError, AgentTimeoutError, AgentRequestError) as e:
@@ -751,7 +811,10 @@ def _apply_environment_assertions(
                     actual=f"Observed {check.actual!r}.",
                 )
             )
-        if result.status == "passed":
+        if result.status == "passed" or (result.status == "skipped" and result.metrics.get("judging_disabled")):
+            if result.metrics.pop("judging_disabled", False):
+                result.metrics.pop("error", None)
+                result.metrics["first_failure_stage"] = "unknown"
             result.status = "failed"
             result.metrics["quality_score"] = 0.0
             _set_outcome_metrics(

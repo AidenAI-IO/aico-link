@@ -719,6 +719,7 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	rt.stateManager.RegisterUpdater(&deviceStateUpdater{snapshot: rt.ConfigSnapshot})
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
+	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -765,6 +766,10 @@ func (r *Runtime) initRunGate() {
 		r.runGate = make(chan struct{}, 1)
 		r.runGate <- struct{}{}
 	})
+}
+
+func (r *Runtime) decisionConfig() DecisionModelConfig {
+	return r.ConfigSnapshot().Decision
 }
 
 func (r *Runtime) deviceTypeFromState() string {
@@ -1271,17 +1276,35 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// configurable trigger. It is intentionally independent from conversation
 	// summarization and provider-managed Responses compaction.
 	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
+	// A screenshot-count prune only drops stale states: its target is one no
+	// request reaches, so it never compacts tool results toward the token
+	// target. That stays with the token threshold.
+	const stateTarget = math.MaxInt
+	stateLimit := cfg.ContextPruneStateLimitOrDefault()
+	pruneReason := ""
 	if pruneEnabled && messageTokenUsage > pruneTrigger {
+		pruneReason = "threshold"
 		if r.logger != nil {
 			r.logger.Info("Historical context prune: token usage reached threshold; tokenUsage=%d trigger=%d target=%d", messageTokenUsage, pruneTrigger, pruneTarget)
 		}
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, pruneTarget)
+	} else if states := r.contextManager.ScreenshotStateCount(); states > stateLimit {
+		pruneReason = "state_count"
+		if r.logger != nil {
+			r.logger.Info("Historical context prune: screenshot states reached limit; states=%d limit=%d", states, stateLimit)
+		}
+	}
+	if pruneReason != "" {
+		target := pruneTarget
+		if pruneReason == "state_count" {
+			target = stateTarget
+		}
+		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, target)
 		if episodeRecorder != nil {
 			episodeRecorder.RecordEvent(historicalPruneEvent(
 				contextCompactor.LastPruneStats(),
 				pruned,
 				pruneErr,
-				"threshold",
+				pruneReason,
 			))
 		}
 		if pruneErr != nil {
@@ -1318,7 +1341,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 
-	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, cfg.ScreenshotPruningOrDefault(), r.contextManager)
+	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
 	agentLoop.SteerRecorder = steerRecorder
@@ -1341,6 +1364,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if pruneEnabled && messageTokens > pruneTrigger {
 			targetTokens = pruneTarget
 			reason = "active_turn_threshold"
+		} else if currentManager.ScreenshotStateCount() > stateLimit {
+			targetTokens = stateTarget
+			reason = "active_turn_state_count"
 		}
 		if usableInputBudget > 0 && activePromptTokens(currentManager, options) > usableInputBudget {
 			hardBudgetExceeded = true
@@ -1945,7 +1971,7 @@ func (r *Runtime) availableTools() []langtools.Tool {
 		return nil
 	}
 	tools := NewToolSpecs(r.toolSnapshot().All()).AgentToolsForPlatform(r.devicePlatformFromState())
-	return r.filterPhoneBridgeAgentTools(tools)
+	return benchmarkHeadlessTools(r.ConfigSnapshot(), benchmarkMockTools(r.ConfigSnapshot(), r.filterPhoneBridgeAgentTools(tools)))
 }
 
 // AvailableTools returns the runtime-filtered tools exposed to the

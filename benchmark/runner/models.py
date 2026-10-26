@@ -8,6 +8,9 @@ class ToolCall:
     tool: str
     input: dict[str, Any]
     has_screenshot: bool = False
+    is_error: bool = False
+    # False when history recorded the call but no result for it.
+    has_result: bool = True
 
 @dc.dataclass
 class Trace:
@@ -61,5 +64,6 @@ class TaskResult:
     artifact_dir: str = ""
     started_at: str = ""
     finished_at: str = ""
+    task_prompt: str = ""
     description_for_judge: str = ""
     rubric_spec: list[dict] = dc.field(default_factory=list)

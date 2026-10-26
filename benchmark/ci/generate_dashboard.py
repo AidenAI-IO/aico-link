@@ -10,14 +10,9 @@ from pathlib import Path
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp, comparison_key, fetch_benchmark_history
-from ci.weekly_report import summarize_weekly, render_weekly
+from ci.weekly_report import AREA_ORDER, DIAGNOSTIC_SUITES, capability_of, environment_of, summarize_weekly, render_weekly
 from ci.dashboard_metrics import METRIC_CHARTS
 
-
-# A suite whose pass@1 drops by at least this much against its own previous run
-# is called out as a regression. Benchmarks are noisy, so a threshold below this
-# would flag ordinary run-to-run variance.
-REGRESSION_THRESHOLD = 0.05
 
 # Plain HTML (no Python format braces); the JSON payload replaces one marker.
 _TEMPLATE_PATH = Path(__file__).with_name("dashboard_template.html")
@@ -48,7 +43,6 @@ def generate_dashboard(
                        if (stamp := parse_timestamp(record.get("timestamp"))) is not None
                        and display_start <= stamp < report_end]
     runs = _group_into_runs(display_history)
-    regressions = _find_regressions(runs)
     suites = _summarize_suites(runs)
     warnings = warnings or []
     weekly = summarize_weekly(history, end=report_end)
@@ -70,7 +64,6 @@ def generate_dashboard(
                     "repo": repo,
                     "runs": runs,
                     "suites": compact_suites,
-                    "regressions": regressions,
                     "history": history,
                     "warnings": warnings,
                     "weekly": weekly,
@@ -82,7 +75,7 @@ def generate_dashboard(
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(
-        _render_html(runs=runs, suites=suites, regressions=regressions, repo=repo,
+        _render_html(runs=runs, suites=suites, repo=repo,
                      warnings=warnings, report_end=report_end),
         encoding="utf-8",
     )
@@ -94,11 +87,6 @@ def generate_dashboard(
         print(f"  Latest: {latest['commit_sha'][:8]} on {latest['git_branch']}")
         print(f"    pass@1 {_percent(latest['pass_at_1'])}"
               f" ({latest['passed']}/{latest['eligible_tasks']} eligible first attempts)")
-    if regressions:
-        print(f"  Regressions: {len(regressions)}")
-        for item in regressions:
-            print(f"    {item['suite']}: {_percent(item['previous'])}"
-                  f" -> {_percent(item['current'])}")
 
 
 def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -155,7 +143,11 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "commit_sha": record.get("commit_sha") or "unknown",
             "run_id": record.get("run_id"),
             "experiment_id": record.get("experiment_id"),
+            "execution_environment": record.get("execution_environment"),
+            "environment_label": environment_of(record),
+            "skill_discovery": record.get("skill_discovery") or {},
             "tasks": tasks,
+            "workload_task_ids": record.get("workload_task_ids"),
             "passed": passed,
             "eligible_tasks": eligible,
             "pass_at_1": record.get("pass_at_1"),
@@ -210,6 +202,23 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return runs
 
 
+def _changed_fields(latest: dict[str, Any], previous: dict[str, Any] | None) -> list[str]:
+    """Return the comparison fields that differ between two runs of a dataset."""
+    if previous is None:
+        return []
+    return [field for field in _CONFIG_ORDER
+            if str(latest.get(field) or "") != str(previous.get(field) or "")]
+
+
+# COMPARISON_FIELDS in reading order: settings that most often explain a score change first.
+_CONFIG_ORDER = (
+    "agent_model", "judge_model", "judge_prompt_version", "judge_provider", "suite_sha256",
+    "workload_sha256", "metrics_schema_version", "metrics_k", "target_platform",
+    "active_skills", "git_branch", "execution_environment",
+)
+assert sorted(_CONFIG_ORDER) == sorted(COMPARISON_FIELDS)
+
+
 def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     Build each dataset's history, preserving all metrics and run identities.
@@ -235,10 +244,10 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for name, points in series.items():
         points.sort(key=lambda point: point["timestamp"] or "")
         latest = points[-1]
-        previous = next((p for p in reversed(points[:-1])
-                         if latest["comparison_key"] is not None
-                         and p["comparison_key"] == latest["comparison_key"]), None)
-        # Metric deltas and change direction require matching configurations.
+        # Compare with the immediately previous run even when its configuration
+        # differs; the changed fields explain the delta.
+        previous = points[-2] if len(points) > 1 else None
+        changed_fields = _changed_fields(latest, previous)
         metric_deltas = {metric: _delta(latest.get(metric), previous.get(metric) if previous else None)
                          for metric in ("pass_at_1", "pass_at_k", "pass_pow_k")}
         changes = [value for value in metric_deltas.values() if value is not None]
@@ -247,19 +256,22 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         direction = ("mixed" if increases and decreases else "improved" if increases
                      else "declined" if decreases else "unchanged" if changes else "unavailable")
         comparison_status = (
-            "No baseline" if len(points) < 2 else
-            "Configuration unverified" if latest["comparison_key"] is None else
-            "Configuration changed" if previous is None else
+            "No baseline" if previous is None else
             "Missing scores" if not changes else
+            "Configuration unverified" if latest["comparison_key"] is None or previous["comparison_key"] is None else
+            "Configuration changed" if changed_fields else
             "Comparable"
         )
         summaries.append({
             "suite": name,
+            "capability": capability_of(name),
+            "diagnostic": name in DIAGNOSTIC_SUITES,
             "latest": latest,
             "previous": previous,
             "metric_deltas": metric_deltas,
             "change_direction": direction,
             "comparison_status": comparison_status,
+            "changed_fields": changed_fields,
             "delta": _delta(latest["pass_at_1"], previous["pass_at_1"] if previous else None),
             "points": points,
         })
@@ -271,48 +283,6 @@ def _summarize_suites(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         item["latest"]["pass_at_1"] or 0.0,
     ))
     return summaries
-
-
-def _find_regressions(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """
-    Find suites whose pass@1 fell meaningfully in the most recent run.
-
-    Args:
-        runs: Workflow runs, sorted oldest first
-
-    Returns:
-        Regressions, largest drop first
-    """
-    if len(runs) < 2:
-        return []
-
-    latest = runs[-1]
-
-    regressions = []
-    for suite in latest["suites"]:
-        current = suite["pass_at_1"]
-        previous = next((run for run in reversed(runs[:-1]) if any(
-            candidate["suite"] == suite["suite"] and suite["comparison_key"] is not None
-            and candidate["comparison_key"] == suite["comparison_key"] for candidate in run["suites"])), None)
-        prior = next((candidate["pass_at_1"] for candidate in previous["suites"]
-                      if candidate["suite"] == suite["suite"] and candidate["comparison_key"] == suite["comparison_key"]), None) if previous else None
-        if current is None or prior is None:
-            continue
-        if prior - current >= REGRESSION_THRESHOLD - 1e-12:
-            regressions.append({
-                "suite": suite["suite"],
-                "current": current,
-                "previous": prior,
-                "delta": current - prior,
-                "passed": suite["passed"],
-                "tasks": suite["tasks"],
-                "eligible_tasks": suite["eligible_tasks"],
-                "commit_sha": latest["commit_sha"],
-                "previous_commit_sha": previous["commit_sha"],
-            })
-
-    regressions.sort(key=lambda item: item["delta"])
-    return regressions
 
 
 def _delta(current: float | None, previous: float | None) -> float | None:
@@ -333,7 +303,6 @@ def _render_html(
     *,
     runs: list[dict[str, Any]],
     suites: list[dict[str, Any]],
-    regressions: list[dict[str, Any]],
     repo: str,
     warnings: list[str],
     report_end: datetime | None = None,
@@ -348,7 +317,6 @@ def _render_html(
     Args:
         runs: Workflow runs, sorted oldest first
         suites: Per-suite summaries
-        regressions: Detected regressions
         repo: GitHub repository ("owner/repo") for commit links
 
     Returns:
@@ -368,7 +336,8 @@ def _render_html(
         "repo": repo,
         "runs": runs,
         "suites": suites,
-        "regressions": regressions,
+        "capabilities": [name for name in AREA_ORDER
+                         if any(suite["capability"] == name for suite in suites)],
         "warnings": display_warnings,
         "metricCharts": sorted(METRIC_CHARTS, key=lambda spec:
                                ("latency", "timings", "calls", "reliability", "tokens", "cost").index(spec["id"])),

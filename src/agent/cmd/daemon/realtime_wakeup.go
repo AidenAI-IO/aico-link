@@ -59,8 +59,6 @@ func shouldAnnounceRealtimeSessionFailure(err error) bool {
 	return errors.As(err, &providerFailure)
 }
 
-// runRealtimeWakeupMode owns the realtime voice path. The legacy wakeup
-// runners remain separate so they can be restored without changing this path.
 type realtimeChatCommand struct {
 	ctx     context.Context
 	request agent.RealtimeChatRequest
@@ -367,6 +365,8 @@ func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher 
 	runRealtimeWakeupModeWithServer(cfg, sigChan, nil, nil, nil, newWatcher)
 }
 
+// runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
+// runners remain separate so they can be restored without changing this path.
 func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	events := make(chan struct{}, 1)
 	bridge := newRealtimeChatBridge(func() {
@@ -466,17 +466,17 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
 	}
-	logging.Infof("agent", "ready", "Starting realtime MCU ASR wakeup listener...")
+	logging.Infof("agent", "ready", "Starting realtime MCU wakeup listener...")
 	watchers, err := startWakeupWatchers(newWatcher, func() {
 		signalWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Warnf("agent", "realtime", "ASR wakeup unavailable: %v; /api/chat activation remains enabled", err)
+		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
 	} else {
 		defer stopWakeupWatchers(watchers)
 	}
 
-	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or MCU ASR)... Ctrl+C to quit")
+	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or %s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 	var taskWake taskWakeState
 	for {
 		if reloadRequested(reload) {

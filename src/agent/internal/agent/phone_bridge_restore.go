@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"aico-agent/internal/agent/mnk"
 )
 
 const (
@@ -62,7 +64,7 @@ func (r *PhoneBridgeRestorer) EnsureForeground(ctx context.Context) (bool, error
 	}
 
 	if bridge.logger != nil {
-		bridge.logger.Info("phone-bridge: restoring foreground via %s before app command", firstNonEmptyPhoneField(status.ReturnEntry, "return_entry"))
+		bridge.logger.Info("phone-bridge: restoring foreground via %s before app command", firstNonEmptyString([]string{status.ReturnEntry, "return_entry"}))
 	}
 	if err := r.tap(ctx, status); err != nil {
 		return false, fmt.Errorf("tap Dynamic Island return entry: %w", err)
@@ -86,7 +88,7 @@ func (r *PhoneBridgeRestorer) tap(ctx context.Context, status PhoneBridgeStatus)
 	default:
 	}
 	x, y := phoneBridgeDynamicIslandTapPoint()
-	absX, absY := normalizedToAbsolutePoint(x, y)
+	absX, absY := mnk.NormalizedToAbsolutePoint(x, y)
 	return tapPointer(r.pc, absX, absY, mouseButtonByte("left"))
 }
 

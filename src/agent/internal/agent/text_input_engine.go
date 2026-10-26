@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
@@ -524,7 +525,7 @@ func textInputChunkIsPunctuation(chunk textInputChunk) bool {
 // avoiding an unnecessary pinyin/candidate-selection cycle.
 func directTextInputForRune(r rune) (string, bool) {
 	if r <= 0x7f {
-		_, ok := keyboardLayoutKeyStroke(defaultKeyboardLayout, byte(r))
+		_, ok := mnk.KeyboardLayoutKeyStroke(mnk.DefaultKeyboardLayout, byte(r))
 		return string(r), ok
 	}
 	if input, ok := map[rune]string{

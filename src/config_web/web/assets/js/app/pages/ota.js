@@ -4,7 +4,7 @@
  * APT source. Package-only updates can restart Config Web without a reboot.
  */
 
-import {request, t} from '../data.js';
+import {fetchSnapshot, request, t} from '../data.js';
 import {waitForReboot} from '../apply.js';
 import {postToHost} from '../host.js';
 import {parseOtaLog, shortVersion} from '../ota-progress.js';
@@ -47,7 +47,7 @@ function localTime(value) {
 async function readStatus() {
   const [ota, snapshot] = await Promise.all([
     request('/api/ota/status'),
-    request('/api/device/snapshot').catch(() => ({})),
+    fetchSnapshot().catch(() => ({})),
   ]);
   return {ota, firmware: (snapshot && snapshot.firmware) || {}};
 }

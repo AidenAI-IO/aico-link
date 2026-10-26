@@ -3,6 +3,7 @@ package agent
 import (
 	"sort"
 
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/realtimevoice"
 	"aico-agent/internal/agent/tts"
 )
@@ -193,9 +194,9 @@ type ConfigMetadata struct {
 }
 
 func keyboardLayoutEnumOptions() []EnumOption {
-	options := make([]EnumOption, 0, len(keyboardLayoutDefinitions))
-	for _, layout := range keyboardLayoutDefinitions {
-		options = append(options, EnumOption{Value: layout.value, Label: layout.label})
+	options := make([]EnumOption, 0, len(mnk.KeyboardLayoutDefinitions))
+	for _, layout := range mnk.KeyboardLayoutDefinitions {
+		options = append(options, EnumOption{Value: layout.Value, Label: layout.Label})
 	}
 	return options
 }
@@ -218,9 +219,6 @@ func providerTypeIs(field, value string) Condition {
 }
 func in(field string, vs ...string) Condition {
 	return Condition{Field: field, Op: "in", Values: vs}
-}
-func notIn(field string, vs ...string) Condition {
-	return Condition{Field: field, Op: "notIn", Values: vs}
 }
 
 func all(conds ...Condition) *VisibleRule { return &VisibleRule{All: conds} }
@@ -732,6 +730,24 @@ func ConfigMeta() ConfigMetadata {
 				},
 			},
 			{
+				Name: "decision",
+				Fields: []FieldMeta{
+					{Key: "provider", Label: "Decision model provider", Widget: WidgetSelect,
+						Enum:    []EnumOption{{Value: DecisionProviderTypeSafe, Label: "TypeSafe Jev"}, {Value: DecisionProviderOpenAI, Label: "OpenAI Luna"}},
+						Default: defaults.Decision.ProviderOrDefault()},
+					{Key: "enabled", Label: "Enable decision model", Widget: WidgetBoolean, Default: false,
+						Help: "Fixed workflow checks ask the decision model and the main model at once; confident decision-model answers are used. Requires an API key."},
+					{Key: "api_key", Label: "Decision model API key", Widget: WidgetText, Secret: true, Layout: "wide"},
+					{Key: "base_url", Label: "Decision model Base URL", Widget: WidgetText, Layout: "wide",
+						Default: defaults.Decision.BaseURLOrDefault()},
+					{Key: "model", Label: "Decision model", Widget: WidgetText,
+						Default: defaults.Decision.ModelOrDefault()},
+					{Key: "min_confidence", Label: "Minimum confidence", Widget: WidgetNumber,
+						Help:    "Answers below this confidence (0 to 1) are handed back to the main model.",
+						Default: defaults.Decision.MinConfidenceOrDefault()},
+				},
+			},
+			{
 				Name: "telemetry",
 				Fields: []FieldMeta{
 					{Key: "enabled", Widget: WidgetBoolean, Default: false},
@@ -776,6 +792,14 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "input_mode", Widget: WidgetSelect,
 						Enum:    enumOptions("stt", "realtime"),
 						Default: defaults.InputMode},
+					{Key: "tap_wakeup_enabled", Label: "Tap wakeup", Widget: WidgetBoolean,
+						Help:    "When on, the tap button can wake Aico. Turning it off disables only that button path, not other activation such as Realtime /api/chat.",
+						Default: defaults.TapWakeupEnabledOrDefault()},
+					{Key: "mcp_enabled", Label: "MCP", Widget: WidgetBoolean,
+						Help:    "When on, Agent tools can be used over MCP.",
+						Default: defaults.MCPEnabledOrDefault()},
+					// mcp_shell_enabled and mcp_config_web_base_url stay TOML-only
+					// (not in configupdate.Agent / Config Web widgets) this release.
 					{Key: "vad_backend", Widget: WidgetSelect,
 						Enum:        enumOptions(defaultVADBackend, "cpu"),
 						Default:     defaults.VADBackend,
@@ -820,11 +844,12 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "context_prune_threshold", Label: "Context prune threshold (fraction)", Widget: WidgetNumber,
 						Help:    "Fraction of the usable model input budget that triggers cleanup of stale state and older tool exchanges, including during one long-running tool loop, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.",
 						Default: defaults.ContextPruneThreshold, Placeholder: "0 = automatic (0.5)"},
+					{Key: "context_prune_state_limit", Label: "Screenshot state limit", Widget: WidgetNumber,
+						Help:    "Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. 0 uses 6.",
+						Default: defaults.ContextPruneStateLimit, Placeholder: "0 = automatic (6)"},
 					{Key: "context_compaction_threshold", Label: "Context compaction threshold (fraction)", Widget: WidgetNumber,
 						Help:    "Fraction of the usable model input budget at which the conversation is summarized. Must be 0 or greater than 0 and less than 1; 0 uses 0.8.",
 						Default: defaults.ContextCompactionThreshold, Placeholder: "0 = automatic (0.8)"},
-					{Key: "screenshot_keep_n", Widget: WidgetNumber, Default: defaults.ScreenshotKeepN},
-					{Key: "screenshot_prune_interval", Widget: WidgetNumber, Default: defaults.ScreenshotPruneInterval},
 					{Key: "screen_stable_timeout_ms", Widget: WidgetNumber, Default: defaults.ScreenStableTimeoutMs},
 					{Key: "screen_stable_ms", Widget: WidgetNumber, Default: defaults.ScreenStableMs},
 					{Key: "screen_stable_diff_threshold", Widget: WidgetNumber, Default: defaults.ScreenStableDiffThreshold},

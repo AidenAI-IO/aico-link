@@ -300,14 +300,6 @@ func (m *episodeMemoryScriptedModel) firstCallText() string {
 	return strings.Join(parts, "\n")
 }
 
-func reviewedEpisodeMemoryResponses(responses ...string) []string {
-	reviewed := make([]string, 0, len(responses)*2)
-	for _, response := range responses {
-		reviewed = append(reviewed, response, response)
-	}
-	return reviewed
-}
-
 func TestEpisodeMemoryEpisodeDueHonorsLeaseAndRetry(t *testing.T) {
 	now := time.Now().UTC()
 	tests := []struct {

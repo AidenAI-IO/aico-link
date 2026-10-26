@@ -26,20 +26,6 @@ const appSearchPointerRestoreSettleDelay = 800 * time.Millisecond
 // result. iOS can ignore a second tap that follows too quickly.
 const appSearchQuickCommitGap = 800 * time.Millisecond
 
-func sleepWithContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
 type appSearchOpenTool struct {
 	hw                   *textInputHardwareDeps
 	vision               textInputVision
@@ -53,6 +39,8 @@ type appSearchOpenTool struct {
 	sleep                func(context.Context, time.Duration) error
 	iosKeyboardIsolation *iosKeyboardIsolationController
 	exactEntryOnly       bool
+	checkSearchOpenFn    func(context.Context, screenshotResult) (androidSearchCheck, error)
+	searchEntries        *androidSearchEntryStore
 }
 
 type appSearchOpenArgs struct {
@@ -108,9 +96,7 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 	}
 	platform := ""
 	if t.deviceTypeFn != nil {
-		if derived := textInputPlatformFromDeviceType(t.deviceTypeFn()); derived != "" {
-			platform = derived
-		}
+		platform = textInputPlatformFromDeviceType(t.deviceTypeFn())
 	}
 	if platform == "" && t.iosKeyboardIsolation != nil {
 		platform = "ios"
@@ -127,6 +113,10 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 		launchDelay:      t.launchDelay,
 		sleep:            t.sleep,
 		exactEntryOnly:   t.exactEntryOnly,
+		// Android search entries are remembered per connected phone.
+		phoneIDFn:         t.connectedPhoneID,
+		checkSearchOpenFn: t.checkSearchOpenFn,
+		searchEntries:     t.searchEntries,
 	})
 	if err != nil {
 		logging.Infof("agent", "app_search", "open finished target=%q ok=false error=%q steps=%q", args.App, err.Error(), result.Steps)
@@ -142,10 +132,26 @@ func (t *appSearchOpenTool) call(ctx context.Context, input string) (string, err
 	if result.Reason != "" {
 		output["reason"] = result.Reason
 	}
+	if result.Popup != nil {
+		output["popup"] = map[string]any{
+			"kind":    result.Popup.Kind,
+			"summary": result.Popup.Summary,
+			"note":    "A dialog is open over the app. Decide from the task whether to continue; do not accept permission, login, privacy or payment dialogs unless the user asked for it.",
+		}
+	}
 	if !result.Opened {
 		output["ok"] = false
 	}
 	return jsonString(output), nil
+}
+
+// connectedPhoneID identifies the phone on the board's USB link. It survives a
+// Phone Bridge disconnect, which is when the search flow runs.
+func (t *appSearchOpenTool) connectedPhoneID() string {
+	if t == nil || t.entryTool == nil || t.entryTool.bridgeTool == nil {
+		return ""
+	}
+	return t.entryTool.bridgeTool.currentBridge().HIDConnectionPhoneID()
 }
 
 func (t *appSearchOpenTool) searchTerm(app string) string {
@@ -170,6 +176,24 @@ type appSearchOpenFlowConfig struct {
 	sleep            func(context.Context, time.Duration) error
 	// exactEntryOnly skips the quick pinyin query (tests of exact entry).
 	exactEntryOnly bool
+	// phoneIDFn, checkSearchOpenFn and searchEntries drive the Android search
+	// entry; see openAndroidSystemSearch.
+	phoneIDFn         func() string
+	checkSearchOpenFn func(context.Context, screenshotResult) (androidSearchCheck, error)
+	searchEntries     *androidSearchEntryStore
+	// checkSearchFieldFn replaces the empty-search-field check in tests.
+	checkSearchFieldFn func(context.Context, screenshotResult, string) (searchFieldCheck, error)
+	// checkPopupFn replaces the after-open dialog check in tests.
+	checkPopupFn func(context.Context, screenshotResult, string) (popupCheck, error)
+}
+
+// resolvedPlatform is cfg.platform, or the entry tool's platform when the
+// caller left it empty.
+func (cfg appSearchOpenFlowConfig) resolvedPlatform() string {
+	if cfg.platform != "" {
+		return cfg.platform
+	}
+	return cfg.entryTool.platform()
 }
 
 type appSearchOpenFlowResult struct {
@@ -177,6 +201,8 @@ type appSearchOpenFlowResult struct {
 	Reason   string
 	VLMCalls int
 	Steps    []string
+	// Popup is a dialog left open over the app for the Agent to decide on.
+	Popup *popupCheck
 }
 
 func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (appSearchOpenFlowResult, error) {
@@ -213,11 +239,51 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		}
 		return interpretTextInputToolOutput(out)
 	}
-	if err := callQuickAction("spotlight_search"); err != nil {
-		return result, err
-	}
-	steps = append(steps, "opened system search")
 	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+	// Resolve once so every step below works on the same platform.
+	cfg.platform = cfg.resolvedPlatform()
+	if cfg.platform == "android" {
+		entry, err := openAndroidSystemSearch(ctx, cfg, engine)
+		result.VLMCalls += entry.vlmCalls
+		steps = append(steps, entry.steps...)
+		if err != nil {
+			result.Steps = steps
+			return result, err
+		}
+		if entry.appIcon != nil {
+			result.Steps = steps
+			if err := tapSearchOpenResult(ctx, cfg.hw, *entry.appIcon); err != nil {
+				return result, err
+			}
+			result.Steps = append(result.Steps, "tapped visible app icon")
+			if err := sleep(ctx, launchDelay); err != nil {
+				return result, err
+			}
+			// This is a launcher icon, not a search result. Keep target-app
+			// confirmation instead of the search-page transition comparison.
+			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, searchTerm, screenshotResult{})
+			result.VLMCalls += calls
+			if err != nil {
+				return result, err
+			}
+			result.Opened = opened.Opened
+			result.Reason = strings.TrimSpace(opened.Reason)
+			if opened.Opened {
+				result.Steps = append(result.Steps, "app open confirmed")
+				if cfg.afterOpenFn != nil {
+					if err := cfg.afterOpenFn(); err != nil {
+						return result, err
+					}
+				}
+			}
+			return result, nil
+		}
+	} else {
+		if err := callQuickAction("spotlight_search"); err != nil {
+			return result, err
+		}
+		steps = append(steps, "opened system search")
+	}
 	isolation := iosKeyboardIsolationControllerFromContext(ctx)
 	type searchAttempt struct {
 		term       string
@@ -233,12 +299,13 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		if previousQuick {
 			// The quick query is committed ASCII text, so no screen analysis
 			// is needed to clear it.
-			if err := clearSearchQueryText(ctx, cfg); err != nil {
+			if err := clearSearchQueryText(ctx, engine); err != nil {
 				result.Steps = append(steps, "clear quick query failed")
 				return result, err
 			}
 		}
-		quick, err := enterSearchQuery(ctx, cfg, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		entered, err := enterSearchQuery(ctx, cfg, engine, term, index > 0 && !previousQuick, attempts[index].allowQuick)
+		quick := entered == searchQueryQuick
 		previousQuick = quick
 		if err != nil {
 			var unverified *searchQueryUnverifiedError
@@ -274,8 +341,10 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 		}
 		steps = append(steps, "waited for search results to settle")
 		foundForTerm := false
+		recovered := false
+	lookup:
 		for attempt := 1; attempt <= 2; attempt++ {
-			findResult, calls, err := findSearchOpenAppResult(ctx, cfg, engine, term)
+			findResult, searchShot, calls, err := findSearchOpenAppResult(ctx, cfg, engine, term)
 			result.VLMCalls += calls
 			if err != nil {
 				result.Steps = append(steps, "locate app failed")
@@ -291,6 +360,26 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 					continue
 				}
 				steps = append(steps, fmt.Sprintf("app result not found for %q", term))
+				// A pasted query that never reached the field leaves no
+				// results; re-enter it once before trying the next term.
+				if entered == searchQueryPasted && !recovered {
+					recovered = true
+					reentered, calls, err := recoverEmptySearchPaste(ctx, cfg, engine, term)
+					result.VLMCalls += calls
+					if err != nil {
+						result.Steps = append(steps, "search paste recovery failed")
+						return result, err
+					}
+					if reentered {
+						steps = append(steps, fmt.Sprintf("search field was empty after paste; re-entered %q", term))
+						if err := sleep(ctx, settleDelay); err != nil {
+							result.Steps = append(steps, "wait for search results canceled")
+							return result, err
+						}
+						attempt = 0
+						continue lookup
+					}
+				}
 				break
 			}
 			foundForTerm = true
@@ -311,7 +400,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 				result.Steps = append(steps, "app launch wait canceled")
 				return result, err
 			}
-			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, term)
+			opened, calls, err := confirmSearchOpenApp(ctx, cfg, engine, term, searchShot)
 			result.VLMCalls += calls
 			if err != nil {
 				result.Steps = append(steps, "confirm app open failed")
@@ -319,6 +408,7 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 			}
 			if opened.Opened {
 				steps = append(steps, "app open confirmed")
+				steps, result = checkPopupAfterOpen(ctx, cfg, engine, steps, result)
 				if cfg.afterOpenFn != nil {
 					if err := cfg.afterOpenFn(); err != nil {
 						result.Steps = append(steps, "after-open hook failed")
@@ -348,35 +438,48 @@ func runAppSearchOpenFlow(ctx context.Context, cfg appSearchOpenFlowConfig) (app
 	return result, nil
 }
 
-// enterSearchQuery reports quick=true when it typed the quick ASCII query,
-// which the caller retries with exact entry if no result is found.
-func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string, clearFirst, allowQuick bool) (quick bool, err error) {
+// searchQueryEntry is how enterSearchQuery entered the query.
+type searchQueryEntry int
+
+const (
+	searchQueryTyped searchQueryEntry = iota
+	// searchQueryQuick is the quick ASCII query, which the caller retries
+	// with exact entry if no result is found.
+	searchQueryQuick
+	// searchQueryPasted went through a background clipboard route.
+	searchQueryPasted
+)
+
+func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string, clearFirst, allowQuick bool) (searchQueryEntry, error) {
 	if clearFirst {
-		engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
-		if err := engine.clearField(ctx, cfg.platform); err != nil {
-			return false, err
+		if err := engine.clearField(ctx, cfg.resolvedPlatform()); err != nil {
+			return searchQueryTyped, err
 		}
 	}
-	attempted, err := pasteSearchQuery(ctx, cfg, term)
+	route, err := pasteSearchQuery(ctx, cfg, term)
+	attempted := route != ""
 	if err := ctx.Err(); err != nil {
-		return false, err
+		return searchQueryTyped, err
 	}
 	if attempted && err == nil {
-		logging.Infof("agent", "app_search", "query input route=pip_clipboard_paste")
-		return false, nil
+		logging.Infof("agent", "app_search", "query input route=%s", route)
+		return searchQueryPasted, nil
 	}
 	if attempted {
 		logging.Infof("agent", "app_search", "query input route=local_hid clipboard_error=%v", err)
 		// A failed paste may have inserted text. Clear it without Escape,
 		// which could dismiss Spotlight, before the existing local input path.
-		if err := clearSearchQueryText(ctx, cfg); err != nil {
-			return false, err
+		if err := clearSearchQueryText(ctx, engine); err != nil {
+			return searchQueryTyped, err
 		}
 	}
 	if allowQuick {
-		typed, err := typeQuickSearchQuery(ctx, cfg, term)
-		if err != nil || typed {
-			return typed, err
+		typed, err := typeQuickSearchQuery(ctx, cfg, engine, term)
+		if err != nil {
+			return searchQueryTyped, err
+		}
+		if typed {
+			return searchQueryQuick, nil
 		}
 	}
 
@@ -386,22 +489,107 @@ func enterSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term str
 	}
 	out, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
 	if err != nil {
-		return false, err
+		return searchQueryTyped, err
 	}
 	var result enterTextToolResult
 	if err := json.Unmarshal([]byte(out), &result); err != nil {
-		return false, fmt.Errorf("parse search entry result: %w", err)
+		return searchQueryTyped, fmt.Errorf("parse search entry result: %w", err)
 	}
 	if !result.OK {
-		return false, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
+		return searchQueryTyped, &searchQueryUnverifiedError{suggestion: strings.TrimSpace(result.Suggestion)}
 	}
-	return false, nil
+	return searchQueryTyped, nil
+}
+
+// searchFieldCheck is the state of the system search field after a paste.
+type searchFieldCheck struct {
+	Empty       bool            `json:"empty"`
+	SearchField *focusPointArgs `json:"search_field"`
+	Reason      string          `json:"reason,omitempty"`
+}
+
+// recoverEmptySearchPaste handles a background clipboard paste that sent the
+// paste keys but left the search field empty, which shows up only as missing
+// results. It pastes through the long-press menu and, if the field is still
+// empty, types the query locally. It reports whether the query was re-entered.
+func recoverEmptySearchPaste(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string) (bool, int, error) {
+	field, calls, err := checkSearchField(ctx, cfg, engine)
+	if err != nil || !field.Empty || field.SearchField == nil {
+		return false, calls, err
+	}
+	focus := *field.SearchField
+	logging.Infof("agent", "app_search", "search field empty after paste term=%q; trying long-press paste at %.0f,%.0f", term, focus.X, focus.Y)
+	if bridgeTool := cfg.entryTool.bridgeTool; bridgeTool != nil {
+		if err := bridgeTool.pasteViaContextMenu(ctx, engine, cfg.resolvedPlatform(), focus); err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return false, calls, ctxErr
+			}
+			logging.Infof("agent", "app_search", "long-press paste failed term=%q: %v", term, err)
+		} else {
+			after, more, err := checkSearchField(ctx, cfg, engine)
+			calls += more
+			if err != nil {
+				return false, calls, err
+			}
+			if !after.Empty {
+				logging.Infof("agent", "app_search", "query input route=long_press_paste")
+				return true, calls, nil
+			}
+		}
+	}
+	logging.Infof("agent", "app_search", "query input route=local_hid after empty paste term=%q", term)
+	input := map[string]any{"text": term, "focus": map[string]any{"x": focus.X, "y": focus.Y}}
+	// Results decide whether local entry worked, as for unverified entry.
+	if _, err := cfg.entryTool.enterTextInner(ctx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true}); err != nil {
+		return false, calls, err
+	}
+	return true, calls, nil
+}
+
+func checkSearchField(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine) (searchFieldCheck, int, error) {
+	shot, err := engine.captureScreenshot(ctx)
+	if err != nil {
+		return searchFieldCheck{}, 0, err
+	}
+	if cfg.checkSearchFieldFn != nil {
+		check, err := cfg.checkSearchFieldFn(ctx, shot, cfg.resolvedPlatform())
+		return check, 0, err
+	}
+	modelVision, ok := cfg.vision.(*llmTextInputVision)
+	if !ok || modelVision == nil {
+		return searchFieldCheck{}, 0, nil
+	}
+	raw, err := modelVision.visionDecisionJSON(ctx, "search_field_empty", buildSearchFieldCheckPrompt(), []string{"empty"}, shot)
+	if err != nil {
+		return searchFieldCheck{}, 1, err
+	}
+	var check searchFieldCheck
+	if err := json.Unmarshal([]byte(raw), &check); err != nil {
+		return searchFieldCheck{}, 1, fmt.Errorf("parse search field check: %w", err)
+	}
+	return check, 1, nil
+}
+
+func buildSearchFieldCheckPrompt() string {
+	return strings.TrimSpace(`Analyze this phone screenshot of a system app search page right after automation pasted a query into its search field.
+Decide whether the search field is still empty, which means the paste had no effect.
+Return JSON only:
+{
+  "empty": true,
+  "search_field": {"x": 500, "y": 80},
+  "reason": "search field shows only its placeholder"
+}
+
+Rules:
+- empty=true when the search field shows no typed text: only placeholder text such as "搜索" or "Search", or nothing at all.
+- empty=false when any query text, pinyin, or uncommitted IME text is in the field.
+- search_field is the center of the search text field in normalized 0-1000 coordinates, or null when no search field is visible.
+- Keep reason short and concrete.`)
 }
 
 // clearSearchQueryText removes committed query text with Select All and
 // Backspace, avoiding Escape, which could dismiss Spotlight.
-func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) error {
-	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
+func clearSearchQueryText(ctx context.Context, engine *textInputEngine) error {
 	selectAll, err := textInputKeyboardKeysForSelectAll(engine.hw.platform())
 	if err != nil {
 		return err
@@ -419,15 +607,11 @@ func clearSearchQueryText(ctx context.Context, cfg appSearchOpenFlowConfig) erro
 // mode. System search lists apps for pinyin in both English and pinyin input,
 // so only the pending composition must be committed (see
 // appSearchQuickCommitGap). It reports false when no quick query applies.
-func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (bool, error) {
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
+func typeQuickSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, term string) (bool, error) {
+	platform := cfg.resolvedPlatform()
 	if platform != "ios" || cfg.exactEntryOnly {
 		return false, nil
 	}
-	engine := newTextInputEngineWithSleep(*cfg.hw, cfg.vision, cfg.sleep)
 	query, err := appSearchQuickQuery(ctx, engine, term)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -498,29 +682,39 @@ func (e *searchQueryUnverifiedError) Error() string {
 	return "enter search query: " + e.suggestion
 }
 
-// PiP can write the clipboard without leaving the focused system search UI.
-// The existing result lookup, tap and app-open confirmation verify the outcome.
-func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (attempted bool, err error) {
-	platform := cfg.platform
-	if platform == "" {
-		platform = cfg.entryTool.platform()
-	}
-	if platform != "ios" || cfg.entryTool.bridgeTool == nil {
-		return false, nil
+// The iOS PiP and Android foreground-service companions can write the
+// clipboard without leaving the focused system search UI. Pasting the exact
+// query also avoids local IME composition, which some Android vendors do not
+// support for external keyboards. The existing result lookup, tap and app-open
+// confirmation verify the outcome. route is empty when no background
+// clipboard route applies.
+func pasteSearchQuery(ctx context.Context, cfg appSearchOpenFlowConfig, term string) (route string, err error) {
+	platform := cfg.resolvedPlatform()
+	if cfg.entryTool.bridgeTool == nil {
+		return "", nil
 	}
 	bridgeTool := cfg.entryTool.bridgeTool
 	bridge := bridgeTool.currentBridge()
-	if bridge == nil || !phoneBridgeCanUsePiPBackground(bridge.getStatus(), "clipboard_write") {
-		return false, nil
+	if bridge == nil {
+		return "", nil
+	}
+	status := bridge.getStatus()
+	switch {
+	case platform == "ios" && phoneBridgeCanUsePiPBackground(status, "clipboard_write"):
+		route = "pip_clipboard_paste"
+	case platform == "android" && phoneBridgeCanUseFGSBackground(status, "clipboard_write"):
+		route = "fgs_clipboard_paste"
+	default:
+		return "", nil
 	}
 	if err := bridgeTool.writeClipboard(ctx, bridge, term); err != nil {
-		return true, err
+		return route, err
 	}
 	if err := bridgeTool.sleepAfterClipboardWrite(ctx); err != nil {
-		return true, err
+		return route, err
 	}
 	_, _, err = bridgeTool.pasteClipboard(ctx, platform)
-	return true, err
+	return route, err
 }
 
 func appSearchFallbackTerms(searchTerm string) []string {
@@ -554,26 +748,30 @@ func appSearchFallbackTerms(searchTerm string) []string {
 	return unique
 }
 
-func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeSearchResult, int, error) {
+// findSearchOpenAppResult also returns the search page screenshot the result
+// was located on.
+func findSearchOpenAppResult(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeSearchResult, screenshotResult, int, error) {
 	shot, err := engine.captureScreenshot(ctx)
 	if err != nil {
-		return bridgeSearchResult{}, 0, err
+		return bridgeSearchResult{}, screenshotResult{}, 0, err
 	}
 	if cfg.findAppTapFn != nil {
 		result, err := cfg.findAppTapFn(ctx, shot, searchTerm)
-		return result, 0, err
+		return result, shot, 0, err
 	}
 	modelVision, ok := cfg.vision.(*llmTextInputVision)
 	if !ok || modelVision == nil {
-		return bridgeSearchResult{}, 0, fmt.Errorf("app search vision is not configured")
+		return bridgeSearchResult{}, shot, 0, fmt.Errorf("app search vision is not configured")
 	}
-	prompt := buildAppSearchResultPrompt(searchTerm)
-	raw, err := modelVision.visionDecisionJSON(ctx, "app_search", prompt, []string{"found"}, shot)
-	if err != nil {
-		return bridgeSearchResult{}, 1, err
+	result, usedLLM, err := decide(ctx, modelVision.decider, appSearchDecision(modelVision, shot, searchTerm))
+	return result, shot, vlmCallCount(usedLLM), err
+}
+
+func vlmCallCount(usedLLM bool) int {
+	if usedLLM {
+		return 1
 	}
-	result, err := parseAppSearchResult(raw)
-	return result, 1, err
+	return 0
 }
 
 // parseAppSearchResult ignores unknown fields: some models echo the response
@@ -609,7 +807,7 @@ Rules:
 - If not visible, return {"found": false, "tap_point": {"x": 0, "y": 0}}.`, searchTerm))
 }
 
-func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string) (bridgeAppOpenResult, int, error) {
+func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, searchTerm string, searchShot screenshotResult) (bridgeAppOpenResult, int, error) {
 	shot, err := engine.captureScreenshot(ctx)
 	if err != nil {
 		return bridgeAppOpenResult{}, 0, err
@@ -622,6 +820,54 @@ func confirmSearchOpenApp(ctx context.Context, cfg appSearchOpenFlowConfig, engi
 	if !ok || modelVision == nil {
 		return bridgeAppOpenResult{}, 0, fmt.Errorf("app open confirmation vision is not configured")
 	}
+	llm := func(ctx context.Context) (bridgeAppOpenResult, error) {
+		if searchShot.Data != "" {
+			return confirmSearchLeftLLM(ctx, modelVision, searchShot, shot, searchTerm)
+		}
+		return confirmSearchOpenAppLLM(ctx, modelVision, shot, searchTerm)
+	}
+	result, usedLLM, err := decide(ctx, modelVision.decider, appOpenDecision(llm, shot, searchTerm))
+	return result, vlmCallCount(usedLLM), err
+}
+
+// confirmSearchLeftLLM asks whether the screen left the system search page,
+// comparing the search page the result was tapped on with the screen after the
+// tap, instead of asking the model to recognize the target app. An app's first
+// screen varies too much for that: Settings reopens on its own search page and
+// Safari on a start page that looks like the home screen, which both read as
+// "not opened" from one screenshot. In on-device iOS runs the comparison was
+// right 16 of 16 times, where the single-screenshot question was right 12.
+func confirmSearchLeftLLM(ctx context.Context, modelVision *llmTextInputVision, before, after screenshotResult, searchTerm string) (bridgeAppOpenResult, error) {
+	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", buildSearchLeftPrompt(searchTerm), []string{"left_search"}, before, after)
+	if err != nil {
+		return bridgeAppOpenResult{}, err
+	}
+	var parsed struct {
+		LeftSearch bool   `json:"left_search"`
+		Reason     string `json:"reason"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return bridgeAppOpenResult{}, fmt.Errorf("parse app open confirmation: %w", err)
+	}
+	return bridgeAppOpenResult{Opened: parsed.LeftSearch, Reason: parsed.Reason}, nil
+}
+
+func buildSearchLeftPrompt(searchTerm string) string {
+	return strings.TrimSpace(fmt.Sprintf(`You get two device screenshots. The first is a system search results page for query %q, captured just before tapping an app result. The second was captured shortly after the tap.
+Decide whether the second screenshot has left that system search page for another screen.
+Return JSON only:
+{
+  "left_search": true,
+  "reason": "an app screen replaced the search results"
+}
+
+Rules:
+- left_search=true when the second screenshot shows any screen other than the system search page and the launcher: an app screen, an app's own search or start page, a blank or dark app page, or a loading transition. You do not need to recognize the app.
+- left_search=false when the second screenshot still shows the same system search page, with or without the keyboard, or the home screen.
+- Keep reason short and concrete.`, searchTerm))
+}
+
+func confirmSearchOpenAppLLM(ctx context.Context, modelVision *llmTextInputVision, shot screenshotResult, searchTerm string) (bridgeAppOpenResult, error) {
 	prompt := strings.TrimSpace(fmt.Sprintf(`Analyze this device screenshot immediately after tapping the app search result for query %q.
 Decide whether the screen has opened the requested app instead of remaining on the search results page.
 Return JSON only:
@@ -636,13 +882,13 @@ Rules:
 - Keep reason short and concrete.`, searchTerm))
 	raw, err := modelVision.visionDecisionJSON(ctx, "app_open_confirmation", prompt, []string{"opened"}, shot)
 	if err != nil {
-		return bridgeAppOpenResult{}, 1, err
+		return bridgeAppOpenResult{}, err
 	}
 	var result bridgeAppOpenResult
 	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		return bridgeAppOpenResult{}, 1, fmt.Errorf("parse app open confirmation: %w", err)
+		return bridgeAppOpenResult{}, fmt.Errorf("parse app open confirmation: %w", err)
 	}
-	return result, 1, nil
+	return result, nil
 }
 
 func tapSearchOpenResult(ctx context.Context, hw *textInputHardwareDeps, point focusPointArgs) error {
@@ -654,4 +900,26 @@ func tapSearchOpenResult(ctx context.Context, hw *textInputHardwareDeps, point f
 		return err
 	}
 	return interpretTextInputToolOutput(out)
+}
+
+// checkPopupAfterOpen looks for a dialog over the freshly opened app. Ads are
+// closed; anything else is returned to the Agent in the result.
+func checkPopupAfterOpen(ctx context.Context, cfg appSearchOpenFlowConfig, engine *textInputEngine, steps []string, result appSearchOpenFlowResult) ([]string, appSearchOpenFlowResult) {
+	shot, err := engine.captureScreenshot(ctx)
+	if err != nil {
+		logging.Warnf("agent", "popup", "after-open screenshot failed: %v", err)
+		return steps, result
+	}
+	popup, calls, err := handlePopup(ctx, cfg.hw, cfg.vision, cfg.checkPopupFn, shot, cfg.platform, popupMomentAppOpen)
+	result.VLMCalls += calls
+	switch {
+	case err != nil:
+		logging.Warnf("agent", "popup", "after-open dialog handling failed: %v", err)
+	case popup.Handled:
+		steps = append(steps, fmt.Sprintf("closed %s dialog", popup.Kind))
+	case popup.blocking():
+		steps = append(steps, fmt.Sprintf("%s dialog is open", popup.Kind))
+		result.Popup = &popup
+	}
+	return steps, result
 }

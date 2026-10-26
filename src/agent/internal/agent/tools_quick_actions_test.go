@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/json"
@@ -105,12 +106,12 @@ func TestQuickActionSchemaListsOnlyActiveActionsForDeviceType(t *testing.T) {
 	schema := tool.ArgsSchema()
 	actionEnum := stringEnumPropertyValues(t, schema, "action")
 
-	for _, want := range []string{"list", "back", "home", "app_switch"} {
+	for _, want := range []string{"list", "back", "home", "app_switch", "spotlight_search"} {
 		if _, ok := actionEnum[want]; !ok {
 			t.Fatalf("quick_action schema missing active Android action %q: %v", want, actionEnum)
 		}
 	}
-	for _, notWant := range []string{"control_center", "quick_app_switch_left", "spotlight_search"} {
+	for _, notWant := range []string{"control_center", "quick_app_switch_left"} {
 		if _, ok := actionEnum[notWant]; ok {
 			t.Fatalf("quick_action schema exposed unavailable Android action %q: %v", notWant, actionEnum)
 		}
@@ -349,6 +350,38 @@ func TestQuickActionSpotlightSearchClearsSearchField(t *testing.T) {
 	assertReleaseReport(t, reports[9], "release after second Backspace")
 }
 
+func TestQuickActionAndroidSpotlightSearchOpensLauncherSearchFromHome(t *testing.T) {
+	_, binding, ok := newQuickActionsTable().lookup("spotlight_search", "android")
+	if !ok || binding.Status != quickActionStatusActive {
+		t.Fatalf("Android spotlight_search binding = %#v, found=%v; want active", binding, ok)
+	}
+	if len(binding.Steps) != 2 {
+		t.Fatalf("Android spotlight_search steps = %#v, want Home then swipe down", binding.Steps)
+	}
+	var homeInput struct {
+		Keys []string `json:"keys"`
+	}
+	home := binding.Steps[0]
+	if err := json.Unmarshal(home.Input, &homeInput); err != nil || home.Tool != "keyboard_tap" || !reflect.DeepEqual(homeInput.Keys, []string{"KEYCODE_HOME"}) {
+		t.Fatalf("first step = %s %s (err=%v), want keyboard_tap KEYCODE_HOME", home.Tool, home.Input, err)
+	}
+	var swipeInput struct {
+		Type  string             `json:"type"`
+		Start map[string]float64 `json:"start"`
+		End   map[string]float64 `json:"end"`
+	}
+	swipe := binding.Steps[1]
+	if err := json.Unmarshal(swipe.Input, &swipeInput); err != nil || swipe.Tool != "touch_gesture" || swipeInput.Type != "swipe" {
+		t.Fatalf("second step = %s %s (err=%v), want touch_gesture swipe", swipe.Tool, swipe.Input, err)
+	}
+	start, end := swipeInput.Start, swipeInput.End
+	// Start below the status bar so the swipe opens launcher search, not the
+	// notification shade, and move downward.
+	if start["y"] < 200 || end["y"] <= start["y"] {
+		t.Fatalf("swipe start=%v end=%v, want a mid-screen downward swipe", start, end)
+	}
+}
+
 func TestQuickActionSpotlightSearchBatchesIOSModifierIsolation(t *testing.T) {
 	skipHIDSleeps(t)
 	skipQuickActionDelays(t)
@@ -401,7 +434,7 @@ func TestQuickActionRestoresIOSPointerWhenCanceledMidSequence(t *testing.T) {
 	}
 }
 
-func readKeyboardReports(t *testing.T, dev *HIDDevice, path string) [][]byte {
+func readKeyboardReports(t *testing.T, dev *mnk.HIDDevice, path string) [][]byte {
 	t.Helper()
 
 	dev.Close()

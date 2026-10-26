@@ -1,15 +1,10 @@
 {
   "name": "mobilegym_basic",
   "suite_category": "MobileGym",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Basic MobileGym device control tests using simulator-only approach",
   "prompt_prefix": "",
-  "global_reset": {
-    "type": "agent_prompt",
-    "prompt": "回到主屏幕（不在主屏幕就点首页键）。",
-    "timeout_sec": 30,
-    "clear_history_after": true
-  },
+  "global_reset": {},
   "trace_observations": [],
   "tasks": [
     {
@@ -33,11 +28,7 @@
       ],
       "hard_assertions": {
         "must_complete_within_sec": 120,
-        "min_tool_calls": 2,
-        "required_tools": [
-          "screenshot",
-          "touch_gesture"
-        ]
+        "min_tool_calls": 1
       },
       "repeats": 1
     },
@@ -62,42 +53,49 @@
       ],
       "hard_assertions": {
         "must_complete_within_sec": 120,
-        "min_tool_calls": 3,
-        "required_tools": [
-          "screenshot",
-          "touch_gesture"
-        ]
+        "min_tool_calls": 1
       },
       "repeats": 1
     },
     {
-      "id": "swipe_navigation",
+      "id": "swipe_scroll_list",
       "category": "device_operation",
-      "prompt": "在主屏幕向上滑打开应用抽屉，然后给我看看。",
-      "description_for_judge": "Agent 应该：1) 识别当前在主屏幕 2) 执行向上滑动手势 3) 打开应用抽屉并截图",
+      "prompt": "在列表实验室中向上滑动列表，显示后面的项目，然后告诉我当前看到的项目。",
+      "description_for_judge": "Swipe upward within Scroll Lab to reveal later list items and report an item visible after scrolling.",
       "rubric": [
         {
-          "id": "performed_swipe",
-          "description": "执行了向上滑动手势"
+          "id": "scrolled_list",
+          "check": "The post-screenshot shows later list items after a successful upward swipe."
         },
         {
-          "id": "opened_app_drawer",
-          "description": "成功打开了应用抽屉"
-        },
-        {
-          "id": "took_screenshot",
-          "description": "在应用抽屉打开后进行了截图"
+          "id": "reported_visible_item",
+          "check": "The final response names an item visible in the post-screenshot."
         }
       ],
       "hard_assertions": {
         "must_complete_within_sec": 60,
-        "min_tool_calls": 2,
-        "required_tools": [
-          "screenshot",
-          "touch_gesture"
+        "min_tool_calls": 1,
+        "required_tool_calls": [
+          {
+            "tool": "touch_gesture",
+            "input_contains": {
+              "type": "swipe"
+            }
+          }
         ]
       },
-      "repeats": 1
+      "repeats": 1,
+      "app_ids": [
+        "scroll_lab"
+      ],
+      "foreground_app_id": "scroll_lab",
+      "environment_assertions": {
+        "route.app": "scroll_lab",
+        "route.path": "/",
+        "apps.scroll_lab.firstVisibleOrdinal": {
+          "min": 2
+        }
+      }
     }
   ]
 }

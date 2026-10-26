@@ -15,7 +15,6 @@ import (
 	"testing"
 
 	"aico-agent/internal/agent/contextmanager"
-	"aico-agent/internal/agent/executor"
 	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/model"
 	"aico-agent/internal/agent/screen"
@@ -312,7 +311,7 @@ func TestVisualCoordinatesAgentLoopWiring(t *testing.T) {
 			}
 			backend := &visualRecordingTool{name: "touch_gesture"}
 			m := &visualLoopModel{provider: provider}
-			loop := NewAgentLoop(m, RoleProfile{Tools: []langtools.Tool{backend}}, 3, nil, nil, executor.ScreenshotPruningConfig{}, manager)
+			loop := NewAgentLoop(m, RoleProfile{Tools: []langtools.Tool{backend}}, 3, nil, nil, manager)
 			loop.ScreenState = visualTestScreen(t, msg)
 			answer, err := loop.Run(context.Background(), "tap center")
 			if err != nil || answer != "done" {

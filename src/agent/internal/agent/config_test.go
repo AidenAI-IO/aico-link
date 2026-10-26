@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aico-agent/internal/agent/mnk"
 )
 
 func TestConfigValidateAcceptsSTT(t *testing.T) {
@@ -318,16 +320,16 @@ provider = "fake"
 }
 
 func TestHIDKeyboardLayoutDefaultsToQWERTY(t *testing.T) {
-	if got := (HIDConfig{}).KeyboardLayoutOrDefault(); got != keyboardLayoutQWERTY {
-		t.Fatalf("KeyboardLayoutOrDefault() = %q, want %q", got, keyboardLayoutQWERTY)
+	if got := (HIDConfig{}).KeyboardLayoutOrDefault(); got != mnk.KeyboardLayoutQWERTY {
+		t.Fatalf("KeyboardLayoutOrDefault() = %q, want %q", got, mnk.KeyboardLayoutQWERTY)
 	}
-	if got := DefaultConfig().HID.KeyboardLayout; got != keyboardLayoutQWERTY {
-		t.Fatalf("DefaultConfig().HID.KeyboardLayout = %q, want %q", got, keyboardLayoutQWERTY)
+	if got := DefaultConfig().HID.KeyboardLayout; got != mnk.KeyboardLayoutQWERTY {
+		t.Fatalf("DefaultConfig().HID.KeyboardLayout = %q, want %q", got, mnk.KeyboardLayoutQWERTY)
 	}
 }
 
 func TestConfigValidateKeyboardLayout(t *testing.T) {
-	for _, layout := range []string{keyboardLayoutQWERTY, keyboardLayoutAZERTY, keyboardLayoutQWERTZ} {
+	for _, layout := range []string{mnk.KeyboardLayoutQWERTY, mnk.KeyboardLayoutAZERTY, mnk.KeyboardLayoutQWERTZ} {
 		cfg := Config{Model: ModelConfig{Provider: "fake"}, HID: HIDConfig{KeyboardLayout: layout}}
 		if err := cfg.Validate(); err != nil {
 			t.Fatalf("Validate() rejected keyboard layout %q: %v", layout, err)
@@ -859,27 +861,6 @@ func TestBundledSkillsDirCandidatesUseBusinessPackage(t *testing.T) {
 	want := []string{"/usr/share/aico/skills"}
 	if got := bundledSkillsDirCandidates(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("bundledSkillsDirCandidates() = %#v, want %#v", got, want)
-	}
-}
-
-func TestConfigScreenshotPruningDefaultsAndOverrides(t *testing.T) {
-	cfg := Config{Model: ModelConfig{Provider: "fake"}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-	pruning := cfg.ScreenshotPruningOrDefault()
-	if pruning.KeepN != 3 || pruning.Interval != 2 {
-		t.Fatalf("default screenshot pruning = %#v, want keep_n=3 interval=2", pruning)
-	}
-
-	cfg.ScreenshotKeepN = 5
-	cfg.ScreenshotPruneInterval = 40
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() with screenshot pruning overrides error = %v", err)
-	}
-	pruning = cfg.ScreenshotPruningOrDefault()
-	if pruning.KeepN != 5 || pruning.Interval != 40 {
-		t.Fatalf("configured screenshot pruning = %#v, want keep_n=5 interval=40", pruning)
 	}
 }
 
@@ -1830,26 +1811,6 @@ func TestConfigValidateRejectsBraveSearchWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRejectsNegativeScreenshotPruning(t *testing.T) {
-	cfg := Config{
-		Model:           ModelConfig{Provider: "fake"},
-		ScreenshotKeepN: -1,
-	}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "screenshot_keep_n") {
-		t.Fatalf("expected screenshot_keep_n validation error, got %v", err)
-	}
-
-	cfg = Config{
-		Model:                   ModelConfig{Provider: "fake"},
-		ScreenshotPruneInterval: -1,
-	}
-	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "screenshot_prune_interval") {
-		t.Fatalf("expected screenshot_prune_interval validation error, got %v", err)
-	}
-}
-
 func TestProxyConfigFromEnvironment(t *testing.T) {
 	t.Setenv("http_proxy", "http://proxy.example:18080")
 	t.Setenv("HTTP_PROXY", "")
@@ -2164,6 +2125,9 @@ func TestVoiceSessionConfigDefaults(t *testing.T) {
 	if !cfg.VoiceInterruptOnWakeupOrDefault() {
 		t.Fatal("VoiceInterruptOnWakeupOrDefault() = false, want true")
 	}
+	if !cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = false, want true")
+	}
 	if !cfg.VoiceStreamingTTSEnabledOrDefault() {
 		t.Fatal("VoiceStreamingTTSEnabledOrDefault() = false, want true")
 	}
@@ -2181,6 +2145,7 @@ func TestVoiceSessionConfigDefaults(t *testing.T) {
 func TestVoiceSessionConfigOverrides(t *testing.T) {
 	followupEnabled := true
 	interruptDisabled := false
+	tapWakeupDisabled := false
 	streamingDisabled := false
 	toolSpeech := false
 	progressSpeechDisabled := false
@@ -2189,6 +2154,7 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 		VoiceFirstTurnTimeoutMs:    1234,
 		VoiceFollowupTimeoutMs:     5678,
 		VoiceInterruptOnWakeup:     &interruptDisabled,
+		TapWakeupEnabled:           &tapWakeupDisabled,
 		VoiceStreamingTTSEnabled:   &streamingDisabled,
 		VoiceToolCallSpeech:        &toolSpeech,
 		VoiceProgressSpeechEnabled: &progressSpeechDisabled,
@@ -2206,6 +2172,9 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 	}
 	if cfg.VoiceInterruptOnWakeupOrDefault() {
 		t.Fatal("VoiceInterruptOnWakeupOrDefault() = true, want false")
+	}
+	if cfg.TapWakeupEnabledOrDefault() {
+		t.Fatal("TapWakeupEnabledOrDefault() = true, want false")
 	}
 	if cfg.VoiceStreamingTTSEnabledOrDefault() {
 		t.Fatal("VoiceStreamingTTSEnabledOrDefault() = true, want false")

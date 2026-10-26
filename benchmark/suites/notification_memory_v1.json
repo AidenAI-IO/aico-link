@@ -16,7 +16,7 @@
         },
         {
           "id": "preserves_delivery_time",
-          "check": "The final answer says the package is expected tomorrow."
+          "check": "The final answer gives the expected arrival as the day after the notification was received: either 'tomorrow' relative to the notification or the recalled date 2026-08-22."
         },
         {
           "id": "does_not_invent",
@@ -34,6 +34,7 @@
       "expected_recalled_memory_ids": ["tmp_notification_1"],
       "setup": {
         "type": "seed_notification",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 120,
         "expected_memory_count": 1,
@@ -56,13 +57,19 @@
     },
     {
       "id": "notification_noise_is_filtered",
+      "memory_assertions": {
+        "query": {
+          "limit": 100
+        },
+        "expected_count": 0
+      },
       "category": "memory",
       "description_for_judge": "OTP and marketing notifications must not create user memory.",
       "prompt": "Check memory for the verification-code and marketing notifications in this fixture. Tell me whether either notification was retained as user memory. Do not call bridge_notification.",
       "rubric": [
         {
           "id": "rejects_noise_memory",
-          "check": "The final answer says OTP/verification-code and marketing notifications should not be stored as memory."
+          "check": "The final answer reports that neither fixture notification was retained or that no matching records were found. A general policy statement about what should be stored is not required."
         }
       ],
       "hard_assertions": {
@@ -75,6 +82,7 @@
       },
       "setup": {
         "type": "seed_notification",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 120,
         "expected_memory_count": 0,
@@ -133,6 +141,7 @@
       "expected_recalled_memory_ids": ["tmp_notification_2"],
       "setup": {
         "type": "seed_notification",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 120,
         "expected_memory_count": 1,
@@ -190,6 +199,7 @@
       },
       "setup": {
         "type": "seed_notification",
+        "evaluate": true,
         "consolidate": true,
         "timeout_sec": 120,
         "expected_memory_count": 0,
@@ -246,12 +256,13 @@
               "source_refs": [{"type": "notification", "id": "fixture-update-old", "event_ids": ["old-event"]}],
               "evidence_refs": [{"type": "notification", "id": "fixture-update-evidence", "event_ids": ["old-evidence-event"]}],
               "evidence": ["The package arrives today."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
         {
           "type": "seed_notification",
+          "evaluate": true,
           "consolidate": true,
           "timeout_sec": 120,
           "expected_memory_count": 1,
@@ -273,6 +284,7 @@
         },
         {
           "type": "assert_memory",
+          "evaluate": true,
           "query": {"tags": ["com.delivery.update"], "limit": 20},
           "expected": [
             {"id": "tmp_update_delivery", "memory_scope": "temporary", "revision": 2, "content_contains": "tomorrow", "source_refs_contain": [{"type": "notification", "id": "fixture-update-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["update-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-update-evidence", "event_ids_contains": ["old-evidence-event"]}]}
@@ -283,6 +295,38 @@
     },
     {
       "id": "notification_explicit_reinforce",
+      "memory_assertions": {
+        "query": {
+          "tags": [
+            "com.calendar.reinforce"
+          ],
+          "limit": 20
+        },
+        "expected": [
+          {
+            "id": "tmp_reinforce_calendar",
+            "memory_scope": "temporary",
+            "revision": 2,
+            "content_contains": "tomorrow at 10:00",
+            "source_refs_contain": [
+              {
+                "type": "notification",
+                "id": "fixture-reinforce-old",
+                "event_ids_contains": [
+                  "old-event"
+                ]
+              },
+              {
+                "type": "notification",
+                "event_ids_contains": [
+                  "reinforce-calendar-event-1"
+                ]
+              }
+            ]
+          }
+        ],
+        "expected_count": 1
+      },
       "category": "memory",
       "description_for_judge": "A repeated notification with the same conclusion must reinforce the existing temporary memory instead of replacing its content or creating a duplicate.",
       "prompt": "Check the calendar notification memory for the meeting time. Use recall_memory with com.calendar.reinforce and report the time. Do not call bridge_notification.",
@@ -290,10 +334,6 @@
         {
           "id": "preserves_conclusion",
           "check": "The final answer says the meeting is tomorrow at 10:00."
-        },
-        {
-          "id": "does_not_duplicate",
-          "check": "The answer is based on one reinforced calendar conclusion, not multiple conflicting memories."
         }
       ],
       "hard_assertions": {
@@ -318,12 +358,13 @@
               "entities": ["com.calendar.reinforce"],
               "source_refs": [{"type": "notification", "id": "fixture-reinforce-old", "event_ids": ["old-event"]}],
               "evidence": ["The meeting is tomorrow at 10:00."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
         {
           "type": "seed_notification",
+          "evaluate": true,
           "consolidate": true,
           "timeout_sec": 120,
           "expected_memory_count": 1,
@@ -345,6 +386,7 @@
         },
         {
           "type": "assert_memory",
+          "evaluate": true,
           "query": {"tags": ["com.calendar.reinforce"], "limit": 20},
           "expected": [
             {"id": "tmp_reinforce_calendar", "memory_scope": "temporary", "revision": 2, "content_contains": "tomorrow at 10:00", "source_refs_contain": [{"type": "notification", "id": "fixture-reinforce-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["reinforce-calendar-event-1"]}]}
@@ -392,7 +434,7 @@
                 }
               ],
               "evidence": ["The package delivery was scheduled for Friday."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             },
             {
               "store": "temporary",
@@ -404,12 +446,13 @@
               "entities": ["com.delivery.remove"],
               "source_refs": [{"type": "notification", "id": "fixture-remove-control", "event_ids": ["control-event"]}],
               "evidence": ["A different package is scheduled for Monday."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
         {
           "type": "seed_notification",
+          "evaluate": true,
           "consolidate": true,
           "timeout_sec": 120,
           "expected_memory_count": 0,
@@ -430,6 +473,7 @@
         },
         {
           "type": "assert_memory",
+          "evaluate": true,
           "query": {"tags": ["com.delivery.remove"], "limit": 20},
           "absent_ids": ["tmp_remove_delivery"],
           "expected": [{"id": "tmp_remove_delivery_control", "source_refs_contain": [{"type": "notification", "id": "fixture-remove-control", "event_ids_contains": ["control-event"]}]}],
@@ -449,7 +493,7 @@
         },
         {
           "id": "uses_promoted_scope",
-          "check": "The recalled rule is a long-term memory, not the temporary source record."
+          "check": "The recall_memory result used for the answer is the long-term rule, not the temporary source record tmp_promote_delivery. Setup performs the promotion; the agent only needs to recall it."
         }
       ],
       "hard_assertions": {
@@ -475,12 +519,13 @@
               "source_refs": [{"type": "notification", "id": "fixture-promote-old", "event_ids": ["old-event"]}],
               "evidence_refs": [{"type": "notification", "id": "fixture-promote-evidence", "event_ids": ["old-evidence-event"]}],
               "evidence": ["Future packages should be delivered to the office."],
-              "expires_at": "2026-09-30T00:00:00Z"
+              "expires_in_sec": 86400
             }
           ]
         },
         {
           "type": "seed_notification",
+          "evaluate": true,
           "consolidate": true,
           "timeout_sec": 120,
           "expected_memory_count": 1,
@@ -502,6 +547,7 @@
         },
         {
           "type": "assert_memory",
+          "evaluate": true,
           "query": {"tags": ["com.delivery.promote"], "limit": 20},
           "expected": [
             {"memory_scope": "long_term", "content_contains": "delivered to the office", "source_refs_contain": [{"type": "notification", "id": "fixture-promote-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["promote-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-promote-evidence", "event_ids_contains": ["old-evidence-event"]}]}

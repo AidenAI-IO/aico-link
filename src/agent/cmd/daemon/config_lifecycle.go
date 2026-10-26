@@ -38,7 +38,10 @@ type inputLifecycle struct {
 
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
 	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
-	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher, newVoiceWatcher: source.newWatcher}
+	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
+	c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
+		return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+	}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
 		defer c.dialogMu.Unlock()
@@ -65,8 +68,9 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VADSpeechThreshold: cfg.VADSpeechThreshold, SilenceMs: cfg.SilenceMs, MinSpeechMs: cfg.MinSpeechMs,
 		VoiceFollowupEnabled: cfg.VoiceFollowupEnabled, VoiceFollowupTimeoutMs: cfg.VoiceFollowupTimeoutMs,
 		VoiceFirstTurnTimeoutMs: cfg.VoiceFirstTurnTimeoutMs, VoiceMaxTurns: cfg.VoiceMaxTurns,
-		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
-		VoiceToolCallSpeech: cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
+		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
+		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
+		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
 		VoiceMaxResponseTokens: cfg.VoiceMaxResponseTokens,
 	}
 }

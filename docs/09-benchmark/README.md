@@ -124,13 +124,24 @@ The Aico companion app cases are consolidated into two suites:
 
 - `notes_entry_policy_v1.json`: Notes is already open, its icon is visible, or
   neither is visible. The Agent respectively enters text directly, clicks the
-  visible icon, or uses `search_launch_app`.
+  visible icon, or uses `open_app`.
 - `phone_bridge_data_policy_v1.json`: contacts, calendar query/create, clipboard
   read/write, and notification cases for iOS Dynamic Island restoration, iOS PiP,
   and Android FGS.
 
+Scripted suites run their isolated workers with `--benchmark-mock-tools`, which
+requires a benchmark token and an environment bridge. Tool descriptions, schemas,
+availability filtering, and post-action screenshot verification are unchanged;
+only device-tool execution is sent to the fixture's `/api/tools/<name>` endpoint.
+The mock serves the native `/api/phone-bridge/status` object, so PiP, FGS, and
+Dynamic Island capabilities reflect the active fixture. An enabled FGS fixture
+reports a fresh heartbeat unless it sets `fgs_bridge_updated_at` explicitly.
+Mock policy runs do not validate internal app-restoration, paste, or command
+transports.
+
 These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
-so they do not cover the BLE Wake-specific allowlist or runtime tool filtering.
+so they do not cover live BLE Wake capability discovery or delivery. Platform
+and Phone Bridge availability filtering still use the scripted status.
 
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the
@@ -157,6 +168,19 @@ Use real devices separately for iOS BLE pairing/Wake, the narrower BLE Wake
 allowlist, iOS PiP/Android FGS lifecycle, USB ECM, native permissions, actual
 background queue delivery, app launch behavior, and HID paste validation. Mock
 suites test their modeled policy and tool selection, not OS integration.
+
+### Time-independent memory fixtures
+
+A `seed_memory` item may set `expires_in_sec` to a positive integer of at most
+one year (31536000 seconds). The runner resolves it to an absolute `expires_at`
+immediately before each attempt, without changing the suite snapshot. Do not
+specify both fields. Notification mutation fixtures use a one-day lifetime so
+they do not expire as the calendar advances. Keep absolute timestamps only for
+tests that intentionally model expiry.
+
+An inline recall result with `results: null` is a completed empty result, matching
+Go's nil-slice JSON encoding. Expected IDs missing from that result are an eligible
+recall failure, not a judge error. Missing or truncated evidence remains ineligible.
 
 ## Reports
 
@@ -236,7 +260,7 @@ Common options:
 - `--environment-url URL` - Environment bridge URL for setup, pre/post screen capture, and release.
 - `--auto-agent-setup` - Start isolated agent daemon workers and schedule by bridge concurrency.
 - `--agent-config PATH` - Agent config used for auto-started daemon workers.
-- `--no-judge` - Skip LLM judge and only run hard assertions.
+- `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
@@ -359,11 +383,26 @@ second step:
 
 ## Historical dashboard and weekly report
 
+Latest results keeps scores, deltas, test-area filters, and failure evidence in
+view. Metric definitions and data-coverage notes are collapsed. Select a dataset
+to inspect its run comparison under **Weekly trends → Run details**: model,
+judge prompt, attempts per task, task and attempt counts, skills, and environment.
+Branch and commit identify each run; a branch change alone is not presented as
+a change to evaluation settings. A changed suite file is flagged with a source
+comparison link when both commits are known. This does not imply a semantic
+change: formatting alone can change the file fingerprint. Raw fingerprints,
+judge provider, and metrics schema remain in the report data for troubleshooting
+and are not displayed as a separate table.
+Task-selection metadata distinguishes a repetition change from changed coverage;
+older records without that metadata retain a general coverage-change notice.
+
 The daily benchmark workflow generates `dashboard.html` with the last 7 days
 of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
+Both workflows default to history from the workflow's branch. For a manual
+weekly report, set `branch_filter` to another branch or `*` for all branches.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
 for credentials, report commands, time windows, and comparison rules.
@@ -386,7 +425,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (13 cases) |
+| Manual dispatch | `adb` | Native Android UI and text editing; requires a connected emulator or device |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -399,17 +439,27 @@ dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
 
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
-single-suite run must use the matching `runnable` or `hardware` profile; use
+single-suite run must use the matching `runnable`, `hardware`, or `adb` profile; use
 `all` when intentionally overriding that boundary.
 
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
 the Android-style MobileGym simulator automatically; no external iOS bridge is
-required. This case is excluded from the scheduled sweep while its baseline is
-being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+required. This case is available through manual dispatch only. The iOS-only
+Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
 from Agent capability failures. The same suite with profile `hardware` selects
-the existing external iOS case; profile `all` selects both environments.
+the external iOS case; profile `all` selects both environments.
+
+For native Android, dispatch profile `adb` with
+`suites/adb_android_basic.json` for general operations or
+`suites/adb_android_text_editing.json` for text editing. Leave the suite input
+blank to run both. See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
+for coverage and device prerequisites.
+
+Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
+exist, be unique, and support the case's target platform. An empty list selects
+the entire suite, subject to platform filtering. ADB cases require concurrency 1.
 
 When a suite has cases in multiple environment profiles, an explicit suite
 selection runs only cases belonging to the requested profile. A selection with
@@ -421,19 +471,14 @@ device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 
-Treat the first two weeks as a baseline period. Review each scheduled case's run
-duration, Langfuse cost, and failure class before deciding whether the policy of
-running every locally runnable case needs to change. Only add VPhone or another
-external environment to the schedule after its bridge has at least 99% health
-availability over that baseline period.
-
 The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AICO_` prefix; the workflow maps them to the runner variables documented
 below.
 
 - Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
   `BENCHMARK_AGENT_BASE_URL`, `BENCHMARK_JUDGE_MODEL`,
-  `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `ANDROID_SERIAL`,
+  `BENCHMARK_JUDGE_BASE_URL`, `DAEMON_IMAGE`, `BENCHMARK_ANDROID_SERIAL`,
+  `BENCHMARK_ANDROID_SDK_DIR`,
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
   `BENCHMARK_IOS_ENVIRONMENT_URL`, `BENCHMARK_MAC_ENVIRONMENT_URL`,
   `BENCHMARK_VPHONE_ENVIRONMENT_URL`,
@@ -448,8 +493,19 @@ Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 repository setting. If neither is set, the workflow uses `1`. The report derives
 `metrics_k` from the planned task repeats; no separate metrics variable is needed.
 
-The benchmark job uses the dedicated `aico-hosted-01` runner because the
-MobileGym and agent-daemon paths require Docker. One job performs checkout,
+ADB cases need a booted Android device or emulator reachable from the runner
+host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
+`emulator-5554`; the workflow passes it to the runner as `ANDROID_SERIAL`. When
+`adb` is not already on the runner's `PATH`, the workflow uses
+`<sdk>/platform-tools/adb`, where `<sdk>` is the optional
+`BENCHMARK_ANDROID_SDK_DIR` variable and defaults to `~/android-sdk`. Before any
+ADB case starts, the workflow waits up to ten minutes for the device and
+`sys.boot_completed`; a device that never finishes booting fails the job
+early.
+
+The benchmark job uses the `aiden-hosted-02` runner by default (override with
+`AICO_RUNNER_PRIMARY`) because the MobileGym and agent-daemon paths require
+Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the
 selected cases out with a configurable concurrency limit. MobileGym cases are
 scheduled first so multiple container-backed benchmarks can overlap;

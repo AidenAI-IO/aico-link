@@ -6,6 +6,7 @@ from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 from runner.models import TaskResult
+from runner.trace import tool_result_failed
 
 
 FAILURE_CLASSES = ("agent", "environment", "evaluation", "skipped", "unknown")
@@ -103,16 +104,15 @@ def derive_history_metrics(history: list[Mapping[str, Any]]) -> dict[str, Any]:
             screenshot_since_model = True
         if message_type == "tool_result":
             raw = message.get("content")
-            is_error = bool(message.get("is_error"))
+            parsed = None
             if isinstance(raw, str):
                 try:
                     parsed = json.loads(raw)
                 except (TypeError, json.JSONDecodeError):
                     parsed = None
-                if isinstance(parsed, Mapping):
-                    is_error = is_error or bool(parsed.get("is_error")) or parsed.get("ok") is False
                 if _is_screenshot_result(message, parsed, raw):
                     screenshot_since_model = True
+            is_error = tool_result_failed(dict(message), parsed if isinstance(parsed, Mapping) else {})
             tool_errors += int(is_error)
             if is_error and first_error_ref is None:
                 tool_name = str(message.get("tool_name") or "")

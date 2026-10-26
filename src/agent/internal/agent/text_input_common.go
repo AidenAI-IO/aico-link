@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
@@ -96,14 +97,6 @@ func containsHanRunes(text string) bool {
 	return false
 }
 
-func compositionSegmentsForText(text string, segments []string) ([]string, error) {
-	segs := normalizeCompositionSegments(segments)
-	if len(segs) == 0 {
-		return nil, fmt.Errorf("composition input requires segments (IME romanization syllables); none provided for %q", text)
-	}
-	return segs, nil
-}
-
 // textInputCompositionPlanner derives the ASCII keystrokes required by the
 // active IME for a non-ASCII target. It is intentionally internal to the text
 // entry workflow so the main agent never has to construct pinyin/IME segments.
@@ -138,7 +131,7 @@ func (e *textInputEngine) compositionSegmentsForText(ctx context.Context, text s
 			if r > 0x7f {
 				return nil, fmt.Errorf("IME segment planner returned non-ASCII input %q", segment)
 			}
-			if _, ok := keyboardLayoutKeyStroke(defaultKeyboardLayout, byte(r)); !ok {
+			if _, ok := mnk.KeyboardLayoutKeyStroke(mnk.DefaultKeyboardLayout, byte(r)); !ok {
 				return nil, fmt.Errorf("IME segment planner returned unsupported key %q", r)
 			}
 		}

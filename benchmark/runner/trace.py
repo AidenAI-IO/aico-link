@@ -11,13 +11,28 @@ def _safe_loads(s: str) -> Any:
         return None
 
 
+def tool_result_failed(message: dict[str, Any], content: Any = None) -> bool:
+    """Return whether a history tool_result reports failure.
+
+    Shared by trace matching and history metrics so both count the same results.
+    """
+    if message.get("is_error") or message.get("tool_error") is not None:
+        return True
+    if content is None:
+        content = _safe_loads(message.get("content", ""))
+    return isinstance(content, dict) and (bool(content.get("is_error")) or content.get("ok") is False)
+
+
 def extract_trace(history: list[dict[str, Any]]) -> Trace:
     tool_calls: list[ToolCall] = []
     final_response = ""
     step = 0
     pending: dict[str, Any] | None = None
+    last_result: ToolCall | None = None
     for msg in history:
         mtype = msg.get("type")
+        if mtype != "state":
+            last_result = None
         if mtype == "tool_call":
             if pending is not None:
                 tool_calls.append(ToolCall(**pending))
@@ -26,10 +41,12 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
             if not isinstance(args, dict):
                 args = {}
             pending = {"step": step, "tool": msg.get("tool_name", ""),
-                       "input": args, "has_screenshot": False}
+                       "input": args, "has_screenshot": False, "has_result": False}
         elif mtype == "tool_result" and pending is not None:
             raw = msg.get("content", "")
             content = _safe_loads(raw)
+            pending["has_result"] = True
+            pending["is_error"] = tool_result_failed(msg, content)
             if isinstance(content, dict) and content.get("data"):
                 pending["has_screenshot"] = True
             elif isinstance(raw, str) and "screenshot observation" in raw.lower():
@@ -37,7 +54,18 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
                 # summary instead (e.g. "... returned a screenshot observation ...").
                 pending["has_screenshot"] = True
             tool_calls.append(ToolCall(**pending))
+            last_result = tool_calls[-1]
             pending = None
+        elif mtype == "state" and last_result is not None:
+            # The daemon emits post-action images as state messages immediately
+            # after the result. Initial/unrelated state images are not tool shots.
+            caption = f"screenshot observation returned by the {last_result.tool} tool."
+            attachments = msg.get("attachments") or []
+            if caption in str(msg.get("content", "")) and any(
+                isinstance(item, dict) and item.get("kind") == "image"
+                for item in attachments
+            ):
+                last_result.has_screenshot = True
         elif mtype == "assistant":
             final_response = msg.get("content", "")
     if pending is not None:
@@ -48,6 +76,64 @@ def extract_trace(history: list[dict[str, Any]]) -> Trace:
         total_tool_calls=len(tool_calls),
         total_duration_ms=0,
     )
+
+
+def apply_episode_tool_evidence(trace: Trace, episode: dict[str, Any] | None) -> bool:
+    """Apply episode-only tool evidence to the history-derived trace.
+
+    Public history omits error status and records the model's raw arguments.
+    The episode records each result's error status and, when the model uses
+    pixel coordinates, the normalized arguments the device received. A result
+    whose tool_error marks action_completed means the device action succeeded
+    and only post-action verification failed, so the call still counts as
+    executed. Results pair with calls in order; a count or name mismatch leaves
+    the trace as-is.
+
+    Returns whether the trace now carries episode evidence for every completed
+    call. False means error status and device-facing arguments are unverified.
+    """
+    completed = [tc for tc in trace.tool_calls if tc.has_result]
+    if not completed:
+        return True
+    events = episode.get("events") if isinstance(episode, dict) else None
+    if not isinstance(events, list):
+        return False
+    results: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
+    mapping: tuple[str, dict[str, Any]] | None = None
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        if event.get("type") == "visual_coordinate_mapping":
+            # Recorded during execution, before that call's result.
+            metadata = event.get("metadata") if isinstance(event.get("metadata"), dict) else {}
+            normalized = metadata.get("normalized_input")
+            if isinstance(normalized, str):
+                normalized = _safe_loads(normalized)
+            mapping = (str(metadata.get("tool") or ""), normalized) if isinstance(normalized, dict) else None
+        elif event.get("type") == "tool_result":
+            tool_name = str(event.get("tool_name") or "")
+            results.append((event, mapping[1] if mapping and mapping[0] == tool_name else None))
+            mapping = None
+    # Only calls whose result reached history can pair with episode results; a
+    # trailing unfinished call must not discard evidence for completed ones.
+    if len(results) != len(completed):
+        return False
+    if any(str(r.get("tool_name") or "") != tc.tool for (r, _), tc in zip(results, completed)):
+        return False
+    for (result, normalized), tool_call in zip(results, completed):
+        if isinstance(result.get("screenshot_ref"), str) and result["screenshot_ref"].strip():
+            tool_call.has_screenshot = True
+        tool_error = result.get("tool_error")
+        details = tool_error.get("details") if isinstance(tool_error, dict) else None
+        if isinstance(details, dict) and details.get("action_completed") is True:
+            # The device action succeeded; only post-action verification
+            # (stable-screen wait or screenshot) failed.
+            tool_call.is_error = False
+        elif result.get("is_error") or tool_error is not None:
+            tool_call.is_error = True
+        if normalized is not None:
+            tool_call.input = normalized
+    return True
 
 
 def trace_has_skill_read(trace: Trace, skill_name: str) -> bool:

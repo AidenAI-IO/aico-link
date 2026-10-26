@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"aico-agent/internal/agent/mnk"
 )
 
 // fieldIndex builds a section.key -> FieldMeta lookup for the metadata.
@@ -113,7 +115,7 @@ func TestConfigMeta_Valid(t *testing.T) {
 		t.Errorf("expected device section first, got %q", ConfigMeta().Sections[0].Name)
 	}
 
-	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "telemetry", "live_activity", "agent"} {
+	for _, name := range []string{"device", "model", "tts", "stt", "audio", "voice_model", "audio_archive", "frame_service", "quick_capture", "voice_notifications", "log", "hid", "search", "decision", "telemetry", "live_activity", "agent"} {
 		if !seenSections[name] {
 			t.Errorf("expected section %q to be present", name)
 		}
@@ -219,6 +221,11 @@ func TestConfigMeta_PreservesExistingFormPresentation(t *testing.T) {
 			label:       "Context prune threshold (fraction)",
 			placeholder: "0 = automatic (0.5)",
 			help:        "Fraction of the usable model input budget that triggers cleanup of stale state and older tool exchanges, including during one long-running tool loop, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.",
+		},
+		"agent.context_prune_state_limit": {
+			label:       "Screenshot state limit",
+			placeholder: "0 = automatic (6)",
+			help:        "Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. 0 uses 6.",
 		},
 		"agent.context_compaction_threshold": {
 			label:       "Context compaction threshold (fraction)",
@@ -400,7 +407,7 @@ func TestConfigMeta_NonRegistryEnumsMatchValidation(t *testing.T) {
 	}
 
 	keyboardLayoutEnum := enumValues("hid.keyboard_layout")
-	for _, layout := range []string{keyboardLayoutQWERTY, keyboardLayoutAZERTY, keyboardLayoutQWERTZ} {
+	for _, layout := range []string{mnk.KeyboardLayoutQWERTY, mnk.KeyboardLayoutAZERTY, mnk.KeyboardLayoutQWERTZ} {
 		if !contains(keyboardLayoutEnum, layout) {
 			t.Errorf("hid.keyboard_layout enum missing %q", layout)
 		}
@@ -456,6 +463,7 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"model.provider", defaults.Model.Provider},
 		{"model.model", defaults.Model.Model},
 		{"agent.context_prune_threshold", defaults.ContextPruneThreshold},
+		{"agent.context_prune_state_limit", defaults.ContextPruneStateLimit},
 		// temperature's effective default is model-dependent and resolved at
 		// load time, so the metadata placeholder is the global fallback rather
 		// than the (now unset) DefaultConfig value.
@@ -514,13 +522,13 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_first_turn_timeout_ms", defaults.VoiceFirstTurnTimeoutMs},
 		{"agent.voice_max_turns", defaults.VoiceMaxTurns},
 		{"agent.voice_interrupt_on_wakeup", defaults.VoiceInterruptOnWakeupOrDefault()},
+		{"agent.tap_wakeup_enabled", defaults.TapWakeupEnabledOrDefault()},
+		{"agent.mcp_enabled", defaults.MCPEnabledOrDefault()},
 		{"agent.voice_streaming_tts_enabled", defaults.VoiceStreamingTTSEnabledOrDefault()},
 		{"agent.voice_tool_call_speech", defaults.VoiceToolCallSpeechOrDefault()},
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},
 		{"agent.voice_max_response_tokens", defaults.VoiceMaxResponseTokens},
 		{"agent.max_iterations", defaults.MaxIterations},
-		{"agent.screenshot_keep_n", defaults.ScreenshotKeepN},
-		{"agent.screenshot_prune_interval", defaults.ScreenshotPruneInterval},
 		{"agent.screen_stable_timeout_ms", defaults.ScreenStableTimeoutMs},
 		{"agent.screen_stable_ms", defaults.ScreenStableMs},
 		{"agent.screen_stable_diff_threshold", defaults.ScreenStableDiffThreshold},
@@ -1132,6 +1140,7 @@ func TestConfigMeta_CoversConfigFields(t *testing.T) {
 		{"device", reflect.TypeOf(DeviceConfig{}), map[string]bool{"backend": true}},
 		{"hid", reflect.TypeOf(HIDConfig{}), map[string]bool{"pointer_mode": true}},
 		{"search", reflect.TypeOf(SearchConfig{}), nil},
+		{"decision", reflect.TypeOf(DecisionModelConfig{}), nil},
 		{"log", reflect.TypeOf(LogConfig{}), nil},
 		{"telemetry", reflect.TypeOf(TelemetryConfig{}), nil},
 		{"live_activity", reflect.TypeOf(LiveActivityConfig{}), nil},
@@ -1200,6 +1209,8 @@ func TestConfigMeta_CoversConfigFields(t *testing.T) {
 		"model": true, "tts": true, "stt": true, "device": true, "hid": true,
 		"audio": true, "search": true, "log": true, "telemetry": true, "termination_policy": true, "live_activity": true,
 		"skills_dirs": true, "bundled_skills_dir": true,
+		// TOML-only MCP knobs; not in configupdate.Agent / Config Web this release.
+		"mcp_shell_enabled": true, "mcp_config_web_base_url": true,
 	}
 	cfgType := reflect.TypeOf(Config{})
 	for name, f := range tomlKeys(cfgType) {

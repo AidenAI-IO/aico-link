@@ -43,7 +43,6 @@ type AgentLoop struct {
 	CallbacksHandler           callbacks.Handler
 	MaxIterations              int
 	Recorder                   *EpisodeRecorder
-	ScreenshotPruning          executor.ScreenshotPruningConfig
 	SteerInterrupt             func() <-chan struct{}
 	SteerProvider              func(context.Context) (RunSteerMessage, bool)
 	SteerWaiter                func(context.Context) (RunSteerMessage, bool, error)
@@ -68,32 +67,19 @@ func NewAgentLoop(
 	maxIterations int,
 	callbacksHandler callbacks.Handler,
 	recorder *EpisodeRecorder,
-	screenshotPruning executor.ScreenshotPruningConfig,
 	contextManager *contextmanager.ContextManager,
 ) *AgentLoop {
 	if contextManager == nil {
 		logging.Fatalf("agent", "agent_loop", "context manager is nil")
 	}
 	return &AgentLoop{
-		Model:             model,
-		Profile:           profile,
-		CallbacksHandler:  callbacksHandler,
-		MaxIterations:     maxIterations,
-		Recorder:          recorder,
-		ScreenshotPruning: screenshotPruning,
-		ToolResultPolicy:  NewToolResultPolicy(),
-		contextManager:    contextManager,
-	}
-}
-
-func (l *AgentLoop) outboundTransforms() []executor.OutboundMessageTransform {
-	modelName := l.Model.Spec().Name
-	modelProvider := l.Model.Spec().Provider
-	return []executor.OutboundMessageTransform{
-		executor.AnthropicScreenshotPruner{
-			Enabled: IsAnthropicModel(modelProvider, modelName),
-			Config:  l.ScreenshotPruning,
-		},
+		Model:            model,
+		Profile:          profile,
+		CallbacksHandler: callbacksHandler,
+		MaxIterations:    maxIterations,
+		Recorder:         recorder,
+		ToolResultPolicy: NewToolResultPolicy(),
+		contextManager:   contextManager,
 	}
 }
 
@@ -104,7 +90,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 		defer l.notices.finishOnReturn(ctx, &runErr)
 	}
 	agentTools := l.Profile.Tools
-	transforms := l.outboundTransforms()
+	var transforms []executor.OutboundMessageTransform
 	if IsAnthropicModel(l.Model.Spec().Provider, l.Model.Spec().Name) {
 		frames := newVisualCoordinates(l.ScreenState)
 		transforms = append(transforms, frames)
@@ -949,14 +935,6 @@ func responsesGenerationInfoForToolCall(info map[string]any, toolID string) map[
 	return cloned
 }
 
-type roleExecutionResult struct {
-	Action          *schema.AgentAction
-	Step            *schema.AgentStep
-	ToolError       *ToolError
-	CandidateAnswer string
-	ToolDuration    time.Duration
-}
-
 func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *FunctionAgent, toolCall messages.Message, step schema.AgentStep, prepared PreparedToolResult) error {
 	if llmExecutor == nil {
 		return fmt.Errorf("llm executor is nil")
@@ -965,7 +943,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 	toolContent := prepared.Content
 	var followups []llms.MessageContent
 	if parser != nil && parser.isVisualObservationTool(step.Action.Tool) {
-		if content, visualFollowups := parser.observationMessagesForStep(step, true); len(visualFollowups) > 0 {
+		if content, visualFollowups := parser.observationMessagesForStep(step); len(visualFollowups) > 0 {
 			toolContent = content
 			followups = visualFollowups
 			prepared = PreparedToolResult{Content: content, Complete: true}

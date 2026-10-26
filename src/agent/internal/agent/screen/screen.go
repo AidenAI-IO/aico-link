@@ -35,6 +35,47 @@ type ScreenState struct {
 	screenshotHeight     int
 	screenshotUpdatedAt  time.Time
 	screenshotGeneration uint64
+	phoneScreenFallback  PhoneScreenFallback
+}
+
+// PhoneScreenFallback remembers reported phone screen dimensions across Agent
+// restarts, for captures taken while no live report exists.
+type PhoneScreenFallback interface {
+	// Remember stores a report; a zero frame size means "the latest frame".
+	Remember(info PhoneScreenInfo, frameWidth, frameHeight int)
+	// NoteFrame records a capture frame size.
+	NoteFrame(frameWidth, frameHeight int)
+	// Lookup returns the dimensions remembered for this frame size.
+	Lookup(frameWidth, frameHeight int) (PhoneScreenInfo, bool)
+	// LookupForDevice returns the remembered dimensions and their frame size
+	// (zero when no capture happened yet).
+	LookupForDevice() (PhoneScreenInfo, int, int, bool)
+	// ObserveCrop learns from a crop the frame service detected on its own;
+	// edgesOnScreen reports that its cut edges lie on the phone screen edge.
+	ObserveCrop(cropWidth, cropHeight, frameWidth, frameHeight int, edgesOnScreen bool)
+	// ShouldReprobe reports whether a capture using a remembered entry should
+	// also detect again without it, so a stale entry can be corrected.
+	ShouldReprobe() bool
+}
+
+// SetPhoneScreenFallback installs the store used when no live report exists.
+func (s *ScreenState) SetPhoneScreenFallback(fallback PhoneScreenFallback) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.phoneScreenFallback = fallback
+	s.mu.Unlock()
+}
+
+// PhoneScreenFallback returns the installed store, or nil.
+func (s *ScreenState) PhoneScreenFallback() PhoneScreenFallback {
+	if s == nil {
+		return nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.phoneScreenFallback
 }
 
 type ScreenMappingState struct {

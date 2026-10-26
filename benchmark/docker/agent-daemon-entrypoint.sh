@@ -33,7 +33,9 @@ if [ -n "${AICO_DEVICE_TYPE:-}" ]; then
     set -- "$@" --device-type "$AICO_DEVICE_TYPE"
 fi
 
+bridge_enabled=0
 if [ "${AICO_ENVIRONMENT_BRIDGE_MODE:-}" = "1" ] || [ "${AICO_ENVIRONMENT_BRIDGE_MODE:-}" = "true" ]; then
+    bridge_enabled=1
     if [ -z "${ENVIRONMENT_BRIDGE_ENDPOINT:-}" ]; then
         echo "ENVIRONMENT_BRIDGE_ENDPOINT is required when AICO_ENVIRONMENT_BRIDGE_MODE is enabled" >&2
         exit 1
@@ -42,6 +44,16 @@ if [ "${AICO_ENVIRONMENT_BRIDGE_MODE:-}" = "1" ] || [ "${AICO_ENVIRONMENT_BRIDGE
     if [ -n "${AICO_BENCHMARK_TASK_ID:-}" ]; then
         set -- "$@" --benchmark-task-id "$AICO_BENCHMARK_TASK_ID"
     fi
+fi
+
+if [ "${AICO_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
+    set -- "$@" --benchmark-mock-tools
+fi
+
+# These containers have no physical device services. Real-device CLI runs do not
+# use this entrypoint; bridged and scripted environments retain their tool catalog.
+if [ -n "${AICO_BENCHMARK_TOKEN_FILE:-}" ] && [ "$bridge_enabled" -eq 0 ]; then
+    set -- "$@" --benchmark-headless
 fi
 
 exec "$@"

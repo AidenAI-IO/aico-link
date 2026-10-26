@@ -7,7 +7,7 @@
  * confirmed first because it cannot be undone.
  */
 
-import {fetchSnapshot, request, t} from '../data.js';
+import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
 import {createSaver} from '../saver.js';
 import {choiceSheet} from '../../ui/choice-sheet.js';
 import {confirmSheet} from '../../ui/confirm.js';
@@ -52,16 +52,13 @@ function groupNoted(props) {
 }
 
 export async function memoryPage(context) {
-  const snapshot = context.snapshot || await fetchSnapshot().catch(() => ({config: {}}));
+  const snapshot = await ensureSnapshot(context);
   const body = el('div');
   const saver = createSaver(context, {
     title: msg('ui.nav_memory', '记忆'),
     back: '/',
     root: body,
-    onSaved: payload => {
-      if (payload && payload.config) snapshot.config = payload.config;
-      render();
-    },
+    onSaved: adoptSaved(snapshot, () => render()),
   });
   const config = () => snapshot.config || {};
 

@@ -2245,20 +2245,6 @@ func runtimeModelCallToolResponseContains(messages []llms.MessageContent, want s
 	return false
 }
 
-func runtimeLastMessageText(messages []llms.MessageContent) (llms.ChatMessageType, string, bool) {
-	if len(messages) == 0 {
-		return "", "", false
-	}
-	last := messages[len(messages)-1]
-	var builder strings.Builder
-	for _, part := range last.Parts {
-		if text, ok := part.(llms.TextContent); ok {
-			builder.WriteString(text.Text)
-		}
-	}
-	return last.Role, builder.String(), true
-}
-
 type staticTool struct {
 	name   string
 	output string
@@ -2996,20 +2982,6 @@ func contentResponseWithInfo(content string, info map[string]any) *llms.ContentR
 	}
 }
 
-func plannerResponse(nextStep string, plan ...string) *llms.ContentResponse {
-	if len(plan) == 0 {
-		plan = []string{nextStep}
-	}
-	payload, _ := json.Marshal(map[string]any{
-		"objective":           "test objective",
-		"completion_criteria": []string{"test request is satisfied"},
-		"plan":                plan,
-		"next_step":           nextStep,
-		"reason":              "test plan",
-	})
-	return contentResponse(string(payload))
-}
-
 func verifierFinishResponse(finalAnswer string) *llms.ContentResponse {
 	return verifierFinishResponseWithInfo(finalAnswer, nil)
 }
@@ -3025,43 +2997,6 @@ func verifierFinishJSON(finalAnswer string) string {
 		"reason":       "test verified",
 	})
 	return string(payload)
-}
-
-func structuredVerifierFinishResponse(speechText, output string) *llms.ContentResponse {
-	return contentResponse(structuredVerifierFinishJSON(speechText, output))
-}
-
-func structuredVerifierFinishJSON(speechText, output string) string {
-	payload, _ := json.Marshal(map[string]any{
-		"can_finish":   true,
-		"speech":       speechText,
-		"text":         output,
-		"final_answer": output,
-		"reason":       "test verified",
-	})
-	return string(payload)
-}
-
-func verifierContinueResponse(reason string) *llms.ContentResponse {
-	return contentResponse(verifierContinueJSON(reason))
-}
-
-func verifierContinueJSON(reason string) string {
-	payload, _ := json.Marshal(map[string]any{
-		"can_finish":   false,
-		"needs_replan": true,
-		"reason":       reason,
-	})
-	return string(payload)
-}
-
-func verifierStepContinueResponse(reason string) *llms.ContentResponse {
-	payload, _ := json.Marshal(map[string]any{
-		"can_finish":   false,
-		"needs_replan": false,
-		"reason":       reason,
-	})
-	return contentResponse(string(payload))
 }
 
 func toolCallResponse(id, name, arguments string) *llms.ContentResponse {
@@ -3165,16 +3100,6 @@ func TestRuntimeCallbackPropagatesToolErrorToEventsAndMessages(t *testing.T) {
 
 func runEventsOfType(events []RunEvent, eventType string) []RunEvent {
 	var matching []RunEvent
-	for _, event := range events {
-		if event.Type == eventType {
-			matching = append(matching, event)
-		}
-	}
-	return matching
-}
-
-func taskEpisodeEventsOfType(events []TaskEpisodeEvent, eventType string) []TaskEpisodeEvent {
-	var matching []TaskEpisodeEvent
 	for _, event := range events {
 		if event.Type == eventType {
 			matching = append(matching, event)
@@ -4206,23 +4131,6 @@ func TestNewRuntimeLoadsBundledSkillsSeededOnFirstStartup(t *testing.T) {
 
 	if _, ok := runtime.skills.GetIndex().Get("alpha"); !ok {
 		t.Fatalf("expected runtime to load skill copied during startup sync")
-	}
-}
-
-func numericExtraValue(v interface{}) int64 {
-	switch n := v.(type) {
-	case int:
-		return int64(n)
-	case int64:
-		return n
-	case int32:
-		return int64(n)
-	case uint64:
-		return int64(n)
-	case float64:
-		return int64(n)
-	default:
-		return -1
 	}
 }
 

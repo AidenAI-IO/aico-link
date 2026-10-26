@@ -118,11 +118,38 @@ Screenshot binary data is stored as an Episode artifact. Event records contain r
 
 The recorded `outcome.success` value is not treated as verified truth. It is input evidence for later assessment.
 
+The Episode index lists every Episode with a short user goal and summary
+(each capped at 300 characters) for lookups; the full goal and trace stay in
+the Episode's own `episode.yaml` and `events.jsonl`. It has two files:
+
+- `memory/episodes/index.yaml` is a snapshot.
+- `memory/episodes/index-log.jsonl` is an append-only log of entries written
+  since the snapshot. A later line replaces an earlier one with the same id.
+
+Starting and finishing a run appends one line to the log and never rewrites
+the snapshot, so a run's cost does not grow with the number of stored
+Episodes. The log is folded back into the snapshot at agent startup, and by
+the `episode_retention` cleaner once the log reaches 256 KiB or when it
+deletes Episodes. The snapshot records the id of the log it absorbed, so a log
+left behind by an interrupted fold is not replayed. Each process keeps the
+merged index in memory and updates it on its own appends.
+
 ### Episode Storage Retention
 
-The current Episode implementation does not register a retention cleaner for
-`memory/episodes/`. Episode metadata, events, and artifacts remain on disk until
-the whole memory plane is explicitly cleared.
+The storage monitor's `episode_retention` cleaner runs with the routine
+maintenance check (at every storage level). It deletes whole Episode
+directories, together with their index entries:
+
+- Episodes that ended more than 30 days ago.
+- The oldest Episodes beyond the newest 1,000 in the index.
+- Episode directories missing from the index whose last change is more than
+  30 days old.
+
+It never deletes a running Episode or one that an active Long-Term or Device
+Memory cites as evidence (`episode` source or evidence references). Episode
+Memory distills what later runs need into Device Memory within minutes of a
+run, so older Episodes are only execution evidence. The cleaner takes the same
+per-directory lock as every Episode writer.
 
 The consolidation ledger is bounded separately. It retains the latest 64
 `done` or `ignored` terminal statuses while preserving processing and retry
@@ -198,6 +225,20 @@ One Episode can produce zero to three independent candidates.
 | `fact` | stable device, app, or page observation | observed tool result |
 
 An Episode-level failure does not automatically create Failure Memory. A Failure candidate must contain reusable guidance for a future task.
+
+Candidates hold knowledge specific to the device, app, or page that the Agent
+cannot get elsewhere. The Agent already receives every tool result, including
+the `suggestion` a failed tool returns, so guidance that only restates a tool
+result in the Episode or describes generic tool use (take a screenshot after a
+failure, refocus the field, retry) is not stored. Attaching an app, page, or
+control name to that guidance does not make it specific. A workaround for a
+tool that misbehaved is a defect to fix in the tool; it is stored only when it
+also records a fact about the device, app, or page that no tool result in the
+Episode gave, such as a coordinate, route, page layout, or stop condition. The
+extractor sees tool results but not tool definitions, so the rule is judged
+against the results in the Episode. The extraction prompt, the omission
+review, and the retention audit share this rule
+(`episodeMemoryBuiltInGuidanceRule`).
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 

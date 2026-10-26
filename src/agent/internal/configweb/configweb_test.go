@@ -615,8 +615,8 @@ func TestConfigBackupImportValidatesPersistsAndReloads(t *testing.T) {
 	if resp.Code != http.StatusOK || !strings.Contains(resp.Body.String(), `"persisted":true`) || !strings.Contains(resp.Body.String(), `"pending":true`) {
 		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
 	}
-	if reloadRevision != configDataRevision(restored) {
-		t.Fatalf("reload revision=%d, want %d", reloadRevision, configDataRevision(restored))
+	if reloadRevision != agent.ConfigRevision(restored) {
+		t.Fatalf("reload revision=%d, want %d", reloadRevision, agent.ConfigRevision(restored))
 	}
 	written, err := os.ReadFile(options.AgentConfigPath)
 	if err != nil || !bytes.Equal(written, restored) {
@@ -672,7 +672,7 @@ func TestConfigTestAcceptsRealtimeInputMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := `{"section":"agent","values":{"input_mode":"realtime","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screenshot_keep_n":3,"screenshot_prune_interval":2,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+	request := `{"section":"agent","values":{"input_mode":"realtime","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
 	resp := httptest.NewRecorder()
 	server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
 	if resp.Code != http.StatusOK {
@@ -725,7 +725,7 @@ func TestConfigTestInputModeAcceptsUnsetAndRejectsRemovedModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := `{"section":"agent","values":{` + test.value + `"vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screenshot_keep_n":3,"screenshot_prune_interval":2,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+			request := `{"section":"agent","values":{` + test.value + `"vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
 			resp := httptest.NewRecorder()
 			server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
 			if resp.Code != http.StatusOK {
@@ -751,6 +751,65 @@ func TestConfigTestInputModeAcceptsUnsetAndRejectsRemovedModes(t *testing.T) {
 				return
 			}
 			t.Fatalf("input_mode result missing: %+v", payload.Results)
+		})
+	}
+}
+
+// TestConfigTestStatePruneLimitIsOptional covers the agent section smoke
+// test: an omitted context_prune_state_limit falls back to the agent default,
+// so it must pass, while a present value has to be a whole number >= 0.
+func TestConfigTestStatePruneLimitIsOptional(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		value      string
+		wantResult bool
+		wantPassed bool
+	}{
+		{"omitted", "", false, true},
+		{"zero", `"context_prune_state_limit":0,`, true, true},
+		{"positive", `"context_prune_state_limit":6,`, true, true},
+		{"negative", `"context_prune_state_limit":-1,`, true, false},
+		{"fraction", `"context_prune_state_limit":1.5,`, true, false},
+		{"wrong type", `"context_prune_state_limit":"6",`, true, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := NewServer(testOptions(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			request := `{"section":"agent","values":{` + test.value + `"input_mode":"stt","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+			resp := httptest.NewRecorder()
+			server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
+			if resp.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+			}
+			var payload struct {
+				OK      bool `json:"ok"`
+				Results []struct {
+					Check  string `json:"check"`
+					Passed bool   `json:"passed"`
+					Detail string `json:"detail"`
+				} `json:"results"`
+			}
+			if err := json.Unmarshal(resp.Body.Bytes(), &payload); err != nil {
+				t.Fatal(err)
+			}
+			found := false
+			for _, result := range payload.Results {
+				if result.Check != "context_prune_state_limit" {
+					continue
+				}
+				found = true
+				if result.Passed != test.wantPassed {
+					t.Fatalf("context_prune_state_limit result=%+v, want passed=%v", result, test.wantPassed)
+				}
+			}
+			if found != test.wantResult {
+				t.Fatalf("context_prune_state_limit result present=%v, want %v: %+v", found, test.wantResult, payload.Results)
+			}
+			if payload.OK != test.wantPassed {
+				t.Fatalf("ok=%v, want %v: %+v", payload.OK, test.wantPassed, payload.Results)
+			}
 		})
 	}
 }

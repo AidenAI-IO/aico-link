@@ -354,7 +354,7 @@ func (t *WaitStableScreenTool) wait(ctx context.Context, input string) (waitStab
 			wait = remaining
 		}
 		if wait > 0 {
-			if err := sleepContext(ctx, wait); err != nil {
+			if err := sleepWithContext(ctx, wait); err != nil {
 				return waitStableScreenResult{}, err
 			}
 		}
@@ -424,18 +424,4 @@ func meanRGBAbsDiff(aMeta *frameMetadata, a []byte, bMeta *frameMetadata, b []by
 		}
 	}
 	return float64(sum) / float64(len(a))
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

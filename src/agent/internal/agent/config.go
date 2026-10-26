@@ -1,19 +1,20 @@
 package agent
 
 import (
-	"aico-agent/internal/agent/executor"
-	"aico-agent/internal/agent/realtimevoice"
-	"aico-agent/internal/logging"
 	"errors"
 	"fmt"
 	"math"
-	"net"
 	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/netproxy"
 
 	"github.com/BurntSushi/toml"
 )
@@ -30,6 +31,9 @@ type EnvironmentBridgeConfig struct {
 }
 
 type BenchmarkConfig struct {
+	Headless  bool `toml:"-"` // Benchmark container without a device or environment bridge.
+	MockTools bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+
 	Token string `toml:"-"` // Only set via benchmark runner CLI flags, never from config file
 }
 
@@ -289,6 +293,7 @@ type Config struct {
 	STTProviders               map[string]STTProvider        `toml:"stt_providers,omitempty"`   // Named STT provider configurations
 	VoiceModelProviders        map[string]VoiceModelProvider `toml:"voice_model_providers,omitempty"`
 	Model                      ModelConfig                   `toml:"model"`
+	Decision                   DecisionModelConfig           `toml:"decision,omitempty"`
 	TTS                        TTSConfig                     `toml:"tts,omitempty"`
 	STT                        STTConfig                     `toml:"stt,omitempty"`
 	HID                        HIDConfig                     `toml:"hid"`
@@ -322,6 +327,10 @@ type Config struct {
 	VoiceFirstTurnTimeoutMs    int                           `toml:"voice_first_turn_timeout_ms,omitempty"`
 	VoiceMaxTurns              int                           `toml:"voice_max_turns,omitempty"`
 	VoiceInterruptOnWakeup     *bool                         `toml:"voice_interrupt_on_wakeup,omitempty"`
+	TapWakeupEnabled           *bool                         `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled                 *bool                         `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	MCPShellEnabled            *bool                         `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	MCPConfigWebBaseURL        string                        `toml:"mcp_config_web_base_url,omitempty"`
 	VoiceStreamingTTSEnabled   *bool                         `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                         `toml:"voice_tool_call_speech,omitempty"`
 	VoiceProgressSpeechEnabled *bool                         `toml:"voice_progress_speech_enabled,omitempty"`
@@ -337,14 +346,17 @@ type Config struct {
 	// read it through
 	// ContextPruneThresholdOrDefault rather than directly.
 	ContextPruneThreshold float64 `toml:"context_prune_threshold,omitempty"`
+	// ContextPruneStateLimit also runs the same stale-state cleanup once the
+	// context holds more <state> messages with a screenshot. Zero uses
+	// defaultContextPruneStateLimit. Read it through
+	// ContextPruneStateLimitOrDefault.
+	ContextPruneStateLimit int `toml:"context_prune_state_limit,omitempty"`
 	// ContextCompactionThreshold is the fraction of the usable model input
 	// budget at which conversation compaction summarizes the transcript. Zero
 	// uses defaultContextCompactionThreshold. Read it through
 	// ContextCompactionThresholdOrDefault rather than directly, so loaders that
 	// do not start from DefaultConfig still get the default.
 	ContextCompactionThreshold float64         `toml:"context_compaction_threshold,omitempty"`
-	ScreenshotKeepN            int             `toml:"screenshot_keep_n,omitempty"`
-	ScreenshotPruneInterval    int             `toml:"screenshot_prune_interval,omitempty"`
 	ScreenStableTimeoutMs      int             `toml:"screen_stable_timeout_ms,omitempty"`
 	ScreenStableMs             int             `toml:"screen_stable_ms,omitempty"`
 	ScreenStableDiffThreshold  float64         `toml:"screen_stable_diff_threshold,omitempty"`
@@ -494,13 +506,13 @@ func (c VoiceModelConfig) Validate() error {
 	if endpoint := strings.TrimSpace(c.Endpoint); provider != "speko" && endpoint != "" {
 		u, err := url.Parse(endpoint)
 		if err != nil || u.Host == "" || (u.Scheme != "wss" &&
-			!(u.Scheme == "ws" && isLoopbackHost(u.Hostname()))) {
+			!(u.Scheme == "ws" && netproxy.IsLoopbackHost(u.Hostname()))) {
 			return fmt.Errorf("voice_model.endpoint: invalid websocket URL %q", c.Endpoint)
 		}
 	}
 	if base := strings.TrimSpace(c.BaseURL); base != "" {
 		u, err := url.Parse(base)
-		if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname()))) {
+		if err != nil || u.Host == "" || (u.Scheme != "https" && !(u.Scheme == "http" && netproxy.IsLoopbackHost(u.Hostname()))) {
 			return fmt.Errorf("voice_model.base_url: invalid HTTP URL %q", c.BaseURL)
 		}
 	}
@@ -512,36 +524,11 @@ func (c VoiceModelConfig) Validate() error {
 	return nil
 }
 
-func isLoopbackHost(host string) bool {
-	host = strings.TrimSpace(strings.Trim(host, "[]"))
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
+// ProxyConfig is the explicit proxy configuration shared with the TTS adapters
+// and other network clients.
+type ProxyConfig = netproxy.Config
 
-type ProxyConfig struct {
-	HTTPProxy  string
-	HTTPSProxy string
-	AllProxy   string
-	NoProxy    string
-}
-
-const DefaultNoProxy = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
-
-func (p ProxyConfig) HasProxyURL() bool {
-	return strings.TrimSpace(p.HTTPProxy) != "" ||
-		strings.TrimSpace(p.HTTPSProxy) != "" ||
-		strings.TrimSpace(p.AllProxy) != ""
-}
-
-func (p ProxyConfig) WithDefaults() ProxyConfig {
-	if p.HasProxyURL() && strings.TrimSpace(p.NoProxy) == "" {
-		p.NoProxy = DefaultNoProxy
-	}
-	return p
-}
+const DefaultNoProxy = netproxy.DefaultNoProxy
 
 func ProxyConfigFromEnvironment() ProxyConfig {
 	p := ProxyConfig{
@@ -560,26 +547,6 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func (p ProxyConfig) IsZero() bool {
-	return strings.TrimSpace(p.HTTPProxy) == "" &&
-		strings.TrimSpace(p.HTTPSProxy) == "" &&
-		strings.TrimSpace(p.AllProxy) == "" &&
-		strings.TrimSpace(p.NoProxy) == ""
-}
-
-func (p ProxyConfig) Validate() error {
-	for name, value := range map[string]string{
-		"http_proxy":  p.HTTPProxy,
-		"https_proxy": p.HTTPSProxy,
-		"all_proxy":   p.AllProxy,
-	} {
-		if err := validateProxyURL(value); err != nil {
-			return fmt.Errorf("proxy.%s: %w", name, err)
-		}
-	}
-	return nil
 }
 
 func (a AudioConfig) SocketOrDefault() string {
@@ -777,7 +744,7 @@ func (h HIDConfig) KeyboardDeviceOrDefault() string {
 }
 
 func (h HIDConfig) KeyboardLayoutOrDefault() string {
-	layout, _ := normalizeKeyboardLayout(h.KeyboardLayout)
+	layout, _ := mnk.NormalizeKeyboardLayout(h.KeyboardLayout)
 	return layout
 }
 
@@ -1472,6 +1439,7 @@ func groupedConfigToRuntime(grouped map[string]interface{}) map[string]interface
 	moveTable([]string{"conversation_settings", "termination_policy"}, "termination_policy")
 	moveTable([]string{"model_settings", "model"}, "model")
 	moveTable([]string{"model_settings", "providers"}, "model_providers")
+	moveTable([]string{"model_settings", "decision"}, "decision")
 	moveTable([]string{"voice_settings", "realtime", "providers"}, "voice_model_providers")
 	mergeRootTable(grouped, result, []string{"voice_settings", "mode"})
 	mergeRootTable(grouped, result, []string{"voice_settings", "classic", "runtime"})
@@ -1752,6 +1720,9 @@ func (c Config) Validate() error {
 	default:
 		return fmt.Errorf("invalid search.provider: %s (expected duckduckgo, brave, or tavily)", c.Search.Provider)
 	}
+	if err := c.Decision.validate(); err != nil {
+		return err
+	}
 
 	if strings.TrimSpace(c.Model.Provider) == "" {
 		return errors.New("model.provider is required")
@@ -1794,6 +1765,9 @@ func (c Config) Validate() error {
 	}
 	if err := validateContextThresholdFraction("context_prune_threshold", c.ContextPruneThreshold); err != nil {
 		return err
+	}
+	if c.ContextPruneStateLimit < 0 {
+		return fmt.Errorf("context_prune_state_limit must be >= 0, got %d", c.ContextPruneStateLimit)
 	}
 	if err := validateContextThresholdFraction("context_compaction_threshold", c.ContextCompactionThreshold); err != nil {
 		return err
@@ -1953,12 +1927,6 @@ func (c Config) Validate() error {
 	if err := c.Storage.MonitorConfig().Validate(); err != nil {
 		return err
 	}
-	if c.ScreenshotKeepN < 0 {
-		return fmt.Errorf("screenshot_keep_n must be >= 0, got %d", c.ScreenshotKeepN)
-	}
-	if c.ScreenshotPruneInterval < 0 {
-		return fmt.Errorf("screenshot_prune_interval must be >= 0, got %d", c.ScreenshotPruneInterval)
-	}
 	if c.ScreenStableTimeoutMs < 0 {
 		return fmt.Errorf("screen_stable_timeout_ms must be >= 0, got %d", c.ScreenStableTimeoutMs)
 	}
@@ -1976,8 +1944,8 @@ func (c Config) Validate() error {
 		return err
 	}
 
-	if _, ok := normalizeKeyboardLayout(c.HID.KeyboardLayout); !ok {
-		return fmt.Errorf("invalid hid.keyboard_layout: %s (expected %s)", c.HID.KeyboardLayout, keyboardLayoutValuesText())
+	if _, ok := mnk.NormalizeKeyboardLayout(c.HID.KeyboardLayout); !ok {
+		return fmt.Errorf("invalid hid.keyboard_layout: %s (expected %s)", c.HID.KeyboardLayout, mnk.KeyboardLayoutValuesText())
 	}
 	switch strings.ToLower(strings.TrimSpace(c.HID.PointerMode)) {
 	case "", "absolute", "touchscreen":
@@ -2272,6 +2240,27 @@ func (c Config) VoiceInterruptOnWakeupOrDefault() bool {
 	return true
 }
 
+func (c Config) TapWakeupEnabledOrDefault() bool {
+	if c.TapWakeupEnabled != nil {
+		return *c.TapWakeupEnabled
+	}
+	return true
+}
+
+func (c Config) MCPEnabledOrDefault() bool {
+	if c.MCPEnabled != nil {
+		return *c.MCPEnabled
+	}
+	return true
+}
+
+func (c Config) MCPShellEnabledOrDefault() bool {
+	if c.MCPShellEnabled != nil {
+		return *c.MCPShellEnabled
+	}
+	return false
+}
+
 func (c Config) VoiceStreamingTTSEnabledOrDefault() bool {
 	if c.VoiceStreamingTTSEnabled != nil {
 		return *c.VoiceStreamingTTSEnabled
@@ -2323,11 +2312,13 @@ func (c Config) ContextPruneThresholdOrDefault() float64 {
 	return min(threshold, c.ContextCompactionThresholdOrDefault())
 }
 
-func (c Config) ScreenshotPruningOrDefault() executor.ScreenshotPruningConfig {
-	return executor.ScreenshotPruningConfig{
-		KeepN:    c.ScreenshotKeepN,
-		Interval: c.ScreenshotPruneInterval,
-	}.WithDefaults()
+// ContextPruneStateLimitOrDefault returns how many <state> messages with a
+// screenshot the context may hold before the stale-state cleanup runs.
+func (c Config) ContextPruneStateLimitOrDefault() int {
+	if c.ContextPruneStateLimit <= 0 {
+		return defaultContextPruneStateLimit
+	}
+	return c.ContextPruneStateLimit
 }
 
 func (c Config) ScreenStableDefaults() ScreenStableDefaults {

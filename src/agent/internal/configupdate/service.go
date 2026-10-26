@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"math"
 	"os"
@@ -123,6 +122,19 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 	if err != nil {
 		return Result{}, internalConfigUpdate(err)
 	}
+	if commit {
+		// Re-read under the lock so a concurrent writer's save is the base
+		// this patch merges onto, rather than one this rename would discard.
+		unlock, err := lockConfigUpdates(resolvedPath)
+		if err != nil {
+			return Result{}, internalConfigUpdate(err)
+		}
+		defer unlock()
+		resolvedPath, original, fileMode, err = prepareConfigUpdateFile(path)
+		if err != nil {
+			return Result{}, internalConfigUpdate(err)
+		}
+	}
 	current, err := agent.LoadResolvedConfig(resolvedPath)
 	if err != nil {
 		// A persisted config can be invalid before this update (for example,
@@ -180,7 +192,7 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 		if err != nil {
 			return Result{}, internalConfigUpdate(err)
 		}
-		return Result{OK: true, Config: FromAgentConfig(cfg), ChangedPaths: []string{}, RebootRequired: false, Persisted: commit, Applied: false, Revision: configRevisionFromFile(resolvedPath), Apply: agent.ApplyLive}, nil
+		return Result{OK: true, Config: FromAgentConfig(cfg), ChangedPaths: []string{}, RebootRequired: false, Persisted: commit, Applied: false, Revision: agent.ConfigFileRevision(resolvedPath), Apply: agent.ApplyLive}, nil
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(resolvedPath), ".agent.toml.config-update-*.toml")
 	if err != nil {
@@ -219,7 +231,7 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 	}
 	apply, applyReasons := agent.ConfigApplyLevel(current, candidate)
 	if !commit {
-		return newResult(candidate, changed, apply, applyReasons, false, configRevision(original)), nil
+		return newResult(candidate, changed, apply, applyReasons, false, agent.ConfigRevision(original)), nil
 	}
 	if err := os.Rename(tmpPath, resolvedPath); err != nil {
 		return Result{}, internalConfigUpdate(fmt.Errorf("replace config: %w", err))
@@ -232,7 +244,7 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 	if err := directory.Sync(); err != nil {
 		return Result{}, internalConfigUpdate(fmt.Errorf("sync config directory: %w", err))
 	}
-	return newResult(candidate, changed, apply, applyReasons, true, configRevision(updated)), nil
+	return newResult(candidate, changed, apply, applyReasons, true, agent.ConfigRevision(updated)), nil
 }
 
 func newResult(candidate agent.Config, changed []string, apply agent.ApplyLevel, reasons []string, persisted bool, revision uint64) Result {
@@ -252,20 +264,6 @@ func newResult(candidate agent.Config, changed []string, apply agent.ApplyLevel,
 		result.RebootReasons = []string{"USB/HID identity or keyboard layout changed"}
 	}
 	return result
-}
-
-func configRevision(data []byte) uint64 {
-	h := fnv.New64a()
-	_, _ = h.Write(data)
-	return h.Sum64()
-}
-
-func configRevisionFromFile(path string) uint64 {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return 0
-	}
-	return configRevision(data)
 }
 
 func prepareConfigUpdateFile(path string) (string, []byte, os.FileMode, error) {
@@ -1213,7 +1211,7 @@ func tomlPathForWebPath(path []string) []string {
 			prefix = []string{"basic_settings", "language_timezone"}
 		} else if key == "input_mode" {
 			prefix = []string{"voice_settings", "mode"}
-		} else if strings.HasPrefix(key, "vad_") || strings.HasPrefix(key, "silence_") || strings.HasPrefix(key, "min_speech_") || strings.HasPrefix(key, "voice_") {
+		} else if key == "tap_wakeup_enabled" || strings.HasPrefix(key, "vad_") || strings.HasPrefix(key, "silence_") || strings.HasPrefix(key, "min_speech_") || strings.HasPrefix(key, "voice_") {
 			prefix = []string{"voice_settings", "classic", "runtime"}
 		} else {
 			prefix = []string{"conversation_settings", "agent"}
@@ -1226,6 +1224,8 @@ func tomlPathForWebPath(path []string) []string {
 		}
 	case "model_providers":
 		prefix = []string{"model_settings", "providers"}
+	case "decision":
+		prefix = []string{"model_settings", "decision"}
 	case "voice_model":
 		prefix = []string{"voice_settings", "realtime"}
 	case "voice_model_providers":

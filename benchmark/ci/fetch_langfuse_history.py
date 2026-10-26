@@ -23,6 +23,8 @@ REPORT_SCORE_NAMES = tuple(dict.fromkeys((
     "efficiency.cost_usd.p50", "efficiency.cost_usd.sum", "efficiency.total_tokens.sum",
     *DISTRIBUTION_SCORE_NAMES,
     "coverage.agent_eligible_attempts",
+    "observations.skill_read_device_operator.passed_tasks",
+    "observations.skill_read_device_operator.observed_tasks",
     "diagnostics.failure_stage_coverage", "diagnostics.failure_stage_coverage.classified",
     "diagnostics.failure_stage_coverage.eligible_failures",
     *(f"failures.stage.{name}" for name in sorted(FAILURE_STAGES)),
@@ -32,7 +34,7 @@ REPORT_SCORE_NAMES = tuple(dict.fromkeys((
 
 COMPARISON_FIELDS = (
     "git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
-    "metrics_k", "agent_model", "judge_provider", "judge_model",
+    "metrics_k", "agent_model", "judge_provider", "judge_model", "execution_environment",
     "judge_prompt_version", "target_platform", "active_skills",
 )
 
@@ -44,9 +46,13 @@ class HistoryResult:
 
 
 def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
-    """Require a known workload/configuration before claiming a regression."""
+    """Require a known workload/configuration before claiming a regression.
+
+    target_platform is compared but not required: isolated suites run without a
+    device and legitimately record none.
+    """
     required = ("git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
-                "metrics_k", "agent_model", "target_platform")
+                "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
@@ -220,6 +226,12 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         "commit_sha": metadata.get("git_sha") or "unknown",
         "suite": metadata.get("benchmark_suite") or "unknown",
         "source": source,
+        "workload_task_ids": metadata.get("workload_task_ids"),
+        "execution_environment": metadata.get("execution_environment"),
+        "skill_discovery": {
+            "read": scores.get("observations.skill_read_device_operator.passed_tasks"),
+            "observed": scores.get("observations.skill_read_device_operator.observed_tasks"),
+        },
         "tasks": scores.get("capability.pass_at_1.total_tasks"),
         "eligible_tasks": scores.get("capability.pass_at_1.eligible_tasks"),
         "passed": scores.get("capability.pass_at_1.successes"),

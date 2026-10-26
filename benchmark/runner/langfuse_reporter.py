@@ -5,6 +5,9 @@ import hashlib
 import json
 import os
 import re
+import time
+
+import httpx
 import uuid
 from collections.abc import Callable
 from pathlib import Path
@@ -589,14 +592,22 @@ def _create_score(
     value = score["value"]
     if score.get("data_type") == "BOOLEAN":
         value = 1 if value else 0
-    create_score(
-        id=score_id,
-        name=score["name"],
-        value=value,
-        data_type=score["data_type"],
-        trace_id=trace_id,
-        dataset_run_id=dataset_run_id,
-    )
+    # Stable IDs make replay safe even if the server committed before disconnecting.
+    for attempt in range(3):
+        try:
+            create_score(
+                id=score_id, name=score["name"], value=value,
+                data_type=score["data_type"], trace_id=trace_id,
+                dataset_run_id=dataset_run_id,
+            )
+            return
+        except Exception as exc:
+            transient = isinstance(exc, (httpx.TransportError, ConnectionError, TimeoutError))
+            transient = transient or getattr(exc, "status_code", None) in {408, 429, 500, 502, 503, 504}
+            if not transient or attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+
 
 
 def _score_id(dataset_name: str, run_name: str, scope: str, score_name: str) -> str:
@@ -1209,6 +1220,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "benchmark_suite": artifacts.suite.name,
         "suite_sha256": artifacts.suite.sha256,
         "workload_sha256": _workload_sha256(artifacts.results),
+        "workload_task_ids": sorted({str(row["task_id"]).strip() for row in artifacts.results}),
         "artifact_sha256": _artifact_sha256(artifacts),
         "metrics_schema_version": manifest.get("metrics_schema_version"),
         "metrics_k": manifest.get("metrics_k"),
@@ -1225,6 +1237,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "judge_model": judge.get("model"),
         "judge_prompt_version": manifest.get("judge_prompt_version"),
         "target_platform": manifest.get("target_platform"),
+        "execution_environment": manifest.get("execution_environment"),
         "selected_task_ids": manifest.get("selected_task_ids"),
         "active_skills": manifest.get("active_skills"),
     }

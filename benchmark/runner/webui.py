@@ -2165,6 +2165,7 @@ def daemon_compose_env(
     benchmark_task_id: str = "",
     device_type: str = "",
     environment_bridge_mode: bool | None = None,
+    benchmark_mock_tools: bool = False,
 ) -> dict[str, str]:
     env = dict(os.environ)
     # Strip general host proxies so builds and model/device traffic do not
@@ -2174,6 +2175,7 @@ def daemon_compose_env(
                 "http_proxy", "https_proxy", "all_proxy"):
         env.pop(key, None)
     env["AICO_DAEMON_IMAGE"] = image
+    env["AICO_BENCHMARK_MOCK_TOOLS"] = "1" if benchmark_mock_tools else "0"
     bridge_enabled = bool(environment_bridge_endpoint) if environment_bridge_mode is None else bool(environment_bridge_mode)
     env["AICO_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
     if host_port is not None:
@@ -2207,6 +2209,7 @@ def start_daemon_compose(
     benchmark_task_id: str = "",
     device_type: str = "",
     environment_bridge_mode: bool | None = None,
+    benchmark_mock_tools: bool = False,
     stop_requested: Callable[[], bool] | None = None,
 ) -> str:
     project = daemon_compose_project(job)
@@ -2221,6 +2224,7 @@ def start_daemon_compose(
         benchmark_task_id=benchmark_task_id,
         device_type=device_type,
         environment_bridge_mode=environment_bridge_mode,
+        benchmark_mock_tools=benchmark_mock_tools,
     )
     run_logged_command(
         daemon_compose_command(

@@ -68,7 +68,7 @@ func TestAbsoluteModeRejectsAndroidNavigationExtensionKey(t *testing.T) {
 		t.Fatal("expected absolute-mode rejection for KEYCODE_BACK")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, `hid.pointer_mode="touchscreen"`) || !strings.Contains(msg, absolutePointerModeExtensionKeyList) {
+	if !strings.Contains(msg, `hid.pointer_mode="touchscreen"`) || !strings.Contains(msg, AbsolutePointerModeExtensionKeyList) {
 		t.Fatalf("error = %q, want absolute allow-list message", msg)
 	}
 	if len(android.bytes()) != 0 {

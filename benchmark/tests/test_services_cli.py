@@ -1,3 +1,4 @@
+import argparse
 import json
 import re
 from pathlib import Path
@@ -501,6 +502,38 @@ def test_start_adb_android_env_prints_environment_urls(tmp_path: Path, monkeypat
     manifest = json.loads(Path(payload["manifest_path"]).read_text(encoding="utf-8"))
     assert manifest["public_endpoint"] == "http://127.0.0.1:18899"
     assert manifest["pid"] == 4242
+
+
+def test_start_adb_android_env_defaults_to_docker_reachable_host(tmp_path: Path, monkeypatch, capsys):
+    launched = []
+
+    class FakeProc:
+        pid = 4242
+
+    monkeypatch.setattr(services, "mobilegym_bridge_bind_host", lambda: "172.17.0.1")
+    monkeypatch.setattr(services, "start_adb_bridge_process", lambda **kwargs: (launched.append(kwargs) or FakeProc()))
+    monkeypatch.setattr(services, "wait_for_http_health", lambda url, timeout: None)
+
+    parser = argparse.ArgumentParser()
+    services.add_service_parsers(parser.add_subparsers(dest="cmd"))
+    args = parser.parse_args(
+        [
+            "start-adb-android-env",
+            "--adb-serial",
+            "emulator-5554",
+            "--runs-dir",
+            str(tmp_path),
+            "--bridge-port",
+            "18899",
+            "--json",
+        ]
+    )
+
+    assert services.cmd_start_adb_android_env(args) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["environment_url"] == "http://172.17.0.1:18899"
+    assert launched[0]["bridge_host"] == "172.17.0.1"
 
 
 def test_start_adb_android_env_requires_serial(tmp_path: Path, capsys):

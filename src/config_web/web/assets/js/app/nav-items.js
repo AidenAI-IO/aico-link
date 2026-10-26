@@ -15,7 +15,7 @@ export const PRIMARY_ITEMS = [
   {id: 'wifi', label: 'Wi-Fi', route: '/wifi', status: 'wifi'},
   {id: 'basic', label: msg('ui.nav_basic', '基础设置'), route: '/basic'},
   {id: 'conversation', label: msg('ui.nav_conversation', '对话与工具'), route: '/conversation'},
-  {id: 'model', label: msg('ui.nav_model', '主模型设置'), route: '/model'},
+  {id: 'model', label: msg('ui.nav_model', '模型设置'), route: '/model'},
   {id: 'voice', label: msg('ui.nav_voice', '语音'), route: '/voice', status: 'voice'},
 ];
 
