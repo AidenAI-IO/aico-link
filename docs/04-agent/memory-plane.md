@@ -236,6 +236,10 @@ specific. Facts that tool results observed about the device, app, or page are
 evidence, not built-in guidance: a verified sequence of steps, a route, a
 required field or precondition, a page layout, a coordinate, or a stop
 condition is specific knowledge even though a tool result reported it. A
+single observation of a changing value such as an IP address, token, or
+timestamp is transient, even when it appears on a named app or page. A
+verified multi-step procedure retains the observed transitions and verification;
+the final action alone is not treated as sufficient without separate proof. A
 workaround for a tool that misbehaved is a defect to fix in the tool; it is
 stored only when it also records such a device, app, or page fact beyond the
 tool's own advice. The extractor sees tool results but not tool definitions,
@@ -269,7 +273,7 @@ processing/proposed -> ignored
 
 The proposal is persisted before Device Memory writes. Recovery can therefore apply an existing proposal without repeating the model call.
 
-Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
+Empty responses and invalid JSON from a normally finished initial extraction are terminal `ignored` results. If the optional omission review returns malformed JSON on every attempt, the worker retains the valid first-pass assessment and its empty candidate list. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
 
 If a target Memory revision changes before update, the stale proposal is discarded and the Episode is re-extracted against the latest revision. Output-token truncation and retention/omission review failures may also schedule another model call for the same extractor version.
 

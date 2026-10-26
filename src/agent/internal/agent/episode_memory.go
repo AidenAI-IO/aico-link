@@ -30,6 +30,7 @@ const (
 var (
 	errEpisodeMemoryRevisionChanged   = errors.New("episode memory revision changed")
 	errEpisodeMemoryOmissionReview    = errors.New("episode memory omission review failed")
+	errEpisodeMemoryMalformedOmission = errors.New("episode memory omission review returned malformed JSON")
 	errEpisodeMemoryRetentionAudit    = errors.New("episode memory retention audit failed")
 	errEpisodeMemoryProcessingFailed  = errors.New("episode memory processing failed")
 	errEpisodeMemoryInvalidRetryLimit = errors.New("episode memory has invalid retry batch limit")
@@ -818,11 +819,14 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 	if shouldReviewEpisodeMemoryProposal(episode, proposal) {
 		reviewed, reviewErr := p.reviewEpisodeMemoryOmission(ctx, episode, proposal, existing, attempt)
 		if reviewErr != nil {
-			return episodeMemoryProposal{}, safeEpisodeMemoryError(fmt.Errorf("%w: %w", errEpisodeMemoryOmissionReview, reviewErr))
-		}
-		proposal, err = normalizeEpisodeMemoryAssessment(episode, reviewed, existing)
-		if err != nil {
-			return episodeMemoryProposal{}, err
+			if !errors.Is(reviewErr, errEpisodeMemoryMalformedOmission) || attempt < episodeMemoryMaxAttempts-1 {
+				return episodeMemoryProposal{}, safeEpisodeMemoryError(fmt.Errorf("%w: %w", errEpisodeMemoryOmissionReview, reviewErr))
+			}
+		} else {
+			proposal, err = normalizeEpisodeMemoryAssessment(episode, reviewed, existing)
+			if err != nil {
+				return episodeMemoryProposal{}, err
+			}
 		}
 	}
 	if !episodeMemoryProposalNeedsRetentionAudit(proposal) {
@@ -1124,6 +1128,8 @@ Return exactly one JSON object matching this schema:
 
 Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
 
+A procedure rewrite must preserve the observed step sequence; do not reduce it to the final action or infer that the final action alone succeeds.
+
 Episode:
 ` + payload + `
 
@@ -1241,7 +1247,7 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryProposal(ctx context.Conte
 	var proposal episodeMemoryProposal
 	if err := json.Unmarshal([]byte(content), &proposal); err != nil {
 		p.logEpisodeMemoryResponseFailure("omission review parse failed", content)
-		return episodeMemoryProposal{}, fmt.Errorf("parse episode memory proposal: %w", err)
+		return episodeMemoryProposal{}, fmt.Errorf("%w: %w", errEpisodeMemoryMalformedOmission, err)
 	}
 	proposal.ExistingRevisions = make(map[string]int, len(existing))
 	for _, item := range existing {
@@ -1991,7 +1997,7 @@ Episode:
 // It separates the remediation advice a tool returns, which the Agent gets
 // again on the next failure, from the device, app, and page facts that tool
 // results observe, which are the evidence Device Memory is built from.
-const episodeMemoryBuiltInGuidanceRule = `The Agent already receives every tool result, including the suggestion a failed tool returns, so a memory that only repeats that suggestion adds nothing. None of the following is device-, app-, or page-specific knowledge: guidance that only restates the remediation advice a tool returned in this Episode; generic tool use such as taking a screenshot after a failure, refocusing a field, or retrying; and either of those with an app, page, or control name attached, for example "in Safari, tap the address bar and retry enter_text" after enter_text already said to refocus the field and retry. Facts that tool results observed about this device, app, or page are evidence, not built-in guidance: a verified sequence of steps, a route, a required field or precondition, a page layout, a coordinate, or a stop condition is specific knowledge even though a tool result reported it. A workaround for a tool that misbehaved is a defect to fix in the tool; it counts only when it also records such a device, app, or page fact beyond the tool's own advice.`
+const episodeMemoryBuiltInGuidanceRule = `The Agent already receives every tool result, including the suggestion a failed tool returns, so a memory that only repeats that suggestion adds nothing. None of the following is device-, app-, or page-specific knowledge: guidance that only restates the remediation advice a tool returned in this Episode; generic tool use such as taking a screenshot after a failure, refocusing a field, or retrying; and either of those with an app, page, or control name attached, for example "in Safari, tap the address bar and retry enter_text" after enter_text already said to refocus the field and retry. Facts that tool results observed about this device, app, or page are evidence, not built-in guidance: a verified sequence of steps, a route, a required field or precondition, a page layout, a coordinate, or a stop condition is specific knowledge even though a tool result reported it. Evidence alone does not make a fact durable: a current IP address, token, timestamp, or other changing value seen once is transient, even on a named app or page. Merely completing a read-only lookup of such a value does not create a reusable lesson. A workaround for a tool that misbehaved is a defect to fix in the tool; it counts only when it also records such a device, app, or page fact beyond the tool's own advice.`
 
 const episodeMemoryProposalInstructions = `For each Episode, return a proposal object matching this schema:
 {
@@ -2024,11 +2030,11 @@ Device Memory holds what the Agent cannot know without this device: routes, coor
 Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Use unknown when final proof is missing and say what is missing. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
 
 Type rules:
-- procedure: reusable multi-step goal path supported by tool calls and results. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
+- procedure: reusable multi-step goal path supported by tool calls and results. Preserve the observed sequence, including intermediate transitions and verification, when that sequence is the evidence of success. Do not replace it with a fact claiming the final action alone works unless that shorter path was independently verified. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
 - navigation: independently reusable page entry or transition, supported by an action and comparable before/after observations. Keep a navigation step inside a procedure when it has no independent recall value.
 - calibration: coordinate, screen, control, or coordinate-space relationship supported by coordinate input and post-action evidence.
 - failure: reusable guard, check, stop condition, or recovery action. A failed Episode is not automatically a failure memory; omit one-off failures with no actionable future guard.
-- fact: stable device, app, or page fact directly observed by a tool. Do not turn guesses into facts.
+- fact: stable device, app, or page fact directly observed by a tool. Do not turn guesses, one-time values, or a multi-step procedure into facts.
 
 Deduplication and conflict rules:
 - Use action=create only when no existing memory has the same scoped lesson.

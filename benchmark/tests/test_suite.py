@@ -1493,11 +1493,13 @@ def test_episode_reflection_suite_covers_assessment_contracts():
         "recorded_success_without_proof_is_not_trusted",
         "failed_episode_creates_actionable_guard",
         "transient_value_is_not_memorized",
+        "tool_remediation_is_not_memorized",
     }
     assert task_by_id["successful_workaround_is_extracted"].consolidation_expectation.goal_result == "achieved"
     assert task_by_id["recorded_success_without_proof_is_not_trusted"].consolidation_expectation.allow_empty_memory is True
     assert task_by_id["failed_episode_creates_actionable_guard"].consolidation_expectation.goal_result == "not_achieved"
     assert task_by_id["transient_value_is_not_memorized"].consolidation_expectation.allow_empty_memory is True
+    assert task_by_id["tool_remediation_is_not_memorized"].consolidation_expectation.max_memory_ids == 0
 
 
 def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():

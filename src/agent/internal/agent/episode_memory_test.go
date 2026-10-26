@@ -1953,6 +1953,7 @@ func TestEpisodeMemoryBuiltInGuidanceRuleKeepsToolObservedFacts(t *testing.T) {
 		"remediation advice a tool returned",
 		"Facts that tool results observed about this device, app, or page are evidence",
 		"a required field or precondition",
+		"a current IP address, token, timestamp, or other changing value seen once is transient",
 	} {
 		if !strings.Contains(episodeMemoryBuiltInGuidanceRule, want) {
 			t.Fatalf("built-in guidance rule is missing %q:\n%s", want, episodeMemoryBuiltInGuidanceRule)
@@ -1960,6 +1961,31 @@ func TestEpisodeMemoryBuiltInGuidanceRuleKeepsToolObservedFacts(t *testing.T) {
 	}
 	if strings.Contains(episodeMemoryBuiltInGuidanceRule, "no tool result in the Episode gave") {
 		t.Fatal("built-in guidance rule still excludes every fact a tool result reported")
+	}
+}
+
+func TestEpisodeMemoryMalformedOmissionReviewKeepsFirstPassAfterRetries(t *testing.T) {
+	model := &episodeMemoryScriptedModel{responses: []string{`[]`, `[]`}}
+	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+	processor := newEpisodeMemoryProcessor(plane, model)
+	episode := TaskEpisode{ID: "ep_one_time_token", Events: []TaskEpisodeEvent{
+		{EventID: "read_call", Type: runEventToolCall, ToolName: "read_screen"},
+		{EventID: "read_result", Type: "tool_result", ToolName: "read_screen", Observation: "A one-time token was visible."},
+		{EventID: "verify_call", Type: runEventToolCall, ToolName: "read_screen"},
+		{EventID: "verify_result", Type: "tool_result", ToolName: "read_screen", Observation: "Sign-in completed."},
+	}}
+	firstPass := episodeMemoryProposal{EpisodeAssessment: episodeMemoryAssessment{
+		GoalResult: episodeGoalAchieved, Reason: "Sign-in completed.", EvidenceRefs: []string{"verify_result"},
+	}}
+	if _, err := processor.postProcessEpisodeMemoryProposal(context.Background(), episode, firstPass, nil, 0); !errors.Is(err, errEpisodeMemoryOmissionReview) {
+		t.Fatalf("first attempt error = %v, want retryable omission review error", err)
+	}
+	got, err := processor.postProcessEpisodeMemoryProposal(context.Background(), episode, firstPass, nil, episodeMemoryMaxAttempts-1)
+	if err != nil {
+		t.Fatalf("postProcessEpisodeMemoryProposal() error = %v", err)
+	}
+	if got.EpisodeAssessment.GoalResult != episodeGoalAchieved || len(got.Candidates) != 0 || model.callCount() != 2 {
+		t.Fatalf("proposal = %#v, model calls = %d", got, model.callCount())
 	}
 }
 
