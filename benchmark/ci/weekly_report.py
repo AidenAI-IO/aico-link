@@ -104,6 +104,7 @@ CAPABILITY_SUITES = {
                      "app_workflow_v1", "quick_action_v1"),
     "Device integration": ("aiden_app_connection_capabilities_v1",
                            "aiden_app_android_bridge_capabilities_v1",
+                           "aiden_app_android_bridge_data_v1",
                            "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
 }
