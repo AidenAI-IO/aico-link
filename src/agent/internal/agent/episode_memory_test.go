@@ -1945,6 +1945,24 @@ func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
 	}
 }
 
+func TestEpisodeMemoryBuiltInGuidanceRuleKeepsToolObservedFacts(t *testing.T) {
+	// Every piece of Episode evidence comes from a tool result, so the rule must
+	// only exclude the advice a tool returns, not the app facts it observed
+	// (a verified step sequence, or a precondition such as an empty recipient).
+	for _, want := range []string{
+		"remediation advice a tool returned",
+		"Facts that tool results observed about this device, app, or page are evidence",
+		"a required field or precondition",
+	} {
+		if !strings.Contains(episodeMemoryBuiltInGuidanceRule, want) {
+			t.Fatalf("built-in guidance rule is missing %q:\n%s", want, episodeMemoryBuiltInGuidanceRule)
+		}
+	}
+	if strings.Contains(episodeMemoryBuiltInGuidanceRule, "no tool result in the Episode gave") {
+		t.Fatal("built-in guidance rule still excludes every fact a tool result reported")
+	}
+}
+
 func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 	model := &episodeMemoryScriptedModel{responses: []string{`{"episode_assessment":{"goal_result":"unknown","reason":"no proof","evidence_refs":[]},"candidates":[]}`}}
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
