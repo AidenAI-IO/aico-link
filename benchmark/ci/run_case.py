@@ -438,6 +438,11 @@ def run_case(
             command.extend(["--environment-url", environment_url])
         if case.target_platform != "auto":
             command.extend(["--target-platform", case.target_platform])
+        if case.android_phone_bridge:
+            command.extend([
+                "--android-phone-bridge-serial",
+                runtime_environment["ANDROID_SERIAL"],
+            ])
         if _images_prepared(runtime_environment):
             command.append("--no-build-daemon-image")
         if timeout_seconds is None:
@@ -469,7 +474,18 @@ def run_case(
                     log_file.write(f"\n{message}\n")
                 print(f"Error: {message}", file=sys.stderr, flush=True)
                 return 1
-        return _effective_exit_code(returncode, BENCHMARK_ROOT / "runs" / run_id / "manifest.json")
+        manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
+        result = _effective_exit_code(returncode, manifest_path)
+        if case.android_phone_bridge and result == 0:
+            totals = json.loads(manifest_path.read_text(encoding="utf-8"))["totals"]
+            if int(totals["passed"]) != int(totals["tasks"]):
+                print(
+                    f"Android Phone Bridge case {case.id} did not pass every task",
+                    file=log_file or sys.stderr,
+                    flush=True,
+                )
+                return 1
+        return result
     finally:
         _stop_daemon_projects_by_run_id(run_id)
         _stop_service(service)

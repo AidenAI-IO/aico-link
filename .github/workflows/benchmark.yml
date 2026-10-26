@@ -324,6 +324,17 @@ jobs:
             echo "Expected $AIDENBRIDGE_PACKAGE version $AIDENBRIDGE_VERSION_CODE, found ${installed_version:-none}" >&2
             exit 1
           }
+      - name: Enable emulator routing for AidenBridge capabilities
+        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        run: |
+          set -euo pipefail
+          adb -s "$ANDROID_SERIAL" root
+          timeout 60 adb -s "$ANDROID_SERIAL" wait-for-device
+          [[ "$(adb -s "$ANDROID_SERIAL" shell id -u | tr -d '\r')" == "0" ]] || {
+            echo "AidenBridge capability benchmark requires a rooted Android emulator" >&2
+            exit 1
+          }
+          adb -s "$ANDROID_SERIAL" shell iptables -t nat -L OUTPUT -n >/dev/null
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-

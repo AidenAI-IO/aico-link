@@ -55,20 +55,21 @@ For `bridge_clipboard`, `action: "write"` requires a `text` string. Missing, nul
 
 ## Desktop Agent With ADB Reverse
 
-When running the Agent on a development computer instead of the Luckfox board, the phone cannot reach `192.168.42.1` because the USB ECM board network does not exist. For Android development, use the ADB input backend and let the phone app connect through ADB reverse:
+When running the Agent on a development computer instead of the Luckfox board, the phone cannot reach `192.168.42.1` because the USB ECM board network does not exist. The current Android companion app uses the fixed board address and has no loopback fallback. A plain ADB reverse mapping is therefore insufficient for this App build. Desktop development requires either an App build with a configurable loopback target or a rooted emulator that redirects the fixed board address to an ADB reverse socket.
 
 ```text
-Phone relay app -> ws://127.0.0.1:8080/api/phone-bridge
-ADB reverse     -> host computer 127.0.0.1:8080
+Phone relay app -> ws://192.168.42.1:8080/api/phone-bridge
+Emulator NAT    -> 127.0.0.1:8080
+ADB reverse     -> host computer Agent port
 ```
 
-When `[advanced_settings.hardware.hid].input_backend = "adb"` is active, the desktop Agent attempts to configure the reverse mapping automatically at startup:
+When `[advanced_settings.hardware.hid].input_backend = "adb"` is active, the desktop Agent attempts to configure a fixed-port reverse mapping at startup:
 
 ```bash
 adb reverse tcp:8080 tcp:8080
 ```
 
-The companion app keeps `192.168.42.1` as the first target, then falls back to the desktop ADB reverse target when the board API is unavailable. Android board-network binding is skipped for loopback URLs so the app can reach the ADB reverse socket.
+The benchmark's `aidenbridge-capabilities-android` case configures the emulator NAT rule and maps ADB reverse to each task Agent's published port. It requires a rooted emulator and checks `/api/phone-bridge/status` before running its clipboard and URL tasks.
 
 For host microphone recording and TTS replies in this desktop/PC Agent mode, keep `audio.backend = "auto"` or set it to `"local"`. The Agent captures PCM through an installed host recorder command and plays temporary WAV files through the host OS player instead of `audio_service`.
 

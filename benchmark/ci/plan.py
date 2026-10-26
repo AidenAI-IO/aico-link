@@ -38,6 +38,7 @@ class SuiteCase:
     # False keeps the case out of the automatic runnable profile; it stays
     # selectable by explicit --suite (workflow_dispatch).
     runnable: bool = True
+    android_phone_bridge: bool = False
 
     def matrix_entry(self) -> dict[str, Any]:
         return dc.asdict(self)
@@ -75,6 +76,14 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         )
     if case.environment == "external" and not case.environment_variable:
         raise CatalogError(f"external case {case.id} requires environment_variable")
+    if case.android_phone_bridge and (
+        case.environment != "adb"
+        or case.target_platform != "android"
+        or case.max_concurrency != 1
+    ):
+        raise CatalogError(
+            f"{case.id} requires a single Android ADB worker for phone bridge"
+        )
     if case.max_concurrency < 1:
         raise CatalogError(f"max_concurrency for {case.id} must be positive")
     if case.timeout_minutes < 1:

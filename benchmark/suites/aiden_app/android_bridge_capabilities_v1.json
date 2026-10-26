@@ -1,0 +1,53 @@
+{
+  "name": "aiden_app_android_bridge_capabilities_v1",
+  "suite_category": "Aiden App / Real Connection",
+  "description": "Verify actual AidenBridge commands through the connected Android emulator, with the Agent connection checked before each task.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "clipboard_round_trip",
+      "category": "multi_step",
+      "description_for_judge": "Read the Android system clipboard through Phone Bridge, write a temporary marker, verify it, then restore and verify the original value, including an empty original value.",
+      "prompt": "请通过已连接手机的 Bridge 读取当前剪贴板文本，暂时写入 AIDEN_BRIDGE_CI_MARKER，读回确认，然后恢复原始文本并再次读回确认。原始文本为空时也要恢复为空。不要用屏幕操作来读写剪贴板。",
+      "rubric": [
+        {"id": "marker_verified", "check": "The Phone Bridge clipboard write succeeds and a later bridge read returns AIDEN_BRIDGE_CI_MARKER exactly."},
+        {"id": "original_restored", "check": "The original clipboard text is restored and verified by a final bridge read."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 5,
+        "max_tool_calls": 7,
+        "must_complete_within_sec": 180,
+        "required_tools": ["bridge_clipboard"],
+        "forbidden_tools": ["touch_gesture", "enter_text", "quick_action"],
+        "required_tool_calls": [
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "write", "text": "AIDEN_BRIDGE_CI_MARKER"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "write"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}}
+        ]
+      }
+    },
+    {
+      "id": "open_url_through_bridge",
+      "category": "single_step",
+      "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
+      "prompt": "请直接通过已连接手机的 Bridge 打开 https://example.com/ ，不要手动操作浏览器界面。",
+      "rubric": [
+        {"id": "url_command_succeeded", "check": "The Agent calls open_url for exactly https://example.com/ and the Phone Bridge result succeeds."},
+        {"id": "browser_opened", "check": "The post-screenshot shows Android handling the URL in a browser; a network loading error is acceptable."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 3,
+        "must_complete_within_sec": 120,
+        "required_tools": ["open_url"],
+        "forbidden_tools": ["open_app", "search_launch_app", "touch_gesture", "enter_text"],
+        "required_tool_calls": [
+          {"tool": "open_url", "input_contains": {"url": "https://example.com/"}}
+        ]
+      }
+    }
+  ]
+}

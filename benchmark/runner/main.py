@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import concurrent.futures
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
+from runner.android_phone_bridge import connected_android_phone_bridge
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
@@ -110,6 +112,8 @@ def cli(argv: list[str] | None = None) -> int:
                        help="Optional environment bridge endpoint; when set, each task calls /api/setup, POST /api/providers/screenshot, and /api/release")
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
+    p_run.add_argument("--android-phone-bridge-serial", default="",
+                       help="Connect a rooted Android emulator's AidenBridge app to each isolated Agent")
     p_run.add_argument("--max-concurrency", type=int, default=0,
                        help="Cap auto-agent-setup worker concurrency; 0 means no explicit cap")
     p_run.add_argument("--daemon-image", default=os.environ.get("AIDEN_DAEMON_IMAGE", "aiden-agent-daemon:local"))
@@ -597,6 +601,10 @@ def _cmd_run_auto_agent_setup_inner(
     if args.repeats is not None and args.repeats <= 0:
         print(f"Error: --repeats must be positive, got {args.repeats}", file=sys.stderr)
         return 2
+    bridge_serial = getattr(args, "android_phone_bridge_serial", "")
+    if bridge_serial and args.max_concurrency != 1:
+        print("Error: Android Phone Bridge requires one worker", file=sys.stderr)
+        return 2
     if args.max_concurrency < 0:
         print("Error: max-concurrency must be non-negative", file=sys.stderr)
         return 2
@@ -807,19 +815,27 @@ def _cmd_run_auto_agent_setup_inner(
                 f"[{progress}] RUNNING    {unit.task.id} attempt={unit.attempt}",
                 flush=True,
             )
-            return run_one_task(
-                client,
-                suite,
-                unit.task,
-                unit.attempt,
-                art_dir,
-                judge_cfg,
-                judge_cache,
-                run_id,
-                environment_url=args.environment_url or None,
-                benchmark_task_id=route_id,
-                active_skills=active_skills,
+            bridge = (
+                connected_android_phone_bridge(
+                    bridge_serial, published_port, client
+                )
+                if bridge_serial
+                else nullcontext()
             )
+            with bridge:
+                return run_one_task(
+                    client,
+                    suite,
+                    unit.task,
+                    unit.attempt,
+                    art_dir,
+                    judge_cfg,
+                    judge_cache,
+                    run_id,
+                    environment_url=args.environment_url or None,
+                    benchmark_task_id=route_id,
+                    active_skills=active_skills,
+                )
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
             return skipped_task_result(

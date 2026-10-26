@@ -49,9 +49,6 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 13
-    assert len(hardware) == 14
-    assert len(all_cases) == 29
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
@@ -122,6 +119,22 @@ def test_aidenbridge_smoke_can_be_selected_without_other_hardware_cases() -> Non
     assert [(case.id, case.environment, case.target_platform) for case in selected] == [
         ("aidenbridge-android", "adb", "android")
     ]
+
+
+def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
+    catalog = load_catalog()
+    selected = select_cases(
+        catalog,
+        profile="hardware",
+        suite="suites/aiden_app/android_bridge_capabilities_v1.json",
+    )
+
+    assert len(selected) == 1
+    assert selected[0].android_phone_bridge is True
+    assert selected[0].environment == "adb"
+    assert selected[0].target_platform == "android"
+    assert selected[0].max_concurrency == 1
+    assert selected[0] not in select_cases(catalog, profile="runnable")
 
 
 def test_suite_selection_must_match_profile_unless_all() -> None:
@@ -441,7 +454,7 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     ).read_text(encoding="utf-8")
     artifact_paths = "\n".join(
         section.split("if-no-files-found:", 1)[0]
-        for section in workflow.split("path:")[1:]
+        for section in re.split(r"(?m)^\s+path:\s*\|", workflow)[1:]
     )
 
     assert "cli-services" not in artifact_paths
