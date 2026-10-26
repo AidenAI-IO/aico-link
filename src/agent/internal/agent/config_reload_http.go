@@ -17,14 +17,22 @@ type configReloadRequest struct {
 	Revision uint64 `json:"revision"`
 }
 
-func configFileRevision(path string) uint64 {
+// ConfigRevision is the revision of agent.toml contents that Config Web and
+// configupdate report and the reload endpoint checks against the file on disk.
+func ConfigRevision(data []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(data)
+	return h.Sum64()
+}
+
+// ConfigFileRevision returns ConfigRevision of the file at path, or 0 when it
+// cannot be read.
+func ConfigFileRevision(path string) uint64 {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0
 	}
-	h := fnv.New64a()
-	_, _ = h.Write(data)
-	return h.Sum64()
+	return ConfigRevision(data)
 }
 
 func isLoopbackRequest(r *http.Request) bool {
@@ -108,7 +116,7 @@ var ErrConfigRevisionStale = errors.New("stale config revision")
 func (r *Runtime) ReloadPersistedConfig(revision uint64) (ConfigApplyStatus, error) {
 	current := r.ConfigSnapshot()
 	configPath := filepath.Join(current.ConfigDir, "agent.toml")
-	onDisk := configFileRevision(configPath)
+	onDisk := ConfigFileRevision(configPath)
 	if onDisk == 0 {
 		return ConfigApplyStatus{}, fmt.Errorf("config file unavailable")
 	}
@@ -119,7 +127,7 @@ func (r *Runtime) ReloadPersistedConfig(revision uint64) (ConfigApplyStatus, err
 	if err != nil {
 		return ConfigApplyStatus{}, fmt.Errorf("reload config: %w", err)
 	}
-	if configFileRevision(configPath) != revision {
+	if ConfigFileRevision(configPath) != revision {
 		return ConfigApplyStatus{}, fmt.Errorf("%w: config changed while loading; retry latest revision", ErrConfigRevisionStale)
 	}
 	// Preserve process-only fields; the persisted config cannot overwrite CLI overrides.

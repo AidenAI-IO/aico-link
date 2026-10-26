@@ -55,7 +55,7 @@ func (r *Runtime) ConfigApplyStatus() ConfigApplyStatus {
 // InitializeConfigApplication records the persisted revision at daemon startup,
 // including USB changes that still await a device reboot.
 func (r *Runtime) InitializeConfigApplication(persisted Config) {
-	revision := configFileRevision(filepath.Join(persisted.ConfigDir, "agent.toml"))
+	revision := ConfigFileRevision(filepath.Join(persisted.ConfigDir, "agent.toml"))
 	r.configStatusMu.Lock()
 	defer r.configStatusMu.Unlock()
 	r.configStatus = ConfigApplyStatus{Revision: revision, AppliedRevision: revision, State: "applied", Applied: true}
