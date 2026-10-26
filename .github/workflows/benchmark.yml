@@ -301,20 +301,24 @@ jobs:
         if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
         run: |
           set -euo pipefail
+          echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
           installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
-            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
           installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+          echo "Current version ${installed_version:-none}; package location ${installed_path:-none}"
           if [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]]; then
             echo "$AIDENBRIDGE_PACKAGE version $installed_version is already installed"
             exit 0
           fi
           apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
           trap 'rm -f "$apk_path"' EXIT
+          echo "Downloading pinned AidenBridge APK"
           curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
           echo "$AIDENBRIDGE_APK_SHA256  $apk_path" | sha256sum --check --status
+          echo "Installing AidenBridge version $AIDENBRIDGE_VERSION_CODE"
           adb -s "$ANDROID_SERIAL" install -r "$apk_path"
           installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
-            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
           installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
           [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]] || {
             echo "Expected $AIDENBRIDGE_PACKAGE version $AIDENBRIDGE_VERSION_CODE, found ${installed_version:-none}" >&2
