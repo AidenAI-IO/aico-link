@@ -475,17 +475,7 @@ def run_case(
                 print(f"Error: {message}", file=sys.stderr, flush=True)
                 return 1
         manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
-        result = _effective_exit_code(returncode, manifest_path)
-        if case.android_phone_bridge and result == 0:
-            totals = json.loads(manifest_path.read_text(encoding="utf-8"))["totals"]
-            if int(totals["passed"]) != int(totals["tasks"]):
-                print(
-                    f"Android Phone Bridge case {case.id} did not pass every task",
-                    file=log_file or sys.stderr,
-                    flush=True,
-                )
-                return 1
-        return result
+        return _effective_exit_code(returncode, manifest_path)
     finally:
         _stop_daemon_projects_by_run_id(run_id)
         _stop_service(service)

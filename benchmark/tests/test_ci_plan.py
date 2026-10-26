@@ -306,6 +306,38 @@ def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None
     assert _effective_exit_code(0, manifest) == 0
 
 
+@pytest.mark.parametrize("case_id", ["adb-android", "aidenbridge-capabilities-android"])
+@pytest.mark.parametrize("complete", [True, False])
+def test_android_cases_use_run_completeness_not_task_pass_rate(
+    monkeypatch, tmp_path: Path, case_id: str, complete: bool,
+) -> None:
+    case = next(item for item in load_catalog().cases if item.id == case_id)
+    run_dir = tmp_path / "runs" / "ci-test"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        '{"totals":{"tasks":2,"passed":1,"failed":1,"skipped":0}}',
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        '{"task_id":"passed","attempt":1,"status":"passed"}\n'
+        + ('{"task_id":"failed","attempt":1,"status":"failed"}\n' if complete else ''),
+        encoding="utf-8",
+    )
+    _write_generated_reports(run_dir)
+    monkeypatch.setattr(run_case_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("http://bridge.test", None))
+    monkeypatch.setattr(run_case_module, "_stop_daemon_projects_by_run_id", lambda run_id: None)
+    monkeypatch.setattr(run_case_module, "_stop_service", lambda service: None)
+    monkeypatch.setattr(
+        run_case_module.subprocess, "run",
+        lambda command, **kwargs: run_case_module.subprocess.CompletedProcess(command, 0),
+    )
+
+    assert run_case_module.run_case(
+        case, run_id="ci-test", environment={"ANDROID_SERIAL": "emulator-5554"},
+    ) == (0 if complete else 1)
+
+
 @pytest.mark.parametrize(
     "metrics",
     [
