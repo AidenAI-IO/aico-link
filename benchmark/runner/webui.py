@@ -2166,6 +2166,7 @@ def daemon_compose_env(
     device_type: str = "",
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
+    benchmark_local_phone_bridge: bool = False,
 ) -> dict[str, str]:
     env = dict(os.environ)
     # Strip general host proxies so builds and model/device traffic do not
@@ -2176,6 +2177,7 @@ def daemon_compose_env(
         env.pop(key, None)
     env["AIDEN_DAEMON_IMAGE"] = image
     env["AIDEN_BENCHMARK_MOCK_TOOLS"] = "1" if benchmark_mock_tools else "0"
+    env["AIDEN_BENCHMARK_LOCAL_PHONE_BRIDGE"] = "1" if benchmark_local_phone_bridge else "0"
     bridge_enabled = bool(environment_bridge_endpoint) if environment_bridge_mode is None else bool(environment_bridge_mode)
     env["AIDEN_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
     if host_port is not None:
@@ -2210,6 +2212,7 @@ def start_daemon_compose(
     device_type: str = "",
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
+    benchmark_local_phone_bridge: bool = False,
     stop_requested: Callable[[], bool] | None = None,
 ) -> str:
     project = daemon_compose_project(job)
@@ -2225,6 +2228,7 @@ def start_daemon_compose(
         device_type=device_type,
         environment_bridge_mode=environment_bridge_mode,
         benchmark_mock_tools=benchmark_mock_tools,
+        benchmark_local_phone_bridge=benchmark_local_phone_bridge,
     )
     run_logged_command(
         daemon_compose_command(

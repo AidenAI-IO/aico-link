@@ -593,9 +593,10 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 
 	rt.screenState = screenState
 
-	// Create PhoneBridge in proxy mode if environment bridge is enabled
+	// An ADB environment bridge handles screen and input, but the benchmark App
+	// can connect directly to this Agent for Phone Bridge commands.
 	endpoint := strings.TrimSpace(cfg.EnvironmentBridge.Endpoint)
-	if cfg.EnvironmentBridge.Enabled && endpoint != "" {
+	if cfg.EnvironmentBridge.Enabled && endpoint != "" && !cfg.EnvironmentBridge.LocalPhoneBridge {
 		rt.phoneBridge = NewPhoneBridgeProxy(
 			endpoint,
 			cfg.EnvironmentBridge.BenchmarkTaskID,

@@ -65,6 +65,8 @@ def connected_android_phone_bridge(
         _wait_for_connection(client)
         yield
     finally:
-        if rule_installed:
-            _adb(serial, "shell", "iptables", "-t", "nat", "-D", "OUTPUT", *NAT_RULE)
-        _adb(serial, "reverse", "--remove", REVERSE_PORT)
+        try:
+            if rule_installed:
+                _adb(serial, "shell", "iptables", "-t", "nat", "-D", "OUTPUT", *NAT_RULE)
+        finally:
+            _adb(serial, "reverse", "--remove", REVERSE_PORT)

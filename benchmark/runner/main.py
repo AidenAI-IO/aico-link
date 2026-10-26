@@ -768,6 +768,7 @@ def _cmd_run_auto_agent_setup_inner(
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
+                benchmark_local_phone_bridge=bool(bridge_serial),
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")

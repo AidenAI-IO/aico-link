@@ -25,9 +25,10 @@ type SearchConfig struct {
 }
 
 type EnvironmentBridgeConfig struct {
-	Enabled         bool   `toml:"-"` // Only set via CLI, not config file
-	Endpoint        string `toml:"-"` // Only set via CLI, not config file
-	BenchmarkTaskID string `toml:"-"` // Only set via CLI, not config file
+	Enabled          bool   `toml:"-"` // Only set via CLI, not config file
+	Endpoint         string `toml:"-"` // Only set via CLI, not config file
+	BenchmarkTaskID  string `toml:"-"` // Only set via CLI, not config file
+	LocalPhoneBridge bool   `toml:"-"` // Keep the App connection on this Agent while device input uses the environment bridge.
 }
 
 type BenchmarkConfig struct {

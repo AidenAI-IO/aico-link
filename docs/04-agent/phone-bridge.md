@@ -69,7 +69,7 @@ When `[advanced_settings.hardware.hid].input_backend = "adb"` is active, the des
 adb reverse tcp:8080 tcp:8080
 ```
 
-The benchmark's `aidenbridge-capabilities-android` case configures the emulator NAT rule and maps ADB reverse to each task Agent's published port. It requires a rooted emulator and checks `/api/phone-bridge/status` before running its clipboard and URL tasks.
+The benchmark's `aidenbridge-capabilities-android` case configures the emulator NAT rule and maps ADB reverse to each task Agent's published port. It requires a rooted emulator and checks `/api/phone-bridge/status` before running its clipboard and URL tasks. The benchmark daemon keeps Phone Bridge local while the ADB environment bridge still supplies screen and input operations.
 
 For host microphone recording and TTS replies in this desktop/PC Agent mode, keep `audio.backend = "auto"` or set it to `"local"`. The Agent captures PCM through an installed host recorder command and plays temporary WAV files through the host OS player instead of `audio_service`.
 
