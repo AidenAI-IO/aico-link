@@ -102,24 +102,29 @@ def verify_android_bridge_input(serial: str, text: str, prior_writes: set[str]) 
         event.get("fields", {}).get("text_length") == text_length
         for event in writes
     )
-    _adb(serial, "shell", "uiautomator", "dump", INPUT_XML_PATH)
     try:
-        hierarchy = ET.fromstring(_adb(serial, "shell", "cat", INPUT_XML_PATH))
+        _adb(serial, "shell", "uiautomator", "dump", INPUT_XML_PATH)
+        raw_hierarchy = _adb(serial, "shell", "cat", INPUT_XML_PATH)
+        hierarchy = ET.fromstring(raw_hierarchy)
     finally:
         _adb(serial, "shell", "rm", "-f", INPUT_XML_PATH)
-    matching_fields = [
+    editable_fields = [
         node.attrib
         for node in hierarchy.iter("node")
         if "EditText" in node.attrib.get("class", "")
         and node.attrib.get("package") != "com.aidenbridge"
-        and node.attrib.get("text") == text
     ]
+    matching_fields = [field for field in editable_fields if field.get("text") == text]
     return {
         "bridge_clipboard_write": bridge_wrote_text,
         "new_clipboard_writes": len(writes),
         "write_command_ids": [event["fields"]["command_id"] for event in writes],
         "field_contains_exact_text": bool(matching_fields),
         "target_package": matching_fields[0].get("package") if matching_fields else None,
+        # Keep raw XML so newline escaping, widget classes, and actual field
+        # contents can be inspected when visual and exact checks disagree.
+        "ui_hierarchy_xml": raw_hierarchy,
+        "editable_fields": editable_fields,
     }
 
 

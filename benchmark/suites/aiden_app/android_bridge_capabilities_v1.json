@@ -136,7 +136,7 @@
       "category": "multi_step",
       "android_bridge_fixture": "calendar",
       "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
-      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes 中文日历验证. Query that day and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the day again and confirm that ID is absent. Do not operate the calendar UI.",
+      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes 中文日历验证. Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
       "rubric": [
         {"id": "created_event_read_back", "check": "The created event is returned by query with matching ID, title, equivalent timestamps, location and Unicode notes."},
         {"id": "created_event_deleted", "check": "Only the event created by this task is deleted and the final query confirms its ID is absent. Permission and provider errors do not count as success."}
