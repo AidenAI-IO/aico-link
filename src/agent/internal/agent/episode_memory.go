@@ -30,7 +30,6 @@ const (
 var (
 	errEpisodeMemoryRevisionChanged   = errors.New("episode memory revision changed")
 	errEpisodeMemoryOmissionReview    = errors.New("episode memory omission review failed")
-	errEpisodeMemoryMalformedOmission = errors.New("episode memory omission review returned malformed JSON")
 	errEpisodeMemoryRetentionAudit    = errors.New("episode memory retention audit failed")
 	errEpisodeMemoryProcessingFailed  = errors.New("episode memory processing failed")
 	errEpisodeMemoryInvalidRetryLimit = errors.New("episode memory has invalid retry batch limit")
@@ -819,14 +818,11 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 	if shouldReviewEpisodeMemoryProposal(episode, proposal) {
 		reviewed, reviewErr := p.reviewEpisodeMemoryOmission(ctx, episode, proposal, existing, attempt)
 		if reviewErr != nil {
-			if !errors.Is(reviewErr, errEpisodeMemoryMalformedOmission) || attempt < episodeMemoryMaxAttempts-1 {
-				return episodeMemoryProposal{}, safeEpisodeMemoryError(fmt.Errorf("%w: %w", errEpisodeMemoryOmissionReview, reviewErr))
-			}
-		} else {
-			proposal, err = normalizeEpisodeMemoryAssessment(episode, reviewed, existing)
-			if err != nil {
-				return episodeMemoryProposal{}, err
-			}
+			return episodeMemoryProposal{}, safeEpisodeMemoryError(fmt.Errorf("%w: %w", errEpisodeMemoryOmissionReview, reviewErr))
+		}
+		proposal, err = normalizeEpisodeMemoryAssessment(episode, reviewed, existing)
+		if err != nil {
+			return episodeMemoryProposal{}, err
 		}
 	}
 	if !episodeMemoryProposalNeedsRetentionAudit(proposal) {
@@ -895,7 +891,7 @@ func (p *episodeMemoryProcessor) reviewEpisodeMemoryOmission(ctx context.Context
 	if err != nil {
 		return episodeMemoryProposal{}, err
 	}
-	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryEvidencePrompt(string(payload), existing))}
+	parts := []llms.ContentPart{llms.TextPart(episodeMemoryProposalInstructions), llms.TextPart(buildEpisodeMemoryEvidencePrompt(string(payload), existing))}
 	assessmentJSON, _ := json.Marshal(proposal.EpisodeAssessment)
 	parts = append(parts, llms.TextPart("Review this first-pass assessment once: "+string(assessmentJSON)+". It returned no candidates despite the Episode containing multiple evidence-bearing steps. Re-check whether a reusable durable lesson, guard, route, or stable fact specific to this device, app, or page was omitted. "+episodeMemoryBuiltInGuidanceRule+" Return the same JSON schema; keep candidates empty if the evidence does not support a durable memory. Do not invent facts or promote run-specific observations."))
 	for _, screenshot := range loadEpisodeMemoryScreenshots(p.plane.episodes.rootDir, episode) {
@@ -1247,7 +1243,7 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryProposal(ctx context.Conte
 	var proposal episodeMemoryProposal
 	if err := json.Unmarshal([]byte(content), &proposal); err != nil {
 		p.logEpisodeMemoryResponseFailure("omission review parse failed", content)
-		return episodeMemoryProposal{}, fmt.Errorf("%w: %w", errEpisodeMemoryMalformedOmission, err)
+		return episodeMemoryProposal{}, fmt.Errorf("parse episode memory proposal: %w", err)
 	}
 	proposal.ExistingRevisions = make(map[string]int, len(existing))
 	for _, item := range existing {
@@ -1997,7 +1993,7 @@ Episode:
 // It separates the remediation advice a tool returns, which the Agent gets
 // again on the next failure, from the device, app, and page facts that tool
 // results observe, which are the evidence Device Memory is built from.
-const episodeMemoryBuiltInGuidanceRule = `The Agent already receives every tool result, including the suggestion a failed tool returns, so a memory that only repeats that suggestion adds nothing. None of the following is device-, app-, or page-specific knowledge: guidance that only restates the remediation advice a tool returned in this Episode; generic tool use such as taking a screenshot after a failure, refocusing a field, or retrying; and either of those with an app, page, or control name attached, for example "in Safari, tap the address bar and retry enter_text" after enter_text already said to refocus the field and retry. Facts that tool results observed about this device, app, or page are evidence, not built-in guidance: a verified sequence of steps, a route, a required field or precondition, a page layout, a coordinate, or a stop condition is specific knowledge even though a tool result reported it. Evidence alone does not make a fact durable: a current IP address, token, timestamp, or other changing value seen once is transient, even on a named app or page. Merely completing a read-only lookup of such a value does not create a reusable lesson. A workaround for a tool that misbehaved is a defect to fix in the tool; it counts only when it also records such a device, app, or page fact beyond the tool's own advice.`
+const episodeMemoryBuiltInGuidanceRule = `The Agent already receives every tool result, including the suggestion a failed tool returns, so a memory that only repeats that suggestion adds nothing. None of the following is device-, app-, or page-specific knowledge: guidance that only restates the remediation advice a tool returned in this Episode; generic tool use such as taking a screenshot after a failure, refocusing a field, or retrying; and either of those with an app, page, or control name attached, for example "in Safari, tap the address bar and retry enter_text" after enter_text already said to refocus the field and retry. Facts that tool results observed about this device, app, or page are evidence, not built-in guidance: a verified sequence of steps, a route, a required field or precondition, a page layout, a coordinate, or a stop condition is specific knowledge even though a tool result reported it. An observed application precondition is reusable even if it seems obvious: when Send fails because the recipient is empty, retaining a guard to fill the recipient before sending records an app constraint, not generic tool retry advice. Do not discard that guard solely because the tool reported the error. Evidence alone does not make a fact durable: a current IP address, token, timestamp, or other changing value seen once is transient, even on a named app or page. Merely completing a read-only lookup of such a value does not create a reusable lesson. A workaround for a tool that misbehaved is a defect to fix in the tool; it counts only when it also records such a device, app, or page fact beyond the tool's own advice.`
 
 const episodeMemoryProposalInstructions = `For each Episode, return a proposal object matching this schema:
 {

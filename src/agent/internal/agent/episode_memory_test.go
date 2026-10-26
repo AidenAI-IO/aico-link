@@ -1964,31 +1964,6 @@ func TestEpisodeMemoryBuiltInGuidanceRuleKeepsToolObservedFacts(t *testing.T) {
 	}
 }
 
-func TestEpisodeMemoryMalformedOmissionReviewKeepsFirstPassAfterRetries(t *testing.T) {
-	model := &episodeMemoryScriptedModel{responses: []string{`[]`, `[]`}}
-	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
-	processor := newEpisodeMemoryProcessor(plane, model)
-	episode := TaskEpisode{ID: "ep_one_time_token", Events: []TaskEpisodeEvent{
-		{EventID: "read_call", Type: runEventToolCall, ToolName: "read_screen"},
-		{EventID: "read_result", Type: "tool_result", ToolName: "read_screen", Observation: "A one-time token was visible."},
-		{EventID: "verify_call", Type: runEventToolCall, ToolName: "read_screen"},
-		{EventID: "verify_result", Type: "tool_result", ToolName: "read_screen", Observation: "Sign-in completed."},
-	}}
-	firstPass := episodeMemoryProposal{EpisodeAssessment: episodeMemoryAssessment{
-		GoalResult: episodeGoalAchieved, Reason: "Sign-in completed.", EvidenceRefs: []string{"verify_result"},
-	}}
-	if _, err := processor.postProcessEpisodeMemoryProposal(context.Background(), episode, firstPass, nil, 0); !errors.Is(err, errEpisodeMemoryOmissionReview) {
-		t.Fatalf("first attempt error = %v, want retryable omission review error", err)
-	}
-	got, err := processor.postProcessEpisodeMemoryProposal(context.Background(), episode, firstPass, nil, episodeMemoryMaxAttempts-1)
-	if err != nil {
-		t.Fatalf("postProcessEpisodeMemoryProposal() error = %v", err)
-	}
-	if got.EpisodeAssessment.GoalResult != episodeGoalAchieved || len(got.Candidates) != 0 || model.callCount() != 2 {
-		t.Fatalf("proposal = %#v, model calls = %d", got, model.callCount())
-	}
-}
-
 func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 	model := &episodeMemoryScriptedModel{responses: []string{`{"episode_assessment":{"goal_result":"unknown","reason":"no proof","evidence_refs":[]},"candidates":[]}`}}
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
@@ -1996,6 +1971,9 @@ func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 
 	if _, err := processor.reviewEpisodeMemoryOmission(context.Background(), TaskEpisode{ID: "ep_omission_rule"}, episodeMemoryProposal{}, nil, 0); err != nil {
 		t.Fatalf("reviewEpisodeMemoryOmission: %v", err)
+	}
+	if !strings.Contains(model.firstCallText(), episodeMemoryProposalInstructions) {
+		t.Fatal("omission review is missing the proposal schema and evidence, retention, and type rules")
 	}
 	var review string
 	for _, part := range strings.Split(model.firstCallText(), "\n") {
