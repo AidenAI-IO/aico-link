@@ -82,6 +82,7 @@ class ConsolidationExpectation:
     forbidden_memory_substrings: list[str] = dc.field(default_factory=list)
     required_memory_substrings: list[str] = dc.field(default_factory=list)
     required_memory_types: list[str] = dc.field(default_factory=list)
+    required_procedure_steps: list[str] = dc.field(default_factory=list)
     required_memory_scope: dict[str, str] = dc.field(default_factory=dict)
 
 @dc.dataclass
@@ -643,7 +644,7 @@ def _parse_consolidation_expectation(
     allowed = {
         "goal_result", "min_memory_ids", "max_memory_ids", "allow_empty_memory",
         "required_assessment_evidence", "expected_status", "forbidden_memory_substrings",
-        "required_memory_substrings", "required_memory_types", "required_memory_scope",
+        "required_memory_substrings", "required_memory_types", "required_memory_scope", "required_procedure_steps",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -701,6 +702,7 @@ def _parse_consolidation_expectation(
         "forbidden_memory_substrings": raw.get("forbidden_memory_substrings", []),
         "required_memory_substrings": raw.get("required_memory_substrings", []),
         "required_memory_types": raw.get("required_memory_types", []),
+        "required_procedure_steps": raw.get("required_procedure_steps", []),
     }
     for field, values in lists.items():
         if not isinstance(values, list) or not all(isinstance(item, str) and item.strip() for item in values):
@@ -715,7 +717,7 @@ def _parse_consolidation_expectation(
         raise SuiteValidationError(
             f"task {task_id}: consolidation_expectation.required_memory_scope must be an object of non-empty strings"
         )
-    positive_contract = bool(lists["required_memory_substrings"] or lists["required_memory_types"] or required_scope)
+    positive_contract = bool(lists["required_memory_substrings"] or lists["required_memory_types"] or lists["required_procedure_steps"] or required_scope)
     if positive_contract and allow_empty_memory:
         raise SuiteValidationError(
             f"task {task_id}: consolidation_expectation.allow_empty_memory cannot be true when required memory content, type, or scope is declared"
@@ -738,6 +740,7 @@ def _parse_consolidation_expectation(
         forbidden_memory_substrings=list(lists["forbidden_memory_substrings"]),
         required_memory_substrings=list(lists["required_memory_substrings"]),
         required_memory_types=list(lists["required_memory_types"]),
+        required_procedure_steps=list(lists["required_procedure_steps"]),
         required_memory_scope=dict(required_scope),
     )
 

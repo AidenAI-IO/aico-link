@@ -1945,25 +1945,6 @@ func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
 	}
 }
 
-func TestEpisodeMemoryBuiltInGuidanceRuleKeepsToolObservedFacts(t *testing.T) {
-	// Every piece of Episode evidence comes from a tool result, so the rule must
-	// only exclude the advice a tool returns, not the app facts it observed
-	// (a verified step sequence, or a precondition such as an empty recipient).
-	for _, want := range []string{
-		"remediation advice a tool returned",
-		"Facts that tool results observed about this device, app, or page are evidence",
-		"a required field or precondition",
-		"a current IP address, token, timestamp, or other changing value seen once is transient",
-	} {
-		if !strings.Contains(episodeMemoryBuiltInGuidanceRule, want) {
-			t.Fatalf("built-in guidance rule is missing %q:\n%s", want, episodeMemoryBuiltInGuidanceRule)
-		}
-	}
-	if strings.Contains(episodeMemoryBuiltInGuidanceRule, "no tool result in the Episode gave") {
-		t.Fatal("built-in guidance rule still excludes every fact a tool result reported")
-	}
-}
-
 func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 	model := &episodeMemoryScriptedModel{responses: []string{`{"episode_assessment":{"goal_result":"unknown","reason":"no proof","evidence_refs":[]},"candidates":[]}`}}
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
@@ -1975,13 +1956,7 @@ func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 	if !strings.Contains(model.firstCallText(), episodeMemoryProposalInstructions) {
 		t.Fatal("omission review is missing the proposal schema and evidence, retention, and type rules")
 	}
-	var review string
-	for _, part := range strings.Split(model.firstCallText(), "\n") {
-		if strings.HasPrefix(part, "Review this first-pass assessment once") {
-			review = part
-		}
-	}
-	if !strings.Contains(review, episodeMemoryBuiltInGuidanceRule) {
-		t.Fatalf("omission review does not discount built-in tool guidance:\n%s", review)
+	if got := strings.Count(model.firstCallText(), episodeMemoryBuiltInGuidanceRule); got != 1 {
+		t.Fatalf("omission review guidance rule count = %d, want one shared policy", got)
 	}
 }

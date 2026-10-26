@@ -331,7 +331,7 @@ func (t *RecallDeviceMemoryTool) Description() string {
 func (t *RecallDeviceMemoryTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
 		"terms":     stringArrayArgSchema("Free-text search terms."),
-		"tags":      stringArrayArgSchema("Topic tags to match."),
+		"tags":      stringArrayArgSchema("Topic tags to match. With terms or entities, an empty result retries tags as search terms; topic relevance and scope filters still apply."),
 		"entities":  stringArrayArgSchema("Named apps, devices, accounts, or UI concepts to match."),
 		"types":     stringArrayArgSchema("Device memory categories such as procedure, navigation, failure, calibration, or fact."),
 		"device_id": stringArgSchema("Device id to filter by; omit for default search."),
@@ -389,7 +389,10 @@ nextHit:
 			if err != nil {
 				break
 			}
-			cost := len(encoded) + 1
+			cost := len(encoded)
+			if len(limited) > 0 {
+				cost++ // comma between results
+			}
 			if used+cost <= charBudget {
 				limited = append(limited, candidate)
 				used += cost
@@ -400,9 +403,9 @@ nextHit:
 				candidate.Content = truncateForLog(candidate.Content, len(candidate.Content)/2)
 			case len(candidate.Summary) > 160:
 				candidate.Summary = truncateForLog(candidate.Summary, len(candidate.Summary)/2)
-			case len(candidate.Steps) > 1:
-				candidate.Steps = candidate.Steps[:len(candidate.Steps)-1]
 			default:
+				// A procedure is an ordered path. Omitting a step changes its
+				// meaning, so skip a hit that cannot fit with all steps intact.
 				continue nextHit
 			}
 		}

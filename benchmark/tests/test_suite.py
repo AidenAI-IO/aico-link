@@ -1913,3 +1913,17 @@ def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bou
     path.write_text(json.dumps({"name": "s", "tasks": [task]}))
     with pytest.raises(SuiteValidationError, match=message):
         load_suite(path)
+
+
+def test_consolidation_procedure_steps_are_a_positive_contract():
+    from runner.suite import _parse_consolidation_expectation
+
+    expected = ["Open preferences", "Apply", "Verify"]
+    parsed = _parse_consolidation_expectation({"required_procedure_steps": expected}, "path")
+    assert parsed.required_procedure_steps == expected
+    for invalid in ("Apply", [""], [1]):
+        with pytest.raises(SuiteValidationError, match="required_procedure_steps"):
+            _parse_consolidation_expectation({"required_procedure_steps": invalid}, "path")
+    for empty in ({"allow_empty_memory": True}, {"max_memory_ids": 0}):
+        with pytest.raises(SuiteValidationError):
+            _parse_consolidation_expectation({"required_procedure_steps": expected, **empty}, "path")

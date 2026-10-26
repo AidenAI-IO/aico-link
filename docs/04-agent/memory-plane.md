@@ -103,7 +103,10 @@ The recall tool searches active, applicable Device Memory using the query suppli
 
 If a query combining tags with search terms or entities returns no matches, the
 tool retries with the tags as ranking terms. Entity, type, and device filters
-remain in effect. A query containing only tags keeps its exact tag filtering.
+remain in effect. When topic terms or tags are supplied, at least one must match
+the memory; an entity match alone cannot establish topic relevance. A query
+containing only tags keeps its exact tag filtering. Procedures are returned with
+all stored steps intact, or omitted if they cannot fit the recall budget.
 
 ## Episode Recording
 
@@ -230,36 +233,32 @@ One Episode can produce zero to three independent candidates.
 
 An Episode-level failure does not automatically create Failure Memory. A Failure candidate must contain reusable guidance for a future task.
 
-Candidates hold knowledge specific to the device, app, or page that the Agent
-cannot get elsewhere. The Agent already receives every tool result, including
-the `suggestion` a failed tool returns, so guidance that only restates the
-remediation advice a tool returned in the Episode or describes generic tool use
-(take a screenshot after a failure, refocus the field, retry) is not stored.
-Attaching an app, page, or control name to that guidance does not make it
-specific. Facts that tool results observed about the device, app, or page are
-evidence, not built-in guidance: a verified sequence of steps, a route, a
-required field or precondition, a page layout, a coordinate, or a stop
-condition is specific knowledge even though a tool result reported it. A
-single observation of a changing value such as an IP address, token, or
-timestamp is transient, even when it appears on a named app or page. A
-verified multi-step procedure retains the observed transitions and verification;
-the final action alone is not treated as sufficient without separate proof. A
-workaround for a tool that misbehaved is a defect to fix in the tool; it is
-stored only when it also records such a device, app, or page fact beyond the
-tool's own advice. The extractor sees tool results but not tool definitions,
-so the rule is judged against the results in the Episode. The extraction
-prompt, the omission review, and the retention audit share this rule
-(`episodeMemoryBuiltInGuidanceRule`). An observed required field is a reusable
-application precondition even if it seems obvious; it is not generic retry
-advice. The omission review receives the complete proposal schema and the same
-evidence, retention, and type rules as initial extraction.
+Tool observations are evidence for device, app, or page knowledge. The fact that
+an observation arrived through a tool result is not a reason to discard it.
+Retention requires actionable, scoped information beyond general knowledge and
+the advice the Agent already receives. Repeating retry instructions or adding an
+app name to generic advice does not meet that requirement. An observed constraint
+or workaround qualifies when its evidenced conditions change a future task's
+execution. Observation alone does not establish durability or make a run-specific
+value reusable.
+
+Extraction, omission review, and retention audit share this policy through
+`episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
+proposal schema and type rules, once. Procedure guidance and candidate evidence
+must describe the same supported path; a shorter path needs its own evidence.
+These semantic decisions remain model judgments, not guarantees supplied by the
+structural evidence validator.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
 A Procedure's stored steps come from its own `evidence_refs`, not the Episode
 assessment's references. The candidate must cite each step of the verified path,
 including intermediate transitions and final verification. Failed alternatives
-belong in guards or preconditions, not in the executable step sequence.
+belong in guards or preconditions, not in the executable step sequence. Evaluation fixtures can use
+`consolidation_expectation.required_procedure_steps` to require description
+substrings in distinct returned steps, in order, within one procedure. This
+checks the path available to the Agent rather than accepting matching prose or
+steps distributed across multiple memories.
 
 ## Create, Update, And Conflict
 

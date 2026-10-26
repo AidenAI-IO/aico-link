@@ -137,7 +137,10 @@ func (s *DeviceMemoryStore) Search(ctx context.Context, query DeviceMemoryQuery)
 	if limit <= 0 {
 		limit = 8
 	}
-	terms := normalizeSearchTerms(append(append([]string(nil), query.Terms...), append(query.Tags, query.Entities...)...))
+	// Topic terms determine relevance; matching a scope alone is not enough
+	// when the caller also asked for a specific subject.
+	topicTerms := normalizeSearchTerms(append(append([]string(nil), query.Terms...), query.Tags...))
+	terms := normalizeSearchTerms(append(append([]string(nil), topicTerms...), query.Entities...))
 	var hits []MemoryHit
 	for _, item := range items {
 		if item.Status != deviceMemoryStatusActive {
@@ -161,7 +164,7 @@ func (s *DeviceMemoryStore) Search(ctx context.Context, query DeviceMemoryQuery)
 		if len(query.Entities) > 0 && !matchesAnyMemoryName(query.Entities, deviceMemoryEntityCandidates(item)) {
 			continue
 		}
-		if len(terms) > 0 && scoreDeviceMemory(item, terms) == 0 {
+		if len(topicTerms) > 0 && scoreDeviceMemory(item, topicTerms) == 0 {
 			continue
 		}
 		hit := deviceMemoryToHit(item)
