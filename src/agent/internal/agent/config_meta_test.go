@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 // fieldIndex builds a section.key -> FieldMeta lookup for the metadata.

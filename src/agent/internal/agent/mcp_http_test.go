@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/mcp"
+	"aico-agent/internal/mcp"
 )
 
 func TestMCPDisabledReturnsNotFound(t *testing.T) {
@@ -49,7 +49,7 @@ func TestMCPEnabledInitialize(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if !bytes.Contains(rec.Body.Bytes(), []byte(`"aiden-agent"`)) {
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"aico-agent"`)) {
 		t.Fatalf("body=%s", rec.Body.String())
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestConfigSavesSerializeThroughReloadAndKeepStatusAvailable(t *testing.T) {

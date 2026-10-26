@@ -13,7 +13,7 @@ func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 	if err := os.WriteFile(options.OTAConfigPath, []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(options.CmdlinePath, []byte("aiden.slot_suffix=_b"), 0600); err != nil {
+	if err := os.WriteFile(options.CmdlinePath, []byte("aico.slot_suffix=_b"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	server := &Server{options: options}

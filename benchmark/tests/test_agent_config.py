@@ -30,11 +30,11 @@ def test_benchmark_agent_template_uses_benchmark_agent_environment_placeholders(
     config = tomllib.loads(template.read_text(encoding="utf-8"))
 
     assert config["model_settings"]["providers"]["benchmark"] == {
-        "type": "{{AIDEN_BENCHMARK_AGENT_PROVIDER}}",
-        "base_url": "{{AIDEN_BENCHMARK_AGENT_BASE_URL}}",
-        "api_key": "{{AIDEN_BENCHMARK_AGENT_API_KEY}}",
+        "type": "{{AICO_BENCHMARK_AGENT_PROVIDER}}",
+        "base_url": "{{AICO_BENCHMARK_AGENT_BASE_URL}}",
+        "api_key": "{{AICO_BENCHMARK_AGENT_API_KEY}}",
     }
-    assert config["model_settings"]["model"]["model"] == "{{AIDEN_BENCHMARK_AGENT_MODEL}}"
+    assert config["model_settings"]["model"]["model"] == "{{AICO_BENCHMARK_AGENT_MODEL}}"
 
 
 def test_render_agent_template_escapes_complete_toml_string_content(monkeypatch):
@@ -42,7 +42,7 @@ def test_render_agent_template_escapes_complete_toml_string_content(monkeypatch)
     monkeypatch.setenv(runner_config.BENCHMARK_AGENT_API_KEY_ENV, api_key)
 
     rendered = runner_config.render_agent_template(
-        'api_key = "{{AIDEN_BENCHMARK_AGENT_API_KEY}}"\n'
+        'api_key = "{{AICO_BENCHMARK_AGENT_API_KEY}}"\n'
     )
 
     assert tomllib.loads(rendered)["api_key"] == api_key
@@ -198,7 +198,7 @@ def test_resolve_agent_model_api_key_keeps_unprefixed_value_without_matching_env
 def test_default_agent_config_path_ignores_directory_env_path(monkeypatch, tmp_path: Path):
     config_dir = tmp_path / "agent.toml"
     config_dir.mkdir()
-    monkeypatch.setenv("AIDEN_AGENT_CONFIG", str(config_dir))
+    monkeypatch.setenv("AICO_AGENT_CONFIG", str(config_dir))
     monkeypatch.setattr(agent_config, "REPO_ROOT", tmp_path / "missing-repo")
 
     assert default_agent_config_path() != config_dir

@@ -58,10 +58,10 @@ static bool parse_u32(const char* text, uint32_t* out) {
     return true;
 }
 
-static int cmd_health(aiden::AudioServiceClient& client) {
-    aiden::AudioHealthResult h;
-    aiden::AidenServiceStatus s = client.health(&h);
-    if (s != aiden::AidenServiceStatus::OK) {
+static int cmd_health(aico::AudioServiceClient& client) {
+    aico::AudioHealthResult h;
+    aico::AicoServiceStatus s = client.health(&h);
+    if (s != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "health failed: %s\n", service_status_to_string(s));
         return 1;
     }
@@ -73,10 +73,10 @@ static int cmd_health(aiden::AudioServiceClient& client) {
     return 0;
 }
 
-static int cmd_get_volume(aiden::AudioServiceClient& client) {
+static int cmd_get_volume(aico::AudioServiceClient& client) {
     uint32_t volume = 0;
-    aiden::AidenServiceStatus s = client.get_playback_volume(&volume);
-    if (s != aiden::AidenServiceStatus::OK) {
+    aico::AicoServiceStatus s = client.get_playback_volume(&volume);
+    if (s != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "get_playback_volume failed: %s\n", service_status_to_string(s));
         return 1;
     }
@@ -84,23 +84,23 @@ static int cmd_get_volume(aiden::AudioServiceClient& client) {
     return 0;
 }
 
-static int cmd_set_volume(aiden::AudioServiceClient& client, uint32_t volume) {
+static int cmd_set_volume(aico::AudioServiceClient& client, uint32_t volume) {
     if (volume > 100) {
         fprintf(stderr, "invalid volume: %u (expected 0..100)\n", volume);
         return 2;
     }
-    aiden::AidenServiceStatus s = client.set_playback_volume(volume);
-    if (s != aiden::AidenServiceStatus::OK) {
+    aico::AicoServiceStatus s = client.set_playback_volume(volume);
+    if (s != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "set_playback_volume failed: %s\n", service_status_to_string(s));
         return 1;
     }
     return cmd_get_volume(client);
 }
 
-static int cmd_record_stream(aiden::AudioServiceClient& client, int seconds) {
-    aiden::AudioFormat fmt;
-    aiden::RecordStartResult rs;
-    if (client.start_recording(fmt, &rs) != aiden::AidenServiceStatus::OK) {
+static int cmd_record_stream(aico::AudioServiceClient& client, int seconds) {
+    aico::AudioFormat fmt;
+    aico::RecordStartResult rs;
+    if (client.start_recording(fmt, &rs) != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "start_recording failed\n");
         return 1;
     }
@@ -112,10 +112,10 @@ static int cmd_record_stream(aiden::AudioServiceClient& client, int seconds) {
     bool read_failed = false;
 
     while (std::chrono::steady_clock::now() < deadline) {
-        aiden::AudioChunkResult chunk;
-        aiden::AidenServiceStatus s = client.read_record_chunk(rs.session_id, 2000, &chunk);
-        if (s == aiden::AidenServiceStatus::TIMEOUT) continue;
-        if (s != aiden::AidenServiceStatus::OK) {
+        aico::AudioChunkResult chunk;
+        aico::AicoServiceStatus s = client.read_record_chunk(rs.session_id, 2000, &chunk);
+        if (s == aico::AicoServiceStatus::TIMEOUT) continue;
+        if (s != aico::AicoServiceStatus::OK) {
             fprintf(stderr, "read_record_chunk failed: %s\n", service_status_to_string(s));
             read_failed = true;
             break;
@@ -132,9 +132,9 @@ static int cmd_record_stream(aiden::AudioServiceClient& client, int seconds) {
         }
     }
 
-    aiden::AidenServiceStatus stop_status = client.stop_recording(rs.session_id);
-    if (stop_status != aiden::AidenServiceStatus::OK &&
-        stop_status != aiden::AidenServiceStatus::SESSION_NOT_FOUND) {
+    aico::AicoServiceStatus stop_status = client.stop_recording(rs.session_id);
+    if (stop_status != aico::AicoServiceStatus::OK &&
+        stop_status != aico::AicoServiceStatus::SESSION_NOT_FOUND) {
         fprintf(stderr, "stop_recording failed: %s\n",
                 service_status_to_string(stop_status));
         read_failed = true;
@@ -142,9 +142,9 @@ static int cmd_record_stream(aiden::AudioServiceClient& client, int seconds) {
     return read_failed ? 1 : 0;
 }
 
-static int cmd_play_stream(aiden::AudioServiceClient& client, const aiden::AudioFormat& fmt) {
-    aiden::PlaybackStartResult ps;
-    if (client.start_playback(fmt, &ps) != aiden::AidenServiceStatus::OK) {
+static int cmd_play_stream(aico::AudioServiceClient& client, const aico::AudioFormat& fmt) {
+    aico::PlaybackStartResult ps;
+    if (client.start_playback(fmt, &ps) != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "start_playback failed\n");
         return 1;
     }
@@ -154,9 +154,9 @@ static int cmd_play_stream(aiden::AudioServiceClient& client, const aiden::Audio
     for (;;) {
         size_t n = fread(buf, 1, sizeof(buf), stdin);
         if (n > 0) {
-            aiden::AidenServiceStatus ws =
+            aico::AicoServiceStatus ws =
                 client.write_play_chunk(ps.session_id, buf, n, false);
-            if (ws != aiden::AidenServiceStatus::OK) {
+            if (ws != aico::AicoServiceStatus::OK) {
                 fprintf(stderr, "write_play_chunk failed: %s\n", service_status_to_string(ws));
                 write_failed = true;
                 break;
@@ -173,9 +173,9 @@ static int cmd_play_stream(aiden::AudioServiceClient& client, const aiden::Audio
 
     // Always finalize playback explicitly, even when stdin size is an exact
     // multiple of chunk size.
-    aiden::AidenServiceStatus final_ws =
+    aico::AicoServiceStatus final_ws =
         client.write_play_chunk(ps.session_id, nullptr, 0, true);
-    if (final_ws != aiden::AidenServiceStatus::OK) {
+    if (final_ws != aico::AicoServiceStatus::OK) {
         fprintf(stderr, "final write_play_chunk failed: %s\n",
                 service_status_to_string(final_ws));
         write_failed = true;
@@ -187,7 +187,7 @@ static int cmd_play_stream(aiden::AudioServiceClient& client, const aiden::Audio
 int main(int argc, char** argv) {
     std::string socket_path = default_socket();
     int seconds = 3;
-    aiden::AudioFormat play_fmt;
+    aico::AudioFormat play_fmt;
 
     int i = 1;
     // Parse global --socket option.
@@ -199,7 +199,7 @@ int main(int argc, char** argv) {
     if (i >= argc) { usage(argv[0]); return 2; }
 
     std::string cmd = argv[i++];
-    aiden::AudioServiceClient client(socket_path.c_str());
+    aico::AudioServiceClient client(socket_path.c_str());
 
     if (cmd == "health") {
         return cmd_health(client);

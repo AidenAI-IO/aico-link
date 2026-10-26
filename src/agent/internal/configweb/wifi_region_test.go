@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"aiden-agent/internal/wifiregion"
+	"aico-agent/internal/wifiregion"
 )
 
 type fakeWiFiRegionDriver struct {
@@ -359,14 +359,14 @@ func TestNoNetworkApplyReportsSelectorCleanupFailure(t *testing.T) {
 	options := testOptions(t)
 	options.WiFiBackend = "systemd-networkd"
 	binDir := t.TempDir()
-	t.Setenv("AIDEN_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
+	t.Setenv("AICO_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
 	for name, script := range map[string]string{
 		"ip": "#!/bin/sh\nexit 0\n",
 		"systemctl": `#!/bin/sh
 set -eu
-/bin/rm -f "$AIDEN_TEST_WIFI_SELECTOR"
-/bin/mkdir "$AIDEN_TEST_WIFI_SELECTOR"
-/bin/touch "$AIDEN_TEST_WIFI_SELECTOR/stale"
+/bin/rm -f "$AICO_TEST_WIFI_SELECTOR"
+/bin/mkdir "$AICO_TEST_WIFI_SELECTOR"
+/bin/touch "$AICO_TEST_WIFI_SELECTOR/stale"
 `,
 	} {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
@@ -392,13 +392,13 @@ func TestRegionUpdateRollsBackRadioWhenCandidateRestartFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	t.Setenv("AIDEN_TEST_ORIGINAL_WIFI_CONFIG", options.WiFiConfigPath)
-	t.Setenv("AIDEN_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
+	t.Setenv("AICO_TEST_ORIGINAL_WIFI_CONFIG", options.WiFiConfigPath)
+	t.Setenv("AICO_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
 	for name, script := range map[string]string{
 		"ip":      "#!/bin/sh\nexit 0\n",
 		"wpa_cli": "#!/bin/sh\nprintf '%s\\n' 'wpa_state=DISCONNECTED'\n",
 		"systemctl": `#!/bin/sh
-/usr/bin/grep -Fqx "AIDEN_WPA_SUPPLICANT_CONFIG=\"$AIDEN_TEST_ORIGINAL_WIFI_CONFIG\"" "$AIDEN_TEST_WIFI_SELECTOR"
+/usr/bin/grep -Fqx "AICO_WPA_SUPPLICANT_CONFIG=\"$AICO_TEST_ORIGINAL_WIFI_CONFIG\"" "$AICO_TEST_WIFI_SELECTOR"
 `,
 	} {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {
@@ -438,9 +438,9 @@ func TestFirstWiFiConnectionTimeoutRestoresCountryAndEmptyConfiguration(t *testi
 		t.Fatal(err)
 	}
 	binDir := t.TempDir()
-	t.Setenv("AIDEN_TEST_ORIGINAL_WIFI_CONFIG", options.WiFiConfigPath)
-	t.Setenv("AIDEN_TEST_WIFI_CANDIDATE", options.WiFiConfigPath+".candidate")
-	t.Setenv("AIDEN_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
+	t.Setenv("AICO_TEST_ORIGINAL_WIFI_CONFIG", options.WiFiConfigPath)
+	t.Setenv("AICO_TEST_WIFI_CANDIDATE", options.WiFiConfigPath+".candidate")
+	t.Setenv("AICO_TEST_WIFI_SELECTOR", options.WiFiConfigEnvironmentPath)
 	for name, script := range map[string]string{
 		"ip":      "#!/bin/sh\nexit 0\n",
 		"wpa_cli": "#!/bin/sh\nprintf '%s\\n' 'wpa_state=DISCONNECTED'\n",
@@ -448,10 +448,10 @@ func TestFirstWiFiConnectionTimeoutRestoresCountryAndEmptyConfiguration(t *testi
 set -eu
 [ "${1:-}" = restart ]
 [ "${2:-}" = wpa_supplicant@wlan0.service ]
-if /usr/bin/grep -Fqx "AIDEN_WPA_SUPPLICANT_CONFIG=\"$AIDEN_TEST_WIFI_CANDIDATE\"" "$AIDEN_TEST_WIFI_SELECTOR"; then
+if /usr/bin/grep -Fqx "AICO_WPA_SUPPLICANT_CONFIG=\"$AICO_TEST_WIFI_CANDIDATE\"" "$AICO_TEST_WIFI_SELECTOR"; then
   exit 1
 fi
-/usr/bin/grep -Fqx "AIDEN_WPA_SUPPLICANT_CONFIG=\"$AIDEN_TEST_ORIGINAL_WIFI_CONFIG\"" "$AIDEN_TEST_WIFI_SELECTOR"
+/usr/bin/grep -Fqx "AICO_WPA_SUPPLICANT_CONFIG=\"$AICO_TEST_ORIGINAL_WIFI_CONFIG\"" "$AICO_TEST_WIFI_SELECTOR"
 `,
 	} {
 		if err := os.WriteFile(filepath.Join(binDir, name), []byte(script), 0o755); err != nil {

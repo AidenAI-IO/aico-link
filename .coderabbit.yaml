@@ -1,7 +1,7 @@
 reviews:
   auto_review:
     base_branches:
-      - "^feat/aiden-business-package$"
+      - "^feat/aico-business-package$"
   tools:
     golangci-lint:
       # CodeRabbit runs golangci-lint from the repository root with ./..., but

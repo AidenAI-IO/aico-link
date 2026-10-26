@@ -8,7 +8,7 @@ import (
 	"strings"
 	"syscall"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const maxInt64 = int64(^uint64(0) >> 1)

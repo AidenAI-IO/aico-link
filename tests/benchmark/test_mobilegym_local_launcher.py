@@ -37,7 +37,7 @@ def helper_module():
     return mod
 
 
-def test_scan_suites_includes_nested_aiden(launcher_module, tmp_path):
+def test_scan_suites_includes_nested_aico(launcher_module, tmp_path):
     suites_dir = tmp_path / "suites" / "perception"
     suites_dir.mkdir(parents=True)
     (suites_dir / "perception_v1.json").write_text('{"tasks":[{},{}]}')
@@ -45,15 +45,15 @@ def test_scan_suites_includes_nested_aiden(launcher_module, tmp_path):
     suites = launcher_module.scan_suites(tmp_path)
 
     by_type = {(item["type"], item["name"]): item for item in suites}
-    assert by_type[("aiden", "perception_v1")]["path"].endswith("perception/perception_v1.json")
-    assert by_type[("aiden", "perception_v1")]["task_count"] == 2
+    assert by_type[("aico", "perception_v1")]["path"].endswith("perception/perception_v1.json")
+    assert by_type[("aico", "perception_v1")]["task_count"] == 2
 
 
 def test_build_run_command_reports_mobilegym_runs_moved_to_webui(launcher_module, tmp_path):
     with pytest.raises(launcher_module.LauncherError, match="benchmark WebUI"):
         launcher_module.build_run_command(
             tmp_path,
-            {"suite": "perception/perception_v1", "suite_type": "aiden", "parallel": 3, "limit": 1},
+            {"suite": "perception/perception_v1", "suite_type": "aico", "parallel": 3, "limit": 1},
         )
 
 
@@ -81,12 +81,12 @@ def test_build_run_command_rejects_path_traversal(launcher_module, tmp_path):
     with pytest.raises(launcher_module.LauncherError, match="benchmark WebUI"):
         launcher_module.build_run_command(
             tmp_path,
-            {"suite": "..", "suite_type": "aiden", "parallel": 1},
+            {"suite": "..", "suite_type": "aico", "parallel": 1},
         )
 
 
 def test_validate_model_environment_requires_api_key_for_openrouter(launcher_module, monkeypatch):
-    for name in ("MODEL_API_KEY", "OPENROUTER_API_KEY", "AIDEN_MODEL_API_KEY"):
+    for name in ("MODEL_API_KEY", "OPENROUTER_API_KEY", "AICO_MODEL_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("MODEL_PROVIDER", "openrouter")
 
@@ -167,7 +167,7 @@ def test_fetch_board_model_config_uses_shell_tool(launcher_module):
 
 
 def test_current_model_label_ignores_legacy_command_environment(launcher_module):
-    assert launcher_module.current_model_label({"MODEL_NAME": "qwen3.6-35b"}) == "aiden-go"
+    assert launcher_module.current_model_label({"MODEL_NAME": "qwen3.6-35b"}) == "aico-go"
 
 
 def test_handler_options_allows_browser_cors(launcher_module, tmp_path):
@@ -490,7 +490,7 @@ def test_helper_start_invokes_launchctl_for_local_launcher(helper_module, monkey
                 "launchctl",
                 "kickstart",
                 "-k",
-                f"gui/{os.getuid()}/com.aiden.mobilegym-local-launcher",
+                f"gui/{os.getuid()}/com.aico.mobilegym-local-launcher",
             ],
             helper_module.LAUNCHCTL_TIMEOUT_SECONDS,
         )
@@ -499,7 +499,7 @@ def test_helper_start_invokes_launchctl_for_local_launcher(helper_module, monkey
 
 def test_helper_start_bootstraps_launcher_when_service_is_unloaded(helper_module, monkeypatch, tmp_path):
     calls = []
-    plist = tmp_path / "com.aiden.mobilegym-local-launcher.plist"
+    plist = tmp_path / "com.aico.mobilegym-local-launcher.plist"
     plist.write_text("plist")
     monkeypatch.setattr(helper_module, "LAUNCHER_PLIST", plist)
 
@@ -510,7 +510,7 @@ def test_helper_start_bootstraps_launcher_when_service_is_unloaded(helper_module
                 113,
                 argv,
                 output="",
-                stderr='Could not find service "com.aiden.mobilegym-local-launcher"\n',
+                stderr='Could not find service "com.aico.mobilegym-local-launcher"\n',
             )
         return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
 
@@ -520,9 +520,9 @@ def test_helper_start_bootstraps_launcher_when_service_is_unloaded(helper_module
 
     assert result == {"ok": True, "status": "started", "output": ""}
     assert calls == [
-        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.aiden.mobilegym-local-launcher"],
+        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.aico.mobilegym-local-launcher"],
         ["launchctl", "bootstrap", f"gui/{os.getuid()}", str(plist)],
-        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.aiden.mobilegym-local-launcher"],
+        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.aico.mobilegym-local-launcher"],
     ]
 
 
@@ -580,8 +580,8 @@ def test_helper_start_endpoint_rejects_public_browser_origin(helper_module):
 def test_local_launcher_installer_registers_launchd_service():
     script = INSTALLER_PATH.read_text()
 
-    assert "com.aiden.mobilegym-local-launcher" in script
-    assert "com.aiden.mobilegym-local-launcher-helper" in script
+    assert "com.aico.mobilegym-local-launcher" in script
+    assert "com.aico.mobilegym-local-launcher-helper" in script
     assert "benchmark/mobilegym/scripts/local_launcher.py" in script
     assert "benchmark/mobilegym/scripts/local_launcher_helper.py" in script
     assert "UV_BIN=\"$(command -v uv)\"" in script

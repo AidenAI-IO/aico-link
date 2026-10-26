@@ -2,13 +2,13 @@
 
 Controls an Android emulator (Genymotion) or a physical device through adb, and
 exposes an HTTP protocol to the benchmark that is **fully compatible with the
-MobileGym bridge**. The Aiden Go agent uses the bridge's screen and MNK
+MobileGym bridge**. The Aico Go Agent uses the bridge's screen and MNK
 providers directly.
 
 ```text
 benchmark/runner (test orchestration)
   ↓ /api/chat
-Aiden Go Daemon (environment-bridge mode)
+Aico Go Daemon (environment-bridge mode)
   ↓ POST /api/providers/mnk              ← input primitives
   ↓ POST /api/providers/screenshot       ← screen provider
 ADB Android Bridge (this module, local Python process)
@@ -62,7 +62,7 @@ uv run python -m runner start-agent-daemon \
   --environment-bridge-endpoint http://127.0.0.1:8899
 
 # 3. Run the benchmark (take --agent-url / token from step 2's output).
-#    This command enables the judge — export AIDEN_BENCHMARK_JUDGE_API_KEY first;
+#    This command enables the judge — export AICO_BENCHMARK_JUDGE_API_KEY first;
 #    see the "Judging" section. Append --no-judge to only exercise the pipeline.
 uv run python -m runner run \
   --suite suites/adb_android_basic.json \
@@ -119,12 +119,12 @@ completely independent of the agent-under-test model (the agent model is set in
   until rejudged; known assertion failures still fail. Tasks without a rubric
   are decided by their deterministic assertions.
 - **Judge enabled** (the default for `run`, i.e. without `--no-judge`): you must
-  provide `AIDEN_BENCHMARK_JUDGE_API_KEY`, otherwise it fails with
-  `missing env var AIDEN_BENCHMARK_JUDGE_API_KEY`.
+  provide `AICO_BENCHMARK_JUDGE_API_KEY`, otherwise it fails with
+  `missing env var AICO_BENCHMARK_JUDGE_API_KEY`.
 
 ```bash
 cd benchmark
-export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+export AICO_BENCHMARK_JUDGE_API_KEY=...
 
 uv run python -m runner run \
   --suite suites/adb_android_basic.json \
@@ -150,7 +150,7 @@ saved in the run directory, so you can re-score **without re-running the
 device**:
 
 ```bash
-export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+export AICO_BENCHMARK_JUDGE_API_KEY=...
 uv run python -m runner rejudge \
   --run-dir runs/<that run's directory> \
   --judge-model anthropic/claude-sonnet-4-6

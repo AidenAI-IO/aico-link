@@ -1,6 +1,6 @@
 #include "audio_service_server.h"
 #include "audio_volume_state.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,7 +19,7 @@ void signal_handler(int) {
 
 struct Options {
     std::string socket_path = "/run/audio_service/audio_service.sock";
-    std::string volume_state_path = aiden::kDefaultAudioVolumeStatePath;
+    std::string volume_state_path = aico::kDefaultAudioVolumeStatePath;
 };
 
 void usage(const char* program) {
@@ -61,28 +61,28 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    aiden::set_log_service("audio_service");
+    aico::set_log_service("audio_service");
 
     signal(SIGINT,  signal_handler);
     signal(SIGTERM, signal_handler);
     signal(SIGHUP,  SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
 
-    aiden::AudioServiceServer server(opts.socket_path.c_str(),
+    aico::AudioServiceServer server(opts.socket_path.c_str(),
                                      opts.volume_state_path.c_str());
-    if (server.start() != aiden::AidenServiceStatus::OK) {
-        AIDEN_LOG_ERROR("server", "socket_start_failed",
+    if (server.start() != aico::AicoServiceStatus::OK) {
+        AICO_LOG_ERROR("server", "socket_start_failed",
                         "socket_path=%s", opts.socket_path.c_str());
         return 1;
     }
 
-    AIDEN_LOG_INFO("server", "listening", "socket_path=%s", opts.socket_path.c_str());
+    AICO_LOG_INFO("server", "listening", "socket_path=%s", opts.socket_path.c_str());
 
     while (!g_quit) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
     }
 
     server.stop();
-    AIDEN_LOG_INFO("server", "stopped", "socket_path=%s", opts.socket_path.c_str());
+    AICO_LOG_INFO("server", "stopped", "socket_path=%s", opts.socket_path.c_str());
     return 0;
 }

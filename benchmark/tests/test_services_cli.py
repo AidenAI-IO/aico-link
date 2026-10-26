@@ -26,7 +26,7 @@ def test_start_mobilegym_env_prints_environment_urls(tmp_path: Path, monkeypatch
         parallel_envs=3,
         web_port=18173,
         bridge_port=19090,
-        mobilegym_image="aiden-mobilegym-simulator:test",
+        mobilegym_image="aico-mobilegym-simulator:test",
         no_build_mobilegym_image=True,
         ready_timeout_sec=12,
         json=True,
@@ -39,18 +39,18 @@ def test_start_mobilegym_env_prints_environment_urls(tmp_path: Path, monkeypatch
     assert payload["docker_environment_url"] == "http://host.docker.internal:19090"
     assert payload["web_url"] == "http://127.0.0.1:18173"
     assert "screen_url" not in payload
-    assert payload["container_name"] == "aiden-mobilegym-env-mobilegym-smoke"
+    assert payload["container_name"] == "aico-mobilegym-env-mobilegym-smoke"
     assert payload["parallel_envs"] == 3
     assert payload["agent_daemon_command"] == (
         "uv run python -m runner start-agent-daemon "
         "--environment-bridge-endpoint http://127.0.0.1:19090"
     )
-    assert payload["stop_command"] == "docker rm -f aiden-mobilegym-env-mobilegym-smoke"
+    assert payload["stop_command"] == "docker rm -f aico-mobilegym-env-mobilegym-smoke"
     assert health_urls == [("http://127.0.0.1:19090/health", 12)]
     command, cwd, text = commands[0]
     assert cwd == services.BENCHMARK_ROOT.parent
     assert text is True
-    assert "aiden-mobilegym-simulator:test" in command
+    assert "aico-mobilegym-simulator:test" in command
     assert "127.0.0.1:18173:4173" in command
     assert "127.0.0.1:19090:9090" in command
     assert "--parallel-envs 3" in command[-1]
@@ -81,7 +81,7 @@ def test_start_mobilegym_env_uses_docker_assigned_ports_when_auto(tmp_path: Path
         parallel_envs=2,
         web_port=0,
         bridge_port=0,
-        mobilegym_image="aiden-mobilegym-simulator:test",
+        mobilegym_image="aico-mobilegym-simulator:test",
         no_build_mobilegym_image=True,
         ready_timeout_sec=12,
         json=True,
@@ -124,7 +124,7 @@ def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp
         runs_dir=str(tmp_path),
         base_config_dir=str(tmp_path / "base"),
         agent_config="",
-        daemon_image="aiden-agent-daemon:test",
+        daemon_image="aico-agent-daemon:test",
         no_build_daemon_image=True,
         environment_bridge_endpoint="http://127.0.0.1:19090",
         device_type="",
@@ -142,15 +142,15 @@ def test_start_agent_daemon_prints_agent_url_and_rewrites_environment_bridge(tmp
     assert payload["docker_environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert payload["benchmark_task_id"] == "suite.json:t1"
     assert payload["container_id"] == "agent-container"
-    assert payload["compose_project"] == "aiden-benchmark-agent-agent-smoke"
+    assert payload["compose_project"] == "aico-benchmark-agent-agent-smoke"
     assert payload["device_type"] == "Android"
     assert payload["target_platform"] == "android"
     assert "docker compose" in payload["stop_command"]
 
     assert captured["job"].agent_url == "http://127.0.0.1:18081"
-    assert captured["job"].container_name == "aiden-benchmark-agent-agent-smoke"
+    assert captured["job"].container_name == "aico-benchmark-agent-agent-smoke"
     kwargs = captured["kwargs"]
-    assert kwargs["image"] == "aiden-agent-daemon:test"
+    assert kwargs["image"] == "aico-agent-daemon:test"
     assert kwargs["host_port"] == 18081
     assert kwargs["environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert kwargs["benchmark_task_id"] == "suite.json:t1"
@@ -214,7 +214,7 @@ def test_start_agent_daemon_uses_explicit_device_type_without_environment_bridge
         runs_dir=str(tmp_path),
         base_config_dir=str(tmp_path / "base"),
         agent_config="",
-        daemon_image="aiden-agent-daemon:test",
+        daemon_image="aico-agent-daemon:test",
         no_build_daemon_image=True,
         environment_bridge_endpoint="",
         device_type="android",
@@ -323,7 +323,7 @@ def test_start_agent_daemon_validates_effective_device_type_after_start(
     )
 
     assert services.cmd_start_agent_daemon(_agent_daemon_args(tmp_path)) == 1
-    assert stopped == ["aiden-benchmark-agent-agent-smoke"]
+    assert stopped == ["aico-benchmark-agent-agent-smoke"]
     assert "expected ios, reported android" in capsys.readouterr().err
 
 
@@ -350,7 +350,7 @@ def test_start_agent_daemon_uses_docker_assigned_port_when_auto(tmp_path: Path, 
         runs_dir=str(tmp_path),
         base_config_dir=str(tmp_path / "base"),
         agent_config="",
-        daemon_image="aiden-agent-daemon:test",
+        daemon_image="aico-agent-daemon:test",
         no_build_daemon_image=True,
         environment_bridge_endpoint="",
         device_type="ios",
@@ -371,7 +371,7 @@ def test_start_agent_daemon_uses_docker_assigned_port_when_auto(tmp_path: Path, 
 def test_agent_daemon_compose_passes_benchmark_token_file_env_var():
     compose = (webui.BENCHMARK_DOCKER_DIR / "docker-compose.agent-daemon.yml").read_text(encoding="utf-8")
 
-    assert "AIDEN_BENCHMARK_TOKEN_FILE: ${AIDEN_BENCHMARK_TOKEN_FILE:-}" in compose
+    assert "AICO_BENCHMARK_TOKEN_FILE: ${AICO_BENCHMARK_TOKEN_FILE:-}" in compose
 
 
 def test_start_agent_daemon_reports_missing_agent_config(tmp_path: Path, capsys):
@@ -381,7 +381,7 @@ def test_start_agent_daemon_reports_missing_agent_config(tmp_path: Path, capsys)
         runs_dir=str(tmp_path),
         base_config_dir=str(tmp_path / "missing"),
         agent_config="",
-        daemon_image="aiden-agent-daemon:test",
+        daemon_image="aico-agent-daemon:test",
         no_build_daemon_image=True,
         environment_bridge_endpoint="",
         device_type="",
@@ -401,10 +401,10 @@ def test_daemon_compose_env_strips_host_proxy(monkeypatch):
     for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
                 "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.setenv(key, "http://127.0.0.1:7897")
-    monkeypatch.setenv("AIDEN_LANGFUSE_HTTPS_PROXY", "http://telemetry.test:8080")
+    monkeypatch.setenv("AICO_LANGFUSE_HTTPS_PROXY", "http://telemetry.test:8080")
 
     env = webui.daemon_compose_env(
-        image="aiden-agent-daemon:test",
+        image="aico-agent-daemon:test",
         environment_bridge_endpoint="http://host.docker.internal:18080",
     )
 
@@ -412,7 +412,7 @@ def test_daemon_compose_env_strips_host_proxy(monkeypatch):
                 "http_proxy", "https_proxy", "all_proxy"):
         assert key not in env, f"{key} leaked into daemon env"
     assert "host.docker.internal" in env["NO_PROXY"]
-    assert env["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://telemetry.test:8080"
+    assert env["AICO_LANGFUSE_HTTPS_PROXY"] == "http://telemetry.test:8080"
 
 
 def test_agent_daemon_compose_only_forwards_dedicated_telemetry_proxy():
@@ -422,37 +422,37 @@ def test_agent_daemon_compose_only_forwards_dedicated_telemetry_proxy():
                 "http_proxy", "https_proxy", "all_proxy"):
         assert re.search(rf"(?m)^\s+(?:-\s+)?{key}\s*[:=]", compose) is None
         assert "${" + key not in compose
-    assert "AIDEN_LANGFUSE_HTTPS_PROXY: ${AIDEN_LANGFUSE_HTTPS_PROXY:-}" in compose
+    assert "AICO_LANGFUSE_HTTPS_PROXY: ${AICO_LANGFUSE_HTTPS_PROXY:-}" in compose
 
 
 def test_daemon_compose_env_enables_benchmark_token_for_config_dir(tmp_path: Path):
     env = webui.daemon_compose_env(
-        image="aiden-agent-daemon:test",
+        image="aico-agent-daemon:test",
         host_port=18081,
         config_dir=tmp_path / "config",
     )
 
-    assert env["AIDEN_BENCHMARK_TOKEN_FILE"] == "/config/control_token"
+    assert env["AICO_BENCHMARK_TOKEN_FILE"] == "/config/control_token"
 
 
 def test_daemon_compose_env_uses_ephemeral_port_for_zero_host_port():
     env = webui.daemon_compose_env(
-        image="aiden-agent-daemon:test",
+        image="aico-agent-daemon:test",
         host_port=0,
     )
 
-    assert env["AIDEN_DAEMON_HOST_PORT"] == "0"
+    assert env["AICO_DAEMON_HOST_PORT"] == "0"
     compose_text = webui.AGENT_DAEMON_COMPOSE_FILE.read_text(encoding="utf-8")
-    assert '127.0.0.1:${AIDEN_DAEMON_HOST_PORT:-8080}:8080' in compose_text
+    assert '127.0.0.1:${AICO_DAEMON_HOST_PORT:-8080}:8080' in compose_text
 
 
 def test_daemon_compose_env_passes_runtime_device_type():
     env = webui.daemon_compose_env(
-        image="aiden-agent-daemon:test",
+        image="aico-agent-daemon:test",
         device_type="android",
     )
 
-    assert env["AIDEN_DEVICE_TYPE"] == "android"
+    assert env["AICO_DEVICE_TYPE"] == "android"
 
 
 def test_start_adb_android_env_prints_environment_urls(tmp_path: Path, monkeypatch, capsys):
@@ -647,7 +647,7 @@ def _agent_daemon_args(tmp_path: Path, **overrides):
         "runs_dir": str(tmp_path),
         "base_config_dir": str(tmp_path / "base"),
         "agent_config": "",
-        "daemon_image": "aiden-agent-daemon:test",
+        "daemon_image": "aico-agent-daemon:test",
         "no_build_daemon_image": True,
         "environment_bridge_endpoint": "http://127.0.0.1:19090",
         "device_type": "",

@@ -32,7 +32,7 @@ func (m *wifiAuthMonitor) startAt(ctx context.Context, socketPath string) {
 	if m.conn != nil {
 		return
 	}
-	directory, err := os.MkdirTemp("", "aiden-wpa-")
+	directory, err := os.MkdirTemp("", "aico-wpa-")
 	if err != nil {
 		return
 	}

@@ -4,8 +4,8 @@ import (
 	"context"
 	"sync"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agenttask"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agenttask"
 )
 
 // runtimeAgentTaskRunner adapts the legacy agent Runtime to the narrow
@@ -30,6 +30,7 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		}
 	}
 	request := agent.RunRequest{
+		WaitForIdle:             true,
 		Input:                   prompt,
 		Turn:                    agent.NewTextTurnInput(prompt, nil),
 		AsyncEpisodeMaintenance: true,

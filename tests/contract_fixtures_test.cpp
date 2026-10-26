@@ -11,7 +11,7 @@
 namespace {
 
 std::string fixture_path(const char* name) {
-    return std::string(AIDEN_SOURCE_DIR) + "/tests/contracts/" + name;
+    return std::string(AICO_SOURCE_DIR) + "/tests/contracts/" + name;
 }
 
 std::vector<uint8_t> read_fixture(const char* name) {
@@ -45,15 +45,15 @@ TEST_CASE("shared UDS fixtures match the documented envelope") {
     cJSON_Delete(request_json);
 
     const std::vector<uint8_t> encoded = read_fixture("uds-frame-response.bin");
-    REQUIRE(encoded.size() >= aiden::kFrameWirePrefixSize);
-    aiden::FrameWirePrefix prefix;
-    REQUIRE(aiden::decode_frame_wire_prefix(encoded.data(),
-                                             aiden::kFrameWirePrefixSize,
+    REQUIRE(encoded.size() >= aico::kFrameWirePrefixSize);
+    aico::FrameWirePrefix prefix;
+    REQUIRE(aico::decode_frame_wire_prefix(encoded.data(),
+                                             aico::kFrameWirePrefixSize,
                                              &prefix));
-    REQUIRE(encoded.size() == aiden::kFrameWirePrefixSize + prefix.header_len +
+    REQUIRE(encoded.size() == aico::kFrameWirePrefixSize + prefix.header_len +
                                 prefix.payload_len);
     const std::string header(
-        reinterpret_cast<const char*>(encoded.data() + aiden::kFrameWirePrefixSize),
+        reinterpret_cast<const char*>(encoded.data() + aico::kFrameWirePrefixSize),
         prefix.header_len);
     cJSON* response_json = cJSON_Parse(header.c_str());
     REQUIRE(response_json != nullptr);
@@ -71,7 +71,7 @@ TEST_CASE("shared UDS fixtures match the documented envelope") {
     CHECK(std::string(sequence->valuestring) == "7");
     cJSON_Delete(response_json);
 
-    const size_t payload_offset = aiden::kFrameWirePrefixSize + prefix.header_len;
+    const size_t payload_offset = aico::kFrameWirePrefixSize + prefix.header_len;
     REQUIRE(prefix.payload_len == 4);
     CHECK(encoded[payload_offset + 0] == 0);
     CHECK(encoded[payload_offset + 1] == 1);

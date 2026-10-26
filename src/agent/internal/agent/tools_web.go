@@ -21,7 +21,7 @@ import (
 )
 
 const defaultWebSearchMaxResults = 5
-const defaultUserAgent = "aiden-agent/1.0 (+https://github.com/AidenAI-IO)"
+const defaultUserAgent = "aico/1.0 (+https://aico.link)"
 const defaultWebToolTimeout = 15 * time.Second
 const maxWebToolOutputBytes = 12_000
 const braveSearchEndpoint = "https://api.search.brave.com/res/v1/web/search"

@@ -8,7 +8,7 @@
       "id": "current_time_via_shell",
       "category": "single_step",
       "description_for_judge": "The agent should query the controller clock through shell and report a real timestamp with timezone and Unix seconds.",
-      "prompt": "Aiden 控制器现在的准确时间是什么？请同时给出本地时间、时区名称或 UTC offset，以及 Unix 秒级时间戳。不要把当前连接设备的时间当成控制器时间。",
+      "prompt": "Aico Link 控制器现在的准确时间是什么？请同时给出本地时间、时区名称或 UTC offset，以及 Unix 秒级时间戳。不要把当前连接设备的时间当成控制器时间。",
       "rubric": [
         {
           "id": "used_shell_clock",

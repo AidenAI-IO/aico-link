@@ -9,7 +9,7 @@
 #include <sstream>
 #include <string>
 
-namespace aiden {
+namespace aico {
 namespace {
 
 std::string trim_copy(const std::string& input) {
@@ -513,8 +513,8 @@ bool is_allowed_system_env_key(const std::string& key) {
     static const std::set<std::string> allowed = {
         "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY",
         "all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY",
-        "ANTHROPIC_BASE_URL", "ANDROID_SERIAL", "AIDEN_ADB_SERIAL",
-        "AIDEN_POINTER_MODE", "AIDEN_WIFI_PROXY_ENABLED",
+        "ANTHROPIC_BASE_URL", "ANDROID_SERIAL", "AICO_ADB_SERIAL",
+        "AICO_POINTER_MODE", "AICO_WIFI_PROXY_ENABLED",
     };
     if (allowed.find(key) != allowed.end()) {
         return true;
@@ -674,4 +674,4 @@ bool render_system_env_without_proxy_assignments(const std::string& content,
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

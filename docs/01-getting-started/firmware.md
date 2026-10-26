@@ -4,20 +4,25 @@ sidebar_position: 4
 
 # Firmware Build and Flashing
 
-This version removes the OEM partition and `/oem`, supports full-image
-flashing only, and does not provide OTA migration from the old layout.
-The new layout uses boot/rootfs A/B slots, with 1792 MiB per rootfs slot and
-OTA manifest schema version 2.
+The firmware uses boot/rootfs A/B slots, with 1792 MiB per rootfs slot and
+OTA manifest schema version 2. Migration from the former OEM-partition layout
+requires full-image flashing; there is no OTA migration from that older layout.
+The current firmware has no OEM partition or `/oem` directory.
+
+For boards already using this A/B layout, the transition to the Aico technical
+names requires a complete matching boot-and-rootfs OTA, which preserves
+`/userdata`. A business `.deb` alone cannot perform this transition. See
+[Product Names and Technical Identifiers](../02-architecture/naming.md).
 
 ## Getting Firmware
 
-The **Aiden Channel Release** workflow compares changes against the selected
+The **Aico Link Channel Release** workflow compares changes against the selected
 channel's previous release. System changes produce signed firmware; business-only
 changes produce a Debian package. The primary workflow checks `main` hourly at
 `:17` UTC and publishes changed content to `dev`; unchanged content is skipped.
 All three channels (`dev`, `staging`, `prod`) also support manual releases;
 see [Channel Releases](../08-ota/channel-release.md). Primary and backup entries
-default to verified publication, using `aiden-hosted-01` and `aiden-hosted-02`
+default to verified publication, using `aico-hosted-01` and `aico-hosted-02`
 respectively for firmware builds. Fallback and standalone package builds upload
 artifacts only. You can also build the image locally with
 `./debian_build.sh`, or obtain a reviewed `update.img` through the project's
@@ -29,16 +34,29 @@ When flashing the full firmware, you typically use `update.img`.
 
 This project's firmware is built on `pico-sdk` and includes the following customizations:
 
-- Wi-Fi uses the external antenna by default;
-- Kernel builds both the Rockchip RK628 and Toshiba TC358743 HDMI-to-CSI V4L2 drivers;
-- DTS declares the Firefly RK628D board on 100 kHz I2C4 at `0x50`, with GPIO3_C5 push-pull/no-pull reset and four continuous-clock CSI lanes, plus the legacy TC358743 board at `0x0f` with two non-continuous-clock lanes. Only the bridge that responds on I2C registers a V4L2 subdevice;
-- Bridge-aware HDMI timing: RK628D keeps its 1080p60 EDID, while TC358743 automatically advertises 1080p30 to fit its two-lane CSI link;
+- The AIC8800D80 Wi-Fi driver is enabled by default (`ENABLE_WIFIDRV=1`). The
+  GD32 MCU controls `WIFI_VCC_PWREN`. SCH v1 startup preserves module power and
+  retained SDIO state across RV1106 restarts, without pulsing WL_EN or rebinding
+  the host. The BSP identifies the supported ROM state before provisioning, or
+  validates and reuses running firmware. Partial or unknown firmware states
+  fail startup instead of triggering another download. The loader requires
+  `fw_state` to report `provisioned` or `reused` and holds the SDIO host active
+  through BSP and Wi-Fi driver initialization before restoring its power policy.
+  Bluetooth preparation checks the same shared firmware state. Bluetooth HCI
+  and the BLE service are enabled by default (`ENABLE_BLUETOOTH_HCI=1`,
+  `ENABLE_BLE_SERVICE=1`) and attach the controller on `/dev/ttyS0`;
+- Kernel builds the Rockchip RK628 HDMI-to-CSI V4L2 driver and disables the
+  unpopulated Toshiba TC358743 path;
+- The Aico Link SCH v1 DTS declares RK628F on 100 kHz I2C4 at `0x50`, with
+  GPIO1_B0 reset, GPIO1_B1 interrupt, and four continuous-clock CSI lanes;
+- RK628F keeps its driver-provided 1080p60 EDID;
 - USB-C port is configured as a composite gadget on boot: keyboard HID,
   pointer/touch HID, and CDC ECM networking (`usb0`, default `192.168.42.1`);
 - Builds a Debian 13 rootfs from `overlay-debian/`, BSP modules and libraries,
-  and the installed `aiden-business` package. No OEM partition or `/oem` directory is created.
+  and the installed `aico-business` package. No OEM partition or `/oem` directory is created.
 
-The related low-level changes can be found in the `pico-sdk/` submodule.
+The related low-level changes are tracked directly in the vendored `pico-sdk/`
+directory.
 
 ## Building the Full Firmware Locally
 
@@ -53,7 +71,7 @@ key pair (see `./debian_build.sh --help`). Process overview:
 
 1. Build and audit the Debian armhf C/C++ and Go application bundle;
 2. Build the RV1106 BSP, bootloader, kernel modules, and A/B boot images from `pico-sdk`;
-3. Build the pinned Debian 13 rootfs, install `aiden-business`, and apply `overlay-debian/`;
+3. Build the pinned Debian 13 rootfs, install `aico-business`, and apply `overlay-debian/`;
 4. Install BSP libraries/modules and the OTA public key into rootfs before archiving it;
 5. Create rootfs, userdata, and OTA images and validate their contents;
 6. Generate the signed local OTA manifest and full USB first-flash package.
@@ -75,6 +93,43 @@ building an image, verify the runtime with:
 
 Runtime-installed packages stay under `/userdata`; see
 [Persistent Python Packages](../04-agent/python-packages.md).
+
+## System Suspend
+
+The Debian board configuration includes `rv1106-pm.config` and the Aico Link board
+DTS settings for both suspend-to-idle (`s2idle`) and suspend-to-RAM (`deep`).
+The image installs `/usr/bin/aico-power`, available in the normal shell PATH.
+Run either command as root:
+
+```bash
+aico-power sleep       # Select s2idle and request suspend
+aico-power deep-sleep  # Select deep and request suspend
+```
+
+The command verifies that the kernel advertises the requested mode, syncs
+filesystems, selects `/sys/power/mem_sleep`, and writes `mem` to
+`/sys/power/state`. It waits until the suspend request returns and reports
+kernel errors with a nonzero exit status. Check the available states with:
+
+```bash
+cat /sys/power/state
+cat /sys/power/mem_sleep
+```
+
+Both `s2idle` and `deep` should appear in `mem_sleep`; brackets indicate the
+currently selected mode. Each command selects its own mode explicitly.
+Deep sleep retains RAM and the RV power-hold signal; it does not power off the
+RV1106. The RK628 driver powers down its enable GPIO during system suspend and
+restores it on resume. ASRPRO and Wi-Fi/Bluetooth supply controls are not changed
+by this command. A peripheral driver that refuses suspend causes the request
+to fail; the command does not detach drivers to bypass that error.
+
+UART5 remains a wake source for the MCU link, so periodic MCU traffic can wake
+`s2idle` immediately. Deep resume requires a suitable PMU-bank GPIO wake source
+and its kernel configuration; UART5 is not a deep-sleep wake path. The temporary
+J2-13/GPIO0_A6 wake key used in hardware testing is not installed by the
+production DTS. Until the board's deep wake path is configured, use reset or a
+power cycle to restart it. Shell and network access pause while suspended.
 
 ## Flashing the Firmware
 
@@ -99,9 +154,9 @@ version 1.0.41, so it speaks the current adb auth and pairing protocol.
 
 ### 2. Flash with upgrade_tool
 
-On Linux, use the x86_64 tool generated in the repository `pico-sdk`
-submodule. The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O
-binary and will not run on Linux. The guarded flash helper verifies the image
+On Linux, use the x86_64 tool in the vendored `pico-sdk/` directory. The
+repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary and will
+not run on Linux. The guarded flash helper verifies the image
 digest and requires an explicit confirmation because a full factory flash
 overwrites userdata:
 

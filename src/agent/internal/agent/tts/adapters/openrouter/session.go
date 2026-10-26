@@ -11,7 +11,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 type session struct {

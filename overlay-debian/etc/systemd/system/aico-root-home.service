@@ -1,0 +1,14 @@
+[Unit]
+Description=Bind the persistent Aico Link root home
+Requires=aico-userdata-migrate.service
+After=aico-userdata-migrate.service
+Before=aico-ssh-identity.service ssh.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-root-home
+RemainAfterExit=yes
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=multi-user.target

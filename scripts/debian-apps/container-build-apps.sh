@@ -47,7 +47,12 @@ mkdir -p "${BUILD_DIR}" "${DIST_DIR}/bin" "${DIST_DIR}/lib" \
     "${DIST_DIR}/maps" "${DIST_DIR}/metadata"
 
 ttyd_download=${BUILD_DIR}/${TTYD_ASSET}
-curl -fL --retry 3 --connect-timeout 20 -o "${ttyd_download}" "${TTYD_URL}"
+ttyd_cache=/work/.cache/debian-apps/${TTYD_ASSET}
+if [ -f "${ttyd_cache}" ] && echo "${TTYD_SHA256}  ${ttyd_cache}" | sha256sum -c - >/dev/null 2>&1; then
+    cp -f "${ttyd_cache}" "${ttyd_download}"
+else
+    curl -fL --retry 3 --connect-timeout 20 -o "${ttyd_download}" "${TTYD_URL}"
+fi
 echo "${TTYD_SHA256}  ${ttyd_download}" | sha256sum -c -
 install -m 0755 "${ttyd_download}" "${DIST_DIR}/bin/ttyd"
 printf 'version=%s\nasset=%s\nsha256=%s\nurl=%s\n' \
@@ -57,9 +62,9 @@ printf 'version=%s\nasset=%s\nsha256=%s\nurl=%s\n' \
 cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="${REPO_ROOT}/cmake/toolchains/armhf-debian.cmake" \
-    -DAIDEN_TARGET_PLATFORM=rv1106-debian-glibc \
-    -DAIDEN_DEBIAN_OPENCV_DIR="${OPENCV_DIR}" \
-    -DAIDEN_ENABLE_LINK_MAPS=ON
+    -DAICO_TARGET_PLATFORM=rv1106-debian-glibc \
+    -DAICO_DEBIAN_OPENCV_DIR="${OPENCV_DIR}" \
+    -DAICO_ENABLE_LINK_MAPS=ON
 cmake --build "${BUILD_DIR}" --parallel "${JOBS}" --verbose \
     2>&1 | tee "${DIST_DIR}/metadata/build.log"
 
@@ -83,11 +88,11 @@ export PATH=/usr/local/go/bin:${PATH}
 export GOTOOLCHAIN=local
 export GOCACHE=/go-build-cache
 export GOMODCACHE=/go-mod-cache
-export GOPATH=/tmp/aiden-go-path
+export GOPATH=/tmp/aico-go-path
 readonly AGENT_COMMIT=$(git -C "${REPO_ROOT}" rev-parse --short=12 HEAD)
 readonly AGENT_BUILD_TIME=$(date -u -d "@${SOURCE_EPOCH}" +%Y%m%d-%H%M%S)
 readonly AGENT_BUILD_VERSION=${AGENT_BUILD_TIME}-${AGENT_COMMIT}
-readonly AGENT_LDFLAGS="-s -w -buildid= -X aiden-agent/internal/agent.buildCommit=${AGENT_COMMIT} -X aiden-agent/internal/agent.buildVersion=${AGENT_BUILD_VERSION}"
+readonly AGENT_LDFLAGS="-s -w -buildid= -X aico-agent/internal/agent.buildCommit=${AGENT_COMMIT} -X aico-agent/internal/agent.buildVersion=${AGENT_BUILD_VERSION}"
 
 pushd "${REPO_ROOT}/src/agent" >/dev/null
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
@@ -96,6 +101,9 @@ CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
     -o "${DIST_DIR}/bin/ble_service" ./cmd/ble_service
+CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
+    go build -mod=readonly -trimpath -buildvcs=false -ldflags '-s -w -buildid=' \
+    -o "${DIST_DIR}/bin/mcu_service" ./cmd/mcu_service
 CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 \
     go build -mod=readonly -trimpath -buildvcs=false -ldflags "${AGENT_LDFLAGS}" \
     -o "${DIST_DIR}/bin/ota" ./cmd/ota
@@ -123,9 +131,10 @@ printf '%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
     >"${DIST_DIR}/metadata/hardware-demo-commit.txt"
 git -C "${REPO_ROOT}" status --short \
     >"${DIST_DIR}/metadata/hardware-demo-status.txt"
-printf '%s\n' "$(git -C "${REPO_ROOT}/pico-sdk" rev-parse HEAD)" \
+# The SDK is part of the firmware commit; retain the existing metadata names.
+printf '%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)" \
     >"${DIST_DIR}/metadata/pico-sdk-commit.txt"
-git -C "${REPO_ROOT}/pico-sdk" status --short \
+git -C "${REPO_ROOT}" status --short -- pico-sdk \
     >"${DIST_DIR}/metadata/pico-sdk-status.txt"
 printf 'source_date_epoch=%s\nagent_build_version=%s\n' \
     "${SOURCE_EPOCH}" "${AGENT_BUILD_VERSION}" \

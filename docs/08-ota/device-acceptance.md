@@ -15,7 +15,7 @@ Before enabling production OTA rollout, the following acceptance tests should be
 - The `update.img` inside `update.img.tar.gz` contains the dedicated empty `ota` partition and the factory baseline in userdata at `/debian/ota/config.json`.
 - When UART is available, it is recommended to record SPL rollback logs simultaneously.
 
-`aiden-ota-health.service` only handles `/userdata/ota/pending_boot.json` at
+`aico-ota-health.service` only handles `/userdata/ota/pending_boot.json` at
 startup; it does not perform network or GitHub update checks. Manual updates
 must be triggered via `ota update`.
 
@@ -48,14 +48,14 @@ test "$(readlink -f "$ota_mount_device")" = "$ota_device"
 test -n "$userdata_mount_device"
 test "$(readlink -f "$userdata_mount_device")" != "$ota_device"
 df -h /userdata /userdata/ota
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
-/usr/lib/aiden/ota status
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/ota status
 ```
 
 Expected:
 
 - Factory boot is in slot A.
-- `/proc/cmdline` contains `aiden.slot_suffix=_a` and `root=PARTLABEL=rootfs_a`.
+- `/proc/cmdline` contains `aico.slot_suffix=_a` and `root=PARTLABEL=rootfs_a`.
 - `/` is mounted from `rootfs_a` (`/dev/mmcblk0p7`); `/oem` is absent.
 - `/userdata/ota` is an ext4 mount whose source resolves to `/dev/disk/by-partlabel/ota`, and it reports an independent filesystem from `/userdata`.
 - `misc` metadata can be parsed normally from byte offset `2048`, slot A is successful.
@@ -66,7 +66,7 @@ Expected:
 Switch to inactive slot:
 
 ```bash
-/usr/lib/aiden/abctl set-active /dev/disk/by-partlabel/misc b --tries 3
+/usr/lib/aico/abctl set-active /dev/disk/by-partlabel/misc b --tries 3
 sync
 reboot
 ```
@@ -76,12 +76,12 @@ After reboot, check:
 ```bash
 cat /proc/cmdline
 findmnt /
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 ```
 
 Expected:
 
-- `/proc/cmdline` contains `aiden.slot_suffix=_b` and `root=PARTLABEL=rootfs_b`.
+- `/proc/cmdline` contains `aico.slot_suffix=_b` and `root=PARTLABEL=rootfs_b`.
 - `/` is mounted from `rootfs_b` (`/dev/mmcblk0p8`); `/oem` is absent.
 - Slot B has remaining tries before mark successful.
 
@@ -90,9 +90,9 @@ Expected:
 After confirming the new slot is usable, commit:
 
 ```bash
-/usr/lib/aiden/abctl mark-successful /dev/disk/by-partlabel/misc b
+/usr/lib/aico/abctl mark-successful /dev/disk/by-partlabel/misc b
 sync
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 ```
 
 Expected: slot B successful with tries 0; previous slot is still retained as a fallback slot.
@@ -102,12 +102,12 @@ Expected: slot B successful with tries 0; previous slot is still retained as a f
 Force trial boot to another slot, but do not mark successful:
 
 ```bash
-/usr/lib/aiden/abctl set-active /dev/disk/by-partlabel/misc a --tries 1
+/usr/lib/aico/abctl set-active /dev/disk/by-partlabel/misc a --tries 1
 sync
 reboot
 ```
 
-To prevent health success, mask `aiden-ota-health-marker.service` for the
+To prevent health success, mask `aico-ota-health-marker.service` for the
 bounded test or prevent application readiness during trial boot. Reboot again
 after tries are consumed, then remove the mask.
 
@@ -126,7 +126,7 @@ Configuration should point to target repo/channel and include `boot`, `rootfs` h
 Execute OTA once:
 
 ```bash
-/usr/lib/aiden/ota update
+/usr/lib/aico/ota update
 ```
 
 Expected process:
@@ -142,8 +142,8 @@ Expected process:
 After success, check:
 
 ```bash
-/usr/lib/aiden/ota status
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/ota status
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 ls -l /userdata/ota/pending_boot.json /userdata/ota/health.ok 2>&1 || true
 ```
 

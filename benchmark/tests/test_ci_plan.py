@@ -89,7 +89,7 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     selected = select_cases(
         catalog,
         profile="all",
-        suite="suites/aiden_app/connection_capabilities_v1.json",
+        suite="suites/aico_app/connection_capabilities_v1.json",
     )
 
     assert {case.target_platform for case in selected} == {"ios", "android"}
@@ -129,7 +129,7 @@ def test_external_case_reads_its_named_environment_variable() -> None:
     case = next(
         item
         for item in load_catalog().cases
-        if item.id == "aiden-app-ios"
+        if item.id == "aico-app-ios"
     )
 
     url, service = _environment_url(
@@ -154,14 +154,14 @@ def test_ci_maps_unprefixed_action_variables_to_benchmark_runtime() -> None:
         }
     )
 
-    assert runtime["AIDEN_BENCHMARK_AGENT_MODEL"] == "agent-model"
-    assert runtime["AIDEN_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
-    assert runtime["AIDEN_DAEMON_IMAGE"] == "agent-daemon:test"
+    assert runtime["AICO_BENCHMARK_AGENT_MODEL"] == "agent-model"
+    assert runtime["AICO_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
+    assert runtime["AICO_DAEMON_IMAGE"] == "agent-daemon:test"
     assert runtime["LANGFUSE_PUBLIC_KEY"] == "langfuse-key"
-    assert runtime["AIDEN_BENCHMARK_TELEMETRY"] == "1"
-    assert runtime["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
-    assert "AIDEN_BENCHMARK_TELEMETRY" not in _runtime_environment({})
-    assert "AIDEN_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
+    assert runtime["AICO_BENCHMARK_TELEMETRY"] == "1"
+    assert runtime["AICO_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
+    assert "AICO_BENCHMARK_TELEMETRY" not in _runtime_environment({})
+    assert "AICO_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
 
 
 def test_ci_uses_prepared_images_only_when_explicitly_enabled() -> None:
@@ -514,7 +514,7 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
-    assert re.search(r"(?m)^\s+AIDEN_[A-Z0-9_]+:", workflow) is None
+    assert re.search(r"(?m)^\s+AICO_[A-Z0-9_]+:", workflow) is None
     assert "BENCHMARK_TELEMETRY: '1'" in workflow
     expected_mappings = {
         "BENCHMARK_AGENT_PROVIDER": "vars.BENCHMARK_AGENT_PROVIDER",
@@ -530,11 +530,11 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         "BENCHMARK_IOS_ENVIRONMENT_URL": "vars.BENCHMARK_IOS_ENVIRONMENT_URL",
         "BENCHMARK_MAC_ENVIRONMENT_URL": "vars.BENCHMARK_MAC_ENVIRONMENT_URL",
         "BENCHMARK_VPHONE_ENVIRONMENT_URL": "vars.BENCHMARK_VPHONE_ENVIRONMENT_URL",
-        "BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL"
         ),
-        "BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL"
         ),
     }
     for environment_name, github_expression in expected_mappings.items():

@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
 
-AIDEN_OTA_PARTITION_NAME="${AIDEN_OTA_PARTITION_NAME:-ota}"
-AIDEN_OTA_MOUNT_POINT="${AIDEN_OTA_MOUNT_POINT:-/userdata/ota}"
-AIDEN_OTA_DEVICE_PATH="${AIDEN_OTA_DEVICE_PATH:-/dev/disk/by-partlabel/ota}"
-AIDEN_OTA_FILESYSTEM="${AIDEN_OTA_FILESYSTEM:-ext4}"
-AIDEN_OTA_DOWNLOAD_SAFETY_MARGIN_MIB="${AIDEN_OTA_DOWNLOAD_SAFETY_MARGIN_MIB:-16}"
-AIDEN_OTA_FILESYSTEM_OVERHEAD_MIB="${AIDEN_OTA_FILESYSTEM_OVERHEAD_MIB:-30}"
-AIDEN_OTA_LAYOUT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AIDEN_OTA_BOARD_CONFIG_PATH="${AIDEN_OTA_BOARD_CONFIG_PATH:-$AIDEN_OTA_LAYOUT_ROOT/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk}"
+AICO_OTA_PARTITION_NAME="${AICO_OTA_PARTITION_NAME:-ota}"
+AICO_OTA_MOUNT_POINT="${AICO_OTA_MOUNT_POINT:-/userdata/ota}"
+AICO_OTA_DEVICE_PATH="${AICO_OTA_DEVICE_PATH:-/dev/disk/by-partlabel/ota}"
+AICO_OTA_FILESYSTEM="${AICO_OTA_FILESYSTEM:-ext4}"
+AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB="${AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB:-16}"
+AICO_OTA_FILESYSTEM_OVERHEAD_MIB="${AICO_OTA_FILESYSTEM_OVERHEAD_MIB:-30}"
+AICO_OTA_LAYOUT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+AICO_OTA_BOARD_CONFIG_PATH="${AICO_OTA_BOARD_CONFIG_PATH:-$AICO_OTA_LAYOUT_ROOT/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk}"
 
-aiden_ota_partition_size_mib() {
+aico_ota_partition_size_mib() {
   local partition_env definition size_spec partition_name value
 
-  if [ ! -f "$AIDEN_OTA_BOARD_CONFIG_PATH" ]; then
-    echo "ota_partition_layout.sh: missing board config: $AIDEN_OTA_BOARD_CONFIG_PATH" >&2
+  if [ ! -f "$AICO_OTA_BOARD_CONFIG_PATH" ]; then
+    echo "ota_partition_layout.sh: missing board config: $AICO_OTA_BOARD_CONFIG_PATH" >&2
     return 1
   fi
   partition_env="$({
     unset RK_PARTITION_CMD_IN_ENV
-    source "$AIDEN_OTA_BOARD_CONFIG_PATH"
+    source "$AICO_OTA_BOARD_CONFIG_PATH"
     printf '%s' "${RK_PARTITION_CMD_IN_ENV:-}"
   })" || return 1
 
   while IFS= read -r definition; do
     partition_name="${definition#*(}"
     partition_name="${partition_name%)}"
-    [ "$partition_name" = "$AIDEN_OTA_PARTITION_NAME" ] || continue
+    [ "$partition_name" = "$AICO_OTA_PARTITION_NAME" ] || continue
 
     size_spec="${definition%%(*}"
     size_spec="${size_spec%%@*}"
@@ -50,24 +50,24 @@ aiden_ota_partition_size_mib() {
     break
   done < <(printf '%s\n' "$partition_env" | tr ',' '\n')
 
-  echo "ota_partition_layout.sh: valid ${AIDEN_OTA_PARTITION_NAME} partition not found in $AIDEN_OTA_BOARD_CONFIG_PATH" >&2
+  echo "ota_partition_layout.sh: valid ${AICO_OTA_PARTITION_NAME} partition not found in $AICO_OTA_BOARD_CONFIG_PATH" >&2
   return 1
 }
 
-aiden_ota_partition_size_bytes() {
+aico_ota_partition_size_bytes() {
   local partition_mib
-  partition_mib="$(aiden_ota_partition_size_mib)" || return 1
+  partition_mib="$(aico_ota_partition_size_mib)" || return 1
   echo $((partition_mib * 1024 * 1024))
 }
 
-aiden_ota_download_safety_margin_bytes() {
-  echo $((AIDEN_OTA_DOWNLOAD_SAFETY_MARGIN_MIB * 1024 * 1024))
+aico_ota_download_safety_margin_bytes() {
+  echo $((AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB * 1024 * 1024))
 }
 
-aiden_ota_manifest_max_download_bytes() {
+aico_ota_manifest_max_download_bytes() {
   local partition_mib usable_mib
-  partition_mib="$(aiden_ota_partition_size_mib)" || return 1
-  usable_mib=$((partition_mib - AIDEN_OTA_DOWNLOAD_SAFETY_MARGIN_MIB - AIDEN_OTA_FILESYSTEM_OVERHEAD_MIB))
+  partition_mib="$(aico_ota_partition_size_mib)" || return 1
+  usable_mib=$((partition_mib - AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB - AICO_OTA_FILESYSTEM_OVERHEAD_MIB))
   if [ "$usable_mib" -le 0 ]; then
     echo "ota_partition_layout.sh: OTA partition has no usable download capacity" >&2
     return 1

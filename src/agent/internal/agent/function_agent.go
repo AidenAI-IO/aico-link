@@ -36,7 +36,7 @@ const maxToolObservationRunes = 4000
 const maxSkillReadObservationRunes = 20000
 
 type toolActionLog struct {
-	Version     int    `json:"aiden_action_log_version"`
+	Version     int    `json:"aico_action_log_version"`
 	Message     string `json:"message"`
 	ToolContent string `json:"tool_content,omitempty"`
 }

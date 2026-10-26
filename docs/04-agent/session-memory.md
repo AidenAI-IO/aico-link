@@ -4,7 +4,7 @@ sidebar_position: 8
 
 # Session Memory Compaction
 
-This document describes Aiden Agent's session-level conversation memory compaction. The mechanism turns a growing event stream into chunk summaries and keeps only the latest hot window available to the Agent as native chat messages.
+This document describes Aico's session-level conversation memory compaction. The mechanism turns a growing event stream into chunk summaries and keeps only the latest hot window available to the Agent as native chat messages.
 
 This is separate from the [Memory Plane design](memory-plane.md). Memory Plane handles device and task-episode experience memory; session memory handles the dialogue history for one active session.
 
@@ -83,7 +83,7 @@ closes the current active session by atomically moving the whole
 It then recreates `memory/session/events.jsonl` as an empty file and clears the
 in-memory conversation window and event counters.
 
-This implements only multi-session storage isolation. Aiden does not restore,
+This implements only multi-session storage isolation. Aico does not restore,
 list, or switch back to old sessions yet. There is always exactly one active
 session, and the new active session starts with empty conversation context.
 

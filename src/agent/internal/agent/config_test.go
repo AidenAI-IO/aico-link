@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 func TestConfigValidateAcceptsSTT(t *testing.T) {
@@ -623,7 +623,7 @@ func TestLoadResolvedConfigAcceptsSymlinkToRegularFile(t *testing.T) {
 }
 
 func TestLoadResolvedConfigRejectsSpecialFile(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aiden-config-")
+	dir, err := os.MkdirTemp("", "aico-config-")
 	if err != nil {
 		t.Fatalf("create short temp directory: %v", err)
 	}
@@ -858,7 +858,7 @@ func TestConfigRejectsInvalidTerminationPolicyThresholdOrder(t *testing.T) {
 }
 
 func TestBundledSkillsDirCandidatesUseBusinessPackage(t *testing.T) {
-	want := []string{"/usr/share/aiden/skills"}
+	want := []string{"/usr/share/aico/skills"}
 	if got := bundledSkillsDirCandidates(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("bundledSkillsDirCandidates() = %#v, want %#v", got, want)
 	}
@@ -1890,10 +1890,10 @@ func TestConfigVADBackendDefaultsAndValidation(t *testing.T) {
 	if got := cfg.VADBackendOrDefault(); got != "cpu" {
 		t.Fatalf("VADBackendOrDefault() = %q, want cpu", got)
 	}
-	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aiden/cpu_vad" {
+	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("DefaultVADHelperPathForBackend(cpu) = %q", got)
 	}
-	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aiden/cpu_vad" {
+	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("ResolveVADHelperPath(cpu, rknn default) = %q", got)
 	}
 	if got := ResolveVADHelperPath("cpu", "/custom/vad"); got != "/custom/vad" {
@@ -2415,7 +2415,7 @@ enabled = false
 relay_url = "https://relay.example.com"
 relay_api_key = "relay-secret"
 board_id = "board-001"
-bundle_id = "com.example.aiden"
+bundle_id = "com.example.aico"
 environment = "sandbox"
 team_id = "TEAMID1234"
 key_id = "KEYID12345"

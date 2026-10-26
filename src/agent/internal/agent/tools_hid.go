@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/json"
 	"fmt"

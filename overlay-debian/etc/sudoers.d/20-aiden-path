@@ -1,3 +1,0 @@
-# Allow commands such as sudo ota status to resolve Aiden's root-owned tools.
-# Authentication and command permissions remain defined by the main sudoers file.
-Defaults secure_path="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib/aiden"

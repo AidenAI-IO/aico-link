@@ -1,7 +1,7 @@
 # Custom Test Suites
 
-Aiden benchmark suites use `benchmark/suites/<name>.json`. When MobileGym runs as an
-environment bridge, the benchmark WebUI lists these Aiden JSON suites and uses
+Aico benchmark suites use `benchmark/suites/<name>.json`. When MobileGym runs as an
+environment bridge, the benchmark WebUI lists these Aico JSON suites and uses
 `benchmark-task-id` to route concurrent task workers to different environments within
 the same MobileGym instance. The benchmark runner does not currently load YAML files
 from this directory.
@@ -16,7 +16,7 @@ uv run python -m runner webui
 ```
 
 When creating a MobileGym environment, set `Envs` to a value greater than 1, then select
-that environment to run an Aiden JSON suite. The WebUI starts a separate daemon for each
+that environment to run an Aico JSON suite. The WebUI starts a separate daemon for each
 concurrent task worker and uses `benchmark-task-id` to route workers to different
 environments within the same MobileGym instance.
 
@@ -48,4 +48,4 @@ See the MobileGym registry: `account, alipay, bilibili, calendar, clock, crossap
 
 ## Example files
 
-- `aiden_smoke.yaml` — a historical example; **it cannot currently be run directly with `--suite aiden_smoke`** and is provided only as a task-list reference.
+- `aico_smoke.yaml` — a historical example; **it cannot currently be run directly with `--suite aico_smoke`** and is provided only as a task-list reference.

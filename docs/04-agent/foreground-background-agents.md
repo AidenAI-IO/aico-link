@@ -23,6 +23,11 @@ To keep realtime context bounded, a new websocket session replays only the
 latest 10 user turns, including the assistant/tool messages belonging to those
 turns. The full user history remains on disk.
 
+The backend also exposes [schedules and routines](./schedules-and-routines.md)
+through the `schedule` tool. MCU timer expiry resumes scheduled work in its
+originating backend conversation, following compaction revisions. Scheduled
+runs and ordinary queued backend tasks wait for the runtime to become idle.
+
 The foreground realtime session can be activated by either the physical GPIO
 wakeup signal or a text request to `/api/chat`. A text request submitted while
 no realtime session is connected stays queued while the daemon connects, then

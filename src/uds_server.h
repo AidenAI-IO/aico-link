@@ -9,7 +9,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 class UdsServer {
 public:
@@ -40,4 +40,4 @@ private:
     std::mutex mutex_;
 };
 
-}  // namespace aiden
+}  // namespace aico

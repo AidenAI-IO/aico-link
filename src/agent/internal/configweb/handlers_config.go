@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/wifiproxy"
+	"aico-agent/internal/wifiproxy"
 )
 
 type configTestRequest struct {
@@ -334,7 +334,7 @@ func (s *Server) agentCommandEnvironment() ([]string, error) {
 		values["HTTPS_PROXY"] != "" || values["https_proxy"] != "" ||
 		values["ALL_PROXY"] != "" || values["all_proxy"] != ""
 	generatedWiFiNoProxy := false
-	if values["AIDEN_WIFI_PROXY_ENABLED"] != "0" && strings.TrimSpace(s.options.LocalProxyAddress) != "" {
+	if values["AICO_WIFI_PROXY_ENABLED"] != "0" && strings.TrimSpace(s.options.LocalProxyAddress) != "" {
 		localProxy := "http://" + s.options.LocalProxyAddress
 		// The generated file contains one value per protocol. Preserve those
 		// values independently so SOCKS5 Wi-Fi policies remain SOCKS5 at the

@@ -1,0 +1,344 @@
+{
+  "name": "aico_app_phone_bridge_data_policy_v1",
+  "suite_category": "Aico companion app / Phone Bridge Policy",
+  "description": "Policy matrix for Phone Bridge data tools across iOS Dynamic Island restore, iOS PiP background queue, and Android FGS background queue.",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "ios_dynamic_island_contacts_query",
+      "category": "single_step",
+      "description_for_judge": "With the Aico App in the background, PiP disabled, and Dynamic Island reachable, the Agent should call bridge_contacts directly and let the tool restore the Aico App internally.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 未开启，灵动岛返回入口可达。请查询通讯录里 Biden 的手机号并告诉我。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-di-contacts", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": false, "fgs_bridge_enabled": false},
+        "screen_text": "iPhone screen with a reachable Aico App Dynamic Island return entry.",
+        "tools": {
+          "bridge_contacts": {
+            "input_contains": {"action": "query", "query": "Biden"},
+            "output": {"ok": true, "restored_from_return_entry": true, "contacts": [{"id": "biden", "name": "Biden", "phone_numbers": ["+1 202-555-0147"]}]}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_contacts_tool", "check": "Calls bridge_contacts with action=query and query=Biden."},
+        {"id": "used_internal_restore", "check": "Does not call bridge_open_app or manually click the Dynamic Island before querying."},
+        {"id": "reported_number", "check": "Reports +1 202-555-0147 from the tool result."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_contacts"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Biden"}}]
+      }
+    },
+    {
+      "id": "ios_dynamic_island_calendar_query",
+      "category": "single_step",
+      "description_for_judge": "Query calendar through bridge_calendar; the tool restores the Aico App through Dynamic Island before sending the command.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 未开启，灵动岛返回入口可达。请查询 2026-07-23 这一天的日历事件，时间范围严格使用 2026-07-23T00:00:00+08:00 到 2026-07-24T00:00:00+08:00。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-di-calendar", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": false, "fgs_bridge_enabled": false},
+        "screen_text": "iPhone screen with a reachable Aico App Dynamic Island return entry.",
+        "tools": {
+          "bridge_calendar": {
+            "input_contains": {"action": "query", "from": "2026-07-23T00:00:00+08:00", "to": "2026-07-24T00:00:00+08:00"},
+            "output": {"ok": true, "restored_from_return_entry": true, "events": [{"event_id": "event-1", "title": "项目同步", "start_at": "2026-07-23T10:00:00+08:00"}]}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_calendar_tool", "check": "Calls bridge_calendar with action=query and the exact requested range."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or use manual UI recovery."},
+        {"id": "reported_event", "check": "Reports the 项目同步 event from the result."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_calendar"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2026-07-23T00:00:00+08:00", "to": "2026-07-24T00:00:00+08:00"}}]
+      }
+    },
+    {
+      "id": "ios_dynamic_island_clipboard_read",
+      "category": "single_step",
+      "description_for_judge": "Read the clipboard through bridge_clipboard and internal Dynamic Island restore.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 未开启，灵动岛返回入口可达。请读取当前手机剪贴板内容并告诉我。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-di-clipboard", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": false, "fgs_bridge_enabled": false},
+        "screen_text": "iPhone screen with a reachable Aico App Dynamic Island return entry.",
+        "tools": {
+          "bridge_clipboard": {
+            "input_contains": {"action": "read"},
+            "output": {"ok": true, "restored_from_return_entry": true, "text": "Dynamic Island clipboard value"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_clipboard_tool", "check": "Calls bridge_clipboard with action=read."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or manually click Dynamic Island."},
+        {"id": "reported_text", "check": "Reports Dynamic Island clipboard value."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_clipboard"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}]
+      }
+    },
+    {
+      "id": "ios_dynamic_island_notification_send",
+      "category": "single_step",
+      "description_for_judge": "Send a notification through bridge_notification and internal Dynamic Island restore.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 未开启，灵动岛返回入口可达。请立即发送一条本地通知，标题为「Aico Benchmark」，正文为「灵动岛恢复通知」，不播放声音。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-di-notification", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": false, "fgs_bridge_enabled": false},
+        "screen_text": "iPhone screen with a reachable Aico App Dynamic Island return entry.",
+        "tools": {
+          "bridge_notification": {
+            "input_contains": {"title": "Aico Benchmark", "body": "灵动岛恢复通知", "sound": false},
+            "output": {"ok": true, "restored_from_return_entry": true, "notification_id": "ios-di-notification-1"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_notification_tool", "check": "Calls bridge_notification with the requested title/body and sound=false."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or manually click Dynamic Island."},
+        {"id": "completed", "check": "Reports that the notification was sent."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_notification"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_notification", "input_contains": {"title": "Aico Benchmark", "body": "灵动岛恢复通知", "sound": false}}]
+      }
+    },
+    {
+      "id": "ios_pip_contacts_query",
+      "category": "single_step",
+      "description_for_judge": "With iOS PiP enabled, query contacts directly through the background queue and never call bridge_open_app.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 已开启。请查询通讯录里 Alice 的手机号并告诉我。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-pip-contacts", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": true, "fgs_bridge_enabled": false},
+        "screen_text": "iOS PiP Bridge background mode is active; Dynamic Island is hidden by PiP.",
+        "tools": {
+          "bridge_contacts": {
+            "input_contains": {"action": "query", "query": "Alice"},
+            "output": {"ok": true, "delivery": "pip_background_queue", "contacts": [{"id": "alice", "name": "Alice", "phone_numbers": ["+1 415-555-0101"]}]}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_contacts_tool", "check": "Calls bridge_contacts with action=query and query=Alice."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app because PiP only supports background-safe data tools."},
+        {"id": "reported_number", "check": "Reports +1 415-555-0101."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_contacts"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Alice"}}]
+      }
+    },
+    {
+      "id": "ios_pip_calendar_create",
+      "category": "single_step",
+      "description_for_judge": "Create a calendar event directly through the iOS PiP background queue; bridge_open_app is unavailable.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 已开启。请创建日历事件：标题「PiP 测试日程」，开始时间 2026-07-24T14:00:00+08:00，结束时间 2026-07-24T15:00:00+08:00，地点「3号会议室」。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-pip-calendar", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": true, "fgs_bridge_enabled": false},
+        "screen_text": "iOS PiP Bridge background mode is active.",
+        "tools": {
+          "bridge_calendar": {
+            "input_contains": {"action": "create", "title": "PiP 测试日程", "start_at": "2026-07-24T14:00:00+08:00", "end_at": "2026-07-24T15:00:00+08:00", "location": "3号会议室"},
+            "output": {"ok": true, "delivery": "pip_background_queue", "event_id": "pip-event-1"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_calendar_tool", "check": "Calls bridge_calendar action=create with the exact event fields."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or open the Calendar UI."},
+        {"id": "completed", "check": "Reports successful event creation."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_calendar"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_calendar", "input_contains": {"action": "create", "title": "PiP 测试日程", "start_at": "2026-07-24T14:00:00+08:00", "end_at": "2026-07-24T15:00:00+08:00", "location": "3号会议室"}}]
+      }
+    },
+    {
+      "id": "ios_pip_clipboard_write",
+      "category": "single_step",
+      "description_for_judge": "Write the requested standalone clipboard value through the iOS PiP background queue.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 已开启。请把文本「PiP clipboard benchmark」写入手机系统剪贴板。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-pip-clipboard", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": true, "fgs_bridge_enabled": false},
+        "screen_text": "iOS PiP Bridge background mode is active.",
+        "tools": {
+          "bridge_clipboard": {
+            "input_contains": {"action": "write", "text": "PiP clipboard benchmark"},
+            "output": {"ok": true, "delivery": "pip_background_queue", "text": "PiP clipboard benchmark"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_clipboard_tool", "check": "Calls bridge_clipboard action=write with the exact text."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or use a UI paste flow."},
+        {"id": "completed", "check": "Reports successful clipboard write."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_clipboard"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture", "enter_text"],
+        "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "write", "text": "PiP clipboard benchmark"}}]
+      }
+    },
+    {
+      "id": "ios_pip_notification_send",
+      "category": "single_step",
+      "description_for_judge": "Send a notification directly through the iOS PiP background queue.",
+      "prompt": "测试环境状态：iOS，Aico App 在后台，PiP Bridge 已开启。请立即发送本地通知，标题「PiP Benchmark」，正文「后台通知成功」，播放声音。",
+      "mock_environment": {
+        "platform": "ios",
+        "phone_bridge": {"connected": false, "phone_id": "ios-pip-notification", "app_state": "background", "return_entry": "dynamic_island", "return_entry_available": true, "pip_bridge_enabled": true, "fgs_bridge_enabled": false},
+        "screen_text": "iOS PiP Bridge background mode is active.",
+        "tools": {
+          "bridge_notification": {
+            "input_contains": {"title": "PiP Benchmark", "body": "后台通知成功", "sound": true},
+            "output": {"ok": true, "delivery": "pip_background_queue", "notification_id": "pip-notification-1"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_notification_tool", "check": "Calls bridge_notification with the exact title/body and sound=true."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app."},
+        {"id": "completed", "check": "Reports successful notification send."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_notification"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_notification", "input_contains": {"title": "PiP Benchmark", "body": "后台通知成功", "sound": true}}]
+      }
+    },
+    {
+      "id": "android_fgs_contacts_query",
+      "category": "single_step",
+      "description_for_judge": "Query contacts directly through the Android FGS background queue; open_app is not allowed.",
+      "prompt": "测试环境状态：Android，Aico App 在后台，FGS Bridge 已开启。请查询通讯录里 Bob 的手机号并告诉我。",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": false, "phone_id": "android-fgs-contacts", "app_state": "background", "return_entry": "none", "return_entry_available": false, "pip_bridge_enabled": false, "fgs_bridge_enabled": true},
+        "screen_text": "Android FGS Bridge background mode is active.",
+        "tools": {
+          "bridge_contacts": {
+            "input_contains": {"action": "query", "query": "Bob"},
+            "output": {"ok": true, "delivery": "fgs_background_queue", "contacts": [{"id": "bob", "name": "Bob", "phone_numbers": ["+1 650-555-0102"]}]}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_contacts_tool", "check": "Calls bridge_contacts with action=query and query=Bob."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app because Android FGS only executes background-safe data commands."},
+        {"id": "reported_number", "check": "Reports +1 650-555-0102."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_contacts"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Bob"}}]
+      }
+    },
+    {
+      "id": "android_fgs_calendar_query",
+      "category": "single_step",
+      "description_for_judge": "Query calendar directly through the Android FGS background queue.",
+      "prompt": "测试环境状态：Android，Aico App 在后台，FGS Bridge 已开启。请查询 2026-07-25 这一天的日历事件，时间范围严格使用 2026-07-25T00:00:00+08:00 到 2026-07-26T00:00:00+08:00。",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": false, "phone_id": "android-fgs-calendar", "app_state": "background", "return_entry": "none", "return_entry_available": false, "pip_bridge_enabled": false, "fgs_bridge_enabled": true},
+        "screen_text": "Android FGS Bridge background mode is active.",
+        "tools": {
+          "bridge_calendar": {
+            "input_contains": {"action": "query", "from": "2026-07-25T00:00:00+08:00", "to": "2026-07-26T00:00:00+08:00"},
+            "output": {"ok": true, "delivery": "fgs_background_queue", "events": [{"event_id": "fgs-event-1", "title": "Android FGS 例会", "start_at": "2026-07-25T09:30:00+08:00"}]}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_calendar_tool", "check": "Calls bridge_calendar with action=query and the exact requested range."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app or navigate the Calendar UI."},
+        {"id": "reported_event", "check": "Reports Android FGS 例会."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_calendar"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2026-07-25T00:00:00+08:00", "to": "2026-07-26T00:00:00+08:00"}}]
+      }
+    },
+    {
+      "id": "android_fgs_clipboard_read",
+      "category": "single_step",
+      "description_for_judge": "Read the clipboard directly through the Android FGS background queue.",
+      "prompt": "测试环境状态：Android，Aico App 在后台，FGS Bridge 已开启。请读取当前手机剪贴板内容并告诉我。",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": false, "phone_id": "android-fgs-clipboard", "app_state": "background", "return_entry": "none", "return_entry_available": false, "pip_bridge_enabled": false, "fgs_bridge_enabled": true},
+        "screen_text": "Android FGS Bridge background mode is active.",
+        "tools": {
+          "bridge_clipboard": {
+            "input_contains": {"action": "read"},
+            "output": {"ok": true, "delivery": "fgs_background_queue", "text": "Android FGS clipboard value"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_clipboard_tool", "check": "Calls bridge_clipboard with action=read."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app."},
+        {"id": "reported_text", "check": "Reports Android FGS clipboard value."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_clipboard"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}]
+      }
+    },
+    {
+      "id": "android_fgs_notification_send",
+      "category": "single_step",
+      "description_for_judge": "Send a notification directly through the Android FGS background queue.",
+      "prompt": "测试环境状态：Android，Aico App 在后台，FGS Bridge 已开启。请立即发送本地通知，标题「FGS Benchmark」，正文「Android 后台通知成功」，不播放声音。",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": false, "phone_id": "android-fgs-notification", "app_state": "background", "return_entry": "none", "return_entry_available": false, "pip_bridge_enabled": false, "fgs_bridge_enabled": true},
+        "screen_text": "Android FGS Bridge background mode is active.",
+        "tools": {
+          "bridge_notification": {
+            "input_contains": {"title": "FGS Benchmark", "body": "Android 后台通知成功", "sound": false},
+            "output": {"ok": true, "delivery": "fgs_background_queue", "notification_id": "fgs-notification-1"}
+          }
+        }
+      },
+      "rubric": [
+        {"id": "used_notification_tool", "check": "Calls bridge_notification with the exact title/body and sound=false."},
+        {"id": "did_not_open_app", "check": "Does not call bridge_open_app."},
+        {"id": "completed", "check": "Reports successful notification send."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 4, "must_complete_within_sec": 120,
+        "required_tools": ["bridge_notification"],
+        "forbidden_tools": ["bridge_open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [{"tool": "bridge_notification", "input_contains": {"title": "FGS Benchmark", "body": "Android 后台通知成功", "sound": false}}]
+      }
+    }
+  ]
+}

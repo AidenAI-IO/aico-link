@@ -11,7 +11,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKER = ROOT / "overlay-debian/usr/lib/aiden/aiden-hybrid-update"
+WORKER = ROOT / "overlay-debian/usr/lib/aico/aico-hybrid-update"
 MOCK = '''#!/usr/bin/env python3
 import json, os, sys, time
 from pathlib import Path
@@ -38,7 +38,7 @@ if name == "ota":
         (root / "state.json").write_text(json.dumps({"phase":"pending-reboot"}))
         print('{"Updated":true}')
 elif "--simulate" in args:
-    print(config.get("plan", "Inst aiden-business [0.0.1-1] (0.0.2-1 Aiden [armhf])" if config["package"] else "0 upgraded"))
+    print(config.get("plan", "Inst aico-business [0.0.1-1] (0.0.2-1 Aico [armhf])" if config["package"] else "0 upgraded"))
 '''
 
 
@@ -57,15 +57,15 @@ class HybridUpdateTests(unittest.TestCase):
         self.marker.write_text('{"phase":"requested"}')
         (self.root / "boot-id").write_text("boot-before")
         self.env = dict(os.environ, HYBRID_TEST_ROOT=str(self.root),
-                        AIDEN_HYBRID_UPDATE_MARKER=str(self.marker),
-                        AIDEN_CONFIG_WEB_OTA_UPDATE_LOCK=str(self.root / "lock"),
-                        AIDEN_OTA_STATE_PATH=str(self.root / "state.json"),
-                        AIDEN_BOOT_ID_PATH=str(self.root / "boot-id"),
-                        AIDEN_OTA_CONFIG=str(self.root / "config.json"),
-                        AIDEN_BUSINESS_APT_SOURCE=str(self.root / "business.sources"),
-                        AIDEN_MAINTENANCE_LOCK=str(self.root / "maintenance.lock"),
-                        AIDEN_OTA_BIN=str(self.root / "ota"),
-                        AIDEN_APT_GET_BIN=str(self.root / "apt-get"))
+                        AICO_HYBRID_UPDATE_MARKER=str(self.marker),
+                        AICO_CONFIG_WEB_OTA_UPDATE_LOCK=str(self.root / "lock"),
+                        AICO_OTA_STATE_PATH=str(self.root / "state.json"),
+                        AICO_BOOT_ID_PATH=str(self.root / "boot-id"),
+                        AICO_OTA_CONFIG=str(self.root / "config.json"),
+                        AICO_BUSINESS_APT_SOURCE=str(self.root / "business.sources"),
+                        AICO_MAINTENANCE_LOCK=str(self.root / "maintenance.lock"),
+                        AICO_OTA_BIN=str(self.root / "ota"),
+                        AICO_APT_GET_BIN=str(self.root / "apt-get"))
         # Exercise real subprocess timeouts without waiting for the production
         # ten-minute budget or DHCP backoff in each failure test.
         self.command = [sys.executable, "-c", """
@@ -107,7 +107,7 @@ sys.exit(worker["main"]())
         self.assertIn("Dir::Etc::sourceparts=-", commands[1])
         self.assertIn("APT::Get::List-Cleanup=0", commands[1])
         self.assertIn("--only-upgrade", commands[-1])
-        self.assertEqual(commands[-1][-2:], ["install", "aiden-business"])
+        self.assertEqual(commands[-1][-2:], ["install", "aico-business"])
         self.assertFalse(self.marker.exists())
 
     def test_unrelated_package_does_not_trigger_business_upgrade(self):
@@ -182,7 +182,7 @@ sys.exit(worker["main"]())
         log = self.run_worker()
         self.assertEqual(log.count("apt metadata retry"), 2)
         self.assertEqual(sum(event[-1] == "update" for event in self.events()), 3)
-        self.assertEqual(self.events()[-1][-2:], ["install", "aiden-business"])
+        self.assertEqual(self.events()[-1][-2:], ["install", "aico-business"])
         self.assertIn("hybrid: completed", log)
 
     def test_apt_retries_are_bounded_and_never_install_after_failure(self):

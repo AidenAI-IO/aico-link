@@ -242,20 +242,20 @@ api_key = "sk-override"
 }
 
 func TestVoiceProviderAPIKeyEnvironmentReferencesResolve(t *testing.T) {
-	t.Setenv("AIDEN_TEST_TTS_KEY", "sk-from-env")
-	t.Setenv("AIDEN_TEST_STT_KEY", "sk-stt-env")
+	t.Setenv("AICO_TEST_TTS_KEY", "sk-from-env")
+	t.Setenv("AICO_TEST_STT_KEY", "sk-stt-env")
 
 	cfg := writeVoiceProviderConfig(t, `
 [voice_settings.classic.tts.providers.minimax-main]
 type = "minimax"
-api_key = "$AIDEN_TEST_TTS_KEY"
+api_key = "$AICO_TEST_TTS_KEY"
 
 [voice_settings.classic.tts]
 provider = "minimax-main"
 
 [voice_settings.classic.stt.providers.whisper]
 type = "openai-whisper"
-api_key = "$AIDEN_TEST_STT_KEY"
+api_key = "$AICO_TEST_STT_KEY"
 
 [voice_settings.classic.stt]
 provider = "whisper"

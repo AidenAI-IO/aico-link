@@ -95,7 +95,7 @@ export function createBackupEngine(onChange) {
   async function openSession() {
     if (session && new Date(session.expires_at).getTime() > Date.now() + 30000) return session;
     session = await request('/api/maintenance/sessions', {
-      method: 'POST', credentials: 'same-origin', headers: {'X-Aiden-Client': 'config-web/2.0'},
+      method: 'POST', credentials: 'same-origin', headers: {'X-Aico-Client': 'config-web/2.0'},
     });
     return session;
   }
@@ -105,8 +105,8 @@ export function createBackupEngine(onChange) {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const current = await openSession();
       const headers = new Headers(options.headers || {});
-      headers.set('X-Aiden-Request-ID', id);
-      headers.set('X-Aiden-CSRF-Token', current.csrf_token);
+      headers.set('X-Aico-Request-ID', id);
+      headers.set('X-Aico-CSRF-Token', current.csrf_token);
       try {
         return await request(url, {...options, headers, credentials: 'same-origin'});
       } catch (error) {
@@ -270,7 +270,7 @@ export function createBackupEngine(onChange) {
       emit({phase: t('backup.phase.restore_ingest'), done: 0, total: file.size});
       await uploadBrowserChunks(file, created.chunk_size,
         (index, chunk, hash) => jobRequest(jobPath('restore', created.job_id, `/chunks/${index}`), {
-          method: 'PUT', headers: {'Content-Type': 'application/octet-stream', 'X-Aiden-Chunk-SHA256': hash}, body: chunk,
+          method: 'PUT', headers: {'Content-Type': 'application/octet-stream', 'X-Aico-Chunk-SHA256': hash}, body: chunk,
         }),
         async (response, offset, total) => {
           job = {...job, ...response};

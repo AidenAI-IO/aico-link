@@ -1,0 +1,212 @@
+#!/bin/sh
+# Temporarily remove the pointer from the iOS USB composite while sending a
+# modifier shortcut, then restore the normal keyboard + pointer profile.
+set -eu
+
+CONF_FILE=/etc/aico_dynamic_keyboard.conf
+[ -f "$CONF_FILE" ] || {
+	echo "missing $CONF_FILE" >&2
+	exit 1
+}
+. "$CONF_FILE"
+
+GADGET_DIR=$DYNAMIC_KEYBOARD_GADGET_DIR
+UDC_PATH=$GADGET_DIR/UDC
+CONFIG_DIR=$GADGET_DIR/configs/c.1
+KEYBOARD_FUNC=$GADGET_DIR/functions/hid.usb0
+POINTER_FUNC=$GADGET_DIR/functions/hid.usb1
+EXTRA_KEYS_FUNC=$GADGET_DIR/functions/hid.usb2
+ECM_FUNC=$GADGET_DIR/functions/ecm.usb0
+WATCHDOG_GRACE_FILE=/run/aico_dynamic_keyboard.grace
+
+die() {
+	echo "aico-dynamic-keyboard: $*" >&2
+	exit 1
+}
+
+release_lock() {
+	rm -f "$DYNAMIC_KEYBOARD_LOCK_DIR/pid"
+	rmdir "$DYNAMIC_KEYBOARD_LOCK_DIR" 2>/dev/null || true
+}
+
+acquire_lock() {
+	i=0
+	while ! mkdir "$DYNAMIC_KEYBOARD_LOCK_DIR" 2>/dev/null; do
+		owner=$(cat "$DYNAMIC_KEYBOARD_LOCK_DIR/pid" 2>/dev/null || true)
+		case "$owner" in
+			''|*[!0-9]*) ;;
+			*)
+				if ! kill -0 "$owner" 2>/dev/null; then
+					rm -f "$DYNAMIC_KEYBOARD_LOCK_DIR/pid"
+					rmdir "$DYNAMIC_KEYBOARD_LOCK_DIR" 2>/dev/null || true
+					continue
+				fi
+				;;
+		esac
+		i=$((i + 1))
+		[ "$i" -lt 150 ] || die "timed out waiting for $DYNAMIC_KEYBOARD_LOCK_DIR"
+		sleep 0.1
+	done
+	echo "$$" > "$DYNAMIC_KEYBOARD_LOCK_DIR/pid"
+	trap release_lock EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+}
+
+read_udc() {
+	udc=$(cat "$UDC_PATH" 2>/dev/null || true)
+	if [ -z "$udc" ]; then
+		udc=$(ls /sys/class/udc 2>/dev/null | head -n1)
+	fi
+	[ -n "$udc" ] || die "no UDC available"
+	printf '%s\n' "$udc"
+}
+
+current_mode() {
+	if [ -L "$CONFIG_DIR/hid.usb0" ] && [ ! -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
+		printf 'isolated\n'
+	elif [ -L "$CONFIG_DIR/hid.usb0" ] && [ -L "$CONFIG_DIR/hid.usb1" ] && [ -L "$CONFIG_DIR/hid.usb2" ] && [ -L "$CONFIG_DIR/ecm.usb0" ]; then
+		printf 'normal\n'
+	else
+		printf 'invalid\n'
+	fi
+}
+
+unlink_functions() {
+	rm -f "$CONFIG_DIR"/hid.* "$CONFIG_DIR"/ecm.* 2>/dev/null || true
+}
+
+link_normal_profile() {
+	ln -s "$KEYBOARD_FUNC" "$CONFIG_DIR/hid.usb0"
+	ln -s "$EXTRA_KEYS_FUNC" "$CONFIG_DIR/hid.usb2"
+	ln -s "$POINTER_FUNC" "$CONFIG_DIR/hid.usb1"
+}
+
+link_isolated_profile() {
+	ln -s "$KEYBOARD_FUNC" "$CONFIG_DIR/hid.usb0"
+	ln -s "$EXTRA_KEYS_FUNC" "$CONFIG_DIR/hid.usb2"
+}
+
+link_ecm() {
+	ln -s "$ECM_FUNC" "$CONFIG_DIR/ecm.usb0"
+}
+
+set_identity() {
+	mode=$1
+	case "$mode" in
+		normal)
+			echo "$DYNAMIC_KEYBOARD_NORMAL_ID_PRODUCT" > "$GADGET_DIR/idProduct"
+			echo "$DYNAMIC_KEYBOARD_NORMAL_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
+			echo "$DYNAMIC_KEYBOARD_NORMAL_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
+			echo "$DYNAMIC_KEYBOARD_NORMAL_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
+			;;
+		isolated)
+			echo "$DYNAMIC_KEYBOARD_ISOLATED_ID_PRODUCT" > "$GADGET_DIR/idProduct"
+			echo "$DYNAMIC_KEYBOARD_ISOLATED_BCD_DEVICE" > "$GADGET_DIR/bcdDevice"
+			echo "$DYNAMIC_KEYBOARD_ISOLATED_SERIAL" > "$GADGET_DIR/strings/0x409/serialnumber"
+			echo "$DYNAMIC_KEYBOARD_ISOLATED_PRODUCT" > "$GADGET_DIR/strings/0x409/product"
+			;;
+		*) die "unknown mode: $mode" ;;
+	esac
+}
+
+restore_usb0() {
+	if [ -d /sys/class/net/usb0 ]; then
+        ip link set dev usb0 up >/dev/null 2>&1 || true
+        ip address replace "$DYNAMIC_KEYBOARD_USB0_ADDR/24" dev usb0 >/dev/null 2>&1 || true
+	fi
+}
+
+mark_watchdog_grace() {
+	grace_seconds=${DYNAMIC_KEYBOARD_WATCHDOG_GRACE_SECONDS:-10}
+	case "$grace_seconds" in
+		''|*[!0-9]*) die "invalid watchdog grace seconds: $grace_seconds" ;;
+	esac
+	[ "$grace_seconds" -gt 0 ] || die "watchdog grace seconds must be positive"
+	grace_now=$(date +%s)
+	grace_tmp="${WATCHDOG_GRACE_FILE}.$$"
+	if ! printf '%s\n' "$((grace_now + grace_seconds))" > "$grace_tmp"; then
+		rm -f "$grace_tmp"
+		die "cannot write watchdog grace deadline"
+	fi
+	if ! mv -f "$grace_tmp" "$WATCHDOG_GRACE_FILE"; then
+		rm -f "$grace_tmp"
+		die "cannot publish watchdog grace deadline"
+	fi
+}
+
+wait_for_configuration() {
+	udc=$1
+	i=0
+	while [ "$i" -lt "$DYNAMIC_KEYBOARD_CONFIGURE_TIMEOUT_TENTHS" ]; do
+		state=$(cat "/sys/class/udc/$udc/state" 2>/dev/null || true)
+		[ "$state" = configured ] && return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	return 1
+}
+
+validate_layout() {
+	for path in "$GADGET_DIR" "$CONFIG_DIR" "$KEYBOARD_FUNC" "$POINTER_FUNC" "$EXTRA_KEYS_FUNC" "$ECM_FUNC"; do
+		[ -e "$path" ] || die "required gadget path is missing: $path"
+	done
+}
+
+switch_mode() {
+	mode=$1
+	validate_layout
+	acquire_lock
+
+	current_udc=$(cat "$UDC_PATH" 2>/dev/null || true)
+	current_state=""
+	if [ -n "$current_udc" ]; then
+		current_state=$(cat "/sys/class/udc/$current_udc/state" 2>/dev/null || true)
+	fi
+	if [ "$(current_mode)" = "$mode" ] && [ "$current_state" = configured ]; then
+		echo "profile already $mode"
+		return 0
+	fi
+
+	udc=$(read_udc)
+	mark_watchdog_grace
+	echo "" > "$UDC_PATH"
+	detach_seconds=0.1
+	if [ "$mode" = normal ]; then
+		detach_seconds=$DYNAMIC_KEYBOARD_RESTORE_DETACH_SECONDS
+	fi
+	sleep "$detach_seconds"
+	unlink_functions
+	set_identity "$mode"
+	if [ "$mode" = isolated ]; then
+		link_isolated_profile
+	else
+		link_normal_profile
+	fi
+	link_ecm
+	echo "$udc" > "$UDC_PATH"
+	restore_usb0
+
+	wait_for_configuration "$udc" || die "UDC did not reach configured state for $mode profile"
+	sleep "$DYNAMIC_KEYBOARD_HOST_SETTLE_SECONDS"
+	restore_usb0
+	mark_watchdog_grace
+	echo "profile $mode"
+}
+
+status() {
+	[ -d "$GADGET_DIR" ] || die "gadget is not initialized"
+	echo "mode=$(current_mode)"
+	echo "product=$(cat "$GADGET_DIR/strings/0x409/product" 2>/dev/null || true)"
+	echo "udc=$(cat "$UDC_PATH" 2>/dev/null || true)"
+	echo "udc_state=$(cat /sys/class/udc/*/state 2>/dev/null | head -n1 || true)"
+	ls -la "$CONFIG_DIR" 2>/dev/null | awk '$1 ~ /^l/ { print $9 " -> " $11 }'
+}
+
+case "${1:-}" in
+	isolate) switch_mode isolated ;;
+	restore) switch_mode normal ;;
+	status) status ;;
+	*) echo "Usage: $0 {isolate|restore|status}" >&2; exit 1 ;;
+esac

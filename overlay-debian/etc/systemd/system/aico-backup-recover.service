@@ -1,0 +1,15 @@
+[Unit]
+Description=Recover interrupted Aico Link data restore transactions
+Requires=userdata.mount userdata-ota.mount
+After=userdata.mount userdata-ota.mount
+Before=aico-userdata-migrate.service aico-root-home.service aico-bluetooth-state.service
+Before=aico-machine-id.service aico-config-web.service aico-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-backup-recover
+RemainAfterExit=yes
+TimeoutStartSec=300s
+
+[Install]
+WantedBy=multi-user.target

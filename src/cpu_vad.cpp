@@ -1,4 +1,4 @@
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "vad_common.h"
 
 #include <algorithm>
@@ -9,7 +9,7 @@
 
 namespace {
 
-constexpr const char* kDefaultWeightsPath = "/usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin";
+constexpr const char* kDefaultWeightsPath = "/usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin";
 
 struct Args {
     std::string weights_path = kDefaultWeightsPath;
@@ -52,7 +52,7 @@ Args parse_args(int argc, char** argv) {
     Args args;
     const auto parse_or_exit = [](const char* flag, const std::string& raw, int* value) {
         if (!parse_positive_int(raw, value)) {
-            AIDEN_LOG_ERROR("arguments", "invalid_value", "flag=%s value=%s", flag,
+            AICO_LOG_ERROR("arguments", "invalid_value", "flag=%s value=%s", flag,
                             raw.c_str());
             std::exit(2);
         }
@@ -118,16 +118,16 @@ public:
     }
 
 private:
-    aiden_vad::SileroWeights weights_;
-    aiden_vad::STFTFeatureExtractor feature_extractor_;
-    aiden_vad::SileroConvEncoder encoder_;
-    aiden_vad::SileroLSTMDecoder decoder_;
-    float features_[aiden_vad::kSTFTBins * aiden_vad::kFeatureFrames];
-    float encoder_out_[aiden_vad::kHidden];
+    aico_vad::SileroWeights weights_;
+    aico_vad::STFTFeatureExtractor feature_extractor_;
+    aico_vad::SileroConvEncoder encoder_;
+    aico_vad::SileroLSTMDecoder decoder_;
+    float features_[aico_vad::kSTFTBins * aico_vad::kFeatureFrames];
+    float encoder_out_[aico_vad::kHidden];
 };
 
 bool run_benchmark(SileroCPUVAD* vad, const Args& args, std::string* err) {
-    std::vector<std::vector<int16_t> > frames = aiden_vad::make_benchmark_frames();
+    std::vector<std::vector<int16_t> > frames = aico_vad::make_benchmark_frames();
     float probability = 0.0f;
     for (int i = 0; i < args.benchmark_warmup; ++i) {
         const std::vector<int16_t>& frame = frames[static_cast<std::size_t>(i) % frames.size()];
@@ -137,7 +137,7 @@ bool run_benchmark(SileroCPUVAD* vad, const Args& args, std::string* err) {
     }
     vad->reset();
 
-    const aiden_vad::CPUUsage cpu_start = aiden_vad::current_cpu_usage();
+    const aico_vad::CPUUsage cpu_start = aico_vad::current_cpu_usage();
     const std::chrono::steady_clock::time_point wall_start = std::chrono::steady_clock::now();
     for (int i = 0; i < args.benchmark_frames; ++i) {
         const std::vector<int16_t>& frame = frames[static_cast<std::size_t>(i) % frames.size()];
@@ -146,10 +146,10 @@ bool run_benchmark(SileroCPUVAD* vad, const Args& args, std::string* err) {
         }
     }
     const std::chrono::steady_clock::time_point wall_end = std::chrono::steady_clock::now();
-    const aiden_vad::CPUUsage cpu_end = aiden_vad::current_cpu_usage();
+    const aico_vad::CPUUsage cpu_end = aico_vad::current_cpu_usage();
     const double wall_ms =
         std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(wall_end - wall_start).count();
-    aiden_vad::print_benchmark_result("cpu", args.benchmark_frames, args.benchmark_warmup,
+    aico_vad::print_benchmark_result("cpu", args.benchmark_frames, args.benchmark_warmup,
                                       wall_ms, cpu_start, cpu_end, probability);
     return true;
 }
@@ -157,14 +157,14 @@ bool run_benchmark(SileroCPUVAD* vad, const Args& args, std::string* err) {
 }  // namespace
 
 int main(int argc, char** argv) {
-    aiden::set_log_service("cpu_vad");
+    aico::set_log_service("cpu_vad");
     Args args = parse_args(argc, argv);
     std::string err;
-    std::vector<int16_t> frame(aiden_vad::kFrameSamples);
+    std::vector<int16_t> frame(aico_vad::kFrameSamples);
 
     SileroCPUVAD vad;
     if (!vad.init(args.weights_path, &err)) {
-        aiden_vad::protocol_error(err);
+        aico_vad::protocol_error(err);
         return 1;
     }
 
@@ -172,7 +172,7 @@ int main(int argc, char** argv) {
         std::fill(frame.begin(), frame.end(), 0);
         float probability = 0.0f;
         if (!vad.infer(frame.data(), &probability, &err)) {
-            aiden_vad::protocol_error(err);
+            aico_vad::protocol_error(err);
             return 1;
         }
         std::cout << "P " << probability << std::endl;
@@ -181,7 +181,7 @@ int main(int argc, char** argv) {
 
     if (args.benchmark) {
         if (!run_benchmark(&vad, args, &err)) {
-            aiden_vad::protocol_error(err);
+            aico_vad::protocol_error(err);
             return 1;
         }
         return 0;
@@ -190,7 +190,7 @@ int main(int argc, char** argv) {
     std::cout << "READY" << std::endl;
     while (true) {
         char command = 0;
-        if (!aiden_vad::read_exact(std::cin, &command, 1)) return 0;
+        if (!aico_vad::read_exact(std::cin, &command, 1)) return 0;
         if (command == 'Q') return 0;
         if (command == 'R') {
             vad.reset();
@@ -198,16 +198,16 @@ int main(int argc, char** argv) {
             continue;
         }
         if (command != 'F') {
-            aiden_vad::protocol_error("unknown command");
+            aico_vad::protocol_error("unknown command");
             continue;
         }
-        if (!aiden_vad::read_exact(std::cin, reinterpret_cast<char*>(frame.data()),
+        if (!aico_vad::read_exact(std::cin, reinterpret_cast<char*>(frame.data()),
                                    frame.size() * sizeof(int16_t))) {
             return 0;
         }
         float probability = 0.0f;
         if (!vad.infer(frame.data(), &probability, &err)) {
-            aiden_vad::protocol_error(err);
+            aico_vad::protocol_error(err);
             continue;
         }
         std::cout << "P " << probability << std::endl;

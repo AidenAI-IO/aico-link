@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/tokencounter"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/tokencounter"
+	"aico-agent/internal/util"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -212,7 +212,7 @@ func newTelemetryPromptMedia(contentType string, data []byte) telemetryPromptMed
 		contentType = "application/octet-stream"
 	}
 	return telemetryPromptMedia{
-		Placeholder: "@@@aidenTelemetryMedia:" + uuid.NewString() + "@@@",
+		Placeholder: "@@@aicoTelemetryMedia:" + uuid.NewString() + "@@@",
 		ContentType: contentType,
 		Data:        data,
 	}

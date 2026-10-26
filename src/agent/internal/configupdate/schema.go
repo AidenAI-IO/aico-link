@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // Config is the single definition of the config_web <-> agent wire contract: keys

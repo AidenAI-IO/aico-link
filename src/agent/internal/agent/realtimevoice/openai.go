@@ -1,7 +1,7 @@
 package realtimevoice
 
 import (
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"

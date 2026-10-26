@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/configupdate"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/configupdate"
 )
 
 type webConfigDTO = configupdate.Config

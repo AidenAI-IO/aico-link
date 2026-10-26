@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/statemanager"
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/agent/statemanager"
+	"aico-agent/internal/ble"
 	"bytes"
 	"context"
 	"encoding/json"

@@ -15,18 +15,18 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 )
 
 func TestBluetoothHTTPStatus(t *testing.T) {
 	server := &Server{
 		bleStatusRequest: func(context.Context, string) (ble.RuntimeStatus, error) {
-			return ble.RuntimeStatus{DeviceName: "Aiden-1234", BackendAvailable: true}, nil
+			return ble.RuntimeStatus{DeviceName: "Aico-1234", BackendAvailable: true}, nil
 		},
 	}
 	recorder := httptest.NewRecorder()
 	server.handleBluetoothStatus(recorder, httptest.NewRequest(http.MethodGet, "/api/bluetooth/status", nil))
-	if recorder.Code != http.StatusOK || !containsAll(recorder.Body.String(), `"ok":true`, `"device_name":"Aiden-1234"`) {
+	if recorder.Code != http.StatusOK || !containsAll(recorder.Body.String(), `"ok":true`, `"device_name":"Aico-1234"`) {
 		t.Fatalf("status code=%d body=%s", recorder.Code, recorder.Body.String())
 	}
 }
@@ -235,7 +235,7 @@ func TestPhoneNotificationEventsAcceptsMaximumValidatedBatch(t *testing.T) {
 		t.Fatalf("boundary notification request length=%d", len(body))
 	}
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-ble-")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-ble-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestBluetoothHTTPPairingStartRejectsNonUSBRequest(t *testing.T) {
 }
 
 func TestConfiguredBLEServiceSocketPath(t *testing.T) {
-	t.Setenv("AIDEN_BLE_SERVICE_SOCKET", "/tmp/custom-ble.sock")
+	t.Setenv("AICO_BLE_SERVICE_SOCKET", "/tmp/custom-ble.sock")
 	if got := configuredBLEServiceSocketPath(); got != "/tmp/custom-ble.sock" {
 		t.Fatalf("configuredBLEServiceSocketPath() = %q", got)
 	}

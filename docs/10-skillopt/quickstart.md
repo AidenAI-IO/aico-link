@@ -88,7 +88,7 @@ optimization loop.
 
 ## Existing Device Daemon Run
 
-If an Aiden agent daemon is already running, SkillOpt can use it directly:
+If an Aico Agent daemon is already running, SkillOpt can use it directly:
 
 ```bash
 uv run --project skillopt python -m skillopt \
@@ -189,7 +189,7 @@ resolved by the shared runner config helpers.
 
 `skill not found`
 
-SkillOpt looks under `AIDEN_SKILLS_DIR`, then
+SkillOpt looks under `AICO_SKILLS_DIR`, then
 `src/agent/config/skills/<skill>/SKILL.md`, then `skills/<skill>/SKILL.md`.
 
 Judge model returns HTTP 403 or region errors

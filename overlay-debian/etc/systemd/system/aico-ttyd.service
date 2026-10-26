@@ -1,0 +1,25 @@
+[Unit]
+Description=Aico Link ttyd browser terminal
+Requires=aico-environment.service aico-usb-gadget.service
+After=aico-environment.service aico-usb-gadget.service
+ConditionPathExists=/usr/lib/aico/ttyd
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=aico
+Group=aico
+EnvironmentFile=/etc/aico_boot.conf
+EnvironmentFile=/run/aico/system.env
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_TTYD
+ExecStart=/usr/lib/aico/aico-ttyd-start
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=10s
+LogsDirectory=ttyd
+StandardOutput=append:/var/log/ttyd/ttyd.log
+StandardError=append:/var/log/ttyd/ttyd.log
+
+[Install]
+WantedBy=multi-user.target

@@ -246,7 +246,7 @@ func TestRollbackRemountsLiveSourceWhenCheckpointFails(t *testing.T) {
 	target := filepath.Join(root, "userhome")
 	unit := &TransactionUnit{Key: "userdata:user-home", Target: target,
 		Staged: filepath.Join(TransactionDir(root, "j"), "new/user-home"), Old: filepath.Join(TransactionDir(root, "j"), "old/user-home"),
-		BindMount: mountPoint, RemountScript: "/usr/lib/aiden/aiden-root-home",
+		BindMount: mountPoint, RemountScript: "/usr/lib/aico/aico-root-home",
 		HadOriginal: true, OldMoved: true, NewInstalled: true, Unmounted: true, Remounted: true, Committed: true}
 	mustWrite(t, filepath.Join(unit.Target, "value"), "new")
 	mustWrite(t, filepath.Join(unit.Old, "value"), "old")
@@ -271,7 +271,7 @@ func TestBindMountRollbackRequiresMountController(t *testing.T) {
 	unit := &TransactionUnit{Key: "userdata:user-home", Component: ComponentUserHome, Layer: LayerUserdata,
 		Target: filepath.Join(root, "userhome"), Staged: filepath.Join(TransactionDir(root, "j"), "new/user-home"),
 		Old: filepath.Join(TransactionDir(root, "j"), "old/user-home"), Directory: true,
-		BindMount: filepath.Join(t.TempDir(), "root"), RemountScript: "/usr/lib/aiden/aiden-root-home",
+		BindMount: filepath.Join(t.TempDir(), "root"), RemountScript: "/usr/lib/aico/aico-root-home",
 		HadOriginal: true, OldMoved: true, NewInstalled: true}
 	mustWrite(t, filepath.Join(unit.Target, ".bashrc"), "new")
 	mustWrite(t, filepath.Join(unit.Old, ".bashrc"), "old")
@@ -298,7 +298,7 @@ func TestBindMountUnitUnmountsExchangesAndRemounts(t *testing.T) {
 	unit := &TransactionUnit{Key: "userdata:user-home", Component: ComponentUserHome, Layer: LayerUserdata,
 		Target: target, Staged: filepath.Join(TransactionDir(root, "j"), "new/user-home"),
 		Old: filepath.Join(TransactionDir(root, "j"), "old/user-home"), Directory: true,
-		BindMount: mountPoint, RemountScript: "/usr/lib/aiden/aiden-root-home"}
+		BindMount: mountPoint, RemountScript: "/usr/lib/aico/aico-root-home"}
 	mustWrite(t, filepath.Join(unit.Staged, ".bashrc"), "new")
 	mounts.scripts[unit.RemountScript] = func() error { return mounts.bind(mountPoint, target) }
 
@@ -339,7 +339,7 @@ func TestBindMountUnmountFailureLeavesTargetUntouched(t *testing.T) {
 	unit := &TransactionUnit{Key: "userdata:user-home", Component: ComponentUserHome, Layer: LayerUserdata,
 		Target: target, Staged: filepath.Join(TransactionDir(root, "j"), "new/user-home"),
 		Old: filepath.Join(TransactionDir(root, "j"), "old/user-home"), Directory: true,
-		BindMount: mountPoint, RemountScript: "/usr/lib/aiden/aiden-root-home"}
+		BindMount: mountPoint, RemountScript: "/usr/lib/aico/aico-root-home"}
 	mustWrite(t, filepath.Join(unit.Staged, ".bashrc"), "new")
 	if err := CommitUnit(unit, mounts, nil); err == nil || !strings.Contains(err.Error(), "busy") {
 		t.Fatalf("commit with busy mount = %v", err)
@@ -369,7 +369,7 @@ func TestBindMountRefusesForeignSource(t *testing.T) {
 	unit := &TransactionUnit{Key: "userdata:user-home", Component: ComponentUserHome, Layer: LayerUserdata,
 		Target: target, Staged: filepath.Join(TransactionDir(root, "j"), "new/user-home"),
 		Old: filepath.Join(TransactionDir(root, "j"), "old/user-home"), Directory: true,
-		BindMount: mountPoint, RemountScript: "/usr/lib/aiden/aiden-root-home"}
+		BindMount: mountPoint, RemountScript: "/usr/lib/aico/aico-root-home"}
 	mustWrite(t, filepath.Join(unit.Staged, ".bashrc"), "new")
 	if err := CommitUnit(unit, mounts, nil); err == nil || !strings.Contains(err.Error(), "not bound") {
 		t.Fatalf("commit with foreign mount source = %v", err)

@@ -5,7 +5,7 @@ sidebar_position: 9
 # OTA Release Channels
 
 All three channels, `dev`, `staging`, and `prod`, can be selected explicitly in
-the **Aiden Channel Release** workflow. The primary build workflow also checks
+the **Aico Link Channel Release** workflow. The primary build workflow also checks
 `main` hourly and publishes changed content to the fixed `dev` channel;
 `staging` and `prod` remain manual. See [Channel Releases](channel-release.md) for
 classification, version allocation, contracts, repository setup and retries.

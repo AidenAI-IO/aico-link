@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ARTIFACT_FILENAME = "aiden_bridge_actions.json"
+ARTIFACT_FILENAME = "aico_bridge_actions.json"
 ACTION_LOG_FIELDS = (
     "episode_id",
     "action_id",

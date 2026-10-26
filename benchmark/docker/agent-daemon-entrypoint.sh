@@ -1,8 +1,8 @@
 #!/bin/sh
 set -eu
 
-source_config_dir="${AIDEN_SOURCE_CONFIG_DIR:-/config}"
-runtime_config_dir="${AIDEN_RUNTIME_CONFIG_DIR:-/tmp/aiden-config}"
+source_config_dir="${AICO_SOURCE_CONFIG_DIR:-/config}"
+runtime_config_dir="${AICO_RUNTIME_CONFIG_DIR:-/tmp/aico-config}"
 config_file="$runtime_config_dir/agent.toml"
 
 rm -rf "$runtime_config_dir"
@@ -23,34 +23,36 @@ if grep -q '^[[:space:]]*control_token_file[[:space:]]*=' "$config_file"; then
     sed -i 's#^[[:space:]]*control_token_file[[:space:]]*=.*#control_token_file = "/config/control_token"#' "$config_file"
 fi
 
-set -- daemon -dir "$runtime_config_dir" -addr "${AIDEN_DAEMON_ADDR:-0.0.0.0:8080}"
+set -- daemon -dir "$runtime_config_dir" -addr "${AICO_DAEMON_ADDR:-0.0.0.0:8080}"
 
-if [ -n "${AIDEN_BENCHMARK_TOKEN_FILE:-}" ]; then
-    set -- "$@" --benchmark-token-file "$AIDEN_BENCHMARK_TOKEN_FILE"
+if [ -n "${AICO_BENCHMARK_TOKEN_FILE:-}" ]; then
+    set -- "$@" --benchmark-token-file "$AICO_BENCHMARK_TOKEN_FILE"
 fi
 
-if [ -n "${AIDEN_DEVICE_TYPE:-}" ]; then
-    set -- "$@" --device-type "$AIDEN_DEVICE_TYPE"
+if [ -n "${AICO_DEVICE_TYPE:-}" ]; then
+    set -- "$@" --device-type "$AICO_DEVICE_TYPE"
 fi
 
-if [ "${AIDEN_ENVIRONMENT_BRIDGE_MODE:-}" = "1" ] || [ "${AIDEN_ENVIRONMENT_BRIDGE_MODE:-}" = "true" ]; then
+bridge_enabled=0
+if [ "${AICO_ENVIRONMENT_BRIDGE_MODE:-}" = "1" ] || [ "${AICO_ENVIRONMENT_BRIDGE_MODE:-}" = "true" ]; then
+    bridge_enabled=1
     if [ -z "${ENVIRONMENT_BRIDGE_ENDPOINT:-}" ]; then
-        echo "ENVIRONMENT_BRIDGE_ENDPOINT is required when AIDEN_ENVIRONMENT_BRIDGE_MODE is enabled" >&2
+        echo "ENVIRONMENT_BRIDGE_ENDPOINT is required when AICO_ENVIRONMENT_BRIDGE_MODE is enabled" >&2
         exit 1
     fi
     set -- "$@" --environment-bridge-mode --environment-bridge-endpoint "$ENVIRONMENT_BRIDGE_ENDPOINT"
-    if [ -n "${AIDEN_BENCHMARK_TASK_ID:-}" ]; then
-        set -- "$@" --benchmark-task-id "$AIDEN_BENCHMARK_TASK_ID"
+    if [ -n "${AICO_BENCHMARK_TASK_ID:-}" ]; then
+        set -- "$@" --benchmark-task-id "$AICO_BENCHMARK_TASK_ID"
     fi
 fi
 
-if [ "${AIDEN_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
+if [ "${AICO_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
     set -- "$@" --benchmark-mock-tools
 fi
 
 # These containers have no physical device services. Real-device CLI runs do not
 # use this entrypoint; bridged and scripted environments retain their tool catalog.
-if [ -n "${AIDEN_BENCHMARK_TOKEN_FILE:-}" ] && [ "${AIDEN_ENVIRONMENT_BRIDGE_MODE:-0}" != "1" ]; then
+if [ -n "${AICO_BENCHMARK_TOKEN_FILE:-}" ] && [ "$bridge_enabled" -eq 0 ]; then
     set -- "$@" --benchmark-headless
 fi
 

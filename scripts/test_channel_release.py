@@ -62,7 +62,7 @@ class PlannerTests(GitFixture):
         record = self.make()
         self.assertEqual((record["kind"], record["version"], record["platform"]["contract"]), ("ota", "0.0.2", 1))
         self.assertIs(type(record["platform"]["contract"]), int)
-        self.assertEqual(plan.environment(record)["AIDEN_PLATFORM_CONTRACT"], "1")
+        self.assertEqual(plan.environment(record)["AICO_PLATFORM_CONTRACT"], "1")
         self.assertEqual(record["platform"]["base_release"], record["tag"])
 
     def test_release_contract_rejects_non_positive_or_non_integer_values(self):
@@ -87,22 +87,22 @@ class PlannerTests(GitFixture):
 
     def test_new_namespaced_configs_ship_without_changing_contract(self):
         base = self.publish()
-        for path in ("etc/aiden/new-feature.conf", "etc/aiden_new.conf",
-                     "etc/profile.d/aiden-extra.sh", "usr/lib/aiden/aiden-new-helper",
-                     "etc/systemd/system/aiden-new.service", "etc/ssh/sshd_config.d/30-aiden.conf"):
+        for path in ("etc/aico/new-feature.conf", "etc/aico_new.conf",
+                     "etc/profile.d/aico-extra.sh", "usr/lib/aico/aico-new-helper",
+                     "etc/systemd/system/aico-new.service", "etc/ssh/sshd_config.d/30-aico.conf"):
             with self.subTest(path=path):
                 self.commit({"overlay-debian/" + path: "new config"})
                 record = self.publish()
                 self.assertEqual(record["kind"], "business")
                 self.assertEqual(record["platform"], base["platform"])
                 self.assertEqual(record["changes"]["config"], ["overlay-debian/" + path])
-        self.commit({"overlay-debian/etc/aiden/new-feature.conf": None})
+        self.commit({"overlay-debian/etc/aico/new-feature.conf": None})
         self.assertEqual(self.make()["kind"], "business")
 
     def test_platform_exclusions_and_boundary_changes_require_ota(self):
         self.publish()
-        for path in ("usr/lib/aiden/aiden-rootfs-grow", "usr/lib/aiden/aiden-ota-health-aggregate",
-                     "usr/lib/aiden/platform/lib/new.so", "etc/systemd/system/aiden-environment.service",
+        for path in ("usr/lib/aico/aico-rootfs-grow", "usr/lib/aico/aico-ota-health-aggregate",
+                     "usr/lib/aico/platform/lib/new.so", "etc/systemd/system/aico-environment.service",
                      "etc/bluetooth/main.conf", "etc/apt/sources.list.d/other.sources"):
             self.commit({"overlay-debian/" + path: "platform change"})
             self.assertEqual(self.publish()["kind"], "ota")
@@ -114,7 +114,7 @@ class PlannerTests(GitFixture):
         del old["runtime_config"]
         updated = self.publish()
         self.assertEqual((updated["kind"], updated["platform"]["contract"]), ("ota", 2))
-        self.commit({"overlay-debian/etc/aiden_new.conf": "config"})
+        self.commit({"overlay-debian/etc/aico_new.conf": "config"})
         self.assertEqual(self.make()["kind"], "business")
 
     def test_channels_have_independent_baselines_and_global_numbers(self):
@@ -161,14 +161,14 @@ class PlannerTests(GitFixture):
 
     def test_overlay_markdown_remains_system(self):
         self.publish()
-        self.commit({"overlay-debian/usr/share/aiden/platform/README.md": "platform content"})
+        self.commit({"overlay-debian/usr/share/aico/platform/README.md": "platform content"})
         self.assertEqual(self.make()["kind"], "ota")
 
     def test_overlay_gitignore_is_shipped(self):
         self.publish()
-        self.commit({"overlay-debian/etc/aiden/.gitignore": "managed config"})
+        self.commit({"overlay-debian/etc/aico/.gitignore": "managed config"})
         self.assertEqual(self.publish()["kind"], "business")
-        self.commit({"overlay-debian/usr/share/aiden/platform/.gitignore": "platform content"})
+        self.commit({"overlay-debian/usr/share/aico/platform/.gitignore": "platform content"})
         self.assertEqual(self.make()["kind"], "ota")
 
     def test_skill_markdown_is_business(self):
@@ -386,7 +386,7 @@ class ReleaseNotesTests(GitFixture):
 
     def test_notes_keep_commits_and_comparison_without_file_lists(self):
         previous = self.publish()
-        self.commit({"src/agent/main.go": "business", "overlay-debian/etc/aiden/new.conf": "config",
+        self.commit({"src/agent/main.go": "business", "overlay-debian/etc/aico/new.conf": "config",
                      "docs/readme.md": "docs"})
         business = self.publish()
         self.commit({"overlay-debian/etc/config": "system"})
@@ -408,7 +408,7 @@ class ReleaseNotesTests(GitFixture):
 
     def test_first_system_commit_with_more_ignores_business_config_and_docs(self):
         self.publish()
-        self.commit({"src/agent/main.go": "business", "overlay-debian/etc/aiden/new.conf": "config"})
+        self.commit({"src/agent/main.go": "business", "overlay-debian/etc/aico/new.conf": "config"})
         self.commit({"overlay-debian/etc/config": "system one"})
         first = self.git("rev-parse", "HEAD")
         self.commit({"overlay-debian/etc/config": "system two"})
@@ -465,14 +465,35 @@ class ReleaseNotesTests(GitFixture):
         self.assert_notice(record, record["source_commit"])
 
 
+class CheckoutTests(GitFixture):
+    def setUp(self):
+        super().setUp()
+        self.commit({"pico-sdk/project/config": "source config"})
+        self.record = self.make()
+
+    def test_sdk_build_changes_are_allowed_only_after_the_build(self):
+        (self.root / "pico-sdk/project/config").write_text("BSP build overlay")
+        (self.root / "pico-sdk/generated").write_text("BSP output")
+        with patch.object(release, "ROOT", self.root):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                release.check_checkout(self.record)
+            release.check_checkout(self.record, allow_dirty_sdk=True)
+
+    def test_application_changes_remain_rejected_after_the_build(self):
+        (self.root / "src/agent/main.go").write_text("uncommitted application")
+        with patch.object(release, "ROOT", self.root):
+            with self.assertRaisesRegex(ValueError, "clean source"):
+                release.check_checkout(self.record, allow_dirty_sdk=True)
+
+
 class ContractTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
-        self.env = {**os.environ, "AIDEN_PLATFORM_CONTRACT": "7", "AIDEN_PLATFORM_BASE": "dev-v0.0.9",
-                    "AIDEN_RELEASE_CHANNEL": "dev", "AIDEN_SYSTEM_FINGERPRINT": "a" * 64,
-                    "AIDEN_BUSINESS_VERSION": "0.0.10", "AIDEN_BUSINESS_REVISION": "1"}
+        self.env = {**os.environ, "AICO_PLATFORM_CONTRACT": "7", "AICO_PLATFORM_BASE": "dev-v0.0.9",
+                    "AICO_RELEASE_CHANNEL": "dev", "AICO_SYSTEM_FINGERPRINT": "a" * 64,
+                    "AICO_BUSINESS_VERSION": "0.0.10", "AICO_BUSINESS_REVISION": "1"}
 
     def test_package_and_rootfs_share_the_contract(self):
         with patch.dict(os.environ, self.env):
@@ -483,7 +504,7 @@ class ContractTests(unittest.TestCase):
         self.assertIs(type(platform["platform_contract"]), int)
 
     def test_default_contract_is_integer_one(self):
-        with patch.dict(os.environ, {**self.env, "AIDEN_PLATFORM_CONTRACT": ""}):
+        with patch.dict(os.environ, {**self.env, "AICO_PLATFORM_CONTRACT": ""}):
             platform = contract.declaration()
             manifest = contract.package_manifest()
         self.assertIs(type(platform["platform_contract"]), int)
@@ -492,14 +513,14 @@ class ContractTests(unittest.TestCase):
 
     def test_contract_environment_requires_canonical_positive_integer(self):
         for value in ("0", "-1", "1.0.0", "1.0", "01", "+1", "true", " 1"):
-            with self.subTest(value=value), patch.dict(os.environ, {**self.env, "AIDEN_PLATFORM_CONTRACT": value}):
+            with self.subTest(value=value), patch.dict(os.environ, {**self.env, "AICO_PLATFORM_CONTRACT": value}):
                 with self.assertRaisesRegex(ValueError, "positive integer"):
                     contract.declaration()
 
     def test_preinst_checks_contract_before_any_service_operation(self):
         subprocess.run(["bash", str(ROOT / "scripts/debian-package/write-maintainer-scripts.sh"),
                         str(self.root / "DEBIAN")], env=self.env, check=True)
-        contract_path = self.root / "usr/lib/aiden/platform/contract.json"
+        contract_path = self.root / "usr/lib/aico/platform/contract.json"
         with patch.dict(os.environ, self.env):
             platform = contract.declaration()
         release.write_json(contract_path, platform)
@@ -537,14 +558,14 @@ class AssetTests(GitFixture):
         package_root = self.root / "package"
         control = package_root / "DEBIAN/control"
         control.parent.mkdir(parents=True)
-        control.write_text(f"Package: aiden-business\nVersion: {record['version']}-1\nArchitecture: armhf\n"
+        control.write_text(f"Package: aico-business\nVersion: {record['version']}-1\nArchitecture: armhf\n"
                            "Maintainer: Test <test@example.test>\nDescription: test package\n")
-        manifest_path = package_root / "usr/share/doc/aiden-business/release-manifest.json"
+        manifest_path = package_root / "usr/share/doc/aico-business/release-manifest.json"
         with patch.dict(os.environ, self.env):
             manifest = contract.package_manifest()
         release.write_json(manifest_path, manifest)
         system_config.stage(package_root)
-        name = f"aiden-business_{record['version']}-1_armhf.deb"
+        name = f"aico-business_{record['version']}-1_armhf.deb"
         subprocess.run(["dpkg-deb", "--build", "--root-owner-group", str(package_root), str(self.assets / name)],
                        check=True, stdout=subprocess.DEVNULL)
         shutil.copyfile(manifest_path, self.assets / "release-manifest.json")
@@ -584,6 +605,29 @@ class AssetTests(GitFixture):
         (self.assets / "RELEASE-NOTES.md").write_text("corrupt")
         with self.assertRaisesRegex(ValueError, "modified"):
             release.verify(self.assets)
+
+    def test_stage_accepts_vendored_sdk_firmware_commit(self):
+        self.commit({".gitignore": "assets/\npackage/\noutput/\n",
+                     "pico-sdk/project/config": "vendored SDK"})
+        self.record = self.make()
+        record = self.create_assets()
+        metadata = self.root / "output/debian-apps/apps/metadata"
+        metadata.mkdir(parents=True)
+        for name in ("hardware-demo-commit.txt", "pico-sdk-commit.txt"):
+            (metadata / name).write_text(record["source_commit"])
+        for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
+            (metadata / name).write_text("")
+        audit = self.root / "output/debian-apps/apps-audit"
+        audit.mkdir()
+        (audit / "summary.txt").write_text("status=pass\n")
+        package = f"aico-business_{record['version']}-1_armhf.deb"
+        source = self.root / "output/debian-package"
+        source.mkdir()
+        shutil.copyfile(self.assets / package, source / package)
+        destination = self.root / "output/staged"
+        with patch.object(release, "ROOT", self.root):
+            release.stage(record, destination)
+        self.assertEqual(release.verify(destination)["source_commit"], record["source_commit"])
 
     def test_package_binding_cannot_be_changed_by_rehashing_assets(self):
         self.create_assets()

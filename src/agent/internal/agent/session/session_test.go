@@ -1,7 +1,7 @@
 package session
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"errors"
 	"reflect"
 	"testing"

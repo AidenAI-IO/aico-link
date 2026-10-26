@@ -1,0 +1,18 @@
+[Unit]
+Description=Generate the strict Aico Link service environment
+Requires=aico-userdata-migrate.service aico-machine-id.service
+After=aico-userdata-migrate.service aico-machine-id.service aico-platform-ldconfig.service
+Before=aico-adb-host.service aico-agent.service aico-audio.service
+Before=aico-ble.service aico-config-web.service aico-frame.service
+Before=aico-ota-health-marker.service aico-ota-health.service aico-ttyd.service
+ConditionPathExists=/usr/lib/aico/aico-environment
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/install -d -m 0755 /run/aico
+ExecStart=/usr/lib/aico/aico-environment --input=/userdata/system/env --output=/run/aico/system.env --invalid-marker=/run/aico/environment.invalid
+RemainAfterExit=yes
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=multi-user.target

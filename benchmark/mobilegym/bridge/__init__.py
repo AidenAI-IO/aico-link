@@ -1,1 +1,1 @@
-"""Worker-local bridge between Aiden and MobileGym."""
+"""Worker-local bridge between Aico and MobileGym."""

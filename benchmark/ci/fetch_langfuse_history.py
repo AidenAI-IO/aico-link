@@ -119,7 +119,7 @@ def fetch_benchmark_history(
                                  from_start_time=cutoff, to_start_time=now,
                                  fields="core,metadata"):
             metadata = experiment.metadata or {}
-            if str(metadata.get("aiden_benchmark", "")).lower() != "true":
+            if str(metadata.get("aico_benchmark", "")).lower() != "true":
                 continue
             if branch_filter and metadata.get("git_branch") != branch_filter:
                 if not metadata.get("git_branch"):

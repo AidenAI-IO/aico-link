@@ -30,8 +30,8 @@ systemd mounts it with `userdata-ota.mount`:
 /dev/mmcblk0p10 -> /userdata/ota (ext4)
 ```
 
-`aiden-slot-resolve.service` runs before `userdata.mount`,
-`userdata-ota.mount`. `aiden-ota-health.service` requires the
+`aico-slot-resolve.service` runs before `userdata.mount`,
+`userdata-ota.mount`. `aico-ota-health.service` requires the
 mounted userdata and OTA workspace before processing health.
 
 The Go updater independently checks `/proc/self/mountinfo` before creating its
@@ -133,7 +133,7 @@ migration do not change OTA capacity.
 mount | grep ' /userdata/ota '
 df -h /userdata /userdata/ota
 du -h /userdata/ota/downloads/* /userdata/ota/downloads/*.part 2>/dev/null
-/usr/lib/aiden/ota status
+/usr/lib/aico/ota status
 tail -n 100 /var/log/ota/ota.log
 ```
 

@@ -50,8 +50,8 @@
     {
       "id": "save_user_fact",
       "category": "memory",
-      "description_for_judge": "Persist the employee ID AIDEN-7429 and office city Hangzhou. User background may correctly be stored as profile or fact. Evaluate persisted memory_state, not merely a save request.",
-      "prompt": "记住：我的工号是 AIDEN-7429，办公城市是杭州。",
+      "description_for_judge": "Persist the employee ID AICO-7429 and office city Hangzhou. User background may correctly be stored as profile or fact. Evaluate persisted memory_state, not merely a save request.",
+      "prompt": "记住：我的工号是 AICO-7429，办公城市是杭州。",
       "rubric": [
         {
           "id": "appropriate_type",
@@ -75,7 +75,7 @@
             "tool": "save_memory",
             "input_contains": {
               "content": {
-                "$contains": "AIDEN-7429"
+                "$contains": "AICO-7429"
               }
             }
           }
@@ -87,7 +87,7 @@
         },
         "expected": [
           {
-            "content_contains": "AIDEN-7429"
+            "content_contains": "AICO-7429"
           }
         ]
       }
@@ -365,7 +365,7 @@
               "id": "fixture_employee_profile",
               "store": "long_term",
               "type": "profile",
-              "content": "Employee ID: AIDEN-7429. Office city: Hangzhou.",
+              "content": "Employee ID: AICO-7429. Office city: Hangzhou.",
               "tags": [
                 "work",
                 "办公城市",
@@ -388,7 +388,7 @@
             {
               "id": "fixture_employee_profile",
               "type": "profile",
-              "content_contains": "Employee ID: AIDEN-7429. Office city: Hangzhou."
+              "content_contains": "Employee ID: AICO-7429. Office city: Hangzhou."
             }
           ]
         }
@@ -401,7 +401,7 @@
         },
         {
           "id": "answer_mentions_employee_id",
-          "check": "The final response contains 'AIDEN-7429'."
+          "check": "The final response contains 'AICO-7429'."
         },
         {
           "id": "answer_mentions_city",

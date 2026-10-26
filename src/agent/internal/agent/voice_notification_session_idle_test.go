@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/realtimevoice"
 )
 
 func TestTurnFailureFromError_SessionIdle(t *testing.T) {

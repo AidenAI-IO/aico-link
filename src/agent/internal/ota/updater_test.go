@@ -21,7 +21,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 func TestUpdaterHappyPathDownloadsWritesSwitchesAndReboots(t *testing.T) {
@@ -712,7 +712,7 @@ func TestUpdaterRejectsOversizedRemoteManifest(t *testing.T) {
 	}
 }
 
-func TestCurrentSlotFromCmdlineReadsAidenSlotSuffix(t *testing.T) {
+func TestCurrentSlotFromCmdlineReadsAicoSlotSuffix(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		cmdline string
@@ -720,10 +720,10 @@ func TestCurrentSlotFromCmdlineReadsAidenSlotSuffix(t *testing.T) {
 		wantOK  bool
 		wantErr string
 	}{
-		{name: "slot a", cmdline: "console=ttyFIQ0 aiden.slot_suffix=_a root=/dev/mmcblk0", want: SlotA, wantOK: true},
-		{name: "slot b", cmdline: "rootwait aiden.slot_suffix=_b", want: SlotB, wantOK: true},
+		{name: "slot a", cmdline: "console=ttyFIQ0 aico.slot_suffix=_a root=/dev/mmcblk0", want: SlotA, wantOK: true},
+		{name: "slot b", cmdline: "rootwait aico.slot_suffix=_b", want: SlotB, wantOK: true},
 		{name: "missing", cmdline: "console=ttyFIQ0", wantOK: false},
-		{name: "invalid", cmdline: "aiden.slot_suffix=_c", wantErr: "invalid slot"},
+		{name: "invalid", cmdline: "aico.slot_suffix=_c", wantErr: "invalid slot"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ok, err := currentSlotFromCmdline(tc.cmdline)
@@ -752,10 +752,10 @@ func TestRootSlotFromCmdlineReadsRunningRootfs(t *testing.T) {
 		wantErr string
 	}{
 		{name: "partlabel a", cmdline: "rootwait root=PARTLABEL=rootfs_a", want: SlotA, wantOK: true},
-		{name: "partlabel b", cmdline: "root=PARTLABEL=rootfs_b aiden.slot_suffix=_b", want: SlotB, wantOK: true},
+		{name: "partlabel b", cmdline: "root=PARTLABEL=rootfs_b aico.slot_suffix=_b", want: SlotB, wantOK: true},
 		{name: "by name a", cmdline: "root=/dev/block/by-name/rootfs_a", want: SlotA, wantOK: true},
 		{name: "by name b", cmdline: "root=/dev/block/by-name/rootfs_b", want: SlotB, wantOK: true},
-		{name: "numbered p7 a", cmdline: "aiden.slot_suffix=_b root=/dev/mmcblk0p7", want: SlotA, wantOK: true},
+		{name: "numbered p7 a", cmdline: "aico.slot_suffix=_b root=/dev/mmcblk0p7", want: SlotA, wantOK: true},
 		{name: "numbered p8 b", cmdline: "root=/dev/mmcblk0p8", want: SlotB, wantOK: true},
 		{name: "missing", cmdline: "console=ttyFIQ0", wantOK: false},
 		{name: "unsupported", cmdline: "root=/dev/mmcblk0p2", wantErr: "unsupported root device"},

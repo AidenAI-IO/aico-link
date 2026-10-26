@@ -16,8 +16,8 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	speechtext "aiden-agent/internal/agent/speech"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	speechtext "aico-agent/internal/agent/speech"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 func TestTTSPlaybackFormatUsesProviderOnlySampleRate(t *testing.T) {

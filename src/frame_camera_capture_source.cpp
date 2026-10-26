@@ -1,5 +1,6 @@
 #include "frame_camera_capture_source.h"
-#include "aiden_log.h"
+#include "aico_log.h"
+#include "rk628_hdmi_mode.h"
 #include <chrono>
 #include <dirent.h>
 #include <errno.h>
@@ -12,7 +13,7 @@
 #include <sys/file.h>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 static std::string subdev_sysfs_device_path(const std::string& subdev_device) {
     const char* basename = strrchr(subdev_device.c_str(), '/');
@@ -105,7 +106,7 @@ bool FrameCameraCaptureSource::open() {
     const uint64_t open_attempt = ++open_attempts_;
     const std::chrono::steady_clock::time_point open_started =
         std::chrono::steady_clock::now();
-    AIDEN_LOG_INFO("camera_source", "open_started",
+    AICO_LOG_INFO("camera_source", "open_started",
                    "attempt=%llu video_device=%s configured_subdev=%s auto_subdev=%d pixel_format=%s width=%d height=%d",
                    static_cast<unsigned long long>(open_attempt),
                    device_name_.c_str(), subdev_device_.c_str(),
@@ -116,13 +117,14 @@ bool FrameCameraCaptureSource::open() {
     if (auto_subdev_) {
         subdev_device_ = detect_hdmi_subdev(&bridge_name);
         if (subdev_device_.empty()) {
-            AIDEN_LOG_WARN("hdmi", "bridge_not_ready",
+            prepared_mode_subdev_.clear();
+            AICO_LOG_WARN("hdmi", "bridge_not_ready",
                            "attempt=%llu frame capture will retry until an HDMI bridge appears",
                            static_cast<unsigned long long>(open_attempt));
             const uint64_t elapsed_ms = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - open_started).count());
-            AIDEN_LOG_WARN("camera_source", "open_completed",
+            AICO_LOG_WARN("camera_source", "open_completed",
                            "attempt=%llu ok=0 phase=bridge_discovery elapsed_ms=%llu",
                            static_cast<unsigned long long>(open_attempt),
                            static_cast<unsigned long long>(elapsed_ms));
@@ -149,7 +151,7 @@ bool FrameCameraCaptureSource::open() {
     }
     const std::string bridge_sysfs_device =
         subdev_sysfs_device_path(subdev_device_);
-    AIDEN_LOG_INFO("camera_source", "bridge_selected",
+    AICO_LOG_INFO("camera_source", "bridge_selected",
                    "attempt=%llu subdev=%s bridge_name=%s sysfs_device=%s",
                    static_cast<unsigned long long>(open_attempt),
                    subdev_device_.c_str(),
@@ -172,7 +174,7 @@ bool FrameCameraCaptureSource::open() {
         // below is allowed to perform that renegotiation.
         config_.allow_edid_fallback = false;
         if (edid_path_.empty()) {
-            const char* default_edid = "/usr/share/aiden/edid/hdmi_1080p30_cta.hex";
+            const char* default_edid = "/usr/share/aico/edid/hdmi_1080p30_cta.hex";
             if (access(default_edid, R_OK) == 0) {
                 edid_path_ = default_edid;
             }
@@ -181,7 +183,7 @@ bool FrameCameraCaptureSource::open() {
         auto_force_trigger_pending_ = false;
         config_.force_trigger = force_trigger_pending_;
         config_.allow_edid_fallback = false;
-        if (auto_edid_) {
+        if (auto_edid_ && bridge_name.find("rk628-csi") == std::string::npos) {
             edid_path_.clear();
         }
     } else {
@@ -194,7 +196,7 @@ bool FrameCameraCaptureSource::open() {
     sync_config_strings();
 
     const bool force_attempt = config_.force_trigger;
-    AIDEN_LOG_INFO("camera_source", "policy_resolved",
+    AICO_LOG_INFO("camera_source", "policy_resolved",
                    "attempt=%llu bridge_name=%s force_trigger=%d allow_edid_fallback=%d edid_path=%s",
                    static_cast<unsigned long long>(open_attempt),
                    bridge_name.empty() ? "unknown" : bridge_name.c_str(),
@@ -207,7 +209,7 @@ bool FrameCameraCaptureSource::open() {
     // IPC service remains alive and the manager retries instead of terminating
     // the entire systemd service.
     if (lock_fd_ < 0) {
-        AIDEN_LOG_INFO("camera", "device_lock_open_started",
+        AICO_LOG_INFO("camera", "device_lock_open_started",
                        "attempt=%llu device=%s",
                        static_cast<unsigned long long>(open_attempt),
                        device_name_.c_str());
@@ -216,14 +218,14 @@ bool FrameCameraCaptureSource::open() {
         lock_fd_ = ::open(device_name_.c_str(), O_RDONLY | O_CLOEXEC);
         if (lock_fd_ < 0) {
             const int open_errno = errno;
-            AIDEN_LOG_WARN("camera", "device_lock_open_pending",
+            AICO_LOG_WARN("camera", "device_lock_open_pending",
                            "attempt=%llu device=%s errno=%d error=%s",
                            static_cast<unsigned long long>(open_attempt),
                            device_name_.c_str(), open_errno, strerror(open_errno));
             const uint64_t elapsed_ms = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - open_started).count());
-            AIDEN_LOG_WARN("camera_source", "open_completed",
+            AICO_LOG_WARN("camera_source", "open_completed",
                            "attempt=%llu ok=0 phase=device_lock_open elapsed_ms=%llu errno=%d",
                            static_cast<unsigned long long>(open_attempt),
                            static_cast<unsigned long long>(elapsed_ms), open_errno);
@@ -233,14 +235,14 @@ bool FrameCameraCaptureSource::open() {
         const uint64_t lock_open_elapsed_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - lock_open_started).count());
-        AIDEN_LOG_INFO("camera", "device_lock_open_completed",
+        AICO_LOG_INFO("camera", "device_lock_open_completed",
                        "attempt=%llu device=%s fd=%d elapsed_ms=%llu",
                        static_cast<unsigned long long>(open_attempt),
                        device_name_.c_str(), lock_fd_,
                        static_cast<unsigned long long>(lock_open_elapsed_ms));
         if (flock(lock_fd_, LOCK_EX | LOCK_NB) < 0) {
             const int lock_errno = errno;
-            AIDEN_LOG_WARN("camera", "device_lock_pending",
+            AICO_LOG_WARN("camera", "device_lock_pending",
                            "attempt=%llu device=%s errno=%d error=%s",
                            static_cast<unsigned long long>(open_attempt),
                            device_name_.c_str(), lock_errno, strerror(lock_errno));
@@ -249,7 +251,7 @@ bool FrameCameraCaptureSource::open() {
             const uint64_t elapsed_ms = static_cast<uint64_t>(
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - open_started).count());
-            AIDEN_LOG_WARN("camera_source", "open_completed",
+            AICO_LOG_WARN("camera_source", "open_completed",
                            "attempt=%llu ok=0 phase=device_lock elapsed_ms=%llu errno=%d",
                            static_cast<unsigned long long>(open_attempt),
                            static_cast<unsigned long long>(elapsed_ms), lock_errno);
@@ -258,7 +260,29 @@ bool FrameCameraCaptureSource::open() {
         }
     }
 
-    AIDEN_LOG_INFO("camera_source", "camera_init_started",
+    // Apply only after discovery and device ownership, including a bridge
+    // registered after service startup. Recovery keeps the accepted EDID;
+    // it must not repeatedly interrupt the source's negotiation.
+    if (auto_edid_ && bridge_name.find("rk628-csi") != std::string::npos &&
+        prepared_mode_subdev_ != subdev_device_) {
+        const int fd = ::open(subdev_device_.c_str(), O_RDWR | O_CLOEXEC);
+        const bool prepared = fd >= 0 && prepare_rk628_hdmi_mode(
+            fd, "/userdata/system/hdmi-mode", "/usr/share/aico/hdmi", &edid_path_);
+        const int prepare_errno = errno;
+        if (fd >= 0) {
+            ::close(fd);
+        }
+        if (!prepared) {
+            ::close(lock_fd_);
+            lock_fd_ = -1;
+            errno = prepare_errno;
+            return false;
+        }
+        prepared_mode_subdev_ = subdev_device_;
+        sync_config_strings();
+    }
+
+    AICO_LOG_INFO("camera_source", "camera_init_started",
                    "attempt=%llu video_device=%s subdev=%s",
                    static_cast<unsigned long long>(open_attempt),
                    device_name_.c_str(), subdev_device_.c_str());
@@ -284,12 +308,12 @@ bool FrameCameraCaptureSource::open() {
         lock_fd_ = -1;
     }
     if (opened) {
-        AIDEN_LOG_INFO("camera_source", "open_completed",
+        AICO_LOG_INFO("camera_source", "open_completed",
                        "attempt=%llu ok=1 phase=ready elapsed_ms=%llu lock_fd=%d",
                        static_cast<unsigned long long>(open_attempt),
                        static_cast<unsigned long long>(elapsed_ms), lock_fd_);
     } else {
-        AIDEN_LOG_WARN("camera_source", "open_completed",
+        AICO_LOG_WARN("camera_source", "open_completed",
                        "attempt=%llu ok=0 phase=camera_init elapsed_ms=%llu errno=%d error=%s",
                        static_cast<unsigned long long>(open_attempt),
                        static_cast<unsigned long long>(elapsed_ms), init_errno,
@@ -341,7 +365,7 @@ bool FrameCameraCaptureSource::capture(CapturedFrame* frame) {
         if (y_bytes_u64 > std::numeric_limits<uint32_t>::max() ||
             uv_bytes_u64 > std::numeric_limits<uint32_t>::max() ||
             y_bytes_u64 + uv_bytes_u64 > buffer.size()) {
-            AIDEN_LOG_ERROR("camera", "frame_layout_incomplete",
+            AICO_LOG_ERROR("camera", "frame_layout_incomplete",
                             "format=%s width=%u height=%u bytes=%zu expected=%llu",
                             pixel_format_.c_str(), video_frame.width, video_frame.height,
                             buffer.size(),
@@ -372,7 +396,7 @@ bool FrameCameraCaptureSource::discard() {
 void FrameCameraCaptureSource::close() {
     const std::chrono::steady_clock::time_point close_started =
         std::chrono::steady_clock::now();
-    AIDEN_LOG_INFO("camera_source", "close_started",
+    AICO_LOG_INFO("camera_source", "close_started",
                    "open_attempts=%llu lock_fd=%d",
                    static_cast<unsigned long long>(open_attempts_), lock_fd_);
     camera_.stop();
@@ -383,9 +407,9 @@ void FrameCameraCaptureSource::close() {
     const uint64_t elapsed_ms = static_cast<uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - close_started).count());
-    AIDEN_LOG_INFO("camera_source", "close_completed",
+    AICO_LOG_INFO("camera_source", "close_completed",
                    "elapsed_ms=%llu",
                    static_cast<unsigned long long>(elapsed_ms));
 }
 
-}  // namespace aiden
+}  // namespace aico
