@@ -335,7 +335,7 @@ jobs:
             exit 1
           }
           adb -s "$ANDROID_SERIAL" shell iptables -t nat -L OUTPUT -n >/dev/null
-          for permission in READ_CALENDAR READ_CONTACTS; do
+          for permission in READ_CALENDAR WRITE_CALENDAR READ_CONTACTS WRITE_CONTACTS; do
             adb -s "$ANDROID_SERIAL" shell pm grant "$AIDENBRIDGE_PACKAGE" "android.permission.$permission"
           done
           if (( $(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r') >= 33 )); then

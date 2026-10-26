@@ -509,6 +509,25 @@ for general UI operations. These cases use the ADB bridge and do not establish
 the App's separate Phone Bridge connection. Select either suite with the
 `hardware` profile for a focused manual run.
 
+`aiden_app/android_bridge_capabilities_v1.json` is the connected AidenBridge
+suite. It runs with a rooted Android emulator and one Agent worker, checks the
+Phone Bridge connection per task, and covers clipboard round trips, semantic
+app and URL opening, calendar create/query/delete, contacts create/query/update,
+local notifications, and single-line and multiline Unicode text entry. The
+write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar and
+`AidenBridgeBenchmarkContact` contact). The runner removes only those fixtures
+before and after each write task, including failures. Calendar/contact write
+permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
+diagnostic event from the App and the exact text in a non-Bridge Android input
+field; its evidence is included in `results.jsonl` and the local
+`android_bridge_input.json` task artifact. Select this suite with the
+`hardware` profile to run only the connected App cases.
+
+This suite replaces the former separate `android_bridge_data_v1.json` suite.
+It does not claim coverage of iOS-only transports, BLE notification forwarding,
+or every permission/background failure mode. Scheduled notification delivery
+and optional calendar reminders also need separate device-side assertions.
+
 The benchmark job uses the `aiden-hosted-02` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the

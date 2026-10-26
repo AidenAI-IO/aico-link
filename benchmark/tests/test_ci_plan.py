@@ -135,6 +135,7 @@ def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
     assert selected[0].target_platform == "android"
     assert selected[0].max_concurrency == 1
     assert selected[0] not in select_cases(catalog, profile="runnable")
+    assert not any(case.id in {"aidenbridge-data-android", "aidenbridge-input-android"} for case in catalog.cases)
 
 
 def test_suite_selection_must_match_profile_unless_all() -> None:

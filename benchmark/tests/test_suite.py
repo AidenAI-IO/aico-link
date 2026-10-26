@@ -30,6 +30,19 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+def test_android_bridge_input_text_requires_non_empty_string(tmp_path: Path):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["android_bridge_input_text"] = "Aiden 输入验证 #42"
+    path = tmp_path / "bridge_input.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    assert load_suite(path).tasks[0].android_bridge_input_text == "Aiden 输入验证 #42"
+
+    fixture["tasks"][0]["android_bridge_input_text"] = ""
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match="android_bridge_input_text"):
+        load_suite(path)
+
+
 @pytest.mark.parametrize("assertions", [
     {}, [], {"expected": []}, {"absent_ids": []}, {"expected_count": None},
     {"expected_count": True}, {"expected_count": -1}, {"expected_count": "1"},

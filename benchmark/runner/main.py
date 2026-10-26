@@ -13,13 +13,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
 from runner.android_phone_bridge import (
+    android_bridge_fixture,
+    clipboard_write_ids,
     connected_android_phone_bridge,
     foreground_android_phone_bridge,
+    verify_android_bridge_input,
 )
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
 from runner.judge import DEFAULT_JUDGE_BASE_URL, JUDGE_PROMPT_VERSION, JudgeConfig
+from runner.models import HardAssertionFailure
 from runner.platform import (
     TargetPlatform,
     read_environment_health,
@@ -826,8 +830,12 @@ def _cmd_run_auto_agent_setup_inner(
                 if bridge_serial
                 else nullcontext()
             )
-            with bridge:
-                return run_one_task(
+            with bridge, android_bridge_fixture(bridge_serial, unit.task.android_bridge_fixture):
+                prior_writes = (
+                    clipboard_write_ids(bridge_serial)
+                    if unit.task.android_bridge_input_text else set()
+                )
+                result = run_one_task(
                     client,
                     suite,
                     unit.task,
@@ -844,6 +852,39 @@ def _cmd_run_auto_agent_setup_inner(
                         if bridge_serial else None
                     ),
                 )
+                if unit.task.android_bridge_input_text:
+                    try:
+                        evidence = verify_android_bridge_input(
+                            bridge_serial, unit.task.android_bridge_input_text, prior_writes
+                        )
+                    except Exception as exc:
+                        evidence = {"error": str(exc)}
+                    (art_dir / "android_bridge_input.json").write_text(
+                        json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    result.metrics["android_bridge_input"] = evidence
+                    verified = bool(evidence.get("bridge_clipboard_write") and evidence.get("field_contains_exact_text"))
+                    if result.hard_assertions is not None:
+                        result.hard_assertions.android_bridge_input = verified
+                    if evidence.get("error"):
+                        if result.status == "passed":
+                            result.status = "judge_error"
+                            result.metrics.update(success=None, quality_score=None, agent_eligible=False,
+                                                  failure_class="evaluation", first_failure_stage="evaluation",
+                                                  failure_event_ref="android_bridge_input.json")
+                    elif not verified:
+                        result.hard_assertion_failures.append(HardAssertionFailure(
+                            id="android_bridge_input",
+                            label="Android Bridge Input",
+                            requirement="AidenBridge clipboard write and exact text in a non-Bridge editable field",
+                            actual=json.dumps(evidence, ensure_ascii=False),
+                        ))
+                        if result.status == "passed":
+                            result.status = "failed"
+                            result.metrics.update(success=False, quality_score=0.0, failure_class="agent",
+                                              first_failure_stage="state_verification",
+                                              failure_event_ref="android_bridge_input.json")
+                return result
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
             return skipped_task_result(
@@ -964,6 +1005,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"Error: task id(s) not found in suite: {', '.join(missing)}", file=sys.stderr)
             return 2
         suite.tasks = [by_id[task_id] for task_id in selected_task_ids]
+
+    if any(task.android_bridge_input_text or task.android_bridge_fixture for task in suite.tasks):
+        if not args.auto_agent_setup or not getattr(args, "android_phone_bridge_serial", ""):
+            print("Error: Android Bridge assertions/fixtures require --auto-agent-setup and --android-phone-bridge-serial", file=sys.stderr)
+            return 2
 
     if _suite_has_mixed_mock_and_real_tasks(suite):
         print(
