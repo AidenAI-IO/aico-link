@@ -38,8 +38,7 @@ load boundary; Config Web writes only the grouped paths below.
 3. **Conversation Settings**:
    - Agent Prompt: `prompt`
    - Max Iterations: `max_iterations`
-   - Context Management: `context_prune_threshold`, `context_compaction_threshold`
-   - Screenshot Pruning: `screenshot_keep_n`, `screenshot_prune_interval`
+   - Context Management: `context_prune_threshold`, `context_prune_state_limit`, `context_compaction_threshold`
    - Tool Settings: `[conversation_settings.termination_policy]`, web search `[conversation_settings.search]`
 
 4. **Model Settings**:
@@ -266,9 +265,8 @@ timezone = "UTC"
 [conversation_settings.agent]
 max_iterations = -1
 context_prune_threshold = 0.5
+context_prune_state_limit = 6
 context_compaction_threshold = 0.8
-screenshot_keep_n = 3
-screenshot_prune_interval = 2
 
 # input_mode is intentionally omitted: this example configures no STT/TTS
 # provider, and stt and realtime each require their own. An unset mode is
@@ -458,13 +456,13 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | `mcp_shell_enabled`         | `false`                     | When on, the MCP allowlist includes the `shell` tool. TOML-only in this release (not on the Config Web Advanced page).                                                                                      |
 | `mcp_config_web_base_url`   | `http://127.0.0.1`          | Loopback HTTP base URL used by MCP `device_status` / `support_bundle`. Non-loopback values are rejected.                                                                                                   |
 | `context_prune_threshold`   | `0.5`                       | Fraction of the usable model input budget that triggers deterministic cleanup of stale state snapshots and older tool exchanges, including while one long-running tool loop is still executing. It cleans down to 6/7 of the trigger (so the default cleans from 50% to ~43%). Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.5`. The effective value is capped at `context_compaction_threshold`, so this cheap deterministic pass always gets a chance to free tokens before the LLM summary runs. A value of `1` or greater is rejected, as are `nan` and `inf`; a legacy absolute token count (for example `12000`) is detected on load, logged, and replaced by the default. |
+| `context_prune_state_limit` | `6`                       | Runs the stale-state cleanup once more `<state>` messages than this carry a screenshot, keeping the latest state of the current turn; does not compact tool results. Must be `0` or greater; `0` uses `6` |
 | `context_compaction_threshold` | `0.8`                    | Fraction of the usable model input budget at which the conversation is summarized into a compaction message. Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.8`. Values of `1` or greater, `nan`, and `inf` are rejected. Compaction itself has no token target: the transcript is reduced structurally by retaining head and tail messages and replacing the middle with one LLM summary, so the post-compaction size follows from the summary rather than from a budget. |
-| `screenshot_keep_n`         | `3`                         | Number of most recent screenshots to keep when pruning screenshots from the LLM context; unset or `0` uses the default                                                                                    |
-| `screenshot_prune_interval` | `2`                         | Once screenshots exceed `screenshot_keep_n + screenshot_prune_interval`, replace old screenshots with placeholders in batches; unset or `0` uses the default                                              |
 | `input_mode`                | unset / `stt` / `realtime`   | Voice mode: unset leaves voice unconfigured (HTTP/Web UI only), `stt` runs the STT/TTS voice loop, `realtime` uses a realtime voice model. `stt` requires `[voice_settings.classic.stt]` and `[...tts]`; `realtime` requires a realtime credential |
 
 Before each model request, the Agent prunes stale state and older completed
-tool-call/result pairs, normally protecting the latest three exchanges. It then
+tool-call/result pairs, normally protecting the latest three exchanges.
+It then
 applies threshold-based conversation summarization and rechecks any rewritten
 context. The hard input-budget check includes tool schemas and can prune the
 protected exchanges if necessary. If deterministic pruning is insufficient, it
@@ -477,6 +475,15 @@ searchable history. A chunk persistence failure is logged without undoing the
 accepted revision; the full history remains in the parent transcript.
 Successful revisions preserve the original transcript on disk and reset provider
 response anchors.
+
+`context_prune_state_limit` runs the same stale-state cleanup once the context
+holds more `<state>` messages with a screenshot than the limit (default 6),
+even when token usage is far below `context_prune_threshold`. It drops the
+older states, text and screenshot together, and keeps the latest state of the
+current turn; it does not compact tool results, which stays the job of
+`context_prune_threshold`. Screenshots are cheap in tokens but each carries
+50-100 KB of image data in every request, so on a long conversation the request
+outgrows a small device's memory long before the token trigger fires.
 
 ### Quick Capture
 

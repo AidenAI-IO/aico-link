@@ -222,6 +222,11 @@ func TestConfigMeta_PreservesExistingFormPresentation(t *testing.T) {
 			placeholder: "0 = automatic (0.5)",
 			help:        "Fraction of the usable model input budget that triggers cleanup of stale state and older tool exchanges, including during one long-running tool loop, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.",
 		},
+		"agent.context_prune_state_limit": {
+			label:       "Screenshot state limit",
+			placeholder: "0 = automatic (6)",
+			help:        "Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. 0 uses 6.",
+		},
 		"agent.context_compaction_threshold": {
 			label:       "Context compaction threshold (fraction)",
 			placeholder: "0 = automatic (0.8)",
@@ -458,6 +463,7 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"model.provider", defaults.Model.Provider},
 		{"model.model", defaults.Model.Model},
 		{"agent.context_prune_threshold", defaults.ContextPruneThreshold},
+		{"agent.context_prune_state_limit", defaults.ContextPruneStateLimit},
 		// temperature's effective default is model-dependent and resolved at
 		// load time, so the metadata placeholder is the global fallback rather
 		// than the (now unset) DefaultConfig value.
@@ -523,8 +529,6 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},
 		{"agent.voice_max_response_tokens", defaults.VoiceMaxResponseTokens},
 		{"agent.max_iterations", defaults.MaxIterations},
-		{"agent.screenshot_keep_n", defaults.ScreenshotKeepN},
-		{"agent.screenshot_prune_interval", defaults.ScreenshotPruneInterval},
 		{"agent.screen_stable_timeout_ms", defaults.ScreenStableTimeoutMs},
 		{"agent.screen_stable_ms", defaults.ScreenStableMs},
 		{"agent.screen_stable_diff_threshold", defaults.ScreenStableDiffThreshold},

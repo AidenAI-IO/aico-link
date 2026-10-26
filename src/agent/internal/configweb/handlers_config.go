@@ -176,7 +176,7 @@ func (s *Server) handleConfigTest(w http.ResponseWriter, r *http.Request) {
 		} else {
 			add("screen_stable_diff_threshold", value >= 0, fmt.Sprintf("must be >= 0, got %s", formatNumber(value)))
 		}
-		for _, key := range []string{"silence_ms", "min_speech_ms", "voice_followup_timeout_ms", "voice_first_turn_timeout_ms", "voice_max_turns", "voice_max_response_tokens", "screenshot_keep_n", "screenshot_prune_interval", "screen_stable_timeout_ms", "screen_stable_ms"} {
+		for _, key := range []string{"silence_ms", "min_speech_ms", "voice_followup_timeout_ms", "voice_first_turn_timeout_ms", "voice_max_turns", "voice_max_response_tokens", "context_prune_state_limit", "screen_stable_timeout_ms", "screen_stable_ms"} {
 			value, ok := numberValue(key)
 			add(key, ok && value >= 0, fmt.Sprintf("must be >= 0, got %s", formatNumber(value)))
 		}

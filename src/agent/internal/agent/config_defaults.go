@@ -2,8 +2,6 @@ package agent
 
 import "aiden-agent/internal/agent/realtimevoice"
 
-import "aiden-agent/internal/agent/constants"
-
 import "aiden-agent/internal/agent/mnk"
 
 const (
@@ -103,6 +101,14 @@ const (
 	// exchanges runs. It sits below the compaction threshold so the cheap
 	// deterministic pass gets a chance to free tokens before the LLM summary.
 	defaultContextPruneThreshold = 0.5
+	// defaultContextPruneStateLimit also triggers that cleanup once the
+	// context holds more <state> messages with a screenshot. The token trigger
+	// cannot catch screenshot growth: a screenshot is a few hundred tokens but
+	// 50-100 KB of base64 resent in every request, so on a 145 MB board the
+	// request outgrew memory long before the token trigger (about 293k tokens
+	// for deepseek-flash) fired. 6 kept board latency and swap at the level of
+	// 4 while pruning a third less often.
+	defaultContextPruneStateLimit = 6
 	// GPIO 3 (physical pin 38) is the Quick Capture button on Luckfox Pico Zero.
 	// Zero disables the trigger; see QuickCaptureConfig.Validate.
 	defaultQuickCaptureGPIOPin = 3
@@ -269,8 +275,7 @@ func DefaultConfig() Config {
 		TerminationPolicy:          DefaultTerminationPolicyConfig(),
 		ContextCompactionThreshold: defaultContextCompactionThreshold,
 		ContextPruneThreshold:      defaultContextPruneThreshold,
-		ScreenshotKeepN:            constants.DefaultScreenshotKeepN,
-		ScreenshotPruneInterval:    constants.DefaultScreenshotPruneInterval,
+		ContextPruneStateLimit:     defaultContextPruneStateLimit,
 		ScreenStableTimeoutMs:      defaultStableWaitTimeoutMs,
 		ScreenStableMs:             defaultStableDurationMs,
 		ScreenStableDiffThreshold:  defaultDiffThreshold,
