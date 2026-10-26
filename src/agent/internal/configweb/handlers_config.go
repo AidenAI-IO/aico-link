@@ -3,6 +3,7 @@ package configweb
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -176,9 +177,15 @@ func (s *Server) handleConfigTest(w http.ResponseWriter, r *http.Request) {
 		} else {
 			add("screen_stable_diff_threshold", value >= 0, fmt.Sprintf("must be >= 0, got %s", formatNumber(value)))
 		}
-		for _, key := range []string{"silence_ms", "min_speech_ms", "voice_followup_timeout_ms", "voice_first_turn_timeout_ms", "voice_max_turns", "voice_max_response_tokens", "context_prune_state_limit", "screen_stable_timeout_ms", "screen_stable_ms"} {
+		for _, key := range []string{"silence_ms", "min_speech_ms", "voice_followup_timeout_ms", "voice_first_turn_timeout_ms", "voice_max_turns", "voice_max_response_tokens", "screen_stable_timeout_ms", "screen_stable_ms"} {
 			value, ok := numberValue(key)
 			add(key, ok && value >= 0, fmt.Sprintf("must be >= 0, got %s", formatNumber(value)))
+		}
+		// The screenshot state limit is optional; when omitted the agent uses
+		// its default, so only a value that is present is checked.
+		if _, present := values["context_prune_state_limit"]; present {
+			value, ok := numberValue("context_prune_state_limit")
+			add("context_prune_state_limit", ok && value >= 0 && value == math.Trunc(value), fmt.Sprintf("must be a whole number >= 0, got %s", formatNumber(value)))
 		}
 		value, ok := numberValue("max_iterations")
 		add("max_iterations", ok && value >= -1, fmt.Sprintf("must be >= -1, got %s", formatNumber(value)))

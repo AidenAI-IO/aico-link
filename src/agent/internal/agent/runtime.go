@@ -1260,12 +1260,10 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// configurable trigger. It is intentionally independent from conversation
 	// summarization and provider-managed Responses compaction.
 	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
-	// A screenshot-count prune only drops stale states. Without a token
-	// budget there is no tool-result target, so use one no request reaches.
-	stateTarget := pruneTarget
-	if !pruneEnabled {
-		stateTarget = math.MaxInt
-	}
+	// A screenshot-count prune only drops stale states: its target is one no
+	// request reaches, so it never compacts tool results toward the token
+	// target. That stays with the token threshold.
+	const stateTarget = math.MaxInt
 	stateLimit := cfg.ContextPruneStateLimitOrDefault()
 	pruneReason := ""
 	if pruneEnabled && messageTokenUsage > pruneTrigger {
@@ -1280,7 +1278,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 	if pruneReason != "" {
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, stateTarget)
+		target := pruneTarget
+		if pruneReason == "state_count" {
+			target = stateTarget
+		}
+		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, target)
 		if episodeRecorder != nil {
 			episodeRecorder.RecordEvent(historicalPruneEvent(
 				contextCompactor.LastPruneStats(),
