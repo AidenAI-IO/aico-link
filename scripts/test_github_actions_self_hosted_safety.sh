@@ -139,7 +139,7 @@ runner_mapping = build.fetch("runs-on")
 end
 abort "build runner mapping must preserve explicit hosted runner inputs" unless runner_mapping.end_with?("|| inputs.runner }}")
 benchmark_runner = YAML.load_file(benchmark_path).fetch("jobs").fetch("run").fetch("runs-on")
-unless benchmark_runner == "${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-01' }}"
+unless benchmark_runner == "${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}"
   abort "benchmark must use the configurable primary runner with its existing registration as the default"
 end
 
