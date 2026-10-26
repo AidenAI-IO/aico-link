@@ -285,43 +285,63 @@ def test_vphone_ios_basic_warmup_requires_screenshot():
     assert warmup.hard_assertions.required_tools == ["screenshot"]
 
 
-def test_adb_android_basic_suite_loads_device_operation_tasks():
+def test_adb_android_basic_suite_loads_general_operations_and_navigation():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json"
     suite = load_suite(suite_path)
 
     assert suite.name == "adb_android_basic"
-    assert {task.category for task in suite.tasks} == {"device_operation"}
+    assert {task.category for task in suite.tasks} == {
+        "device_operation", "single_step", "multi_step",
+    }
     assert [task.id for task in suite.tasks] == [
-        "screenshot_home",
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
+        "screenshot_home", "open_settings", "settings_check_wifi", "open_app_drawer",
+        "tap_back", "scroll_page_down", "scroll_to_bottom",
+        "quick_action_home", "quick_action_app_switch", "quick_action_notification_center",
+        "clock_from_settings", "notification_round_trip", "about_device_and_back",
+        "settings_scroll_round_trip", "reopen_settings_context", "return_to_settings_via_recents",
     ]
-    # Action tasks must not require any specific tool: every action tool
-    # already returns a post-action screenshot, so the agent legitimately
-    # completes them without ever invoking the standalone screenshot tool,
-    # and it may pick quick_action vs touch_gesture for the same outcome.
     by_id = {task.id: task for task in suite.tasks}
     assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
     assert suite.prompt_prefix == ""
-    for task_id in (
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
-    ):
-        assert by_id[task_id].hard_assertions.required_tools == []
+    for task in suite.tasks:
+        if task.id != "screenshot_home":
+            assert task.hard_assertions.required_tools == []
+        assert task.rubric and all(item.check for item in task.rubric)
+
     assert by_id["settings_check_wifi"].hard_assertions.min_tool_calls == 1
-    # These ported multi-step tasks genuinely need navigation before observing.
-    for task_id in ("clock_count_alarms", "open_app_drawer"):
-        assert by_id[task_id].hard_assertions.min_tool_calls >= 2
+
+
+@pytest.mark.parametrize("task_id,action", [
+    ("quick_action_home", "home"),
+    ("quick_action_app_switch", "app_switch"),
+    ("quick_action_notification_center", "notification_center"),
+])
+def test_adb_shortcut_contract_requires_successful_execution(task_id, action):
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="quick_action", input={"action": action})],
+                  final_response="Done", total_tool_calls=1, total_duration_ms=100)
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = True
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = False
+    trace.tool_calls[0].input = {"action": "screenshot"}
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+
+def test_adb_bottom_scroll_accepts_one_successful_scroll():
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == "scroll_to_bottom")
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="touch_gesture", input={"type": "swipe"})],
+                  final_response="Reached the bottom", total_tool_calls=1, total_duration_ms=100)
+    # The visual rubric judges whether the bottom was actually reached.
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
 
 
 @pytest.mark.parametrize("task_id,tool,tool_input", [

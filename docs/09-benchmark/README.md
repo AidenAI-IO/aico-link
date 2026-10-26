@@ -260,7 +260,7 @@ Common options:
 - `--environment-url URL` - Environment bridge URL for setup, pre/post screen capture, and release.
 - `--auto-agent-setup` - Start isolated agent daemon workers and schedule by bridge concurrency.
 - `--agent-config PATH` - Agent config used for auto-started daemon workers.
-- `--no-judge` - Skip LLM judge and only run hard assertions.
+- `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
@@ -401,6 +401,8 @@ of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
+Both workflows default to history from the workflow's branch. For a manual
+weekly report, set `branch_filter` to another branch or `*` for all branches.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
 for credentials, report commands, time windows, and comparison rules.
@@ -423,7 +425,8 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (13 cases) |
+| Manual dispatch | `adb` | Native Android UI and text editing; requires a connected emulator or device |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -436,17 +439,27 @@ dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
 
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
-single-suite run must use the matching `runnable` or `hardware` profile; use
+single-suite run must use the matching `runnable`, `hardware`, or `adb` profile; use
 `all` when intentionally overriding that boundary.
 
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
 the Android-style MobileGym simulator automatically; no external iOS bridge is
-required. This case is excluded from the scheduled sweep while its baseline is
-being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+required. This case is available through manual dispatch only. The iOS-only
+Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
 from Agent capability failures. The same suite with profile `hardware` selects
-the existing external iOS case; profile `all` selects both environments.
+the external iOS case; profile `all` selects both environments.
+
+For native Android, dispatch profile `adb` with
+`suites/adb_android_basic.json` for general operations or
+`suites/adb_android_text_editing.json` for text editing. Leave the suite input
+blank to run both. See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
+for coverage and device prerequisites.
+
+Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
+exist, be unique, and support the case's target platform. An empty list selects
+the entire suite, subject to platform filtering. ADB cases require concurrency 1.
 
 When a suite has cases in multiple environment profiles, an explicit suite
 selection runs only cases belonging to the requested profile. A selection with
@@ -457,12 +470,6 @@ do not receive Agent/Judge/Langfuse secrets and therefore do not operate a
 device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
-
-Treat the first two weeks as a baseline period. Review each scheduled case's run
-duration, Langfuse cost, and failure class before deciding whether the policy of
-running every locally runnable case needs to change. Only add VPhone or another
-external environment to the schedule after its bridge has at least 99% health
-availability over that baseline period.
 
 The workflow expects these GitHub configuration values. GitHub-facing names omit
 the `AIDEN_` prefix; the workflow maps them to the runner variables documented

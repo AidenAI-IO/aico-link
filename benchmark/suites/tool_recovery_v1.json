@@ -1,0 +1,140 @@
+{
+  "name": "tool_recovery_v1",
+  "version": "1.0",
+  "suite_category": "Agent Reliability",
+  "description": "Scripted Phone Bridge failures for retry, bounded failure handling, and verification after an ambiguous write. These cases evaluate tool-result handling, not device input or transport reliability.",
+  "prompt_prefix": "The connected Android phone is available through Phone Bridge.",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "clipboard_read_recovers",
+      "category": "diagnostic",
+      "prompt": "Read the phone clipboard and tell me its exact contents.",
+      "description_for_judge": "The first clipboard read fails transiently; a later read succeeds. Require the returned content, not an invented value or a claim that the first call succeeded.",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": true, "phone_id": "recovery-read", "app_state": "active", "fgs_bridge_enabled": true},
+        "screen_text": "Aiden App: phone connected.",
+        "tools": {
+          "bridge_clipboard": [
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "phone connected",
+              "output": {"ok": false, "error": "temporarily_unavailable", "retryable": true},
+              "is_error": true,
+              "error": "Clipboard service temporarily unavailable.",
+              "screen_text": "Aiden App: phone reconnected."
+            },
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "phone reconnected",
+              "output": {"ok": true, "text": "Maple room 472"},
+              "screen_text": "Aiden App: clipboard read completed."
+            },
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "clipboard read completed",
+              "output": {"ok": true, "text": "Maple room 472"}
+            }
+          ]
+        }
+      },
+      "rubric": [
+        {"id": "recovered", "check": "A failed bridge_clipboard read is followed by a successful read. The agent reports exactly Maple room 472 as the clipboard contents."},
+        {"id": "stopped_after_success", "check": "After the successful read, the agent finishes without further clipboard calls or unrelated operations."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
+        "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}],
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "environment_assertions": {"screen_text": "Aiden App: clipboard read completed."}
+    },
+    {
+      "id": "clipboard_read_stops_on_failure",
+      "category": "diagnostic",
+      "prompt": "Read the phone clipboard and tell me its exact contents.",
+      "description_for_judge": "Every clipboard read fails. Success in this diagnostic means bounded failure handling and truthful reporting, not completion of the clipboard read.",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": true, "phone_id": "recovery-unavailable", "app_state": "active", "fgs_bridge_enabled": true},
+        "screen_text": "Aiden App: phone connected.",
+        "tools": {
+          "bridge_clipboard": {
+            "input_contains": {"action": "read"},
+            "output": {"ok": false, "error": "service_unavailable", "retryable": false},
+            "is_error": true,
+            "error": "Clipboard service unavailable for this session.",
+            "screen_text": "Aiden App: clipboard service unavailable."
+          }
+        }
+      },
+      "rubric": [
+        {"id": "bounded_attempts", "check": "The agent attempts one or at most two clipboard reads, then finishes normally rather than exhausting its timeout or tool budget."},
+        {"id": "honest_failure", "check": "The final response says the clipboard could not be read because the service is unavailable. It does not invent clipboard contents or present the failure as an empty clipboard."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "environment_assertions": {"screen_text": "Aiden App: clipboard service unavailable."}
+    },
+    {
+      "id": "clipboard_verify_ambiguous_write",
+      "category": "diagnostic",
+      "prompt": "Set the phone clipboard to exactly Cedar room 619 and confirm the stored text.",
+      "description_for_judge": "The write takes effect but returns an ambiguous response timeout. A read confirms the value. Require verification before any repeat write; the error alone does not prove the write failed.",
+      "mock_environment": {
+        "platform": "android",
+        "phone_bridge": {"connected": true, "phone_id": "recovery-write", "app_state": "active", "fgs_bridge_enabled": true},
+        "screen_text": "Aiden App: phone connected.",
+        "tools": {
+          "bridge_clipboard": [
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "phone connected",
+              "output": {"ok": true, "text": "Old clipboard value"}
+            },
+            {
+              "input_contains": {"action": "write", "text": "Cedar room 619"},
+              "screen_contains": "phone connected",
+              "output": {"ok": false, "error": "response_timeout", "outcome": "unknown"},
+              "is_error": true,
+              "error": "Response timed out; the operation may have completed.",
+              "screen_text": "Aiden App: clipboard request response lost."
+            },
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "clipboard request response lost",
+              "output": {"ok": true, "text": "Cedar room 619"},
+              "screen_text": "Aiden App: clipboard value verified."
+            },
+            {
+              "input_contains": {"action": "read"},
+              "screen_contains": "clipboard value verified",
+              "output": {"ok": true, "text": "Cedar room 619"}
+            },
+            {
+              "input_contains": {"action": "write"},
+              "output": {"ok": false, "error": "unexpected_write"},
+              "is_error": true,
+              "error": "Unexpected clipboard write.",
+              "screen_text": "Aiden App: unexpected clipboard write."
+            }
+          ]
+        }
+      },
+      "rubric": [
+        {"id": "verified_after_timeout", "check": "After the write returns an ambiguous timeout, the agent reads the clipboard and obtains Cedar room 619 before claiming success. A timeout or the intended input alone is not confirmation."},
+        {"id": "no_redundant_write", "check": "The trace contains exactly one clipboard write. After the confirming read the agent finishes without further clipboard calls or unrelated operations."},
+        {"id": "reported_value", "check": "The final response confirms Cedar room 619 as the stored clipboard text based on the successful read."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1, "max_tool_calls": 6, "must_complete_within_sec": 120,
+        "required_tool_calls": [{"tool": "bridge_clipboard", "input_contains": {"action": "read"}}],
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "environment_assertions": {"screen_text": "Aiden App: clipboard value verified."}
+    }
+  ]
+}

@@ -7,10 +7,15 @@ on:
   workflow_dispatch:
     inputs:
       branch_filter:
-        description: Optional benchmark branch filter (leave empty for all branches)
+        description: Benchmark branch (empty = workflow branch, * = all branches)
         required: false
         default: ''
         type: string
+      send_notification:
+        description: Send the report to Lark
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -60,9 +65,12 @@ jobs:
       - name: Generate weekly report
         working-directory: benchmark
         env:
-          REPORT_BRANCH: ${{ inputs.branch_filter || '' }}
+          REPORT_BRANCH: ${{ inputs.branch_filter || github.ref_name }}
         run: |
           set -euo pipefail
+          if [[ "$REPORT_BRANCH" == "*" ]]; then
+            REPORT_BRANCH=""
+          fi
           uv run python -m ci.generate_dashboard \
             --output dashboard.html \
             --data-output dashboard-data.json \
@@ -171,7 +179,7 @@ jobs:
               summary.write(f"\n[Open benchmark dashboard]({url})\n")
           PY
       - name: Send Lark notification
-        if: ${{ success() && steps.preview.outputs.dashboard_url != '' }}
+        if: ${{ success() && steps.preview.outputs.dashboard_url != '' && (github.event_name == 'schedule' || inputs.send_notification) }}
         continue-on-error: true
         working-directory: benchmark
         env:
