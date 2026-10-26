@@ -389,10 +389,19 @@ def evaluate_task_history(
             base.finished_at = now_iso()
             return base
     # Tasks without a rubric are fully decided by their deterministic assertions.
-    if judge_cfg is None or not task.rubric:
+    if not task.rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)
+        base.finished_at = now_iso()
+        return base
+    if judge_cfg is None:
+        base.status = "skipped"
+        base.metrics["judging_disabled"] = True
+        base.metrics["error"] = "Rubric evaluation skipped because judging is disabled; run rejudge to score this attempt."
+        base.metrics["quality_score"] = None
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        base.metrics["failure_event_ref"] = None
         base.finished_at = now_iso()
         return base
     try:
@@ -802,7 +811,10 @@ def _apply_environment_assertions(
                     actual=f"Observed {check.actual!r}.",
                 )
             )
-        if result.status == "passed":
+        if result.status == "passed" or (result.status == "skipped" and result.metrics.get("judging_disabled")):
+            if result.metrics.pop("judging_disabled", False):
+                result.metrics.pop("error", None)
+                result.metrics["first_failure_stage"] = "unknown"
             result.status = "failed"
             result.metrics["quality_score"] = 0.0
             _set_outcome_metrics(

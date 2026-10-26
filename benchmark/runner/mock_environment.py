@@ -261,6 +261,13 @@ def _handler_for(server: MockEnvironmentServer):
             if path is None:
                 self._json(404, {"ok": False, "error": {"code": "not_found"}})
                 return
+            if path in {"/state", "/route"}:
+                if self._read_json() is None:
+                    return
+                # Match the state-reader contract; scripted screens have no app route.
+                data = server.snapshot() if path == "/state" else {}
+                self._json(200, {"ok": True, "data": data})
+                return
             if path == "/api/setup":
                 server.reset()
                 self._json(200, {"ok": True, "data": {"setup": True}})
