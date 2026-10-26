@@ -138,6 +138,10 @@ jobs:
       BENCHMARK_TELEMETRY: '1'
       LANGFUSE_HTTPS_PROXY: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
       ANDROID_SERIAL: ${{ vars.BENCHMARK_ANDROID_SERIAL }}
+      AIDENBRIDGE_APK_URL: https://foxwallet.oss-cn-hongkong.aliyuncs.com/downloads/aidenbridge.apk?v=261022018
+      AIDENBRIDGE_APK_SHA256: 02439556d3f890177f8ff1ef79138d4a0c4073c90564ddc9fdc69aac05ccca93
+      AIDENBRIDGE_PACKAGE: com.aidenbridge
+      AIDENBRIDGE_VERSION_CODE: '261022018'
       BENCHMARK_PHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_PHONE_ENVIRONMENT_URL }}
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
       BENCHMARK_MAC_ENVIRONMENT_URL: ${{ vars.BENCHMARK_MAC_ENVIRONMENT_URL }}
@@ -293,6 +297,29 @@ jobs:
           echo "$ANDROID_SERIAL did not finish booting" >&2
           adb devices >&2
           exit 1
+      - name: Install AidenBridge on Android device
+        if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
+        run: |
+          set -euo pipefail
+          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+          if [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]]; then
+            echo "$AIDENBRIDGE_PACKAGE version $installed_version is already installed"
+            exit 0
+          fi
+          apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
+          trap 'rm -f "$apk_path"' EXIT
+          curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
+          echo "$AIDENBRIDGE_APK_SHA256  $apk_path" | sha256sum --check --status
+          adb -s "$ANDROID_SERIAL" install -r "$apk_path"
+          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p' | head -n 1)"
+          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+          [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]] || {
+            echo "Expected $AIDENBRIDGE_PACKAGE version $AIDENBRIDGE_VERSION_CODE, found ${installed_version:-none}" >&2
+            exit 1
+          }
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-

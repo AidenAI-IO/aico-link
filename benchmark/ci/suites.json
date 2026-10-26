@@ -19,6 +19,8 @@
     {"id": "phone-control-mobilegym", "suite": "suites/phone_control_v1.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 360, "runnable": false},
 
     {"id": "adb-android", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
+    {"id": "aidenbridge-android", "suite": "suites/aidenbridge_android_smoke.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 120},
+    {"id": "phone-control-adb", "suite": "suites/phone_control_v1.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 360},
     {"id": "app-workflow", "suite": "suites/app_workflow_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL", "timeout_minutes": 360},
     {"id": "episode-memory-before-ios", "suite": "suites/episode_memory_before_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},
     {"id": "episode-memory-after-ios", "suite": "suites/episode_memory_after_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},

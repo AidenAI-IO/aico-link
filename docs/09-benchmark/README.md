@@ -423,7 +423,7 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (14 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -495,6 +495,19 @@ host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
 ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
+
+For ADB cases, CI then checks `com.aidenbridge` on the emulator. It reuses
+version code `261022018` when present; otherwise it downloads the pinned APK,
+checks its SHA-256, and installs it with `adb install -r`. Update the URL,
+checksum, and expected version together in `benchmark.yml` when intentionally
+changing the tested App build. The upstream download path can be republished;
+the checksum makes a changed binary fail before installation. The emulator must
+retain its data between jobs
+for the installation to be reused. `aidenbridge_android_smoke.json` checks that
+the App opens visibly; `phone_control_v1.json` also runs against the ADB device
+for general UI operations. These cases use the ADB bridge and do not establish
+the App's separate Phone Bridge connection. Select either suite with the
+`hardware` profile for a focused manual run.
 
 The benchmark job uses the `aiden-hosted-02` runner because the
 MobileGym and agent-daemon paths require Docker. One job performs checkout,
