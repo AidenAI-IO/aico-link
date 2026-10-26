@@ -484,6 +484,34 @@ func (c *ContextManager) StoreArtifact(mimeType string, data []byte, metadata Ar
 	return c.currentSession.StoreArtifact(mimeType, data, metadata)
 }
 
+// ScreenshotStateCount returns how many <state> messages in the active session
+// carry a screenshot, without copying the message list.
+func (c *ContextManager) ScreenshotStateCount() int {
+	if c == nil {
+		return 0
+	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if c.currentSession == nil {
+		return 0
+	}
+	count := 0
+	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		for _, message := range currentMessages {
+			if message.Role != messages.MessageRoleState {
+				continue
+			}
+			for _, attachment := range message.Attachments {
+				if attachment.Source == messages.AttachmentSourceScreenshotObservation {
+					count++
+					break
+				}
+			}
+		}
+	})
+	return count
+}
+
 func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()

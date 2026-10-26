@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/executor"
 	"aiden-agent/internal/agent/mnk"
 	"aiden-agent/internal/agent/realtimevoice"
 	"aiden-agent/internal/logging"
@@ -346,14 +345,17 @@ type Config struct {
 	// read it through
 	// ContextPruneThresholdOrDefault rather than directly.
 	ContextPruneThreshold float64 `toml:"context_prune_threshold,omitempty"`
+	// ContextPruneStateLimit also runs the same stale-state cleanup once the
+	// context holds more <state> messages with a screenshot. Zero uses
+	// defaultContextPruneStateLimit. Read it through
+	// ContextPruneStateLimitOrDefault.
+	ContextPruneStateLimit int `toml:"context_prune_state_limit,omitempty"`
 	// ContextCompactionThreshold is the fraction of the usable model input
 	// budget at which conversation compaction summarizes the transcript. Zero
 	// uses defaultContextCompactionThreshold. Read it through
 	// ContextCompactionThresholdOrDefault rather than directly, so loaders that
 	// do not start from DefaultConfig still get the default.
 	ContextCompactionThreshold float64         `toml:"context_compaction_threshold,omitempty"`
-	ScreenshotKeepN            int             `toml:"screenshot_keep_n,omitempty"`
-	ScreenshotPruneInterval    int             `toml:"screenshot_prune_interval,omitempty"`
 	ScreenStableTimeoutMs      int             `toml:"screen_stable_timeout_ms,omitempty"`
 	ScreenStableMs             int             `toml:"screen_stable_ms,omitempty"`
 	ScreenStableDiffThreshold  float64         `toml:"screen_stable_diff_threshold,omitempty"`
@@ -1763,6 +1765,9 @@ func (c Config) Validate() error {
 	if err := validateContextThresholdFraction("context_prune_threshold", c.ContextPruneThreshold); err != nil {
 		return err
 	}
+	if c.ContextPruneStateLimit < 0 {
+		return fmt.Errorf("context_prune_state_limit must be >= 0, got %d", c.ContextPruneStateLimit)
+	}
 	if err := validateContextThresholdFraction("context_compaction_threshold", c.ContextCompactionThreshold); err != nil {
 		return err
 	}
@@ -1920,12 +1925,6 @@ func (c Config) Validate() error {
 	}
 	if err := c.Storage.MonitorConfig().Validate(); err != nil {
 		return err
-	}
-	if c.ScreenshotKeepN < 0 {
-		return fmt.Errorf("screenshot_keep_n must be >= 0, got %d", c.ScreenshotKeepN)
-	}
-	if c.ScreenshotPruneInterval < 0 {
-		return fmt.Errorf("screenshot_prune_interval must be >= 0, got %d", c.ScreenshotPruneInterval)
 	}
 	if c.ScreenStableTimeoutMs < 0 {
 		return fmt.Errorf("screen_stable_timeout_ms must be >= 0, got %d", c.ScreenStableTimeoutMs)
@@ -2312,11 +2311,13 @@ func (c Config) ContextPruneThresholdOrDefault() float64 {
 	return min(threshold, c.ContextCompactionThresholdOrDefault())
 }
 
-func (c Config) ScreenshotPruningOrDefault() executor.ScreenshotPruningConfig {
-	return executor.ScreenshotPruningConfig{
-		KeepN:    c.ScreenshotKeepN,
-		Interval: c.ScreenshotPruneInterval,
-	}.WithDefaults()
+// ContextPruneStateLimitOrDefault returns how many <state> messages with a
+// screenshot the context may hold before the stale-state cleanup runs.
+func (c Config) ContextPruneStateLimitOrDefault() int {
+	if c.ContextPruneStateLimit <= 0 {
+		return defaultContextPruneStateLimit
+	}
+	return c.ContextPruneStateLimit
 }
 
 func (c Config) ScreenStableDefaults() ScreenStableDefaults {

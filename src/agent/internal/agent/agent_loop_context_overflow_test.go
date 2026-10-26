@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
 	"aiden-agent/internal/agent/messages"
 	"aiden-agent/internal/agent/model"
 
@@ -58,7 +57,6 @@ func TestAgentLoopCompactsAndRetriesProviderContextExceededError(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	recoveryCalls := 0
@@ -138,7 +136,6 @@ func TestAgentLoopChecksContextBudgetBeforeEveryModelRequest(t *testing.T) {
 		2,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	guardCalls := 0
@@ -200,7 +197,7 @@ func TestAgentLoopRechecksBudgetAfterThresholdCompaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := &contextBudgetGuardModel{}
-	loop := NewAgentLoop(model, RoleProfile{}, 1, nil, nil, executor.ScreenshotPruningConfig{}.WithDefaults(), manager)
+	loop := NewAgentLoop(model, RoleProfile{}, 1, nil, nil, manager)
 	var sequence []string
 	budgetErr := errors.New("summary exceeds budget")
 	loop.ContextBudgetGuard = func(_ context.Context, current *contextmanager.ContextManager, _ llms.CallOptions) (*contextmanager.ContextManager, bool, error) {
@@ -237,7 +234,7 @@ func TestAgentLoopRejectsFailedBudgetRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	model := &contextBudgetGuardModel{}
-	loop := NewAgentLoop(model, RoleProfile{}, 1, nil, nil, executor.ScreenshotPruningConfig{}.WithDefaults(), manager)
+	loop := NewAgentLoop(model, RoleProfile{}, 1, nil, nil, manager)
 	budgetErr := errors.New("cannot fit context")
 	loop.ContextBudgetGuard = func(context.Context, *contextmanager.ContextManager, llms.CallOptions) (*contextmanager.ContextManager, bool, error) {
 		return replacement, true, budgetErr

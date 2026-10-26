@@ -56,17 +56,18 @@
 # context_compaction_threshold below.
 # context_prune_threshold = 0.5
 
+# The same stale-state cleanup also runs once more <state> messages than this
+# carry a screenshot, keeping the latest state of the current turn. It does not
+# compact tool results. Screenshots are cheap in tokens but heavy in bytes, so
+# this bounds the request size long before the token threshold above fires.
+# 0 selects the default.
+# context_prune_state_limit = 6
+
 # Context compaction threshold
 # Point at which the conversation is summarized into a compaction message by the
 # LLM. Lower it to summarize earlier and keep prompts smaller; raise it to keep
 # more raw transcript at the cost of larger prompts.
 # context_compaction_threshold = 0.8
-
-# Screenshot context pruning:
-# keep the latest N screenshots and batch-prune older screenshots every interval
-# to keep long runs bounded without changing the cached message prefix every turn.
-# screenshot_keep_n = 3
-# screenshot_prune_interval = 2
 
 # Tool Settings
 

@@ -243,7 +243,6 @@ func TestAgentLoopTerminatesRecursiveArtifactRecovery(t *testing.T) {
 		8,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 
@@ -283,7 +282,6 @@ func TestAgentLoopCompactsWhenToolResultCrossesContextThreshold(t *testing.T) {
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	turnOptions := []llms.CallOption{
@@ -318,7 +316,7 @@ func TestAgentLoopCompactionCanRetryWhenManagerIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("freshNewContextManager() error = %v", err)
 	}
-	loop := NewAgentLoop(nil, RoleProfile{}, 1, nil, nil, executor.ScreenshotPruningConfig{}.WithDefaults(), manager)
+	loop := NewAgentLoop(nil, RoleProfile{}, 1, nil, nil, manager)
 	loop.ContextCompactionTrigger = 1
 	compactionCalls := 0
 	loop.ContextThresholdCompaction = func(_ context.Context, current *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
@@ -364,7 +362,6 @@ func TestAgentLoopUsesRuntimeFallbackWindowForCurrentToolResultGuard(t *testing.
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "run the tool", chains.WithMaxTokens(1_000))
@@ -426,7 +423,6 @@ func TestAgentLoopTouchGestureInvalidJSONSelfCorrectsBeforeAction(t *testing.T) 
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 
@@ -487,7 +483,6 @@ func TestAgentLoopStoresLargeToolResultAsBoundedArtifact(t *testing.T) {
 		4,
 		nil,
 		recorder,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "run tests")
@@ -565,7 +560,6 @@ func TestAgentLoopDoesNotRepeatCompletedActionWhenArtifactPersistenceFails(t *te
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "perform action once")
@@ -608,7 +602,6 @@ func TestAgentLoopPersistsBoundedToolResultWhenPolicyFails(t *testing.T) {
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.ToolResultPolicy = failingToolResultPolicy{err: errors.New("policy unavailable")}
