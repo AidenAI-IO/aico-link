@@ -101,6 +101,10 @@ Normal `recall_device_memory` results have the following limits:
 
 The recall tool searches active, applicable Device Memory using the query supplied by the model. It records the IDs actually returned on the Episode; no runtime-side candidate list is injected or used to rewrite the model's query.
 
+If a query combining tags with search terms or entities returns no matches, the
+tool retries with the tags as ranking terms. Entity, type, and device filters
+remain in effect. A query containing only tags keeps its exact tag filtering.
+
 ## Episode Recording
 
 Every completed run with a user goal persists a task Episode before background learning starts. Success, failure, and interruption are recording states, not learning admission rules.
@@ -251,6 +255,11 @@ advice. The omission review receives the complete proposal schema and the same
 evidence, retention, and type rules as initial extraction.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
+
+A Procedure's stored steps come from its own `evidence_refs`, not the Episode
+assessment's references. The candidate must cite each step of the verified path,
+including intermediate transitions and final verification. Failed alternatives
+belong in guards or preconditions, not in the executable step sequence.
 
 ## Create, Update, And Conflict
 

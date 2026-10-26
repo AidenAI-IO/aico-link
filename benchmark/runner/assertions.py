@@ -523,7 +523,12 @@ def _extract_option_answer(final_response: str) -> str | None:
         if len(set(parenthesized)) != 1:
             return None
         return f"({parenthesized[0]})"
-    matches = re.findall(r"\b([a-d])\b", text.lower())
+    # A bare letter is a choice only on its own answer line. Searching prose
+    # for single letters mistakes the English article "a" for option (a).
+    matches = re.findall(
+        r"^\s*(?:(?:answer|option|choice)\s*:?\s*)?([a-d])[.!]?\s*$",
+        text.lower(), re.MULTILINE,
+    )
     answers = list(matches)
     if len(set(answers)) != 1:
         return None

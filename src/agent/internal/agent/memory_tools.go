@@ -354,9 +354,10 @@ func (t *RecallDeviceMemoryTool) Call(ctx context.Context, input string) (string
 	if err != nil {
 		return "", err
 	}
-	if len(results) == 0 && len(query.Tags) > 0 && len(query.Terms) > 0 {
+	if len(results) == 0 && len(query.Tags) > 0 && (len(query.Terms) > 0 || len(query.Entities) > 0) {
 		// LLMs often emit a useful free-text query together with an overly
-		// specific tag filter. Retry with tags as ranking terms while preserving
+		// specific tag filter, or use an app entity with guessed topic tags.
+		// Retry with tags as ranking terms while preserving
 		// hard entity, type, and device constraints. Entities can identify an app,
 		// account, or device boundary, so relaxing them risks cross-scope recall.
 		fallback := query

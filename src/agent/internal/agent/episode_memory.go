@@ -2032,6 +2032,8 @@ Type rules:
 - failure: reusable guard, check, stop condition, or recovery action. A failed Episode is not automatically a failure memory; omit one-off failures with no actionable future guard.
 - fact: stable device, app, or page fact directly observed by a tool. Do not turn guesses, one-time values, or a multi-step procedure into facts.
 
+For a procedure, the candidate's evidence_refs must include the tool results for every step in the verified path, including intermediate transitions and final verification. Stored steps are built only from these candidate references; episode_assessment.evidence_refs do not supply missing steps. Guidance and references must describe the same complete path. Exclude unrelated actions and failed attempts from the executable path; describe a failed alternative as a guard or precondition instead. Do not narrow a full-goal procedure to its final verification suffix unless that suffix was independently demonstrated as the intended reusable lesson.
+
 Deduplication and conflict rules:
 - Use action=create only when no existing memory has the same scoped lesson.
 - For action=create, omit memory_id and memory_revision.

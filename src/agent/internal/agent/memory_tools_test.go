@@ -400,6 +400,39 @@ func TestRecallSessionChunksToolReturnsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestRecallDeviceMemoryTagFallbackWithoutTermsPreservesScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewDeviceMemoryStore(t.TempDir())
+	for _, fixture := range []struct{ id, app, device, kind string }{
+		{"wanted", "QA Notes", "phone", "procedure"},
+		{"other_app", "Calendar", "phone", "procedure"},
+		{"other_device", "QA Notes", "tablet", "procedure"},
+		{"other_type", "QA Notes", "phone", "fact"},
+	} {
+		_, err := store.ApplyMemoryIntent(ctx, MemoryIntent{Action: MemoryIntentActionCreate, DeviceItem: &DeviceMemoryItem{
+			ID: fixture.id, AppName: fixture.app, DeviceID: fixture.device, Type: fixture.kind,
+			Status: deviceMemoryStatusActive, Tags: []string{"save", "persistence"},
+			Title: "Edit the title", Content: "Switch to Preview, return to Edit, save and reopen to verify.",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := NewRecallDeviceMemoryTool(store).Call(ctx, `{"tags":["edit","title","verify"],"entities":["QA Notes"],"types":["procedure"],"device_id":"phone"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryHit `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "wanted" {
+		t.Fatalf("recall = %s, want only the matching app, device and type", out)
+	}
+}
+
 func TestRecallMemoryToolReturnsMatchingLongTermMemory(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

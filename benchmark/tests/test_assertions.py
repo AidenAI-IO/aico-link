@@ -281,6 +281,23 @@ def test_expected_option_answer_rejects_invalid_expected_answer():
     assert result.passed is False
     assert result.expected_answer is None
 
+def test_expected_option_answer_does_not_treat_article_as_choice():
+    result = assertions.evaluate_expected_answer(
+        "No, you should not store a one-time verification token for future use.",
+        "(a)", "option_letter",
+    )
+    assert result.passed is False
+    assert result.predicted_answer is None
+
+def test_expected_option_answer_accepts_standalone_bare_letter():
+    for text in ("B", "b.", "<final_answer>b</final_answer>"):
+        result = assertions.evaluate_expected_answer(text, "(b)", "option_letter")
+        assert result.passed is True
+
+def test_expected_option_answer_rejects_ambiguous_bare_letters():
+    result = assertions.evaluate_expected_answer("a\nb", "(b)", "option_letter")
+    assert result.predicted_answer is None
+
 def test_expected_option_answer_rejects_ambiguous_predicted_answer():
     result = assertions.evaluate_expected_answer("I think (a), but maybe (c).", "(c)", "option_letter")
 
