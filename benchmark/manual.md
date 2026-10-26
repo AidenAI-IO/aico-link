@@ -1311,7 +1311,8 @@ The weekly report summarizes the last seven days in UTC: overall totals and each
 suite's results. Scheduled and manual reports use the workflow's branch by default.
 Manual runs accept an optional `branch_filter` input to select another
 branch, or `*` to include all branches. The workflow publishes the report and
-sends its Lark notification using the configured webhook.
+sends its Lark notification using the configured webhook. For a report preview,
+set `send_notification` to `false` when dispatching manually.
 
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the

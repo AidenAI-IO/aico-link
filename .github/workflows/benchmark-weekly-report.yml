@@ -11,6 +11,11 @@ on:
         required: false
         default: ''
         type: string
+      send_notification:
+        description: Send the report to Lark
+        required: false
+        default: true
+        type: boolean
 
 permissions:
   contents: read
@@ -174,7 +179,7 @@ jobs:
               summary.write(f"\n[Open benchmark dashboard]({url})\n")
           PY
       - name: Send Lark notification
-        if: ${{ success() && steps.preview.outputs.dashboard_url != '' }}
+        if: ${{ success() && steps.preview.outputs.dashboard_url != '' && (github.event_name == 'schedule' || inputs.send_notification) }}
         continue-on-error: true
         working-directory: benchmark
         env:
