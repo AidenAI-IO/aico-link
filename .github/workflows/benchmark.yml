@@ -14,6 +14,7 @@ on:
         options:
           - runnable
           - hardware
+          - adb
           - all
       suite:
         description: Optional suite path, for example suites/memory_v1.json
@@ -61,6 +62,7 @@ jobs:
           case "$profile" in
             runnable) timeout_minutes=1440 ;;
             hardware) timeout_minutes=4320 ;;
+            adb) timeout_minutes=1440 ;;
             all) timeout_minutes=5760 ;;
             *) echo "Unsupported benchmark profile: $profile" >&2; exit 1 ;;
           esac
@@ -378,6 +380,7 @@ jobs:
         working-directory: benchmark
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          REPORT_BRANCH: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           # History is read from Langfuse v4 experiments and paginated scores.
@@ -386,6 +389,7 @@ jobs:
             --output dashboard.html \
             --data-output dashboard-data.json \
             --lookback-days 7 \
+            --branch-filter "$REPORT_BRANCH" \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
           if [[ -f dashboard.html ]]; then
