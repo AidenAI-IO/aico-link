@@ -29,7 +29,9 @@ def _adb(serial: str, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _wait_for_connection(client: AgentClient, timeout_sec: int = 60) -> None:
+def _wait_for_connection(
+    client: AgentClient, timeout_sec: int = 60, *, require_active: bool = False
+) -> None:
     deadline = time.monotonic() + timeout_sec
     last_status: dict = {}
     while time.monotonic() < deadline:
@@ -38,15 +40,24 @@ def _wait_for_connection(client: AgentClient, timeout_sec: int = 60) -> None:
             status = json.loads(body)
             if isinstance(status, dict):
                 last_status = status
-                if status.get("connected") is True and status.get("platform") == "android":
+                if (
+                    status.get("connected") is True
+                    and status.get("platform") == "android"
+                    and (not require_active or status.get("app_state") == "active")
+                ):
                     return
         except (AgentRequestError, AgentTimeoutError, ValueError):
             pass
         time.sleep(2)
     raise RuntimeError(
-        "AidenBridge did not connect to the task Agent; "
+        "AidenBridge did not become ready on the task Agent; "
         f"last status: {last_status}"
     )
+
+
+def foreground_android_phone_bridge(serial: str, client: AgentClient) -> None:
+    _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
+    _wait_for_connection(client, timeout_sec=30, require_active=True)
 
 
 @contextmanager

@@ -40,3 +40,23 @@ def test_android_bridge_cleans_up_when_app_does_not_connect(monkeypatch) -> None
 
     assert commands[-2][:6] == ("shell", "iptables", "-t", "nat", "-D", "OUTPUT")
     assert commands[-1] == ("reverse", "--remove", "tcp:8080")
+
+
+def test_foreground_app_waits_for_active_bridge(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(
+        android_phone_bridge, "_adb",
+        lambda serial, *args: calls.append((serial, args)),
+    )
+    monkeypatch.setattr(
+        android_phone_bridge, "_wait_for_connection",
+        lambda client, **kwargs: calls.append(kwargs),
+    )
+
+    android_phone_bridge.foreground_android_phone_bridge("emulator-5554", object())
+
+    assert calls[0] == (
+        "emulator-5554",
+        ("shell", "am", "start", "-n", "com.aidenbridge/.MainActivity"),
+    )
+    assert calls[1] == {"timeout_sec": 30, "require_active": True}

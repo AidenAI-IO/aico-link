@@ -12,7 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
-from runner.android_phone_bridge import connected_android_phone_bridge
+from runner.android_phone_bridge import (
+    connected_android_phone_bridge,
+    foreground_android_phone_bridge,
+)
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
@@ -836,6 +839,10 @@ def _cmd_run_auto_agent_setup_inner(
                     environment_url=args.environment_url or None,
                     benchmark_task_id=route_id,
                     active_skills=active_skills,
+                    after_setup=(
+                        (lambda: foreground_android_phone_bridge(bridge_serial, client))
+                        if bridge_serial else None
+                    ),
                 )
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
