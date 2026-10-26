@@ -1175,9 +1175,10 @@ At the end of a run, the runner tries to upload the report to the agent board's
 ### Cross-run dashboard and weekly report
 
 The daily benchmark workflow generates `dashboard.html` and
-`dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
+`dashboard-data.json` for each run using history from its own branch.
+A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
-history across branches from Langfuse by default, writes `weekly-report.md`
+history from the workflow's branch in Langfuse by default, writes `weekly-report.md`
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
@@ -1307,10 +1308,9 @@ Runs missing configuration metadata are still compared and labelled
 "Configuration unverified".
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
-suite's results. Scheduled and manual reports include all branches by default.
-Manual runs accept an optional `branch_filter` input to restrict the data to one
-branch. The workflow's selected Git ref determines which report code runs; it
-does not restrict the historical data. The workflow publishes the report and
+suite's results. Scheduled and manual reports use the workflow's branch by default.
+Manual runs accept an optional `branch_filter` input to select another
+branch, or `*` to include all branches. The workflow publishes the report and
 sends its Lark notification using the configured webhook.
 
 The report includes each

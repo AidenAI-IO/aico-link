@@ -401,6 +401,8 @@ of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
+Both workflows default to history from the workflow's branch. For a manual
+weekly report, set `branch_filter` to another branch or `*` for all branches.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
 for credentials, report commands, time windows, and comparison rules.

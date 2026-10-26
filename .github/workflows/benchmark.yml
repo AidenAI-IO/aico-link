@@ -380,6 +380,7 @@ jobs:
         working-directory: benchmark
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          REPORT_BRANCH: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           # History is read from Langfuse v4 experiments and paginated scores.
@@ -388,6 +389,7 @@ jobs:
             --output dashboard.html \
             --data-output dashboard-data.json \
             --lookback-days 7 \
+            --branch-filter "$REPORT_BRANCH" \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
           if [[ -f dashboard.html ]]; then
