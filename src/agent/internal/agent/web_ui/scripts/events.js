@@ -6,6 +6,9 @@
 const historyPageLimit = 50;
 const historyRefreshLimit = 200;
 let historyWindow = null;
+// Bumped on a clear. A request made before it may hold the cleared
+// conversation and is dropped, even when the window was already empty.
+let historyGeneration = 0;
 let historyLoadInFlight = false;
 let historyLoadPending = false;
 let olderHistoryLoading = false;
@@ -24,6 +27,7 @@ function historyWindowFromPage(page) {
 
 function resetHistoryWindow() {
     historyWindow = null;
+    historyGeneration++;
 }
 
 function chatRunActive() {
@@ -41,6 +45,7 @@ async function loadHistory() {
         do {
             historyLoadPending = false;
             const current = historyWindow;
+            const generation = historyGeneration;
             const page = await fetchHistoryPage(current
                 ? {after: current.end, session_id: current.sessionId, limit: historyRefreshLimit}
                 : {limit: historyPageLimit});
@@ -49,7 +54,7 @@ async function loadHistory() {
             if (chatRunActive()) return;
             // An older page or a clear replaced the window meanwhile; ask again
             // from the new window instead of appending to a stale one.
-            if (current !== historyWindow) {
+            if (generation !== historyGeneration || current !== historyWindow) {
                 historyLoadPending = true;
                 continue;
             }
@@ -73,30 +78,39 @@ async function loadHistory() {
 }
 
 async function loadOlderHistory() {
-    const current = historyWindow;
-    if (!current || current.start <= 0 || olderHistoryLoading) return;
+    if (olderHistoryLoading) return;
     olderHistoryLoading = true;
     let loaded = false;
     try {
-        const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
-        // Like a refresh, do not re-render over a run's live messages.
-        if (current !== historyWindow || chatRunActive()) return;
-        if (page.reset || page.session_id !== current.sessionId) {
-            historyWindow = historyWindowFromPage(page);
+        for (;;) {
+            const current = historyWindow;
+            if (!current || current.start <= 0) return;
+            const generation = historyGeneration;
+            const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
+            // Like a refresh, do not re-render over a run's live messages, and
+            // drop a page fetched before a clear.
+            if (chatRunActive() || generation !== historyGeneration) return;
+            // A refresh replaced the window meanwhile; ask again from its start,
+            // since a reader already at the top will not scroll there again.
+            if (current !== historyWindow) continue;
+            if (page.reset || page.session_id !== current.sessionId) {
+                historyWindow = historyWindowFromPage(page);
+                renderHistory(historyWindow.messages);
+                return;
+            }
+            historyWindow = Object.assign({}, current, {
+                start: page.start,
+                messages: page.messages.concat(current.messages)
+            });
+            // Keep the messages the user is reading in place while older ones
+            // are inserted above them.
+            const previousHeight = conversationEl.scrollHeight;
+            const previousTop = conversationEl.scrollTop;
             renderHistory(historyWindow.messages);
-            return;
+            conversationEl.scrollTop = previousTop + (conversationEl.scrollHeight - previousHeight);
+            loaded = true;
+            break;
         }
-        historyWindow = Object.assign({}, current, {
-            start: page.start,
-            messages: page.messages.concat(current.messages)
-        });
-        // Keep the messages the user is reading in place while older ones
-        // are inserted above them.
-        const previousHeight = conversationEl.scrollHeight;
-        const previousTop = conversationEl.scrollTop;
-        renderHistory(historyWindow.messages);
-        conversationEl.scrollTop = previousTop + (conversationEl.scrollHeight - previousHeight);
-        loaded = true;
     } catch (err) {
         console.error('Failed to load earlier history:', err);
     } finally {
