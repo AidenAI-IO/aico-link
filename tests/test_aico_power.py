@@ -40,6 +40,9 @@ class AicoPowerTests(unittest.TestCase):
         self.patch("POWER_DIR", self.power)
         self.patch("LOCK_PATH", self.root / "aico-power.lock")
         self.patch("RECOVERY_STATE", self.root / "recovery/state.json")
+        self.patch("BOOT_RECOVERED", self.root / "recovery/boot-recovered")
+        CLI.BOOT_RECOVERED.parent.mkdir()
+        CLI.BOOT_RECOVERED.touch()
         self.patch("WIFI_INTERFACE", self.root / "wlan0")
         idle_driver = self.root / "idle_driver"
         idle_driver.write_text("rv1106_idle\n")
@@ -423,6 +426,74 @@ class AicoPowerTests(unittest.TestCase):
         self.assertEqual(CLI.main(["--recover"]), 0)
         self.mcu.assert_not_called()
         self.wifi.assert_not_called()
+
+    def test_first_sleep_after_reboot_clears_retained_grant_before_prepare(self):
+        CLI.BOOT_RECOVERED.unlink()
+        self.assertFalse(CLI.RECOVERY_STATE.exists())
+        grant = [True]  # MCU remained powered while RV lost its /run directory.
+
+        def request(op):
+            if op == "suspend_resume":
+                self.assertTrue(json.loads(CLI.RECOVERY_STATE.read_text())["mcu"])
+                grant[0] = False
+            elif op == "suspend_prepare":
+                self.assertTrue(CLI.BOOT_RECOVERED.exists())
+                self.assertFalse(grant[0])
+                grant[0] = True
+            return {"state": {"rv_state": "sleeping"}}
+
+        self.mcu.side_effect = request
+        result, errors = self.run_command("sleep")
+        self.assertEqual(result, 0, errors)
+        self.assertEqual(self.mcu.call_args_list, [mock.call("suspend_resume"),
+                         mock.call("suspend_prepare"), mock.call("get_state"),
+                         mock.call("suspend_resume")])
+        self.assertFalse(grant[0])
+
+    def test_failed_boot_recovery_blocks_prepare_and_remains_pending(self):
+        CLI.BOOT_RECOVERED.unlink()
+        self.mcu.side_effect = RuntimeError("MCU service unavailable")
+        result, errors = self.run_command("sleep")
+        self.assertEqual(result, 1)
+        self.assertIn("MCU service unavailable", errors)
+        self.mcu.assert_called_once_with("suspend_resume")
+        self.assertFalse(CLI.BOOT_RECOVERED.exists())
+        self.assertTrue(json.loads(CLI.RECOVERY_STATE.read_text())["mcu"])
+        self.assertEqual(self.state.read_text(), "freeze mem disk\n")
+
+    def test_recovery_timer_retries_beyond_worker_and_stop_post_failures(self):
+        units = ROOT / "overlay-debian/etc/systemd/system"
+        self.assertIn("Wants=aico-suspend-recover.timer", (units / "aico.target").read_text())
+        timer = (units / "aico-suspend-recover.timer").read_text()
+        self.assertIn("OnBootSec=15s", timer)
+        self.assertIn("OnUnitInactiveSec=10s", timer)
+        self.assertIn("Unit=aico-suspend-recover.service", timer)
+        service = (units / "aico-suspend-recover.service").read_text()
+        self.assertIn("ExecStart=/usr/bin/aico-power --recover", service)
+        CLI.BOOT_RECOVERED.unlink()
+        self.mcu.side_effect = RuntimeError("UART unavailable")
+        # Each systemd activation makes a bounded attempt, even without /run state.
+        for _ in range(3):
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(CLI.main(["--recover"]), 1)
+            self.assertFalse(CLI.BOOT_RECOVERED.exists())
+            self.assertTrue(json.loads(CLI.RECOVERY_STATE.read_text())["mcu"])
+        self.mcu.side_effect = None
+        self.assertEqual(CLI.main(["--recover"]), 0)
+        self.assertEqual(self.mcu.call_args_list, [mock.call("suspend_resume")] * 4)
+        self.assertTrue(CLI.BOOT_RECOVERED.exists())
+        self.assertFalse(CLI.RECOVERY_STATE.exists())
+        self.mcu.reset_mock()
+        self.assertEqual(CLI.main(["--recover"]), 0)
+        self.mcu.assert_not_called()  # Successful cleanup does not keep sending UART traffic.
+
+    def test_recovery_timer_cannot_revoke_active_worker_grant(self):
+        CLI.save_recovery({"mcu": True, "wifi": True})
+        with CLI.power_lock(), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(CLI.main(["--recover"]), 1)
+        self.mcu.assert_not_called()
+        self.wifi.assert_not_called()
+        self.assertEqual(json.loads(CLI.RECOVERY_STATE.read_text()), {"mcu": True, "wifi": True})
 
     def test_mcu_cleanup_failure_still_restores_wifi_and_can_retry(self):
         CLI.save_recovery({"wifi": True, "mcu": True})

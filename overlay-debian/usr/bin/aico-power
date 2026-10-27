@@ -22,6 +22,7 @@ MCU_SOCKET = Path("/run/mcu_service/mcu_service.sock")
 WAKEUP_COUNT_TIMEOUT = 5
 WIFI_INTERFACE = Path("/sys/class/net/wlan0")
 RECOVERY_STATE = Path("/run/aico-suspend/state.json")
+BOOT_RECOVERED = Path("/run/aico-suspend/boot-recovered")
 SUSPEND_UNIT = "aico-suspend.service"
 CPU_IDLE_DRIVER = Path("/sys/devices/system/cpu/cpuidle/current_driver")
 CPU_IDLE_DISABLED = Path("/sys/devices/system/cpu/cpu0/cpuidle/state1/disable")
@@ -55,9 +56,16 @@ def save_recovery(state):
 
 
 def recover():
-    if not RECOVERY_STATE.exists():
+    boot_pending = not BOOT_RECOVERED.exists()
+    if not RECOVERY_STATE.exists() and not boot_pending:
         return
-    state = json.loads(RECOVERY_STATE.read_text())
+    state = (json.loads(RECOVERY_STATE.read_text()) if RECOVERY_STATE.exists()
+             else {"mcu": False, "wifi": False})
+    if boot_pending:
+        # /run is lost on RV reboot, but MCU/UART power can remain enabled.
+        # Confirm RESUME once per boot before accepting a new PREPARE.
+        state["mcu"] = True
+        save_recovery(state)
     errors = []
     # Always try both actions. A lost MCU link must not strand Wi-Fi offline.
     for key, action in (("mcu", lambda: mcu_request("suspend_resume")),
@@ -71,6 +79,8 @@ def recover():
         else:
             state[key] = False
             save_recovery(state)
+            if key == "mcu":
+                BOOT_RECOVERED.touch(mode=0o600)
     if errors:
         raise RuntimeError("suspend cleanup incomplete: " + "; ".join(errors))
     RECOVERY_STATE.unlink()

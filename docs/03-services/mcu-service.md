@@ -58,7 +58,13 @@ Application mutations require `generation` from `get_state` and a unique
 Before `suspend_prepare`, the worker persists recovery intent. A timeout or
 lost/invalid PREPARE reply leaves the MCU grant outcome unknown, so the worker
 must abort suspend and send `suspend_resume`. Cleanup intent remains until
-RESUME succeeds; systemd post-stop recovery retries interrupted cleanup.
+RESUME succeeds. Worker and systemd post-stop cleanup each make one bounded
+attempt; `aico-suspend-recover.timer` retries pending actions every ten seconds
+after the preceding activation. It also runs at boot. Before the first PREPARE
+per RV boot, the worker confirms RESUME even with no `/run` recovery file,
+because MCU/UART power and the grant can survive an RV reboot. An unavailable
+link leaves recovery pending and prevents a new suspend. A shared lock excludes
+recovery while a suspend worker owns the grant.
 This obligation also applies to any direct caller of the root-only operations.
 Repeated RV_READY events do not revoke an MCU grant, and the grant has no timer
 expiry that could interrupt a valid long sleep.

@@ -123,9 +123,19 @@ address acquisition are asynchronous after the reconnect request.
 
 Recovery intents are saved in root-owned `/run/aico-suspend/state.json` before
 each external action. `ExecStopPost` retries cleanup if the worker exits or is
-killed. Failed cleanup retains the pending actions for diagnosis and retry;
+killed. Each invocation makes one bounded attempt. `aico-suspend-recover.timer`,
+started by `aico.target`, also runs recovery 15 seconds after boot and ten seconds
+after each recovery activation finishes. Failed cleanup retains pending actions
+for the next activation; successful cleanup sends no further UART requests.
+The grant can survive an RV reboot with MCU/UART still powered, while `/run`
+cannot. Recovery therefore confirms SUSPEND_RESUME once per RV boot and records
+`/run/aico-suspend/boot-recovered`; a sleep request must complete that same
+recovery before PREPARE. Repeated RV_READY is not sufficient. All recovery
+entry points use the worker's lock so they cannot revoke a live suspend grant.
+Persistent MCU failure blocks new sleeps and leaves recovery pending.
 `sudo aico-power --recover` retries them without requesting another sleep.
-Inspect `journalctl -u aico-suspend.service` for the result. Do not invoke the
+Inspect `journalctl -u aico-suspend.service -u aico-suspend-recover.service`
+and `systemctl list-timers aico-suspend-recover.timer` for the result. Do not invoke the
 internal `--execute` worker directly from an SSH session.
 If kernel wakeup sources remain active for five seconds, the worker cancels
 the grant, restores Wi-Fi and reports the blocker.
