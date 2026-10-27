@@ -101,6 +101,13 @@ Normal `recall_device_memory` results have the following limits:
 
 The recall tool searches active, applicable Device Memory using the query supplied by the model. It records the IDs actually returned on the Episode; no runtime-side candidate list is injected or used to rewrite the model's query.
 
+If a query combining tags with search terms or entities returns no matches, the
+tool retries with the tags as ranking terms. Entity, type, and device filters
+remain in effect. When topic terms or tags are supplied, at least one must match
+the memory; an entity match alone cannot establish topic relevance. A query
+containing only tags keeps its exact tag filtering. Procedures are returned with
+all stored steps intact, or omitted if they cannot fit the recall budget.
+
 ## Episode Recording
 
 Every completed run with a user goal persists a task Episode before background learning starts. Success, failure, and interruption are recording states, not learning admission rules.
@@ -226,21 +233,37 @@ One Episode can produce zero to three independent candidates.
 
 An Episode-level failure does not automatically create Failure Memory. A Failure candidate must contain reusable guidance for a future task.
 
-Candidates hold knowledge specific to the device, app, or page that the Agent
-cannot get elsewhere. The Agent already receives every tool result, including
-the `suggestion` a failed tool returns, so guidance that only restates a tool
-result in the Episode or describes generic tool use (take a screenshot after a
-failure, refocus the field, retry) is not stored. Attaching an app, page, or
-control name to that guidance does not make it specific. A workaround for a
-tool that misbehaved is a defect to fix in the tool; it is stored only when it
-also records a fact about the device, app, or page that no tool result in the
-Episode gave, such as a coordinate, route, page layout, or stop condition. The
-extractor sees tool results but not tool definitions, so the rule is judged
-against the results in the Episode. The extraction prompt, the omission
-review, and the retention audit share this rule
-(`episodeMemoryBuiltInGuidanceRule`).
+Tool observations are evidence for device, app, or page knowledge. The fact that
+an observation arrived through a tool result is not a reason to discard it.
+Retention requires actionable, scoped information beyond general knowledge and
+the advice the Agent already receives. Repeating retry instructions or adding an
+app name to generic advice does not meet that requirement. An observed constraint
+or workaround qualifies when its evidenced conditions change a future task's
+execution. Observation alone does not establish durability or make a run-specific
+value reusable.
+
+Extraction, omission review, and retention audit share this policy through
+`episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
+proposal schema and type rules, once. Procedure guidance and candidate evidence
+must describe the same supported path; a shorter path needs its own evidence.
+These semantic decisions remain model judgments, not guarantees supplied by the
+structural evidence validator.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
+
+A Procedure selects its executable path with `step_refs`: ordered tool-result
+event IDs, each paired with a device call and included in `evidence_refs`.
+The broader evidence can include failed alternatives that explain a workaround;
+only selected steps become executable actions. Missing, duplicate, out-of-order,
+unpaired, uncited, or explicitly failed step results are rejected. The model and
+retention audit still judge whether a non-error observation establishes success
+and whether the selected path is complete. Existing stored memories are not
+rewritten; pending procedure candidates without an explicit path are not admitted.
+
+Evaluation fixtures use `consolidation_expectation.required_procedure_steps` for
+the complete returned sequence: one description substring per step, in order,
+with no extra steps. Matching prose or a subsequence cannot hide a failed action
+inserted before or within the valid path.
 
 ## Create, Update, And Conflict
 
@@ -248,7 +271,7 @@ The model proposes `create` or `update`, but code owns admission, storage paths,
 
 If a create proposal missed an existing record outside the bounded view, duplicate resolution is handled as a later explicit consolidation/update operation rather than silently rewriting the create intent at persistence time.
 
-Update requires the exact Memory revision observed during extraction. It preserves prior evidence and existing Procedure steps. Material body changes append the previous value to bounded revision history.
+Update requires the exact Memory revision observed during extraction. It preserves prior evidence. A Procedure update replaces executable steps with the complete `step_refs` path; older steps remain in bounded revision history rather than being appended to the active path. Other Device Memory updates continue to merge steps. Material body changes append the previous value to bounded revision history.
 
 If evidence can be reconciled by adding a version, page, account state, or other precondition, the Memory remains active with a conditioned rule.
 

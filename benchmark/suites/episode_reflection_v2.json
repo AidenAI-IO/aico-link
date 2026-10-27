@@ -21,7 +21,7 @@
         "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
-        "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["Preview", "reopen"]},
+        "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["Preview", "reopen"], "required_procedure_steps": ["Switch from Edit to Preview", "Return from Preview to Edit", "Tap Save after the round trip", "Close and reopen the note"]},
         "episode": {
           "id": "ep_v2_verified_title_workaround",
           "status": "completed",
@@ -347,7 +347,7 @@
         "evaluate": true,
         "consolidate": true,
         "timeout_sec": 90,
-        "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_memory_substrings": ["verify"]},
+        "consolidation_expectation": {"goal_result": "achieved", "min_memory_ids": 1, "max_memory_ids": 3, "required_assessment_evidence": true, "required_memory_types": ["procedure"], "required_procedure_steps": ["Switch from Edit to Preview", "Return from Preview to Edit", "Tap Save", "Close and reopen the note"]},
         "episode": {
           "id": "ep_v2_evidence_refs_required",
           "status": "completed",
