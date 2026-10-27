@@ -157,3 +157,52 @@ func TestDecodeSaveMemoryRequestAcceptsBooleanSensitive(t *testing.T) {
 		}
 	}
 }
+
+// A save the user asked for must take effect even when Notification Memory
+// already wrote the same conclusion; otherwise the duplicate check leaves it
+// notification-owned and out of the user profile.
+func TestSaveMemoryToolClaimsNotificationDuplicate(t *testing.T) {
+	ctx := context.Background()
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	if _, err := store.AddMemory(ctx, MemoryItem{ID: "mem_notification_ctx1", Type: "preference", Priority: 80, Confidence: 0.9, Content: "用户希望快递放在门口。", Origin: memoryOriginNotification, SourceRefs: []MemorySourceRef{{Type: "notification", ID: "ctx1", EventIDs: []string{"e1"}}}, EvidenceExcerpts: []string{"notification"}}); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewSaveMemoryTool(store)
+	result := saveMemoryForTest(t, userRunContext("以后快递放门口就行"), tool, `{"type":"preference","content":"用户希望快递放在门口。"}`)
+	if result["status"] != "saved" || result["id"] != "mem_notification_ctx1" {
+		t.Fatalf("result = %v, want the notification record claimed", result)
+	}
+	profile, err := store.ProfilePrompt(ctx, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(profile, "快递放在门口") {
+		t.Fatalf("profile = %q, want the claimed preference", profile)
+	}
+
+	// Saving the user's own memory again is still a plain duplicate.
+	again := saveMemoryForTest(t, userRunContext("以后快递放门口就行"), tool, `{"type":"preference","content":"用户希望快递放在门口。"}`)
+	if again["status"] != "ignored" {
+		t.Fatalf("repeat save = %v, want ignored", again)
+	}
+}
+
+func TestSaveMemoryToolMarksOrdinaryDuplicateSensitive(t *testing.T) {
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	tool := NewSaveMemoryTool(store)
+	first := saveMemoryForTest(t, context.Background(), tool, `{"type":"fact","content":"保险箱密码 5093。"}`)
+	if first["status"] != "saved" {
+		t.Fatalf("first save = %v", first)
+	}
+	second := saveMemoryForTest(t, userRunContext("帮我记一下保险箱密码 5093"), tool, `{"type":"fact","content":"保险箱密码 5093。","sensitive":"credential","user_request":"帮我记一下"}`)
+	if second["status"] != "saved" || second["id"] != first["id"] {
+		t.Fatalf("second save = %v, want the existing record marked sensitive", second)
+	}
+	parsed, err := readMemoryMarkdown(store.memoryPath(first["id"]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !parsed.Item.Sensitive {
+		t.Fatal("duplicate sensitive save did not mark the record sensitive")
+	}
+}
