@@ -1022,6 +1022,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
             return 2
         suite.tasks = [by_id[task_id] for task_id in selected_task_ids]
 
+    if getattr(args, "android_phone_bridge_serial", "") and not (
+        args.auto_agent_setup and args.environment_url
+    ):
+        print("Error: --android-phone-bridge-serial requires --auto-agent-setup and --environment-url", file=sys.stderr)
+        return 2
     if any(task.android_bridge_input_text or task.android_bridge_fixture for task in suite.tasks):
         if not args.auto_agent_setup or not getattr(args, "android_phone_bridge_serial", ""):
             print("Error: Android Bridge assertions/fixtures require --auto-agent-setup and --android-phone-bridge-serial", file=sys.stderr)

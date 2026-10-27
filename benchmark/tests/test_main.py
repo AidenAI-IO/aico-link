@@ -1140,6 +1140,37 @@ def test_read_optional_token_fails_fast_for_empty_file(tmp_path):
         main._read_optional_token(token_file)
 
 
+@pytest.mark.parametrize("options", [
+    [],
+    ["--auto-agent-setup"],
+    ["--environment-url", "http://127.0.0.1:19090"],
+])
+def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, tmp_path, capsys, options):
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps({
+        "name": "ordinary_suite",
+        "tasks": [{
+            "id": "screen", "category": "device_operation", "prompt": "Describe the screen",
+            "description_for_judge": "Describe the screen",
+            "rubric": [{"id": "described", "check": "The screen is described."}],
+        }],
+    }), encoding="utf-8")
+
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("Invalid Bridge arguments must fail before contacting or starting an Agent")
+
+    monkeypatch.setattr(main, "_read_environment_health", unexpected_execution)
+    monkeypatch.setattr(main, "_new_agent_client", unexpected_execution)
+    monkeypatch.setattr(main, "_cmd_run_auto_agent_setup", unexpected_execution)
+
+    assert main.cli([
+        "run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"),
+        "--android-phone-bridge-serial", "emulator-5554", *options,
+    ]) == 2
+    assert "--android-phone-bridge-serial requires --auto-agent-setup and --environment-url" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+
+
 @pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
 def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path, bridge_mode):
     suite_path = tmp_path / "suite.json"
