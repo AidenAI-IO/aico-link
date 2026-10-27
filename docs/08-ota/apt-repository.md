@@ -5,6 +5,15 @@ GitHub Pages hosts the signed `InRelease`, `Release.gpg`, package indexes, and `
 Packages come only from published Releases in the three channels; unpublished Actions
 build artifacts are never added to the repository.
 
+The repository is Aico-only. A legacy contract whose base OTA release records an
+`aiden-business_<version>-1_armhf.deb` asset but no corresponding `aico-business`
+asset is excluded, along with every business release using that base. These
+contracts receive no APT suite or package pool; use a current Aico base image instead.
+The complete published history is still validated before this exclusion. Missing
+packages or invalid checksums/manifests in supported Aico contracts remain errors,
+and a history containing only legacy contracts cannot replace the site with an empty
+repository. Existing supported Aico contracts retain their normal version retention.
+
 ## Upgrading a board
 
 New base images with this feature automatically select a repository from

@@ -37,8 +37,18 @@ def suite_for(record):
 def select_records(records, repo, keep=3):
     if keep < 2:
         raise ValueError("Retain at least two versions per contract for cached APT indexes")
+    history = validate_history(records, repo)
+    # A contract inherits its package identity from the OTA that established it.
+    # Aiden-era contracts cannot provide upgrades for the Aico-only APT repository.
+    legacy_bases = {
+        record["tag"] for record in history if record["kind"] == "ota"
+        and f"aiden-business_{record['version']}-1_armhf.deb" in record["assets"]
+        and f"aico-business_{record['version']}-1_armhf.deb" not in record["assets"]
+    }
     suites = {}
-    for record in validate_history(records, repo):
+    for record in history:
+        if record["platform"]["base_release"] in legacy_bases:
+            continue
         suites.setdefault(suite_for(record), []).append(record)
     return {suite: items[-keep:] for suite, items in sorted(suites.items())}
 
@@ -146,7 +156,7 @@ def write_suite(directory, packages, records, now, key, keyring):
 def build_site(records, repo, output, cache, public_key=PUBLIC_KEY, keep=3, now=None):
     suites = select_records(records, repo, keep)
     if not suites:
-        raise ValueError("No published managed releases to index")
+        raise ValueError("No supported Aico releases to index")
     if output.exists():
         raise ValueError(f"Output already exists; choose a fresh staging directory: {output}")
     key = fingerprint(public_key)
