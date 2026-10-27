@@ -148,6 +148,37 @@ func splitDelimitedArgValues(s string) []string {
 
 // flexInt decodes a JSON number, but also tolerates a numeric string ("3"),
 // a float ("3.0" or 3.0), and an empty/null value (-> 0).
+// flexScalarString decodes a JSON string, boolean, or number as its text, so
+// a model that sends `"sensitive": true` still yields a usable value.
+type flexScalarString string
+
+func (f *flexScalarString) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*f = ""
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		*f = flexScalarString(s)
+		return nil
+	}
+	var scalar any
+	if err := json.Unmarshal(trimmed, &scalar); err != nil {
+		return err
+	}
+	switch scalar.(type) {
+	case bool, float64:
+		*f = flexScalarString(string(trimmed))
+		return nil
+	default:
+		return fmt.Errorf("expected a string, boolean, or number, got %s", trimmed)
+	}
+}
+
 type flexInt int
 
 func (f *flexInt) UnmarshalJSON(data []byte) error {
@@ -287,7 +318,7 @@ func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 		Entities    flexLiteralStringSlice `json:"entities"`
 		Evidence    flexLiteralStringSlice `json:"evidence"`
 		Priority    flexInt                `json:"priority"`
-		Sensitive   string                 `json:"sensitive"`
+		Sensitive   flexScalarString       `json:"sensitive"`
 		UserRequest string                 `json:"user_request"`
 	}
 	if err := json.Unmarshal([]byte(input), &flex); err != nil {
@@ -301,7 +332,7 @@ func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 		Entities:    flex.Entities,
 		Evidence:    flex.Evidence,
 		Priority:    int(flex.Priority),
-		Sensitive:   flex.Sensitive,
+		Sensitive:   string(flex.Sensitive),
 		UserRequest: flex.UserRequest,
 	}, nil
 }

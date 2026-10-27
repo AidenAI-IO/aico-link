@@ -465,7 +465,7 @@ whether to save; the Agent decides. Tasks are scored on the persisted
   tool trace.
 - Seeded preferences, profile entries, and rules must be applied after the
   history is cleared. These tasks check the outcome, not whether the Agent read
-  the memory from the system prompt or through `recall_memory`.
+  the memory from the turn state or through `recall_memory`.
 - Saved memories must be found among temporary notification memories, both for
   a direct question and for "what do you remember about me". Setup for the
   direct question first asserts that a browse by memory type still returns the

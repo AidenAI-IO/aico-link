@@ -412,6 +412,7 @@ func updateMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time)
 }
 
 func reinforceMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) {
+	existing.Sensitive = existing.Sensitive || candidate.Sensitive
 	existing.Tags = mergeUniqueStrings(existing.Tags, candidate.Tags)
 	existing.Entities = mergeUniqueStrings(existing.Entities, candidate.Entities)
 	existing.SourceRefs = mergeMemorySourceRefs(existing.SourceRefs, candidate.SourceRefs)

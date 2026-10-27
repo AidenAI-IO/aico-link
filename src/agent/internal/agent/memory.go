@@ -104,12 +104,15 @@ func (m *MemoryManager) effectiveContextWindow() int {
 	return normalizeMemoryExtractionConfig(m.extraction).ContextWindow
 }
 
-// userProfilePromptMaxChars bounds the saved-memory section of the system
-// prompt so a long memory history cannot crowd out the instructions.
+// userProfilePromptMaxChars bounds the saved memory added to each turn's
+// state so a long memory history cannot crowd out the conversation.
 const userProfilePromptMaxChars = 1500
 
+// savedUserMemoryStateHeader introduces the saved memory in a turn's state.
+const savedUserMemoryStateHeader = "saved_user_memory (saved by the user in earlier conversations; apply when relevant without asking again; the user's words in this conversation take precedence):"
+
 // UserProfilePrompt returns the saved profile, preference, and rule memories
-// for a new session's system prompt, or "" when none are available.
+// for the current turn's state, or "" when none are available.
 func (m *MemoryManager) UserProfilePrompt(ctx context.Context) string {
 	if m == nil || m.longTerm == nil {
 		return ""

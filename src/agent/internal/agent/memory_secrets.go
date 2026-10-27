@@ -27,7 +27,7 @@ const (
 // unexpected spelling errs toward protection.
 func parseMemorySensitiveKind(value string) memorySensitiveKind {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "none", "false", "no":
+	case "", "none", "false", "no", "0":
 		return memorySensitiveNone
 	case string(memorySensitiveCard):
 		return memorySensitiveCard

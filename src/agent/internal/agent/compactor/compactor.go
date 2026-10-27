@@ -688,7 +688,7 @@ Please summarize the conversation in a concised summary. Template:
 [Specific values, error messages, configuration details]
 
 ## User Plans and Time-Bound Information
-[Appointments, plans, deadlines, and other near-term information the user mentioned, even when unrelated to the goal. Give each an absolute date and time resolved from the message timestamps, for example 2026-10-28 09:00 rather than "tomorrow morning". Keep the user's own wording of what the plan is.]
+[Appointments, plans, deadlines, and other near-term information the user mentioned, even when unrelated to the goal. Resolve relative dates to absolute ones using the message timestamps, for example "2026-10-28 morning" for "tomorrow morning". Give a clock time only when the user stated one. Keep the user's own wording of what the plan is.]
 
 The summary is written at ` + c.now().Format(time.RFC3339) + `. Message labels show when each message was sent.
 

@@ -26,6 +26,10 @@ type ProfileFn func(ctx context.Context, entries []ProfileEntry) string
 type ProfileEntry struct {
 	Type    string
 	Content string
+	// FromNotification marks an entry derived from notification content, which
+	// third parties control and which therefore never becomes a system-prompt
+	// instruction.
+	FromNotification bool
 }
 
 type LongTermMemoryStore struct {
@@ -405,6 +409,8 @@ func (s *LongTermMemoryStore) supersedeMemoryLocked(ctx context.Context, oldID s
 	}
 
 	newItem = normalizeMemoryItem(newItem, time.Now().UTC())
+	// A new version of a secret is still a secret.
+	newItem.Sensitive = newItem.Sensitive || oldParsed.Item.Sensitive
 	newItem.Supersedes = oldID
 
 	oldParsed.Item.Status = "replaced"
@@ -687,7 +693,7 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 			unreadableEntries++
 			continue
 		}
-		entries = append(entries, ProfileEntry{Type: entry.Type, Content: strings.TrimSpace(parsed.Content)})
+		entries = append(entries, ProfileEntry{Type: entry.Type, Content: strings.TrimSpace(parsed.Content), FromNotification: memoryFromNotification(parsed.Item)})
 	}
 	if len(expiredPaths) > 0 {
 		s.invalidateParsedMemoryCache(expiredPaths...)
@@ -696,8 +702,9 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 }
 
 // ProfilePrompt formats the active profile, preference, and rule memories as
-// a bullet list for the system prompt, highest priority first, stopping before
-// maxChars. Sensitive memories are excluded. It reads the records directly
+// a bullet list for the turn state, highest priority first, stopping before
+// maxChars. Sensitive and notification-derived memories are excluded. It
+// reads the records directly
 // rather than profile.md, whose rebuild is debounced and may lag a save.
 func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (string, error) {
 	if s == nil {
@@ -712,7 +719,7 @@ func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (
 	var b strings.Builder
 	for _, entry := range entries {
 		content := strings.Join(strings.Fields(entry.Content), " ")
-		if content == "" {
+		if content == "" || entry.FromNotification {
 			continue
 		}
 		line := "- (" + entry.Type + ") " + content + "\n"
@@ -722,6 +729,15 @@ func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (
 		b.WriteString(line)
 	}
 	return strings.TrimSpace(b.String()), nil
+}
+
+func memoryFromNotification(item MemoryItem) bool {
+	for _, ref := range item.SourceRefs {
+		if ref.Type == "notification" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *LongTermMemoryStore) RequestProfileRebuild() {

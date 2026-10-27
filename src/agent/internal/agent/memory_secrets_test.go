@@ -141,3 +141,19 @@ func TestSaveMemoryToolSavesOrdinaryMemoryWithoutRequestQuote(t *testing.T) {
 		t.Fatalf("result = %v, want an ordinary save", result)
 	}
 }
+
+func TestDecodeSaveMemoryRequestAcceptsBooleanSensitive(t *testing.T) {
+	for input, want := range map[string]memorySensitiveKind{
+		`{"type":"fact","content":"x","sensitive":false}`: memorySensitiveNone,
+		`{"type":"fact","content":"x","sensitive":true}`:  memorySensitiveCredential,
+		`{"type":"fact","content":"x","sensitive":null}`:  memorySensitiveNone,
+	} {
+		req, err := decodeSaveMemoryRequest(input)
+		if err != nil {
+			t.Fatalf("decode %s: %v", input, err)
+		}
+		if got := parseMemorySensitiveKind(req.Sensitive); got != want {
+			t.Errorf("%s: kind = %q, want %q", input, got, want)
+		}
+	}
+}

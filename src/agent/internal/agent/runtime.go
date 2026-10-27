@@ -1611,8 +1611,11 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			attachment = r.captureStateScreenshot()
 		}
 		entries := r.stateManager.GetAllStates()
+		// Saved memory is read on every turn, so a memory the user saves,
+		// changes, or forgets is reflected from the next turn on.
+		savedMemory := r.memories.UserProfilePrompt(context.Background())
 		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && attachment == nil {
+		if len(entries) == 0 && savedMemory == "" && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1628,6 +1631,9 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				continue
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
+		}
+		if savedMemory != "" {
+			fmt.Fprintf(&formated, "%s\n%s\n", savedUserMemoryStateHeader, savedMemory)
 		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
@@ -2323,7 +2329,6 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 			Prompt:      r.ConfigSnapshot().Prompt,
 			Locale:      r.ConfigSnapshot().LocaleOrDefault(),
 			Timezone:    r.ConfigSnapshot().TimezoneOrDefault(),
-			UserProfile: r.memories.UserProfilePrompt(context.Background()),
 		},
 		skills,
 		availableTools,

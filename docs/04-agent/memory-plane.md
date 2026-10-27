@@ -47,8 +47,8 @@ for the user's lasting profile, so `save_memory` does not keep it. It stays in
 the conversation. When context compaction summarizes older messages, the
 summary has a section for user plans and time-bound information: the compactor
 labels each message with its send time in the configured timezone and asks the
-model to give every plan an absolute date and time, so "tomorrow" stays
-correct after the day it was said. Clearing the conversation history drops
+model to resolve relative dates to absolute ones, so "tomorrow" stays correct
+after the day it was said. A clock time is kept only when the user gave one. Clearing the conversation history drops
 these plans with the rest of the conversation.
 
 ### Sensitive Memory
@@ -77,15 +77,20 @@ a plain file, like every other memory.
 Notifications are never an explicit request to remember, and the Notification
 Memory prompt tells the model to ignore OTPs and secrets.
 
-### Saved User Profile In The System Prompt
+### Saved User Memory In Turn State
 
-When a session starts, the active `profile`, `preference`, and `rule` memories
-are listed in a "Saved user memory" section of the system prompt, highest
-priority first, within about 1,500 characters. Sensitive memories and `fact`
-memories are not listed. The Agent therefore applies saved preferences
-without calling `recall_memory`. A memory saved during a session appears in
-the prompt of the next session; the current session already holds it in its
-conversation.
+Every user turn's state message lists the active `profile`, `preference`, and
+`rule` memories under `saved_user_memory`, highest priority first, within about
+1,500 characters. They are read from the records on each turn, so a memory the
+user saves, changes, or forgets is reflected from the next turn on. The Agent
+therefore applies saved preferences without calling `recall_memory`.
+
+The list is not written into the system prompt, which a session keeps until
+the history is cleared or the configuration changes and which would otherwise
+go on showing a forgotten memory. Older state messages are pruned like any
+other state. Sensitive memories, `fact` memories, and memories derived from
+notifications are not listed; notification content is written by third parties
+and must not become an instruction.
 
 ## Runtime Flow
 
