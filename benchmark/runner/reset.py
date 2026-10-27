@@ -566,14 +566,12 @@ def _validate_consolidated_memory_content(
             steps = item.get("steps")
             if str(item.get("type") or "").casefold() != "procedure" or not isinstance(steps, list):
                 return False
-            # Each expected action must occur in a distinct step, in order.
-            # Prose mentioning all actions cannot substitute for an executable path.
-            descriptions = iter(
-                str(step.get("Description") or "").casefold()
-                for step in steps if isinstance(step, dict)
-            )
-            for expected in required_steps:
-                if not any(expected.casefold() in description for description in descriptions):
+            # Require the entire selected path, not a subsequence that could
+            # conceal failed attempts or unrelated actions between valid steps.
+            if len(steps) != len(required_steps):
+                return False
+            for step, expected in zip(steps, required_steps):
+                if not isinstance(step, dict) or expected.casefold() not in str(step.get("Description") or "").casefold():
                     return False
         serialized_item = json.dumps(item, ensure_ascii=False).casefold()
         if any(value.casefold() not in serialized_item for value in required_substrings):

@@ -251,14 +251,19 @@ structural evidence validator.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
 
-A Procedure's stored steps come from its own `evidence_refs`, not the Episode
-assessment's references. The candidate must cite each step of the verified path,
-including intermediate transitions and final verification. Failed alternatives
-belong in guards or preconditions, not in the executable step sequence. Evaluation fixtures can use
-`consolidation_expectation.required_procedure_steps` to require description
-substrings in distinct returned steps, in order, within one procedure. This
-checks the path available to the Agent rather than accepting matching prose or
-steps distributed across multiple memories.
+A Procedure selects its executable path with `step_refs`: ordered tool-result
+event IDs, each paired with a device call and included in `evidence_refs`.
+The broader evidence can include failed alternatives that explain a workaround;
+only selected steps become executable actions. Missing, duplicate, out-of-order,
+unpaired, uncited, or explicitly failed step results are rejected. The model and
+retention audit still judge whether a non-error observation establishes success
+and whether the selected path is complete. Existing stored memories are not
+rewritten; pending procedure candidates without an explicit path are not admitted.
+
+Evaluation fixtures use `consolidation_expectation.required_procedure_steps` for
+the complete returned sequence: one description substring per step, in order,
+with no extra steps. Matching prose or a subsequence cannot hide a failed action
+inserted before or within the valid path.
 
 ## Create, Update, And Conflict
 

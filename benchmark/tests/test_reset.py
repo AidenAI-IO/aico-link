@@ -1056,7 +1056,8 @@ def test_seed_memory_rejects_ambiguous_expiry():
 
 @pytest.mark.parametrize("steps, accepted", [
     (["Open preferences", "Change setting", "Reopen to verify"], True),
-    (["Open preferences", "Read status", "Change setting", "Reopen to verify"], True),
+    (["Open preferences", "Read status", "Change setting", "Reopen to verify"], False),
+    (["Failed attempt", "Open preferences", "Change setting", "Reopen to verify"], False),
     (["Change setting", "Reopen to verify"], False),
     (["Change setting", "Open preferences", "Reopen to verify"], False),
     (["Open preferences, Change setting, Reopen to verify"], False),

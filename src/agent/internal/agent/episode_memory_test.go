@@ -465,7 +465,8 @@ func TestEpisodeMemoryProcessorCreatesMultipleTypedMemoriesWithOneModelCall(t *t
       "expected_effect":"The Display settings page is visible",
       "scope":{"device_id":"device_a","app_name":"Settings","goal_pattern":"open display settings"},
       "tags":["settings","display"],
-      "evidence_refs":["ep_extract_call","ep_extract_result","ep_extract_display_call","ep_extract_display_result"]
+      "evidence_refs":["ep_extract_call","ep_extract_result","ep_extract_display_call","ep_extract_display_result"],
+      "step_refs":["ep_extract_result","ep_extract_display_result"]
     },
     {
       "lesson_key":"settings_display_location",
@@ -1324,7 +1325,7 @@ func TestEpisodeMemoryProcedureStepsRedactAuditedSensitiveValues(t *testing.T) {
 			{EventID: "result", Type: "tool_result", ToolName: "enter_text", Observation: "913204 was accepted"},
 		},
 	}
-	steps := episodeMemoryProcedureSteps(episode, []string{"call", "result"}, []string{"913204"})
+	steps := episodeMemoryProcedureSteps(episode, []string{"result"}, []string{"913204"})
 	if len(steps) != 1 {
 		t.Fatalf("steps = %#v, want one", steps)
 	}
@@ -1747,7 +1748,8 @@ func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
     "lesson_key":"merge_display_path","type":"procedure","action":"update","memory_id":"devmem_procedure","memory_revision":1,
     "unresolved_conflict":false,"situation":"When opening display settings","guidance":"Open Settings and select Display","expected_effect":"Display controls are visible",
     "scope":{"device_id":"device_a","app_name":"Settings"},"tags":["display"],
-    "evidence_refs":["ep_proc_call_1","ep_proc_result_1","ep_proc_call_2","ep_proc_result_2"]
+    "evidence_refs":["ep_proc_call_1","ep_proc_result_1","ep_proc_call_2","ep_proc_result_2"],
+    "step_refs":["ep_proc_result_1","ep_proc_result_2"]
   }]
 }`}}
 	processor := newEpisodeMemoryProcessor(plane, model)

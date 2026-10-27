@@ -526,7 +526,7 @@ def _extract_option_answer(final_response: str) -> str | None:
     # A bare letter is a choice only on its own answer line. Searching prose
     # for single letters mistakes the English article "a" for option (a).
     matches = re.findall(
-        r"^\s*(?:(?:answer|option|choice)\s*:?\s*)?([a-d])[.!]?\s*$",
+        r"^[ \t]*(?:(?:answer|option|choice)(?:[ \t]*:[ \t]*|[ \t]+))?([a-d])[.!]?[ \t]*\r?$",
         text.lower(), re.MULTILINE,
     )
     answers = list(matches)

@@ -5002,7 +5002,8 @@ func TestBenchmarkProcessEpisodeMemoryConsolidatesSeededEpisode(t *testing.T) {
     "expected_effect":"The changed title remains visible after reopening the note",
     "scope":{"device_id":"benchmark-device","app_name":"QA Notes","app_version":"7","goal_pattern":"persist edited note title"},
     "tags":["qa-notes","title","save"],
-    "evidence_refs":["preview_call","preview_result","edit_call","edit_result","save_call","save_result","verify_call","verify_result"]
+    "evidence_refs":["direct_save_result","preview_call","preview_result","edit_call","edit_result","save_call","save_result","verify_call","verify_result"],
+    "step_refs":["preview_result","edit_result","save_result","verify_result"]
   }]
 }`}}
 	runtime := NewRuntimeWithDeps(

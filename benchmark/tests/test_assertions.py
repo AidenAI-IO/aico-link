@@ -862,3 +862,12 @@ def test_required_tool_calls_first_attempt_only():
     out = evaluate_hard_assertions(trace_wrong_then_right, spec, timed_out=False)
     assert out.all_passed is False
     assert out.results.required_tool_calls is False
+
+
+def test_expected_option_answer_requires_label_separator():
+    for text in ("answerb", "optionb", "choiceb", "answerb."):
+        result = assertions.evaluate_expected_answer(text, "(b)", "option_letter")
+        assert result.predicted_answer is None
+    for text in ("answer b", "option:b", "choice: b", "Answer\tB", "B", "Explanation\r\nAnswer: B\r\nMore text"):
+        result = assertions.evaluate_expected_answer(text, "(b)", "option_letter")
+        assert result.predicted_answer == "(b)"
