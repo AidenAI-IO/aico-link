@@ -94,7 +94,7 @@ func (t *RecallMemoryTool) Description() string {
 		"Use for remembered preferences, rules, procedures, facts, profile info, or screen content the user saved earlier with the device button.",
 		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation.",
 		"Notification-derived temporary memories are included automatically. Use this tool for remembered notification conclusions; when the exact original notification record is required, use shell to read `/userdata/agent/memory/notifications/events/*.jsonl` without modifying it.",
-		"Returns matching memories with id, type, title, content, summary.",
+		"Returns matching memories with id, revision, type, title, content, summary.",
 	}, " ")
 }
 
@@ -208,18 +208,21 @@ func (t *SaveMemoryTool) Description() string {
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
 		"Returns status=saved with id, or status=ignored when it is a duplicate.",
+		"To correct a previously saved memory, first recall it, then pass its id as replaces_id and its revision as expected_revision. Do not guess the target; a stale revision is rejected.",
 	}, " ")
 }
 
 func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"type":     stringEnumArgSchema("Memory category.", "preference", "rule", "procedure", "fact", "profile"),
-		"title":    stringArgSchema("Short title for the memory."),
-		"content":  stringArgSchema("The stable information to remember."),
-		"tags":     stringArrayArgSchema("Topic or domain keywords for future search, e.g. verification, payment, expense. Not time words or vague terms."),
-		"entities": stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people."),
-		"evidence": stringArrayArgSchema("Original user quotes or observations that led to this memory, to help verify relevance later."),
-		"priority": rangedIntegerArgSchema("Importance from 1 to 100: 80+ for user-stated rules/preferences, 60+ for inferred patterns, 40+ for observations.", 1, 100),
+		"type":              stringEnumArgSchema("Memory category.", "preference", "rule", "procedure", "fact", "profile"),
+		"title":             stringArgSchema("Short title for the memory."),
+		"content":           stringArgSchema("The stable information to remember."),
+		"tags":              stringArrayArgSchema("Topic or domain keywords for future search, e.g. verification, payment, expense. Not time words or vague terms."),
+		"entities":          stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people."),
+		"evidence":          stringArrayArgSchema("Original user quotes or observations that led to this memory, to help verify relevance later."),
+		"priority":          rangedIntegerArgSchema("Importance from 1 to 100: 80+ for user-stated rules/preferences, 60+ for inferred patterns, 40+ for observations.", 1, 100),
+		"replaces_id":       stringArgSchema("ID returned by recall_memory when correcting an existing memory; requires expected_revision."),
+		"expected_revision": minIntegerArgSchema("Revision returned by recall_memory for replaces_id.", 1),
 	}, "type", "content")
 }
 
@@ -249,6 +252,17 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		Tags:             req.Tags,
 		Entities:         req.Entities,
 		EvidenceExcerpts: req.Evidence,
+	}
+	if req.ReplacesID != "" || req.ExpectedRevision != 0 {
+		if req.ReplacesID == "" || req.ExpectedRevision <= 0 {
+			return "", fmt.Errorf("replaces_id and expected_revision are required together")
+		}
+		id, err := t.store.ReplaceMemory(ctx, req.ReplacesID, req.ExpectedRevision, item)
+		if err != nil {
+			return "", err
+		}
+		t.store.RequestProfileRebuild()
+		return encodeToolJSON(map[string]string{"status": "saved", "id": id, "operation": string(MemoryOperationSupersede)})
 	}
 	result, err := t.store.ApplyMemoryCandidate(ctx, item)
 	if err != nil {

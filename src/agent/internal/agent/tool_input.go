@@ -263,37 +263,43 @@ func decodeDeviceMemoryQuery(input string) (DeviceMemoryQuery, error) {
 
 // SaveMemoryRequest represents the input for save_memory tool.
 type SaveMemoryRequest struct {
-	Type     string
-	Title    string
-	Content  string
-	Tags     []string
-	Entities []string
-	Evidence []string
-	Priority int
+	Type             string
+	Title            string
+	Content          string
+	Tags             []string
+	Entities         []string
+	Evidence         []string
+	Priority         int
+	ReplacesID       string
+	ExpectedRevision int
 }
 
 // decodeSaveMemoryRequest tolerantly decodes a save_memory argument.
 func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 	var flex struct {
-		Type     string                 `json:"type"`
-		Title    string                 `json:"title"`
-		Content  string                 `json:"content"`
-		Tags     flexLiteralStringSlice `json:"tags"`
-		Entities flexLiteralStringSlice `json:"entities"`
-		Evidence flexLiteralStringSlice `json:"evidence"`
-		Priority flexInt                `json:"priority"`
+		Type             string                 `json:"type"`
+		Title            string                 `json:"title"`
+		Content          string                 `json:"content"`
+		Tags             flexLiteralStringSlice `json:"tags"`
+		Entities         flexLiteralStringSlice `json:"entities"`
+		Evidence         flexLiteralStringSlice `json:"evidence"`
+		Priority         flexInt                `json:"priority"`
+		ReplacesID       string                 `json:"replaces_id"`
+		ExpectedRevision flexInt                `json:"expected_revision"`
 	}
 	if err := json.Unmarshal([]byte(input), &flex); err != nil {
 		return SaveMemoryRequest{}, err
 	}
 	return SaveMemoryRequest{
-		Type:     flex.Type,
-		Title:    flex.Title,
-		Content:  flex.Content,
-		Tags:     flex.Tags,
-		Entities: flex.Entities,
-		Evidence: flex.Evidence,
-		Priority: int(flex.Priority),
+		Type:             flex.Type,
+		Title:            flex.Title,
+		Content:          flex.Content,
+		Tags:             flex.Tags,
+		Entities:         flex.Entities,
+		Evidence:         flex.Evidence,
+		Priority:         int(flex.Priority),
+		ReplacesID:       flex.ReplacesID,
+		ExpectedRevision: int(flex.ExpectedRevision),
 	}, nil
 }
 

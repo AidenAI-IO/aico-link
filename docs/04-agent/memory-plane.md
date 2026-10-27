@@ -81,6 +81,10 @@ make an unrelated record satisfy a topical query.
 
 Explicit requests to remember information or a rule for future conversations
 require a successful `save_memory` call before the Agent confirms persistence.
+When correcting an existing long-term memory, the Agent recalls it first and
+passes its `id` and `revision` as `replaces_id` and `expected_revision` to
+`save_memory`. The store rejects a stale revision or a different memory type;
+it does not select a replacement solely from matching tags or entities.
 
 `recall_session_chunks` searches the backend ContextManager's shared chunk
 index. Topic queries match tags, entities, and summary text, including topics

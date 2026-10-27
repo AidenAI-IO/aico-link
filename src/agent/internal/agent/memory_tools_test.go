@@ -5,6 +5,7 @@ import (
 	"aiden-agent/internal/logging"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -559,6 +560,34 @@ func TestSaveMemoryToolExcludesScreenSnapshotType(t *testing.T) {
 	want := []string{"preference", "rule", "procedure", "fact", "profile"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("save_memory type enum = %v, want %v", got, want)
+	}
+}
+
+func TestSaveMemoryToolReplacesRecalledMemory(t *testing.T) {
+	store := NewLongTermMemoryStore(t.TempDir())
+	ctx := context.Background()
+	old := MemoryItem{ID: "old-preference", Type: "preference", Content: "Use dark mode.", EvidenceExcerpts: []string{"Use dark mode."}}
+	if _, err := store.AddMemory(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewSaveMemoryTool(store)
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference"}`); err == nil {
+		t.Fatal("replacement without a revision succeeded")
+	}
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":2}`); !errors.Is(err, errMemoryRevisionChanged) {
+		t.Fatalf("stale replacement error = %v", err)
+	}
+	output, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]string
+	if err := json.Unmarshal([]byte(output), &result); err != nil || result["operation"] != string(MemoryOperationSupersede) {
+		t.Fatalf("result = %q, err = %v", output, err)
+	}
+	active, err := store.Search(ctx, MemoryQuery{Limit: 10})
+	if err != nil || len(active) != 1 || active[0].Content != "Use light mode." {
+		t.Fatalf("active memories = %#v, err = %v", active, err)
 	}
 }
 
