@@ -3421,13 +3421,19 @@ static int rk628_csi_resume(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct rk628_csi *csi = to_csi(sd);
+	int ret;
 
 	v4l2_info(sd, "%s: resume!\n", __func__);
 
 	rk628_csi_power_on(csi);
 	rk628_cru_initialize(csi->rk628);
 	/* Power loss restores 1188 MHz; timing detection assumes probe's 1194 MHz. */
-	rk628_clk_set_rate(csi->rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
+	ret = rk628_clk_set_rate(csi->rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
+	if (ret) {
+		v4l2_err(sd, "failed to restore CPLL: %d\n", ret);
+		rk628_csi_power_off(csi);
+		return ret;
+	}
 	rk628_csi_initial(sd);
 	rk628_hdmirx_plugout(sd);
 	if (csi->plugin_irq)
@@ -3446,6 +3452,10 @@ static int rk628_csi_suspend(struct device *dev)
 	struct i2c_client *client = to_i2c_client(dev);
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct rk628_csi *csi = to_csi(sd);
+
+	/* Failed resume already left the receiver off and its IRQs disabled. */
+	if (csi->rk628->is_suspend)
+		return 0;
 
 	v4l2_info(sd, "%s: suspend!\n", __func__);
 
@@ -3810,7 +3820,11 @@ static int rk628_csi_probe(struct i2c_client *client,
 		err = -ENODEV;
 		goto power_off;
 	}
-	rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
+	err = rk628_clk_set_rate(rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
+	if (err) {
+		v4l2_err(sd, "failed to configure CPLL: %d\n", err);
+		goto power_off;
+	}
 
 	if (rk628->version >= RK628F_VERSION) {
 		err = rk628_csi_get_multi_dev_info(csi);

@@ -14,6 +14,8 @@ coherent receiver, CRU, MIPI PHY and post-processing implementation together.
 Local integration differences:
 - Restore the probe-time 1194 MHz CPLL reference on resume after power loss,
   before initializing HDMI timing measurement and output clocks.
+- Bound PLL lock polling and propagate timeout/I2C errors through the clock
+  setter. Stop CSI probe/resume and audio divider setup on parent-PLL failure.
 - Expose optional attributes on the I2C device, without a newer global
   Rockchip HDMI class dependency.
 - Omit the external RKCIF soft-reset hook unavailable in this BSP. Bridge

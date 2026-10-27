@@ -124,6 +124,41 @@ class AicoPowerTests(unittest.TestCase):
         self.assertEqual(self.mcu.call_args_list,
                          [mock.call("suspend_prepare"), mock.call("suspend_resume")])
 
+    def test_lost_prepare_response_releases_unknown_grant(self):
+        grant = [False]
+
+        def request(op):
+            if op == "suspend_prepare":
+                self.assertTrue(json.loads(CLI.RECOVERY_STATE.read_text())["mcu"])
+                grant[0] = True
+                raise RuntimeError("PREPARE response timed out")
+            self.assertEqual(op, "suspend_resume")
+            grant[0] = False
+
+        self.mcu.side_effect = request
+        result, errors = self.run_command("sleep")
+        self.assertEqual(result, 1)
+        self.assertIn("PREPARE response timed out", errors)
+        self.assertEqual(self.state.read_text(), "freeze mem disk\n")
+        self.assertFalse(grant[0])
+        self.assertFalse(CLI.RECOVERY_STATE.exists())
+        self.assertEqual(self.mcu.call_args_list,
+                         [mock.call("suspend_prepare"), mock.call("suspend_resume")])
+
+    def test_prepare_timeout_retains_cleanup_until_resume_succeeds(self):
+        self.mcu.side_effect = [RuntimeError("PREPARE response timed out"),
+                               RuntimeError("UART unavailable")]
+        result, errors = self.run_command("sleep")
+        self.assertEqual(result, 1)
+        self.assertIn("UART unavailable", errors)
+        self.assertTrue(json.loads(CLI.RECOVERY_STATE.read_text())["mcu"])
+        self.assertEqual(self.state.read_text(), "freeze mem disk\n")
+        self.mcu.side_effect = None
+        self.mcu.reset_mock()
+        self.assertEqual(CLI.main(["--recover"]), 0)
+        self.mcu.assert_called_once_with("suspend_resume")
+        self.assertFalse(CLI.RECOVERY_STATE.exists())
+
     def test_wakeup_count_failure_rolls_back_mcu_grant(self):
         original = CLI.write_power
         def fail_count(path, value, *args, **kwargs):

@@ -70,6 +70,12 @@ instead of 148.5 MHz and produced persistent diagonal corruption in raw frames.
 Clock and all HDMI channels remained locked; restarting capture or rewriting
 the same EDID did not repair it. Internal RK628 color bars were intact, and
 restoring the calibrated CPLL rate restored the phone image at 1080p60.
+PLL lock polling is limited to 100 reads with 1 ms sleeps between attempts.
+Timeouts return `ETIMEDOUT`; failed I2C reads retain their original errno.
+Probe and resume stop on CPLL failure. Failed resume powers the receiver back
+off and leaves IRQs and hotplug work disabled instead of proceeding with an
+unlocked reference clock. Audio parent-PLL errors also propagate without
+programming a divider from an invalid rate.
 
 Receiver configuration samples character errors once and uses that result
 for both readiness and retry decisions. Reading the counters can update

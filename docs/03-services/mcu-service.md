@@ -55,6 +55,13 @@ remain null; the MCU's six-byte battery response uses `FF`/`FFFF` sentinels.
 Application mutations require `generation` from `get_state` and a unique
 `request_id`. The two root-only suspend operations are reserved for
 `aico-power` and serialized by the service; they do not use mutation IDs.
+Before `suspend_prepare`, the worker persists recovery intent. A timeout or
+lost/invalid PREPARE reply leaves the MCU grant outcome unknown, so the worker
+must abort suspend and send `suspend_resume`. Cleanup intent remains until
+RESUME succeeds; systemd post-stop recovery retries interrupted cleanup.
+This obligation also applies to any direct caller of the root-only operations.
+Repeated RV_READY events do not revoke an MCU grant, and the grant has no timer
+expiry that could interrupt a valid long sleep.
 For example, a timer PUT body is:
 
 ```json

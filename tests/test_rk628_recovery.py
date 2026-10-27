@@ -380,7 +380,7 @@ int main(void) {
 
 
 def extract_function(source, name):
-    match = re.search(r"^(?:static )?(?:bool|int|void|unsigned long) " + name + r"\([^;]*?\)\n\{.*?^\}",
+    match = re.search(r"^(?:static )?(?:bool|int|void|long|unsigned long) " + name + r"\([^;]*?\)\n\{.*?^\}",
                       source, re.MULTILINE | re.DOTALL)
     if not match:
         raise AssertionError(f"Production function not found: {name}")
@@ -445,11 +445,16 @@ def main():
             ("rk628.h", "rk628_cru.h", "rk628_cru.c")))
         resume = resume.replace("/* CRU_FUNCTIONS */", "\n".join(
             extract_function(cru_source, name) for name in (
-                "rk628_cru_clk_get_rate_pll", "rk628_cru_clk_set_rate_pll",
+                "rational_best_approximation", "rk628_cru_clk_get_rate_pll",
+                "rk628_cru_wait_pll_lock", "rk628_cru_clk_set_rate_pll",
+                "rk628_cru_clk_set_rate_sclk_vop", "rk628_cru_clk_set_rate_sclk_hdmirx_aud",
+                "rk628_cru_clk_set_rate_rx_read", "rk628_cru_clk_get_rate_uart_src",
+                "rk628_cru_clk_set_rate_sclk_uart", "rk628_cru_clk_set_rate_cec",
+                "rk628_clk_set_rate",
                 "rk628_cru_initialize",
             )))
-        resume = resume.replace("/* DRIVER_FUNCTIONS */",
-                                extract_function(source, "rk628_csi_resume"))
+        resume = resume.replace("/* DRIVER_FUNCTIONS */", "\n".join(
+            extract_function(source, name) for name in ("rk628_csi_resume", "rk628_csi_suspend")))
         compiler = shlex.split(os.environ.get("CC", "gcc"))
         for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
                            ("startup", startup), ("cif-startup", cif_startup),
