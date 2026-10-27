@@ -91,21 +91,21 @@ require_uint "--click Y" "$HID_CLICK_Y"
 require_uint "--hid-duration-ms" "$HID_DURATION_MS"
 
 run_privileged_hid() {
-    aiden_hid_name="$1"
+    aico_hid_name="$1"
     shift
     if [ "$(id -u)" -eq 0 ]; then
-        run_check "$aiden_hid_name" "$@"
+        run_check "$aico_hid_name" "$@"
         return $?
     fi
     if [ -w /dev/hidg0 ] && [ -w /dev/hidg1 ]; then
-        run_check "$aiden_hid_name" "$@"
+        run_check "$aico_hid_name" "$@"
         return $?
     fi
     if command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
-        run_check "$aiden_hid_name" sudo -n "$@"
+        run_check "$aico_hid_name" sudo -n "$@"
         return $?
     fi
-    fail "$aiden_hid_name cannot run: /dev/hidg0 or /dev/hidg1 is not writable by $(id -un). Run locally as root or grant HID write permission."
+    fail "$aico_hid_name cannot run: /dev/hidg0 or /dev/hidg1 is not writable by $(id -un). Run locally as root or grant HID write permission."
     return 1
 }
 
@@ -116,8 +116,8 @@ check_exists "keyboard HID" /dev/hidg0
 check_exists "pointer HID" /dev/hidg1
 check_exists "consumer/control HID" /dev/hidg2
 
-if [ -r /sys/kernel/config/usb_gadget/aiden_hid/UDC ]; then
-    UDC="$(cat /sys/kernel/config/usb_gadget/aiden_hid/UDC 2>/dev/null)"
+if [ -r /sys/kernel/config/usb_gadget/aico_hid/UDC ]; then
+    UDC="$(cat /sys/kernel/config/usb_gadget/aico_hid/UDC 2>/dev/null)"
     if [ -n "$UDC" ]; then
         pass "USB gadget bound to UDC: $UDC"
     else

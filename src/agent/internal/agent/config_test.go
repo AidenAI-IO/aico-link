@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 func TestConfigValidateAcceptsSTT(t *testing.T) {
@@ -623,7 +623,7 @@ func TestLoadResolvedConfigAcceptsSymlinkToRegularFile(t *testing.T) {
 }
 
 func TestLoadResolvedConfigRejectsSpecialFile(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aiden-config-")
+	dir, err := os.MkdirTemp("", "aico-config-")
 	if err != nil {
 		t.Fatalf("create short temp directory: %v", err)
 	}
@@ -858,30 +858,9 @@ func TestConfigRejectsInvalidTerminationPolicyThresholdOrder(t *testing.T) {
 }
 
 func TestBundledSkillsDirCandidatesUseBusinessPackage(t *testing.T) {
-	want := []string{"/usr/share/aiden/skills"}
+	want := []string{"/usr/share/aico/skills"}
 	if got := bundledSkillsDirCandidates(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("bundledSkillsDirCandidates() = %#v, want %#v", got, want)
-	}
-}
-
-func TestConfigScreenshotPruningDefaultsAndOverrides(t *testing.T) {
-	cfg := Config{Model: ModelConfig{Provider: "fake"}}
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() error = %v", err)
-	}
-	pruning := cfg.ScreenshotPruningOrDefault()
-	if pruning.KeepN != 3 || pruning.Interval != 2 {
-		t.Fatalf("default screenshot pruning = %#v, want keep_n=3 interval=2", pruning)
-	}
-
-	cfg.ScreenshotKeepN = 5
-	cfg.ScreenshotPruneInterval = 40
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("Validate() with screenshot pruning overrides error = %v", err)
-	}
-	pruning = cfg.ScreenshotPruningOrDefault()
-	if pruning.KeepN != 5 || pruning.Interval != 40 {
-		t.Fatalf("configured screenshot pruning = %#v, want keep_n=5 interval=40", pruning)
 	}
 }
 
@@ -1832,26 +1811,6 @@ func TestConfigValidateRejectsBraveSearchWithoutAPIKey(t *testing.T) {
 	}
 }
 
-func TestConfigValidateRejectsNegativeScreenshotPruning(t *testing.T) {
-	cfg := Config{
-		Model:           ModelConfig{Provider: "fake"},
-		ScreenshotKeepN: -1,
-	}
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "screenshot_keep_n") {
-		t.Fatalf("expected screenshot_keep_n validation error, got %v", err)
-	}
-
-	cfg = Config{
-		Model:                   ModelConfig{Provider: "fake"},
-		ScreenshotPruneInterval: -1,
-	}
-	err = cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "screenshot_prune_interval") {
-		t.Fatalf("expected screenshot_prune_interval validation error, got %v", err)
-	}
-}
-
 func TestProxyConfigFromEnvironment(t *testing.T) {
 	t.Setenv("http_proxy", "http://proxy.example:18080")
 	t.Setenv("HTTP_PROXY", "")
@@ -1931,10 +1890,10 @@ func TestConfigVADBackendDefaultsAndValidation(t *testing.T) {
 	if got := cfg.VADBackendOrDefault(); got != "cpu" {
 		t.Fatalf("VADBackendOrDefault() = %q, want cpu", got)
 	}
-	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aiden/cpu_vad" {
+	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("DefaultVADHelperPathForBackend(cpu) = %q", got)
 	}
-	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aiden/cpu_vad" {
+	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("ResolveVADHelperPath(cpu, rknn default) = %q", got)
 	}
 	if got := ResolveVADHelperPath("cpu", "/custom/vad"); got != "/custom/vad" {
@@ -2456,7 +2415,7 @@ enabled = false
 relay_url = "https://relay.example.com"
 relay_api_key = "relay-secret"
 board_id = "board-001"
-bundle_id = "com.example.aiden"
+bundle_id = "com.example.aico"
 environment = "sandbox"
 team_id = "TEAMID1234"
 key_id = "KEYID12345"

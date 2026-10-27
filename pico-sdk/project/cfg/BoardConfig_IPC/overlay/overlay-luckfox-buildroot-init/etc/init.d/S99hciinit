@@ -1,0 +1,47 @@
+#!/bin/sh
+
+check_hciconfig() {
+	if command -v hciattach >/dev/null 2>&1; then
+		# S26wifi loads the SDIO driver before this script, but allow for
+		# slow SDIO enumeration instead of racing the module insertion.
+		i=0
+		while ! lsmod | grep -q "aic8800_fdrv" && [ $i -lt 20 ]; do
+			sleep 1
+			i=$((i + 1))
+		done
+
+		if lsmod | grep -q "aic8800_fdrv"; then
+			# Reference Pico boards use UART1.  A board overlay can provide
+			# /etc/default/aic8800-bt with AIC8800_BT_TTY to select another
+			# UART without making this shared init script model-dependent.
+			bt_tty=/dev/ttyS1
+			if [ -r /etc/default/aic8800-bt ]; then
+				. /etc/default/aic8800-bt
+				if [ -n "${AIC8800_BT_TTY}" ]; then
+					bt_tty=${AIC8800_BT_TTY}
+				fi
+			fi
+			echo "Attaching AIC8800 Bluetooth on ${bt_tty}"
+			hciattach -s 1500000 "${bt_tty}" any 1500000 flow nosleep &
+			sleep 2
+			if hciconfig -a | grep -q "hci0"; then
+				hciconfig hci0 up &
+			else
+				echo "hci0 not found or not available."
+			fi
+			ifconfig wlan0 up && udhcpc -i wlan0 > /dev/null 2>&1
+		else
+			echo "aic8800_fdrv not found."
+		fi
+	fi
+}
+
+case $1 in
+	start)
+		check_hciconfig &
+		;;
+	*)
+		exit 1
+		;;
+esac
+

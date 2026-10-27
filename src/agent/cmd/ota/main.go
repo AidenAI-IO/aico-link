@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/ota"
+	"aico-agent/internal/ota"
 )
 
 func main() {

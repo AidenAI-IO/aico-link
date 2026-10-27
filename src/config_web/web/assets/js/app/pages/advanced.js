@@ -180,7 +180,7 @@ export async function logsPage(context) {
     if (isEmbedded()) {
       // The archive is binary and a WebView cannot save a download, so the app
       // opens the board URL in the system browser, which can.
-      postToHost({type: 'aiden_open_url', url: new URL('/api/logs/support', window.location.href).href});
+      postToHost({type: 'aico_open_url', url: new URL('/api/logs/support', window.location.href).href});
       return;
     }
     trigger.disabled = true;
@@ -189,7 +189,7 @@ export async function logsPage(context) {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const match = (response.headers.get('Content-Disposition') || '').match(/filename="([^"]+)"/i);
       const url = URL.createObjectURL(await response.blob());
-      const link = el('a', {attrs: {href: url, download: match ? match[1] : 'aiden-logs.tar.gz'}});
+      const link = el('a', {attrs: {href: url, download: match ? match[1] : 'aico-logs.tar.gz'}});
       document.body.appendChild(link);
       link.click();
       link.remove();

@@ -1,0 +1,78 @@
+#!/bin/sh
+set -e
+
+if [ "$#" -eq 0 ]; then
+    echo "Usage: aico-env-run COMMAND [ARG...]" >&2
+    exit 64
+fi
+
+AICO_ENV_DEFAULT_NO_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16,fc00::/7,fe80::/10"
+AICO_ENV_FILE="${AICO_SYSTEM_ENV:-/userdata/system/env}"
+AICO_ENV_WIFI_PROXY_BYPASS="${AICO_WIFI_PROXY_BYPASS:-0}"
+
+# The proxy daemon must see the configured upstream, never the fixed local
+# endpoint inherited from its parent. Clearing these keys also makes removing
+# an upstream from the env file take effect on daemon restart.
+if [ "$AICO_ENV_WIFI_PROXY_BYPASS" = "1" ]; then
+    unset HTTP_PROXY HTTPS_PROXY ALL_PROXY NO_PROXY
+    unset http_proxy https_proxy all_proxy no_proxy
+fi
+
+if [ -r "$AICO_ENV_FILE" ]; then
+    case "$-" in
+        *a*) AICO_ENV_RESTORE_ALLEXPORT=1 ;;
+        *) AICO_ENV_RESTORE_ALLEXPORT=0 ;;
+    esac
+    case "$-" in
+        *e*) AICO_ENV_RESTORE_ERREXIT=1 ;;
+        *) AICO_ENV_RESTORE_ERREXIT=0 ;;
+    esac
+    set -a
+    set +e
+    . "$AICO_ENV_FILE"
+    if [ "$AICO_ENV_RESTORE_ERREXIT" = "1" ]; then
+        set -e
+    else
+        set +e
+    fi
+    if [ "$AICO_ENV_RESTORE_ALLEXPORT" != "1" ]; then
+        set +a
+    fi
+fi
+
+if [ "$AICO_ENV_WIFI_PROXY_BYPASS" != "1" ] && [ "${AICO_WIFI_PROXY_ENABLED:-1}" != "0" ]; then
+    AICO_ENV_WIFI_PROXY_ENVIRONMENT="${AICO_WIFI_PROXY_ENVIRONMENT:-/run/wifi_proxy/proxy-env}"
+    if [ -n "${AICO_WIFI_PROXY_URL:-}" ]; then
+        HTTP_PROXY="$AICO_WIFI_PROXY_URL"
+        HTTPS_PROXY="$AICO_WIFI_PROXY_URL"
+        ALL_PROXY="$AICO_WIFI_PROXY_URL"
+    elif [ -r "$AICO_ENV_WIFI_PROXY_ENVIRONMENT" ]; then
+        . "$AICO_ENV_WIFI_PROXY_ENVIRONMENT"
+    else
+        HTTP_PROXY=http://127.0.0.1:18080
+        HTTPS_PROXY=http://127.0.0.1:18080
+        ALL_PROXY=http://127.0.0.1:18080
+    fi
+    http_proxy="$HTTP_PROXY"
+    https_proxy="$HTTPS_PROXY"
+    all_proxy="$ALL_PROXY"
+    export HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+fi
+
+if [ "$AICO_ENV_WIFI_PROXY_BYPASS" != "1" ] &&
+   [ -n "${HTTP_PROXY:-}${http_proxy:-}${HTTPS_PROXY:-}${https_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ] &&
+   [ "${AICO_WIFI_PROXY_NO_PROXY_SET:-0}" != "1" ] &&
+   [ -z "${NO_PROXY:-}" ] && [ -z "${no_proxy:-}" ]; then
+    NO_PROXY="$AICO_ENV_DEFAULT_NO_PROXY"
+    no_proxy="$AICO_ENV_DEFAULT_NO_PROXY"
+    export NO_PROXY no_proxy
+fi
+export NO_PROXY no_proxy 2>/dev/null || true
+
+if [ -r /etc/profile.d/aico-python.sh ]; then
+    . /etc/profile.d/aico-python.sh
+fi
+
+unset AICO_ENV_DEFAULT_NO_PROXY AICO_ENV_FILE AICO_ENV_WIFI_PROXY_ENVIRONMENT
+unset AICO_ENV_RESTORE_ALLEXPORT AICO_ENV_RESTORE_ERREXIT AICO_ENV_WIFI_PROXY_BYPASS AICO_WIFI_PROXY_NO_PROXY_SET
+exec "$@"

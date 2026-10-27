@@ -1,17 +1,18 @@
-# Aiden Firmware
+# Aico Link Firmware
 
-Docs: [aidenai.io/docs](https://aidenai.io/docs) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
+Website: [aico.link](https://aico.link) | Docs: [Documentation Hub](docs/README.md) | Community: [Join the Discord](https://discord.gg/tFrQsgFGTy)
 
-Aiden Firmware is the firmware and device-side agent runtime for the
-current Aiden development board. The board observes a target device through
-HDMI capture and controls it through USB HID, so the agent can operate normal
-mobile or desktop apps without relying on app-specific automation APIs.
+**Aico Link** is the hardware. **Aico** is the AI Agent that runs on it.
+This repository provides Aico Link firmware, hardware services, and the Aico
+runtime. The board observes a target device through HDMI capture and controls
+it through USB HID, so Aico can operate normal mobile or desktop apps without
+relying on app-specific automation APIs.
 
 This repository is for the development-board implementation: firmware overlay,
 C++ hardware services, the Go Agent, OTA tooling, tests, and benchmark support.
 It is not a final integrated hardware product.
 
-![Aiden Development Board](./aiden-dev-board.webp)
+![Aico Link Development Board](./aico-dev-board.webp)
 
 ## Hardware & Self-Assembly
 
@@ -27,7 +28,7 @@ Some prototype hardware revisions may include additional USB modules, but the fi
 
 For the complete parts list, self-assembly instructions, wiring diagram, and target-device prerequisites, see [Hardware & Wiring](docs/01-getting-started/hardware.md).
 
-## What Aiden Does
+## What Aico Does
 
 The current hardware setup connects to a phone or computer through a USB-C hub:
 
@@ -41,7 +42,7 @@ The basic control path does not require jailbreak, ADB, developer mode, or a cus
 ## Key Features
 
 ### 1. **True Portability**
-Most mobile agent projects are lab prototypes that require a laptop or desktop to run. Aiden is:
+Most mobile agent projects are lab prototypes that require a laptop or desktop to run. Aico Link is:
 - **Pocket-sized** — Powered entirely by your phone's USB-C port (future versions will be credit-card-sized and magnetically attach to phone backs)
 - **Plug-and-play core control** — HDMI observation and USB HID control work
   without pairing or a companion app. Optional Phone Bridge, BLE Wake, and
@@ -56,20 +57,20 @@ Most mobile agent projects are lab prototypes that require a laptop or desktop t
 - **Community-driven** — Contributions welcome; flash custom firmware freely
 
 ### 3. **Privacy-First**
-- **No Aiden backend** — All services (LLM, STT, TTS) are user-configured external endpoints
+- **No Aico backend** — All services (LLM, STT, TTS) are user-configured external endpoints
 - **Zero data collection** — We never see your screen, conversations, or behavior
 - **Self-hostable** — Run your own models; keep everything on your infrastructure
 - **Auditable** — Open-source code under community scrutiny
 
 ### 4. **Adaptive Intelligence**
-- **Persistent memory** — Aiden remembers device-specific context, user preferences, and past interactions
+- **Persistent memory** — Aico remembers device-specific context, user preferences, and past interactions
 - **Self-improving skills** — Skills update based on usage patterns and new workflows
-- **Personalized over time** — The more you use Aiden, the better it understands your habits and needs
+- **Personalized over time** — The more you use Aico, the better it understands your habits and needs
 
 ### 5. **Real-Time Voice Interaction**
 - **Hardware VAD** (Voice Activity Detection) — Wake-word-free voice control with sub-100ms latency
 - **Streaming STT/TTS** — Natural conversation flow with live transcription and speech synthesis
-- **Audio feedback** — Aiden speaks responses and status updates
+- **Audio feedback** — Aico speaks responses and status updates
 
 ## Repository Scope
 
@@ -79,7 +80,7 @@ Most mobile agent projects are lab prototypes that require a laptop or desktop t
 - **USB networking**: The board exposes `usb0` at `192.168.42.1` for the device config page and local board-to-phone communication.
 - **OTA**: A/B partition updates, signed manifests, health confirmation, and `abctl` diagnostics.
 
-The firmware has no required Aiden-hosted backend. Screenshots, audio, and text are sent only to the model/STT/TTS/search endpoints you configure.
+The firmware has no required Aico-hosted backend. Screenshots, audio, and text are sent only to the model/STT/TTS/search endpoints you configure.
 
 ## Architecture
 
@@ -107,7 +108,7 @@ At runtime, the Agent is intentionally decoupled from C++ service internals: Fra
 ## Quick Start
 
 For the fastest hardware-free experience, start Config Web and Agent Web with
-the [Try Aiden on PC](docs/01-getting-started/try-aiden-on-pc.md) guide:
+the [Try Aico on PC](docs/01-getting-started/try-aico-on-pc.md) guide:
 
 ```bash
 docker compose up --build
@@ -120,11 +121,12 @@ compatible environment bridge. For benchmark suites and reports, see
 
 First-time hardware users should start with [Newcomer Quickstart](docs/01-getting-started/quickstart.md). It walks through wiring, flashing, Wi-Fi setup, Agent configuration, voice verification, and troubleshooting.
 
-Clone the repository:
+Clone the repository (the BSP is included in `pico-sdk/`; `--recursive` also
+initializes the MobileGym dependency):
 
 ```bash
-git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git
-cd aiden-firmware
+git clone --recursive git@github.com:AidenAI-IO/aico-link.git aico-link-firmware
+cd aico-link-firmware
 ```
 
 Build and audit the Debian ARM application bundle:
@@ -169,7 +171,8 @@ tool directly:
 The full documentation is organized under [docs/](docs/README.md):
 
 - [Documentation Hub](docs/README.md)
-- [Try Aiden on PC](docs/01-getting-started/try-aiden-on-pc.md)
+- [Product Names and Technical Identifiers](docs/02-architecture/naming.md)
+- [Try Aico on PC](docs/01-getting-started/try-aico-on-pc.md)
 - [Newcomer Quickstart](docs/01-getting-started/quickstart.md)
 - [Hardware & Wiring](docs/01-getting-started/hardware.md)
 - [Firmware Build & Flashing](docs/01-getting-started/firmware.md)

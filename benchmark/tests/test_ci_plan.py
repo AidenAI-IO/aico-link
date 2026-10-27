@@ -49,32 +49,38 @@ def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> 
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
+    assert len(runnable) == 17
+    assert len(hardware) == 16
+    assert len(all_cases) == 32
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.id for case in runnable if case.environment == "adb"} == {
-        "adb-android", "adb-android-aidenbridge",
-        "adb-android-text-editing", "adb-android-text-editing-aidenbridge",
+        "adb_android_basic", "adb_android_basic-aidenbridge",
+        "adb_android_text_editing", "adb_android_text_editing-aidenbridge",
     }
     assert len({case.id for case in all_cases}) == len(all_cases)
     assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
         {case.suite for case in catalog.cases}
-        - {"suites/mobilegym_scroll_sweep.json"}
+        - {"suites/mobilegym_scroll_sweep.json", "suites/tool_recovery_v1.json"}
     )
 
 
-def test_scroll_sweep_stays_out_of_runnable_but_is_explicitly_selectable() -> None:
+@pytest.mark.parametrize("case_id,suite", [
+    ("mobilegym-scroll-sweep", "suites/mobilegym_scroll_sweep.json"),
+    ("tool-recovery", "suites/tool_recovery_v1.json"),
+])
+def test_manual_suite_stays_out_of_runnable_but_is_explicitly_selectable(case_id, suite) -> None:
     catalog = load_catalog()
 
     runnable = select_cases(catalog, profile="runnable")
-    sweep_ids = {case.id for case in runnable}
-    assert "mobilegym-scroll-sweep" not in sweep_ids
+    assert case_id not in {case.id for case in runnable}
 
     selected = select_cases(
         catalog,
         profile="runnable",
-        suite="suites/mobilegym_scroll_sweep.json",
+        suite=suite,
     )
-    assert [case.id for case in selected] == ["mobilegym-scroll-sweep"]
+    assert [case.id for case in selected] == [case_id]
     assert selected[0].runnable is False
 
 
@@ -84,7 +90,7 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     selected = select_cases(
         catalog,
         profile="all",
-        suite="suites/aiden_app/connection_capabilities_v1.json",
+        suite="suites/aico_app/connection_capabilities_v1.json",
     )
 
     assert {case.target_platform for case in selected} == {"ios", "android"}
@@ -104,13 +110,15 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
     assert mobilegym[0].runnable is False
     assert mobilegym[0] not in select_cases(catalog, profile="runnable")
     assert {case.id for case in hardware} == {"phone-control-ios"}
+    with pytest.raises(CatalogError, match="outside the adb profile"):
+        select_cases(catalog, profile="adb", suite=suite)
     assert {case.id for case in both} == {
         "phone-control-mobilegym", "phone-control-ios"
     }
 
 
 @pytest.mark.parametrize("suite", ["adb_android_basic", "adb_android_text_editing"])
-@pytest.mark.parametrize("profile", ["runnable", "hardware", "all"])
+@pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
 def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite, profile):
     catalog = load_catalog()
     selected = select_cases(catalog, profile=profile, suite=f"suites/{suite}.json")
@@ -164,7 +172,7 @@ def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
     selected = select_cases(
         catalog,
         profile="hardware",
-        suite="suites/aiden_app/android_bridge_capabilities_v1.json",
+        suite="suites/aico_app/android_bridge_capabilities_v1.json",
     )
 
     assert len(selected) == 1
@@ -191,7 +199,7 @@ def test_external_case_reads_its_named_environment_variable() -> None:
     case = next(
         item
         for item in load_catalog().cases
-        if item.id == "aiden-app-ios"
+        if item.id == "aico-app-ios"
     )
 
     url, service = _environment_url(
@@ -216,14 +224,14 @@ def test_ci_maps_unprefixed_action_variables_to_benchmark_runtime() -> None:
         }
     )
 
-    assert runtime["AIDEN_BENCHMARK_AGENT_MODEL"] == "agent-model"
-    assert runtime["AIDEN_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
-    assert runtime["AIDEN_DAEMON_IMAGE"] == "agent-daemon:test"
+    assert runtime["AICO_BENCHMARK_AGENT_MODEL"] == "agent-model"
+    assert runtime["AICO_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
+    assert runtime["AICO_DAEMON_IMAGE"] == "agent-daemon:test"
     assert runtime["LANGFUSE_PUBLIC_KEY"] == "langfuse-key"
-    assert runtime["AIDEN_BENCHMARK_TELEMETRY"] == "1"
-    assert runtime["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
-    assert "AIDEN_BENCHMARK_TELEMETRY" not in _runtime_environment({})
-    assert "AIDEN_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
+    assert runtime["AICO_BENCHMARK_TELEMETRY"] == "1"
+    assert runtime["AICO_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
+    assert "AICO_BENCHMARK_TELEMETRY" not in _runtime_environment({})
+    assert "AICO_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
 
 
 def test_ci_uses_prepared_images_only_when_explicitly_enabled() -> None:
@@ -344,7 +352,7 @@ def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None
     assert _effective_exit_code(0, manifest) == 0
 
 
-@pytest.mark.parametrize("case_id", ["adb-android", "adb-android-aidenbridge", "aidenbridge-capabilities-android"])
+@pytest.mark.parametrize("case_id", ["adb_android_basic", "adb_android_basic-aidenbridge", "aidenbridge-capabilities-android"])
 @pytest.mark.parametrize("complete", [True, False])
 def test_android_cases_use_run_completeness_not_task_pass_rate(
     monkeypatch, tmp_path: Path, case_id: str, complete: bool,
@@ -610,7 +618,7 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
-    assert re.search(r"(?m)^\s+AIDEN_[A-Z0-9_]+:", workflow) is None
+    assert re.search(r"(?m)^\s+AICO_[A-Z0-9_]+:", workflow) is None
     assert "BENCHMARK_TELEMETRY: '1'" in workflow
     expected_mappings = {
         "BENCHMARK_AGENT_PROVIDER": "vars.BENCHMARK_AGENT_PROVIDER",
@@ -626,11 +634,11 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         "BENCHMARK_IOS_ENVIRONMENT_URL": "vars.BENCHMARK_IOS_ENVIRONMENT_URL",
         "BENCHMARK_MAC_ENVIRONMENT_URL": "vars.BENCHMARK_MAC_ENVIRONMENT_URL",
         "BENCHMARK_VPHONE_ENVIRONMENT_URL": "vars.BENCHMARK_VPHONE_ENVIRONMENT_URL",
-        "BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL"
         ),
-        "BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL"
         ),
     }
     for environment_name, github_expression in expected_mappings.items():

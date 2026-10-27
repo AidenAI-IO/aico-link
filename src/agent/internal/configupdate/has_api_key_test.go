@@ -3,7 +3,7 @@ package configupdate
 import (
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // The shipped agent.toml references "$OPENAI_API_KEY"-style variables that a

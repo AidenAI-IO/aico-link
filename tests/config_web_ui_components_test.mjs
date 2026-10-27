@@ -411,9 +411,14 @@ const countByClass = (node, className) => {
     'an explicit opt-in parameter marks the document as embedded',
   );
   assert.equal(
-    isEmbedded({location: {search: ''}, navigator: {userAgent: 'Mozilla/5.0 (iPhone) AidenApp/1.0'}}),
+    isEmbedded({location: {search: ''}, navigator: {userAgent: 'Mozilla/5.0 (iPhone) AicoApp/1.0'}}),
     true,
-    'the app user-agent token marks the document as embedded',
+    'the Aico app user-agent token marks the document as embedded',
+  );
+  assert.equal(
+    isEmbedded({location: {search: ''}, navigator: {userAgent: 'Mozilla/5.0 (iPhone) AicoApp/1.0'}}),
+    true,
+    'the legacy app user-agent token remains supported',
   );
 
   // Android marks its WebView in the user agent; a desktop browser does not.
@@ -581,6 +586,28 @@ const countByClass = (node, className) => {
     globalThis.setTimeout = realSetTimeout;
     globalThis.clearTimeout = realClearTimeout;
   }
+}
+
+// Host messages and backup headers use the initial Aico protocol.
+{
+  const {postToHost} = await import(pathToFileURL(path.join(uiRoot, '../app/host.js')).href);
+  const messages = [];
+  const host = {ReactNativeWebView: {postMessage: value => messages.push(JSON.parse(value))}};
+  const message = {type: 'aico_config_save_state', dirty: true};
+  assert.equal(postToHost(message, host), true);
+  assert.deepEqual(messages.pop(), message);
+  assert.equal(postToHost({type: 'aico_config_restart'}, {}), false);
+
+  const {readArchiveHeader} = await import(pathToFileURL(path.join(uiRoot, '../config/host-transfer.js')).href);
+  const data = new TextEncoder().encode(JSON.stringify({format: 'aico-backup', version: 1}));
+  const prefix = new Uint8Array(14);
+  prefix.set(new TextEncoder().encode('AICOBKP1'));
+  const view = new DataView(prefix.buffer);
+  view.setUint16(8, 1);
+  view.setUint32(10, data.length);
+  assert.deepEqual(await readArchiveHeader(new Blob([prefix, data])), {format: 'aico-backup', version: 1});
+  prefix.set(new TextEncoder().encode('INVALID!'));
+  await assert.rejects(() => readArchiveHeader(new Blob([prefix, data])), /not_aico_backup/);
 }
 
 process.stdout.write('config web UI component tests passed\n');

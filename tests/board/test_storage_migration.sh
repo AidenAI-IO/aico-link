@@ -3,14 +3,14 @@
 #
 # Strategy: instead of filling the real 3 GB /userdata, a small loop-mounted
 # ext4 image (on /userdata, since /tmp is a ~73 MB tmpfs) acts as the "eMMC"
-# via the AIDEN_STORAGE_EMMC_ROOT test hook (injected through
-# /userdata/system/env, which aiden-env-run exports to the agent on every
+# via the AICO_STORAGE_EMMC_ROOT test hook (injected through
+# /userdata/system/env, which aico-env-run exports to the agent on every
 # start). Backdated recordings push free space below the 10% start watermark;
 # the test then asserts that the oldest files stream to the SD card until free
 # space is back at the 50% stop watermark.
 #
 # Requirements: board reachable over ssh, an SD card inserted and mounted,
-# firmware with the AIDEN_STORAGE_EMMC_ROOT hook.
+# firmware with the AICO_STORAGE_EMMC_ROOT hook.
 #
 # Usage:
 #   BOARD=root@192.168.42.1 ./tests/board/test_storage_migration.sh
@@ -38,7 +38,7 @@ SSH_OPTS="$SSH_OPTS -o ControlMaster=auto -o ControlPath=$SSH_CTL -o ControlPers
 
 # The loop image lives on the real eMMC (/userdata, ~2.6 GB free); /tmp is a
 # small tmpfs that cannot hold it. The loop mount point below is what the
-# migrator sees as "eMMC" via AIDEN_STORAGE_EMMC_ROOT, and its statfs is
+# migrator sees as "eMMC" via AICO_STORAGE_EMMC_ROOT, and its statfs is
 # independent of the host /userdata partition.
 TEST_ROOT=/userdata/stmig
 IMG="$TEST_ROOT/emmc.img"
@@ -51,10 +51,10 @@ FILE_MB=2
 NFILES=18
 SYS_ENV=/userdata/system/env
 SYS_ENV_BAK=/userdata/system/env.stmig.bak
-STATE=/run/aiden/storage.state
-SD_AUDIO=/mnt/sdcard/aiden/audio
+STATE=/run/aico/storage.state
+SD_AUDIO=/mnt/sdcard/aico/audio
 AGENT_LOG=/userdata/agent/log/agent.log
-ENV_LINE="AIDEN_STORAGE_EMMC_ROOT=$EMMC"
+ENV_LINE="AICO_STORAGE_EMMC_ROOT=$EMMC"
 
 PASS=0
 FAIL=0
@@ -113,23 +113,23 @@ make_loop_image() {
 }
 
 restart_agent() {
-    # aiden-agent.service forks a long-lived watchdog. Over ssh that child
+    # aico-agent.service forks a long-lived watchdog. Over ssh that child
     # inherits the session's stdout pipe, so ssh blocks until the watchdog exits
     # (i.e. forever). setsid + full fd redirection detaches it so ssh returns at
     # once; the ServerAlive guard in SSH_OPTS is a last resort.
-    bsh 'setsid systemctl restart aiden-agent.service >/dev/null 2>&1 </dev/null & exit 0' \
+    bsh 'setsid systemctl restart aico-agent.service >/dev/null 2>&1 </dev/null & exit 0' \
         >/dev/null 2>&1
 }
 
-# agent_env_root reads AIDEN_STORAGE_EMMC_ROOT from the *running* agent
+# agent_env_root reads AICO_STORAGE_EMMC_ROOT from the *running* agent
 # process, so we can confirm a restart actually picked up the injected env
 # instead of racing an old process that still uses /userdata.
 agent_env_root() {
-    bsh 'pid="$(cat /run/agent/agent.pid 2>/dev/null)"; [ -n "$pid" ] && tr "\0" "\n" < /proc/$pid/environ 2>/dev/null | sed -n "s/^AIDEN_STORAGE_EMMC_ROOT=//p"' | head -1
+    bsh 'pid="$(cat /run/agent/agent.pid 2>/dev/null)"; [ -n "$pid" ] && tr "\0" "\n" < /proc/$pid/environ 2>/dev/null | sed -n "s/^AICO_STORAGE_EMMC_ROOT=//p"' | head -1
 }
 
 # restart_and_wait_env restarts the agent and blocks until the running agent
-# reports the expected AIDEN_STORAGE_EMMC_ROOT ("" = must be unset).
+# reports the expected AICO_STORAGE_EMMC_ROOT ("" = must be unset).
 restart_and_wait_env() {
     want="$1"
     restart_agent
@@ -229,7 +229,7 @@ bsh "cp $SYS_ENV $SYS_ENV_BAK 2>/dev/null; grep -q '^$ENV_LINE\$' $SYS_ENV 2>/de
 # Restart and confirm the *running* agent actually picked up the test root,
 # otherwise the migration would run against the real /userdata and never fire.
 restart_and_wait_env "$EMMC" \
-    || fatal "agent did not start with AIDEN_STORAGE_EMMC_ROOT=$EMMC (running root: '$(agent_env_root)')"
+    || fatal "agent did not start with AICO_STORAGE_EMMC_ROOT=$EMMC (running root: '$(agent_env_root)')"
 
 log "  waiting for migration to finish (timeout 180s)..."
 deadline=$(( $(date +%s) + 180 ))
@@ -258,7 +258,7 @@ newest_present="$(bsh "test -f $EMMC/audio/${PREFIX}${newest}.wav && echo yes")"
 sd_md5s="$(bsh "cd $SD_AUDIO 2>/dev/null && md5sum ${PREFIX}*.wav 2>/dev/null")"
 corrupt="$(printf '%s\n%s\n' "$src_md5s" "$sd_md5s" \
     | awk '$2 != "" { if ($2 in h) { if (h[$2] != $1) print $2 } else h[$2] = $1 }')"
-partials="$(bsh "ls $SD_AUDIO/${PREFIX}*.aiden-partial 2>/dev/null")"
+partials="$(bsh "ls $SD_AUDIO/${PREFIX}*.aico-partial 2>/dev/null")"
 
 log "  migration: status=$status moved_files=$moved_files free_after=${after_pct}% detail=$detail"
 log "  newest index on SD: ${max_sd:-none}; oldest index left on eMMC: ${min_src:-none}"

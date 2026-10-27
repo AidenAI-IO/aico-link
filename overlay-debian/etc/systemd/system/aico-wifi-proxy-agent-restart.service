@@ -1,0 +1,7 @@
+[Unit]
+Description=Restart the Aico after a proxy route change
+After=aico-wifi-proxy.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl try-restart aico-agent.service

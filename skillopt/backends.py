@@ -32,7 +32,7 @@ class SkillOptRolloutBackend(Protocol):
         ...
 
 
-class AidenDeviceBackend:
+class AicoDeviceBackend:
     def __init__(self, *, agent_url: str):
         self.client = AgentClient(base_url=agent_url)
 

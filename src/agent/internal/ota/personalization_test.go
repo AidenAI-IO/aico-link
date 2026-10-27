@@ -171,7 +171,7 @@ func TestDebianUpdaterPersonalizesInactiveRootFSAndCommitsSidecarBeforeActivatio
 		"boot_b.img": []byte("boot-b-v2"),
 		"rootfs.img": genericRootFS,
 	})
-	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aico-link/releases/latest"
 	env.config.DebianMode = true
 	env.config.DebugfsPath = requireE2fsprogs(t, "debugfs")
 	env.config.E2fsckPath = requireE2fsprogs(t, "e2fsck")

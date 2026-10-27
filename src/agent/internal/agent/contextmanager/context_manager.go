@@ -1,9 +1,9 @@
 package contextmanager
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/session"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/session"
+	"aico-agent/internal/logging"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -482,6 +482,34 @@ func (c *ContextManager) StoreArtifact(mimeType string, data []byte, metadata Ar
 		return ArtifactFile{}, fmt.Errorf("artifact store is unavailable")
 	}
 	return c.currentSession.StoreArtifact(mimeType, data, metadata)
+}
+
+// ScreenshotStateCount returns how many <state> messages in the active session
+// carry a screenshot, without copying the message list.
+func (c *ContextManager) ScreenshotStateCount() int {
+	if c == nil {
+		return 0
+	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if c.currentSession == nil {
+		return 0
+	}
+	count := 0
+	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		for _, message := range currentMessages {
+			if message.Role != messages.MessageRoleState {
+				continue
+			}
+			for _, attachment := range message.Attachments {
+				if attachment.Source == messages.AttachmentSourceScreenshotObservation {
+					count++
+					break
+				}
+			}
+		}
+	})
+	return count
 }
 
 func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error {

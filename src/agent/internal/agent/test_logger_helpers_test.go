@@ -4,7 +4,7 @@ import (
 	"io"
 	"log"
 
-	"aiden-agent/internal/agent/statemanager"
+	"aico-agent/internal/agent/statemanager"
 )
 
 func newTestLogger() *Logger {

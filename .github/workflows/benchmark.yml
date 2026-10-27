@@ -14,6 +14,7 @@ on:
         options:
           - runnable
           - hardware
+          - adb
           - all
       suite:
         description: Optional suite path, for example suites/memory_v1.json
@@ -61,6 +62,7 @@ jobs:
           case "$profile" in
             runnable) timeout_minutes=1440 ;;
             hardware) timeout_minutes=4320 ;;
+            adb) timeout_minutes=1440 ;;
             all) timeout_minutes=5760 ;;
             *) echo "Unsupported benchmark profile: $profile" >&2; exit 1 ;;
           esac
@@ -94,7 +96,7 @@ jobs:
   run:
     needs: plan
     if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    runs-on: aiden-hosted-02
+    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
     # A single job fans the cases out in-process instead, where the isolation that
@@ -114,9 +116,9 @@ jobs:
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
-      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aiden-agent-daemon:local' }}
+      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aico-agent-daemon:local' }}
       DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn
-      MOBILEGYM_IMAGE: aiden-mobilegym-simulator:py311
+      MOBILEGYM_IMAGE: aico-mobilegym-simulator:py311
       MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
       MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
       BENCHMARK_CI_IMAGES_PREPARED: '1'
@@ -146,8 +148,8 @@ jobs:
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
       BENCHMARK_MAC_ENVIRONMENT_URL: ${{ vars.BENCHMARK_MAC_ENVIRONMENT_URL }}
       BENCHMARK_VPHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_VPHONE_ENVIRONMENT_URL }}
-      BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL }}
-      BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL }}
+      BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL }}
+      BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL }}
     steps:
       - name: Reclaim persistent runner workspace
         shell: bash
@@ -175,7 +177,7 @@ jobs:
         run: |
           set -uo pipefail
           cutoff=$(( $(date +%s) - REAP_AGE_HOURS * 3600 ))
-          for prefix in aiden-benchmark-agent- aiden-mobilegym-env-; do
+          for prefix in aico-benchmark-agent- aico-mobilegym-env-; do
             for id in $(docker ps -aq --filter "name=$prefix"); do
               # .Created is plain RFC3339. `docker ps --format CreatedAt` instead ends
               # in a timezone abbreviation that GNU date refuses to parse.
@@ -191,7 +193,7 @@ jobs:
           done
           for id in $(docker network ls -q --filter "label=com.docker.compose.project"); do
             project="$(docker network inspect -f '{{ index .Labels "com.docker.compose.project" }}' "$id" 2>/dev/null)" || continue
-            [[ "$project" == aiden-benchmark-agent-* ]] || continue
+            [[ "$project" == aico-benchmark-agent-* ]] || continue
             created="$(docker network inspect -f '{{.Created}}' "$id" 2>/dev/null)" || continue
             created_epoch="$(date -d "$created" +%s 2>/dev/null)" || continue
             if (( created_epoch < cutoff )); then
@@ -374,10 +376,10 @@ jobs:
           fi
           # Every run id in this job starts with the prefix, so one prefix sweep
           # covers all the cases the fan-out started.
-          for id in $(docker ps -aq --filter "name=aiden-mobilegym-env-mobilegym-${RUN_ID_PREFIX}"); do
+          for id in $(docker ps -aq --filter "name=aico-mobilegym-env-mobilegym-${RUN_ID_PREFIX}"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done
-          for id in $(docker ps -aq --filter "name=aiden-benchmark-agent-${RUN_ID_PREFIX}"); do
+          for id in $(docker ps -aq --filter "name=aico-benchmark-agent-${RUN_ID_PREFIX}"); do
             project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$id" 2>/dev/null)"
             if [[ -n "$project" ]]; then
               docker compose \
@@ -432,6 +434,7 @@ jobs:
         working-directory: benchmark
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          REPORT_BRANCH: ${{ github.ref_name }}
         run: |
           set -uo pipefail
           # History is read from Langfuse v4 experiments and paginated scores.
@@ -440,6 +443,7 @@ jobs:
             --output dashboard.html \
             --data-output dashboard-data.json \
             --lookback-days 7 \
+            --branch-filter "$REPORT_BRANCH" \
             --runs-dir runs \
             --run-id-prefix "$RUN_ID_PREFIX"
           if [[ -f dashboard.html ]]; then

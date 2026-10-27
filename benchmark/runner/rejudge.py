@@ -47,7 +47,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
         metrics = row.setdefault("metrics", {})
         # Rejudging changes semantic verdicts, never recorded execution gates.
         if (
-            row.get("status") in {"timeout", "skipped"}
+            row.get("status") == "timeout"
+            or (row.get("status") == "skipped" and not metrics.get("judging_disabled"))
             or row.get("hard_assertion_failures")
             or any(value is False for value in (row.get("hard_assertions") or {}).values())
             or metrics.get("agent_error")
@@ -117,6 +118,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
         row["status"] = "passed" if row["rubric_pass_count"] == row["rubric_total"] else "failed"
         metrics.pop("rejudge_error", None)
         metrics.pop("judge_error", None)
+        if metrics.pop("judging_disabled", False):
+            metrics.pop("error", None)
         metrics.update(
             success=row["status"] == "passed",
             agent_eligible=True,

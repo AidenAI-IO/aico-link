@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/wifiregion"
+	"aico-agent/internal/wifiregion"
 )
 
 const defaultWiFiRegionConfigPath = "/userdata/debian/wifi/wpa_supplicant-wlan0.conf"

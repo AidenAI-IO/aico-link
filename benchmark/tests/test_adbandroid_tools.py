@@ -207,7 +207,7 @@ def test_enter_text_does_not_claim_success_on_mismatch(bridge):
     status, body = _invoke(
         base_url,
         "enter_text",
-        {"text": "hello-aiden", "focus": {"x": 500, "y": 100}},
+        {"text": "hello-aico", "focus": {"x": 500, "y": 100}},
     )
     assert status == 200
     output, screenshot = _text_entry_output(body)

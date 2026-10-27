@@ -26,11 +26,11 @@ import repository
 sys.path.insert(0, str(ROOT / "scripts/debian-package"))
 import system_config
 
-loader = importlib.machinery.SourceFileLoader("apt_source", str(ROOT / "overlay-debian/usr/lib/aiden/aiden-apt-source"))
+loader = importlib.machinery.SourceFileLoader("apt_source", str(ROOT / "overlay-debian/usr/lib/aico/aico-apt-source"))
 spec = importlib.util.spec_from_loader(loader.name, loader)
 apt_source = importlib.util.module_from_spec(spec)
 loader.exec_module(apt_source)
-REPO = "AidenAI-IO/aiden-firmware"
+REPO = "AidenAI-IO/aico-link"
 
 
 def run(*args, **kwargs):
@@ -46,7 +46,7 @@ class QuietHandler(http.server.SimpleHTTPRequestHandler):
                      "Requires Linux APT, dpkg-deb and GnuPG")
 class RepositoryTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory(prefix="aiden-apt-test-")
+        self.temporary = tempfile.TemporaryDirectory(prefix="aico-apt-test-")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
         self.gpg = self.root / "gnupg"
@@ -83,7 +83,7 @@ class RepositoryTests(unittest.TestCase):
             "fingerprints": {"business": hashlib.sha256(version.encode()).hexdigest(),
                              "system": hashlib.sha256(str(platform["contract"]).encode()).hexdigest()},
         }
-        declaration = {"format": 1, "product": "aiden", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        declaration = {"format": 1, "product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
                        "os_release": "debian-13", "libc": "glibc", "channel": channel,
                        "platform_contract": platform["contract"], "base_release": platform["base_release"],
                        "system_fingerprint": record["fingerprints"]["system"]}
@@ -95,16 +95,16 @@ class RepositoryTests(unittest.TestCase):
         package_root = self.root / tag
         (package_root / "DEBIAN").mkdir(parents=True)
         (package_root / "DEBIAN/control").write_text(
-            f"Package: aiden-business\nVersion: {version}-1\nArchitecture: armhf\n"
+            f"Package: aico-business\nVersion: {version}-1\nArchitecture: armhf\n"
             "Maintainer: Test <apt@example.test>\nDescription: business fixture\n")
-        document = package_root / "usr/share/doc/aiden-business/release-manifest.json"
+        document = package_root / "usr/share/doc/aico-business/release-manifest.json"
         document.parent.mkdir(parents=True)
         document.write_text(json.dumps(manifest))
         if runtime_config:
             system_config.stage(package_root)
         directory = self.cache / tag
         directory.mkdir(parents=True)
-        path = directory / f"aiden-business_{version}-1_armhf.deb"
+        path = directory / f"aico-business_{version}-1_armhf.deb"
         run("dpkg-deb", "--build", "--root-owner-group", str(package_root), str(path))
         record["assets"] = {path.name: {"size": path.stat().st_size, "sha256": repository.sha256(path)}}
         self.history.append(record)
@@ -128,22 +128,28 @@ class RepositoryTests(unittest.TestCase):
 
     def apt_fixture(self, platform, url):
         root = self.root / "device"
-        declaration = root / "usr/lib/aiden/platform/contract.json"
+        declaration = root / "usr/lib/aico/platform/contract.json"
         declaration.parent.mkdir(parents=True)
         declaration.write_text(json.dumps(platform))
         apt_source.configure(root, self.key)
-        source = root / "etc/apt/sources.list.d/aiden-business.sources"
+        source = root / "etc/apt/sources.list.d/aico-business.sources"
         source.write_text(source.read_text().replace(apt_source.DEFAULT_URL, url + "/apt")
                           .replace("Signed-By: /usr/", f"Signed-By: {root}/usr/"))
         for path in ("var/lib/apt/lists/partial", "var/cache/apt/archives/partial", "var/lib/dpkg", "etc/apt/apt.conf.d"):
             (root / path).mkdir(parents=True, exist_ok=True)
         (root / "var/lib/dpkg/status").write_text(
-            "Package: aiden-business\nStatus: install ok installed\nArchitecture: armhf\nVersion: 0.0.2-1\nDescription: old business\n\n"
+            "Package: aico-business\nStatus: install ok installed\nArchitecture: armhf\nVersion: 0.0.2-1\nDescription: old business\n\n"
             "Package: system-fixture\nStatus: install ok installed\nArchitecture: armhf\nVersion: 1\nDescription: old system\n")
+        try:
+            sandbox_user = getpass.getuser()
+        except OSError:
+            # Docker can run with the host's numeric UID absent from passwd.
+            # APT already runs unprivileged in that case and cannot drop IDs.
+            sandbox_user = "root"
         self.apt_options = ["-o", f"Dir={root}", "-o", f"Dir::State::status={root}/var/lib/dpkg/status",
                             "-o", "Dir::Etc::sourcelist=-", "-o", "APT::Architecture=armhf",
                             "-o", "Acquire::Languages=none", "-o", "APT::Update::Error-Mode=any",
-                            "-o", f"APT::Sandbox::User={getpass.getuser()}", "-o", "Debug::NoLocking=true",
+                            "-o", f"APT::Sandbox::User={sandbox_user}", "-o", "Debug::NoLocking=true",
                             "-o", "Dir::Cache::pkgcache=", "-o", "Dir::Cache::srcpkgcache="]
         return root
 
@@ -159,7 +165,7 @@ class RepositoryTests(unittest.TestCase):
             self.apt_fixture(device, url)
             self.apt("apt-get", "update")
             upgrade = self.apt("apt-get", "--simulate", "upgrade").stdout
-            self.assertIn("Inst aiden-business", upgrade)
+            self.assertIn("Inst aico-business", upgrade)
             self.assertIn("0.0.4-1", upgrade)
 
     def test_contract_isolation_and_only_business_upgrades(self):
@@ -180,15 +186,15 @@ class RepositoryTests(unittest.TestCase):
             (system / "Release").write_text("Origin: Debian\nLabel: Debian\nSuite: test\nCodename: test\nArchitectures: armhf\n")
             (root / "etc/apt/sources.list.d/system.list").write_text(f"deb [trusted=yes] {url}/system ./\n")
             self.apt("apt-get", "update")
-            policy = self.apt("apt-cache", "policy", "aiden-business", "system-fixture").stdout
+            policy = self.apt("apt-cache", "policy", "aico-business", "system-fixture").stdout
             self.assertIn("Candidate: 0.0.3-1", policy)
             self.assertIn("Candidate: 1\n", policy)
             result = self.apt("apt-get", "--simulate", "upgrade").stdout
-            self.assertIn("Inst aiden-business", result)
+            self.assertIn("Inst aico-business", result)
             self.assertNotIn("Inst system-fixture", result)
             self.assertNotIn("0.0.6", policy)
-            downloaded = self.apt("apt-get", "--print-uris", "--download-only", "--assume-yes", "install", "aiden-business").stdout
-            self.assertIn("pool/dev-c1/dev-v0.0.3/aiden-business_0.0.3-1_armhf.deb", downloaded)
+            downloaded = self.apt("apt-get", "--print-uris", "--download-only", "--assume-yes", "install", "aico-business").stdout
+            self.assertIn("pool/dev-c1/dev-v0.0.3/aico-business_0.0.3-1_armhf.deb", downloaded)
 
     def test_hybrid_check_refreshes_only_business_source_and_targets_business(self):
         device = self.release("0.0.2", kind="ota", contract=1)
@@ -198,11 +204,11 @@ class RepositoryTests(unittest.TestCase):
             root = self.apt_fixture(device, url)
             # An unrelated broken source must not participate in this check.
             (root / "etc/apt/sources.list.d/unrelated.list").write_text("deb http://127.0.0.1:1/unrelated ./\n")
-            self.apt("apt-get", "-o", f"Dir::Etc::sourcelist={root}/etc/apt/sources.list.d/aiden-business.sources",
+            self.apt("apt-get", "-o", f"Dir::Etc::sourcelist={root}/etc/apt/sources.list.d/aico-business.sources",
                      "-o", "Dir::Etc::sourceparts=-", "-o", "APT::Get::List-Cleanup=0", "update")
-            plan = self.apt("apt-get", "--simulate", "--only-upgrade", "install", "aiden-business").stdout
+            plan = self.apt("apt-get", "--simulate", "--only-upgrade", "install", "aico-business").stdout
             changed = [line.split()[1] for line in plan.splitlines() if line.startswith("Inst ")]
-            self.assertEqual(changed, ["aiden-business"])
+            self.assertEqual(changed, ["aico-business"])
             self.assertIn("0.0.3-1", plan)
 
     def test_signed_metadata_has_no_expiry(self):
@@ -213,7 +219,7 @@ class RepositoryTests(unittest.TestCase):
         with self.serve() as url:
             self.apt_fixture(device, url)
             self.apt("apt-get", "update")
-            self.assertIn("Candidate: 0.0.2-1", self.apt("apt-cache", "policy", "aiden-business").stdout)
+            self.assertIn("Candidate: 0.0.2-1", self.apt("apt-cache", "policy", "aico-business").stdout)
 
     def test_tampered_indexes_are_rejected(self):
         device = self.release("0.0.2", kind="ota", contract=1)
@@ -267,7 +273,7 @@ class RepositoryTests(unittest.TestCase):
 
 class ConfigurationTests(unittest.TestCase):
     def test_contract_is_a_positive_json_integer(self):
-        platform = {"product": "aiden", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        platform = {"product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
                     "channel": "dev", "base_release": "dev-v0.0.2", "system_fingerprint": "a" * 64}
         self.assertEqual(apt_source.suite_for({**platform, "platform_contract": 1}), "dev-c1")
         for value in (0, -1, True, False, 1.0, "1", "1.0.0", None):
@@ -278,7 +284,7 @@ class ConfigurationTests(unittest.TestCase):
         for platform in ({}, {"channel": "unknown"}, {"channel": "dev", "platform_contract": 0}):
             with self.subTest(platform=platform), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
-                path = root / "usr/lib/aiden/platform/contract.json"
+                path = root / "usr/lib/aico/platform/contract.json"
                 path.parent.mkdir(parents=True)
                 path.write_text(json.dumps(platform))
                 with self.assertRaises(ValueError):

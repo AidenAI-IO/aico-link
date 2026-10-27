@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 // iosKeyboardIsolationProfileGate adapts iosKeyboardIsolationController to mnk.ProfileGate.

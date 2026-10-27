@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
-readonly HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-rootfs-grow
+readonly HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-rootfs-grow
 TEST_ROOT=$(mktemp -d)
 readonly TEST_ROOT
 cleanup() {
@@ -111,9 +111,9 @@ exit "${status}"
 EOF
 chmod +x "${TEST_ROOT}/bin/"*
 export PATH="${TEST_ROOT}/bin:${PATH}"
-export AIDEN_SLOT_ENV=${TEST_ROOT}/slot.env
-export AIDEN_ROOTFS_GROW_MARKER=${TEST_ROOT}/rootfs-grown
-printf 'AIDEN_SLOT_SUFFIX=_b\n' >"${AIDEN_SLOT_ENV}"
+export AICO_SLOT_ENV=${TEST_ROOT}/slot.env
+export AICO_ROOTFS_GROW_MARKER=${TEST_ROOT}/rootfs-grown
+printf 'AICO_SLOT_SUFFIX=_b\n' >"${AICO_SLOT_ENV}"
 
 make_image() {
     local name=$1 initial_mb=$2 partition_mb=$3 block_size=$4
@@ -123,7 +123,7 @@ make_image() {
 }
 
 prepare_case() {
-    rm -f "${AIDEN_ROOTFS_GROW_MARKER}" "${TEST_ROOT}/rootfs-grown.tmp."*
+    rm -f "${AICO_ROOTFS_GROW_MARKER}" "${TEST_ROOT}/rootfs-grown.tmp."*
     : >"${TEST_ROOT}/calls"
     unset GROW_TEST_MOUNTED GROW_TEST_FSCK_STATUS GROW_TEST_CORRECTED GROW_TEST_RESIZE_FAIL
     make_image rootfs 16 32 4096
@@ -172,8 +172,8 @@ legacy_status=0
 grep -q "Please run 'e2fsck -f" "${TEST_ROOT}/legacy-output"
 run_helper
 assert_full "${TEST_ROOT}/rootfs.img"
-[ -f "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "rootfs OTA with preserved userdata did not complete"
-grep -qx 'slot=_b' "${AIDEN_ROOTFS_GROW_MARKER}"
+[ -f "${AICO_ROOTFS_GROW_MARKER}" ] || fail "rootfs OTA with preserved userdata did not complete"
+grep -qx 'slot=_b' "${AICO_ROOTFS_GROW_MARKER}"
 [ "$(grep -c '^resize2fs ' "${TEST_ROOT}/calls")" -eq 1 ] \
     || fail "already-full data filesystems were resized"
 if grep -q '^e2fsck ' "${TEST_ROOT}/calls"; then fail "already-full data filesystems were checked"; fi
@@ -191,7 +191,7 @@ run_helper
 assert_full "${TEST_ROOT}/userdata.img"
 assert_full "${TEST_ROOT}/ota.img"
 [ "$(grep -c '^e2fsck ' "${TEST_ROOT}/calls")" -eq 2 ] || fail "offline growth did not check both data filesystems"
-[ -f "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "fresh data growth did not complete"
+[ -f "${AICO_ROOTFS_GROW_MARKER}" ] || fail "fresh data growth did not complete"
 
 prepare_case
 make_image userdata 16 32 4096
@@ -199,7 +199,7 @@ mark_previously_mounted "${TEST_ROOT}/userdata.img"
 export GROW_TEST_CORRECTED=1
 run_helper
 assert_full "${TEST_ROOT}/userdata.img"
-[ -f "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "corrected fsck status prevented growth"
+[ -f "${AICO_ROOTFS_GROW_MARKER}" ] || fail "corrected fsck status prevented growth"
 
 # These cases verify the no-offline-fsck branch for devices reported as mounted.
 # resize2fs still operates on image files here; real online growth needs a mount.
@@ -222,7 +222,7 @@ for fsck_status in 2 4 8; do
     status=0
     run_helper || status=$?
     [ "${status}" -eq "${fsck_status}" ] || fail "fsck status ${fsck_status} was not propagated"
-    [ ! -e "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "failed fsck wrote a completion marker"
+    [ ! -e "${AICO_ROOTFS_GROW_MARKER}" ] || fail "failed fsck wrote a completion marker"
     if grep -q '^resize2fs /dev/disk/' "${TEST_ROOT}/calls"; then fail "data was resized after failed fsck"; fi
 done
 
@@ -230,13 +230,13 @@ prepare_case
 make_image userdata 16 32 4096
 export GROW_TEST_RESIZE_FAIL=/dev/disk/by-partlabel/userdata
 if run_helper; then fail "failed resize was accepted"; fi
-[ ! -e "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "failed resize wrote a completion marker"
+[ ! -e "${AICO_ROOTFS_GROW_MARKER}" ] || fail "failed resize wrote a completion marker"
 
 prepare_case
 truncate -s 16M "${TEST_ROOT}/userdata.img"
 if run_helper; then fail "a filesystem larger than its partition was accepted"; fi
 grep -q 'larger than its partition' "${TEST_ROOT}/output"
-[ ! -e "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "invalid geometry wrote a completion marker"
+[ ! -e "${AICO_ROOTFS_GROW_MARKER}" ] || fail "invalid geometry wrote a completion marker"
 if grep -q '^e2fsck ' "${TEST_ROOT}/calls"; then fail "invalid geometry was repaired"; fi
 
 prepare_case
@@ -244,6 +244,6 @@ truncate -s 0 "${TEST_ROOT}/userdata.img"
 truncate -s 32M "${TEST_ROOT}/userdata.img"
 if run_helper; then fail "unreadable ext4 metadata was accepted"; fi
 grep -q 'Cannot read ext4 geometry' "${TEST_ROOT}/output"
-[ ! -e "${AIDEN_ROOTFS_GROW_MARKER}" ] || fail "unreadable ext4 metadata wrote a completion marker"
+[ ! -e "${AICO_ROOTFS_GROW_MARKER}" ] || fail "unreadable ext4 metadata wrote a completion marker"
 
 echo "Debian rootfs growth tests passed"

@@ -51,7 +51,7 @@ jobs:
     if: ${{ inputs.dry_run && startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
     uses: ./.github/workflows/build.yml
     with:
-      runner: aiden-hosted-01
+      runner: aico-hosted-01
       source_ref: ${{ inputs.source_ref || 'main' }}
       free_disk_space: false
       dry_run: true
@@ -68,7 +68,7 @@ jobs:
       id-token: write
     uses: ./.github/workflows/release.yml
     with:
-      runner: aiden-hosted-01
+      runner: aico-hosted-01
       # Scheduled events have no dispatch inputs; default them explicitly.
       channel: ${{ inputs.channel || 'dev' }}
       source_ref: ${{ inputs.source_ref || 'main' }}

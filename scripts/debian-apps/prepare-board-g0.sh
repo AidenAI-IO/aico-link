@@ -12,7 +12,7 @@ readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
 readonly BUNDLE_NAME=debian-apps-g0
 readonly ARCHIVE=${BUNDLE_DIR}/${BUNDLE_NAME}.tar.gz
 readonly MODEL_DIR=${REPO_ROOT}/assets/business/models
-readonly MODULE_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-media-modules
+readonly MODULE_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-media-modules
 readonly MODEL_RKNN=silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn
 readonly MODEL_WEIGHTS=silero_vad_6_2_lstm_decoder_weights.bin
 readonly MODEL_RKNN_SHA256=81515d04c665ac8c1370d376c07987cf7f368a72ab9e3083dd68ad26c7ae1509
@@ -20,7 +20,7 @@ readonly MODEL_WEIGHTS_SHA256=f4c25e3669172b75b928e4c4a855657fd747f24fd2d8af599e
 readonly REMOTE_RUNNER=${SCRIPT_DIR}/board-g0-remote.sh
 
 readonly -a APP_PAYLOAD=(
-    bin/aiden-environment
+    bin/aico-environment
     bin/audio_service
     bin/audio_service_cli
     bin/audio_stream
@@ -114,7 +114,7 @@ write_bundle_metadata() {
         printf 'format=1\n'
         printf 'source_date_epoch=%s\n' "${BUILD_EPOCH}"
         printf 'hardware_demo_commit=%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)"
-        printf 'pico_sdk_commit=%s\n' "$(git -C "${REPO_ROOT}/pico-sdk" rev-parse HEAD)"
+        printf 'pico_sdk_commit=%s\n' "$(git -C "${REPO_ROOT}" rev-parse HEAD)"
         printf 'apps_elf_audit_sha256=%s\n' "${apps_audit_sha}"
         printf 'media_module_helper_sha256=%s\n' "${module_helper_sha}"
         printf 'board_g0_remote_runner_sha256=%s\n' "${remote_runner_sha}"
@@ -162,14 +162,14 @@ run_bundle() {
     cp -a "${APPS_DIR}/lib/librga.so.2" "${payload_root}/lib/librga.so.2"
     cp -a "${MODEL_DIR}/${MODEL_RKNN}" "${payload_root}/model/"
     cp -a "${MODEL_DIR}/${MODEL_WEIGHTS}" "${payload_root}/model/"
-    cp -a "${MODULE_HELPER}" "${payload_root}/aiden-media-modules"
+    cp -a "${MODULE_HELPER}" "${payload_root}/aico-media-modules"
     cp -a "${REMOTE_RUNNER}" "${payload_root}/board-g0-remote.sh"
     cp -a "${AUDIT_DIR}/summary.txt" "${payload_root}/audit/"
     cp -a "${AUDIT_DIR}/elf-audit.tsv" "${payload_root}/audit/"
     write_bundle_metadata "${payload_root}"
     write_payload_manifest "${payload_root}"
 
-    chmod 0755 "${payload_root}/aiden-media-modules" \
+    chmod 0755 "${payload_root}/aico-media-modules" \
         "${payload_root}/board-g0-remote.sh" "${payload_root}/bin/"*
     find "${payload_root}" -exec touch -h -d "@${BUILD_EPOCH}" {} +
     tar --sort=name --owner=0 --group=0 --numeric-owner \

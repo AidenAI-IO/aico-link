@@ -50,13 +50,13 @@ build/bin/abctl read /tmp/misc.img
 Read real `misc` on device:
 
 ```bash
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 ```
 
 Manually switch slot:
 
 ```bash
-/usr/lib/aiden/abctl set-active /dev/disk/by-partlabel/misc b --tries 3
+/usr/lib/aico/abctl set-active /dev/disk/by-partlabel/misc b --tries 3
 sync
 reboot
 ```
@@ -66,13 +66,13 @@ After boot, confirm active slot:
 ```bash
 cat /proc/cmdline
 findmnt /
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 ```
 
 After confirming device health, commit slot:
 
 ```bash
-/usr/lib/aiden/abctl mark-successful /dev/disk/by-partlabel/misc b
+/usr/lib/aico/abctl mark-successful /dev/disk/by-partlabel/misc b
 sync
 ```
 
@@ -81,7 +81,7 @@ sync
 Set up a trial boot and do not mark successful:
 
 ```bash
-/usr/lib/aiden/abctl set-active /dev/disk/by-partlabel/misc b --tries 1
+/usr/lib/aico/abctl set-active /dev/disk/by-partlabel/misc b --tries 1
 sync
 reboot
 ```
@@ -90,7 +90,7 @@ Do not commit B. Continue rebooting until SPL exhausts tries and returns to the 
 
 ## Expected Diagnostic Signals
 
-- `/proc/cmdline` contains `aiden.slot_suffix=_a` or `_b`.
+- `/proc/cmdline` contains `aico.slot_suffix=_a` or `_b`.
 - `root=PARTLABEL=rootfs_a|rootfs_b` in `/proc/cmdline` matches slot suffix.
 - `/` uses `rootfs_a` or `rootfs_b`, matching the slot suffix. `/oem` is absent.
 - `abctl read` can parse AVB A/B metadata without CRC or layout errors.

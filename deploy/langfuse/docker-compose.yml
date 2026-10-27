@@ -1,4 +1,4 @@
-# Langfuse self-hosted stack for Aiden episode telemetry
+# Langfuse self-hosted stack for Aico episode telemetry
 #
 # Quick start:
 #   cd deploy/langfuse
@@ -39,7 +39,7 @@ services:
     environment: &langfuse-worker-env
       NEXTAUTH_URL: ${NEXTAUTH_URL:-http://localhost:3000}
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/postgres}
-      SALT: ${SALT:-aiden-langfuse-salt}
+      SALT: ${SALT:-aico-langfuse-salt}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
       TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
       LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
@@ -74,17 +74,17 @@ services:
       - 3000:3000
     environment:
       <<: *langfuse-worker-env
-      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-aiden-langfuse-nextauth-secret}
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-aico-langfuse-nextauth-secret}
       # First-boot bootstrap. Langfuse only runs the init script when both IDs are set;
       # leave them empty to create the organization/project by hand in the UI instead.
       LANGFUSE_INIT_ORG_ID: ${LANGFUSE_INIT_ORG_ID:-}
       LANGFUSE_INIT_PROJECT_ID: ${LANGFUSE_INIT_PROJECT_ID:-}
-      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Aiden}
-      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-aiden-firmware}
+      LANGFUSE_INIT_ORG_NAME: ${LANGFUSE_INIT_ORG_NAME:-Aico}
+      LANGFUSE_INIT_PROJECT_NAME: ${LANGFUSE_INIT_PROJECT_NAME:-aico-link-firmware}
       LANGFUSE_INIT_PROJECT_PUBLIC_KEY: ${LANGFUSE_INIT_PROJECT_PUBLIC_KEY:-}
       LANGFUSE_INIT_PROJECT_SECRET_KEY: ${LANGFUSE_INIT_PROJECT_SECRET_KEY:-}
-      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@aiden.local}
-      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Aiden Admin}
+      LANGFUSE_INIT_USER_EMAIL: ${LANGFUSE_INIT_USER_EMAIL:-admin@aico.local}
+      LANGFUSE_INIT_USER_NAME: ${LANGFUSE_INIT_USER_NAME:-Aico Admin}
       LANGFUSE_INIT_USER_PASSWORD: ${LANGFUSE_INIT_USER_PASSWORD:-changeme}
 
   clickhouse:

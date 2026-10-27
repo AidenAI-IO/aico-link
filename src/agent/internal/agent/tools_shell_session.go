@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 	"context"
 	"errors"
 	"fmt"
@@ -415,7 +415,7 @@ func shellPlatformShellArg() string {
 func shellCommandEnv(usePTY bool, execution shellExecutionConfig) []string {
 	env := os.Environ()
 	env = shellApplyProxyEnv(env, execution.proxy)
-	// PYTHONUSERBASE and pip flags are configured globally by /etc/profile.d/aiden-python.sh
+	// PYTHONUSERBASE and pip flags are configured globally by /etc/profile.d/aico-python.sh
 	// and inherited from the parent environment. TMPDIR is injected command-scoped
 	// to use /userdata/tmp for agent shell commands, avoiding the small /tmp tmpfs (73 MB)
 	// while preventing storage wear from a global TMPDIR override.

@@ -43,6 +43,7 @@ type MemoryIntent struct {
 	DeviceItem       *DeviceMemoryItem
 	Action           MemoryIntentAction
 	ExpectedRevision int
+	ReplaceSteps     bool // Device procedure updates can supply a complete replacement path.
 }
 
 func (s *LongTermMemoryStore) ApplyMemoryIntent(ctx context.Context, intent MemoryIntent) (MemoryApplyResult, error) {

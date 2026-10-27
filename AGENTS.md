@@ -1,26 +1,34 @@
 # Contribution Guide
 
-This repository contains the Aiden development-board firmware, C++ hardware
-services and SDK, the Go Agent runtime, Debian and OTA tooling, web
+This repository contains the Aico Link development-board firmware, C++ hardware
+services and SDK, the Aico AI Agent runtime, Debian and OTA tooling, web
 applications, benchmarks, and their tests. Keep changes focused on the
 component being modified and preserve the interfaces between these parts.
 
 ## Required workflow
 
+The test commands in this section apply when the current task changes this
+repository's source, tests, scripts, configuration, or documentation, or when
+the user explicitly asks to test this repository. Work confined to sibling
+repositories (for example, `aiden-mcu` or `aiden-design`) does not trigger
+`aico-link-firmware` checks. An edit limited to this `AGENTS.md` guidance does not
+require a firmware test run.
+
 1. Work from the repository root unless a component's documentation says
    otherwise.
-2. After every change, run the quick test suite:
+2. After changes within this repository, run the local test suite:
 
    ```bash
    make check
    ```
 
-   This is the Docker-backed quick-feedback profile. It covers the shared
+   This is the default and only required check for local development, including
+   cross-component, release, and packaging changes. It covers the shared
    contracts, host C++ tests, focused Go and web checks, and a small benchmark
    sample. Do not replace it with an unscoped local test command; the test
    image supplies the pinned toolchains and dependencies.
-3. For changes that affect multiple components, release behavior, production
-   packaging, or before merging, also run:
+3. CI runs the full validation profile before merging. Run it locally only when
+   explicitly requested or when investigating a full-suite failure:
 
    ```bash
    make check-full
@@ -35,16 +43,17 @@ instead of silently treating the change as tested.
 
 ## Setup and repository map
 
-Clone the repository with its submodules:
+Clone the repository with its MobileGym submodule:
 
 ```bash
 git clone --recursive <repository-url>
 ```
 
-For an existing checkout, initialize them with
-`git submodule update --init --recursive`. The `pico-sdk` and
-`benchmark/mobilegym/vendor/mobilegym` directories are submodules; avoid
-editing their contents unless the task explicitly targets those dependencies.
+For an existing checkout, initialize MobileGym with
+`git submodule update --init --recursive benchmark/mobilegym/vendor/mobilegym`.
+The `pico-sdk/` BSP is vendored directly in this repository; it requires no
+submodule initialization. Avoid editing vendored or submodule contents unless
+the task explicitly targets those dependencies.
 
 The main areas are:
 
@@ -54,6 +63,7 @@ The main areas are:
   authoritative `test-manifest.yaml`.
 - `scripts/`: Docker test runners, Debian and OTA tooling, and release checks.
 - `overlay-debian/`: Debian rootfs files, systemd units, and device helpers.
+- `pico-sdk/`: vendored Luckfox/Rockchip BSP, kernel, bootloader, and build tools.
 - `benchmark/` and `skillopt/`: Python benchmark and SkillOpt projects.
 - `docs/`: build, architecture, operations, and contributor documentation.
 

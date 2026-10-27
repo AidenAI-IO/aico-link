@@ -6,11 +6,11 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::FrameServiceStatus;
-using aiden::UdsMessage;
-using aiden::UdsServer;
-using aiden::uds_request_once;
-using aiden::write_uds_message;
+using aico::FrameServiceStatus;
+using aico::UdsMessage;
+using aico::UdsServer;
+using aico::uds_request_once;
+using aico::write_uds_message;
 
 namespace {
 
@@ -18,7 +18,7 @@ struct TempSocketPath {
     std::string path;
 
     TempSocketPath() {
-        char tmpl[] = "/tmp/aiden_uds_server_XXXXXX";
+        char tmpl[] = "/tmp/aico_uds_server_XXXXXX";
         int fd = ::mkstemp(tmpl);
         REQUIRE(fd >= 0);
         ::close(fd);

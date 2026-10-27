@@ -47,7 +47,7 @@ static void initialize_ctype_tables(void) {
         __ctype_tolower['a'] == 'a';
 }
 
-int aiden_rknn_glibc_compat_init(void) {
+int aico_rknn_glibc_compat_init(void) {
     const int ret = pthread_once(&ctype_once, initialize_ctype_tables);
     return ret == 0 && ctype_tables_valid ? 0 : -1;
 }

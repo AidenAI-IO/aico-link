@@ -158,7 +158,7 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 				pb.fgsBridgeSeen, pb.fgsBridgeEnabled = true, true
 				pb.fgsBridgeAt = time.Now().Add(-phoneBridgeBackgroundStateMaxAge - time.Second)
 			}
-			pb.NoteClipboardWrite("Aiden")
+			pb.NoteClipboardWrite("Aico")
 			keyboard := &recordingTextInputTool{name: "keyboard_text", out: "ok"}
 			hw := &textInputHardwareDeps{
 				deviceTypeFn: func() string { return pb.platform },
@@ -178,7 +178,7 @@ func TestSearchQueryDoesNotRestoreCompanionOrUseUnsupportedClipboardRoute(t *tes
 					},
 				},
 			}
-			if _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "Aiden", false, false); err != nil {
+			if _, err := enterSearchQuery(context.Background(), appSearchOpenFlowConfig{hw: hw, vision: vision, entryTool: entry, sleep: testNoWaitSleep}, newFastTextInputEngine(*hw, vision), "Aico", false, false); err != nil {
 				t.Fatal(err)
 			}
 			if len(keyboard.calls) != 2 {

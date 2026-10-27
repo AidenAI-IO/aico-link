@@ -34,7 +34,7 @@ def test_phone_control_successful_action_count_reaches_visual_judge(
     history = []
     for index, tool_name in enumerate(tool_names):
         gesture = "drag_start" if index == 0 else "drag_release"
-        tool_input = {"text": "Aiden test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
+        tool_input = {"text": "Aico test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
         history.extend([
             {"type": "tool_call", "tool_name": tool_name, "tool_input": json.dumps(tool_input)},
             {"type": "tool_result", "tool_name": tool_name, "content": '{"ok":true}'},
@@ -61,6 +61,46 @@ def test_phone_control_successful_action_count_reaches_visual_judge(
     assert task.prompt in result.task_prompt
     assert result.status == expected_status
     assert result.hard_assertion_failures == []
+
+
+@pytest.mark.parametrize("has_rubric,has_tool_call,expected_status", [
+    (True, True, "skipped"),
+    (True, False, "failed"),
+    (False, True, "passed"),
+])
+def test_no_judge_does_not_count_unscored_tasks_as_success(
+    tmp_path, has_rubric, has_tool_call, expected_status
+):
+    task = TaskSpec(
+        id="open_settings", category="navigation", prompt="Open Settings",
+        description_for_judge="Settings is open",
+        rubric=[RubricItem(id="opened", check="Settings is open")] if has_rubric else [],
+        hard_assertions=HardAssertions(min_tool_calls=1),
+    )
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    history = [
+        {"type": "tool_call", "tool_name": "unrelated_tool", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "unrelated_tool", "content": "ok"},
+    ] if has_tool_call else []
+    history.append({"type": "assistant", "content": "Done"})
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=history, attempt=1,
+        artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None,
+        run_id="regression", timed_out=False,
+    )
+    assert result.status == expected_status
+    scores = aggregate([result])
+    if expected_status == "skipped":
+        assert result.metrics["success"] is None
+        assert result.metrics["quality_score"] is None
+        assert result.metrics["agent_eligible"] is False
+        assert result.metrics["judging_disabled"] is True
+        assert scores["pass_at_1"]["eligible_tasks"] == 0
+        assert scores["pass_at_1"]["value"] is None
+        assert (tmp_path / "trace.json").exists()
+    else:
+        assert result.metrics["success"] is (expected_status == "passed")
+        assert scores["pass_at_1"]["eligible_tasks"] == 1
 
 
 class FakeClient:
@@ -241,7 +281,8 @@ def test_run_one_task_does_not_count_pre_execution_agent_error_as_agent_failure(
     assert result.metrics["failure_class"] == "unknown"
 
 
-def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monkeypatch):
+@pytest.mark.parametrize("has_rubric", [False, True])
+def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monkeypatch, has_rubric):
     suite = Suite(
         name="mobilegym",
         global_reset={},
@@ -254,7 +295,7 @@ def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monke
         category="multi_step",
         description_for_judge="Open the exact target.",
         prompt="open target",
-        rubric=[],
+        rubric=[RubricItem(id="opened", check="Target is open")] if has_rubric else [],
         hard_assertions=HardAssertions(min_tool_calls=0, max_tool_calls=0),
         environment_assertions={
             "route.path": "/item/scroll-item-083",
@@ -288,6 +329,8 @@ def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monke
     assert result.hard_assertions.environment_state is False
     assert result.metrics["success"] is False
     assert result.metrics["agent_eligible"] is True
+    assert result.metrics["first_failure_stage"] != "evaluation"
+    assert "judging_disabled" not in result.metrics
     assert result.metrics["quality_score"] == 0.0
     assert aggregate([result])["pass_at_1"]["value"] == 0.0
     assert [failure.id for failure in result.hard_assertion_failures] == [
@@ -534,7 +577,7 @@ def test_run_one_task_keeps_dynamic_mock_screenshot_attachment_and_post_artifact
     assert (artifact_dir / "post.jpg").exists()
 
 
-def test_run_one_task_passes_without_judge_when_hard_assertions_pass(tmp_path: Path):
+def test_run_one_task_leaves_rubric_unscored_without_judge(tmp_path: Path):
     suite = Suite(
         name="smoke",
         global_reset={},
@@ -555,7 +598,7 @@ def test_run_one_task_passes_without_judge_when_hard_assertions_pass(tmp_path: P
         FakeClient(), suite, task, 1, tmp_path / "artifacts", None, None, "run-1"
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert result.hard_assertions.response_exists is True
 
 
@@ -600,7 +643,7 @@ def test_run_one_task_writes_consolidation_artifact_from_setup(
         FakeClient("done"), suite, task, 1, artifact_dir, None, None, "run-1"
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert json.loads((artifact_dir / "consolidation.json").read_text())["assessment"]["goal_result"] == "unknown"
     assert not (artifact_dir / "setup.json").exists()
 
@@ -1221,7 +1264,7 @@ def test_run_one_task_fetches_unique_episode_and_saves_it(tmp_path: Path):
         "run-1",
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert client.episode_requests == ["ep/one"]
     assert json.loads((tmp_path / "artifacts" / "episode.json").read_text()) == episode
     assert result.metrics["episode_id"] == "ep/one"
@@ -1246,7 +1289,7 @@ def test_run_one_task_uses_response_episode_with_context_backed_history(tmp_path
     result = run_one_task(
         client, suite, task, 1, tmp_path / "artifacts", None, None, "run-1"
     )
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert client.episode_requests == ["ep-current"]
     assert result.metrics["episode_id"] == "ep-current"
 
@@ -1321,7 +1364,7 @@ def test_run_one_task_complete_inline_result_still_fetches_episode_metrics(tmp_p
         "run-1",
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert result.metrics["memory_recall_evidence_source"] == "inline"
     assert client.episode_requests == ["ep/one"]
     assert "episode unavailable" in result.metrics["episode_error"]
@@ -1349,7 +1392,7 @@ def test_run_one_task_without_memory_id_assertion_fetches_episode_metrics(
         "run-1",
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert client.episode_requests == ["ep/one"]
     assert json.loads((tmp_path / "artifacts" / "episode.json").read_text())["id"] == "ep/one"
 
@@ -1396,7 +1439,8 @@ def test_run_one_task_merges_authoritative_episode_telemetry(tmp_path: Path):
     assert result.metrics["time_to_first_token_ms"] == 45
     assert result.metrics["device_execution_ms"] == 17
     assert result.metrics["tool_errors"] == 1
-    assert result.metrics["first_failure_stage"] is None
+    assert result.status == "skipped"
+    assert result.metrics["first_failure_stage"] == "evaluation"
     assert result.metrics["failure_event_ref"] is None
 
 
@@ -1449,7 +1493,7 @@ def test_run_one_task_applies_suite_prompt_prefix(tmp_path: Path):
         client, suite, task, 1, tmp_path / "artifacts", None, None, "run-1"
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert client.messages == [
         "You must call recall_memory before answering.\n\nChoose one option."
     ]

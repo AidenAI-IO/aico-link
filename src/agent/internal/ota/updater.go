@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/netproxy"
 )
 
 const (
@@ -36,7 +36,7 @@ const (
 	DefaultOTAMountInfoPath             = "/proc/self/mountinfo"
 	DefaultOTAUpdateLockName            = "update.lock"
 	DefaultOTADownloadSafetyMarginBytes = 16 << 20
-	DefaultReleaseURL                   = "https://api.github.com/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	DefaultReleaseURL                   = "https://api.github.com/repos/AidenAI-IO/aico-link/releases/latest"
 	MaxRemoteManifestBytes              = 1 << 20
 	// DefaultHTTPRequestLimit bounds metadata requests (release JSON, manifest).
 	// Those are small and fast; 30m is already generous.
@@ -190,7 +190,7 @@ func normalizeUpdaterConfig(config UpdaterConfig) (UpdaterConfig, error) {
 		config.BlockDir = DefaultOTABlockDir
 	}
 	if config.PublicKeyPath == "" {
-		config.PublicKeyPath = "/usr/share/keyrings/aiden-ota.pem"
+		config.PublicKeyPath = "/usr/share/keyrings/aico-ota.pem"
 	}
 	if config.MachineIDPath == "" {
 		config.MachineIDPath = DefaultPersistentMachineIDPath
@@ -1631,7 +1631,7 @@ func currentRootSlotFromProcCmdline() (Slot, bool, error) {
 
 func currentSlotFromCmdline(cmdline string) (Slot, bool, error) {
 	for _, field := range strings.Fields(cmdline) {
-		value, ok := strings.CutPrefix(field, "aiden.slot_suffix=")
+		value, ok := strings.CutPrefix(field, "aico.slot_suffix=")
 		if !ok {
 			continue
 		}

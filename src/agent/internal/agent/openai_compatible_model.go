@@ -1,8 +1,8 @@
 package agent
 
 import (
-	agentmessages "aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/util"
+	agentmessages "aico-agent/internal/agent/messages"
+	"aico-agent/internal/util"
 	"bufio"
 	"bytes"
 	"context"

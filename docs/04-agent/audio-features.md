@@ -29,7 +29,7 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 | Component | Files | Description |
 | --- | --- | --- |
 | Audio client | `audio_client.go` | Connects to `audio_service`, starts recording/playback sessions, reads/writes PCM chunks |
-| VAD | `vad.go` + `/usr/lib/aiden/rknn_vad` or `/usr/lib/aiden/cpu_vad` | Silero VAD inference; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
+| VAD | `vad.go` + `/usr/lib/aico/rknn_vad` or `/usr/lib/aico/cpu_vad` | Silero VAD inference; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
 | STT | `stt.go`, provider-specific clients | OpenAI Whisper, OpenRouter, Tencent Cloud ASR, Qwen ASR, and Google Cloud STT; `tencent` / `tencent_asr` remain compatibility aliases for `tencent-asr` |
 | TTS | `tts/`, `tts_helpers.go` | Pluggable TTS provider, outputs PCM for the configured playback backend; automatically resamples to the target playback sample rate when necessary |
 | Dialog manager | `audio_dialog.go` | Orchestrates recording, VAD, STT/LLM/TTS flow |
@@ -54,15 +54,15 @@ Before final non-streaming TTS, the runtime passes the spoken reply through the 
 Runs the realtime voice session selected by `[voice_settings.realtime].provider` from the
 named `[voice_settings.realtime.providers]` records. Realtime activation is selected
 explicitly by `input_mode = "realtime"`; it is not controlled by API key
-presence. The realtime session also supports `/api/chat` activation when GPIO
-is unavailable.
+presence. The realtime session also supports `/api/chat` activation when the
+hardware wakeup button is unavailable.
 
 See [Realtime Voice Module](realtime-voice.md) for the adapter layers,
 provider capability differences, and event lifecycle.
 
 ## Wakeup Trigger
 
-Waits for the hardware tap button to start recording. On current boards that button is wired to GPIO 33/GPIO 32 (falling edge); both pins enter the same wakeup flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a voice session, so disabling it leaves the voice loop waiting until the setting is turned back on. When `input_mode = "stt"` and `voice_followup_enabled = true`, wakeup opens a continuous voice session: the first turn still requires the tap button (when tap wakeup is enabled), but after the Agent replies it will continue listening for follow-up questions within the `voice_followup_timeout_ms` window. `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Repeated wakeup triggers during listening or recording are merged or ignored and will not restart recording or discard already-recorded audio; whether triggering wakeup again during thinking cancels the current LLM request is controlled by `voice_interrupt_on_wakeup`; the microphone is not open by default during TTS playback, and recording continues only after playback ends; triggering wakeup again during playback will interrupt the current turn and immediately start recording. On current boards this path requires Linux GPIO sysfs and completed button wiring.
+Waits for the hardware tap button to start recording. On current boards the MCU reports a `touch_key` wakeup event to the Agent; the MCU's ASR wakeup event uses the same voice flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable ASR or other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a voice session, so disabling it leaves the voice loop waiting until another wakeup arrives or the setting is turned back on. When `input_mode = "stt"` and `voice_followup_enabled = true`, wakeup opens a continuous voice session: the first turn still requires a wakeup event, but after the Agent replies it will continue listening for follow-up questions within the `voice_followup_timeout_ms` window. `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Repeated wakeup triggers during listening or recording are merged or ignored and will not restart recording or discard already-recorded audio; whether triggering wakeup again during thinking cancels the current LLM request is controlled by `voice_interrupt_on_wakeup`; the microphone is not open by default during TTS playback, and recording continues only after playback ends; triggering wakeup again during playback will interrupt the current turn and immediately start recording. This path requires the MCU event service to be running.
 
 ## Configuration Snippet
 
@@ -72,8 +72,8 @@ input_mode = "stt"
 
 [voice_settings.classic.runtime]
 vad_backend = "rknn"
-vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-vad_helper_path = "/usr/lib/aiden/rknn_vad"
+vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
@@ -191,15 +191,15 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - `audio.backend` selects both recording and playback. `auto` uses `audio_service` on the board and the local backend in desktop/PC Agent mode through the ADB input backend or environment bridge;
 - `audio_service` must be running when `audio.backend = "audio_service"`;
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
-- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aiden/cpu_vad`;
+- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aico/cpu_vad`;
 - STT/TTS require external API keys;
 - STT mode normally uses the hardware tap button to start a voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
 
 VAD helper can be verified directly on the board:
 
 ```bash
-/usr/lib/aiden/rknn_vad --model /usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
-/usr/lib/aiden/cpu_vad --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/rknn_vad --model /usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/cpu_vad --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
 ```
 
 On success, it will output a line `P <probability>`; if there are still RKNN input configuration issues, it will directly output `ERR ...`.

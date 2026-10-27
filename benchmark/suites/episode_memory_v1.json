@@ -11,7 +11,7 @@
       "description_for_judge": "The setup turn creates a successful task episode for querying controller time with shell, then clears conversation history. In the task turn, the agent may consult historical evidence when needed before answering which tool or path is preferred for the same kind of task. No automatic upfront retrieval is assumed.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "Check the Aiden controller's current time and briefly confirm when you are done.",
+        "prompt": "Check the Aico controller's current time and briefly confirm when you are done.",
         "timeout_sec": 90,
         "clear_history_after": true
       },

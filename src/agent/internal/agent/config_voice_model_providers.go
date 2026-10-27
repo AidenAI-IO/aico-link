@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/realtimevoice"
 	"fmt"
 	"math"
 	"sort"

@@ -8,19 +8,19 @@ import (
 	"strconv"
 	"strings"
 
-	"aiden-agent/internal/netproxy"
-	"aiden-agent/internal/wifiproxy"
+	"aico-agent/internal/netproxy"
+	"aico-agent/internal/wifiproxy"
 )
 
 const (
 	defaultAgentConfigPath           = "/userdata/agent/agent.toml"
 	defaultWiFiConfigPath            = "/userdata/wpa_supplicant.conf"
-	defaultWiFiConfigEnvironmentPath = "/run/aiden/wpa_supplicant-config.env"
+	defaultWiFiConfigEnvironmentPath = "/run/aico/wpa_supplicant-config.env"
 	defaultWiFiRegionStatePath       = "/userdata/system/wifi-region.json"
 	defaultSystemEnvPath             = "/userdata/system/env"
-	defaultWebRoot                   = "/usr/share/aiden/config-web"
-	defaultMaintenanceLockPath       = "/run/aiden/backup.lock"
-	defaultBackupJobStateDir         = "/run/aiden/backup/jobs"
+	defaultWebRoot                   = "/usr/share/aico/config-web"
+	defaultMaintenanceLockPath       = "/run/aico/backup.lock"
+	defaultBackupJobStateDir         = "/run/aico/backup/jobs"
 	defaultUSBAddress                = "192.168.42.1"
 	defaultUSBSubnet                 = "192.168.42.0/24"
 )
@@ -78,12 +78,12 @@ type Options struct {
 }
 
 func DefaultOptions() Options {
-	agentBinary := strings.TrimSpace(os.Getenv("AIDEN_AGENT_BIN"))
+	agentBinary := strings.TrimSpace(os.Getenv("AICO_AGENT_BIN"))
 	if agentBinary == "" {
 		if executable, err := os.Executable(); err == nil {
 			agentBinary = executable
 		} else {
-			agentBinary = "/usr/lib/aiden/agent"
+			agentBinary = "/usr/lib/aico/agent"
 		}
 	}
 	return Options{
@@ -100,8 +100,8 @@ func DefaultOptions() Options {
 		SystemEnvPath:             defaultSystemEnvPath,
 		WiFiProxyConfigPath:       wifiproxy.DefaultConfigPath,
 		LocalProxyAddress:         wifiproxy.DefaultListenAddress,
-		LocalProxyEnvironmentPath: envOrDefault("AIDEN_WIFI_PROXY_ENVIRONMENT", wifiproxy.DefaultEnvironmentPath),
-		StorageStatePath:          "/run/aiden/storage.state",
+		LocalProxyEnvironmentPath: envOrDefault("AICO_WIFI_PROXY_ENVIRONMENT", wifiproxy.DefaultEnvironmentPath),
+		StorageStatePath:          "/run/aico/storage.state",
 		WebRoot:                   defaultWebRoot,
 		BackupUserdataRoot:        "/userdata",
 		BackupSDRoot:              "/mnt/sdcard",
@@ -110,30 +110,30 @@ func DefaultOptions() Options {
 		USBAddress:                defaultUSBAddress,
 		USBSubnet:                 defaultUSBSubnet,
 		USBInterface:              "usb0",
-		HardwareIDPath:            envOrDefault("AIDEN_HARDWARE_ID_PATH", "/sys/firmware/devicetree/base/serial-number"),
-		SystemctlBinary:           envOrDefault("AIDEN_SYSTEMCTL_BIN", "systemctl"),
+		HardwareIDPath:            envOrDefault("AICO_HARDWARE_ID_PATH", "/sys/firmware/devicetree/base/serial-number"),
+		SystemctlBinary:           envOrDefault("AICO_SYSTEMCTL_BIN", "systemctl"),
 		RootHomeMountPoint:        "/root",
-		RootHomeScript:            envOrDefault("AIDEN_ROOT_HOME_SCRIPT", "/usr/lib/aiden/aiden-root-home"),
+		RootHomeScript:            envOrDefault("AICO_ROOT_HOME_SCRIPT", "/usr/lib/aico/aico-root-home"),
 		BluetoothStateMountPoint:  "/var/lib/bluetooth",
-		BluetoothStateScript:      envOrDefault("AIDEN_BLUETOOTH_STATE_SCRIPT", "/usr/lib/aiden/aiden-bluetooth-state"),
-		OTAConfigPath:             envOrDefault("AIDEN_OTA_CONFIG", "/userdata/debian/ota/config.json"),
+		BluetoothStateScript:      envOrDefault("AICO_BLUETOOTH_STATE_SCRIPT", "/usr/lib/aico/aico-bluetooth-state"),
+		OTAConfigPath:             envOrDefault("AICO_OTA_CONFIG", "/userdata/debian/ota/config.json"),
 		AgentBinary:               agentBinary,
-		AgentInitScript:           envOrDefault("AIDEN_AGENT_INIT_SCRIPT", "/usr/lib/aiden/aiden-agent-control"),
-		FrameServiceInitScript:    envOrDefault("AIDEN_FRAME_SERVICE_INIT_SCRIPT", "/usr/lib/aiden/aiden-frame-control"),
-		WiFiProxyInitScript:       envOrDefault("AIDEN_WIFI_PROXY_INIT_SCRIPT", "/usr/lib/aiden/aiden-wifi-proxy-control"),
+		AgentInitScript:           envOrDefault("AICO_AGENT_INIT_SCRIPT", "/usr/lib/aico/aico-agent-control"),
+		FrameServiceInitScript:    envOrDefault("AICO_FRAME_SERVICE_INIT_SCRIPT", "/usr/lib/aico/aico-frame-control"),
+		WiFiProxyInitScript:       envOrDefault("AICO_WIFI_PROXY_INIT_SCRIPT", "/usr/lib/aico/aico-wifi-proxy-control"),
 		// Leave the Agent HTTP target empty by default so the portal follows the
-		// address reported by the agent control helper. AIDEN_AGENT_HTTP_BASE_URL
+		// address reported by the agent control helper. AICO_AGENT_HTTP_BASE_URL
 		// remains an explicit override for development and tests.
-		AgentHTTPBaseURL:       strings.TrimSpace(os.Getenv("AIDEN_AGENT_HTTP_BASE_URL")),
-		OTABinary:              envOrDefault("AIDEN_OTA_BIN", "/usr/lib/aiden/ota"),
-		HybridUpdateService:    envOrDefault("AIDEN_HYBRID_UPDATE_SERVICE", "aiden-hybrid-update.service"),
-		HybridUpdateMarkerPath: envOrDefault("AIDEN_HYBRID_UPDATE_MARKER", "/userdata/ota/hybrid-update.pending"),
-		BootIDPath:             envOrDefault("AIDEN_BOOT_ID_PATH", "/proc/sys/kernel/random/boot_id"),
-		EnvRunBinary:           envOrDefault("AIDEN_ENV_RUN_BIN", "/usr/lib/aiden/aiden-managed-env-run"),
-		OTAUpdateLockPath:      envOrDefault("AIDEN_CONFIG_WEB_OTA_UPDATE_LOCK", "/tmp/config_web_ota_update.lock"),
-		OTAUpdateLogPath:       envOrDefault("AIDEN_CONFIG_WEB_OTA_UPDATE_LOG", "/userdata/ota/config_web_ota_update.log"),
-		OTAHealthLogPath:       envOrDefault("AIDEN_CONFIG_WEB_OTA_HEALTH_LOG", "/var/log/ota/ota.log"),
-		DmesgBinary:            envOrDefault("AIDEN_CONFIG_WEB_DMESG_BIN", "dmesg"),
+		AgentHTTPBaseURL:       strings.TrimSpace(os.Getenv("AICO_AGENT_HTTP_BASE_URL")),
+		OTABinary:              envOrDefault("AICO_OTA_BIN", "/usr/lib/aico/ota"),
+		HybridUpdateService:    envOrDefault("AICO_HYBRID_UPDATE_SERVICE", "aico-hybrid-update.service"),
+		HybridUpdateMarkerPath: envOrDefault("AICO_HYBRID_UPDATE_MARKER", "/userdata/ota/hybrid-update.pending"),
+		BootIDPath:             envOrDefault("AICO_BOOT_ID_PATH", "/proc/sys/kernel/random/boot_id"),
+		EnvRunBinary:           envOrDefault("AICO_ENV_RUN_BIN", "/usr/lib/aico/aico-managed-env-run"),
+		OTAUpdateLockPath:      envOrDefault("AICO_CONFIG_WEB_OTA_UPDATE_LOCK", "/tmp/config_web_ota_update.lock"),
+		OTAUpdateLogPath:       envOrDefault("AICO_CONFIG_WEB_OTA_UPDATE_LOG", "/userdata/ota/config_web_ota_update.log"),
+		OTAHealthLogPath:       envOrDefault("AICO_CONFIG_WEB_OTA_HEALTH_LOG", "/var/log/ota/ota.log"),
+		DmesgBinary:            envOrDefault("AICO_CONFIG_WEB_DMESG_BIN", "dmesg"),
 	}
 }
 

@@ -2,26 +2,26 @@ services:
   daemon:
     # Runtime drains pending telemetry on SIGTERM before Docker removes the worker.
     stop_grace_period: 90s
-    image: ${AIDEN_DAEMON_IMAGE:-aiden-agent-daemon:local}
+    image: ${AICO_DAEMON_IMAGE:-aico-agent-daemon:local}
     build:
       context: ../..
       dockerfile: ${DAEMON_DOCKERFILE:-benchmark/docker/Dockerfile.agent-daemon}
       target: agent-daemon-runtime
     ports:
-      - "127.0.0.1:${AIDEN_DAEMON_HOST_PORT:-8080}:8080"
+      - "127.0.0.1:${AICO_DAEMON_HOST_PORT:-8080}:8080"
     volumes:
-      - ${AIDEN_CONFIG_DIR:-../config}:/config:ro
+      - ${AICO_CONFIG_DIR:-../config}:/config:ro
     environment:
-      AIDEN_ENVIRONMENT_BRIDGE_MODE: ${AIDEN_ENVIRONMENT_BRIDGE_MODE:-0}
+      AICO_ENVIRONMENT_BRIDGE_MODE: ${AICO_ENVIRONMENT_BRIDGE_MODE:-0}
       ENVIRONMENT_BRIDGE_ENDPOINT: ${ENVIRONMENT_BRIDGE_ENDPOINT:-}
-      AIDEN_BENCHMARK_MOCK_TOOLS: ${AIDEN_BENCHMARK_MOCK_TOOLS:-0}
-      AIDEN_BENCHMARK_LOCAL_PHONE_BRIDGE: ${AIDEN_BENCHMARK_LOCAL_PHONE_BRIDGE:-0}
-      AIDEN_BENCHMARK_TASK_ID: ${AIDEN_BENCHMARK_TASK_ID:-}
-      AIDEN_DEVICE_TYPE: ${AIDEN_DEVICE_TYPE:-}
-      AIDEN_BENCHMARK_TOKEN_FILE: ${AIDEN_BENCHMARK_TOKEN_FILE:-}
-      AIDEN_RUNTIME_CONFIG_DIR: /tmp/aiden-config
+      AICO_BENCHMARK_MOCK_TOOLS: ${AICO_BENCHMARK_MOCK_TOOLS:-0}
+      AICO_BENCHMARK_LOCAL_PHONE_BRIDGE: ${AICO_BENCHMARK_LOCAL_PHONE_BRIDGE:-0}
+      AICO_BENCHMARK_TASK_ID: ${AICO_BENCHMARK_TASK_ID:-}
+      AICO_DEVICE_TYPE: ${AICO_DEVICE_TYPE:-}
+      AICO_BENCHMARK_TOKEN_FILE: ${AICO_BENCHMARK_TOKEN_FILE:-}
+      AICO_RUNTIME_CONFIG_DIR: /tmp/aico-config
       # Dedicated to telemetry; model/device traffic keeps its existing routing.
-      AIDEN_LANGFUSE_HTTPS_PROXY: ${AIDEN_LANGFUSE_HTTPS_PROXY:-}
+      AICO_LANGFUSE_HTTPS_PROXY: ${AICO_LANGFUSE_HTTPS_PROXY:-}
       # Bypass local endpoints when the dedicated telemetry proxy is configured.
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,host.docker.internal}
       no_proxy: ${no_proxy:-localhost,127.0.0.1,host.docker.internal}

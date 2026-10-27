@@ -237,15 +237,15 @@ func (s *maintenanceSessionStore) create(r *http.Request) (token, csrf string, e
 	if !sameOrigin(r) {
 		return "", "", time.Time{}, &backupAPIError{Code: "cross_origin_rejected", Status: http.StatusForbidden, Message: "cross-origin maintenance request rejected"}
 	}
-	client := strings.TrimSpace(r.Header.Get("X-Aiden-Client"))
+	client := strings.TrimSpace(r.Header.Get("X-Aico-Client"))
 	if client == "" || len(client) > 128 {
-		return "", "", time.Time{}, &backupAPIError{Code: "invalid_client", Status: http.StatusBadRequest, Message: "X-Aiden-Client is required"}
+		return "", "", time.Time{}, &backupAPIError{Code: "invalid_client", Status: http.StatusBadRequest, Message: "X-Aico-Client is required"}
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
 	if s.session != nil && now.Before(s.session.expiresAt) {
-		if cookie, cookieErr := r.Cookie("aiden_maintenance"); cookieErr == nil && hashToken(cookie.Value) == s.session.tokenHash {
+		if cookie, cookieErr := r.Cookie("aico_maintenance"); cookieErr == nil && hashToken(cookie.Value) == s.session.tokenHash {
 			return s.session.token, s.session.csrf, s.session.expiresAt, nil
 		}
 		if s.busy != nil && s.busy() {
@@ -276,7 +276,7 @@ func (s *maintenanceSessionStore) authorize(r *http.Request, mutate bool) bool {
 		return false
 	}
 	if mutate {
-		if _, err := uuid.Parse(strings.TrimSpace(r.Header.Get("X-Aiden-Request-ID"))); err != nil {
+		if _, err := uuid.Parse(strings.TrimSpace(r.Header.Get("X-Aico-Request-ID"))); err != nil {
 			return false
 		}
 	}
@@ -286,7 +286,7 @@ func (s *maintenanceSessionStore) authorize(r *http.Request, mutate bool) bool {
 	if bearer {
 		value = strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer "))
 	} else {
-		if cookie, err := r.Cookie("aiden_maintenance"); err == nil {
+		if cookie, err := r.Cookie("aico_maintenance"); err == nil {
 			value = cookie.Value
 		}
 	}
@@ -300,7 +300,7 @@ func (s *maintenanceSessionStore) authorize(r *http.Request, mutate bool) bool {
 		return false
 	}
 	if mutate && !bearer {
-		csrf := hashToken(strings.TrimSpace(r.Header.Get("X-Aiden-CSRF-Token")))
+		csrf := hashToken(strings.TrimSpace(r.Header.Get("X-Aico-CSRF-Token")))
 		if csrf != s.session.csrfHash {
 			return false
 		}

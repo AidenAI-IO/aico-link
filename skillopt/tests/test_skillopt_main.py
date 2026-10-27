@@ -34,7 +34,7 @@ def _set_roots(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
 
 
 def test_resolve_skill_path_uses_packaged_board_skills(monkeypatch, tmp_path: Path):
-    monkeypatch.delenv("AIDEN_SKILLS_DIR", raising=False)
+    monkeypatch.delenv("AICO_SKILLS_DIR", raising=False)
     skill_path = tmp_path / "skills" / "device-operator" / "SKILL.md"
     skill_path.parent.mkdir(parents=True)
     skill_path.write_text("---\nname: device-operator\n---\n", encoding="utf-8")
@@ -52,7 +52,7 @@ def test_resolve_skill_path_prefers_env_skills_dir(monkeypatch, tmp_path: Path):
     env_skill.parent.mkdir(parents=True)
     env_skill.write_text("env", encoding="utf-8")
     _set_roots(monkeypatch, tmp_path)
-    monkeypatch.setenv("AIDEN_SKILLS_DIR", str(env_root))
+    monkeypatch.setenv("AICO_SKILLS_DIR", str(env_root))
 
     assert main._resolve_skill_path("device-operator") == env_skill
 
@@ -120,7 +120,7 @@ def test_cli_uses_explicit_train_and_selection_suites(monkeypatch, tmp_path: Pat
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--skill", "device-operator",
@@ -170,7 +170,7 @@ def test_cli_writes_run_artifacts_for_web_report(monkeypatch, tmp_path: Path):
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--backend", "device",
@@ -215,7 +215,7 @@ def test_cli_returns_zero_when_optimization_completes_without_improvement(monkey
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--backend", "device",
@@ -247,7 +247,7 @@ def test_cli_prints_clear_iteration_and_edit_limits(monkeypatch, tmp_path: Path,
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--backend", "device",
@@ -326,7 +326,7 @@ def test_cli_writes_failure_report_when_optimization_raises(monkeypatch, tmp_pat
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--backend", "device",
@@ -826,7 +826,7 @@ def test_cli_dry_run_does_not_write_output_or_web_artifacts(monkeypatch, tmp_pat
 
     _set_roots(monkeypatch, tmp_path)
     monkeypatch.setattr(main, "optimize_skill", fake_optimize_skill)
-    monkeypatch.setattr(main, "AidenDeviceBackend", FakeDeviceBackend, raising=False)
+    monkeypatch.setattr(main, "AicoDeviceBackend", FakeDeviceBackend, raising=False)
 
     rc = main.cli([
         "--skill", "device-operator",
@@ -1180,7 +1180,7 @@ def test_resolve_skill_path_prefers_shared_skill_over_mobilegym_template(monkeyp
     template.parent.mkdir(parents=True)
     template.write_text("template", encoding="utf-8")
     _set_roots(monkeypatch, tmp_path)
-    monkeypatch.delenv("AIDEN_SKILLS_DIR", raising=False)
+    monkeypatch.delenv("AICO_SKILLS_DIR", raising=False)
 
     assert main._resolve_skill_path("device-operator") == shared
 
@@ -1191,7 +1191,7 @@ def test_cli_does_not_use_mobilegym_template_as_skill_source(monkeypatch, tmp_pa
     template.write_text("template", encoding="utf-8")
     _write_device_operator_suites(tmp_path)
     _set_roots(monkeypatch, tmp_path)
-    monkeypatch.delenv("AIDEN_SKILLS_DIR", raising=False)
+    monkeypatch.delenv("AICO_SKILLS_DIR", raising=False)
 
     rc = main.cli([
         "--skill", "device-operator",

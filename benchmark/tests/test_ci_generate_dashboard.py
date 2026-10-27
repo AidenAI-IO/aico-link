@@ -44,9 +44,9 @@ def _record(**overrides):
 
 def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
     runs = _group_into_runs([
-        _record(suite="adb_android_basic", run_id="ci-1-1-adb-android",
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic",
                 execution_environment="adb", passed=2, pass_at_1=0.5),
-        _record(suite="adb_android_basic", run_id="ci-1-1-adb-android-aidenbridge",
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic-aidenbridge",
                 timestamp="2026-10-10T01:00:00+00:00", execution_environment="adb_aidenbridge",
                 passed=3, pass_at_1=0.75),
     ])

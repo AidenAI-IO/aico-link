@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -146,7 +146,7 @@ type interactionsRequest struct {
 }
 
 // interactionsGenerationConfig mirrors the Interactions API GenerationConfig.
-// Google documents temperature here; Aiden forwards a resolved or explicit value
+// Google documents temperature here; Aico forwards a resolved or explicit value
 // and leaves it absent when runtime configuration delegates to the model default.
 type interactionsGenerationConfig struct {
 	MaxOutputTokens   int      `json:"max_output_tokens,omitempty"`
@@ -419,7 +419,7 @@ type interactionSSE struct {
 // the arguments twice in different shapes: step.start carries an `arguments`
 // JSON object that is usually the empty placeholder `{}`, and the following
 // arguments_delta events carry the real payload as JSON *text* chunks.
-// Concatenating the two produces `{}{"name":"aiden"}`, so the seed and the
+// Concatenating the two produces `{}{"name":"aico"}`, so the seed and the
 // deltas are kept apart and the deltas win whenever any arrived.
 type interactionStreamCall struct {
 	ID       string

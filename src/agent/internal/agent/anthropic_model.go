@@ -17,9 +17,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	agentmessages "aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/logging"
+	agentmessages "aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -1169,7 +1169,7 @@ func newAnthropicSSECapture(rawLoggingEnabled bool) *anthropicSSECapture {
 	if !rawLoggingEnabled {
 		return capture
 	}
-	rawFile, err := os.CreateTemp("", "aiden-anthropic-sse-*")
+	rawFile, err := os.CreateTemp("", "aico-anthropic-sse-*")
 	if err != nil {
 		capture.rawWriteErr = err
 		return capture

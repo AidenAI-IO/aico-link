@@ -16,14 +16,14 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/wifiproxy"
-	"aiden-agent/internal/wifiregion"
+	"aico-agent/internal/wifiproxy"
+	"aico-agent/internal/wifiregion"
 )
 
 const (
 	wifiConnectionTaskTimeout               = 2 * time.Minute
 	wifiCandidateApplyTimeout               = 75 * time.Second
-	wifiSupplicantConfigEnvironmentVariable = "AIDEN_WPA_SUPPLICANT_CONFIG"
+	wifiSupplicantConfigEnvironmentVariable = "AICO_WPA_SUPPLICANT_CONFIG"
 	wifiFailureWrongPassword                = "wrong_password"
 	wifiFailureAssociation                  = "association_failed"
 	wifiFailureIP                           = "ip_unavailable"

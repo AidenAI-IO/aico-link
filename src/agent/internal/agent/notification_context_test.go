@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 )
 
 func TestNotificationContextConsumesPersistsAndCommits(t *testing.T) {

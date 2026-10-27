@@ -1,0 +1,18 @@
+#!/bin/sh
+# Load the AIC8800D80 SDIO driver before the Bluetooth HCI init script.
+
+case "$1" in
+start)
+	if [ -x /oem/usr/ko/insmod_wifi.sh ]; then
+		# Run synchronously so S99hciinit observes aic8800_fdrv already
+		# registered, while insmod_wifi.sh starts rkwifi_server in the
+		# background as usual.
+		sh /oem/usr/ko/insmod_wifi.sh
+	else
+		echo "AIC8800 WiFi loader not found: /oem/usr/ko/insmod_wifi.sh"
+	fi
+	;;
+*)
+	exit 1
+	;;
+esac

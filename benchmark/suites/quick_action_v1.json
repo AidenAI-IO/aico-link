@@ -290,14 +290,14 @@
         "ios",
         "mac"
       ],
-      "description_for_judge": "Agent must open any editable text surface (Notes/memo/document editor, SMS/message compose box, or similar; do not send messages) and type 你好Aiden into the text field.",
+      "description_for_judge": "Agent must open any editable text surface (Notes/memo/document editor, SMS/message compose box, or similar; do not send messages) and type 你好Aico into the text field.",
       "setup": {
         "type": "agent_prompt",
         "prompt": "请回到主屏幕，确保当前停留在桌面。",
         "timeout_sec": 30,
         "clear_history_after": true
       },
-      "prompt": "打开短信输入、备忘录或任何可以打字的地方，输入「你好Aiden」。如果用短信，只输入不要发送。",
+      "prompt": "打开短信输入、备忘录或任何可以打字的地方，输入「你好Aico」。如果用短信，只输入不要发送。",
       "rubric": [
         {
           "id": "opened_text_app",
@@ -305,7 +305,7 @@
         },
         {
           "id": "text_typed",
-          "check": "Post-screenshot shows 你好Aiden visible in the text input field."
+          "check": "Post-screenshot shows 你好Aico visible in the text input field."
         }
       ],
       "hard_assertions": {
@@ -324,7 +324,7 @@
       "description_for_judge": "Agent must use quick_action undo to revert the previously typed text in an editable text field, including SMS/message compose boxes.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aiden」，保持文字可见。如果用短信，只输入不要发送。",
+        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」，保持文字可见。如果用短信，只输入不要发送。",
         "timeout_sec": 90,
         "clear_history_after": true
       },
@@ -336,7 +336,7 @@
         },
         {
           "id": "text_reverted",
-          "check": "Post-screenshot shows the text field is empty or has less text than 你好Aiden, indicating undo took effect."
+          "check": "Post-screenshot shows the text field is empty or has less text than 你好Aico, indicating undo took effect."
         }
       ],
       "hard_assertions": {
@@ -355,7 +355,7 @@
       "description_for_judge": "Agent must use quick_action select_all to select all text in an editable text field, including SMS/message compose boxes.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aiden」，保持文字可见。如果用短信，只输入不要发送。",
+        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」，保持文字可见。如果用短信，只输入不要发送。",
         "timeout_sec": 90,
         "clear_history_after": true
       },
@@ -386,7 +386,7 @@
       "description_for_judge": "Agent must use quick_action copy to copy selected text in an editable text field, including SMS/message compose boxes.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aiden」并全选。如果用短信，只输入不要发送。",
+        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」并全选。如果用短信，只输入不要发送。",
         "timeout_sec": 90,
         "clear_history_after": true
       },
@@ -417,7 +417,7 @@
       "description_for_judge": "Agent must use quick_action cut to cut selected text from an editable text field, including SMS/message compose boxes.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aiden」并全选。如果用短信，只输入不要发送。",
+        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」并全选。如果用短信，只输入不要发送。",
         "timeout_sec": 90,
         "clear_history_after": true
       },
@@ -448,7 +448,7 @@
       "description_for_judge": "Agent must use quick_action paste to paste previously copied text into an editable text field, including SMS/message compose boxes.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aiden」，全选并复制，然后清空输入框。如果用短信，只输入不要发送。",
+        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」，全选并复制，然后清空输入框。如果用短信，只输入不要发送。",
         "timeout_sec": 120,
         "clear_history_after": true
       },
@@ -460,7 +460,7 @@
         },
         {
           "id": "text_pasted",
-          "check": "Post-screenshot shows 你好Aiden (or the previously copied text) visible in the text field."
+          "check": "Post-screenshot shows 你好Aico (or the previously copied text) visible in the text field."
         }
       ],
       "hard_assertions": {

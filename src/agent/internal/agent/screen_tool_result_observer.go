@@ -5,7 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 )
 
 // newScreenToolResultObserver projects successful visual tool observations

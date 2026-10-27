@@ -6,10 +6,10 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::FrameIpcMessage;
-using aiden::FrameServiceStatus;
-using aiden::read_frame_message;
-using aiden::write_frame_message;
+using aico::FrameIpcMessage;
+using aico::FrameServiceStatus;
+using aico::read_frame_message;
+using aico::write_frame_message;
 
 namespace {
 
@@ -65,7 +65,7 @@ TEST_CASE("frame ipc returns transport error for incomplete prefix") {
 
 TEST_CASE("frame ipc returns transport error for incomplete payload") {
     SocketPair sockets;
-    std::vector<uint8_t> prefix = aiden::encode_frame_wire_prefix(2, 4);
+    std::vector<uint8_t> prefix = aico::encode_frame_wire_prefix(2, 4);
     FrameIpcMessage message;
 
     REQUIRE(::write(sockets.fds[0], prefix.data(), prefix.size()) == (ssize_t)prefix.size());
@@ -80,7 +80,7 @@ TEST_CASE("frame ipc returns transport error for incomplete payload") {
 TEST_CASE("frame ipc rejects oversized payload without retaining partial output") {
     SocketPair sockets;
     const uint64_t too_large_payload = 64ull * 1024ull * 1024ull + 1ull;
-    std::vector<uint8_t> prefix = aiden::encode_frame_wire_prefix(2, too_large_payload);
+    std::vector<uint8_t> prefix = aico::encode_frame_wire_prefix(2, too_large_payload);
     FrameIpcMessage message;
 
     REQUIRE(::write(sockets.fds[0], prefix.data(), prefix.size()) == (ssize_t)prefix.size());

@@ -1,5 +1,5 @@
 #include "doctest.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_ipc.h"
 #include "frame_service_client.h"
 #include "frame_service_server.h"
@@ -15,13 +15,13 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::FrameMetadata;
-using aiden::FrameListResult;
-using aiden::FrameResult;
-using aiden::FrameServiceClient;
-using aiden::FrameServiceServer;
-using aiden::FrameServiceStatus;
-using aiden::HealthResult;
+using aico::FrameMetadata;
+using aico::FrameListResult;
+using aico::FrameResult;
+using aico::FrameServiceClient;
+using aico::FrameServiceServer;
+using aico::FrameServiceStatus;
+using aico::HealthResult;
 
 namespace {
 
@@ -29,7 +29,7 @@ struct TempSocketPath {
     std::string path;
 
     TempSocketPath() {
-        char tmpl[] = "/tmp/aiden_frame_server_XXXXXX";
+        char tmpl[] = "/tmp/aico_frame_server_XXXXXX";
         int fd = ::mkstemp(tmpl);
         REQUIRE(fd >= 0);
         ::close(fd);
@@ -81,30 +81,30 @@ void read_exact_or_fail(int fd, uint8_t* data, size_t len) {
 }
 
 void request_latest_frame_raw(int fd) {
-    REQUIRE(aiden::write_frame_message(fd,
+    REQUIRE(aico::write_frame_message(fd,
                                        "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0}",
                                        std::vector<uint8_t>()) == FrameServiceStatus::OK);
 }
 
 void request_health_raw(int fd) {
-    REQUIRE(aiden::write_frame_message(fd,
+    REQUIRE(aico::write_frame_message(fd,
                                        "{\"type\":\"request\",\"method\":\"health\"}",
                                        std::vector<uint8_t>()) == FrameServiceStatus::OK);
 }
 
-void read_response_header(int fd, aiden::FrameWirePrefix* prefix) {
-    uint8_t prefix_bytes[aiden::kFrameWirePrefixSize];
+void read_response_header(int fd, aico::FrameWirePrefix* prefix) {
+    uint8_t prefix_bytes[aico::kFrameWirePrefixSize];
     read_exact_or_fail(fd, prefix_bytes, sizeof(prefix_bytes));
-    REQUIRE(aiden::decode_frame_wire_prefix(prefix_bytes, sizeof(prefix_bytes), prefix));
+    REQUIRE(aico::decode_frame_wire_prefix(prefix_bytes, sizeof(prefix_bytes), prefix));
     std::vector<uint8_t> header(prefix->header_len);
     read_exact_or_fail(fd, header.data(), header.size());
 }
 
 std::string read_response(int fd, std::vector<uint8_t>* payload_out) {
-    aiden::FrameWirePrefix prefix;
-    uint8_t prefix_bytes[aiden::kFrameWirePrefixSize];
+    aico::FrameWirePrefix prefix;
+    uint8_t prefix_bytes[aico::kFrameWirePrefixSize];
     read_exact_or_fail(fd, prefix_bytes, sizeof(prefix_bytes));
-    REQUIRE(aiden::decode_frame_wire_prefix(prefix_bytes, sizeof(prefix_bytes), &prefix));
+    REQUIRE(aico::decode_frame_wire_prefix(prefix_bytes, sizeof(prefix_bytes), &prefix));
     std::vector<uint8_t> header(prefix.header_len);
     read_exact_or_fail(fd, header.data(), header.size());
     payload_out->resize(static_cast<size_t>(prefix.payload_len));
@@ -189,8 +189,8 @@ TEST_CASE("FrameServiceServer captures fresh frames on demand without filling th
 TEST_CASE("FrameServiceServer logs the caller and resolution of capture requests") {
     FILE* output = tmpfile();
     REQUIRE(output != NULL);
-    aiden::set_log_service("frame_service");
-    aiden::set_log_output(output);
+    aico::set_log_service("frame_service");
+    aico::set_log_output(output);
 
     TempSocketPath socket_path;
     FrameServiceServer server(socket_path.path.c_str(), 4);
@@ -227,8 +227,8 @@ TEST_CASE("FrameServiceServer logs the caller and resolution of capture requests
     CHECK(log.find("[frame_service][server] capture_request_resolved ") != std::string::npos);
     CHECK(log.find("status=OK") != std::string::npos);
 
-    aiden::set_log_output(NULL);
-    aiden::set_log_service("unknown");
+    aico::set_log_output(NULL);
+    aico::set_log_service("unknown");
     fclose(output);
 }
 
@@ -269,8 +269,8 @@ TEST_CASE("FrameServiceServer health emits numeric counters and string recovery 
     int fd = connect_raw_client(socket_path.path);
     request_health_raw(fd);
 
-    aiden::FrameIpcMessage response;
-    REQUIRE(aiden::read_frame_message(fd, &response) == FrameServiceStatus::OK);
+    aico::FrameIpcMessage response;
+    REQUIRE(aico::read_frame_message(fd, &response) == FrameServiceStatus::OK);
     CHECK(response.payload.empty());
 
     cJSON* root = cJSON_Parse(response.header_json.c_str());
@@ -347,7 +347,7 @@ TEST_CASE("FrameServiceServer crops raw frame when crop_black is true") {
     REQUIRE(server.append_frame(metadata(8, 1, "uyvy", 99), data.data(), data.size(), &seq) == FrameServiceStatus::OK);
 
     int fd = connect_raw_client(socket_path.path);
-    REQUIRE(aiden::write_frame_message(
+    REQUIRE(aico::write_frame_message(
                 fd,
                 "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0,\"format\":\"raw\",\"crop_black\":true}",
                 std::vector<uint8_t>()) == FrameServiceStatus::OK);
@@ -378,7 +378,7 @@ TEST_CASE("FrameServiceServer clamps oversized raw minimal width to source width
     REQUIRE(server.append_frame(metadata(8, 1, "uyvy", 99), data.data(), data.size(), &seq) == FrameServiceStatus::OK);
 
     int fd = connect_raw_client(socket_path.path);
-    REQUIRE(aiden::write_frame_message(
+    REQUIRE(aico::write_frame_message(
                 fd,
                 "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0,\"format\":\"raw\",\"crop_black\":true,\"minimal_width\":4294967296}",
                 std::vector<uint8_t>()) == FrameServiceStatus::OK);
@@ -408,7 +408,7 @@ TEST_CASE("FrameServiceServer uses centered raw aspect crop for known screen wid
     REQUIRE(server.append_frame(metadata(8, 1, "uyvy", 99), data.data(), data.size(), &seq) == FrameServiceStatus::OK);
 
     int fd = connect_raw_client(socket_path.path);
-    REQUIRE(aiden::write_frame_message(
+    REQUIRE(aico::write_frame_message(
                 fd,
                 "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0,\"format\":\"raw\",\"crop_black\":true,\"minimal_width\":4}",
                 std::vector<uint8_t>()) == FrameServiceStatus::OK);
@@ -445,7 +445,7 @@ TEST_CASE("FrameServiceServer uses centered vertical crop for wide known screen"
     REQUIRE(server.append_frame(metadata(8, 8, "uyvy", 99), data.data(), data.size(), &seq) == FrameServiceStatus::OK);
 
     int fd = connect_raw_client(socket_path.path);
-    REQUIRE(aiden::write_frame_message(
+    REQUIRE(aico::write_frame_message(
                 fd,
                 "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0,\"format\":\"raw\",\"crop_black\":true,\"screen_width\":2,\"screen_height\":1}",
                 std::vector<uint8_t>()) == FrameServiceStatus::OK);
@@ -478,7 +478,7 @@ TEST_CASE("FrameServiceServer applies known-screen crop in packed YUV JPEG encod
     REQUIRE(server.append_frame(metadata(8, 8, "uyvy", 99), data.data(), data.size(), &seq) == FrameServiceStatus::OK);
 
     int fd = connect_raw_client(socket_path.path);
-    REQUIRE(aiden::write_frame_message(
+    REQUIRE(aico::write_frame_message(
                 fd,
                 "{\"type\":\"request\",\"method\":\"latest_frame\",\"since_seq\":\"0\",\"timeout_ms\":0,\"format\":\"jpeg\",\"quality\":80,\"crop_black\":true,\"screen_width\":2,\"screen_height\":1}",
                 std::vector<uint8_t>()) == FrameServiceStatus::OK);
@@ -641,7 +641,7 @@ TEST_CASE("FrameServiceServer supports get_frame and list_frames") {
     REQUIRE(client.get_frame(seq1, &frame) == FrameServiceStatus::OK);
     CHECK(frame.data == one);
 
-    aiden::FrameListResult list;
+    aico::FrameListResult list;
     REQUIRE(client.list_frames(2, &list) == FrameServiceStatus::OK);
     REQUIRE(list.frames.size() == 2);
     CHECK(list.frames[0].seq == seq1);
@@ -660,7 +660,7 @@ TEST_CASE("FrameServiceServer limits concurrent large payload sends without bloc
 
     int slow_fd = connect_raw_client(socket_path.path);
     request_latest_frame_raw(slow_fd);
-    aiden::FrameWirePrefix prefix{};
+    aico::FrameWirePrefix prefix{};
     read_response_header(slow_fd, &prefix);
     REQUIRE(prefix.payload_len == data.size());
 

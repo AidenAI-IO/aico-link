@@ -181,7 +181,7 @@ func (p *Planner) planDirectory(ctx context.Context, component ComponentID, sour
 			relative = ""
 		}
 		archivePath := filepath.ToSlash(filepath.Join(source.ArchivePath, relative))
-		if excludedPath(archivePath, source.Exclude) {
+		if excludedPath(archivePath, source.Exclude) || (component == ComponentSDUserFiles && IsReservedSDUserPath(archivePath)) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}

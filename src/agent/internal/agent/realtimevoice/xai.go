@@ -229,7 +229,7 @@ func (s *xAISession) CreateResponse(ctx context.Context) error {
 		"type": "response.create",
 		"response": map[string]any{
 			"output_modalities": []string{"audio"},
-			"metadata":          map[string]string{"client_event_id": fmt.Sprintf("aiden-%d", time.Now().UnixNano())},
+			"metadata":          map[string]string{"client_event_id": fmt.Sprintf("aico-%d", time.Now().UnixNano())},
 		},
 	})
 }

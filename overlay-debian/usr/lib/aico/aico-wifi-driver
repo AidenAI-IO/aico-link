@@ -1,0 +1,147 @@
+#!/bin/sh
+set -eu
+
+ko_dir=/usr/lib/aico/platform/modules
+he_on=${AICO_WIFI_HE:-1}
+lp_on=${AICO_WIFI_LOW_POWER:-0}
+stage=init
+host_power=/sys/bus/platform/devices/ff9a0000.mmc/power/control
+host_power_previous=
+model=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
+log() {
+    printf 'aico-wifi-driver: %s\n' "$*" >&2
+    logger -t aico-wifi-driver "$*" 2>/dev/null || true
+}
+mark() {
+    /usr/lib/aico/aico-boot-timeline mark "wifi-driver:$*" 2>/dev/null || true
+}
+case "${he_on}" in
+    0|1) ;;
+    *)
+        log "stage=init result=failed reason=invalid-he_on value=${he_on}"
+        mark "failed reason=invalid-he_on"
+        exit 1
+        ;;
+esac
+case "${lp_on}" in
+    0|1) ;;
+    *)
+        log "stage=init result=failed reason=invalid-lp_on value=${lp_on}"
+        mark "failed reason=invalid-lp_on"
+        exit 1
+        ;;
+esac
+restore_host_power() {
+    [ -n "$host_power_previous" ] || return 0
+    if ! printf '%s\n' "$host_power_previous" > "$host_power"; then
+        log "stage=${stage} result=failed reason=host-power-restore"
+        return 1
+    fi
+    host_power_previous=
+}
+cleanup() {
+    status=$?
+    trap - EXIT
+    if ! restore_host_power; then
+        status=1
+    fi
+    [ "$status" -eq 0 ] || mark "failed stage=${stage} status=${status}"
+    exit "$status"
+}
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+insert_if_present() {
+    module=$1
+    shift
+    path=${ko_dir}/${module}
+    sys_name=$(basename "${module}" .ko | tr '-' '_')
+    if [ -d "/sys/module/${sys_name}" ]; then
+        log "stage=${stage} module=${module} action=already-loaded"
+        return 0
+    fi
+    if [ ! -f "${path}" ]; then
+        case "$module" in
+            cfg80211.ko|aic8800_bsp.ko|aic8800_fdrv.ko)
+                log "stage=${stage} module=${module} result=failed reason=missing path=${path}"
+                return 1
+                ;;
+        esac
+        log "stage=${stage} module=${module} action=skip reason=missing path=${path}"
+        return 0
+    fi
+    log "stage=${stage} module=${module} action=load params=$*"
+    if ! insmod "${path}" "$@"; then
+        log "stage=${stage} module=${module} action=load result=failed"
+        return 1
+    fi
+    log "stage=${stage} module=${module} action=load result=success"
+}
+
+log "stage=begin he_on=${he_on} lp_on=${lp_on} ko_dir=${ko_dir}"
+mark "begin he_on=${he_on}"
+stage=hardware-prepare
+/usr/lib/aico/aico-wifi-prepare
+stage=crypto
+insert_if_present libarc4.ko
+insert_if_present ctr.ko
+insert_if_present ccm.ko
+insert_if_present aes_generic.ko
+stage=cfg80211
+insert_if_present cfg80211.ko
+stage=bsp
+if [ "$model" = "Aico Link SCH v1" ]; then
+    host_power_previous=$(cat "$host_power")
+    case "$host_power_previous" in
+        auto|on) ;;
+        *)
+            host_power_previous=
+            log "stage=${stage} result=failed reason=invalid-host-power-control"
+            exit 1
+            ;;
+    esac
+    # Keep the ROM/retained transport active through both synchronous probes.
+    printf 'on\n' > "$host_power"
+fi
+insert_if_present aic8800_bsp.ko aic_fw_path=/usr/lib/aico/platform/modules/aic8800dc_fw
+if [ "$model" = "Aico Link SCH v1" ]; then
+    fw_state=$(cat /sys/devices/platform/aic-bsp/aicbsp_info/fw_state 2>/dev/null || true)
+    case "$fw_state" in
+        provisioned|reused) log "stage=${stage} result=ready fw_state=$fw_state" ;;
+        *)
+            log "stage=${stage} result=failed reason=firmware-not-ready fw_state=${fw_state:-missing}"
+            exit 1
+            ;;
+    esac
+fi
+# The AIC8800D80 supports Wi-Fi 6 HE on both bands. AICO_WIFI_HE=0 restores
+# the HT/VHT-only workaround from 2b08d9a9 (#177), which targeted the previous
+# hardware design. This parameter takes effect at module load.
+stage=firmware
+insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"
+restore_host_power
+stage=bluetooth
+insert_if_present aic8800_btlpm.ko
+
+stage=interface-check
+[ -e /sys/class/net/wlan0 ] || {
+    log "stage=${stage} result=failed reason=wlan0-missing"
+    mark "failed reason=wlan0-missing"
+    exit 1
+}
+
+# The AIC8800 wiphy manages its own regulatory domain. The standard
+# wpa_supplicant country hint does not reach it; apply the configured country
+# before wpa_supplicant can bring the interface online.
+stage=region
+[ "$(cat /sys/module/aic8800_fdrv/parameters/custregd)" = Y ] || {
+    log "stage=${stage} result=failed reason=self-managed-regulatory-disabled"
+    exit 1
+}
+if ! /usr/lib/aico/agent wifi-region-apply \
+    --config=/userdata/debian/wifi/wpa_supplicant-wlan0.conf \
+    --interface=wlan0; then
+    log "stage=${stage} result=failed reason=region-apply"
+    exit 1
+fi
+log "stage=complete result=success wlan0=$(cat /sys/class/net/wlan0/operstate 2>/dev/null || echo unknown)"
+mark "complete"

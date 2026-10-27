@@ -12,7 +12,7 @@ sidebar_position: 5
 | --- | --- |
 | Socket | `/run/audio_service/audio_service.sock` |
 | Log | `/var/log/audio_service/audio_service.log` |
-| Binary | `/usr/lib/aiden/audio_service` |
+| Binary | `/usr/lib/aico/audio_service` |
 | Volume state file | `/userdata/audio_service/playback_volume` |
 
 ## Command-line Parameters
@@ -29,16 +29,16 @@ audio_service [--socket PATH] [--volume-state PATH]
 When run directly during development, it also defaults to `/run/audio_service/audio_service.sock`, which can be overridden via a parameter or environment variable:
 
 ```bash
-AUDIO_SERVICE_SOCKET=/tmp/audio_service.sock /usr/lib/aiden/audio_service
-/usr/lib/aiden/audio_service --socket /tmp/audio_service.sock
+AUDIO_SERVICE_SOCKET=/tmp/audio_service.sock /usr/lib/aico/audio_service
+/usr/lib/aico/audio_service --socket /tmp/audio_service.sock
 ```
 
 ## Startup
 
 ```bash
-systemctl start aiden-audio.service
-systemctl status aiden-audio.service --no-pager
-systemctl restart aiden-audio.service
+systemctl start aico-audio.service
+systemctl status aico-audio.service --no-pager
+systemctl restart aico-audio.service
 ```
 
 ## CLI

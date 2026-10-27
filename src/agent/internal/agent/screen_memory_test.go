@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screenprovider"
 	"github.com/tmc/langchaingo/llms"
 )
 

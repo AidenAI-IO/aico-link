@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    echo "Usage: $0 COMMAND [ARG...]" >&2
+    exit 64
+fi
+
+proxy_environment=${AICO_WIFI_PROXY_ENVIRONMENT:-/run/wifi_proxy/proxy-env}
+if [ "${AICO_WIFI_PROXY_ENABLED:-1}" != 0 ]; then
+    if [ -r "${proxy_environment}" ]; then
+        set -a
+        # The proxy writes a shell-safe environment file containing only its
+        # generated proxy variables.
+        # shellcheck disable=SC1090
+        . "${proxy_environment}"
+        http_proxy=${HTTP_PROXY:-}
+        https_proxy=${HTTPS_PROXY:-}
+        all_proxy=${ALL_PROXY:-}
+        no_proxy=${NO_PROXY:-}
+        set +a
+    else
+        HTTP_PROXY=http://127.0.0.1:18080
+        HTTPS_PROXY=http://127.0.0.1:18080
+        ALL_PROXY=http://127.0.0.1:18080
+        http_proxy=${HTTP_PROXY}
+        https_proxy=${HTTPS_PROXY}
+        all_proxy=${ALL_PROXY}
+        export HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
+    fi
+fi
+
+unset proxy_environment
+exec "$@"

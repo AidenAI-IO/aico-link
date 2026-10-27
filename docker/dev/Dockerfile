@@ -107,33 +107,33 @@ RUN set -eux; \
 
 FROM runtime-base AS runtime
 
-COPY --from=agent-builder /out/agent /usr/lib/aiden/agent
+COPY --from=agent-builder /out/agent /usr/lib/aico/agent
 COPY --from=ttyd-builder /out/ttyd /usr/local/bin/ttyd
 COPY --from=runtime-tools-builder /out/fq /usr/bin/fq
 COPY --from=runtime-tools-builder /out/rg /usr/bin/rg
 COPY --from=runtime-tools-builder /out/yq /usr/bin/yq
-COPY src/config_web/web/ /usr/share/aiden/config-web/
-COPY src/agent/config/skills/ /usr/share/aiden/skills/
-COPY docker/dev/agent.toml /opt/aiden/defaults/agent.toml
-COPY docker/dev/aiden-env-run /usr/local/bin/aiden-env-run
-COPY docker/dev/aiden-wifi-proxy-service /usr/local/bin/aiden-wifi-proxy-service
-COPY docker/dev/agent-service.sh /usr/local/bin/aiden-agent-service
-COPY docker/dev/entrypoint.sh /usr/local/bin/aiden-docker-entrypoint
+COPY src/config_web/web/ /usr/share/aico/config-web/
+COPY src/agent/config/skills/ /usr/share/aico/skills/
+COPY docker/dev/agent.toml /opt/aico/defaults/agent.toml
+COPY docker/dev/aico-env-run /usr/local/bin/aico-env-run
+COPY docker/dev/aico-wifi-proxy-service /usr/local/bin/aico-wifi-proxy-service
+COPY docker/dev/agent-service.sh /usr/local/bin/aico-agent-service
+COPY docker/dev/entrypoint.sh /usr/local/bin/aico-docker-entrypoint
 
 RUN chmod 0755 \
-        /usr/lib/aiden/agent \
-        /usr/local/bin/aiden-env-run \
-        /usr/local/bin/aiden-wifi-proxy-service \
-        /usr/local/bin/aiden-agent-service \
-        /usr/local/bin/aiden-docker-entrypoint \
+        /usr/lib/aico/agent \
+        /usr/local/bin/aico-env-run \
+        /usr/local/bin/aico-wifi-proxy-service \
+        /usr/local/bin/aico-agent-service \
+        /usr/local/bin/aico-docker-entrypoint \
         /usr/local/bin/ttyd
 
-ENV AIDEN_AGENT_BIN=/usr/lib/aiden/agent \
-    AIDEN_AGENT_INIT_SCRIPT=/usr/local/bin/aiden-agent-service \
-    AIDEN_WIFI_PROXY_INIT_SCRIPT=/usr/local/bin/aiden-wifi-proxy-service \
-    AIDEN_ENV_RUN_BIN=/usr/local/bin/aiden-env-run \
-    AIDEN_BUNDLED_SKILLS_DIR=/usr/share/aiden/skills \
-    AIDEN_SYSTEM_ENV=/userdata/system/env \
+ENV AICO_AGENT_BIN=/usr/lib/aico/agent \
+    AICO_AGENT_INIT_SCRIPT=/usr/local/bin/aico-agent-service \
+    AICO_WIFI_PROXY_INIT_SCRIPT=/usr/local/bin/aico-wifi-proxy-service \
+    AICO_ENV_RUN_BIN=/usr/local/bin/aico-env-run \
+    AICO_BUNDLED_SKILLS_DIR=/usr/share/aico/skills \
+    AICO_SYSTEM_ENV=/userdata/system/env \
     PYTHONUSERBASE=/userdata/agent/python \
     PIP_USER=1 \
     PIP_BREAK_SYSTEM_PACKAGES=1 \
@@ -143,4 +143,4 @@ ENV AIDEN_AGENT_BIN=/usr/lib/aiden/agent \
 EXPOSE 80 8080
 VOLUME ["/userdata"]
 
-ENTRYPOINT ["/usr/local/bin/aiden-docker-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/aico-docker-entrypoint"]

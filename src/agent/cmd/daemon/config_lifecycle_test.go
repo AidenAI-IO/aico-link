@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestInputLifecycleGPIOFailureCanRetrySameConfig(t *testing.T) {
@@ -357,9 +357,8 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"MaxIterations":              "per-run value read from the runtime snapshot",
 		"TerminationPolicy":          "per-run value read from the runtime snapshot",
 		"ContextPruneThreshold":      "per-run value read from the runtime snapshot",
+		"ContextPruneStateLimit":     "per-run value read from the runtime snapshot",
 		"ContextCompactionThreshold": "per-run value read from the runtime snapshot",
-		"ScreenshotKeepN":            "per-run value read from the runtime snapshot",
-		"ScreenshotPruneInterval":    "per-run value read from the runtime snapshot",
 		"SkillsDirs":                 "skills reload is flagged separately",
 		"BundledSkillsDir":           "skills reload is flagged separately",
 		"Telemetry":                  "per-run value read from the runtime snapshot",

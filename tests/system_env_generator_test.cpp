@@ -5,8 +5,8 @@
 #include <string>
 
 TEST_CASE("system environment generator normalizes proxy variables") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "HTTPS_PROXY=http://proxy.example:7890\nOPENAI_API_KEY='key with spaces'\n",
         &generated));
     REQUIRE(generated.valid);
@@ -21,8 +21,8 @@ TEST_CASE("system environment generator normalizes proxy variables") {
 }
 
 TEST_CASE("system environment generator drops execution boundary variables") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment("LD_PRELOAD=/tmp/inject.so\n", &generated));
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment("LD_PRELOAD=/tmp/inject.so\n", &generated));
     CHECK(generated.valid);
     CHECK(generated.content.find("LD_PRELOAD") == std::string::npos);
     REQUIRE(generated.dropped_keys.size() == 1);
@@ -30,8 +30,8 @@ TEST_CASE("system environment generator drops execution boundary variables") {
 }
 
 TEST_CASE("system environment generator keeps approved keys beside an unapproved one") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "OPENAI_API_KEY=live\nPYTHONPATH=/tmp/inject\n", &generated));
     CHECK(generated.valid);
     CHECK(generated.content.find("OPENAI_API_KEY=\"live\"") != std::string::npos);
@@ -43,17 +43,17 @@ TEST_CASE("system environment generator keeps approved keys beside an unapproved
 TEST_CASE("system environment generator approves operator-named provider credentials") {
     // agent.toml references provider credentials as `api_key = "$NAME"` with a
     // name the operator chooses, so these must survive on Debian too.
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "DASHSCOPE_API_KEY=qwen\nSPEKO_KEY=speko\nVERTEX_TOKEN=vertex\n"
-        "AIDEN_STT_LIVE_TEST_API_KEY=stt\n",
+        "AICO_STT_LIVE_TEST_API_KEY=stt\n",
         &generated));
     CHECK(generated.valid);
     CHECK(generated.dropped_keys.empty());
     CHECK(generated.content.find("DASHSCOPE_API_KEY=\"qwen\"") != std::string::npos);
     CHECK(generated.content.find("SPEKO_KEY=\"speko\"") != std::string::npos);
     CHECK(generated.content.find("VERTEX_TOKEN=\"vertex\"") != std::string::npos);
-    CHECK(generated.content.find("AIDEN_STT_LIVE_TEST_API_KEY=\"stt\"") !=
+    CHECK(generated.content.find("AICO_STT_LIVE_TEST_API_KEY=\"stt\"") !=
           std::string::npos);
 }
 
@@ -65,39 +65,39 @@ TEST_CASE("system environment generator still refuses loader and interpreter nam
         "GLIBC_TUNABLES=x\n",         "IFS=,\n",
     };
     for (size_t i = 0; i < sizeof(hostile) / sizeof(hostile[0]); ++i) {
-        aiden::GeneratedSystemEnv generated;
-        REQUIRE(aiden::generate_systemd_environment(hostile[i], &generated));
+        aico::GeneratedSystemEnv generated;
+        REQUIRE(aico::generate_systemd_environment(hostile[i], &generated));
         REQUIRE(generated.dropped_keys.size() == 1);
         CHECK(generated.content.find(generated.dropped_keys[0]) == std::string::npos);
     }
 }
 
 TEST_CASE("system environment generator reports no drops once the file is fatal") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "LD_PRELOAD=/tmp/inject.so\nHTTP_PROXY=http://http://proxy.example:7890\n",
         &generated));
     CHECK_FALSE(generated.valid);
     CHECK(generated.dropped_keys.empty());
     CHECK(generated.content.find("LD_PRELOAD") == std::string::npos);
-    CHECK(generated.content.find("AIDEN_EXTERNAL_ACCESS_DISABLED=\"1\"") !=
+    CHECK(generated.content.find("AICO_EXTERNAL_ACCESS_DISABLED=\"1\"") !=
           std::string::npos);
 }
 
 TEST_CASE("system environment generator rejects shell statements atomically") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "OPENAI_API_KEY=valid\ntouch /tmp/pwn\n", &generated));
     CHECK_FALSE(generated.valid);
     CHECK(generated.content.find("OPENAI_API_KEY") == std::string::npos);
     CHECK(generated.error.find("unsupported system env statement") != std::string::npos);
-    CHECK(generated.content.find("AIDEN_EXTERNAL_ACCESS_DISABLED=\"1\"") !=
+    CHECK(generated.content.find("AICO_EXTERNAL_ACCESS_DISABLED=\"1\"") !=
           std::string::npos);
 }
 
 TEST_CASE("system environment generator rejects malformed proxy URLs") {
-    aiden::GeneratedSystemEnv generated;
-    REQUIRE(aiden::generate_systemd_environment(
+    aico::GeneratedSystemEnv generated;
+    REQUIRE(aico::generate_systemd_environment(
         "HTTP_PROXY=http://http://proxy.example:7890\n", &generated));
     CHECK_FALSE(generated.valid);
     CHECK(generated.error.find("duplicate scheme") != std::string::npos);

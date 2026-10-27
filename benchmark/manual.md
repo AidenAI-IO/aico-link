@@ -1,7 +1,9 @@
 # Benchmark User Manual
 
-This document describes the design and usage of the Aiden benchmark under the
-current `benchmark/` directory, covering the recommended entry points:
+This document describes the design and usage of the Aico benchmark under the
+current `benchmark/` directory. Aico is the AI Agent running on Aico Link
+hardware; benchmarks can also use hardware-free environment bridges. The
+official website is [aico.link](https://aico.link). Recommended entry points:
 
 - WebUI: best for day-to-day runs, multiple suites, MobileGym concurrency, and
   viewing reports interactively.
@@ -19,11 +21,11 @@ uv sync
 
 ### 1.1 Core goal
 
-The benchmark evaluates the Aiden agent on phone UI, memory, planning, perception,
+The benchmark evaluates the Aico Agent on phone UI, memory, planning, perception,
 and similar tasks. It separates "running the task" from "scoring":
 
 1. The Python runner reads `benchmark/suites/*.json`.
-2. The runner calls the Aiden Go agent daemon over HTTP.
+2. The runner calls the Aico Go Agent daemon over HTTP.
 3. The agent calls tools to operate a device or simulator based on the prompt.
 4. The runner collects artifacts: history, trace, pre/post screenshots, logs.
 5. Hard assertions run first as deterministic checks.
@@ -100,7 +102,7 @@ Notes:
   start an environment bridge automatically; if you need an environment bridge you
   must start the daemon yourself and pass the relevant daemon parameters.
 
-#### Mock Aiden App environments
+#### Mock Aico companion app environments
 
 Phone Bridge strategy tests usually do not need a physical phone or emulator. A
 suite can declare a default `mock_environment`, and each task can override it, to
@@ -113,7 +115,7 @@ start an in-process scripted environment bridge that provides:
 - A generated phone screen artifact whose text can change after scripted tool
   calls; prompt-conditioned policy suites do not require the Agent to inspect it.
 
-Keep these suites in a separate directory such as `suites/aiden_app/`. Prefer one
+Keep these suites in a separate directory such as `suites/aico_app/`. Prefer one
 policy-matrix suite with task-level mocks when cases only differ by runtime state
 or scripted tool results. A suite-level mock remains useful as a default; an
 individual task may override it. If there is no suite-level default, every task
@@ -137,7 +139,7 @@ clipboard read/write, and notifications across these runtime policies:
 
 | Runtime state | Expected Phone Bridge policy |
 | --- | --- |
-| iOS background, PiP disabled, Dynamic Island return entry reachable | Call the `bridge_*` data tool directly; the tool restores Aiden internally before sending the command. Do not click Dynamic Island manually. |
+| iOS background, PiP disabled, Dynamic Island return entry reachable | Call the `bridge_*` data tool directly; the tool restores the companion app internally before sending the command. Do not click Dynamic Island manually. |
 | iOS background with PiP enabled | Send background-safe data commands directly through the PiP queue. |
 | Android background with FGS enabled | Send background-safe data commands directly through the FGS queue. |
 
@@ -149,15 +151,15 @@ Run it with:
 
 ```bash
 uv run python -m runner run \
-  --suite suites/aiden_app/phone_bridge_data_policy_v1.json \
+  --suite suites/aico_app/phone_bridge_data_policy_v1.json \
   --auto-agent-setup \
   --no-judge \
   --verbose
 ```
 
 Do not pass `--environment-url`: the suite starts and owns its mock environment.
-On the WebUI, selecting only mock suites automatically shows `Mock Aiden App
-environment`; clicking Run skips the device picker and uses the same isolated
+On the WebUI, selecting only mock suites automatically shows
+`Mock Aico companion app environment`; clicking Run skips the device picker and uses the same isolated
 task-worker path. Do not mix mock suites and real-device/MobileGym suites in one
 job.
 
@@ -166,13 +168,13 @@ daemon and benchmark token. The runner uses that token to call the benchmark-onl
 `/api/benchmark/phone_bridge_state` endpoint before the task. The endpoint is not
 registered on a normal daemon without a benchmark token.
 
-#### Real Aiden App connection capabilities
+#### Real Aico companion app connection capabilities
 
-`suites/aiden_app/connection_capabilities_v1.json` validates the real end-to-end
+`suites/aico_app/connection_capabilities_v1.json` validates the real end-to-end
 route introduced by Phone Bridge proxy mode:
 
 ```text
-Aiden App -> environment bridge -> per-task Agent daemon -> Agent tool -> Aiden App
+Aico companion app -> environment bridge -> per-task Agent daemon -> Agent tool -> Aico companion app
 ```
 
 Unlike the mock policy suites above, this suite requires a physical iOS or Android
@@ -187,13 +189,17 @@ phone. It covers:
 
 Before running it:
 
-1. Connect the Aiden App to the environment bridge and grant Contacts, Calendar,
+1. Connect the Aico companion app to the environment bridge and grant Contacts, Calendar,
    and Notification permissions.
-2. Create exactly one contact named `Aiden Benchmark Fixture` with phone
+2. Create exactly one contact named `Aico Benchmark Fixture` with phone
    `+1 202-555-0199`, email `benchmark-contact@example.com`, organization
-   `Aiden Baseline`, and note `managed benchmark fixture`.
-3. Keep the phone unlocked. Each task's setup returns to the Aiden App so a
+   `Aico Baseline`, and note `managed benchmark fixture`.
+3. Keep the phone unlocked. Each task's setup returns to the Aico companion app so a
    foreground connection is available before the scored prompt.
+
+Fixture names and frozen task examples keep their original literal text for
+repeatable results; do not rename the provisioned contact or its baseline
+organization.
 
 The contact case restores every field after verification. It intentionally does
 not benchmark contact creation because the App capability has no contact-delete
@@ -205,7 +211,7 @@ Run one platform at a time:
 
 ```bash
 uv run python -m runner run \
-  --suite suites/aiden_app/connection_capabilities_v1.json \
+  --suite suites/aico_app/connection_capabilities_v1.json \
   --auto-agent-setup \
   --environment-url http://<environment-bridge-host>:<port> \
   --target-platform ios \
@@ -214,7 +220,7 @@ uv run python -m runner run \
 ```
 
 Use `--target-platform android` for Android. Do not use this suite with the mock
-environment: its purpose is to verify that the bridge forwards the real Aiden App
+environment: its purpose is to verify that the bridge forwards the real Aico companion app
 connection, status, commands, and structured responses.
 
 Example schema:
@@ -224,7 +230,7 @@ Example schema:
   "tasks": [
     {
       "id": "ios_dynamic_island_contacts_query",
-      "prompt": "iOS，Aiden 在后台，PiP 未开启，灵动岛入口可达。查询 Biden。",
+      "prompt": "iOS，Aico 在后台，PiP 未开启，灵动岛入口可达。查询 Biden。",
       "mock_environment": {
         "phone_bridge": {
           "connected": false,
@@ -235,7 +241,7 @@ Example schema:
           "pip_bridge_enabled": false,
           "fgs_bridge_enabled": false
         },
-        "screen_text": "Aiden Dynamic Island return entry is reachable.",
+        "screen_text": "Aico Dynamic Island return entry is reachable.",
         "tools": {
           "bridge_contacts": {
             "input_contains": {"action": "query", "query": "Biden"},
@@ -306,7 +312,7 @@ hardware integrations.
 ### 1.5 What the bridge server does
 
 The bridge server is the HTTP adapter layer between a concrete environment and the
-Aiden benchmark. The MobileGym bridge exposes a MobileGym env as an environment
+Aico benchmark. The MobileGym bridge exposes a MobileGym env as an environment
 bridge; the Go agent exposes the same interface set when connected to a real
 device.
 
@@ -526,8 +532,8 @@ Common parameters:
 | `--runs-dir` | `benchmark/runs/webui` | Directory for WebUI jobs, raw runs, logs |
 | `--base-config-dir` | `benchmark/config` | Agent config template directory |
 | `--agent-config` | empty | Path where the WebUI's `agent.toml` is saved |
-| `--daemon-image` | `aiden-agent-daemon:local` | Job worker daemon image |
-| `--mobilegym-image` | `aiden-mobilegym-simulator:py311` | MobileGym environment image |
+| `--daemon-image` | `aico-agent-daemon:local` | Job worker daemon image |
+| `--mobilegym-image` | `aico-mobilegym-simulator:py311` | MobileGym environment image |
 | `--no-build-daemon-image` | false | Do not build the daemon image automatically |
 | `--no-build-mobilegym-image` | false | Do not build the MobileGym image automatically |
 
@@ -549,7 +555,7 @@ Main areas on the WebUI home screen:
 ### 2.3 Configuring the judge
 
 The WebUI enables the judge by default. The judge calls an OpenAI-compatible
-endpoint and uses the `AIDEN_BENCHMARK_JUDGE_API_KEY` credential.
+endpoint and uses the `AICO_BENCHMARK_JUDGE_API_KEY` credential.
 
 Usage:
 
@@ -697,7 +703,7 @@ uv run python -m runner <command> [options]
 Compatibility entry point:
 
 ```bash
-python3 scripts/aiden_benchmark.py <command> [options]
+python3 scripts/aico_benchmark.py <command> [options]
 ```
 
 If `<command>` is omitted, the legacy script treats it as `run`.
@@ -717,7 +723,7 @@ Common parameters:
 | Parameter | Description |
 | --- | --- |
 | `--suite PATH` | Required, path to the suite JSON |
-| `--agent-url URL` | Agent daemon address; default `http://localhost:8080` or `AIDEN_AGENT_URL` |
+| `--agent-url URL` | Agent daemon address; default `http://localhost:8080` or `AICO_AGENT_URL` |
 | `--environment-url URL` | Optional, environment bridge address; used for `/api/setup`, `/api/providers/screenshot`, `/api/release` |
 | `--target-platform PLATFORM` | Target device platform (`auto`, `ios`, or `android`); validated against the environment or agent |
 | `--benchmark-token-file PATH` | File containing the benchmark control token used for protected agent endpoints |
@@ -806,7 +812,7 @@ Agent configuration notes:
 - If `--agent-config` is specified, its content is written as the worker's
   `agent.toml`; if not, the runner prefers rendering `agent.toml` from
   `--base-config-dir/agent.toml.template`. The built-in template reads only the
-  `AIDEN_BENCHMARK_AGENT_*` variables listed below.
+  `AICO_BENCHMARK_AGENT_*` variables listed below.
 - Credential references such as `api_key = "$ANTHROPIC_AUTH_TOKEN"` are resolved
   on the host while preparing the worker config. The resolved config is mounted
   read-only into Docker. A missing credential fails before the daemon starts.
@@ -1045,7 +1051,7 @@ Common parameters:
 | `--envs` / `--parallel-envs` | `1` | Number of MobileGym envs behind the bridge |
 | `--web-port` | auto | MobileGym web page port |
 | `--bridge-port` | auto | Bridge API port |
-| `--mobilegym-image` | `aiden-mobilegym-simulator:py311` | MobileGym container image |
+| `--mobilegym-image` | `aico-mobilegym-simulator:py311` | MobileGym container image |
 | `--no-build-mobilegym-image` | false | Use only a locally available image |
 | `--json` | false | Print machine-readable JSON |
 
@@ -1085,7 +1091,7 @@ Common parameters:
 | `--benchmark-task-id` | `cli-task` | Route id used by environment bridge requests |
 | `--agent-config` | empty | Specify agent.toml |
 | `--base-config-dir` | `benchmark/config` | Agent config template directory |
-| `--daemon-image` | `aiden-agent-daemon:local` | Agent daemon image |
+| `--daemon-image` | `aico-agent-daemon:local` | Agent daemon image |
 | `--no-build-daemon-image` | false | Use only a locally available image |
 | `--json` | false | Print machine-readable JSON |
 
@@ -1175,9 +1181,10 @@ At the end of a run, the runner tries to upload the report to the agent board's
 ### Cross-run dashboard and weekly report
 
 The daily benchmark workflow generates `dashboard.html` and
-`dashboard-data.json` for each run. A separate `benchmark-weekly-report.yml`
+`dashboard-data.json` for each run using history from its own branch.
+A separate `benchmark-weekly-report.yml`
 workflow runs every Thursday at 01:07 UTC (09:07 Asia/Shanghai). It reads
-history across branches from Langfuse by default, writes `weekly-report.md`
+history from the workflow's branch in Langfuse by default, writes `weekly-report.md`
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
@@ -1243,7 +1250,7 @@ were called or which environment executed the task:
 | Experience reflection | `episode_reflection_v1`, `episode_reflection_v2` | Extract evidence-backed lessons |
 | Visual grounding | `perception_v1` | Identify and locate visual targets |
 | UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |
-| Device integration | `aiden_app_connection_capabilities_v1`, `aiden_app_phone_bridge_data_policy_v1`, `aiden_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
+| Device integration | `aico_app_connection_capabilities_v1`, `aico_app_phone_bridge_data_policy_v1`, `aico_app_notes_entry_policy_v1` | Device interfaces, connection behavior, and routing policies |
 | Shell utilities | `shell_utility_v1` | Time, timezone, and deterministic shell calculations |
 
 Many areas exercise tool calls. Shell utilities does not represent general tool
@@ -1307,11 +1314,11 @@ Runs missing configuration metadata are still compared and labelled
 "Configuration unverified".
 
 The weekly report summarizes the last seven days in UTC: overall totals and each
-suite's results. Scheduled and manual reports include all branches by default.
-Manual runs accept an optional `branch_filter` input to restrict the data to one
-branch. The workflow's selected Git ref determines which report code runs; it
-does not restrict the historical data. The workflow publishes the report and
-sends its Lark notification using the configured webhook.
+suite's results. Scheduled and manual reports use the workflow's branch by default.
+Manual runs accept an optional `branch_filter` input to select another
+branch, or `*` to include all branches. The workflow publishes the report and
+sends its Lark notification using the configured webhook. For a report preview,
+set `send_notification` to `false` when dispatching manually.
 
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
@@ -1354,21 +1361,21 @@ Common environment variables:
 
 | Variable | Description |
 | --- | --- |
-| `AIDEN_AGENT_URL` | Default for CLI `--agent-url` |
-| `AIDEN_ENVIRONMENT_URL` | Default for CLI `--environment-url` |
-| `AIDEN_BENCHMARK_AGENT_PROVIDER` | Agent provider type rendered into the default `agent.toml` |
-| `AIDEN_BENCHMARK_AGENT_MODEL` | Agent model rendered into `agent.toml` and recorded in the manifest |
-| `AIDEN_BENCHMARK_AGENT_BASE_URL` | Agent model endpoint rendered into the default `agent.toml` |
-| `AIDEN_BENCHMARK_AGENT_API_KEY` | Agent credential rendered into the default read-only `agent.toml` |
-| `AIDEN_BENCHMARK_JUDGE_MODEL` | Default judge model for `run` and `rejudge` |
-| `AIDEN_BENCHMARK_JUDGE_BASE_URL` | Default OpenAI-compatible judge endpoint |
-| `AIDEN_BENCHMARK_JUDGE_API_KEY` | Judge API key |
-| `AIDEN_BENCHMARK_ANALYSIS_API_KEY` | Optional post-run analysis credential; defaults to the Judge key |
+| `AICO_AGENT_URL` | Default for CLI `--agent-url` |
+| `AICO_ENVIRONMENT_URL` | Default for CLI `--environment-url` |
+| `AICO_BENCHMARK_AGENT_PROVIDER` | Agent provider type rendered into the default `agent.toml` |
+| `AICO_BENCHMARK_AGENT_MODEL` | Agent model rendered into `agent.toml` and recorded in the manifest |
+| `AICO_BENCHMARK_AGENT_BASE_URL` | Agent model endpoint rendered into the default `agent.toml` |
+| `AICO_BENCHMARK_AGENT_API_KEY` | Agent credential rendered into the default read-only `agent.toml` |
+| `AICO_BENCHMARK_JUDGE_MODEL` | Default judge model for `run` and `rejudge` |
+| `AICO_BENCHMARK_JUDGE_BASE_URL` | Default OpenAI-compatible judge endpoint |
+| `AICO_BENCHMARK_JUDGE_API_KEY` | Judge API key |
+| `AICO_BENCHMARK_ANALYSIS_API_KEY` | Optional post-run analysis credential; defaults to the Judge key |
 | `BENCHMARK_STATE_FILE` | Default for CLI `--state-file` |
 | `MOBILEGYM_PARALLEL_ENVS` | Default parallel env count for `start_simulator.py` |
-| `AIDEN_BRIDGE_BIND_HOST` | MobileGym bridge bind host |
-| `AIDEN_BRIDGE_PORT` | MobileGym bridge port |
-| `AIDEN_BRIDGE_PUBLIC_HOST` | Bridge external hostname in Docker scenarios |
+| `AICO_BRIDGE_BIND_HOST` | MobileGym bridge bind host |
+| `AICO_BRIDGE_PORT` | MobileGym bridge port |
+| `AICO_BRIDGE_PUBLIC_HOST` | Bridge external hostname in Docker scenarios |
 
 ## 6. Recommended workflows
 
@@ -1435,12 +1442,12 @@ curl http://127.0.0.1:8080/api/tools
 
 If it is a WebUI job, look at the job's daemon log.
 
-### The judge reports missing env var AIDEN_BENCHMARK_JUDGE_API_KEY
+### The judge reports missing env var AICO_BENCHMARK_JUDGE_API_KEY
 
 CLI:
 
 ```bash
-export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+export AICO_BENCHMARK_JUDGE_API_KEY=...
 ```
 
 WebUI:

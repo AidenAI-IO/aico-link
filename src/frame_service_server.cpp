@@ -1,5 +1,5 @@
 #include "frame_service_server.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_jpeg_encoder.h"
 #include "frame_processing.h"
 #include "cJSON/cJSON.h"
@@ -11,7 +11,7 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-namespace aiden {
+namespace aico {
 
 FrameServiceServer::FrameServiceServer(const char* socket_path, size_t ring_capacity)
     : uds_server_(new UdsServer(socket_path ? socket_path : "",
@@ -442,7 +442,7 @@ void FrameServiceServer::handle_request(const UdsMessage& request, int fd) {
             request_id = ++capture_request_count_;
             request_state = state_;
         }
-        AIDEN_LOG_INFO("server", "capture_request_received",
+        AICO_LOG_INFO("server", "capture_request_received",
                        "request_id=%llu peer_pid=%ld peer_uid=%ld peer_gid=%ld peer_name=%s state=%s capture_mode=%s timeout_ms=%u format=%s",
                        static_cast<unsigned long long>(request_id),
                        peer.pid, peer.uid, peer.gid, peer.process_name.c_str(),
@@ -493,14 +493,14 @@ void FrameServiceServer::handle_request(const UdsMessage& request, int fd) {
         const uint64_t request_capture_elapsed_ms =
             (monotonic_ns() - request_started_ns) / 1000000ULL;
         if (status == FrameServiceStatus::OK) {
-            AIDEN_LOG_INFO("server", "capture_request_resolved",
+            AICO_LOG_INFO("server", "capture_request_resolved",
                            "request_id=%llu status=%s capture_elapsed_ms=%llu bytes=%zu",
                            static_cast<unsigned long long>(request_id),
                            frame_service_status_to_string(status),
                            static_cast<unsigned long long>(request_capture_elapsed_ms),
                            frame ? frame->data.size() : 0U);
         } else {
-            AIDEN_LOG_WARN("server", "capture_request_resolved",
+            AICO_LOG_WARN("server", "capture_request_resolved",
                            "request_id=%llu status=%s capture_elapsed_ms=%llu bytes=0",
                            static_cast<unsigned long long>(request_id),
                            frame_service_status_to_string(status),
@@ -687,7 +687,7 @@ void FrameServiceServer::handle_request(const UdsMessage& request, int fd) {
         write_uds_message(fd, header, std::vector<uint8_t>());
     } else if (method == "restart") {
         const PeerIdentity peer = peer_identity(fd);
-        AIDEN_LOG_WARN("server", "restart_requested",
+        AICO_LOG_WARN("server", "restart_requested",
                        "peer_pid=%ld peer_uid=%ld peer_gid=%ld peer_name=%s",
                        peer.pid, peer.uid, peer.gid, peer.process_name.c_str());
         std::function<void()> handler;
@@ -706,4 +706,4 @@ void FrameServiceServer::handle_request(const UdsMessage& request, int fd) {
     cJSON_Delete(root);
 }
 
-}  // namespace aiden
+}  // namespace aico

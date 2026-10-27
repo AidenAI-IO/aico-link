@@ -13,7 +13,7 @@ func TestMaintenanceSessionRejectsNonUSBIngress(t *testing.T) {
 	server := newRestoreTestServer(t, t.TempDir())
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/maintenance/sessions", nil)
 	req.RemoteAddr = "127.0.0.2:1234"
-	req.Header.Set("X-Aiden-Client", "config-web/1.0")
+	req.Header.Set("X-Aico-Client", "config-web/1.0")
 	req = req.WithContext(context.WithValue(req.Context(), usbIngressContextKey{}, false))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, req)
@@ -29,7 +29,7 @@ func TestHTTPMaintenanceCookieAcceptsUUIDv4Fallback(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/maintenance/sessions", nil)
 	req.RemoteAddr = "127.0.0.2:1234"
-	req.Header.Set("X-Aiden-Client", "config-web/1.0")
+	req.Header.Set("X-Aico-Client", "config-web/1.0")
 	session := httptest.NewRecorder()
 	server.ServeHTTP(session, req)
 	if session.Code != http.StatusOK {
@@ -44,8 +44,8 @@ func TestHTTPMaintenanceCookieAcceptsUUIDv4Fallback(t *testing.T) {
 		req = httptest.NewRequest(http.MethodPost, "http://127.0.0.1/api/backup/jobs", bytes.NewBufferString(`{"format_version":1,"protection":{"mode":"none"}}`))
 		req.RemoteAddr = "127.0.0.2:1234"
 		req.AddCookie(cookies[0])
-		req.Header.Set("X-Aiden-Request-ID", id)
-		req.Header.Set("X-Aiden-CSRF-Token", csrf)
+		req.Header.Set("X-Aico-Request-ID", id)
+		req.Header.Set("X-Aico-CSRF-Token", csrf)
 		resp := httptest.NewRecorder()
 		server.ServeHTTP(resp, req)
 		want := http.StatusAccepted

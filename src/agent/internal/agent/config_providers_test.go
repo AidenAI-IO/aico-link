@@ -586,11 +586,11 @@ base_url = "https://explicit.example.com/v1"
 }
 
 func TestProviderAPIKeyEnvironmentReference(t *testing.T) {
-	t.Setenv("AIDEN_TEST_MODEL_KEY", "sk-from-env")
+	t.Setenv("AICO_TEST_MODEL_KEY", "sk-from-env")
 	cfg, err := loadProviderConfig(t, `
 [model_settings.providers.p]
 type = "openai"
-api_key = "$AIDEN_TEST_MODEL_KEY"
+api_key = "$AICO_TEST_MODEL_KEY"
 
 [model_settings.model]
 provider = "p"

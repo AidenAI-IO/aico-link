@@ -36,7 +36,7 @@ async function sendMessage() {
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/x-ndjson',
-                'X-Aiden-Stream': 'ndjson'
+                'X-Aico-Stream': 'ndjson'
             },
             signal: currentChatAbortController.signal,
             body: JSON.stringify({

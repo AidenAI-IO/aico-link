@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -26,8 +27,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/backup"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/backup"
 	"golang.org/x/sys/unix"
 )
 
@@ -605,7 +606,7 @@ func (s *Server) handleRestoreChunk(w http.ResponseWriter, r *http.Request, suff
 		writeJSONError(w, http.StatusBadRequest, "restore upload exceeds archive_size")
 		return
 	}
-	wantHash := strings.TrimSpace(strings.ToLower(r.Header.Get("X-Aiden-Chunk-SHA256")))
+	wantHash := strings.TrimSpace(strings.ToLower(r.Header.Get("X-Aico-Chunk-SHA256")))
 	digest := sha256.Sum256(data)
 	if wantHash == "" || wantHash != hex.EncodeToString(digest[:]) {
 		writeJSONError(w, http.StatusBadRequest, "restore chunk hash mismatch")
@@ -729,7 +730,7 @@ func (s *Server) beginRestoreIngestLocked(job *restoreJob) error {
 }
 
 func ingestQuiesceUnits() []string {
-	return []string{"aiden-agent.service"}
+	return []string{"aico-agent.service"}
 }
 
 // restoreWatchdog enforces stall, idle and total time limits for one job.
@@ -921,6 +922,7 @@ func (s *Server) handleRestorePlan(w http.ResponseWriter, r *http.Request, id st
 			}
 		}()
 	}
+	// Build the restore plan while the SD mount identity is pinned.
 	units, err := s.buildRestoreUnits(job.id, manifest, selected, strategy)
 	if err != nil {
 		s.writeBackupError(w, &backupAPIError{Code: "planning_failed", Status: http.StatusBadRequest, Message: sanitizeBackupError(err)})
@@ -1257,10 +1259,19 @@ func restoreTargetSpecFor(file backup.FileManifest, strategy string) (restoreTar
 		if strategy == "emmc_fallback" {
 			spec.layer, spec.rootRel, spec.unit = backup.LayerUserdata, "audio", "sd-audio-fallback"
 		} else {
-			spec.layer, spec.rootRel, spec.unit = backup.LayerSD, "aiden/audio", "sd-managed-audio"
+			spec.layer, spec.rootRel, spec.unit = backup.LayerSD, "aico/audio", "sd-managed-audio"
 		}
 		spec.directory, spec.within = true, p
 	case backup.ComponentSDUserFiles:
+		if p == "." || p == ".." || strings.HasPrefix(p, "../") || strings.HasPrefix(p, "/") ||
+			p != path.Clean(p) || strings.ContainsAny(p, "\\\x00") {
+			return spec, fmt.Errorf("SD user file path %q must be a normalized relative path", p)
+		}
+		// Exchanging a managed ancestor would replace restored audio or the
+		// live transaction itself. Share backup's FAT alias boundary.
+		if backup.IsReservedSDUserPath(p) {
+			return spec, fmt.Errorf("SD user files cannot restore reserved path %q; exclude sd_user_files from this restore", p)
+		}
 		spec.layer, spec.unit, spec.file = backup.LayerSD, "sd-user-"+shortRestoreKey(p), true
 		spec.rootRel = p
 	case backup.ComponentPythonEnvironment:
@@ -1647,7 +1658,7 @@ func (s *Server) handleRestoreApply(w http.ResponseWriter, r *http.Request, id s
 		reboot, err := s.provisionRestoredIdentity(ctx)
 		if err != nil {
 			// The data is already committed and durable; provisioning is
-			// retried by aiden-machine-id.service on the next boot.
+			// retried by aico-machine-id.service on the next boot.
 			s.addRestoreWarning(job, "identity provisioning did not complete: "+sanitizeBackupError(err)+"; it is retried at next boot")
 			reboot = true
 		}

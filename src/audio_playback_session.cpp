@@ -1,10 +1,10 @@
 #include "audio_playback_session.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <chrono>
 #include <stdio.h>
 #include <thread>
 
-namespace aiden {
+namespace aico {
 
 AudioPlaybackSession::AudioPlaybackSession(uint64_t session_id, const AudioFormat& fmt)
     : session_id_(session_id), fmt_(fmt), stopped_(false), final_received_(false), joined_(false) {}
@@ -22,7 +22,7 @@ bool AudioPlaybackSession::start() {
     {
         std::lock_guard<std::mutex> player_lock(player_mutex_);
         if (!player_.init(cfg)) {
-            AIDEN_LOG_ERROR("playback", "player_init_failed", "session_id=%llu",
+            AICO_LOG_ERROR("playback", "player_init_failed", "session_id=%llu",
                             static_cast<unsigned long long>(session_id_));
             return false;
         }
@@ -63,12 +63,12 @@ int AudioPlaybackSession::get_volume() const {
     return player_.get_volume();
 }
 
-AidenServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t len,
+AicoServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t len,
                                                     bool is_final) {
-    if (stopped_.load()) return AidenServiceStatus::SESSION_NOT_FOUND;
+    if (stopped_.load()) return AicoServiceStatus::SESSION_NOT_FOUND;
 
     std::unique_lock<std::mutex> lock(mutex_);
-    if (final_received_) return AidenServiceStatus::SESSION_NOT_FOUND;
+    if (final_received_) return AicoServiceStatus::SESSION_NOT_FOUND;
 
     if (queue_.size() >= kMaxQueueChunks) {
         // Apply back-pressure: wait for the queue to drain a bit.
@@ -78,7 +78,7 @@ AidenServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t 
                                 final_received_ || stopped_.load();
                      });
         if (final_received_ || stopped_.load()) {
-            return AidenServiceStatus::SESSION_NOT_FOUND;
+            return AicoServiceStatus::SESSION_NOT_FOUND;
         }
     }
 
@@ -91,7 +91,7 @@ AidenServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t 
     } else {
         cv_.notify_one();
     }
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
 void AudioPlaybackSession::wait_until_done() {
@@ -114,7 +114,7 @@ void AudioPlaybackSession::playback_loop() {
             });
 
             if (stopped_.load()) {
-                AIDEN_LOG_INFO("playback", "interrupted_before_drain", "session_id=%llu",
+                AICO_LOG_INFO("playback", "interrupted_before_drain", "session_id=%llu",
                                static_cast<unsigned long long>(session_id_));
                 std::lock_guard<std::mutex> player_lock(player_mutex_);
                 player_.stop();
@@ -138,13 +138,13 @@ void AudioPlaybackSession::playback_loop() {
                          playback_tail_drain_grace(fmt_, last_played_chunk_bytes),
                          [this] { return stopped_.load(); });
             if (stopped_.load()) {
-                AIDEN_LOG_INFO("playback", "interrupted_during_final_drain", "session_id=%llu",
+                AICO_LOG_INFO("playback", "interrupted_during_final_drain", "session_id=%llu",
                                static_cast<unsigned long long>(session_id_));
                 std::lock_guard<std::mutex> player_lock(player_mutex_);
                 player_.stop();
                 return;
             }
-            AIDEN_LOG_INFO("playback", "drain_completed", "session_id=%llu",
+            AICO_LOG_INFO("playback", "drain_completed", "session_id=%llu",
                            static_cast<unsigned long long>(session_id_));
             break;
         }
@@ -163,7 +163,7 @@ void AudioPlaybackSession::playback_loop() {
     }
 
     if (stopped_.load()) {
-        AIDEN_LOG_INFO("playback", "interrupted", "session_id=%llu",
+        AICO_LOG_INFO("playback", "interrupted", "session_id=%llu",
                        static_cast<unsigned long long>(session_id_));
     }
 
@@ -174,4 +174,4 @@ void AudioPlaybackSession::playback_loop() {
     }
 }
 
-}  // namespace aiden
+}  // namespace aico

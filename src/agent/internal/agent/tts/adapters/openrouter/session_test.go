@@ -11,7 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestLastSentenceBoundaryHandlesUTF8Punctuation(t *testing.T) {

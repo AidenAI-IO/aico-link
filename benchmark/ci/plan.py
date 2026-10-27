@@ -15,7 +15,13 @@ ENVIRONMENTS = {"isolated", "mobilegym", "adb", "external"}
 # belonging to the hardware profile and sharing its exclusive device lock.
 RUNNABLE_ENVIRONMENTS = {"isolated", "mobilegym", "adb"}
 HARDWARE_ENVIRONMENTS = {"adb", "external"}
-PROFILES = {"runnable", "hardware", "all"}
+PROFILE_ENVIRONMENTS = {
+    "runnable": RUNNABLE_ENVIRONMENTS,
+    "hardware": HARDWARE_ENVIRONMENTS,
+    "adb": {"adb"},
+    "all": ENVIRONMENTS,
+}
+PROFILES = set(PROFILE_ENVIRONMENTS)
 TARGET_PLATFORMS = {"auto", "ios", "android", "mac", "windows", "linux"}
 
 if RUNNABLE_ENVIRONMENTS | HARDWARE_ENVIRONMENTS != ENVIRONMENTS:
@@ -39,6 +45,8 @@ class SuiteCase:
     # selectable by explicit --suite (workflow_dispatch).
     runnable: bool = True
     android_phone_bridge: bool = False
+    # Reuse a suite's tasks without copying or changing its scoring contract.
+    task_ids: list[str] = dc.field(default_factory=list)
 
     def matrix_entry(self) -> dict[str, Any]:
         return dc.asdict(self)
@@ -88,6 +96,15 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         raise CatalogError(f"max_concurrency for {case.id} must be positive")
     if case.timeout_minutes < 1:
         raise CatalogError(f"timeout_minutes for {case.id} must be positive")
+    if not isinstance(case.task_ids, list) or not all(
+        isinstance(task_id, str) and task_id.strip() == task_id and task_id
+        for task_id in case.task_ids
+    ):
+        raise CatalogError(f"task_ids for {case.id} must be an array of non-empty IDs")
+    if len(set(case.task_ids)) != len(case.task_ids):
+        raise CatalogError(f"duplicate task_ids for {case.id}")
+    if case.environment == "adb" and case.max_concurrency != 1:
+        raise CatalogError(f"ADB case {case.id} requires max_concurrency=1")
     return case
 
 
@@ -120,6 +137,21 @@ def load_catalog(
         raise CatalogError(f"unclassified suites: {', '.join(missing)}")
     if unknown:
         raise CatalogError(f"catalog references missing suites: {', '.join(unknown)}")
+    for case in cases:
+        if not case.task_ids:
+            continue
+        path = suites_dir / case.suite.removeprefix("suites/")
+        try:
+            tasks = json.loads(path.read_text(encoding="utf-8"))["tasks"]
+            by_id = {task["id"]: task for task in tasks}
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise CatalogError(f"cannot read tasks for {case.id}: {exc}") from exc
+        for task_id in case.task_ids:
+            if task_id not in by_id:
+                raise CatalogError(f"unknown task {task_id!r} for {case.id}")
+            platforms = by_id[task_id].get("platforms", [])
+            if platforms and case.target_platform != "auto" and case.target_platform not in platforms:
+                raise CatalogError(f"task {task_id!r} does not support {case.target_platform} for {case.id}")
     return Catalog(cases=cases)
 
 
@@ -136,11 +168,7 @@ def select_cases(
         if not selected:
             raise CatalogError(f"suite is not in the CI catalog: {suite}")
         if profile != "all":
-            allowed_environments = (
-                RUNNABLE_ENVIRONMENTS
-                if profile == "runnable"
-                else HARDWARE_ENVIRONMENTS
-            )
+            allowed_environments = PROFILE_ENVIRONMENTS[profile]
             selected = tuple(
                 case for case in selected if case.environment in allowed_environments
             )
@@ -160,6 +188,8 @@ def select_cases(
         return tuple(
             case for case in catalog.cases if case.environment in HARDWARE_ENVIRONMENTS
         )
+    if profile == "adb":
+        return tuple(case for case in catalog.cases if case.environment == "adb")
     return catalog.cases
 
 

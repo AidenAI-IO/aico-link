@@ -18,7 +18,7 @@ func TestEnsureADBReverseUsesResolvedSerial(t *testing.T) {
 	logPath := filepath.Join(tmpDir, "adb.log")
 	adbPath := filepath.Join(tmpDir, "adb")
 	script := "#!/bin/sh\n" +
-		"printf '%s\\n' \"$*\" >> \"$AIDEN_TEST_ADB_LOG\"\n" +
+		"printf '%s\\n' \"$*\" >> \"$AICO_TEST_ADB_LOG\"\n" +
 		"if [ \"$1\" = \"devices\" ] && [ \"$2\" = \"-l\" ]; then\n" +
 		"  printf 'List of devices attached\\nserial123\\tdevice product:panther model:Pixel_7_Pro device:panther transport_id:1\\n'\n" +
 		"  exit 0\n" +
@@ -32,9 +32,9 @@ func TestEnsureADBReverseUsesResolvedSerial(t *testing.T) {
 		t.Fatalf("WriteFile(%s) error = %v", adbPath, err)
 	}
 
-	t.Setenv("AIDEN_ADB_PATH", adbPath)
-	t.Setenv("AIDEN_TEST_ADB_LOG", logPath)
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_PATH", adbPath)
+	t.Setenv("AICO_TEST_ADB_LOG", logPath)
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	defer clearAutoConfiguredADBSerial("serial123")
 
