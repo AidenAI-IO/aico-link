@@ -1222,7 +1222,10 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
-	if err := refreshUserProfileSection(r.contextManager, r.memories.UserProfilePrompt(ctx)); err != nil {
+	// A profile read failure keeps the section the session already carries.
+	if userProfile, err := r.memories.UserProfilePrompt(ctx); err != nil {
+		r.memories.warnProfileReadFailure(err)
+	} else if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
 		return RunResult{}, err
 	}
 	if req.ResumeSessionID != "" {
@@ -2364,7 +2367,13 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
-	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, r.memories.UserProfilePrompt(context.Background()))
+	// A new session has no earlier section to keep, so on a read failure it
+	// starts without one; the next run's refresh adds it once the read works.
+	userProfile, err := r.memories.UserProfilePrompt(context.Background())
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
 	return profile
 }
 

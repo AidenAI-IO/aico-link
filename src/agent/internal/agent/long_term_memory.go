@@ -719,9 +719,14 @@ func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (
 	}
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	entries, _, _, err := s.profileEntriesLocked(ctx)
+	entries, unreadable, _, err := s.profileEntriesLocked(ctx)
 	if err != nil {
 		return "", err
+	}
+	// A partial read is a failure: a profile missing an unreadable entry must
+	// not replace the complete one a session already carries.
+	if unreadable > 0 {
+		return "", fmt.Errorf("%d profile memories are unreadable", unreadable)
 	}
 	var b strings.Builder
 	for _, entry := range entries {

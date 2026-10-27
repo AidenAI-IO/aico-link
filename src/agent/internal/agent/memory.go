@@ -109,19 +109,21 @@ func (m *MemoryManager) effectiveContextWindow() int {
 const userProfilePromptMaxChars = 1500
 
 // UserProfilePrompt returns the saved profile, preference, and rule memories
-// for the system prompt, or "" when none are available.
-func (m *MemoryManager) UserProfilePrompt(ctx context.Context) string {
+// for the system prompt. It returns "" with a nil error only when the user
+// has none; a read failure is an error, so callers keep the profile they
+// already have rather than mistaking the failure for an empty profile.
+func (m *MemoryManager) UserProfilePrompt(ctx context.Context) (string, error) {
 	if m == nil || m.longTerm == nil {
-		return ""
+		return "", nil
 	}
-	prompt, err := m.longTerm.ProfilePrompt(ctx, userProfilePromptMaxChars)
-	if err != nil {
-		if m.logger != nil {
-			m.logger.Warn("[memory] read user profile for prompt failed: %v", err)
-		}
-		return ""
+	return m.longTerm.ProfilePrompt(ctx, userProfilePromptMaxChars)
+}
+
+// warnProfileReadFailure logs a user profile read failure.
+func (m *MemoryManager) warnProfileReadFailure(err error) {
+	if m != nil && m.logger != nil {
+		m.logger.Warn("[memory] read user profile for prompt failed: %v", err)
 	}
-	return prompt
 }
 
 // RequestProfileRebuild asks the long-term store to regenerate profile.md. The

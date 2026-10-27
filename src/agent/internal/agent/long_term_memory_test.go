@@ -701,3 +701,25 @@ func TestProfilePromptKeepsUserMemoryReinforcedByNotification(t *testing.T) {
 		t.Fatalf("profile = %q, want notification-written content excluded", prompt)
 	}
 }
+
+// A profile record that cannot be read must surface as an error, not as an
+// empty profile: refresh would otherwise strip the user profile from a
+// session's system prompt on a transient read failure.
+func TestProfilePromptReportsUnreadableEntries(t *testing.T) {
+	ctx := context.Background()
+	root := filepath.Join(t.TempDir(), "long_term")
+	store := NewLongTermMemoryStore(root)
+	if _, err := store.AddMemory(ctx, MemoryItem{ID: "mem_brevity", Type: "preference", Priority: 80, Confidence: 0.9, Content: "用户希望回复尽量简短。", EvidenceExcerpts: []string{"说短一点"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "memories", "mem_brevity.md"), []byte("---\n: not yaml [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(NewLongTermMemoryStore(root)))
+	if profile, err := manager.UserProfilePrompt(ctx); err == nil {
+		t.Fatalf("UserProfilePrompt() = %q, nil; want an error for the unreadable entry", profile)
+	}
+	if profile, err := (*MemoryManager)(nil).UserProfilePrompt(ctx); err != nil || profile != "" {
+		t.Fatalf("nil manager = %q, %v; want an empty profile without error", profile, err)
+	}
+}
