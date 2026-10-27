@@ -26,8 +26,12 @@ function resetHistoryWindow() {
     historyWindow = null;
 }
 
+function chatRunActive() {
+    return typeof currentChatRequestId !== 'undefined' && !!currentChatRequestId;
+}
+
 async function loadHistory() {
-    if (typeof currentChatRequestId !== 'undefined' && currentChatRequestId) return;
+    if (chatRunActive()) return;
     if (historyLoadInFlight) {
         historyLoadPending = true;
         return;
@@ -40,6 +44,9 @@ async function loadHistory() {
             const page = await fetchHistoryPage(current
                 ? {after: current.end, session_id: current.sessionId, limit: historyRefreshLimit}
                 : {limit: historyPageLimit});
+            // A run that started meanwhile renders its own live messages, and
+            // this page would remove them; the refresh after the run catches up.
+            if (chatRunActive()) return;
             // An older page or a clear replaced the window meanwhile; ask again
             // from the new window instead of appending to a stale one.
             if (current !== historyWindow) {
@@ -56,7 +63,7 @@ async function loadHistory() {
             }
             renderHistory(historyWindow.messages);
             fillConversationWithOlderHistory();
-        } while (historyLoadPending && !(typeof currentChatRequestId !== 'undefined' && currentChatRequestId));
+        } while (historyLoadPending && !chatRunActive());
     } catch (err) {
         console.error('Failed to load history:', err);
     } finally {
@@ -72,7 +79,8 @@ async function loadOlderHistory() {
     let loaded = false;
     try {
         const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
-        if (current !== historyWindow) return;
+        // Like a refresh, do not re-render over a run's live messages.
+        if (current !== historyWindow || chatRunActive()) return;
         if (page.reset || page.session_id !== current.sessionId) {
             historyWindow = historyWindowFromPage(page);
             renderHistory(historyWindow.messages);
@@ -112,7 +120,7 @@ function loadOlderHistoryNearTop() {
 
 let historyRefreshTimer = null;
 function refreshHistoryFromContext() {
-    if (typeof currentChatRequestId !== 'undefined' && currentChatRequestId) return;
+    if (chatRunActive()) return;
     if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
     historyRefreshTimer = setTimeout(function() {
         historyRefreshTimer = null;

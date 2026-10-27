@@ -30,6 +30,7 @@ async function sendMessage() {
         timestamp: new Date().toISOString()
     });
 
+    let completed = false;
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
@@ -52,6 +53,7 @@ async function sendMessage() {
         }
 
         await consumeChatStream(res);
+        completed = true;
     } catch (err) {
         if (currentChatCancelRequested || err.name === 'AbortError') {
             addMessage({
@@ -81,7 +83,9 @@ async function sendMessage() {
         renderPendingSteer();
         setComposerState(false);
         if (isConversationNearBottom()) scrollToBottom();
-        refreshHistoryFromContext();
+        // Only after a completed run: an error or interruption shown locally
+        // may not be in the context yet, and a refresh would remove it.
+        if (completed) refreshHistoryFromContext();
     }
 }
 

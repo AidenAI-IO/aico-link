@@ -369,6 +369,9 @@ type chatPendingResult struct {
 	err      string
 	// Per-request history (separate from server-level history)
 	history []Message
+	// turn is the latest turn when the run completed. Later polls serve it,
+	// since by then the context may already hold the next request's turn.
+	turn []Message
 }
 
 // ChatResultResponse is the JSON shape for GET /api/chat/result.
@@ -1667,6 +1670,7 @@ func (s *Server) handleChatAsync(
 		if s.liveActivity != nil {
 			s.liveActivity.CompleteTask(requestID, result.Output)
 		}
+		pending.turn = s.webHistoryTurnSnapshot()
 		pending.done = true
 		pending.mu.Unlock()
 
@@ -1755,7 +1759,7 @@ func (s *Server) handleChatResult(w http.ResponseWriter, r *http.Request) {
 		var historySnapshot []Message
 		response := ""
 		if done {
-			historySnapshot = s.webHistoryTurnSnapshot()
+			historySnapshot = pending.turn
 			for i := len(historySnapshot) - 1; i >= 0; i-- {
 				if historySnapshot[i].Type == "assistant" {
 					response = historySnapshot[i].Content

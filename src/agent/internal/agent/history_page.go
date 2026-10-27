@@ -131,12 +131,18 @@ func (q historyPageQuery) selectRange(sessionID string, total int) (start, end i
 
 func (s *Server) webHistoryPage(query historyPageQuery) HistoryPage {
 	var end int
-	var reset bool
+	var reset, selected bool
 	window, history := s.webHistoryWindow(func(sessionID string, view []messages.Message) (int, int) {
 		var start int
 		start, end, reset = query.selectRange(sessionID, len(view))
+		selected = true
 		return start, end
 	})
+	if !selected {
+		// No active session could be read, so a cursor or session the client
+		// holds cannot be honored either.
+		reset = query.HasBefore || query.HasAfter || query.SessionID != ""
+	}
 	if history == nil {
 		history = []Message{}
 	}

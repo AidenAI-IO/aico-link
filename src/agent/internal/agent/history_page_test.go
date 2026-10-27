@@ -160,3 +160,45 @@ func TestWebHistoryTurnSnapshotStartsAtLatestUserMessage(t *testing.T) {
 		t.Fatalf("turn snapshot = %#v, want only the last turn", turn)
 	}
 }
+
+func TestServerHistoryResetsCursorWithoutReadableSession(t *testing.T) {
+	runtime := NewRuntimeWithDeps(
+		withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake"}}),
+		&testModelResolver{model: &scriptedModel{}},
+		NewMemoryManager(""),
+		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+		NewSkillIndex(),
+	)
+	server := &Server{logger: newTestLogger(), runtime: runtime}
+
+	held := getHistoryPage(t, server, "after=12&session_id=s1")
+	if !held.Reset || held.SessionID != "" || len(held.Messages) != 0 {
+		t.Fatalf("cursor without a readable session = %+v, want an empty reset page", held)
+	}
+	fresh := getHistoryPage(t, server, "limit=50")
+	if fresh.Reset {
+		t.Fatalf("first page without a session = %+v, want no reset", fresh)
+	}
+}
+
+func TestChatResultServesTheTurnCapturedAtCompletion(t *testing.T) {
+	server := newHistoryPageTestServer(t, 2)
+	const requestID = "done-before-next"
+	server.pendingResults = map[string]*chatPendingResult{
+		requestID: {done: true, turn: server.webHistoryTurnSnapshot()},
+	}
+	// The next request has started its turn by the time this one is polled.
+	if err := server.runtime.contextManager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "next question"}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	server.handleChatResult(rec, httptest.NewRequest(http.MethodGet, "/api/chat/result?request_id="+requestID, nil))
+	var resp ChatResultResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode chat result: %v", err)
+	}
+	if resp.Status != "complete" || resp.Response != "answer 1" || len(resp.History) != 4 || resp.History[0].Content != "question 1" {
+		t.Fatalf("chat result = %+v, want the completed turn", resp)
+	}
+}
