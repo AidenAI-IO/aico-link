@@ -127,8 +127,10 @@ func (s *LongTermMemoryStore) applyMemoryCandidateLocked(ctx context.Context, it
 // claimDuplicateLocked folds a duplicate candidate into the existing record
 // when the candidate changes who owns it or how it is protected: a user's
 // explicit save takes over a conclusion that Notification Memory wrote, and a
-// sensitive save marks an ordinary duplicate sensitive. It reports whether the
-// record was rewritten.
+// sensitive save marks an ordinary duplicate sensitive. A claimed record keeps
+// only the user's words, since a duplicate may be a longer notification text
+// that contains them, and drops the notification's expiry. It reports whether
+// the record was rewritten.
 func (s *LongTermMemoryStore) claimDuplicateLocked(ctx context.Context, id string, candidate MemoryItem) (bool, error) {
 	path := s.memoryPath(id)
 	parsed, err := readMemoryMarkdown(path)
@@ -142,6 +144,12 @@ func (s *LongTermMemoryStore) claimDuplicateLocked(ctx context.Context, id strin
 	reinforceMemoryItem(&parsed.Item, candidate, time.Now().UTC())
 	if userClaim {
 		parsed.Item.Origin = memoryOriginUser
+		parsed.Item.Content = candidate.Content
+		if candidate.Title != "" {
+			parsed.Item.Title = candidate.Title
+		}
+		parsed.Item.ExpiresAt = ""
+		parsed.Item.TTL = ""
 	}
 	if err := writeFileAtomic(path, []byte(formatMemoryMarkdown(parsed.Item)), 0o644); err != nil {
 		return false, err

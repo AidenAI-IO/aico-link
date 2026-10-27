@@ -136,6 +136,9 @@ type MemoryQuery struct {
 	Entities []string
 	Types    []string
 	Limit    int
+	// includeSensitive lets internal callers, such as the duplicate check and
+	// maintenance, see sensitive records that a browse by the Agent omits.
+	includeSensitive bool
 }
 
 type MemoryResult struct {
@@ -246,7 +249,7 @@ func (s *LongTermMemoryStore) searchAll(ctx context.Context) ([]MemoryResult, er
 	if err != nil {
 		return nil, err
 	}
-	return s.searchLocked(ctx, MemoryQuery{Limit: len(index.Memories)})
+	return s.searchLocked(ctx, MemoryQuery{Limit: len(index.Memories), includeSensitive: true})
 }
 
 func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuery) ([]MemoryResult, error) {
@@ -279,7 +282,7 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 		}
 		// A secret is returned only when the query names its topic, never by a
 		// browse-style recall that lists everything of a type.
-		if entry.Sensitive && !memoryQueryHasTopicalTerms(query) {
+		if entry.Sensitive && !query.includeSensitive && !memoryQueryHasTopicalTerms(query) {
 			continue
 		}
 		parsed, path, expired, err := s.resolveActiveEntry(entry, now)
@@ -534,10 +537,11 @@ func (s *LongTermMemoryStore) DecideAction(ctx context.Context, candidate Memory
 
 func (s *LongTermMemoryStore) decideActionLocked(ctx context.Context, candidate MemoryItem) (string, string, error) {
 	results, err := s.searchLocked(ctx, MemoryQuery{
-		Tags:     candidate.Tags,
-		Entities: candidate.Entities,
-		Types:    []string{candidate.Type},
-		Limit:    10,
+		Tags:             candidate.Tags,
+		Entities:         candidate.Entities,
+		Types:            []string{candidate.Type},
+		Limit:            10,
+		includeSensitive: true,
 	})
 	if err != nil {
 		return "add", "", err
