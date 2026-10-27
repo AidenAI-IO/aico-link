@@ -9,7 +9,7 @@ import re
 import tempfile
 from urllib.parse import urlsplit
 
-DEFAULT_URL = "https://aidenai-io.github.io/aiden-firmware/apt"
+DEFAULT_URL = "https://aidenai-io.github.io/aico-link/apt"
 KEY_PATH = "usr/share/keyrings/aico-archive-keyring.asc"
 
 

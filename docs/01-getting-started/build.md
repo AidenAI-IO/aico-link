@@ -7,7 +7,7 @@ sidebar_position: 5
 ## Clone the Project
 
 ```bash
-git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git aico-link-firmware
+git clone --recursive git@github.com:AidenAI-IO/aico-link.git aico-link-firmware
 cd aico-link-firmware
 ```
 

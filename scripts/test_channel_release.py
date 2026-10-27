@@ -20,7 +20,8 @@ import release
 sys.path.insert(0, str(ROOT / "scripts/debian-package"))
 import system_config
 
-REPO = "AidenAI-IO/aiden-firmware"
+REPO = "AidenAI-IO/aico-link"
+FORMER_REPO = "AidenAI-IO/aiden-firmware"
 
 
 class GitFixture(unittest.TestCase):
@@ -337,6 +338,23 @@ class PlannerTests(GitFixture):
         bad[-1]["platform"]["base_release"] = "prod-v0.0.2"
         with self.assertRaises(ValueError):
             plan.validate_history(bad, REPO)
+
+    def test_history_published_before_repository_rename_continues(self):
+        self.publish()
+        self.commit({"src/agent/main.go": "next"})
+        self.publish()
+        for record in self.history:
+            record["repo"] = FORMER_REPO
+        self.commit({"src/agent/main.go": "after rename"})
+        record = self.make()
+        self.assertEqual((record["repo"], record["kind"], record["previous_tag"]),
+                         (REPO, "business", "dev-v0.0.3"))
+        plan.validate_history([*self.history, record], REPO)
+        plan.validate_history([*self.history, record], FORMER_REPO)
+        other = copy.deepcopy(self.history)
+        other[0]["repo"] = "AidenAI-IO/other"
+        with self.assertRaisesRegex(ValueError, "Invalid published release record"):
+            plan.validate_history(other, REPO)
 
     def test_stale_plan_cannot_publish(self):
         old_plan = self.make()

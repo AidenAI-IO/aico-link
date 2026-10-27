@@ -553,7 +553,7 @@ boot_b_hash=$(sha256sum "${TEST_ROOT}/ota-config-images/boot_b.img" | awk '{prin
 rootfs_hash=$(sha256sum "${TEST_ROOT}/ota-config-images/rootfs.img" | awk '{print $1}')
 cat >"${TEST_ROOT}/ota-config.json" <<EOF
 {
-  "repo": "AidenAI-IO/aiden-firmware",
+  "repo": "AidenAI-IO/aico-link",
   "channel": "stable",
   "download_safety_margin_bytes": 16777216,
   "factory_version": "20260817-120000-abcdef0",

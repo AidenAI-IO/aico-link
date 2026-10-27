@@ -34,7 +34,7 @@ The sandbox does not build or use the vendored `pico-sdk/` BSP.
 The basic sandbox does not require a recursive clone:
 
 ```bash
-git clone https://github.com/AidenAI-IO/aiden-firmware.git aico-link-firmware
+git clone https://github.com/AidenAI-IO/aico-link.git aico-link-firmware
 cd aico-link-firmware
 ```
 

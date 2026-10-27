@@ -168,7 +168,7 @@ environment; macOS can inspect plans and artifacts.
 
 ```bash
 python3 scripts/release/release.py plan \
-  --repo AidenAI-IO/aiden-firmware --channel dev
+  --repo AidenAI-IO/aico-link --channel dev
 
 # Clean working tree; HEAD must match source_commit in the plan.
 # OTA builds also require the signing/trusted-public-key variables used by debian_build.sh.

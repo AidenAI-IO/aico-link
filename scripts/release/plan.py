@@ -13,6 +13,9 @@ CHANNELS = ("dev", "staging", "prod")
 VERSION = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG = re.compile(r"(dev|staging|prod)-v(" + VERSION + r")\Z")
 POLICY = Path(__file__).with_name("policy.json")
+# Published records are immutable, so releases made before a GitHub repository
+# rename keep the old name. Map each former name to the current one.
+RENAMED_REPOS = {"AidenAI-IO/aiden-firmware": "AidenAI-IO/aico-link"}
 CONFIG_BOUNDARY = json.loads((Path(__file__).resolve().parents[1] / "debian-system/config-package.json").read_text())
 
 
@@ -70,12 +73,16 @@ def validate_record(record):
     datetime.strptime(record["build_time"], "%Y-%m-%dT%H:%M:%SZ")
 
 
+def current_repo(repo):
+    return RENAMED_REPOS.get(repo, repo)
+
+
 def validate_history(records, repo):
     tags, versions, contracts = set(), set(), set()
     by_tag = {record["tag"]: record for record in records}
     for record in records:
         validate_record(record)
-        if record["repo"] != repo or record["kind"] == "none":
+        if current_repo(record["repo"]) != current_repo(repo) or record["kind"] == "none":
             raise ValueError("Invalid published release record")
         if record["tag"] in tags or record["version"] in versions:
             raise ValueError("Duplicate release tag/version")

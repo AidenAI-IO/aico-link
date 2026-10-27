@@ -62,11 +62,13 @@ For deployment and updates, see [Deployment](../01-getting-started/deployment.md
 
 ## Existing External Names
 
-Existing GitHub organization, repository, release, and submodule URLs remain
-unchanged. For example, clone from
-[`AidenAI-IO/aiden-firmware`](https://github.com/AidenAI-IO/aiden-firmware), and
-use the existing signed APT repository at
-`https://aidenai-io.github.io/aiden-firmware/apt`.
+Existing GitHub organization, release, and submodule URLs remain unchanged.
+The firmware repository was renamed from `AidenAI-IO/aiden-firmware` to
+[`AidenAI-IO/aico-link`](https://github.com/AidenAI-IO/aico-link); clone from
+the new name and use the signed APT repository at
+`https://aidenai-io.github.io/aico-link/apt`. Releases published before the
+rename keep the former name in their immutable `release.json` records, and the
+release planner treats both names as the same repository.
 
 Sibling checkout paths such as `aiden-mcu`, `aiden-design`, and `aiden-app`
 refer to those existing repositories; this firmware change does not rename

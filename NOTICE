@@ -179,7 +179,7 @@ cat buildroot/.config | grep "^BR2_PACKAGE.*=y"
 
 If you believe any component's license is incorrectly stated or if you have
 concerns about license compatibility, please open an issue at:
-https://github.com/AidenAI-IO/aiden-firmware/issues
+https://github.com/AidenAI-IO/aico-link/issues
 
 ---
 

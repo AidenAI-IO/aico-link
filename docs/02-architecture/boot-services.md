@@ -186,13 +186,13 @@ Agent output is persisted at `/userdata/agent/log/agent.log`.
 associated and renew DHCP while IPv4 traffic stalls in HE mode with some APs.
 The compatibility default disables Wi-Fi 6 HE and leaves HT/VHT enabled.
 This restores a pre-existing Buildroot fix: commit
-[`2b08d9a9`](https://github.com/AidenAI-IO/aiden-firmware/commit/2b08d9a945846252c3e0d9760187663176cfff57)
+[`2b08d9a9`](https://github.com/AidenAI-IO/aico-link/commit/2b08d9a945846252c3e0d9760187663176cfff57)
 (2026-06-11, #177) passed `he_on=0` at both AIC8800 load points in
 the retired
 Buildroot Wi-Fi loader (`insmod_wifi.sh`). That override was still present in
 `9ff24ababfc672ed16711c8b49b21431e685c9b1`, and the Buildroot packaging script
 copied it over the SDK loader. The Debian migration
-[`4993a135`](https://github.com/AidenAI-IO/aiden-firmware/commit/4993a1354d44922dd79a07b5464c440e8b78ad24)
+[`4993a135`](https://github.com/AidenAI-IO/aico-link/commit/4993a1354d44922dd79a07b5464c440e8b78ad24)
 (#634) introduced this separate loader without the parameter, re-enabling the
 driver's default HE mode. The subsequent removal of the legacy overlay did
 not cause the regression: Debian already used the new loader.
