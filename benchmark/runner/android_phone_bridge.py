@@ -33,7 +33,7 @@ def _adb(serial: str, *args: str) -> str:
     return completed.stdout.strip()
 
 
-def _wait_for_connection(
+def wait_for_android_phone_bridge(
     client: AgentClient, timeout_sec: int = 60, *, require_active: bool = False
 ) -> None:
     deadline = time.monotonic() + timeout_sec
@@ -61,7 +61,7 @@ def _wait_for_connection(
 
 def foreground_android_phone_bridge(serial: str, client: AgentClient) -> None:
     _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
-    _wait_for_connection(client, timeout_sec=30, require_active=True)
+    wait_for_android_phone_bridge(client, timeout_sec=30, require_active=True)
 
 
 def clipboard_write_events(serial: str) -> list[dict]:
@@ -190,7 +190,7 @@ def connected_android_phone_bridge(
         rule_installed = True
         _adb(serial, "shell", "am", "force-stop", "com.aidenbridge")
         _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
-        _wait_for_connection(client)
+        wait_for_android_phone_bridge(client)
         yield
     finally:
         try:

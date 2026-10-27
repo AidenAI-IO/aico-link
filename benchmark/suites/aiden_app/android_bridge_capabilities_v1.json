@@ -7,6 +7,7 @@
   "tasks": [
     {
       "id": "clipboard_round_trip",
+      "foreground_app_id": "com.aidenbridge",
       "category": "multi_step",
       "description_for_judge": "Read the Android system clipboard through Phone Bridge, write a temporary marker, verify it, then restore and verify the original value, including an empty original value.",
       "prompt": "请通过已连接手机的 Bridge 读取当前剪贴板文本，暂时写入 AIDEN_BRIDGE_CI_MARKER，读回确认，然后恢复原始文本并再次读回确认。原始文本为空时也要恢复为空。不要用屏幕操作来读写剪贴板。",
@@ -31,6 +32,7 @@
     },
     {
       "id": "open_url_through_bridge",
+      "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
       "prompt": "请直接通过已连接手机的 Bridge 打开 https://example.com/ ，不要手动操作浏览器界面。",
@@ -51,6 +53,7 @@
     },
     {
       "id": "open_app_through_bridge",
+      "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Launch Android Settings through the foreground AidenBridge semantic app command.",
       "prompt": "请通过已连接手机的 Bridge 打开 Android Settings 应用，不要手动点击屏幕上的应用图标或搜索应用。",
@@ -71,6 +74,7 @@
     },
     {
       "id": "calendar_query",
+      "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Query a fixed date range through the Android Phone Bridge calendar API and report the structured result, including an empty event list.",
       "prompt": "请仅通过已连接手机的 Bridge 查询系统日历在 2037-11-18T00:00:00+08:00 到 2037-11-19T00:00:00+08:00 之间的事件。请报告返回的事件数；如果为空，明确说没有事件。不要打开日历 App 或操作屏幕。",
@@ -91,6 +95,7 @@
     },
     {
       "id": "contacts_query",
+      "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Query a dedicated benchmark contact name through the Android Phone Bridge contacts API; an empty list is valid, but transport and permission errors are not.",
       "prompt": "请仅通过已连接手机的 Bridge 查询通讯录中姓名包含 Aiden Benchmark Fixture 的联系人，并报告返回数量。找不到时明确说返回了空列表，不要创建联系人，也不要操作屏幕。",
@@ -111,6 +116,7 @@
     },
     {
       "id": "send_local_notification",
+      "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Send an immediate local notification through Phone Bridge, report its ID, and verify its visible title and body in Android's notification shade.",
       "prompt": "通过已连接手机的 Bridge 立即发送一条无声本地通知，标题为 AIDEN_BRIDGE_CI_NOTIFICATION，正文为 Android bridge notification verified。然后用 quick_action 的 notification_center 打开通知栏，确认这条通知的标题和正文可见，并报告返回的通知 ID。",
@@ -133,6 +139,7 @@
     },
     {
       "id": "calendar_create_query_delete",
+      "foreground_app_id": "com.aidenbridge",
       "category": "multi_step",
       "android_bridge_fixture": "calendar",
       "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
@@ -155,6 +162,7 @@
     },
     {
       "id": "contacts_create_query_update",
+      "foreground_app_id": "com.aidenbridge",
       "category": "multi_step",
       "android_bridge_fixture": "contacts",
       "description_for_judge": "Create a reserved test contact and verify phone/email values before and after an update through the real Bridge app. The harness removes the reserved contact afterward.",
@@ -177,6 +185,7 @@
     },
     {
       "id": "sms_multiline_unicode_input",
+      "foreground_app_id": "com.aidenbridge",
       "category": "device_operation",
       "description_for_judge": "Open an SMS draft via Phone Bridge and enter multiline Unicode text using enter_text. Never send the draft. Harness checks App write evidence and exact editable field text.",
       "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline and emoji:\nBridge 多行输入 ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
@@ -197,6 +206,7 @@
     },
     {
       "id": "settings_search_unicode_input",
+      "foreground_app_id": "com.aidenbridge",
       "category": "device_operation",
       "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new AidenBridge clipboard write and exact UIAutomator field text.",
       "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden 输入验证 #42. Use enter_text once the editable field is visible, then leave that field on screen.",

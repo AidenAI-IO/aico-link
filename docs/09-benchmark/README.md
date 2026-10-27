@@ -423,7 +423,7 @@ The execution policy is based only on whether CI can prepare the environment:
 | --- | --- | --- |
 | Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
 | Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (14 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
@@ -496,21 +496,47 @@ ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
 
-For ADB cases, CI then checks `com.aidenbridge` on the emulator. It reuses
+When any selected case enables AidenBridge, CI checks `com.aidenbridge` on the emulator. It reuses
 version code `261022018` when present; otherwise it downloads the pinned APK,
 checks its SHA-256, and installs it with `adb install -r`. Update the URL,
 checksum, and expected version together in `benchmark.yml` when intentionally
 changing the tested App build. The upstream download path can be republished;
 the checksum makes a changed binary fail before installation. The emulator must
-retain its data between jobs
-for the installation to be reused. `aidenbridge_android_smoke.json` checks that
-the App opens visibly; `phone_control_v1.json` also runs against the ADB device
-for general UI operations. These cases use the ADB bridge and do not establish
-the App's separate Phone Bridge connection. Select either suite with the
-`hardware` profile for a focused manual run.
+retain its data between jobs for the installation to be reused.
+
+The general Android suites run as matched pairs using the same JSON tasks,
+setup, prompts, rubrics, repeat count, and one worker:
+
+| Suite | Without AidenBridge | With AidenBridge |
+| --- | --- | --- |
+| `adb_android_basic.json` (16 tasks) | `adb-android` | `adb-android-aidenbridge` |
+| `adb_android_text_editing.json` (4 tasks) | `adb-android-text-editing` | `adb-android-text-editing-aidenbridge` |
+
+These task definitions are synced from main commit
+`16ab57b50c68a91a05915a4112f8bc2a896170af`. Basic tasks cover general UI navigation
+and state recovery; text-editing tasks cover ASCII spaces, punctuation,
+replacement, and clearing. The `phone_control_v1.json` suite remains registered
+for MobileGym and iOS, without an additional ADB case.
+
+Selecting either Android suite with the `hardware` profile runs both variants.
+The baseline stops any retained companion App before starting and uses the ADB
+environment without a Phone Bridge connection. The connected variant establishes
+Phone Bridge on each task Agent while ADB continues to provide screenshots and
+input. Both variants retain the task's prepared screen; the connected variant
+does not bring the companion App to the foreground after task setup.
+Hardware cases run exclusively on the shared emulator.
+
+Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
+`execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
+**ADB device** and **ADB + AidenBridge** in its configuration comparison and
+run history. Compare matching tasks from the same workflow attempt/model/repeat
+count using pass rates, tool calls, task time, and token/cost metrics. Historical
+runs with different suite hashes are not a controlled Bridge comparison.
 
 `aiden_app/android_bridge_capabilities_v1.json` is the connected AidenBridge
-suite. It runs with a rooted Android emulator and one Agent worker, checks the
+suite. It tests Bridge-specific APIs rather than serving as the no-Bridge
+comparison workload. It explicitly starts its tasks with the companion App in
+the foreground. It runs with a rooted Android emulator and one Agent worker, checks the
 Phone Bridge connection per task, and covers clipboard round trips, semantic
 app and URL opening, calendar create/query/delete, contacts create/query/update,
 local notifications, and single-line and multiline Unicode text entry. The
@@ -520,7 +546,10 @@ before and after each write task, including failures. Calendar/contact write
 permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
 diagnostic event from the App and the exact text in a non-Bridge Android input
 field; its evidence is included in `results.jsonl` and the local
-`android_bridge_input.json` task artifact. Select this suite with the
+`android_bridge_input.json` task artifact. If input evidence cannot be collected,
+the input assertion is unknown; an otherwise passing task becomes an evaluation
+error. Cleanup failures retain the completed task result and are recorded in
+`android_bridge_cleanup_error` and the worker log. Select this suite with the
 `hardware` profile to run only the connected App cases.
 
 This suite replaces the former separate `android_bridge_data_v1.json` suite.

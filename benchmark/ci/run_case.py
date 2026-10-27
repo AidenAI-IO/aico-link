@@ -130,6 +130,18 @@ def _environment_url(
         serial = environment.get("ANDROID_SERIAL", "").strip()
         if not serial:
             raise RuntimeError("ADB case requires ANDROID_SERIAL")
+        if not case.android_phone_bridge:
+            # A retained emulator may have just run the Bridge-enabled variant.
+            adb_timeout = min(30, timeout_seconds) if timeout_seconds is not None else 30
+            installed = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "list", "packages", "com.aidenbridge"],
+                check=True, capture_output=True, text=True, timeout=adb_timeout,
+            )
+            if "package:com.aidenbridge" in installed.stdout.splitlines():
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "am", "force-stop", "com.aidenbridge"],
+                    check=True, stdout=log_file, stderr=log_file, timeout=adb_timeout,
+                )
         payload = _run_json(
             [
                 python,

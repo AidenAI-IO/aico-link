@@ -11,7 +11,7 @@ def test_android_bridge_routes_and_cleans_up(monkeypatch) -> None:
         return "0" if args == ("shell", "id", "-u") else ""
 
     monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
-    monkeypatch.setattr(android_phone_bridge, "_wait_for_connection", lambda client: None)
+    monkeypatch.setattr(android_phone_bridge, "wait_for_android_phone_bridge", lambda client: None)
 
     with android_phone_bridge.connected_android_phone_bridge("emulator-5554", 32123, object()):
         assert commands[1][1] == ("reverse", "tcp:8080", "tcp:32123")
@@ -32,7 +32,7 @@ def test_android_bridge_cleans_up_when_app_does_not_connect(monkeypatch) -> None
         raise RuntimeError("App did not connect")
 
     monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
-    monkeypatch.setattr(android_phone_bridge, "_wait_for_connection", disconnected)
+    monkeypatch.setattr(android_phone_bridge, "wait_for_android_phone_bridge", disconnected)
 
     with pytest.raises(RuntimeError, match="App did not connect"):
         with android_phone_bridge.connected_android_phone_bridge("emulator-5554", 32123, object()):
@@ -49,7 +49,7 @@ def test_foreground_app_waits_for_active_bridge(monkeypatch) -> None:
         lambda serial, *args: calls.append((serial, args)),
     )
     monkeypatch.setattr(
-        android_phone_bridge, "_wait_for_connection",
+        android_phone_bridge, "wait_for_android_phone_bridge",
         lambda client, **kwargs: calls.append(kwargs),
     )
 

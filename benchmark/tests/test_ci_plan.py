@@ -102,23 +102,59 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
     assert mobilegym[0].target_platform == "android"
     assert mobilegym[0].runnable is False
     assert mobilegym[0] not in select_cases(catalog, profile="runnable")
-    assert {case.id for case in hardware} == {"phone-control-ios", "phone-control-adb"}
+    assert {case.id for case in hardware} == {"phone-control-ios"}
     assert {case.id for case in both} == {
-        "phone-control-mobilegym", "phone-control-ios", "phone-control-adb"
+        "phone-control-mobilegym", "phone-control-ios"
     }
-    assert next(case for case in hardware if case.id == "phone-control-adb").target_platform == "android"
 
 
-def test_aidenbridge_smoke_can_be_selected_without_other_hardware_cases() -> None:
+@pytest.mark.parametrize("suite", ["adb_android_basic", "adb_android_text_editing"])
+def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite):
     catalog = load_catalog()
+    selected = select_cases(catalog, profile="hardware", suite=f"suites/{suite}.json")
 
-    selected = select_cases(
-        catalog, profile="hardware", suite="suites/aidenbridge_android_smoke.json"
-    )
+    assert len(selected) == 2
+    baseline, connected = selected
+    assert baseline.android_phone_bridge is False
+    assert connected.android_phone_bridge is True
+    assert baseline.suite == connected.suite
+    assert baseline.environment == connected.environment == "adb"
+    assert baseline.target_platform == connected.target_platform == "android"
+    assert baseline.max_concurrency == connected.max_concurrency == 1
+    assert baseline.timeout_minutes == connected.timeout_minutes
 
-    assert [(case.id, case.environment, case.target_platform) for case in selected] == [
-        ("aidenbridge-android", "adb", "android")
-    ]
+
+@pytest.mark.parametrize("bridge_enabled", [False, True])
+@pytest.mark.parametrize("app_installed", [False, True])
+def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, app_installed):
+    case = next(case for case in load_catalog().cases
+                if case.suite == "suites/adb_android_basic.json"
+                and case.android_phone_bridge == bridge_enabled)
+    commands = []
+    def run(command, **kwargs):
+        commands.append((command, kwargs))
+        return run_case_module.subprocess.CompletedProcess(
+            command, 0, stdout="package:com.aidenbridge\n" if app_installed else "",
+        )
+    monkeypatch.setattr(run_case_module.subprocess, "run", run)
+    monkeypatch.setattr(run_case_module, "_run_json", lambda *args, **kwargs: {
+        "environment_url": "http://bridge.test",
+    })
+
+    url, _ = _environment_url(case, run_id="paired", environment={"ANDROID_SERIAL": "emulator-5554"})
+
+    assert url == "http://bridge.test"
+    if bridge_enabled:
+        assert commands == []
+    elif app_installed:
+        assert [command[0][-3:] for command in commands] == [
+            ["list", "packages", "com.aidenbridge"],
+            ["am", "force-stop", "com.aidenbridge"],
+        ]
+    else:
+        assert len(commands) == 1
+        assert commands[0][0][-3:] == ["list", "packages", "com.aidenbridge"]
+        assert commands[0][1]["check"] is True
 
 
 def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
@@ -306,7 +342,7 @@ def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None
     assert _effective_exit_code(0, manifest) == 0
 
 
-@pytest.mark.parametrize("case_id", ["adb-android", "aidenbridge-capabilities-android"])
+@pytest.mark.parametrize("case_id", ["adb-android", "adb-android-aidenbridge", "aidenbridge-capabilities-android"])
 @pytest.mark.parametrize("complete", [True, False])
 def test_android_cases_use_run_completeness_not_task_pass_rate(
     monkeypatch, tmp_path: Path, case_id: str, complete: bool,
@@ -328,14 +364,16 @@ def test_android_cases_use_run_completeness_not_task_pass_rate(
     monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("http://bridge.test", None))
     monkeypatch.setattr(run_case_module, "_stop_daemon_projects_by_run_id", lambda run_id: None)
     monkeypatch.setattr(run_case_module, "_stop_service", lambda service: None)
-    monkeypatch.setattr(
-        run_case_module.subprocess, "run",
-        lambda command, **kwargs: run_case_module.subprocess.CompletedProcess(command, 0),
-    )
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return run_case_module.subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(run_case_module.subprocess, "run", run)
 
     assert run_case_module.run_case(
         case, run_id="ci-test", environment={"ANDROID_SERIAL": "emulator-5554"},
     ) == (0 if complete else 1)
+    assert ("--android-phone-bridge-serial" in commands[0]) == case.android_phone_bridge
 
 
 @pytest.mark.parametrize(

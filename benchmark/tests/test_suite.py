@@ -298,43 +298,28 @@ def test_vphone_ios_basic_warmup_requires_screenshot():
     assert warmup.hard_assertions.required_tools == ["screenshot"]
 
 
-def test_adb_android_basic_suite_loads_device_operation_tasks():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json"
-    suite = load_suite(suite_path)
-
-    assert suite.name == "adb_android_basic"
-    assert {task.category for task in suite.tasks} == {"device_operation"}
-    assert [task.id for task in suite.tasks] == [
-        "screenshot_home",
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
-    ]
-    # Action tasks must not require any specific tool: every action tool
-    # already returns a post-action screenshot, so the agent legitimately
-    # completes them without ever invoking the standalone screenshot tool,
-    # and it may pick quick_action vs touch_gesture for the same outcome.
-    by_id = {task.id: task for task in suite.tasks}
+def test_adb_android_suites_keep_navigation_and_text_editing_separate():
+    suites_dir = Path(__file__).resolve().parents[1] / "suites"
+    basic = load_suite(suites_dir / "adb_android_basic.json")
+    editing = load_suite(suites_dir / "adb_android_text_editing.json")
+    assert len(basic.tasks) == 16
+    assert {task.id for task in editing.tasks} == {
+        "search_ascii_with_spaces", "search_ascii_punctuation",
+        "replace_search_query", "clear_search_query",
+    }
+    assert {task.id for task in basic.tasks}.isdisjoint(task.id for task in editing.tasks)
+    for suite in (basic, editing):
+        assert suite.prompt_prefix == ""
+        for task in suite.tasks:
+            assert "shell" in task.hard_assertions.forbidden_tools
+            assert "request_user_action" in task.hard_assertions.forbidden_tools
+            # Generic ADB pairs must preserve task setup, without foregrounding
+            # the companion App only in the connected variant.
+            assert task.foreground_app_id is None
+    by_id = {task.id: task for task in basic.tasks}
+    assert by_id["tap_back"].setup is not None
+    assert by_id["scroll_page_down"].setup is not None
     assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
-    assert suite.prompt_prefix == ""
-    for task_id in (
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
-    ):
-        assert by_id[task_id].hard_assertions.required_tools == []
-    assert by_id["settings_check_wifi"].hard_assertions.min_tool_calls == 1
-    # These ported multi-step tasks genuinely need navigation before observing.
-    for task_id in ("clock_count_alarms", "open_app_drawer"):
-        assert by_id[task_id].hard_assertions.min_tool_calls >= 2
 
 
 @pytest.mark.parametrize("task_id,tool,tool_input", [

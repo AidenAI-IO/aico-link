@@ -18,6 +18,7 @@ from runner.android_phone_bridge import (
     connected_android_phone_bridge,
     foreground_android_phone_bridge,
     verify_android_bridge_input,
+    wait_for_android_phone_bridge,
 )
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
@@ -748,6 +749,7 @@ def _cmd_run_auto_agent_setup_inner(
         )
         log_proc = None
         client = None
+        completed_result = None
         try:
             print(
                 f"[{progress}] STARTING   {unit.task.id} attempt={unit.attempt}",
@@ -848,7 +850,9 @@ def _cmd_run_auto_agent_setup_inner(
                     benchmark_task_id=route_id,
                     active_skills=active_skills,
                     after_setup=(
-                        (lambda: foreground_android_phone_bridge(bridge_serial, client))
+                        (lambda: foreground_android_phone_bridge(bridge_serial, client)
+                         if unit.task.foreground_app_id == "com.aidenbridge"
+                         else wait_for_android_phone_bridge(client))
                         if bridge_serial else None
                     ),
                 )
@@ -863,7 +867,10 @@ def _cmd_run_auto_agent_setup_inner(
                         json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
                     )
                     result.metrics["android_bridge_input"] = evidence
-                    verified = bool(evidence.get("bridge_clipboard_write") and evidence.get("field_contains_exact_text"))
+                    verified = (
+                        None if evidence.get("error") else
+                        bool(evidence.get("bridge_clipboard_write") and evidence.get("field_contains_exact_text"))
+                    )
                     if result.hard_assertions is not None:
                         result.hard_assertions.android_bridge_input = verified
                     if evidence.get("error"):
@@ -884,9 +891,15 @@ def _cmd_run_auto_agent_setup_inner(
                             result.metrics.update(success=False, quality_score=0.0, failure_class="agent",
                                               first_failure_stage="state_verification",
                                               failure_event_ref="android_bridge_input.json")
+                # Only preserve a result once evaluation is complete; errors
+                # exiting the context managers are cleanup failures.
+                completed_result = result
                 return result
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
+            if completed_result is not None:
+                completed_result.metrics["android_bridge_cleanup_error"] = str(exc)
+                return completed_result
             return skipped_task_result(
                 suite,
                 unit.task,
@@ -959,7 +972,10 @@ def _cmd_run_auto_agent_setup_inner(
         "auto_agent_setup": True,
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
-        "execution_environment": _execution_environment(suite, selected_task_ids),
+        "execution_environment": (
+            "adb_aidenbridge" if bridge_serial
+            else _execution_environment(suite, selected_task_ids)
+        ),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",

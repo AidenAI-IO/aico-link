@@ -298,7 +298,7 @@ jobs:
           adb devices >&2
           exit 1
       - name: Install AidenBridge on Android device
-        if: ${{ contains(needs.plan.outputs.matrix, '"environment":"adb"') }}
+        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
         run: |
           set -euo pipefail
           echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
@@ -324,7 +324,7 @@ jobs:
             echo "Expected $AIDENBRIDGE_PACKAGE version $AIDENBRIDGE_VERSION_CODE, found ${installed_version:-none}" >&2
             exit 1
           }
-      - name: Enable emulator routing for AidenBridge capabilities
+      - name: Enable emulator routing for AidenBridge cases
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
         run: |
           set -euo pipefail
