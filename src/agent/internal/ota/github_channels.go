@@ -31,7 +31,7 @@ func releaseEndpoint(config UpdaterConfig) (string, error) {
 	}
 	repo := config.Repo
 	if repo == "" {
-		repo = "AidenAI-IO/aiden-firmware"
+		repo = "AidenAI-IO/aico-link"
 	}
 	if !releaseRepoPattern.MatchString(repo) {
 		return "", fmt.Errorf("invalid OTA repository %q", repo)

@@ -1,6 +1,6 @@
 # GitHub APT Repository
 
-Business package repository: `https://aidenai-io.github.io/aiden-firmware/apt`.
+Business package repository: `https://aidenai-io.github.io/aico-link/apt`.
 GitHub Pages hosts the signed `InRelease`, `Release.gpg`, package indexes, and `.deb` files.
 Packages come only from published Releases in the three channels; unpublished Actions
 build artifacts are never added to the repository.
@@ -137,7 +137,7 @@ Local validation on Linux:
 ```bash
 python3 scripts/test_apt_repository.py
 GNUPGHOME=/path/to/private-gnupg python3 scripts/apt/repository.py \
-  --repo AidenAI-IO/aiden-firmware --output output/apt/site
+  --repo AidenAI-IO/aico-link --output output/apt/site
 ```
 
 Tests run a real `apt update` and simulated `apt upgrade`, covering contract isolation,

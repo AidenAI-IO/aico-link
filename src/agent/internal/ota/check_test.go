@@ -77,7 +77,7 @@ func TestUpdateRejectsReleaseChangedSinceCheck(t *testing.T) {
 	env := newUpdaterTestEnv(t)
 	manifest := env.signedManifest(map[string][]byte{"boot_a.img": []byte("new-a"), "boot_b.img": []byte("new-b"), "rootfs.img": []byte("new-root")}, nil)
 	server := env.releaseServer(t, manifest, nil)
-	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aico-link/releases/latest"
 	env.config.ExpectedVersion = "different-version"
 	_, err := env.updater().CheckOnce(context.Background())
 	if err == nil || !strings.Contains(err.Error(), "changed since availability check") {

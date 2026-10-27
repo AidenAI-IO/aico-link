@@ -125,7 +125,7 @@ Clone the repository (the BSP is included in `pico-sdk/`; `--recursive` also
 initializes the MobileGym dependency):
 
 ```bash
-git clone --recursive git@github.com:AidenAI-IO/aiden-firmware.git aico-link-firmware
+git clone --recursive git@github.com:AidenAI-IO/aico-link.git aico-link-firmware
 cd aico-link-firmware
 ```
 

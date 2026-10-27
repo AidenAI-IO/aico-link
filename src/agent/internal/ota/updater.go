@@ -36,7 +36,7 @@ const (
 	DefaultOTAMountInfoPath             = "/proc/self/mountinfo"
 	DefaultOTAUpdateLockName            = "update.lock"
 	DefaultOTADownloadSafetyMarginBytes = 16 << 20
-	DefaultReleaseURL                   = "https://api.github.com/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	DefaultReleaseURL                   = "https://api.github.com/repos/AidenAI-IO/aico-link/releases/latest"
 	MaxRemoteManifestBytes              = 1 << 20
 	// DefaultHTTPRequestLimit bounds metadata requests (release JSON, manifest).
 	// Those are small and fast; 30m is already generous.

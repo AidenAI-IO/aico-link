@@ -72,7 +72,7 @@ Environment overrides:
                             clear them. Point them outside the repository to
                             survive a CI checkout that cleans ignored files.
   OTA_REPO                  Local factory config repository label (default:
-                            AidenAI-IO/aiden-firmware).
+                            AidenAI-IO/aico-link).
   OTA_CHANNEL               Local manifest channel (default: local).
   OTA_BASE_URL              Optional HTTP(S) base URL embedded in manifest
                             assets for non-GitHub distribution.
@@ -347,7 +347,7 @@ main() {
     local ota_public_key=${OTA_PUBLIC_KEY_PATH:-${DEFAULT_OTA_PUBLIC_KEY}}
     local ota_trust_public_key=${OTA_TRUST_PUBLIC_KEY_PATH:-}
     local go_root=${DEBIAN_APPS_GO_ROOT:-${DEFAULT_GO_ROOT}}
-    local ota_repo=${OTA_REPO:-AidenAI-IO/aiden-firmware}
+    local ota_repo=${OTA_REPO:-AidenAI-IO/aico-link}
     local ota_channel=${OTA_CHANNEL:-local}
     local ota_base_url=${OTA_BASE_URL:-}
     local ota_build_time=${OTA_BUILD_TIME:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}

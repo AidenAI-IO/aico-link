@@ -237,7 +237,7 @@ func TestUpdaterChecksActualCapacityBeforeAssetDownload(t *testing.T) {
 	manifest := env.signedManifest(assets, nil)
 	var assetRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aiden-firmware/releases/latest") {
+		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aico-link/releases/latest") {
 			var release struct {
 				Assets []githubAsset `json:"assets"`
 			}
@@ -262,7 +262,7 @@ func TestUpdaterChecksActualCapacityBeforeAssetDownload(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	t.Cleanup(server.Close)
-	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aico-link/releases/latest"
 	env.config.DownloadSafetyMarginBytes = 64
 	updater := env.updater()
 	updater.availableBytes = func(string) (int64, error) { return 64, nil }
@@ -300,7 +300,7 @@ func TestUpdaterCapacityCreditsResumablePartialDownload(t *testing.T) {
 	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aiden-firmware/releases/latest") {
+		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aico-link/releases/latest") {
 			var release struct {
 				Assets []githubAsset `json:"assets"`
 			}
@@ -332,7 +332,7 @@ func TestUpdaterCapacityCreditsResumablePartialDownload(t *testing.T) {
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
-	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aico-link/releases/latest"
 	env.config.DownloadSafetyMarginBytes = 64
 	remaining := int64(len(assets["boot_b.img"]) - len(partial) + len(assets["rootfs.img"]))
 	updater := env.updater()
@@ -374,7 +374,7 @@ func TestUpdaterStreamsOneVerifiedAssetAtATimeWithinLargestAssetBudget(t *testin
 		}
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aiden-firmware/releases/latest") {
+		if strings.HasSuffix(r.URL.Path, "/repos/AidenAI-IO/aico-link/releases/latest") {
 			var release struct {
 				Assets []githubAsset `json:"assets"`
 			}
@@ -407,7 +407,7 @@ func TestUpdaterStreamsOneVerifiedAssetAtATimeWithinLargestAssetBudget(t *testin
 		_, _ = w.Write(body)
 	}))
 	t.Cleanup(server.Close)
-	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aiden-firmware/releases/latest"
+	env.config.ReleaseURL = server.URL + "/repos/AidenAI-IO/aico-link/releases/latest"
 	env.config.DownloadSafetyMarginBytes = 64
 	largest := int64(0)
 	total := int64(0)

@@ -30,7 +30,7 @@ loader = importlib.machinery.SourceFileLoader("apt_source", str(ROOT / "overlay-
 spec = importlib.util.spec_from_loader(loader.name, loader)
 apt_source = importlib.util.module_from_spec(spec)
 loader.exec_module(apt_source)
-REPO = "AidenAI-IO/aiden-firmware"
+REPO = "AidenAI-IO/aico-link"
 
 
 def run(*args, **kwargs):
