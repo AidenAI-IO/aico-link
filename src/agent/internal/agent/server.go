@@ -369,6 +369,10 @@ type chatPendingResult struct {
 	err      string
 	// Per-request history (separate from server-level history)
 	history []Message
+	// turn is this request's turn, captured when it completed. Later polls
+	// serve it, since by then the context may already hold the next
+	// request's turn.
+	turn []Message
 }
 
 // ChatResultResponse is the JSON shape for GET /api/chat/result.
@@ -1606,6 +1610,12 @@ func (s *Server) handleChatAsync(
 		defer func() {
 			unregisterStreamOutput()
 		}()
+		runReq.OnRunComplete = func() {
+			turn := s.webHistoryTurnSnapshot()
+			pending.mu.Lock()
+			pending.turn = turn
+			pending.mu.Unlock()
+		}
 
 		result, err := s.runtime.Run(runCtx, runReq)
 		if newStream != nil {
@@ -1755,7 +1765,7 @@ func (s *Server) handleChatResult(w http.ResponseWriter, r *http.Request) {
 		var historySnapshot []Message
 		response := ""
 		if done {
-			historySnapshot = s.webHistorySnapshot()
+			historySnapshot = pending.turn
 			for i := len(historySnapshot) - 1; i >= 0; i-- {
 				if historySnapshot[i].Type == "assistant" {
 					response = historySnapshot[i].Content
@@ -2016,6 +2026,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Creating stream writer")
 	runReq.StreamWriter = newStreamFanoutWriter(streamWriters...)
 
+	// Capture the turn while the run still owns the runtime gate; see
+	// RunRequest.OnRunComplete.
+	var turn []Message
+	runReq.OnRunComplete = func() {
+		turn = s.webHistoryTurnSnapshot()
+	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
 	if newStream != nil {
@@ -2039,7 +2055,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if s.logger != nil {
 				s.logger.Info("Agent run canceled: request_id=%s", req.RequestID)
 			}
-			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: s.webHistorySnapshot()})
+			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: turn})
 			return
 		}
 		errorMessage := Message{
@@ -2061,11 +2077,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			s.speakFinalText(ctx, req.RequestID, prepared)
 		}
-		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: s.webHistorySnapshot()})
+		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: turn})
 		return
 	}
 
-	historySnapshot := s.webHistorySnapshot()
+	historySnapshot := turn
 	if s.liveActivity != nil {
 		s.liveActivity.CompleteTask(req.RequestID, result.Output)
 	}
@@ -2585,17 +2601,26 @@ func (s *Server) playPromptSoundAsync(kind promptSoundKind, label string) {
 	}()
 }
 
-// handleHistory returns the conversation history
+// handleHistory returns the conversation history. Without paging parameters
+// it returns the full history as an array for older clients; with them it
+// returns one HistoryPage.
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	historySnapshot := s.webHistorySnapshot()
-
+	query, paged, err := parseHistoryPageQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(historySnapshot)
+	if !paged {
+		json.NewEncoder(w).Encode(s.webHistorySnapshot())
+		return
+	}
+	json.NewEncoder(w).Encode(s.webHistoryPage(query))
 }
 
 type ContextResponse struct {
@@ -3627,23 +3652,34 @@ func (s *Server) BroadcastMessage(msg Message) {
 }
 
 func (s *Server) webHistorySnapshot() []Message {
+	_, history := s.webHistoryWindow(func(_ string, view []messages.Message) (int, int) {
+		return 0, len(view)
+	})
+	return history
+}
+
+// webHistoryWindow converts one range of the Web context to public messages.
+// Each message keeps its absolute context index in RequestID, so a page and
+// a full snapshot identify the same message the same way.
+func (s *Server) webHistoryWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) (contextmanager.MessageListWindow, []Message) {
 	if s == nil || s.runtime == nil {
-		return nil
+		return contextmanager.MessageListWindow{}, nil
 	}
-	dump := s.runtime.WebContextDump()
-	result := make([]Message, 0, len(dump.Messages))
+	window := s.runtime.WebContextWindow(selectRange)
+	result := make([]Message, 0, len(window.Messages))
 	role := "backend"
 	if s.runtime.ConfigSnapshot().InputModeOrDefault() == "realtime" {
 		role = "user"
 	}
-	for i, item := range dump.Messages {
+	for i, item := range window.Messages {
 		message, ok := webMessageFromContextMessage(item, role)
 		if ok {
-			message.RequestID = fmt.Sprintf("context-%s-%d", role, i)
+			message.RequestID = fmt.Sprintf("context-%s-%d", role, window.Start+i)
 			result = append(result, message)
 		}
 	}
-	return result
+	window.Messages = nil
+	return window, result
 }
 
 func webMessageFromContextMessage(item messages.Message, contextRole string) (Message, bool) {
