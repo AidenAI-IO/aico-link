@@ -26,9 +26,9 @@ type ProfileFn func(ctx context.Context, entries []ProfileEntry) string
 type ProfileEntry struct {
 	Type    string
 	Content string
-	// FromNotification marks an entry derived from notification content, which
-	// third parties control and which therefore never becomes a system-prompt
-	// instruction.
+	// FromNotification marks an entry whose content came from a notification,
+	// which third parties control and which therefore never becomes a
+	// system-prompt instruction.
 	FromNotification bool
 }
 
@@ -121,7 +121,11 @@ type MemoryItem struct {
 	Traceability    string            `yaml:"traceability"`
 	// Sensitive marks a secret the user explicitly asked to keep. It is
 	// recalled only by a topical query and never enters the user profile.
-	Sensitive        bool     `yaml:"sensitive,omitempty"`
+	Sensitive bool `yaml:"sensitive,omitempty"`
+	// Origin names who wrote the current content: memoryOriginUser for
+	// save_memory, memoryOriginNotification for Notification Memory. Evidence
+	// added by a reinforcement does not change it.
+	Origin           string   `yaml:"origin,omitempty"`
 	Title            string   `yaml:"-"`
 	Content          string   `yaml:"-"`
 	EvidenceExcerpts []string `yaml:"-"`
@@ -411,6 +415,9 @@ func (s *LongTermMemoryStore) supersedeMemoryLocked(ctx context.Context, oldID s
 	newItem = normalizeMemoryItem(newItem, time.Now().UTC())
 	// A new version of a secret is still a secret.
 	newItem.Sensitive = newItem.Sensitive || oldParsed.Item.Sensitive
+	if newItem.Origin == "" {
+		newItem.Origin = oldParsed.Item.Origin
+	}
 	newItem.Supersedes = oldID
 
 	oldParsed.Item.Status = "replaced"
@@ -702,7 +709,7 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 }
 
 // ProfilePrompt formats the active profile, preference, and rule memories as
-// a bullet list for the turn state, highest priority first, stopping before
+// a bullet list for the system prompt, highest priority first, stopping before
 // maxChars. Sensitive and notification-derived memories are excluded. It
 // reads the records directly
 // rather than profile.md, whose rebuild is debounced and may lag a save.
@@ -731,7 +738,17 @@ func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (
 	return strings.TrimSpace(b.String()), nil
 }
 
+const (
+	memoryOriginUser         = "user"
+	memoryOriginNotification = "notification"
+)
+
+// memoryFromNotification reports whether a notification wrote the memory's
+// content. Records saved before Origin existed fall back to their source refs.
 func memoryFromNotification(item MemoryItem) bool {
+	if item.Origin != "" {
+		return item.Origin == memoryOriginNotification
+	}
 	for _, ref := range item.SourceRefs {
 		if ref.Type == "notification" {
 			return true

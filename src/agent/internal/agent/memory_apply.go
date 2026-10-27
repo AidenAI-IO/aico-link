@@ -355,6 +355,11 @@ func effectiveMemoryRevision(item MemoryItem) int {
 }
 
 func mergeMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) {
+	// Whoever writes new content owns it; an unchanged conclusion keeps its
+	// author.
+	if candidate.Origin != "" && candidate.Content != "" && candidate.Content != existing.Content {
+		existing.Origin = candidate.Origin
+	}
 	if candidate.Title != "" {
 		existing.Title = candidate.Title
 	}

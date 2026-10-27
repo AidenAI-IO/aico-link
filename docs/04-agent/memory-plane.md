@@ -77,20 +77,30 @@ a plain file, like every other memory.
 Notifications are never an explicit request to remember, and the Notification
 Memory prompt tells the model to ignore OTPs and secrets.
 
-### Saved User Memory In Turn State
+### User Profile In The System Prompt
 
-Every user turn's state message lists the active `profile`, `preference`, and
-`rule` memories under `saved_user_memory`, highest priority first, within about
-1,500 characters. They are read from the records on each turn, so a memory the
-user saves, changes, or forgets is reflected from the next turn on. The Agent
+The system prompt ends with a "User profile" section that lists the active
+`profile`, `preference`, and `rule` memories, highest priority first, within
+about 1,500 characters. They are read from the records, not from the
+model-written `profile.md`, so the section matches what was saved. The Agent
 therefore applies saved preferences without calling `recall_memory`.
 
-The list is not written into the system prompt, which a session keeps until
-the history is cleared or the configuration changes and which would otherwise
-go on showing a forgotten memory. Older state messages are pruned like any
-other state. Sensitive memories, `fact` memories, and memories derived from
-notifications are not listed; notification content is written by third parties
-and must not become an instruction.
+A session keeps its system prompt until the history is cleared or the
+configuration changes, which can be days. Before each run, the runtime rebuilds
+the section from the records. When it differs from the one in the session, for
+example because the user saved, changed, or forgot a profile memory, the system
+message is rewritten in a new session revision, the same mechanism context
+compaction uses: the conversation continues, the old transcript stays on disk,
+and scheduled tasks keep following the lineage. An unchanged profile leaves the
+session and any provider prompt cache untouched.
+
+Sensitive memories, `fact` memories, and memories whose content was written by
+Notification Memory are not listed; notification content is written by third
+parties and must not become an instruction. Each record's `origin` (`user` or
+`notification`) names who wrote its current content. A notification that only
+reinforces a user's memory adds evidence without changing its origin; one that
+rewrites the content takes it over. Records saved before `origin` existed are
+treated as notification-written when they carry a notification source.
 
 ## Runtime Flow
 

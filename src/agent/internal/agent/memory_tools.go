@@ -295,6 +295,7 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		Entities:         req.Entities,
 		EvidenceExcerpts: req.Evidence,
 		Sensitive:        sensitive != memorySensitiveNone,
+		Origin:           memoryOriginUser,
 	}
 	result, err := t.store.ApplyMemoryCandidate(ctx, item)
 	if err != nil {

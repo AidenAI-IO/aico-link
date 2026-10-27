@@ -1214,6 +1214,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
+	if err := refreshUserProfileSection(r.contextManager, r.memories.UserProfilePrompt(ctx)); err != nil {
+		return RunResult{}, err
+	}
 	if req.ResumeSessionID != "" {
 		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
 		if err != nil {
@@ -1611,11 +1614,8 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			attachment = r.captureStateScreenshot()
 		}
 		entries := r.stateManager.GetAllStates()
-		// Saved memory is read on every turn, so a memory the user saves,
-		// changes, or forgets is reflected from the next turn on.
-		savedMemory := r.memories.UserProfilePrompt(context.Background())
 		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && savedMemory == "" && attachment == nil {
+		if len(entries) == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1631,9 +1631,6 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				continue
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
-		}
-		if savedMemory != "" {
-			fmt.Fprintf(&formated, "%s\n%s\n", savedUserMemoryStateHeader, savedMemory)
 		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
@@ -2323,7 +2320,7 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 }
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool) RoleProfile {
-	return buildProfile(
+	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
 			Prompt:      r.ConfigSnapshot().Prompt,
@@ -2334,6 +2331,8 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
+	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, r.memories.UserProfilePrompt(context.Background()))
+	return profile
 }
 
 // runtimeCallbackHandler implements callbacks.Handler for streaming output and

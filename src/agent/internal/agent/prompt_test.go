@@ -2,12 +2,10 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"errors"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -497,41 +495,6 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 	for _, unwanted := range []string{"## Runtime context", "Phone bridge status", "session memory tail"} {
 		if strings.Contains(profile.SystemPrompt, unwanted) {
 			t.Fatalf("system prompt should not include dynamic context %q:\n%s", unwanted, profile.SystemPrompt)
-		}
-	}
-}
-
-// Saved memory rides in each turn's state rather than the session's system
-// prompt, which is written once per session: a memory the user forgets must
-// stop appearing on the next turn.
-func TestStateHookCarriesCurrentSavedUserMemory(t *testing.T) {
-	ctx := context.Background()
-	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-	if _, err := store.AddMemory(ctx, MemoryItem{ID: "mem_brevity", Type: "preference", Priority: 80, Confidence: 0.9, Content: "用户希望回复尽量简短。", EvidenceExcerpts: []string{"说短一点"}}); err != nil {
-		t.Fatal(err)
-	}
-	runtime := NewRuntimeWithDeps(Config{}, nil, NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(store)), nil, NewSkillIndex())
-	manager := newPromptTestContextManager(t)
-	runtime.contextManager = manager
-	manager.AddAppendMessageHook(runtime.getStateHook())
-
-	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "hello"}); err != nil {
-		t.Fatalf("AppendMessage() error = %v", err)
-	}
-	first := manager.MessageListDump().Messages[0]
-	if first.Role != messages.MessageRoleState || !strings.Contains(first.Content, savedUserMemoryStateHeader+"\n- (preference) 用户希望回复尽量简短。") {
-		t.Fatalf("first state = %#v, want the saved preference", first)
-	}
-
-	if err := store.Forget(ctx, "mem_brevity", "user asked"); err != nil {
-		t.Fatal(err)
-	}
-	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "again"}); err != nil {
-		t.Fatalf("AppendMessage() error = %v", err)
-	}
-	for _, message := range manager.MessageListDump().Messages[2:] {
-		if strings.Contains(message.Content, "saved_user_memory") {
-			t.Fatalf("forgotten memory still in the next turn's state: %q", message.Content)
 		}
 	}
 }
