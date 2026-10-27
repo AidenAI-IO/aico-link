@@ -3426,6 +3426,8 @@ static int rk628_csi_resume(struct device *dev)
 
 	rk628_csi_power_on(csi);
 	rk628_cru_initialize(csi->rk628);
+	/* Power loss restores 1188 MHz; timing detection assumes probe's 1194 MHz. */
+	rk628_clk_set_rate(csi->rk628, CGU_CLK_CPLL, CPLL_REF_CLK);
 	rk628_csi_initial(sd);
 	rk628_hdmirx_plugout(sd);
 	if (csi->plugin_irq)

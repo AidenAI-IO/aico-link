@@ -126,8 +126,8 @@ func (u *UDSServer) serve(ctx context.Context, c net.Conn) {
 		_ = writeMessage(c, errorResponse(err))
 		return
 	}
-	if r.Op == "poweroff" && !poweroffPeerIsRoot(c) {
-		_ = writeMessage(c, errorResponse(&APIError{Status: "DENIED", Message: "poweroff requires a root peer"}))
+	if (r.Op == "poweroff" || r.Op == "suspend_prepare" || r.Op == "suspend_resume") && !poweroffPeerIsRoot(c) {
+		_ = writeMessage(c, errorResponse(&APIError{Status: "DENIED", Message: "power operation requires a root peer"}))
 		return
 	}
 	wait := r.WaitMS
@@ -215,6 +215,14 @@ func (c Client) GetState(ctx context.Context) (*State, error) {
 }
 func (c Client) Poweroff(ctx context.Context, generation, id string) (*State, error) {
 	r, e := c.Do(ctx, Request{Op: "poweroff", Generation: generation, RequestID: id})
+	return r.State, e
+}
+func (c Client) SuspendPrepare(ctx context.Context) (*State, error) {
+	r, e := c.Do(ctx, Request{Op: "suspend_prepare"})
+	return r.State, e
+}
+func (c Client) SuspendResume(ctx context.Context) (*State, error) {
+	r, e := c.Do(ctx, Request{Op: "suspend_resume"})
 	return r.State, e
 }
 func (c Client) GetBattery(ctx context.Context) (*Battery, error) {

@@ -380,17 +380,17 @@ int main(void) {
 
 
 def extract_function(source, name):
-    match = re.search(r"^(?:static )?(?:bool|int|void) " + name + r"\([^;]*?\)\n\{.*?^\}",
+    match = re.search(r"^(?:static )?(?:bool|int|void|unsigned long) " + name + r"\([^;]*?\)\n\{.*?^\}",
                       source, re.MULTILINE | re.DOTALL)
     if not match:
         raise AssertionError(f"Production function not found: {name}")
     return match.group()
 
 
-def register_definitions():
+def register_definitions(names=("rk628.h", "rk628_hdmirx.h")):
     """Keep the CSI startup harness aligned with the driver's register macros."""
     definitions = []
-    for name in ("rk628.h", "rk628_hdmirx.h"):
+    for name in names:
         lines = iter((DRIVER.parent / name).read_text().splitlines())
         for line in lines:
             if not line.startswith("#define "):
@@ -439,10 +439,21 @@ def main():
             "/* DRIVER_FUNCTIONS */", "\n".join(extract_function(source, name) for name in (
                 "rk628_csi_get_edid", "rk628_reset_edid",
             )))
+        cru_source = (DRIVER.parent / "rk628_cru.c").read_text()
+        resume = (ROOT / "tests/rk628_resume_harness.c").read_text()
+        resume = resume.replace("/* DRIVER_REGISTERS */", register_definitions(
+            ("rk628.h", "rk628_cru.h", "rk628_cru.c")))
+        resume = resume.replace("/* CRU_FUNCTIONS */", "\n".join(
+            extract_function(cru_source, name) for name in (
+                "rk628_cru_clk_get_rate_pll", "rk628_cru_clk_set_rate_pll",
+                "rk628_cru_initialize",
+            )))
+        resume = resume.replace("/* DRIVER_FUNCTIONS */",
+                                extract_function(source, "rk628_csi_resume"))
         compiler = shlex.split(os.environ.get("CC", "gcc"))
         for name, body in (("recovery", PRELUDE + "\n".join(functions) + CASES),
                            ("startup", startup), ("cif-startup", cif_startup),
-                           ("timing", timing), ("edid", edid)):
+                           ("timing", timing), ("edid", edid), ("resume", resume)):
             harness = Path(directory) / (name + ".c")
             binary = Path(directory) / name
             harness.write_text(body)

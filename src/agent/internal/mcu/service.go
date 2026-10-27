@@ -103,6 +103,7 @@ type mutation struct {
 }
 type Service struct {
 	mu                    sync.Mutex
+	suspendMu             sync.Mutex
 	ctx                   context.Context
 	cancel                context.CancelFunc
 	events                *EventStore
@@ -112,6 +113,7 @@ type Service struct {
 	ledSupport            string
 	plugin                *HardwareEvent
 	invalidEvents         uint64
+	wakeVersion           uint64
 	shutdown              ShutdownCoordinator
 	mutations             map[string]*mutation
 }
@@ -147,10 +149,10 @@ func (s *Service) Attach(l *Link) {
 		}
 	}
 	l.OnRX = func() { s.mu.Lock(); s.lastRX = time.Now(); s.mu.Unlock() }
-	l.AllowRequest = func() bool {
+	l.AllowRequest = func(cmd byte) bool {
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		return s.state == Ready
+		return s.state == Ready || (s.state == Sleeping && cmd == SuspendResume)
 	}
 	l.OnReady = func() bool {
 		s.mu.Lock()
@@ -229,6 +231,12 @@ func (s *Service) HandleEvent(f Frame) {
 	}
 	e := HardwareEvent{UARTSeq: f.Seq}
 	if f.Command == Wakeup {
+		s.mu.Lock()
+		s.wakeVersion++
+		if s.state == Sleeping {
+			s.state = Ready
+		}
+		s.mu.Unlock()
 		e.Type = "wakeup"
 		e.SourceCode = p[0]
 		e.Source = "unknown"
@@ -257,7 +265,7 @@ func (s *Service) HandleEvent(f Frame) {
 func (s *Service) State() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	names := map[byte]string{Booting: "booting", Ready: "ready", ShuttingDown: "shutting_down"}
+	names := map[byte]string{Booting: "booting", Ready: "ready", ShuttingDown: "shutting_down", Sleeping: "sleeping"}
 	r := State{RVState: names[s.state], RVServiceVersion: "1.0.0", ProtocolVersion: 1, Generation: s.events.Generation(), UARTConnected: s.link != nil, LEDSupport: s.ledSupport, Plugin: s.plugin, InvalidEvents: s.invalidEvents}
 	if !s.lastRX.IsZero() {
 		r.LastRXAt = s.lastRX.UTC().Format(time.RFC3339Nano)
@@ -289,6 +297,9 @@ func (s *Service) Handle(ctx context.Context, r Request) Response {
 			return errorResponse(err)
 		}
 		return Response{Status: "OK", EventPage: &page}
+	}
+	if r.Op == "suspend_prepare" || r.Op == "suspend_resume" {
+		return s.suspendOperation(ctx, r.Op)
 	}
 	cmd, payload, mutating, err := encodeRequest(r)
 	if err != nil {
@@ -351,6 +362,10 @@ func (s *Service) Handle(ctx context.Context, r Request) Response {
 
 func encodeRequest(r Request) (byte, []byte, bool, error) {
 	switch r.Op {
+	case "suspend_prepare":
+		return SuspendPrepare, nil, true, nil
+	case "suspend_resume":
+		return SuspendResume, nil, true, nil
 	case "poweroff":
 		if r.Since != "" || r.Limit != 0 || r.WaitMS != 0 || r.DelayS != 0 ||
 			r.LED != "" || r.Mode != "" || r.OnMS != 0 || r.OffMS != 0 || r.LeaseS != 0 {
@@ -409,6 +424,55 @@ func encodeRequest(r Request) (byte, []byte, bool, error) {
 	default:
 		return 0, nil, false, invalid("unknown MCU operation")
 	}
+}
+
+func (s *Service) suspendOperation(ctx context.Context, op string) Response {
+	s.suspendMu.Lock()
+	defer s.suspendMu.Unlock()
+	s.mu.Lock()
+	link, state, wakeVersion := s.link, s.state, s.wakeVersion
+	s.mu.Unlock()
+	if link == nil || (op == "suspend_prepare" && state != Ready) ||
+		(op == "suspend_resume" && state != Ready && state != Sleeping) {
+		return errorResponse(&APIError{Status: "NOT_READY", Message: "MCU link is not ready for suspend"})
+	}
+	cmd := SuspendPrepare
+	if op == "suspend_resume" {
+		cmd = SuspendResume
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	f, err := link.Request(requestCtx, cmd, nil)
+	if err != nil {
+		r := errorResponse(err)
+		r.UnknownOutcome = true
+		return r
+	}
+	if len(f.Payload) != 1 || f.Payload[0] > Timeout {
+		return errorResponse(&APIError{Status: "PROTOCOL_ERROR", Message: "invalid suspend response", UnknownOutcome: true})
+	}
+	if f.Payload[0] != Success {
+		status := f.Payload[0]
+		names := []string{"OK", "BUSY", "INVALID_ARGUMENT", "NOT_READY", "DENIED", "INTERNAL_ERROR", "TIMEOUT"}
+		return errorResponse(&APIError{Status: names[status], Message: "MCU rejected suspend command", MCUStatus: &status})
+	}
+	s.mu.Lock()
+	if op == "suspend_prepare" {
+		if s.state != Ready || s.wakeVersion != wakeVersion {
+			s.mu.Unlock()
+			// A wake crossed the grant. The caller must not enter Linux suspend.
+			rollbackCtx, rollbackCancel := context.WithTimeout(s.ctx, time.Second)
+			defer rollbackCancel()
+			_, _ = link.Request(rollbackCtx, SuspendResume, nil)
+			return errorResponse(&APIError{Status: "BUSY", Message: "wake or shutdown arrived during suspend preparation"})
+		}
+		s.state = Sleeping
+	} else if s.state == Sleeping {
+		s.state = Ready
+	}
+	s.mu.Unlock()
+	stateResult := s.State()
+	return Response{Status: "OK", State: &stateResult}
 }
 
 func (s *Service) softwarePoweroff() Response {

@@ -158,18 +158,27 @@ suites:
     class: deterministic
     paths:
       - overlay-debian/usr/bin/aico-power
+      - overlay-debian/etc/systemd/system/aico-suspend.service
       - tests/test_aico_power.py
+      - tests/test_rv1106_s2idle.py
+      - tests/rv1106_s2idle_harness.c
+      - pico-sdk/sysdrv/source/kernel/drivers/cpuidle
       - pico-sdk/project/scripts/test_aico_custom_dts.py
       - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts
       - pico-sdk/sysdrv/source/kernel/arch/arm/configs/rv1106-pm.config
     command: |
       python3 tests/test_aico_power.py
+      python3 tests/test_rv1106_s2idle.py
       python3 pico-sdk/project/scripts/test_aico_custom_dts.py AicoCustomBoardTest.test_suspend_uses_the_board_power_and_pin_configuration
     quick: true
-    dependencies: [python3]
+    dependencies: [python3, gcc]
     required_inputs:
       - overlay-debian/usr/bin/aico-power
+      - overlay-debian/etc/systemd/system/aico-suspend.service
       - tests/test_aico_power.py
+      - tests/test_rv1106_s2idle.py
+      - tests/rv1106_s2idle_harness.c
+      - pico-sdk/sysdrv/source/kernel/drivers/cpuidle/cpuidle-rv1106.c
       - pico-sdk/project/scripts/test_aico_custom_dts.py
       - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts
     required: true
@@ -220,7 +229,7 @@ suites:
 
   - name: rk628-recovery
     class: deterministic
-    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, tests/rk628_edid_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aico/aico-hdmi-mode, edid, overlay-debian/usr/share/aico/hdmi]
+    paths: [pico-sdk, tests/test_rk628_recovery.py, tests/rk628_csi_start_harness.c, tests/rkcif_start_harness.c, tests/rk628_timing_harness.c, tests/rk628_edid_harness.c, tests/rk628_resume_harness.c, scripts/test_rk628d_driver.sh, tests/test_hdmi_mode_cli.py, overlay-debian/usr/lib/aico/aico-hdmi-mode, edid, overlay-debian/usr/share/aico/hdmi]
     command: |
       python3 tests/test_rk628_recovery.py
       bash scripts/test_rk628d_driver.sh
@@ -233,6 +242,7 @@ suites:
       - tests/rkcif_start_harness.c
       - tests/rk628_timing_harness.c
       - tests/rk628_edid_harness.c
+      - tests/rk628_resume_harness.c
       - pico-sdk/sysdrv/source/kernel/drivers/media/i2c/rk628/rk628_hdmirx.c
       - pico-sdk/sysdrv/source/kernel/drivers/media/platform/rockchip/cif/capture.c
     required: true

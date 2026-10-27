@@ -154,3 +154,38 @@ func TestLinkShutdownStopsPendingAndQueuedCommands(t *testing.T) {
 	case <-time.After(150 * time.Millisecond):
 	}
 }
+
+func TestLinkSleepingAllowsOnlyResume(t *testing.T) {
+	p := newChannelPort()
+	l := NewLink(p)
+	l.Guard = 0
+	s := NewService(nil)
+	defer s.Close()
+	defer l.Close()
+	s.Attach(l)
+	go l.Run(context.Background())
+	if f := p.receive(t); f.Command != RVReady {
+		t.Fatal(f)
+	}
+	s.mu.Lock()
+	s.state = Sleeping
+	s.mu.Unlock()
+	if _, err := l.Request(context.Background(), GetBattery, nil); err == nil {
+		t.Fatal("ordinary request accepted while sleeping")
+	}
+	done := make(chan error, 1)
+	go func() { _, err := l.Request(context.Background(), SuspendResume, nil); done <- err }()
+	f := p.receive(t)
+	if f.Command != SuspendResume {
+		t.Fatal(f)
+	}
+	p.send(Frame{Type: RESP, Seq: f.Seq, Command: SuspendResume, Payload: []byte{Success}})
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resume response not delivered")
+	}
+}

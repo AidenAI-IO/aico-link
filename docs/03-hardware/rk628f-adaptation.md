@@ -62,6 +62,15 @@ retries autonomously with a ten-second delay.
 
 ## Receiver recovery
 
+System resume must restore CPLL to the same 1194 MHz reference used at probe,
+before receiver initialization and timing acquisition. Power loss followed by
+generic CRU initialization leaves it at 1188 MHz, while HDMI timing calculations
+assume 1194 MHz. On the tested board this reported a 1080p60 input near 149.25 MHz
+instead of 148.5 MHz and produced persistent diagonal corruption in raw frames.
+Clock and all HDMI channels remained locked; restarting capture or rewriting
+the same EDID did not repair it. Internal RK628 color bars were intact, and
+restoring the calibrated CPLL rate restored the phone image at 1080p60.
+
 Receiver configuration samples character errors once and uses that result
 for both readiness and retry decisions. Reading the counters can update
 their baseline and the equalizer, so a second read could appear clear and
