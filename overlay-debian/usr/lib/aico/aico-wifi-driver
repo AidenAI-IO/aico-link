@@ -2,7 +2,7 @@
 set -eu
 
 ko_dir=/usr/lib/aico/platform/modules
-he_on=${AICO_WIFI_HE:-0}
+he_on=${AICO_WIFI_HE:-1}
 lp_on=${AICO_WIFI_LOW_POWER:-0}
 stage=init
 host_power=/sys/bus/platform/devices/ff9a0000.mmc/power/control
@@ -113,10 +113,9 @@ if [ "$model" = "Aico Link SCH v1" ]; then
             ;;
     esac
 fi
-# Preserve the Buildroot workaround from 2b08d9a9 (#177), which the Debian
-# loader initially omitted: AIC8800 variants can associate and acquire DHCP over HE
-# but subsequently lose IPv4 connectivity with some APs. Keep HT/VHT enabled.
-# This parameter takes effect at module load.
+# The AIC8800D80 supports Wi-Fi 6 HE on both bands. AICO_WIFI_HE=0 restores
+# the HT/VHT-only workaround from 2b08d9a9 (#177), which targeted the previous
+# hardware design. This parameter takes effect at module load.
 stage=firmware
 insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"
 restore_host_power

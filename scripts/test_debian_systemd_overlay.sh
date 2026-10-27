@@ -320,7 +320,7 @@ if grep -qE 'dhcpcd|dhclient' "${OVERLAY}/usr/lib/aico/aico-wlan-guard"; then
 fi
 grep -Fqx 'insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"' \
     "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
-grep -Fqx 'he_on=${AICO_WIFI_HE:-0}' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fqx 'he_on=${AICO_WIFI_HE:-1}' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
 grep -Fq 'stage=begin he_on=${he_on}' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
 grep -Fq 'result=failed reason=wlan0-missing' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
 grep -Fq 'mark "begin he_on=${he_on}"' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
@@ -360,7 +360,7 @@ grep -Fq 'StandardOutput=append:/var/log/wlan_guard/wlan_guard.log' \
     "${UNIT_DIR}/aico-wlan-guard.service"
 grep -Fq 'StandardError=append:/var/log/wlan_guard/wlan_guard.log' \
     "${UNIT_DIR}/aico-wlan-guard.service"
-grep -Fqx 'AICO_WIFI_HE=0' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'AICO_WIFI_HE=1' "${OVERLAY}/etc/aico_boot.conf"
 grep -Fqx 'ENABLE_WIFIDRV=1' "${OVERLAY}/etc/aico_boot.conf"
 grep -Fqx 'ENABLE_WLAN_GUARD=0' "${OVERLAY}/etc/aico_boot.conf"
 grep -Fqx 'ENABLE_BLUETOOTH_HCI=1' "${OVERLAY}/etc/aico_boot.conf"
