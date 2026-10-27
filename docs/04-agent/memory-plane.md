@@ -271,7 +271,7 @@ The model proposes `create` or `update`, but code owns admission, storage paths,
 
 If a create proposal missed an existing record outside the bounded view, duplicate resolution is handled as a later explicit consolidation/update operation rather than silently rewriting the create intent at persistence time.
 
-Update requires the exact Memory revision observed during extraction. It preserves prior evidence and existing Procedure steps. Material body changes append the previous value to bounded revision history.
+Update requires the exact Memory revision observed during extraction. It preserves prior evidence. A Procedure update replaces executable steps with the complete `step_refs` path; older steps remain in bounded revision history rather than being appended to the active path. Other Device Memory updates continue to merge steps. Material body changes append the previous value to bounded revision history.
 
 If evidence can be reconciled by adding a version, page, account state, or other precondition, the Memory remains active with a conditioned rule.
 

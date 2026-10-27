@@ -1715,7 +1715,7 @@ func (p *episodeMemoryProcessor) updateMemory(ctx context.Context, episode TaskE
 	newScope := cloneStringMap(candidate.Scope)
 	var newSteps []ProcedureStep
 	if candidate.Type == episodeMemoryTypeProcedure {
-		newSteps = mergeEpisodeMemorySteps(existing.Steps, episodeMemoryProcedureSteps(episode, candidate.StepRefs, candidate.SensitiveValues))
+		newSteps = episodeMemoryProcedureSteps(episode, candidate.StepRefs, candidate.SensitiveValues)
 	}
 	item := DeviceMemoryItem{
 		ID: candidate.MemoryID, Type: string(candidate.Type), Status: newStatus,
@@ -1730,7 +1730,7 @@ func (p *episodeMemoryProcessor) updateMemory(ctx context.Context, episode TaskE
 	if candidate.UnresolvedConflict {
 		item.ConflictsWith = []string{episode.ID}
 	}
-	_, err = p.plane.device.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &item, Action: MemoryIntentActionUpdate, ExpectedRevision: candidate.MemoryRevision})
+	_, err = p.plane.device.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &item, Action: MemoryIntentActionUpdate, ExpectedRevision: candidate.MemoryRevision, ReplaceSteps: candidate.Type == episodeMemoryTypeProcedure})
 	return err
 }
 
@@ -2081,6 +2081,7 @@ Deduplication and conflict rules:
 - Use action=create only when no existing memory has the same scoped lesson.
 - For action=create, omit memory_id and memory_revision.
 - Use action=update with an existing memory_id and its exact memory_revision when the lesson overlaps. Output the complete merged situation, guidance, expected_effect, scope, and tags; preserve valid older conditions rather than merely copying the new Episode.
+- For a procedure update, step_refs must describe the complete replacement path observed in this Episode; old stored steps are not carried into the executable path unless they are observed again. Prior steps remain in revision history.
 - device_profile and app_profile entries are deterministic context only. Do not update them or duplicate facts already represented by them.
 - Resolve apparent conflicts by conditioning the merged memory on version, page, account state, or another evidenced precondition when possible.
 - Set unresolved_conflict=true only when the same scope still has incompatible conclusions and no safe condition can distinguish them. The memory will be quarantined as disputed.

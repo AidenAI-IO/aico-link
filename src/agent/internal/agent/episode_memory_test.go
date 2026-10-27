@@ -1731,7 +1731,7 @@ func TestEpisodeMemoryProposalRetryStopsAtMaximumAttempts(t *testing.T) {
 	}
 }
 
-func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
+func TestEpisodeMemoryProcedureUpdateReplacesExistingSteps(t *testing.T) {
 	ctx := context.Background()
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
 	oldSteps := []ProcedureStep{{Tool: "launch_app", Text: "Settings", OutcomeNote: "Settings opened"}}
@@ -1777,10 +1777,10 @@ func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("Get(updated) found=%v error=%v", found, err)
 	}
-	if len(updated.Steps) != 3 || updated.Steps[0] != oldSteps[0] {
-		t.Fatalf("updated steps = %#v, want old step plus two new evidenced steps", updated.Steps)
+	if len(updated.Steps) != 2 || updated.Steps[0].OutcomeNote != "Settings list visible" || updated.Steps[1].OutcomeNote != "Display controls visible" {
+		t.Fatalf("updated steps = %#v, want only the new complete path in order", updated.Steps)
 	}
-	if len(updated.RevisionHistory) != 1 || len(updated.RevisionHistory[0].Steps) != 1 {
+	if len(updated.RevisionHistory) != 1 || !equalEpisodeMemorySteps(updated.RevisionHistory[0].Steps, oldSteps) {
 		t.Fatalf("revision history = %#v, want prior step snapshot", updated.RevisionHistory)
 	}
 }

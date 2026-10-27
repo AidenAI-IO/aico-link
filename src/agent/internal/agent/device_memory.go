@@ -301,6 +301,9 @@ func (s *DeviceMemoryStore) applyDeviceMemoryIntentLocked(items []DeviceMemoryIt
 				if intent.Action == MemoryIntentActionReinforce {
 					alreadyApplied = deviceMemoryReinforceAlreadyApplied(*existing, candidate)
 				}
+				if intent.ReplaceSteps && !equalEpisodeMemorySteps(existing.Steps, candidate.Steps) {
+					alreadyApplied = false
+				}
 				if alreadyApplied {
 					return MemoryApplyResult{Operation: deviceOperationForIntent(intent.Action), ID: id}, nil
 				}
@@ -310,7 +313,7 @@ func (s *DeviceMemoryStore) applyDeviceMemoryIntentLocked(items []DeviceMemoryIt
 				reinforceDeviceMemoryItem(existing, &candidate)
 			} else {
 				appendDeviceMemoryRevision(existing, &candidate)
-				updateDeviceMemoryItem(existing, candidate)
+				updateDeviceMemoryItem(existing, candidate, intent.ReplaceSteps)
 			}
 			if _, err := s.upsertLocked(*existing); err != nil {
 				return MemoryApplyResult{}, err
@@ -487,7 +490,7 @@ func deviceMemoryBodyChanged(existing, candidate DeviceMemoryItem) bool {
 		!equalEpisodeMemorySteps(existing.Steps, candidate.Steps)
 }
 
-func mergeDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryItem) {
+func mergeDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryItem, replaceSteps bool) {
 	if candidate.Title != "" {
 		existing.Title = candidate.Title
 	}
@@ -523,7 +526,11 @@ func mergeDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryIte
 	existing.Aliases = mergeUniqueStrings(existing.Aliases, candidate.Aliases)
 	existing.EvidenceRefs = mergeMemorySourceRefs(existing.EvidenceRefs, candidate.EvidenceRefs)
 	existing.ConflictsWith = mergeUniqueStrings(existing.ConflictsWith, candidate.ConflictsWith)
-	existing.Steps = mergeEpisodeMemorySteps(existing.Steps, candidate.Steps)
+	if replaceSteps {
+		existing.Steps = append([]ProcedureStep(nil), candidate.Steps...)
+	} else {
+		existing.Steps = mergeEpisodeMemorySteps(existing.Steps, candidate.Steps)
+	}
 	if candidate.Applicability != nil {
 		existing.Applicability = cloneStringMap(candidate.Applicability)
 	}
@@ -540,8 +547,8 @@ func mergeDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryIte
 	existing.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
-func updateDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryItem) {
-	mergeDeviceMemoryItem(existing, candidate)
+func updateDeviceMemoryItem(existing *DeviceMemoryItem, candidate DeviceMemoryItem, replaceSteps bool) {
+	mergeDeviceMemoryItem(existing, candidate, replaceSteps)
 	if candidate.Priority > 0 {
 		existing.Priority = candidate.Priority
 	}
