@@ -3,6 +3,7 @@
   "cases": [
     {"id": "episode-memory", "suite": "suites/episode_memory_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "memory", "suite": "suites/memory_v1.json", "environment": "isolated", "max_concurrency": 2},
+    {"id": "memory-admission", "suite": "suites/memory_admission_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "shell-utility", "suite": "suites/shell_utility_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "mobilegym-scroll", "suite": "suites/mobilegym_scroll_regression.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 240},
     {"id": "phone-bridge-policy", "suite": "suites/aico_app/phone_bridge_data_policy_v1.json", "environment": "isolated"},

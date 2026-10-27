@@ -595,3 +595,33 @@ func TestRegenerateProfileDoesNotHoldStoreLockDuringProfileFn(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestLongTermMemoryProfilePromptListsProfileEntriesWithinBudget(t *testing.T) {
+	ctx := context.Background()
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	for _, item := range []MemoryItem{
+		{ID: "mem_job", Type: "profile", Priority: 90, Confidence: 0.9, Title: "职业", Content: "用户是一名护士，经常上夜班。", EvidenceExcerpts: []string{"我是护士"}},
+		{ID: "mem_brevity", Type: "preference", Priority: 80, Confidence: 0.9, Title: "回复长度", Content: "用户希望回复尽量简短。", EvidenceExcerpts: []string{"说短一点"}},
+		{ID: "mem_fact", Type: "fact", Priority: 95, Confidence: 0.9, Title: "车牌", Content: "车牌号浙A12345。", EvidenceExcerpts: []string{"车牌"}},
+		{ID: "mem_pin", Type: "profile", Priority: 99, Confidence: 0.9, Title: "PIN", Content: "保险箱密码 5093。", Sensitive: true, EvidenceExcerpts: []string{"帮我记住"}},
+	} {
+		if _, err := store.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prompt, err := store.ProfilePrompt(ctx, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "- (profile) 用户是一名护士，经常上夜班。\n- (preference) 用户希望回复尽量简短。"
+	if prompt != want {
+		t.Fatalf("ProfilePrompt() = %q, want %q", prompt, want)
+	}
+	short, err := store.ProfilePrompt(ctx, len("- (profile) 用户是一名护士，经常上夜班。\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if short != "- (profile) 用户是一名护士，经常上夜班。" {
+		t.Fatalf("ProfilePrompt(short) = %q, want only the highest-priority entry", short)
+	}
+}

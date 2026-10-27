@@ -449,7 +449,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			if !result.Sensitive {
+				temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			}
 		}
 	}
 	if p.longTerm != nil {
@@ -458,7 +460,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			if !result.Sensitive {
+				longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			}
 		}
 	}
 	refs := make([]MemoryMergeReference, 0, 8)

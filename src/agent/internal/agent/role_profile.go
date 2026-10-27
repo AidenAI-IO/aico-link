@@ -42,6 +42,16 @@ func buildProfile(
 		"## Base instruction",
 		combinedAgentInstruction(cfg),
 		"",
+	}
+	if profile := strings.TrimSpace(cfg.UserProfile); profile != "" {
+		promptParts = append(promptParts,
+			"## Saved user memory",
+			"The user saved these profile entries, preferences, and rules in earlier conversations. Apply them whenever relevant without asking again. The user's words in this conversation take precedence. Use recall_memory for other saved facts.",
+			profile,
+			"",
+		)
+	}
+	promptParts = append(promptParts,
 		"## Device memory evidence",
 		deviceMemoryRecallGuidance(),
 		"",
@@ -54,7 +64,7 @@ func buildProfile(
 		"## Available skills",
 		"The entries below are discovery summaries only. Load the matching skill with skill_read before following its instructions.",
 		skills.CatalogSummary(),
-	}
+	)
 
 	promptParts = append(promptParts, "", "## Role rules")
 	for _, rule := range roleRules {

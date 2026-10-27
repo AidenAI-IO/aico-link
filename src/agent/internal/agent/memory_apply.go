@@ -373,6 +373,7 @@ func mergeMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) 
 	if candidate.TTL != "" {
 		existing.TTL = candidate.TTL
 	}
+	existing.Sensitive = existing.Sensitive || candidate.Sensitive
 	if candidate.Priority > existing.Priority {
 		existing.Priority = candidate.Priority
 	}

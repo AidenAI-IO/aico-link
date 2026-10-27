@@ -104,6 +104,26 @@ func (m *MemoryManager) effectiveContextWindow() int {
 	return normalizeMemoryExtractionConfig(m.extraction).ContextWindow
 }
 
+// userProfilePromptMaxChars bounds the saved-memory section of the system
+// prompt so a long memory history cannot crowd out the instructions.
+const userProfilePromptMaxChars = 1500
+
+// UserProfilePrompt returns the saved profile, preference, and rule memories
+// for a new session's system prompt, or "" when none are available.
+func (m *MemoryManager) UserProfilePrompt(ctx context.Context) string {
+	if m == nil || m.longTerm == nil {
+		return ""
+	}
+	prompt, err := m.longTerm.ProfilePrompt(ctx, userProfilePromptMaxChars)
+	if err != nil {
+		if m.logger != nil {
+			m.logger.Warn("[memory] read user profile for prompt failed: %v", err)
+		}
+		return ""
+	}
+	return prompt
+}
+
 // RequestProfileRebuild asks the long-term store to regenerate profile.md. The
 // store debounces bursts internally.
 func (m *MemoryManager) RequestProfileRebuild() {

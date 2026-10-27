@@ -92,32 +92,35 @@ type MemorySourceRef struct {
 }
 
 type MemoryItem struct {
-	ID               string            `yaml:"id"`
-	Type             string            `yaml:"type"`
-	Status           string            `yaml:"status"`
-	Revision         int               `yaml:"revision,omitempty"`
-	Priority         int               `yaml:"priority"`
-	Confidence       float64           `yaml:"confidence"`
-	Tags             []string          `yaml:"tags,omitempty"`
-	Entities         []string          `yaml:"entities,omitempty"`
-	TimeScope        string            `yaml:"time_scope"`
-	CreatedAt        string            `yaml:"created_at"`
-	UpdatedAt        string            `yaml:"updated_at"`
-	TTL              string            `yaml:"ttl,omitempty"`
-	ExpiresAt        string            `yaml:"expires_at,omitempty"`
-	Applicability    map[string]string `yaml:"applicability,omitempty"`
-	SourceRefs       []MemorySourceRef `yaml:"source_refs,omitempty"`
-	EvidenceRefs     []MemorySourceRef `yaml:"evidence_refs,omitempty"`
-	LastValidatedAt  string            `yaml:"last_validated_at,omitempty"`
-	SuccessCount     int               `yaml:"success_count,omitempty"`
-	FailureCount     int               `yaml:"failure_count,omitempty"`
-	ConflictsWith    []string          `yaml:"conflicts_with,omitempty"`
-	Supersedes       string            `yaml:"supersedes,omitempty"`
-	SupersededBy     string            `yaml:"superseded_by,omitempty"`
-	Traceability     string            `yaml:"traceability"`
-	Title            string            `yaml:"-"`
-	Content          string            `yaml:"-"`
-	EvidenceExcerpts []string          `yaml:"-"`
+	ID              string            `yaml:"id"`
+	Type            string            `yaml:"type"`
+	Status          string            `yaml:"status"`
+	Revision        int               `yaml:"revision,omitempty"`
+	Priority        int               `yaml:"priority"`
+	Confidence      float64           `yaml:"confidence"`
+	Tags            []string          `yaml:"tags,omitempty"`
+	Entities        []string          `yaml:"entities,omitempty"`
+	TimeScope       string            `yaml:"time_scope"`
+	CreatedAt       string            `yaml:"created_at"`
+	UpdatedAt       string            `yaml:"updated_at"`
+	TTL             string            `yaml:"ttl,omitempty"`
+	ExpiresAt       string            `yaml:"expires_at,omitempty"`
+	Applicability   map[string]string `yaml:"applicability,omitempty"`
+	SourceRefs      []MemorySourceRef `yaml:"source_refs,omitempty"`
+	EvidenceRefs    []MemorySourceRef `yaml:"evidence_refs,omitempty"`
+	LastValidatedAt string            `yaml:"last_validated_at,omitempty"`
+	SuccessCount    int               `yaml:"success_count,omitempty"`
+	FailureCount    int               `yaml:"failure_count,omitempty"`
+	ConflictsWith   []string          `yaml:"conflicts_with,omitempty"`
+	Supersedes      string            `yaml:"supersedes,omitempty"`
+	SupersededBy    string            `yaml:"superseded_by,omitempty"`
+	Traceability    string            `yaml:"traceability"`
+	// Sensitive marks a secret the user explicitly asked to keep. It is
+	// recalled only by a topical query and never enters the user profile.
+	Sensitive        bool     `yaml:"sensitive,omitempty"`
+	Title            string   `yaml:"-"`
+	Content          string   `yaml:"-"`
+	EvidenceExcerpts []string `yaml:"-"`
 }
 
 type MemoryQuery struct {
@@ -141,6 +144,7 @@ type MemoryResult struct {
 	Entities      []string          `json:"entities,omitempty"`
 	FilePath      string            `json:"file_path"`
 	MemoryScope   string            `json:"memory_scope,omitempty"`
+	Sensitive     bool              `json:"sensitive,omitempty"`
 	ExpiresAt     string            `json:"expires_at,omitempty"`
 	Applicability map[string]string `json:"applicability,omitempty"`
 	SourceRefs    []MemorySourceRef `json:"source_refs,omitempty"`
@@ -164,6 +168,7 @@ type memoryIndexEntry struct {
 	Tags       []string `yaml:"tags,omitempty"`
 	Entities   []string `yaml:"entities,omitempty"`
 	Summary    string   `yaml:"summary"`
+	Sensitive  bool     `yaml:"sensitive,omitempty"`
 }
 
 type scoredMemoryResult struct {
@@ -264,6 +269,11 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 		if entry.Type == "failure" {
 			continue
 		}
+		// A secret is returned only when the query names its topic, never by a
+		// browse-style recall that lists everything of a type.
+		if entry.Sensitive && !memoryQueryHasTopicalTerms(query) {
+			continue
+		}
 		parsed, path, expired, err := s.resolveActiveEntry(entry, now)
 		if expired {
 			expiredPaths = append(expiredPaths, path)
@@ -289,6 +299,7 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 			Tags:          append([]string(nil), entry.Tags...),
 			Entities:      append([]string(nil), entry.Entities...),
 			FilePath:      path,
+			Sensitive:     entry.Sensitive,
 			ExpiresAt:     firstNonEmpty(parsed.Item.ExpiresAt, entry.ExpiresAt),
 			Applicability: cloneStringMap(parsed.Item.Applicability),
 			SourceRefs:    append([]MemorySourceRef(nil), parsed.Item.SourceRefs...),
@@ -664,7 +675,7 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 	var expiredPaths []string
 	unreadableEntries := 0
 	for _, entry := range index.Memories {
-		if entry.Status != "active" || !isProfileRelevantType(entry.Type) {
+		if entry.Status != "active" || entry.Sensitive || !isProfileRelevantType(entry.Type) {
 			continue
 		}
 		parsed, path, expired, err := s.resolveActiveEntry(entry, now)
@@ -682,6 +693,35 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 		s.invalidateParsedMemoryCache(expiredPaths...)
 	}
 	return entries, unreadableEntries, indexSignature, nil
+}
+
+// ProfilePrompt formats the active profile, preference, and rule memories as
+// a bullet list for the system prompt, highest priority first, stopping before
+// maxChars. Sensitive memories are excluded. It reads the records directly
+// rather than profile.md, whose rebuild is debounced and may lag a save.
+func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (string, error) {
+	if s == nil {
+		return "", nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	entries, _, _, err := s.profileEntriesLocked(ctx)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	for _, entry := range entries {
+		content := strings.Join(strings.Fields(entry.Content), " ")
+		if content == "" {
+			continue
+		}
+		line := "- (" + entry.Type + ") " + content + "\n"
+		if b.Len()+len(line) > maxChars {
+			break
+		}
+		b.WriteString(line)
+	}
+	return strings.TrimSpace(b.String()), nil
 }
 
 func (s *LongTermMemoryStore) RequestProfileRebuild() {
@@ -760,6 +800,7 @@ func (s *LongTermMemoryStore) rebuildIndexLocked(ctx context.Context) error {
 			Tags:       append([]string(nil), parsed.Item.Tags...),
 			Entities:   append([]string(nil), parsed.Item.Entities...),
 			Summary:    firstSentence(parsed.Content),
+			Sensitive:  parsed.Item.Sensitive,
 		})
 	}
 	sort.SliceStable(index.Memories, func(i, j int) bool {

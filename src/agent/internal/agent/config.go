@@ -856,6 +856,9 @@ type AgentConfig struct {
 	Prompt      string
 	Locale      string
 	Timezone    string
+	// UserProfile lists saved profile, preference, and rule memories for a
+	// new session's system prompt.
+	UserProfile string
 }
 
 // MemoryConfig is used internally by the memory manager.

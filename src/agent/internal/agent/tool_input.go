@@ -270,30 +270,39 @@ type SaveMemoryRequest struct {
 	Entities []string
 	Evidence []string
 	Priority int
+	// Sensitive names the kind of secret the memory holds, if any.
+	Sensitive string
+	// UserRequest quotes the user's words asking to remember this. It is
+	// required only for a secret.
+	UserRequest string
 }
 
 // decodeSaveMemoryRequest tolerantly decodes a save_memory argument.
 func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 	var flex struct {
-		Type     string                 `json:"type"`
-		Title    string                 `json:"title"`
-		Content  string                 `json:"content"`
-		Tags     flexLiteralStringSlice `json:"tags"`
-		Entities flexLiteralStringSlice `json:"entities"`
-		Evidence flexLiteralStringSlice `json:"evidence"`
-		Priority flexInt                `json:"priority"`
+		Type        string                 `json:"type"`
+		Title       string                 `json:"title"`
+		Content     string                 `json:"content"`
+		Tags        flexLiteralStringSlice `json:"tags"`
+		Entities    flexLiteralStringSlice `json:"entities"`
+		Evidence    flexLiteralStringSlice `json:"evidence"`
+		Priority    flexInt                `json:"priority"`
+		Sensitive   string                 `json:"sensitive"`
+		UserRequest string                 `json:"user_request"`
 	}
 	if err := json.Unmarshal([]byte(input), &flex); err != nil {
 		return SaveMemoryRequest{}, err
 	}
 	return SaveMemoryRequest{
-		Type:     flex.Type,
-		Title:    flex.Title,
-		Content:  flex.Content,
-		Tags:     flex.Tags,
-		Entities: flex.Entities,
-		Evidence: flex.Evidence,
-		Priority: int(flex.Priority),
+		Type:        flex.Type,
+		Title:       flex.Title,
+		Content:     flex.Content,
+		Tags:        flex.Tags,
+		Entities:    flex.Entities,
+		Evidence:    flex.Evidence,
+		Priority:    int(flex.Priority),
+		Sensitive:   flex.Sensitive,
+		UserRequest: flex.UserRequest,
 	}, nil
 }
 

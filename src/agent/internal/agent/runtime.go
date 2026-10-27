@@ -1248,6 +1248,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// counted and traced as part of the episode rather than disappearing from the
 	// run's token accounting.
 	contextCompactor := compactor.NewCompactor(compactor.DefaultProtectRule, m)
+	if location, _, err := loadConfiguredTimezone(cfg.TimezoneOrDefault()); err == nil {
+		contextCompactor.Location = location
+	}
 	budgetContextWindow := contextWindow
 	if budgetContextWindow <= 0 {
 		budgetContextWindow = r.models.Spec().ContextWindow
@@ -2320,6 +2323,7 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 			Prompt:      r.ConfigSnapshot().Prompt,
 			Locale:      r.ConfigSnapshot().LocaleOrDefault(),
 			Timezone:    r.ConfigSnapshot().TimezoneOrDefault(),
+			UserProfile: r.memories.UserProfilePrompt(context.Background()),
 		},
 		skills,
 		availableTools,

@@ -498,3 +498,15 @@ func TestRolePromptOmitsRuntimeAndMemoryContext(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildProfileIncludesSavedUserMemoryOnlyWhenPresent(t *testing.T) {
+	manager := NewSkillManager(NewSkillIndex())
+	with := buildProfile(AgentConfig{UserProfile: "- (preference) 用户希望回复尽量简短。"}, manager, nil, agentRoleRules())
+	if !strings.Contains(with.SystemPrompt, "## Saved user memory") || !strings.Contains(with.SystemPrompt, "用户希望回复尽量简短") {
+		t.Fatalf("system prompt lacks the saved user memory:\n%s", with.SystemPrompt)
+	}
+	without := buildProfile(AgentConfig{}, manager, nil, agentRoleRules())
+	if strings.Contains(without.SystemPrompt, "## Saved user memory") {
+		t.Fatal("system prompt has an empty saved user memory section")
+	}
+}

@@ -17,6 +17,76 @@ The memory plane separates four kinds of persisted state:
 
 Automatic Episode learning writes only Device Memory. It does not create user profile, preference, or rule entries in Long-Term Memory.
 
+## Memory Admission Policy
+
+Three writers persist memory, and each one applies the same rules about what
+may be kept. The model proposes a memory; code enforces the rules that do not
+depend on understanding the language the user spoke.
+
+| Writer | Trigger | Writes |
+| --- | --- | --- |
+| `save_memory` | The Agent calls it during a conversation | Long-Term Memory |
+| Notification Memory | Shared idle window | Temporary or Long-Term Memory |
+| Episode Memory | Shared idle window, after a device task | Device Memory |
+
+| Information | Rule |
+| --- | --- |
+| An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
+| Stable personal facts such as home city, role, or employee ID | May be saved |
+| A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
+| Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
+| Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
+| Credentials and payment card numbers | Not saved by default; see [Sensitive Memory](#sensitive-memory) |
+| Public information, small talk, marketing, and anything the user said not to keep | Never saved |
+| Device lessons | Episode Memory only, subject to the evidence rules below |
+
+### Near-Term Plans
+
+A plan such as "I have a check-up tomorrow morning" is useful for days, not
+for the user's lasting profile, so `save_memory` does not keep it. It stays in
+the conversation. When context compaction summarizes older messages, the
+summary has a section for user plans and time-bound information: the compactor
+labels each message with its send time in the configured timezone and asks the
+model to give every plan an absolute date and time, so "tomorrow" stays
+correct after the day it was said. Clearing the conversation history drops
+these plans with the rest of the conversation.
+
+### Sensitive Memory
+
+`save_memory` takes a `sensitive` argument: `credential` for a password, PIN,
+or similar secret, or `payment_card` for a card number. The model declares the kind, because no keyword list or
+number pattern can recognize secrets reliably in every language a user might
+speak; a card checksum, for example, also accepts one in ten order or tracking
+numbers.
+
+A sensitive memory is saved only when the model also sets `user_request` to the
+user's own words asking to remember it. Code checks that those words appear in
+the run's user input or steer messages, comparing letters and digits without
+case. The quote must contain at least two letters, so citing the secret value
+alone does not count. Otherwise the tool returns `status=refused`, nothing is
+written, and the Agent tells the user it was not remembered. The quote check
+stops the model from inventing a request; whether the quoted words ask to
+remember remains the model's judgment.
+
+A saved sensitive memory is marked `sensitive: true` in its file and index
+entry. It is returned by `recall_memory` only for a query with tags or entities
+that match it, never by a browse by type. It is excluded from the user profile
+and from the related memories shown to Notification Memory. The memory is still
+a plain file, like every other memory.
+
+Notifications are never an explicit request to remember, and the Notification
+Memory prompt tells the model to ignore OTPs and secrets.
+
+### Saved User Profile In The System Prompt
+
+When a session starts, the active `profile`, `preference`, and `rule` memories
+are listed in a "Saved user memory" section of the system prompt, highest
+priority first, within about 1,500 characters. Sensitive memories and `fact`
+memories are not listed. The Agent therefore applies saved preferences
+without calling `recall_memory`. A memory saved during a session appears in
+the prompt of the next session; the current session already holds it in its
+conversation.
+
 ## Runtime Flow
 
 Device memory is not injected into every prompt. The model decides whether to call `recall_device_memory` during execution when the task materially depends on saved device or UI knowledge. Runtime does not perform a pre-run relevance route and does not force a first tool call.
@@ -78,6 +148,13 @@ field; title, summary, and content matches also contribute to relevance.
 The same relevance scoring is used when merging results from both stores.
 Active-state and expiry checks still apply, and a matching type alone cannot
 make an unrelated record satisfy a topical query.
+
+For a topical query, an equally relevant temporary record ranks ahead of a
+long-term one. A browse with only `types` or no terms matches every record
+equally, so long-term records come first and temporary records fill at most
+half of the limit when long-term records are available. A backlog of
+notification conclusions therefore cannot push the user's saved preferences
+out of the results.
 
 Explicit requests to remember information or a rule for future conversations
 require a successful `save_memory` call before the Agent confirms persistence.
@@ -289,7 +366,7 @@ processing/proposed -> ignored
 
 The proposal is persisted before Device Memory writes. Recovery can therefore apply an existing proposal without repeating the model call.
 
-Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
+Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results for a single Episode. When a batch of several Episodes fails without a retryable cause, the failure does not show which Episode caused it, so each Episode is retried on its own instead of being discarded with the batch. A model request that fails or times out is retried, because no response arrived. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. Logs and the processing ledger keep the failure class (request failed, timed out, invalid JSON, batch shape mismatch, truncation, empty response, or a review failure) and drop the wrapped provider text. Each scheduled retry is logged with its attempt number. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
 
 If a target Memory revision changes before update, the stale proposal is discarded and the Episode is re-extracted against the latest revision. Output-token truncation and retention/omission review failures may also schedule another model call for the same extractor version.
 
