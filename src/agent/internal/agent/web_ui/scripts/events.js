@@ -1,14 +1,111 @@
 // History loading and server-sent event synchronization.
+//
+// The page holds a window of the board history instead of the whole
+// conversation: the newest page on load, new messages appended by
+// incremental refreshes, and older pages fetched when the user scrolls up.
+const historyPageLimit = 50;
+const historyRefreshLimit = 200;
+let historyWindow = null;
+let historyLoadInFlight = false;
+let historyLoadPending = false;
+let olderHistoryLoading = false;
+
+async function fetchHistoryPage(params) {
+    const res = await fetch('/api/history?' + new URLSearchParams(params).toString());
+    if (!res.ok) throw new Error(await res.text() || 'Failed to load context history');
+    const page = await res.json();
+    if (!page || !Array.isArray(page.messages)) throw new Error('History response is not a page');
+    return page;
+}
+
+function historyWindowFromPage(page) {
+    return {sessionId: page.session_id || '', start: page.start || 0, end: page.end || 0, messages: page.messages};
+}
+
+function resetHistoryWindow() {
+    historyWindow = null;
+    updateOlderHistoryControl();
+}
+
 async function loadHistory() {
     if (typeof currentChatRequestId !== 'undefined' && currentChatRequestId) return;
+    if (historyLoadInFlight) {
+        historyLoadPending = true;
+        return;
+    }
+    historyLoadInFlight = true;
     try {
-        const res = await fetch('/api/history');
-        if (!res.ok) throw new Error(await res.text() || 'Failed to load context history');
-        const history = await res.json();
-        renderHistory(history);
+        do {
+            historyLoadPending = false;
+            const current = historyWindow;
+            const page = await fetchHistoryPage(current
+                ? {after: current.end, session_id: current.sessionId, limit: historyRefreshLimit}
+                : {limit: historyPageLimit});
+            // An older page or a clear replaced the window meanwhile; ask again
+            // from the new window instead of appending to a stale one.
+            if (current !== historyWindow) {
+                historyLoadPending = true;
+                continue;
+            }
+            if (!current || page.reset || page.session_id !== current.sessionId) {
+                historyWindow = historyWindowFromPage(page);
+            } else if (page.messages.length > 0 || page.end !== current.end) {
+                historyWindow = Object.assign({}, current, {
+                    end: page.end,
+                    messages: current.messages.concat(page.messages)
+                });
+            }
+            renderHistory(historyWindow.messages);
+            updateOlderHistoryControl();
+        } while (historyLoadPending && !(typeof currentChatRequestId !== 'undefined' && currentChatRequestId));
     } catch (err) {
         console.error('Failed to load history:', err);
+    } finally {
+        historyLoadInFlight = false;
+        historyLoadPending = false;
     }
+}
+
+async function loadOlderHistory() {
+    const current = historyWindow;
+    if (!current || current.start <= 0 || olderHistoryLoading) return;
+    olderHistoryLoading = true;
+    updateOlderHistoryControl();
+    try {
+        const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
+        if (current !== historyWindow) return;
+        if (page.reset || page.session_id !== current.sessionId) {
+            historyWindow = historyWindowFromPage(page);
+            renderHistory(historyWindow.messages);
+            return;
+        }
+        historyWindow = Object.assign({}, current, {
+            start: page.start,
+            messages: page.messages.concat(current.messages)
+        });
+        // Keep the messages the user is reading in place while older ones
+        // are inserted above them.
+        const previousHeight = conversationEl.scrollHeight;
+        const previousTop = conversationEl.scrollTop;
+        renderHistory(historyWindow.messages);
+        conversationEl.scrollTop = previousTop + (conversationEl.scrollHeight - previousHeight);
+    } catch (err) {
+        console.error('Failed to load earlier history:', err);
+    } finally {
+        olderHistoryLoading = false;
+        updateOlderHistoryControl();
+    }
+}
+
+function updateOlderHistoryControl() {
+    const hasOlder = !!historyWindow && historyWindow.start > 0;
+    loadOlderHistoryBtn.classList.toggle('hidden', !hasOlder);
+    loadOlderHistoryBtn.disabled = olderHistoryLoading;
+    loadOlderHistoryBtn.textContent = olderHistoryLoading ? 'Loading…' : 'Load earlier messages';
+}
+
+function loadOlderHistoryNearTop() {
+    if (conversationEl.scrollTop < 80) loadOlderHistory();
 }
 
 let historyRefreshTimer = null;
@@ -66,6 +163,7 @@ function handleServerEvent(data) {
 }
 
 document.addEventListener('visibilitychange', function() {
+    if (!document.hidden) loadHistory();
     if (!document.hidden && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
         connectSSE();
     }

@@ -81,6 +81,7 @@ async function sendMessage() {
         renderPendingSteer();
         setComposerState(false);
         if (isConversationNearBottom()) scrollToBottom();
+        refreshHistoryFromContext();
     }
 }
 
@@ -320,10 +321,9 @@ function consumeChatStreamText(text) {
     if (!trimmed) return false;
     try {
         const payload = JSON.parse(trimmed);
-        if (payload.history || payload.response) {
-            renderHistory(payload.history || []);
-            return true;
-        }
+        // A single JSON response carries only the latest turn; the history
+        // window is refreshed from /api/history once the run ends.
+        if (payload.history || payload.response) return true;
         if (payload.type) {
             return handleChatStreamEvent(payload);
         }
@@ -502,6 +502,7 @@ async function clearSession() {
             throw new Error(await res.text() || 'Failed to clear the session.');
         }
         clearDraftAttachments();
+        resetHistoryWindow();
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session:', err);
@@ -518,6 +519,7 @@ async function clearSessionAndMemory() {
             throw new Error(await res.text() || 'Failed to clear the session and memory.');
         }
         clearDraftAttachments();
+        resetHistoryWindow();
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session and memory:', err);

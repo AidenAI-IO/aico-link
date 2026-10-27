@@ -1915,6 +1915,31 @@ func (r *Runtime) WebContextDump() contextmanager.MessageListDump {
 	return r.ContextDump()
 }
 
+// WebContextWindow returns one range of the context that WebContextDump
+// would return, copying only that range.
+func (r *Runtime) WebContextWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) contextmanager.MessageListWindow {
+	if r == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	cfg := r.ConfigSnapshot()
+	realtime := cfg.InputModeOrDefault() == "realtime"
+	if !realtime && r.contextManager != nil {
+		return r.contextManager.MessageListWindow(selectRange)
+	}
+	folder := agentpath.UserContextManagerSessionFolder(cfg.ConfigDir)
+	if !realtime {
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return contextmanager.MessageListWindow{}
+		}
+		folder = agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	}
+	manager, err := contextmanager.LoadContextManagerFromCurrentSession(folder)
+	if err != nil || manager == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	return manager.MessageListWindow(selectRange)
+}
+
 // ReadContextAttachment reads an attachment registered in the user or backend
 // context. It never accepts an arbitrary filesystem path.
 func (r *Runtime) ReadContextAttachment(role, attachmentID string) ([]byte, string, error) {
