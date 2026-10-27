@@ -248,7 +248,7 @@ class WifiDriverTest(StartupFixture):
     def test_low_power_option_reaches_module_loader(self):
         result = self.run_driver(AICO_WIFI_LOW_POWER="1")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("params=he_on=0 custregd=1 lp_on=1", result.stderr)
+        self.assertIn("params=he_on=1 custregd=1 lp_on=1", result.stderr)
         self.assertEqual(self.control.read_text(), "auto\n")
 
 

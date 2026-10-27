@@ -182,31 +182,28 @@ Agent output is persisted at `/userdata/agent/log/agent.log`.
 ## Wi-Fi Connectivity and Recovery
 
 `aico-wifi-driver.service` loads `aic8800_fdrv.ko` with
-`he_on=${AICO_WIFI_HE:-0}`. The current AIC8800DC driver/firmware can remain
-associated and renew DHCP while IPv4 traffic stalls in HE mode with some APs.
-The compatibility default disables Wi-Fi 6 HE and leaves HT/VHT enabled.
-This restores a pre-existing Buildroot fix: commit
+`he_on=${AICO_WIFI_HE:-1}`. The board's Wi-Fi module is an AIC8800D80
+(SDIO `c8a1:0082`, function 2 `c8a1:0182`): a dual-band, single-stream
+802.11ax chip that supports HE on both 2.4 GHz and 5 GHz at up to 80 MHz
+(HE-MCS 0-11). The image enables Wi-Fi 6 HE by default. The firmware directory
+keeps its SDK name, `aic8800dc_fw`, and also contains the AIC8800D80 firmware
+(`fmacfw_8800d80_u02.bin`).
+
+Earlier images defaulted to `he_on=0`. Commit
 [`2b08d9a9`](https://github.com/AidenAI-IO/aico-link/commit/2b08d9a945846252c3e0d9760187663176cfff57)
-(2026-06-11, #177) passed `he_on=0` at both AIC8800 load points in
-the retired
-Buildroot Wi-Fi loader (`insmod_wifi.sh`). That override was still present in
-`9ff24ababfc672ed16711c8b49b21431e685c9b1`, and the Buildroot packaging script
-copied it over the SDK loader. The Debian migration
-[`4993a135`](https://github.com/AidenAI-IO/aico-link/commit/4993a1354d44922dd79a07b5464c440e8b78ad24)
-(#634) introduced this separate loader without the parameter, re-enabling the
-driver's default HE mode. The subsequent removal of the legacy overlay did
-not cause the regression: Debian already used the new loader.
+(2026-06-11, #177) added that override after HE-mode IPv4 stalls on the
+previous hardware design, and #682 carried it into the Debian loader. The
+current AIC8800D80 design does not need this workaround.
 
-At the time, both repository versions pinned `pico-sdk` at
-`d1a279cbb7e29aa0801943cdf21f0575db69eed5`. All 21 files in the affected board's
-`/usr/lib/aico/platform/modules/aic8800dc_fw` matched that SDK firmware directory by SHA-256 during
-the 2026-09-15 investigation. This establishes the missing load parameter as
-the concrete migration regression; it does not assert that separately built
-kernel-module binaries are byte-identical.
+On 2026-10-27, an AIC8800D80 board loaded with `he_on=1` reported
+`HE supp 1`, advertised HE capabilities on both bands in `iw phy`, and
+associated with a 5 GHz AP (channel 64, 80 MHz) at up to `HE-MCS 11`
+(600 Mbit/s TX). Over four minutes, 480 gateway and 240 internet ICMP probes
+had no loss, and eight consecutive 16 MB HTTPS downloads succeeded.
 
-Set `AICO_WIFI_HE=1` in `/etc/aico_boot.conf` to test HE with another firmware
-or AP. The parameter applies on module load, so reboot to apply it; restarting
-the driver service alone does not reload an already loaded module.
+Set `AICO_WIFI_HE=0` in `/etc/aico_boot.conf` to fall back to HT/VHT for an
+incompatible AP. The parameter applies on module load, so reboot to apply it;
+restarting the driver service alone does not reload an already loaded module.
 
 The Aico Link image sets `AICO_WIFI_LOW_POWER=1`. The matching AIC8800D80 driver
 receives `lp_on=1` and requests firmware low-power level 1 when a station
@@ -283,15 +280,10 @@ Validate the wireless path with repeated SSH connections from a LAN client,
 including after an idle period; successful DHCP and `wpa_state=COMPLETED` alone
 do not establish that unicast traffic works.
 
-On the AicoIOT AP (2.4 GHz, channel 6) on 2026-09-15, the original HE mode
-reproduced IPv4/ARP failure even with the guard stopped and `ps_on=0`. Loading
-with `he_on=0` restored LAN SSH and gateway traffic, including with the default
-`ps_on=1`. This is a compatibility mitigation, not proof of which side of the
-driver/firmware/AP interaction is defective. Restoring the old parameter on
-Debian passed 12 consecutive LAN SSH connections after deployment. The
-original #177 commit also records an HE-only comparison (0/30 ICMP replies
-with HE enabled, 374/374 with HE disabled) and a successful reboot check;
-those are historical results, not new reboot validation of this patch.
+If unicast traffic stalls while the link stays associated, compare against
+`AICO_WIFI_HE=0` after a reboot. The previous hardware design reproduced this
+failure in HE mode on a 2.4 GHz AP; disabling HE restored gateway traffic
+there.
 
 ## Wi-Fi Proxy
 
