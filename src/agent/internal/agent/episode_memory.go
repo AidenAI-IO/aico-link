@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -90,6 +91,7 @@ type episodeMemoryCandidate struct {
 	Scope              map[string]string      `json:"scope" yaml:"scope"`
 	Tags               []string               `json:"tags" yaml:"tags"`
 	EvidenceRefs       []string               `json:"evidence_refs" yaml:"evidence_refs"`
+	StepRefs           []string               `json:"step_refs,omitempty" yaml:"step_refs,omitempty"`
 	SensitiveValues    []string               `json:"-" yaml:"-"`
 }
 
@@ -160,6 +162,7 @@ func cloneEpisodeMemoryProposal(proposal episodeMemoryProposal) episodeMemoryPro
 		cloned.Candidates[i].Scope = cloneStringMap(candidate.Scope)
 		cloned.Candidates[i].Tags = append([]string(nil), candidate.Tags...)
 		cloned.Candidates[i].EvidenceRefs = append([]string(nil), candidate.EvidenceRefs...)
+		cloned.Candidates[i].StepRefs = append([]string(nil), candidate.StepRefs...)
 		cloned.Candidates[i].SensitiveValues = append([]string(nil), candidate.SensitiveValues...)
 		if candidate.Confidence != nil {
 			confidence := *candidate.Confidence
@@ -891,9 +894,9 @@ func (p *episodeMemoryProcessor) reviewEpisodeMemoryOmission(ctx context.Context
 	if err != nil {
 		return episodeMemoryProposal{}, err
 	}
-	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryEvidencePrompt(string(payload), existing))}
+	parts := []llms.ContentPart{llms.TextPart(episodeMemoryProposalInstructions), llms.TextPart(buildEpisodeMemoryEvidencePrompt(string(payload), existing))}
 	assessmentJSON, _ := json.Marshal(proposal.EpisodeAssessment)
-	parts = append(parts, llms.TextPart("Review this first-pass assessment once: "+string(assessmentJSON)+". It returned no candidates despite the Episode containing multiple evidence-bearing steps. Re-check whether a reusable durable lesson, guard, route, or stable fact specific to this device, app, or page was omitted. "+episodeMemoryBuiltInGuidanceRule+" Return the same JSON schema; keep candidates empty if the evidence does not support a durable memory. Do not invent facts or promote run-specific observations."))
+	parts = append(parts, llms.TextPart("Review this first-pass assessment once: "+string(assessmentJSON)+". It returned no candidates despite the Episode containing multiple evidence-bearing steps. Re-check whether a reusable durable lesson, guard, route, or stable fact specific to this device, app, or page was omitted. Return the same JSON schema; keep candidates empty if the evidence does not support a durable memory. Do not invent facts or promote run-specific observations."))
 	for _, screenshot := range loadEpisodeMemoryScreenshots(p.plane.episodes.rootDir, episode) {
 		parts = append(parts, llms.TextPart("Attached screenshot evidence for Episode event id: "+screenshot.EventID))
 		parts = append(parts, llms.BinaryContent{MIMEType: screenshot.MIMEType, Data: screenshot.Data})
@@ -984,7 +987,7 @@ func compactEpisodeMemoryCandidates(candidates []episodeMemoryCandidate) []episo
 			continue
 		}
 		base := &compacted[index]
-		if !sameEpisodeMemoryCandidateIdentity(*base, candidate) {
+		if !sameEpisodeMemoryCandidateIdentity(*base, candidate) || !slices.Equal(base.StepRefs, candidate.StepRefs) {
 			conflictingKeys[key] = true
 			continue
 		}
@@ -1123,6 +1126,8 @@ Return exactly one JSON object matching this schema:
 }
 
 Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
+
+Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.
 
 Episode:
 ` + payload + `
@@ -1417,6 +1422,13 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 		return episodeMemoryCandidate{}, false
 	}
 	candidate.EvidenceRefs = expandEpisodeMemoryEvidenceRefs(episode, candidate.EvidenceRefs)
+	if candidate.Type == episodeMemoryTypeProcedure {
+		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
+			return episodeMemoryCandidate{}, false
+		}
+	} else if len(candidate.StepRefs) != 0 {
+		return episodeMemoryCandidate{}, false
+	}
 	if !episodeMemoryTypeEvidenceValid(candidate.Type, episode, candidate.EvidenceRefs, assessment) {
 		return episodeMemoryCandidate{}, false
 	}
@@ -1427,18 +1439,61 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 	return candidate, true
 }
 
+// Step refs name results, not all evidence: failed alternatives can justify a
+// workaround without becoming actions in it. Require a cited, paired result
+// for each selected step and preserve the observed order without repairing it.
+func validEpisodeMemoryStepRefs(episode TaskEpisode, stepRefs, evidenceRefs []string) bool {
+	if len(stepRefs) < 2 {
+		return false
+	}
+	cited := make(map[string]bool, len(evidenceRefs))
+	for _, ref := range evidenceRefs {
+		cited[ref] = true
+	}
+	nextStep := 0
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	for i := range episode.Events {
+		event := &episode.Events[i]
+		if event.EventID != stepRefs[nextStep] {
+			continue
+		}
+		call := pairedCalls[event.EventID]
+		if event.Type != "tool_result" || event.IsError || event.ToolError != nil ||
+			call == nil ||
+			!isEpisodeMemoryDeviceTool(event.ToolName) || !cited[event.EventID] || !cited[call.EventID] {
+			return false
+		}
+		nextStep++
+		if nextStep == len(stepRefs) {
+			return true
+		}
+	}
+	return false
+}
+
 func expandEpisodeMemoryEvidenceRefs(episode TaskEpisode, refs []string) []string {
 	expanded := append([]string(nil), refs...)
-	pendingCalls := make(map[string][]string)
-	pairedCalls := make(map[string]string)
-	for _, event := range episode.Events {
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	for _, ref := range refs {
+		if call := pairedCalls[ref]; call != nil {
+			expanded = appendUniqueString(expanded, call.EventID)
+		}
+	}
+	return expanded
+}
+
+func episodeMemoryPairedToolCalls(episode TaskEpisode) map[string]*TaskEpisodeEvent {
+	pendingCalls := make(map[string][]*TaskEpisodeEvent)
+	pairedCalls := make(map[string]*TaskEpisodeEvent)
+	for i := range episode.Events {
+		event := &episode.Events[i]
 		name := strings.ToLower(strings.TrimSpace(event.ToolName))
-		if name == "" || !isEpisodeMemoryDeviceTool(name) {
+		if !isEpisodeMemoryDeviceTool(name) {
 			continue
 		}
 		switch event.Type {
 		case runEventToolCall:
-			pendingCalls[name] = append(pendingCalls[name], event.EventID)
+			pendingCalls[name] = append(pendingCalls[name], event)
 		case "tool_result":
 			calls := pendingCalls[name]
 			if len(calls) == 0 {
@@ -1448,12 +1503,7 @@ func expandEpisodeMemoryEvidenceRefs(episode TaskEpisode, refs []string) []strin
 			pendingCalls[name] = calls[:len(calls)-1]
 		}
 	}
-	for _, ref := range refs {
-		if callID := pairedCalls[ref]; callID != "" {
-			expanded = appendUniqueString(expanded, callID)
-		}
-	}
-	return expanded
+	return pairedCalls
 }
 
 func episodeMemoryTypeEvidenceValid(memoryType episodeMemoryType, episode TaskEpisode, refs []string, assessment episodeMemoryAssessment) bool {
@@ -1615,7 +1665,7 @@ func (p *episodeMemoryProcessor) createMemory(ctx context.Context, episode TaskE
 		EvidenceRefs:     []MemorySourceRef{episodeMemoryEvidenceRef(episode, candidate.EvidenceRefs)},
 	}
 	if candidate.Type == episodeMemoryTypeProcedure {
-		item.Steps = episodeMemoryProcedureSteps(episode, candidate.EvidenceRefs, candidate.SensitiveValues)
+		item.Steps = episodeMemoryProcedureSteps(episode, candidate.StepRefs, candidate.SensitiveValues)
 	}
 	result, err := p.plane.device.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &item, Action: MemoryIntentActionCreate})
 	return result.ID, err
@@ -1665,7 +1715,7 @@ func (p *episodeMemoryProcessor) updateMemory(ctx context.Context, episode TaskE
 	newScope := cloneStringMap(candidate.Scope)
 	var newSteps []ProcedureStep
 	if candidate.Type == episodeMemoryTypeProcedure {
-		newSteps = mergeEpisodeMemorySteps(existing.Steps, episodeMemoryProcedureSteps(episode, candidate.EvidenceRefs, candidate.SensitiveValues))
+		newSteps = episodeMemoryProcedureSteps(episode, candidate.StepRefs, candidate.SensitiveValues)
 	}
 	item := DeviceMemoryItem{
 		ID: candidate.MemoryID, Type: string(candidate.Type), Status: newStatus,
@@ -1680,7 +1730,7 @@ func (p *episodeMemoryProcessor) updateMemory(ctx context.Context, episode TaskE
 	if candidate.UnresolvedConflict {
 		item.ConflictsWith = []string{episode.ID}
 	}
-	_, err = p.plane.device.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &item, Action: MemoryIntentActionUpdate, ExpectedRevision: candidate.MemoryRevision})
+	_, err = p.plane.device.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &item, Action: MemoryIntentActionUpdate, ExpectedRevision: candidate.MemoryRevision, ReplaceSteps: candidate.Type == episodeMemoryTypeProcedure})
 	return err
 }
 
@@ -1797,14 +1847,19 @@ func renderEpisodeMemoryContent(candidate episodeMemoryCandidate) string {
 	return strings.Join(parts, "\n")
 }
 
-func episodeMemoryProcedureSteps(episode TaskEpisode, refs, sensitiveValues []string) []ProcedureStep {
-	allowed := make(map[string]bool, len(refs))
-	for _, ref := range refs {
-		allowed[ref] = true
+func episodeMemoryProcedureSteps(episode TaskEpisode, stepRefs, sensitiveValues []string) []ProcedureStep {
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	results := make(map[string]*TaskEpisodeEvent, len(episode.Events))
+	for i := range episode.Events {
+		if event := &episode.Events[i]; event.Type == "tool_result" {
+			results[event.EventID] = event
+		}
 	}
 	var steps []ProcedureStep
-	for index, event := range episode.Events {
-		if event.Type != runEventToolCall || !allowed[event.EventID] || !isEpisodeMemoryDeviceTool(event.ToolName) {
+	for _, ref := range stepRefs {
+		event := pairedCalls[ref]
+		result := results[ref]
+		if event == nil || result == nil {
 			continue
 		}
 		step := ProcedureStep{
@@ -1813,16 +1868,7 @@ func episodeMemoryProcedureSteps(episode TaskEpisode, refs, sensitiveValues []st
 			Coords:      extractToolCallCoords(event.ToolInput),
 			Text:        redactEpisodeMemorySensitiveValues(extractToolCallText(event.ToolInput), sensitiveValues),
 		}
-		for nextIndex := index + 1; nextIndex < len(episode.Events); nextIndex++ {
-			next := episode.Events[nextIndex]
-			if next.Type == runEventToolCall {
-				break
-			}
-			if next.Type == "tool_result" && next.ToolName == event.ToolName && allowed[next.EventID] {
-				step.OutcomeNote = redactEpisodeMemorySensitiveValues(truncateForLog(firstNonEmptyString([]string{next.Observation, next.Content}), 240), sensitiveValues)
-				break
-			}
-		}
+		step.OutcomeNote = redactEpisodeMemorySensitiveValues(truncateForLog(firstNonEmptyString([]string{result.Observation, result.Content}), 240), sensitiveValues)
 		steps = append(steps, step)
 	}
 	return steps
@@ -1988,7 +2034,10 @@ Episode:
 // out of Device Memory. The extraction prompt, the omission review, and the
 // retention audit all apply it. The extractor sees tool results but not tool
 // definitions, so the rule is judged against the results in the Episode.
-const episodeMemoryBuiltInGuidanceRule = `The Agent already receives every tool result, including the suggestion a failed tool returns, so a memory that repeats it adds nothing. None of the following is device-, app-, or page-specific knowledge: guidance that only restates a suggestion or error message from a tool result in this Episode; generic tool use such as taking a screenshot after a failure, refocusing a field, or retrying; and either of those with an app, page, or control name attached, for example "in Safari, tap the address bar and retry enter_text" after enter_text already said to refocus the field and retry. A workaround for a tool that misbehaved is a defect to fix in the tool. It counts only when it also records a fact about this device, app, or page that no tool result in the Episode gave, such as a coordinate, route, page layout, or stop condition.`
+// It separates the remediation advice a tool returns, which the Agent gets
+// again on the next failure, from the device, app, and page facts that tool
+// results observe, which are the evidence Device Memory is built from.
+const episodeMemoryBuiltInGuidanceRule = `Tool results provide both observations and remediation advice. Observations are evidence for device, app, or page knowledge; their source alone is never a reason to discard them. Retain a lesson only when it adds actionable, scope-specific information beyond general knowledge and the advice the Agent already receives. Restating retry instructions or attaching an app name to generic advice adds no such information. An observed constraint or workaround can qualify when its evidenced conditions change how a future task should be performed. Observation alone does not establish durability: do not retain a run-specific value or infer a reusable lesson from a one-time lookup. A tool defect belongs in the tool; retain a workaround only for the additional device, app, or page behavior it establishes.`
 
 const episodeMemoryProposalInstructions = `For each Episode, return a proposal object matching this schema:
 {
@@ -2011,7 +2060,8 @@ const episodeMemoryProposalInstructions = `For each Episode, return a proposal o
 	    "confidence": 0.85,
 	    "scope": {"device_id":"...", "app_name":"...", "app_version":"...", "page_name":"...", "goal_pattern":"...", "precondition":"..."},
     "tags": ["short retrieval terms"],
-    "evidence_refs": ["real Episode event ids"]
+    "evidence_refs": ["real Episode event ids supporting the lesson, including failed alternatives"],
+    "step_refs": ["for procedure only: tool_result event ids for the executable path, in order"]
   }]
 }
 
@@ -2021,16 +2071,17 @@ Device Memory holds what the Agent cannot know without this device: routes, coor
 Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Use unknown when final proof is missing and say what is missing. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
 
 Type rules:
-- procedure: reusable multi-step goal path supported by tool calls and results. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
+- procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and final verification. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
 - navigation: independently reusable page entry or transition, supported by an action and comparable before/after observations. Keep a navigation step inside a procedure when it has no independent recall value.
 - calibration: coordinate, screen, control, or coordinate-space relationship supported by coordinate input and post-action evidence.
 - failure: reusable guard, check, stop condition, or recovery action. A failed Episode is not automatically a failure memory; omit one-off failures with no actionable future guard.
-- fact: stable device, app, or page fact directly observed by a tool. Do not turn guesses into facts.
+- fact: stable device, app, or page fact directly observed by a tool. Do not turn guesses, one-time values, or a multi-step procedure into facts.
 
 Deduplication and conflict rules:
 - Use action=create only when no existing memory has the same scoped lesson.
 - For action=create, omit memory_id and memory_revision.
 - Use action=update with an existing memory_id and its exact memory_revision when the lesson overlaps. Output the complete merged situation, guidance, expected_effect, scope, and tags; preserve valid older conditions rather than merely copying the new Episode.
+- For a procedure update, step_refs must describe the complete replacement path observed in this Episode; old stored steps are not carried into the executable path unless they are observed again. Prior steps remain in revision history.
 - device_profile and app_profile entries are deterministic context only. Do not update them or duplicate facts already represented by them.
 - Resolve apparent conflicts by conditioning the merged memory on version, page, account state, or another evidenced precondition when possible.
 - Set unresolved_conflict=true only when the same scope still has incompatible conclusions and no safe condition can distinguish them. The memory will be quarantined as disputed.

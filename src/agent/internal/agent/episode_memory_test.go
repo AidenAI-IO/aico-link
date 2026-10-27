@@ -465,7 +465,8 @@ func TestEpisodeMemoryProcessorCreatesMultipleTypedMemoriesWithOneModelCall(t *t
       "expected_effect":"The Display settings page is visible",
       "scope":{"device_id":"device_a","app_name":"Settings","goal_pattern":"open display settings"},
       "tags":["settings","display"],
-      "evidence_refs":["ep_extract_call","ep_extract_result","ep_extract_display_call","ep_extract_display_result"]
+      "evidence_refs":["ep_extract_call","ep_extract_result","ep_extract_display_call","ep_extract_display_result"],
+      "step_refs":["ep_extract_result","ep_extract_display_result"]
     },
     {
       "lesson_key":"settings_display_location",
@@ -1324,7 +1325,7 @@ func TestEpisodeMemoryProcedureStepsRedactAuditedSensitiveValues(t *testing.T) {
 			{EventID: "result", Type: "tool_result", ToolName: "enter_text", Observation: "913204 was accepted"},
 		},
 	}
-	steps := episodeMemoryProcedureSteps(episode, []string{"call", "result"}, []string{"913204"})
+	steps := episodeMemoryProcedureSteps(episode, []string{"result"}, []string{"913204"})
 	if len(steps) != 1 {
 		t.Fatalf("steps = %#v, want one", steps)
 	}
@@ -1730,7 +1731,7 @@ func TestEpisodeMemoryProposalRetryStopsAtMaximumAttempts(t *testing.T) {
 	}
 }
 
-func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
+func TestEpisodeMemoryProcedureUpdateReplacesExistingSteps(t *testing.T) {
 	ctx := context.Background()
 	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
 	oldSteps := []ProcedureStep{{Tool: "launch_app", Text: "Settings", OutcomeNote: "Settings opened"}}
@@ -1747,7 +1748,8 @@ func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
     "lesson_key":"merge_display_path","type":"procedure","action":"update","memory_id":"devmem_procedure","memory_revision":1,
     "unresolved_conflict":false,"situation":"When opening display settings","guidance":"Open Settings and select Display","expected_effect":"Display controls are visible",
     "scope":{"device_id":"device_a","app_name":"Settings"},"tags":["display"],
-    "evidence_refs":["ep_proc_call_1","ep_proc_result_1","ep_proc_call_2","ep_proc_result_2"]
+    "evidence_refs":["ep_proc_call_1","ep_proc_result_1","ep_proc_call_2","ep_proc_result_2"],
+    "step_refs":["ep_proc_result_1","ep_proc_result_2"]
   }]
 }`}}
 	processor := newEpisodeMemoryProcessor(plane, model)
@@ -1775,10 +1777,10 @@ func TestEpisodeMemoryProcedureUpdatePreservesExistingSteps(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("Get(updated) found=%v error=%v", found, err)
 	}
-	if len(updated.Steps) != 3 || updated.Steps[0] != oldSteps[0] {
-		t.Fatalf("updated steps = %#v, want old step plus two new evidenced steps", updated.Steps)
+	if len(updated.Steps) != 2 || updated.Steps[0].OutcomeNote != "Settings list visible" || updated.Steps[1].OutcomeNote != "Display controls visible" {
+		t.Fatalf("updated steps = %#v, want only the new complete path in order", updated.Steps)
 	}
-	if len(updated.RevisionHistory) != 1 || len(updated.RevisionHistory[0].Steps) != 1 {
+	if len(updated.RevisionHistory) != 1 || !equalEpisodeMemorySteps(updated.RevisionHistory[0].Steps, oldSteps) {
 		t.Fatalf("revision history = %#v, want prior step snapshot", updated.RevisionHistory)
 	}
 }
@@ -1953,13 +1955,10 @@ func TestEpisodeMemoryOmissionReviewDiscountsBuiltInToolGuidance(t *testing.T) {
 	if _, err := processor.reviewEpisodeMemoryOmission(context.Background(), TaskEpisode{ID: "ep_omission_rule"}, episodeMemoryProposal{}, nil, 0); err != nil {
 		t.Fatalf("reviewEpisodeMemoryOmission: %v", err)
 	}
-	var review string
-	for _, part := range strings.Split(model.firstCallText(), "\n") {
-		if strings.HasPrefix(part, "Review this first-pass assessment once") {
-			review = part
-		}
+	if !strings.Contains(model.firstCallText(), episodeMemoryProposalInstructions) {
+		t.Fatal("omission review is missing the proposal schema and evidence, retention, and type rules")
 	}
-	if !strings.Contains(review, episodeMemoryBuiltInGuidanceRule) {
-		t.Fatalf("omission review does not discount built-in tool guidance:\n%s", review)
+	if got := strings.Count(model.firstCallText(), episodeMemoryBuiltInGuidanceRule); got != 1 {
+		t.Fatalf("omission review guidance rule count = %d, want one shared policy", got)
 	}
 }

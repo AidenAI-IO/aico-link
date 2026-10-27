@@ -1513,11 +1513,13 @@ def test_episode_reflection_suite_covers_assessment_contracts():
         "recorded_success_without_proof_is_not_trusted",
         "failed_episode_creates_actionable_guard",
         "transient_value_is_not_memorized",
+        "tool_remediation_is_not_memorized",
     }
     assert task_by_id["successful_workaround_is_extracted"].consolidation_expectation.goal_result == "achieved"
     assert task_by_id["recorded_success_without_proof_is_not_trusted"].consolidation_expectation.allow_empty_memory is True
     assert task_by_id["failed_episode_creates_actionable_guard"].consolidation_expectation.goal_result == "not_achieved"
     assert task_by_id["transient_value_is_not_memorized"].consolidation_expectation.allow_empty_memory is True
+    assert task_by_id["tool_remediation_is_not_memorized"].consolidation_expectation.max_memory_ids == 0
 
 
 def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():
@@ -1931,3 +1933,17 @@ def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bou
     path.write_text(json.dumps({"name": "s", "tasks": [task]}))
     with pytest.raises(SuiteValidationError, match=message):
         load_suite(path)
+
+
+def test_consolidation_procedure_steps_are_a_positive_contract():
+    from runner.suite import _parse_consolidation_expectation
+
+    expected = ["Open preferences", "Apply", "Verify"]
+    parsed = _parse_consolidation_expectation({"required_procedure_steps": expected}, "path")
+    assert parsed.required_procedure_steps == expected
+    for invalid in ("Apply", [""], [1]):
+        with pytest.raises(SuiteValidationError, match="required_procedure_steps"):
+            _parse_consolidation_expectation({"required_procedure_steps": invalid}, "path")
+    for empty in ({"allow_empty_memory": True}, {"max_memory_ids": 0}):
+        with pytest.raises(SuiteValidationError):
+            _parse_consolidation_expectation({"required_procedure_steps": expected, **empty}, "path")

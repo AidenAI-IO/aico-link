@@ -400,6 +400,39 @@ func TestRecallSessionChunksToolReturnsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestRecallDeviceMemoryTagFallbackWithoutTermsPreservesScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewDeviceMemoryStore(t.TempDir())
+	for _, fixture := range []struct{ id, app, device, kind string }{
+		{"wanted", "QA Notes", "phone", "procedure"},
+		{"other_app", "Calendar", "phone", "procedure"},
+		{"other_device", "QA Notes", "tablet", "procedure"},
+		{"other_type", "QA Notes", "phone", "fact"},
+	} {
+		_, err := store.ApplyMemoryIntent(ctx, MemoryIntent{Action: MemoryIntentActionCreate, DeviceItem: &DeviceMemoryItem{
+			ID: fixture.id, AppName: fixture.app, DeviceID: fixture.device, Type: fixture.kind,
+			Status: deviceMemoryStatusActive, Tags: []string{"save", "persistence"},
+			Title: "Edit the title", Content: "Switch to Preview, return to Edit, save and reopen to verify.",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := NewRecallDeviceMemoryTool(store).Call(ctx, `{"tags":["edit","title","verify"],"entities":["QA Notes"],"types":["procedure"],"device_id":"phone"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryHit `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "wanted" {
+		t.Fatalf("recall = %s, want only the matching app, device and type", out)
+	}
+}
+
 func TestRecallMemoryToolReturnsMatchingLongTermMemory(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -576,5 +609,92 @@ func TestToolSetRegistersMemoryRecallTools(t *testing.T) {
 	}
 	if _, ok := tools.Get("inspect_episode"); !ok {
 		t.Fatalf("expected inspect_episode tool to be registered")
+	}
+}
+
+func TestRecallDeviceMemoryRequiresTopicMatchWithinScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewDeviceMemoryStore(t.TempDir())
+	for _, fixture := range []struct{ id, topic string }{
+		{"theme", "Change appearance to dark mode."},
+		{"export", "Export a document to PDF."},
+	} {
+		_, err := store.ApplyMemoryIntent(ctx, MemoryIntent{Action: MemoryIntentActionCreate, DeviceItem: &DeviceMemoryItem{
+			ID: fixture.id, AppName: "Notebook", DeviceID: "phone", Type: "procedure",
+			Status: deviceMemoryStatusActive, Tags: []string{"workflow"}, Content: fixture.topic,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		name, query string
+		want        []string
+	}{
+		{"tag fallback", `{"tags":["export"],"entities":["Notebook"]}`, []string{"export"}},
+		{"term fallback", `{"terms":["PDF"],"tags":["unknown"],"entities":["Notebook"]}`, []string{"export"}},
+		{"no relevant topic", `{"tags":["print"],"entities":["Notebook"]}`, nil},
+		{"direct terms", `{"terms":["export"],"entities":["Notebook"]}`, []string{"export"}},
+		{"scope only", `{"entities":["Notebook"]}`, []string{"export", "theme"}},
+		{"tags only remain exact", `{"tags":["export"]}`, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewRecallDeviceMemoryTool(store).Call(ctx, tt.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded struct {
+				Results []MemoryHit `json:"results"`
+			}
+			if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, hit := range decoded.Results {
+				ids = append(ids, hit.ID)
+			}
+			if !slices.Equal(ids, tt.want) {
+				t.Fatalf("recall ids = %v, want %v", ids, tt.want)
+			}
+		})
+	}
+}
+
+func TestLimitDeviceMemoryRecallPreservesWholeProcedure(t *testing.T) {
+	steps := []ProcedureStep{
+		{Tool: "touch_gesture", Description: "Open preferences."},
+		{Tool: "touch_gesture", Description: "Change the setting."},
+		{Tool: "touch_gesture", Description: "Reopen and verify the setting."},
+	}
+	procedure := MemoryHit{ID: "path", Type: "procedure", Steps: steps}
+	full, err := json.Marshal(map[string]any{"results": []MemoryHit{procedure}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []int{len(full) - 1, len(full), 4800} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			hits := limitDeviceMemoryRecall([]MemoryHit{procedure, {ID: "small", Type: "fact", Content: "A short fact."}}, budget)
+			for _, hit := range hits {
+				if hit.ID == "path" && !reflect.DeepEqual(hit.Steps, steps) {
+					t.Fatalf("recall shortened a procedure: %#v", hit.Steps)
+				}
+			}
+			if len(hits) == 0 {
+				t.Fatal("budget should allow at least the short fact")
+			}
+			if budget < len(full) && hits[0].ID != "small" {
+				t.Fatal("oversized procedure should be omitted")
+			}
+			if budget >= len(full) && hits[0].ID != "path" {
+				t.Fatal("fitting procedure should be retained")
+			}
+			encoded, err := json.Marshal(map[string]any{"results": hits})
+			if err != nil || len(encoded) > budget {
+				t.Fatalf("payload exceeds budget: bytes=%d err=%v", len(encoded), err)
+			}
+		})
+	}
+	if !reflect.DeepEqual(procedure.Steps, steps) {
+		t.Fatal("recall mutated stored steps")
 	}
 }

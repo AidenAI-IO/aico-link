@@ -310,6 +310,50 @@ func TestDeviceMemoryApplyUsesCommonUpdateAndRevision(t *testing.T) {
 	}
 }
 
+func TestDeviceMemoryProcedureUpdateReplacesOnlyWhenRequested(t *testing.T) {
+	store := NewDeviceMemoryStore(t.TempDir())
+	ctx := context.Background()
+	oldStep := ProcedureStep{Tool: "touch_gesture", Description: "Use the old route"}
+	newStep := ProcedureStep{Tool: "touch_gesture", Description: "Use the new route"}
+	first := DeviceMemoryItem{
+		ID: "devmem_route", Type: "procedure", Status: deviceMemoryStatusActive,
+		Title: "Route", Summary: "Use the route", Content: "Current route",
+		Steps:        []ProcedureStep{oldStep},
+		EvidenceRefs: []MemorySourceRef{{Type: "episode", ID: "episode-1", EventIDs: []string{"result-1"}}},
+	}
+	if _, err := store.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &first, Action: MemoryIntentActionCreate}); err != nil {
+		t.Fatal(err)
+	}
+	update := first
+	update.Revision = 1
+	update.Steps = []ProcedureStep{newStep}
+	update.EvidenceRefs = []MemorySourceRef{{Type: "episode", ID: "episode-2", EventIDs: []string{"result-2"}}}
+	intent := MemoryIntent{DeviceItem: &update, Action: MemoryIntentActionUpdate, ExpectedRevision: 1}
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatal(err)
+	}
+	merged, found, err := store.Get(ctx, first.ID)
+	if err != nil || !found || !equalEpisodeMemorySteps(merged.Steps, []ProcedureStep{oldStep, newStep}) {
+		t.Fatalf("ordinary update should merge steps: found=%v err=%v item=%#v", found, err, merged)
+	}
+	intent.ReplaceSteps = true
+	if _, err := store.ApplyMemoryIntent(ctx, intent); !errors.Is(err, errEpisodeMemoryRevisionChanged) {
+		t.Fatalf("stale replacement accepted as already applied: %v", err)
+	}
+	intent.ExpectedRevision = 2
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatalf("identical replacement retry failed: %v", err)
+	}
+	replaced, found, err := store.Get(ctx, first.ID)
+	if err != nil || !found || replaced.Revision != 3 || !equalEpisodeMemorySteps(replaced.Steps, []ProcedureStep{newStep}) ||
+		len(replaced.RevisionHistory) != 2 || !equalEpisodeMemorySteps(replaced.RevisionHistory[1].Steps, []ProcedureStep{oldStep, newStep}) {
+		t.Fatalf("replacement lost order or history: found=%v err=%v item=%#v", found, err, replaced)
+	}
+}
+
 func TestDeviceMemoryCreateRetryKeepsFirstContentForSameEpisode(t *testing.T) {
 	store := NewDeviceMemoryStore(t.TempDir())
 	ctx := context.Background()
