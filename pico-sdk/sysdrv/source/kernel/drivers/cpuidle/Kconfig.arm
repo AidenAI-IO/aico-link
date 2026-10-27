@@ -13,6 +13,15 @@ config ARM_CPUIDLE
 	  initialized by calling the CPU operations init idle hook
 	  provided by architecture code.
 
+config ARM_RV1106_CPUIDLE
+	bool "WFI CPU idle driver for Rockchip RV1106"
+	depends on CPU_RV1106 && !ARM64
+	depends on SUSPEND
+	help
+	  Register WFI idle and suspend-to-idle callbacks on RV1106. The latter
+	  lets the CPUidle core freeze timekeeping while userspace is frozen,
+	  so service watchdogs do not count sleep as missed heartbeat time.
+
 config ARM_PSCI_CPUIDLE
 	bool "PSCI CPU idle Driver"
 	depends on ARM_PSCI_FW

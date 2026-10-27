@@ -125,7 +125,25 @@ static unsigned long rk628_cru_clk_get_rate_pll(struct rk628 *rk628,
 	return foutpostdiv;
 }
 
-static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
+static int rk628_cru_wait_pll_lock(struct rk628 *rk628, u32 reg)
+{
+	u32 val;
+	int ret, i;
+
+	/* Bound both bypass and programmed-rate waits, including resume. */
+	for (i = 0; i < 100; i++) {
+		ret = rk628_i2c_read(rk628, reg, &val);
+		if (ret)
+			return ret;
+		if (val & PLL_LOCK)
+			return 0;
+		usleep_range(1000, 1100);
+	}
+
+	return -ETIMEDOUT;
+}
+
+static long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 						unsigned int id,
 						unsigned long rate)
 {
@@ -135,10 +153,11 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 	u16 fbdiv = 0;
 	u32 frac = 0;
 	u64 foutvco, foutpostdiv;
-	u32 offset, val;
+	u32 offset;
+	int ret;
 
 	if (id == CGU_CLK_APLL && rk628->version == RK628D_VERSION)
-		return 0;
+		return -EINVAL;
 
 	/*
 	 * FREF : 10MHz ~ 800MHz
@@ -147,10 +166,10 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 	 * FOUTPOSTDIV : 8MHz ~ 1.6GHz
 	 */
 	if (fin < MIN_FREF_RATE || fin > MAX_FREF_RATE)
-		return 0;
+		return -EINVAL;
 
 	if (fout < MIN_FOUTPOSTDIV_RATE || fout > MAX_FOUTPOSTDIV_RATE)
-		return 0;
+		return -EINVAL;
 
 	if (id == CGU_CLK_CPLL)
 		offset = 0x00;
@@ -162,11 +181,9 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 	if (fin == fout) {
 		rk628_i2c_write(rk628, offset + CRU_CPLL_CON0, PLL_BYPASS(1));
 		rk628_i2c_write(rk628, offset + CRU_CPLL_CON1, PLL_PD(0));
-		while (1) {
-			rk628_i2c_read(rk628, offset + CRU_CPLL_CON1, &val);
-			if (val & PLL_LOCK)
-				break;
-		}
+		ret = rk628_cru_wait_pll_lock(rk628, offset + CRU_CPLL_CON1);
+		if (ret)
+			return ret;
 		return fin;
 	}
 
@@ -196,7 +213,7 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 		}
 
 		if (postdiv > div2)
-			return 0;
+			return -EINVAL;
 
 		fout *= postdiv1 * postdiv2;
 	} else {
@@ -265,11 +282,9 @@ static unsigned long rk628_cru_clk_set_rate_pll(struct rk628 *rk628,
 			PLL_REFDIV(refdiv));
 	rk628_i2c_write(rk628, offset + CRU_CPLL_CON2, PLL_FRAC(frac));
 
-	while (1) {
-		rk628_i2c_read(rk628, offset + CRU_CPLL_CON1, &val);
-		if (val & PLL_LOCK)
-			break;
-	}
+	ret = rk628_cru_wait_pll_lock(rk628, offset + CRU_CPLL_CON1);
+	if (ret)
+		return ret;
 
 	return (unsigned long)foutpostdiv;
 }
@@ -296,16 +311,20 @@ static unsigned long rk628_cru_clk_set_rate_sclk_vop(struct rk628 *rk628,
 	return rate;
 }
 
-static unsigned long rk628_cru_clk_set_rate_sclk_hdmirx_aud(struct rk628 *rk628,
+static long rk628_cru_clk_set_rate_sclk_hdmirx_aud(struct rk628 *rk628,
 							    unsigned long rate)
 {
 	u64 parent_rate;
+	long pll_rate;
 	u8 div;
 
 	if (rk628->version >= RK628F_VERSION)
-		parent_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_APLL, rate*4);
+		pll_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_APLL, rate*4);
 	else
-		parent_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_GPLL, rate*4);
+		pll_rate = rk628_cru_clk_set_rate_pll(rk628, CGU_CLK_GPLL, rate*4);
+	if (pll_rate < 0)
+		return pll_rate;
+	parent_rate = pll_rate;
 	div = DIV_ROUND_CLOSEST_ULL(parent_rate, rate);
 	do_div(parent_rate, div);
 	rate = parent_rate;
@@ -468,6 +487,8 @@ EXPORT_SYMBOL(rk628_clk_mux_testout);
 int rk628_clk_set_rate(struct rk628 *rk628, unsigned int id,
 		       unsigned long rate)
 {
+	long actual_rate;
+
 	if (id == CGU_CLK_APLL && rk628->version == RK628D_VERSION)
 		return -EINVAL;
 
@@ -475,8 +496,8 @@ int rk628_clk_set_rate(struct rk628 *rk628, unsigned int id,
 	case CGU_CLK_APLL:
 	case CGU_CLK_CPLL:
 	case CGU_CLK_GPLL:
-		rk628_cru_clk_set_rate_pll(rk628, id, rate);
-		break;
+		actual_rate = rk628_cru_clk_set_rate_pll(rk628, id, rate);
+		return actual_rate < 0 ? actual_rate : 0;
 	case CGU_CLK_RX_READ:
 		rk628_cru_clk_set_rate_rx_read(rk628, rate);
 		break;
@@ -487,8 +508,8 @@ int rk628_clk_set_rate(struct rk628 *rk628, unsigned int id,
 		rk628_cru_clk_set_rate_sclk_uart(rk628, rate);
 		break;
 	case CGU_CLK_HDMIRX_AUD:
-		rk628_cru_clk_set_rate_sclk_hdmirx_aud(rk628, rate);
-		break;
+		actual_rate = rk628_cru_clk_set_rate_sclk_hdmirx_aud(rk628, rate);
+		return actual_rate < 0 ? actual_rate : 0;
 	case CGU_CLK_HDMIRX_CEC:
 		rk628_cru_clk_set_rate_cec(rk628, rate);
 		break;

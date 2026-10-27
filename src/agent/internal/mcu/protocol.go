@@ -23,6 +23,8 @@ const (
 	ShutdownReady   byte = 0x0a
 	SetLED          byte = 0x0b
 	GetLED          byte = 0x0c
+	SuspendPrepare  byte = 0x0d
+	SuspendResume   byte = 0x0e
 	Success         byte = 0
 	Busy            byte = 1
 	Invalid         byte = 2
@@ -33,6 +35,7 @@ const (
 	Booting         byte = 1
 	Ready           byte = 2
 	ShuttingDown    byte = 3
+	Sleeping        byte = 4
 	MaxPayload           = 64
 )
 

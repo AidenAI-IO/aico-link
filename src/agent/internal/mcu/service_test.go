@@ -94,17 +94,50 @@ func TestEventsPagingWakeValidationAndCancellation(t *testing.T) {
 }
 
 type fakeRequester struct {
-	mu      sync.Mutex
-	calls   int
-	reply   []byte
-	failure error
+	mu        sync.Mutex
+	calls     int
+	reply     []byte
+	failure   error
+	onRequest func(byte)
 }
 
 func (f *fakeRequester) Request(ctx context.Context, cmd byte, p []byte) (Frame, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
+	if f.onRequest != nil {
+		f.onRequest(cmd)
+	}
 	return Frame{RESP, 0, cmd, append([]byte(nil), f.reply...)}, f.failure
+}
+
+func TestSuspendHandshakeAndWakeRace(t *testing.T) {
+	f := &fakeRequester{reply: []byte{Success}}
+	s := runningService(t, f)
+	if r := s.Handle(context.Background(), Request{Op: "suspend_prepare"}); r.Status != "OK" || r.State.RVState != "sleeping" {
+		t.Fatalf("prepare: %+v", r)
+	}
+	if r := s.Handle(context.Background(), Request{Op: "get_battery"}); r.Status != "NOT_READY" {
+		t.Fatalf("query while sleeping: %+v", r)
+	}
+	s.HandleEvent(Frame{Type: EVENT, Command: Wakeup, Payload: []byte{6, 0, 0, 0}})
+	if s.State().RVState != "ready" {
+		t.Fatal("wake did not clear sleeping state")
+	}
+	if r := s.Handle(context.Background(), Request{Op: "suspend_resume"}); r.Status != "OK" {
+		t.Fatalf("resume: %+v", r)
+	}
+	f.onRequest = func(cmd byte) {
+		if cmd == SuspendPrepare {
+			s.HandleEvent(Frame{Type: EVENT, Command: Wakeup, Payload: []byte{4, 0, 0, 0}})
+		}
+	}
+	if r := s.Handle(context.Background(), Request{Op: "suspend_prepare"}); r.Status != "BUSY" {
+		t.Fatalf("racing wake: %+v", r)
+	}
+	if s.State().RVState != "ready" || f.calls != 4 {
+		t.Fatalf("racing wake state=%+v calls=%d", s.State(), f.calls)
+	}
 }
 func runningService(t *testing.T, f Requester) *Service {
 	t.Helper()
