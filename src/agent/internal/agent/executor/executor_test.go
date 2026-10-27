@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 )

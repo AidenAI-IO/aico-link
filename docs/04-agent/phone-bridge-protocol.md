@@ -7,7 +7,7 @@ sidebar_position: 12
 **Version**: 1.2
 **Date**: 2026-08-13
 
-This document defines the WebSocket command protocol between the hardware board (aiden-firmware) and phone app (aiden-app).
+This document defines the WebSocket command protocol between the hardware board (aico-link-firmware) and phone app (`aiden-app` checkout).
 
 ## Connection
 
@@ -93,7 +93,7 @@ The app can also actively send event messages. Events reuse the `BridgeCommandRe
 Current events:
 
 - `phone_environment`: App reports phone environment snapshot upon WebSocket connection success and returning from background to foreground.
-- `phone_app_state`: App reports the last visible app lifecycle state when it changes among `active`, `background`, and `inactive`, plus whether a Live Activity / Dynamic Island entry is available to return to the Aiden App and whether PiP Bridge mode is enabled. This state is for diagnostics and strategy decisions; it does not mean the app can execute permanently in iOS background.
+- `phone_app_state`: App reports the last visible app lifecycle state when it changes among `active`, `background`, and `inactive`, plus whether a Live Activity / Dynamic Island entry is available to return to the Aico companion app and whether PiP Bridge mode is enabled. This state is for diagnostics and strategy decisions; it does not mean the app can execute permanently in iOS background.
 
 Example:
 
@@ -103,7 +103,7 @@ Example:
   "method": "phone_environment",
   "data": {
     "captured_at": "2026-06-10T03:20:00Z",
-    "source": "aiden-app",
+    "source": "aico-app",
     "platform": "ios",
     "system_name": "iOS",
     "system_version": "18.5",
@@ -485,7 +485,7 @@ Add new contact.
 - `emails` (optional): Email address array
 - `organization` (optional): Company/organization name
 - `notes` (optional): Notes on Android. iOS ignores this field because reading
-  or updating `CNContactNoteKey` requires an entitlement not requested by Aiden.
+  or updating `CNContactNoteKey` requires an entitlement not requested by the companion app.
 
 **iOS implementation**: Uses `CNContactStore.add(CNSaveRequest)` to create, requires `NSContactsUsageDescription` permission.
 **Android implementation**: Uses `ContentResolver.insert(ContactsContract.RawContacts.CONTENT_URI)`, requires `WRITE_CONTACTS` permission.

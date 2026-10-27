@@ -89,7 +89,7 @@ Default socket: `/run/audio_service/audio_service.sock`
 
 ### Response Status
 
-Audio Service uses shared `AidenServiceStatus`. Recording long-poll may return `TIMEOUT` on timeout; returns `SESSION_NOT_FOUND` when session does not exist.
+Audio Service uses shared `AicoServiceStatus`. Recording long-poll may return `TIMEOUT` on timeout; returns `SESSION_NOT_FOUND` when session does not exist.
 
 ## Version Compatibility Recommendations
 

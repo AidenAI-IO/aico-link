@@ -25,6 +25,7 @@ fi
 bash -n \
     "${SYSTEM_DIR}/build.sh" \
     "${SYSTEM_DIR}/audit-bsp.sh" \
+    "${SYSTEM_DIR}/audit-tf-dtb.sh" \
     "${SYSTEM_DIR}/container-build-rootfs.sh" \
     "${SYSTEM_DIR}/container-assemble-images.sh" \
     "${SYSTEM_DIR}/container-install-ota-config.sh" \
@@ -57,11 +58,50 @@ ensure_bsp_build_image' _ "${SYSTEM_DIR}/build.sh"
     "${bsp_image_mock_log}")" -eq 1 ] \
     || fail "a missing BSP builder image is not pulled exactly once"
 
+vendored_fixture=${TEST_ROOT}/vendored-fixture
+vendored_sdk=${vendored_fixture}/pico-sdk
+mkdir -p "${vendored_sdk}/project/cfg/BoardConfig_IPC" \
+    "${vendored_sdk}/sysdrv/source/kernel/arch/arm/configs" \
+    "${vendored_sdk}/sysdrv/source/uboot/u-boot/configs"
+touch "${vendored_sdk}/project/build.sh" \
+    "${vendored_sdk}/sysdrv/source/uboot/u-boot/configs/aico-rv1106-rockusb.config"
+git -C "${vendored_fixture}" init -q
+git -C "${vendored_fixture}" add pico-sdk
+git -C "${vendored_fixture}" -c user.name=Test -c user.email=test@example.invalid \
+    commit -qm 'test: vendored SDK fixture'
+DEBIAN_SYSTEM_SDK_DIR="${vendored_sdk}" \
+DEBIAN_SYSTEM_OUTPUT_DIR="${TEST_ROOT}/vendored-output" \
+    bash -c 'source "$1"; prepare_sdk' _ "${SYSTEM_DIR}/build.sh"
+[ ! -e "${vendored_sdk}/.git" ] || fail "vendored SDK unexpectedly has separate Git metadata"
+[ "$(cat "${TEST_ROOT}/vendored-output/source-sdk-commit.txt")" = \
+    "$(git -C "${vendored_fixture}" rev-parse HEAD)" ] \
+    || fail "vendored SDK provenance does not identify its owning firmware commit"
+[ -L "${vendored_sdk}/.BoardConfig.mk" ] \
+    || fail "vendored SDK board configuration was not prepared"
+
 python3 - "${SYSTEM_DIR}" <<'PYTHON'
 import ast, pathlib, sys
 for path in pathlib.Path(sys.argv[1]).glob('*.py'):
     ast.parse(path.read_text(), filename=str(path))
 PYTHON
+
+kernel_config_fixture=${TEST_ROOT}/kernel.config
+for disabled_value in '# CONFIG_VIDEO_TC358743_CEC is not set' \
+    'CONFIG_VIDEO_TC358743_CEC=n' ''; do
+    printf '%s\n' "${disabled_value}" >"${kernel_config_fixture}"
+    bash -c 'source "$1"; kernel_setting_is_disabled "$2" CONFIG_VIDEO_TC358743_CEC' \
+        _ "${SYSTEM_DIR}/build.sh" "${kernel_config_fixture}" \
+        || fail "kernel validation rejects a disabled or dependency-omitted setting"
+done
+for enabled_value in y m; do
+    printf 'CONFIG_VIDEO_TC358743_CEC=%s\n' "${enabled_value}" \
+        >"${kernel_config_fixture}"
+    if bash -c \
+        'source "$1"; kernel_setting_is_disabled "$2" CONFIG_VIDEO_TC358743_CEC' \
+        _ "${SYSTEM_DIR}/build.sh" "${kernel_config_fixture}"; then
+        fail "kernel validation accepts CONFIG_VIDEO_TC358743_CEC=${enabled_value}"
+    fi
+done
 
 for script in \
     build.sh audit-bsp.sh canonicalize-bsp.py container-build-rootfs.sh container-assemble-images.sh \
@@ -112,15 +152,18 @@ grep -Eq '^[[:space:]]*debootstrap \\' \
 for package in \
     systemd-sysv udev dbus kmod libpam-systemd openssh-server sudo adb iproute2 iputils-arping \
     wpasupplicant bluez systemd-resolved systemd-timesyncd dnsmasq-base \
-    e2fsprogs v4l-utils libdrm2 python3 python3-pip; do
+    e2fsprogs dosfstools exfatprogs util-linux-extra v4l-utils libdrm2 python3 python3-pip; do
     grep -qx "${package}" "${SYSTEM_DIR}/packages.list" \
         || fail "production package list is missing ${package}"
 done
+grep -Fq 'test -x "${ROOTFS_MOUNT}/usr/sbin/hwclock"' \
+    "${SYSTEM_DIR}/container-audit-images.sh" \
+    || fail "rootfs image audit does not enforce the hwclock runtime contract"
 if grep -Eq '^(net-tools|dhcpcd|dhcpcd-base|isc-dhcp-client|flash-kernel|initramfs-tools)$' \
     "${SYSTEM_DIR}/packages.list"; then
     fail "banned package is present in production package list"
 fi
-grep -q 'Pin-Priority: -1' "${SYSTEM_DIR}/aiden-production.pref"
+grep -q 'Pin-Priority: -1' "${SYSTEM_DIR}/aico-production.pref"
 
 # Exercise the image audit against an enabled PAM stack and broken variants.
 # Merely having libpam-systemd in the package manifest is not sufficient.
@@ -129,25 +172,25 @@ source <(sed -n '/^audit_login_sessions() {$/,/^}$/p' \
 ROOTFS_MOUNT=${TEST_ROOT}/login-rootfs
 mkdir -p "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d" \
     "${ROOTFS_MOUNT}/etc/pam.d" \
-    "${ROOTFS_MOUNT}/usr/lib/aiden" \
+    "${ROOTFS_MOUNT}/usr/lib/aico" \
     "${ROOTFS_MOUNT}/usr/lib/arm-linux-gnueabihf/security"
-cp "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aiden.conf" \
-    "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aiden.conf"
+cp "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aico.conf" \
+    "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aico.conf"
 cp "${REPO_ROOT}/overlay-debian/etc/ssh/sshrc" "${ROOTFS_MOUNT}/etc/ssh/sshrc"
-cp "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-ssh-session-tty" \
-    "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-ssh-session-tty"
+cp "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-ssh-session-tty" \
+    "${ROOTFS_MOUNT}/usr/lib/aico/aico-ssh-session-tty"
 printf '@include common-session\n' >"${ROOTFS_MOUNT}/etc/pam.d/sshd"
 printf 'session optional pam_systemd.so\n' >"${ROOTFS_MOUNT}/etc/pam.d/common-session"
 printf 'module fixture\n' >"${ROOTFS_MOUNT}/usr/lib/arm-linux-gnueabihf/security/pam_systemd.so"
 audit_login_sessions
 for login_path in \
-    etc/ssh/sshd_config.d/20-aiden.conf etc/pam.d/sshd etc/pam.d/common-session \
+    etc/ssh/sshd_config.d/20-aico.conf etc/pam.d/sshd etc/pam.d/common-session \
     usr/lib/arm-linux-gnueabihf/security/pam_systemd.so \
-    etc/ssh/sshrc usr/lib/aiden/aiden-ssh-session-tty; do
+    etc/ssh/sshrc usr/lib/aico/aico-ssh-session-tty; do
     cp -p "${ROOTFS_MOUNT}/${login_path}" "${TEST_ROOT}/login-original"
     sed 's/^/# /' "${TEST_ROOT}/login-original" >"${ROOTFS_MOUNT}/${login_path}"
     if [ "${login_path##*/}" = pam_systemd.so ] || \
-        [ "${login_path##*/}" = aiden-ssh-session-tty ]; then
+        [ "${login_path##*/}" = aico-ssh-session-tty ]; then
         rm "${ROOTFS_MOUNT}/${login_path}"
     fi
     if (audit_login_sessions) >"${TEST_ROOT}/login-audit.log" 2>&1; then
@@ -159,10 +202,16 @@ audit_login_sessions
 
 grep -Fq '1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
-grep -Fq 'RK_UBOOT_DEFCONFIG_FRAGMENT="rk-emmc.config rv1106-ab.config aiden-rv1106-rockusb.config"' \
+grep -Fq 'RK_UBOOT_DEFCONFIG_FRAGMENT="rk-emmc.config rv1106-ab.config aico-rv1106-rockusb.config"' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
-grep -Fq 'RK_KERNEL_DEFCONFIG_FRAGMENT="aiden-zram.config rv1106-bt.config aiden-rk628.config debian-system.config"' \
+grep -Fq 'RK_KERNEL_DEFCONFIG_FRAGMENT="aico-zram.config rv1106-bt.config rv1106-sdiowifi.config aico-rk628.config debian-system.config rv1106-pm.config"' \
     "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+grep -Fq 'RK_ENABLE_WIFI_CHIP=AIC8800D80' \
+    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
+    || fail "production board config does not select the AIC8800D80"
+grep -Fq 'RK_CAMERA_SENSOR_IQFILES=""' \
+    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
+    || fail "bridge-only production board unexpectedly packages camera IQ files"
 for symbol in CONFIG_MEDIA_CONTROLLER CONFIG_VIDEO_V4L2_SUBDEV_API \
     CONFIG_VIDEO_RK628_CSI CONFIG_VIDEO_TC358743 \
     CONFIG_VIDEO_TC358743_CEC; do
@@ -176,17 +225,25 @@ if grep -Eq '^[[:space:]]*(restart-poweroff|compatible = "restart-poweroff")' \
     fail "Pico Zero device tree still converts poweroff into a reboot"
 fi
 
-# The pinned submodule must be present: silently skipping the checks below
-# would let an uninitialized or incomplete checkout pass this suite. The only
-# caller fetches pico-sdk before this runs, so a miss is a real failure.
+# The vendored SDK must be present: silently skipping the checks below
+# would let an incomplete repository checkout pass this suite.
 if [ ! -e "${REPO_ROOT}/pico-sdk/project/build.sh" ]; then
-    fail "pico-sdk submodule is not initialized; run 'git submodule update --init -- pico-sdk'"
+    fail "vendored pico-sdk is missing; restore the repository checkout"
 fi
 
-# The BSP source changes live in the pinned pico-sdk commit. Verify the
-# checked-out submodule still carries them so a stale or rewritten SDK
+# The BSP source changes live in the vendored pico-sdk directory. Verify the
+# checked-out sources still carry them so a stale or rewritten SDK
 # checkout fails here instead of an hour into the BSP build.
 sdk_dir=${REPO_ROOT}/pico-sdk
+for sdk_test in \
+    test_ab_boot_config.py \
+    test_aico_custom_dts.py \
+    test_hdmi_bridge_config.py \
+    test_mk_ab_misc.py; do
+    PYTHONDONTWRITEBYTECODE=1 \
+        python3 "${sdk_dir}/project/scripts/${sdk_test}" \
+        || fail "pinned SDK contract test failed: ${sdk_test}"
+done
 grep -Fq 'export RK_JOBS="${RK_JOBS:-$(getconf _NPROCESSORS_ONLN)}"' \
     "${sdk_dir}/project/build.sh" \
     || fail "pico-sdk no longer defaults RK_JOBS to all host CPUs"
@@ -221,7 +278,7 @@ grep -Fq 'RV1106 USB2 PHY tuned:' \
     "${sdk_dir}/sysdrv/source/uboot/u-boot/board/rockchip/evb_rv1106/evb_rv1106.c" \
     || fail "pico-sdk lost the RockUSB PHY readback logging"
 grep -Fq 'CONFIG_CMD_ROCKUSB=y' \
-    "${sdk_dir}/sysdrv/source/uboot/u-boot/configs/aiden-rv1106-rockusb.config" \
+    "${sdk_dir}/sysdrv/source/uboot/u-boot/configs/aico-rv1106-rockusb.config" \
     || fail "pico-sdk lost the RV1106 RockUSB defconfig fragment"
 
 grep -Fq 'rsync -aHAX --numeric-ids --chown=0:0' \
@@ -230,16 +287,18 @@ if grep -Eq 'chown[[:space:]]+(-[^[:space:]]+[[:space:]]+)*(-R|--recursive)' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"; then
     fail "rootfs builder recursively chowns Debian package files"
 fi
-[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-usb-gadget" ] \
+[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-usb-gadget" ] \
     || fail "Debian USB gadget helper is missing"
-[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-boot-timeline" ] \
+[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-boot-timeline" ] \
     || fail "Debian boot timeline helper is missing"
-[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-ttyd-start" ] \
+[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-ttyd-start" ] \
     || fail "Debian ttyd helper is missing"
-[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-ttyd-login" ] \
+[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-ttyd-login" ] \
     || fail "Debian ttyd login helper is missing"
-grep -Fq 'aiden-ttyd.service' \
-    "${REPO_ROOT}/overlay-debian/etc/systemd/system/aiden.target"
+[ -x "${REPO_ROOT}/overlay-debian/usr/bin/aico-power" ] \
+    || fail "Debian power-state command is missing or not executable"
+grep -Fq 'aico-ttyd.service' \
+    "${REPO_ROOT}/overlay-debian/etc/systemd/system/aico.target"
 grep -Fq 'overlay-debian/" "${ROOTFS_DIR}/"' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
 grep -Fq 'stage_rootfs_cli_tools.sh' \
@@ -251,18 +310,20 @@ grep -Fq 'rootfs_cli_tools_manifest_sha256' \
 if grep -Fq '${REPO_ROOT}/overlay/' "${SYSTEM_DIR}/container-build-rootfs.sh"; then
     fail "Debian rootfs builder depends on the Buildroot overlay"
 fi
-grep -Fq 'aiden-boot-timeline.service' "${SYSTEM_DIR}/container-build-rootfs.sh"
-grep -Fq 'aiden-machine-id.service' "${SYSTEM_DIR}/container-build-rootfs.sh"
-grep -Fq 'useradd --uid 1000 --gid aiden --create-home' \
+grep -Fq 'aico-boot-timeline.service' "${SYSTEM_DIR}/container-build-rootfs.sh"
+grep -Fq 'aico-machine-id.service' "${SYSTEM_DIR}/container-build-rootfs.sh"
+grep -Fq 'useradd --uid 1000 --gid aico --create-home' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
-grep -Fq 'sudo,audio,video,dialout,plugdev,netdev aiden' \
+grep -Fq 'sudo,audio,video,dialout,plugdev,netdev aico' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
-grep -Fq 'mgLNEH35w8GS9UrV1Yi4BXg1g.CYyVIAnUAXIXmato37U4M5obgDhGY2YhpIwHd7sNCtBq/uB.5oEk8jHPNYZ.' \
-    "${SYSTEM_DIR}/container-build-rootfs.sh"
+# SHA-512 crypt hash for the factory password luckfox, with fixed salt aico.
+grep -Fq '$6$aico$.IiSAzc6XNkYvV3CRDyP031IcVvRKR7F4Y8cItMftzo06ke.hz399b9z/3B442avhFdXyC29l8tdHUHroBOsM.' \
+    "${SYSTEM_DIR}/container-build-rootfs.sh" \
+    || fail "factory aico account password hash does not match luckfox"
 grep -qx 'PasswordAuthentication yes' \
-    "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aiden.conf"
+    "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aico.conf"
 grep -qx 'PermitRootLogin prohibit-password' \
-    "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aiden.conf"
+    "${REPO_ROOT}/overlay-debian/etc/ssh/sshd_config.d/20-aico.conf"
 grep -Fq 'systemctl --root="${ROOTFS_DIR}" preset-all' \
     "${SYSTEM_DIR}/container-build-rootfs.sh"
 grep -Fq 'ssh.socket rsync.service' "${SYSTEM_DIR}/container-build-rootfs.sh"
@@ -301,7 +362,7 @@ if grep -Fq 'SOURCE_SDK' "${SYSTEM_DIR}/build.sh"; then
 fi
 grep -Fq 'readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}' \
     "${SYSTEM_DIR}/build.sh" \
-    || fail "the system stage does not build the repository pico-sdk submodule in place"
+    || fail "the system stage does not build the vendored pico-sdk directory in place"
 if grep -Fq 'sdk-patches' "${SYSTEM_DIR}/build.sh" \
     || grep -Fq 'sdk-patches' "${SYSTEM_DIR}/audit-bsp.sh"; then
     fail "the system stage still references the removed SDK patch series"
@@ -311,8 +372,8 @@ if grep -Fq 'git -C "${SDK_DIR}" apply' "${SYSTEM_DIR}/build.sh"; then
 fi
 [ ! -e "${SYSTEM_DIR}/sdk-patches" ] \
     || fail "the system-stage SDK patch directory must not exist"
-grep -Fq 'aiden-rv1106-rockusb.config' "${SYSTEM_DIR}/build.sh" \
-    || fail "the system stage does not verify the pinned SDK carries the RockUSB config"
+grep -Fq 'aico-rv1106-rockusb.config' "${SYSTEM_DIR}/build.sh" \
+    || fail "the system stage does not verify the vendored SDK carries the RockUSB config"
 grep -Fq 'readonly SDK_DIR=/sdk' \
     "${SYSTEM_DIR}/container-assemble-images.sh" \
     || fail "image assembly does not read the SDK from the /sdk mount"
@@ -324,20 +385,54 @@ if sed -n '/^run_bsp()/,/^}/p' "${SYSTEM_DIR}/build.sh" \
     | grep -Fq 'source_git_common_dir'; then
     fail "BSP container still depends on a host Git object directory"
 fi
-grep -Fq 'KBUILD_BUILD_USER=aiden' "${SYSTEM_DIR}/build.sh"
+grep -Fq 'KBUILD_BUILD_USER=aico' "${SYSTEM_DIR}/build.sh"
 grep -Fq './build.sh abimages' "${SYSTEM_DIR}/build.sh"
 grep -Fq 'canonicalize-bsp.py' "${SYSTEM_DIR}/build.sh"
 grep -Fq 'audit-bsp.sh' "${SYSTEM_DIR}/build.sh"
 grep -Fq 'factory A/B metadata is invalid' "${SYSTEM_DIR}/audit-bsp.sh"
+grep -Fq "readonly EXPECTED_MODEL='Aico Link SCH v1'" \
+    "${SYSTEM_DIR}/audit-bsp.sh" \
+    || fail "BSP audit does not require the Aico Link SCH v1 production model"
+grep -Eq '^[[:space:]]*model = "Aico Link SCH v1";$' \
+    "${sdk_dir}/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts" \
+    || fail "production DTS does not identify the Aico Link SCH v1 board"
+for serial_contract in \
+    '0:/serial@ff4a0000:okay' \
+    '1:/serial@ff4b0000:disabled' \
+    '2:/serial@ff4c0000:disabled' \
+    '3:/serial@ff4d0000:disabled' \
+    '4:/serial@ff4e0000:okay' \
+    '5:/serial@ff4f0000:okay'; do
+    grep -Fq "'${serial_contract}'" "${SYSTEM_DIR}/audit-bsp.sh" \
+        || fail "BSP audit is missing production UART contract ${serial_contract}"
+done
+grep -Fq 'fiq_serial_id=$(fdtget -t u "${fdt}" /fiq-debugger rockchip,serial-id)' \
+    "${SYSTEM_DIR}/audit-bsp.sh" \
+    || fail "BSP audit does not verify the active FIQ recovery console"
+if grep -Fq "grep -qw 'rootwait'" "${SYSTEM_DIR}/audit-bsp.sh"; then
+    fail "BSP audit requires rootwait even though the slot FIT builder does not emit it"
+fi
+for firmware in \
+    aic_userconfig_8800d80.txt \
+    fmacfw_8800d80_u02.bin \
+    fw_adid_8800d80_u02.bin \
+    fw_patch_8800d80_u02.bin \
+    fw_patch_table_8800d80_u02.bin \
+    lmacfw_rf_8800d80_u02.bin; do
+    grep -Fq "${firmware}" "${SYSTEM_DIR}/audit-bsp.sh" \
+        || fail "BSP audit does not require AIC8800D80 firmware ${firmware}"
+    grep -Fq "${firmware}" "${SYSTEM_DIR}/container-audit-images.sh" \
+        || fail "final image audit does not require AIC8800D80 firmware ${firmware}"
+done
 grep -Fq 'boot_${slot}.img contains multiple root arguments' \
     "${SYSTEM_DIR}/audit-bsp.sh"
 grep -Fq 'bsp-artifacts.sha256' "${SYSTEM_DIR}/audit-bsp.sh"
 grep -Fq -- '--check' "${SYSTEM_DIR}/audit-bsp.sh"
 
 grep -Fq 'stage_platform' "${SYSTEM_DIR}/container-build-rootfs.sh"
-test -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-dynamic-keyboard" \
+test -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-dynamic-keyboard" \
     || fail "production platform overlay is missing the dynamic keyboard helper"
-for binary in abctl agent aiden-environment audio_service ble_service cpu_vad \
+for binary in abctl agent aico-environment audio_service ble_service cpu_vad \
     frame_service ota rknn_vad ttyd; do
     if grep -Eq "/apps[^\n]*${binary}|usr/bin[^\n]*${binary}" \
         "${SYSTEM_DIR}/container-assemble-images.sh"; then
@@ -357,25 +452,25 @@ grep -Fq 'apps/bin/agent" config-check --format=json' "${SYSTEM_DIR}/build.sh"
 grep -Fq 'install -m 0600 "${AGENT_CONFIG}" "${USERDATA_ROOT}/agent/agent.toml"' \
     "${SYSTEM_DIR}/container-assemble-images.sh"
 test ! -e "${REPO_ROOT}/overlay-debian-oem"
-[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-dynamic-keyboard" ] \
+[ -x "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-dynamic-keyboard" ] \
     || fail "Debian platform dynamic keyboard helper is missing"
 [ -s "${REPO_ROOT}/assets/business/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn" ] \
     || fail "Debian platform VAD model is missing"
-[ -s "${REPO_ROOT}/overlay-debian/usr/share/aiden/audio/config_aivqe.json" ] \
+[ -s "${REPO_ROOT}/overlay-debian/usr/share/aico/audio/config_aivqe.json" ] \
     || fail "Debian platform VQE configuration is missing"
 for library in libaec_bf_process.so librkaudio_common.so; do
-    [ -s "${REPO_ROOT}/overlay-debian/usr/lib/aiden/platform/lib/${library}" ] \
+    [ -s "${REPO_ROOT}/overlay-debian/usr/lib/aico/platform/lib/${library}" ] \
         || fail "Debian platform VQE runtime library is missing: ${library}"
 done
-[ "$(sha256sum "${REPO_ROOT}/overlay-debian/usr/lib/aiden/platform/lib/libaec_bf_process.so" | awk '{print $1}')" = \
+[ "$(sha256sum "${REPO_ROOT}/overlay-debian/usr/lib/aico/platform/lib/libaec_bf_process.so" | awk '{print $1}')" = \
     3427abaa4b2ab7917d079e6cba46a68a836069bcc7f6b9e94630353fcd8c1a9a ] \
     || fail "Debian platform VQE AEC runtime checksum changed"
-[ "$(sha256sum "${REPO_ROOT}/overlay-debian/usr/lib/aiden/platform/lib/librkaudio_common.so" | awk '{print $1}')" = \
+[ "$(sha256sum "${REPO_ROOT}/overlay-debian/usr/lib/aico/platform/lib/librkaudio_common.so" | awk '{print $1}')" = \
     de8ff824dd1f2e5ec1074b84490d2836ed9dc61d59d6a90d9cdf19386097263c ] \
     || fail "Debian platform RKAUDIO common runtime checksum changed"
 grep -Fq 'VQE runtime library checksum mismatch' \
     "${SYSTEM_DIR}/container-audit-images.sh"
-[ -s "${REPO_ROOT}/overlay-debian/usr/share/aiden/edid/hdmi_1080p30_cta.hex" ] \
+[ -s "${REPO_ROOT}/overlay-debian/usr/share/aico/edid/hdmi_1080p30_cta.hex" ] \
     || fail "Debian platform EDID is missing"
 if grep -Fq '${REPO_ROOT}/overlay/' "${SYSTEM_DIR}/container-assemble-images.sh"; then
     fail "Debian platform assembler depends on the Buildroot overlay"
@@ -399,7 +494,7 @@ grep -Fq 'root=PARTLABEL=${root_label}' "${SYSTEM_DIR}/container-audit-images.sh
 grep -Fq "net.ifnames=0" "${SYSTEM_DIR}/container-audit-images.sh"
 grep -Fq 'Buildroot SysV startup file leaked' "${SYSTEM_DIR}/container-audit-images.sh"
 grep -Fq 'boot timeline helper was not installed' "${SYSTEM_DIR}/container-audit-images.sh"
-grep -Fq 'aiden-boot-timeline.service is not enabled' "${SYSTEM_DIR}/container-audit-images.sh"
+grep -Fq 'aico-boot-timeline.service is not enabled' "${SYSTEM_DIR}/container-audit-images.sh"
 grep -Fq 'rootfs import attribute audit did not pass' "${SYSTEM_DIR}/container-audit-images.sh"
 grep -Fq 'rootfs ownership or mode is invalid' "${SYSTEM_DIR}/container-audit-images.sh"
 grep -Fq 'sudo executable ownership or mode is invalid' \
@@ -501,7 +596,7 @@ mock_output=${TEST_ROOT}/mock-output
 mock_log=${TEST_ROOT}/docker-args
 mock_apps=${TEST_ROOT}/mock-apps
 mkdir -p "${mock_output}" "${mock_apps}/rootfs-cli-tools" "${mock_apps}/apps" "${mock_apps}/apps-audit"
-printf '%s' mock-deb >"${mock_output}/aiden-business_0.0.1-2_armhf.deb"
+printf '%s' mock-deb >"${mock_output}/aico-business_0.0.1-2_armhf.deb"
 printf 'status=pass\n' >"${mock_apps}/apps-audit/summary.txt"
 printf '%064d  fq\n' 0 >"${mock_apps}/rootfs-cli-tools/manifest.sha256"
 printf 'fq v0.17.0 linux/arm/v7 preserve\n' \

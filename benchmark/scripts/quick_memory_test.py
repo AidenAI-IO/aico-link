@@ -11,8 +11,8 @@ import urllib.request
 import subprocess
 from pathlib import Path
 
-AGENT_URL = os.environ.get("AIDEN_BENCH_AGENT_URL", "http://device.example:8080")
-SSH_HOST = os.environ.get("AIDEN_BENCH_SSH_HOST", "root@device.example")
+AGENT_URL = os.environ.get("AICO_BENCH_AGENT_URL", "http://device.example:8080")
+SSH_HOST = os.environ.get("AICO_BENCH_SSH_HOST", "root@device.example")
 MEMORY_DIR = "/userdata/agent/memory"
 
 

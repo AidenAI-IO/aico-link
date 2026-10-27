@@ -4,7 +4,7 @@ import (
 	"context"
 	"io"
 
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screenprovider"
 )
 
 type frameMetadata = screenprovider.FrameMetadata

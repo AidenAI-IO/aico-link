@@ -112,7 +112,7 @@ std::string join_keys(const std::vector<std::string>& keys) {
 }
 
 void usage() {
-    std::cerr << "Usage: aiden-environment [--input PATH] [--output PATH] "
+    std::cerr << "Usage: aico-environment [--input PATH] [--output PATH] "
                  "[--invalid-marker PATH]\n";
 }
 
@@ -120,8 +120,8 @@ void usage() {
 
 int main(int argc, char** argv) {
     std::string input_path = "/userdata/system/env";
-    std::string output_path = "/run/aiden/system.env";
-    std::string invalid_marker = "/run/aiden/environment.invalid";
+    std::string output_path = "/run/aico/system.env";
+    std::string invalid_marker = "/run/aico/environment.invalid";
     for (int i = 1; i < argc; ++i) {
         std::string arg(argv[i]);
         if (arg == "--help" || arg == "-h") {
@@ -150,8 +150,8 @@ int main(int argc, char** argv) {
         std::cerr << error << "\n";
         return 1;
     }
-    aiden::GeneratedSystemEnv generated;
-    if (!aiden::generate_systemd_environment(input, &generated)) {
+    aico::GeneratedSystemEnv generated;
+    if (!aico::generate_systemd_environment(input, &generated)) {
         std::cerr << "failed to generate system environment\n";
         return 1;
     }

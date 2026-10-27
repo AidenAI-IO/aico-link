@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/realtimevoice"
 )
 
 // A provider idle close must stay announceable and reach the voice layer as an

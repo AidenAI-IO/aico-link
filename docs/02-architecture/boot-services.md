@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Boot Services and Runtime Layout
 
-Debian uses systemd as PID 1. Product services are grouped by `aiden.target`;
+Debian uses systemd as PID 1. Product services are grouped by `aico.target`;
 ordering, restart policy, and failure propagation are declared in unit
 relationships rather than filename order.
 
@@ -12,44 +12,45 @@ relationships rather than filename order.
 
 | Unit | Purpose |
 | --- | --- |
-| `aiden-slot-resolve.service` | Resolve A/B partition devices from the active slot |
+| `aico-slot-resolve.service` | Resolve A/B partition devices from the active slot |
 | `userdata.mount`, `userdata-ota.mount` | Mount product data partitions |
-| `aiden-rootfs-grow.service` | Grow first-boot ext4 filesystems to their partition size |
-| `aiden-userdata-migrate.service` | Validate and migrate persistent Debian userdata |
-| `aiden-machine-id.service` | Provision a stable machine identity |
-| `aiden-platform-ldconfig.service` | Register platform libraries from the active rootfs slot |
-| `aiden-environment.service` | Generate the strict runtime environment |
-| `aiden-media-modules.service` | Load media modules and prepare video device access |
-| `aiden-audio-mixer.service` | Initialize RV1106 microphone controls before audio capture |
-| `aiden-wifi-driver.service` | Load AIC8800 Wi-Fi and Bluetooth firmware |
-| `aiden-bluetooth-attach.service` | Attach the AIC8800 UART transport |
-| `aiden-usb-gadget.service` | Create keyboard, pointer, Consumer Control, and ECM functions |
-| `aiden-usb-dnsmasq.service` | Serve DHCP only on `usb0` |
-| `aiden-usb-ecm-watchdog.service` | Recover confirmed stalled ECM sessions |
-| `aiden-wlan-guard.service` | Apply bounded Wi-Fi recovery |
-| `aiden-frame.service` | Run the HDMI frame service |
-| `aiden-audio.service` | Run audio capture and playback |
-| `aiden-ble.service` | Run BLE Wake and ANCS integration |
-| `aiden-wifi-proxy.service` | Run the fixed loopback proxy and select a per-Wi-Fi upstream |
-| `aiden-agent.service` | Run the Go Agent |
-| `aiden-config-web.service` | Serve the local configuration portal |
-| `aiden-ttyd.service` | Serve the ttyd browser terminal on the USB network |
-| `aiden-ota-health-marker.service` | Aggregate required local health |
-| `aiden-ota-health.service` | Process pending A/B OTA state |
+| `aico-rootfs-grow.service` | Grow first-boot ext4 filesystems to their partition size |
+| `aico-userdata-migrate.service` | Validate and migrate persistent Debian userdata |
+| `aico-machine-id.service` | Provision a stable machine identity |
+| `aico-platform-ldconfig.service` | Register platform libraries from the active rootfs slot |
+| `aico-environment.service` | Generate the strict runtime environment |
+| `aico-media-modules.service` | Load media modules and prepare video device access |
+| `aico-audio-mixer.service` | Initialize RV1106 microphone controls before audio capture |
+| `aico-wifi-driver.service` | Load AIC8800 Wi-Fi and Bluetooth firmware |
+| `aico-bluetooth-attach.service` | Attach the AIC8800 UART transport |
+| `aico-usb-gadget.service` | Create keyboard, pointer, Consumer Control, and ECM functions |
+| `aico-usb-dnsmasq.service` | Serve DHCP only on `usb0` |
+| `aico-usb-ecm-watchdog.service` | Recover confirmed stalled ECM sessions |
+| `aico-wlan-guard.service` | Apply bounded Wi-Fi recovery |
+| `aico-frame.service` | Run the HDMI frame service |
+| `aico-audio.service` | Run audio capture and playback |
+| `aico-ble.service` | Run BLE Wake and ANCS integration |
+| `aico-mcu-event.service` | Run MCU UART, wake events, hardware queries and shutdown coordination |
+| `aico-wifi-proxy.service` | Run the fixed loopback proxy and select a per-Wi-Fi upstream |
+| `aico-agent.service` | Run the Go Agent |
+| `aico-config-web.service` | Serve the local configuration portal |
+| `aico-ttyd.service` | Serve the ttyd browser terminal on the USB network |
+| `aico-ota-health-marker.service` | Aggregate required local health |
+| `aico-ota-health.service` | Process pending A/B OTA state |
 
 Use systemd to inspect the current dependency graph and failures:
 
 ```bash
-systemctl list-dependencies aiden.target
+systemctl list-dependencies aico.target
 systemctl --failed
 ```
 
 The Rockchip boot arguments do not pass `rw` and there is no matching fstab
-entry, so `/` starts read-only. `aiden-rootfs-grow.service` runs
+entry, so `/` starts read-only. `aico-rootfs-grow.service` runs
 `mount -o remount,rw /` on every boot before growing the rootfs and mounting
-userdata and the OTA workspace, which is why it is ordered ahead of `aiden-platform-ldconfig`,
+userdata and the OTA workspace, which is why it is ordered ahead of `aico-platform-ldconfig`,
 `systemd-timesyncd`, and the media services. If those units fail with
-`Read-only file system`, check that `aiden-rootfs-grow.service` ran.
+`Read-only file system`, check that `aico-rootfs-grow.service` ran.
 
 On the first boot of a rootfs slot, the helper grows the mounted rootfs and
 compares the userdata and OTA ext4 block counts with their partition capacities.
@@ -63,7 +64,7 @@ filesystem. Successful preparation remains active for the current boot.
 The growth service refuses manual stop and restart requests, preventing those
 requests from stopping live data mounts through their `Requires=` dependencies.
 After correcting a preparation failure, retry it with
-`systemctl start aiden-rootfs-grow.service`.
+`systemctl start aico-rootfs-grow.service`.
 
 The ext4 regression suite uses image files and simulated mount discovery. Its
 mounted cases verify that neither userdata nor OTA receives an offline fsck;
@@ -79,13 +80,13 @@ services. Check both the boot journal and the service group, since such a retry
 could leave `systemctl --failed` empty while device services were inactive:
 
 ```bash
-journalctl -b -u aiden-rootfs-grow.service
-systemctl status aiden.target aiden-agent.service aiden-usb-gadget.service ssh.service
+journalctl -b -u aico-rootfs-grow.service
+systemctl status aico.target aico-agent.service aico-usb-gadget.service ssh.service
 ```
 
 ## USB HID and ECM
 
-`aiden-usb-gadget.service` exposes a composite gadget (`1d6b:0104`) with a
+`aico-usb-gadget.service` exposes a composite gadget (`1d6b:0104`) with a
 keyboard, pointer, Consumer Control, and an ECM network interface. Two
 invariants keep it enumerating reliably:
 
@@ -102,8 +103,8 @@ invariants keep it enumerating reliably:
   freshly-set address.
 
 The Agent refreshes the composite gadget through the configurable
-`AIDEN_USB_COMPOSITE_REFRESH_COMMAND`; the Debian default is the
-`/usr/lib/aiden/aiden-usb-ecm-watchdog` helper.
+`AICO_USB_COMPOSITE_REFRESH_COMMAND`; the Debian default is the
+`/usr/lib/aico/aico-usb-ecm-watchdog` helper.
 
 A bare `error -71` (`device not accepting address`, `unable to enumerate USB
 device`) is a lower-level control-transfer failure. Investigate cable, power,
@@ -111,41 +112,48 @@ and host port; it is not explained by the descriptor fix.
 
 ## Frame Service
 
-Configuration: `/etc/aiden_frame_service.conf`
+Configuration: `/etc/aico_frame_service.conf`
 
-The unit starts `/usr/lib/aiden/aiden-frame-start`, which selects the HDMI
+The unit starts `/usr/lib/aico/aico-frame-start`, which selects the HDMI
 bridge, applies EDID and trigger policy, reads
 `[advanced_settings.hardware.frame_service].keep_streamon` from
 `/userdata/agent/agent.toml`, and
-executes `/usr/lib/aiden/frame_service`.
+executes `/usr/lib/aico/frame_service`.
 
 ```bash
-systemctl start aiden-frame.service
-systemctl stop aiden-frame.service
-systemctl restart aiden-frame.service
-systemctl status aiden-frame.service --no-pager
+systemctl start aico-frame.service
+systemctl stop aico-frame.service
+systemctl restart aico-frame.service
+systemctl status aico-frame.service --no-pager
 ```
+
+RK628 input defaults to 1080p60. Use `sudo aico-hdmi-mode 1080p30` for
+compatibility mode, `sudo aico-hdmi-mode 1080p60` to switch back, and
+`aico-hdmi-mode status` to read the saved selection. The command restarts
+capture and preserves the choice in userdata across reboots. See
+[RK628 input modes](../03-hardware/rk628f-adaptation.md#persistent-input-mode).
+
 
 The service retries indefinitely when HDMI is not ready. Its persistent output
 is `/var/log/frame_service/frame_service.log`.
 
 ## Audio Service
 
-Configuration: `/etc/aiden_audio_service.conf`
+Configuration: `/etc/aico_audio_service.conf`
 
-`aiden-audio.service` executes `/usr/lib/aiden/audio_service` in the foreground
+`aico-audio.service` executes `/usr/lib/aico/audio_service` in the foreground
 and lets systemd own restart and stop behavior.
 
-Before capture starts, `aiden-audio-mixer.service` waits for all microphone
+Before capture starts, `aico-audio-mixer.service` waits for all microphone
 controls on the `rv1106acodec` ALSA card and restores the microphone gain,
 bias, ADC mode and ALC settings. It selects the card by its ID, independent
 of the default card and boot-time enumeration order. Missing controls, a
 missing mixer helper or failed control writes prevent the audio service
-from starting; inspect `journalctl -u aiden-audio-mixer.service` for details.
+from starting; inspect `journalctl -u aico-audio-mixer.service` for details.
 
 ```bash
-systemctl restart aiden-audio.service
-systemctl status aiden-audio.service --no-pager
+systemctl restart aico-audio.service
+systemctl status aico-audio.service --no-pager
 ```
 
 ## Agent
@@ -153,11 +161,11 @@ systemctl status aiden-audio.service --no-pager
 The Agent unit executes:
 
 ```bash
-/usr/lib/aiden/agent -dir /userdata/agent -addr 0.0.0.0:8080
+/usr/lib/aico/agent -dir /userdata/agent -addr 0.0.0.0:8080
 ```
 
-Before startup, `aiden-python-prepare` validates and prepares the persistent
-Python userbase. The unit loads `/run/aiden/system.env` and then fixes the pip
+Before startup, `aico-python-prepare` validates and prepares the persistent
+Python userbase. The unit loads `/run/aico/system.env` and then fixes the pip
 environment to `/userdata/agent/python`.
 
 ```text
@@ -173,8 +181,8 @@ Agent output is persisted at `/userdata/agent/log/agent.log`.
 
 ## Wi-Fi Connectivity and Recovery
 
-`aiden-wifi-driver.service` loads `aic8800_fdrv.ko` with
-`he_on=${AIDEN_WIFI_HE:-0}`. The current AIC8800DC driver/firmware can remain
+`aico-wifi-driver.service` loads `aic8800_fdrv.ko` with
+`he_on=${AICO_WIFI_HE:-0}`. The current AIC8800DC driver/firmware can remain
 associated and renew DHCP while IPv4 traffic stalls in HE mode with some APs.
 The compatibility default disables Wi-Fi 6 HE and leaves HT/VHT enabled.
 This restores a pre-existing Buildroot fix: commit
@@ -189,18 +197,49 @@ copied it over the SDK loader. The Debian migration
 driver's default HE mode. The subsequent removal of the legacy overlay did
 not cause the regression: Debian already used the new loader.
 
-Both repository versions pin `pico-sdk` at
+At the time, both repository versions pinned `pico-sdk` at
 `d1a279cbb7e29aa0801943cdf21f0575db69eed5`. All 21 files in the affected board's
-`/usr/lib/aiden/platform/modules/aic8800dc_fw` matched that SDK firmware directory by SHA-256 during
+`/usr/lib/aico/platform/modules/aic8800dc_fw` matched that SDK firmware directory by SHA-256 during
 the 2026-09-15 investigation. This establishes the missing load parameter as
 the concrete migration regression; it does not assert that separately built
 kernel-module binaries are byte-identical.
 
-Set `AIDEN_WIFI_HE=1` in `/etc/aiden_boot.conf` to test HE with another firmware
+Set `AICO_WIFI_HE=1` in `/etc/aico_boot.conf` to test HE with another firmware
 or AP. The parameter applies on module load, so reboot to apply it; restarting
 the driver service alone does not reload an already loaded module.
 
-`aiden-wlan-guard.service` checks the Wi-Fi gateway every 10 seconds. It accepts
+The Aico Link image sets `AICO_WIFI_LOW_POWER=1`. The matching AIC8800D80 driver
+receives `lp_on=1` and requests firmware low-power level 1 when a station
+interface opens, after firmware startup. Normal packet delivery stays enabled;
+this does not enable the vendor's suspend packet filter, cut module power, or
+configure Wi-Fi as a system wake source. The ordinary `ps_on` parameter remains
+enabled independently. This setting requires the updated driver module and
+loader together. Reboot after changing `AICO_WIFI_LOW_POWER`; set it to `0` to
+remove the automatic request. Reloading only `aic8800_fdrv` is unsupported with
+the current retained BSP binding and can leave Wi-Fi unavailable.
+
+For a temporary comparison on the RV1106, use the vendor command over serial:
+
+```bash
+# Request low-power level 1, keeping packet filtering disabled.
+iw dev wlan0 vendor send 0x001a11 0x1018 \
+    0x08 0x00 0x06 0x00 0x00 0x00 0x00 0x00
+
+# Request level 0 again, keeping packet filtering disabled.
+iw dev wlan0 vendor send 0x001a11 0x1018 \
+    0x08 0x00 0x06 0x00 0x01 0x00 0x00 0x00
+```
+
+The payload is one little-endian netlink attribute: length 8, type 6, and a
+32-bit latency-mode value. Value 0 requests low-power operation; value 1 requests
+level 0. The command requires an open station interface. Its return code reports
+submission errors; check the kernel log for the separate firmware confirmation.
+`/sys/module/aic8800_fdrv/parameters/lp_on` reports the startup policy, not live
+sleep residency or a later runtime override. Measure board power separately,
+with the same traffic, services, and suspend state for both readings. This
+Wi-Fi control does not enable Bluetooth's separate vendor low-power mode.
+
+`aico-wlan-guard.service` checks the Wi-Fi gateway every 10 seconds. It accepts
 either an ICMP response or a fresh ARP reply, so an AP filtering ping does not
 trigger repeated disconnects. After five failed checks it reassociates, then
 cycles the interface and restarts supplicant if needed. DHCP remains owned by
@@ -210,7 +249,7 @@ does not terminate its own recovery sequence.
 Recovery is limited to three attempts until six consecutive healthy checks
 restore the budget. Once exhausted, the guard keeps monitoring without
 disconnecting the interface. `WLAN_GUARD_MAX_RECOVERIES` and
-`WLAN_GUARD_HEALTHY_THRESHOLD` in `/etc/aiden_boot.conf` override those defaults;
+`WLAN_GUARD_HEALTHY_THRESHOLD` in `/etc/aico_boot.conf` override those defaults;
 restart the guard after changing them. Restarting the guard also resets its
 budget. `iw ... set power_save off` is not used as a fix: that operation is a
 no-op in the bundled driver's `rwnx_cfg80211_set_power_mgmt` implementation.
@@ -233,8 +272,8 @@ running diagnostic service while preserving evidence across reboot.
 Use the USB connection while investigating wireless connectivity:
 
 ```bash
-ssh aiden@192.168.42.1
-sudo journalctl -u aiden-wlan-guard -u wpa_supplicant@wlan0 --since '-10 min'
+ssh aico@192.168.42.1
+sudo journalctl -u aico-wlan-guard -u wpa_supplicant@wlan0 --since '-10 min'
 sudo ip neigh show dev wlan0
 sudo ping -c 10 -W 1 -I wlan0 <wifi-gateway>
 sudo arping -c 3 -w 4 -I wlan0 <wifi-gateway>
@@ -244,7 +283,7 @@ Validate the wireless path with repeated SSH connections from a LAN client,
 including after an idle period; successful DHCP and `wpa_state=COMPLETED` alone
 do not establish that unicast traffic works.
 
-On the AidenIOT AP (2.4 GHz, channel 6) on 2026-09-15, the original HE mode
+On the AicoIOT AP (2.4 GHz, channel 6) on 2026-09-15, the original HE mode
 reproduced IPv4/ARP failure even with the guard stopped and `ps_on=0`. Loading
 with `he_on=0` restored LAN SSH and gateway traffic, including with the default
 `ps_on=1`. This is a compatibility mitigation, not proof of which side of the
@@ -256,10 +295,10 @@ those are historical results, not new reboot validation of this patch.
 
 ## Wi-Fi Proxy
 
-`aiden-wifi-proxy.service` starts `agent wifi-proxy` on `127.0.0.1:18080`
+`aico-wifi-proxy.service` starts `agent wifi-proxy` on `127.0.0.1:18080`
 before the Agent.
 Managed services and login shells use that loopback address by default. Setting
-`AIDEN_WIFI_PROXY_ENABLED=0` restores direct use of the raw environment proxy
+`AICO_WIFI_PROXY_ENABLED=0` restores direct use of the raw environment proxy
 after the affected services or shell restart. The proxy reloads
 `/userdata/system/wifi-proxies.json` and the current `wlan0` SSID every two
 seconds. Each saved network can use the system upstream from
@@ -270,13 +309,13 @@ protocol or the per-network `NO_PROXY` value.
 
 ## OTA
 
-`aiden-ota-health-marker.service` waits for the required local services and the
+`aico-ota-health-marker.service` waits for the required local services and the
 Config Web recovery portal, then writes a transaction-bound health result. The
 Agent is allowed to fail during recovery; its failure does not block the portal
-or mark the OTA slot unhealthy. `aiden-ota-health.service` then executes:
+or mark the OTA slot unhealthy. `aico-ota-health.service` then executes:
 
 ```bash
-/usr/lib/aiden/ota --config /userdata/debian/ota/config.json health
+/usr/lib/aico/ota --config /userdata/debian/ota/config.json health
 ```
 
 Pending OTA validation always checks that Config Web is active and responds over
@@ -295,7 +334,7 @@ See [OTA Overview](../08-ota/README.md) for the full state machine.
 The systemd unit executes:
 
 ```bash
-/usr/lib/aiden/agent config-web --bind=0.0.0.0 --port=80 --config=/userdata/agent/agent.toml --wifi-config=/userdata/debian/wifi/wpa_supplicant-wlan0.conf --wifi-interface=wlan0 --wifi-backend=systemd-networkd --system-env=/userdata/system/env --web-root=/usr/share/aiden/config-web
+/usr/lib/aico/agent config-web --bind=0.0.0.0 --port=80 --config=/userdata/agent/agent.toml --wifi-config=/userdata/debian/wifi/wpa_supplicant-wlan0.conf --wifi-interface=wlan0 --wifi-backend=systemd-networkd --system-env=/userdata/system/env --web-root=/usr/share/aico/config-web
 ```
 
 Config Web uses Debian control helpers for Agent and frame-service restarts.
@@ -304,18 +343,18 @@ It never invokes a SysV service script.
 ## System Environment
 
 `/userdata/system/env` is the persistent user-managed source.
-`aiden-environment.service` validates it and writes `/run/aiden/system.env`.
+`aico-environment.service` validates it and writes `/run/aico/system.env`.
 Product units consume that generated file with `EnvironmentFile=`; invalid
 external settings cannot replace fixed service-critical values such as the
 managed Python userbase. Proxy variables in the persistent source define the
 system/default upstream used by the Wi-Fi proxy; managed programs receive its
 stable loopback proxy address. Login shells load the same validated runtime
-environment through `/etc/profile.d/aiden-env.sh`.
+environment through `/etc/profile.d/aico-env.sh`.
 
 ## Development and Debugging
 
 - Replace a binary only after stopping its owning unit.
 - Use `journalctl -u <unit>` for unit and helper failures.
 - Use the service-specific persistent log for application output.
-- Stop `aiden-frame.service` before opening `/dev/video0` directly.
+- Stop `aico-frame.service` before opening `/dev/video0` directly.
 - Rebuild the complete image when rootfs helpers or unit files change.

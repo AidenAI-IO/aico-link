@@ -113,7 +113,7 @@ If `enter_text` reports missing HID devices such as `/dev/hidg0` or `/dev/hidg1`
 
 ## App Switching and Launch
 
-Use this flow for app switcher, recents, returning to Aiden, and cross-app navigation workflows.
+Use this flow for app switcher, recents, returning to the companion app, and cross-app navigation workflows.
 
 1. Use global `[basic_settings.device].device_type` as the platform authority. Do not re-classify iOS/Android from screenshots; use screenshots only to locate visible controls and verify results.
 2. Observe the screen.
@@ -141,7 +141,7 @@ Selecting an app:
 
 After successfully opening the switcher via a non-obvious method, call `save_memory` with the configured `[basic_settings.device].device_type`, method, gesture coordinates, and tags `["app-switch", "device"]`.
 
-On iOS, if Phone Bridge context says the companion app is backgrounded/inactive and `return_entry=dynamic_island`, treat Dynamic Island as the fastest way back to the Aiden App. Do not blind-tap lock-screen Live Activity cards; use screenshot/HID fallback or visual confirmation for those cases. Opening the Aiden App restores the companion app shortcut channel.
+On iOS, if Phone Bridge context says the companion app is backgrounded/inactive and `return_entry=dynamic_island`, treat Dynamic Island as the fastest way back to the companion app. Do not blind-tap lock-screen Live Activity cards; use screenshot/HID fallback or visual confirmation for those cases. Opening the companion app restores the companion app shortcut channel.
 
 ## Scrolling and Picker Controls
 
@@ -198,7 +198,7 @@ Recovery sequence:
 
 ```bash
 # Debian
-systemctl status --no-pager aiden-frame.service
+systemctl status --no-pager aico-frame.service
 
 frame_service_cli --socket /run/frame_service/frame_service.sock health
 ls -l /run/frame_service/frame_service.sock
@@ -216,7 +216,7 @@ frame_service_cli --socket /run/frame_service/frame_service.sock restart
 
 ```bash
 # Debian
-systemctl restart aiden-frame.service
+systemctl restart aico-frame.service
 ```
 
 6. After service restart, verify in order: service status, health, then `screenshot`.

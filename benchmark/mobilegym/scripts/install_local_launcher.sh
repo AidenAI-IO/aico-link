@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARK_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 REPO_ROOT="$(cd "$BENCHMARK_ROOT/.." && pwd)"
-LABEL="com.aiden.mobilegym-local-launcher"
-HELPER_LABEL="com.aiden.mobilegym-local-launcher-helper"
+LABEL="com.aico.mobilegym-local-launcher"
+HELPER_LABEL="com.aico.mobilegym-local-launcher-helper"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 HELPER_PLIST="$HOME/Library/LaunchAgents/$HELPER_LABEL.plist"
-LOG_DIR="$HOME/Library/Logs/Aiden"
+LOG_DIR="$HOME/Library/Logs/Aico"
 UV_BIN="$(command -v uv)"
 
 if [[ -z "$UV_BIN" ]]; then

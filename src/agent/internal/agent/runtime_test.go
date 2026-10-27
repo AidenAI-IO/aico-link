@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/model"
-	speechtext "aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/model"
+	speechtext "aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"

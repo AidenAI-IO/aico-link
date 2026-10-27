@@ -4,8 +4,8 @@
 #include <string>
 
 TEST_CASE("frame_service library defaults avoid unconditional EDID retriggering") {
-    aiden::CameraConfig camera;
-    aiden_demo::set_default_camera_config(&camera);
+    aico::CameraConfig camera;
+    aico_demo::set_default_camera_config(&camera);
 
     CHECK(camera.width == 1920);
     CHECK(camera.height == 1080);
@@ -14,9 +14,9 @@ TEST_CASE("frame_service library defaults avoid unconditional EDID retriggering"
     CHECK(camera.force_trigger == false);
     CHECK(camera.allow_edid_fallback == true);
     CHECK(camera.require_exact_resolution == true);
-    CHECK(aiden::kDefaultFrameServiceRingSize == 3);
-    CHECK(aiden::kDefaultFrameServiceFps == 3.0);
-    CHECK(aiden::kDefaultScreenshotMaxEdge == 960);
-    CHECK(aiden::default_frame_service_warmup_frames(false) == 0);
-    CHECK(aiden::default_frame_service_warmup_frames(true) == 6);
+    CHECK(aico::kDefaultFrameServiceRingSize == 3);
+    CHECK(aico::kDefaultFrameServiceFps == 3.0);
+    CHECK(aico::kDefaultScreenshotMaxEdge == 960);
+    CHECK(aico::default_frame_service_warmup_frames(false) == 0);
+    CHECK(aico::default_frame_service_warmup_frames(true) == 6);
 }

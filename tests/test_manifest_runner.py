@@ -34,14 +34,16 @@ class ManifestRunnerTest(unittest.TestCase):
         full = {suite["name"] for suite in run_manifest.select_suites(suites, profile="full")}
         self.assertEqual(quick, {
             "manifest-runner", "contracts", "cpp-host", "go-static", "go-unit",
-            "web", "benchmark-python", "skillopt-python", "debian-rootfs-grow",
+            "web", "benchmark-python", "skillopt-python", "mcu-event-service",
+            "debian-rootfs-grow", "tf-card-dtb", "media-page-compat", "rk628-recovery",
+            "aico-power",
         })
         self.assertEqual(full, {suite["name"] for suite in suites if suite["required"]})
         self.assertIn("script-contracts", full)
         self.assertIn("docker-sandbox-contract", full)
         self.assertNotIn("production-cross-smoke", full)
         by_name = {suite["name"]: suite for suite in suites}
-        self.assertIn("-R '^aiden_tests$'", by_name["cpp-host"]["quick_command"])
+        self.assertIn("-R '^aico_tests$'", by_name["cpp-host"]["quick_command"])
         self.assertIn("-run '^TestShared'", by_name["go-unit"]["quick_command"])
         self.assertIn("tests/test_suite.py", by_name["benchmark-python"]["quick_command"])
 

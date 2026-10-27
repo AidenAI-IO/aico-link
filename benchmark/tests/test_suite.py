@@ -1218,7 +1218,7 @@ def test_phone_control_unicode_search_tasks_exclude_adb_android():
 
     assert "android" not in task_by_id["settings_search_bluetooth"].platforms
     assert task_by_id["type_long_mixed_text"].platforms == []
-    assert "Aiden test benchmark-2026!" in task_by_id["type_long_mixed_text"].prompt
+    assert "Aico test benchmark-2026!" in task_by_id["type_long_mixed_text"].prompt
 
 
 def test_skill_discovery_mixed_text_task_excludes_adb_android():
@@ -1717,7 +1717,7 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
     )
 
 def test_notes_entry_policy_suite_covers_three_screen_states():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "notes_entry_policy_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1759,7 +1759,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
 
 
 def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "phone_bridge_data_policy_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1831,8 +1831,8 @@ def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
         assert "bridge_open_app" in task.hard_assertions.forbidden_tools
 
 
-def test_aiden_app_connection_capabilities_suite_covers_real_proxy_contract():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "connection_capabilities_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1899,7 +1899,7 @@ def test_aiden_app_connection_capabilities_suite_covers_real_proxy_contract():
     assert notification_call.tool == "bridge_notification"
     assert notification_call.input_contains == {
         "action": "send",
-        "title": "AIDEN_BRIDGE_NOTIFICATION_V1",
+        "title": "AICO_BRIDGE_NOTIFICATION_V1",
         "body": "forwarded app connection verified",
         "sound": False,
         "badge": 1,

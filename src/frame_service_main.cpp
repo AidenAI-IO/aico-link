@@ -1,5 +1,5 @@
 #include "camera_frame_utils.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_camera_capture_source.h"
 #include "frame_capture_manager.h"
 #include "frame_service_defaults.h"
@@ -23,12 +23,12 @@ void signal_handler(int) {
 
 struct Options {
     Options() : socket_path("/tmp/frame_service.sock"),
-                ring_size(aiden::kDefaultFrameServiceRingSize),
-                fps(aiden::kDefaultFrameServiceFps),
+                ring_size(aico::kDefaultFrameServiceRingSize),
+                fps(aico::kDefaultFrameServiceFps),
                 warmup_frames(-1),
                 keep_streamon(false),
                 auto_subdev(false) {
-        aiden_demo::set_default_camera_config(&camera);
+        aico_demo::set_default_camera_config(&camera);
         // A uniformly black or single-colour phone screen is a valid
         // screenshot. The camera layer's initial frame skip handles
         // transitional output after STREAMON without rejecting valid content.
@@ -58,7 +58,7 @@ struct Options {
     int warmup_frames;
     bool keep_streamon;
     bool auto_subdev;
-    aiden::CameraConfig camera;
+    aico::CameraConfig camera;
 };
 
 void usage(const char* program) {
@@ -156,7 +156,7 @@ bool parse_options(int argc, char** argv, Options* options) {
     }
     if (options->warmup_frames < 0) {
         options->warmup_frames =
-            aiden::default_frame_service_warmup_frames(options->keep_streamon);
+            aico::default_frame_service_warmup_frames(options->keep_streamon);
     }
     options->sync();
     return true;
@@ -171,20 +171,20 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    aiden::set_log_service("frame_service");
+    aico::set_log_service("frame_service");
 
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    aiden::FrameServiceServer server(options.socket_path.c_str(), options.ring_size);
-    if (server.start() != aiden::FrameServiceStatus::OK) {
-        AIDEN_LOG_ERROR("server", "socket_start_failed",
+    aico::FrameServiceServer server(options.socket_path.c_str(), options.ring_size);
+    if (server.start() != aico::FrameServiceStatus::OK) {
+        AICO_LOG_ERROR("server", "socket_start_failed",
                         "socket_path=%s", options.socket_path.c_str());
         return 1;
     }
 
-    aiden::FrameCameraCaptureSource source(options.camera);
-    aiden::FrameCaptureManagerOptions manager_options;
+    aico::FrameCameraCaptureSource source(options.camera);
+    aico::FrameCaptureManagerOptions manager_options;
     manager_options.warmup_frames = options.warmup_frames;
     manager_options.keep_streamon = options.keep_streamon;
     // Keep hot-plug recovery responsive while bounding retries and log volume
@@ -192,17 +192,17 @@ int main(int argc, char** argv) {
     manager_options.recovery_initial_backoff_ms = 1000;
     manager_options.recovery_max_backoff_ms = 5000;
     manager_options.recovery_idle_max_backoff_ms = 10000;
-    aiden::FrameCaptureManager manager(&source, &server, manager_options);
+    aico::FrameCaptureManager manager(&source, &server, manager_options);
     server.set_capture_handler(
         [&manager](uint32_t timeout_ms,
-                   aiden::FrameMetadata* metadata,
+                   aico::FrameMetadata* metadata,
                    std::vector<uint8_t>* data) {
             if (!metadata || !data) {
-                return aiden::FrameServiceStatus::INTERNAL_ERROR;
+                return aico::FrameServiceStatus::INTERNAL_ERROR;
             }
-            aiden::CapturedFrame frame;
-            const aiden::FrameServiceStatus status = manager.capture(timeout_ms, &frame);
-            if (status == aiden::FrameServiceStatus::OK) {
+            aico::CapturedFrame frame;
+            const aico::FrameServiceStatus status = manager.capture(timeout_ms, &frame);
+            if (status == aico::FrameServiceStatus::OK) {
                 *metadata = frame.metadata;
                 *data = std::move(frame.data);
             }
@@ -210,13 +210,13 @@ int main(int argc, char** argv) {
         });
     server.set_restart_handler([&manager]() { manager.request_restart(); });
     if (!manager.start()) {
-        AIDEN_LOG_ERROR("capture", "manager_start_failed", "device=%s",
+        AICO_LOG_ERROR("capture", "manager_start_failed", "device=%s",
                         options.camera.device_name);
         server.stop();
         return 1;
     }
 
-    AIDEN_LOG_INFO("server", "listening",
+    AICO_LOG_INFO("server", "listening",
                    "socket_path=%s capture_mode=on_demand warmup_frames=%d keep_streamon=%d reject_uniform_frames=%d deprecated_fps=%.3f",
                    options.socket_path.c_str(), options.warmup_frames,
                    options.keep_streamon ? 1 : 0,
@@ -227,6 +227,6 @@ int main(int argc, char** argv) {
 
     manager.stop();
     server.stop();
-    AIDEN_LOG_INFO("server", "stopped", "socket_path=%s", options.socket_path.c_str());
+    AICO_LOG_INFO("server", "stopped", "socket_path=%s", options.socket_path.c_str());
     return 0;
 }

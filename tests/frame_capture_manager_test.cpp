@@ -1,5 +1,5 @@
 #include "doctest.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_capture_manager.h"
 #include "frame_service_client.h"
 #include "frame_service_server.h"
@@ -10,18 +10,18 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::CapturedFrame;
-using aiden::FrameCaptureManager;
-using aiden::FrameCaptureManagerOptions;
-using aiden::FrameCaptureSource;
-using aiden::FrameMetadata;
-using aiden::FrameResult;
-using aiden::FrameServiceClient;
-using aiden::FrameServiceServer;
-using aiden::FrameServiceStatus;
-using aiden::HealthResult;
+using aico::CapturedFrame;
+using aico::FrameCaptureManager;
+using aico::FrameCaptureManagerOptions;
+using aico::FrameCaptureSource;
+using aico::FrameMetadata;
+using aico::FrameResult;
+using aico::FrameServiceClient;
+using aico::FrameServiceServer;
+using aico::FrameServiceStatus;
+using aico::HealthResult;
 
-namespace aiden {
+namespace aico {
 void reset_jpeg_encoder_stub();
 int jpeg_encoder_stub_prepare_count();
 int jpeg_encoder_stub_warmup_count();
@@ -35,7 +35,7 @@ namespace {
 struct TempSocketPath {
     std::string path;
     TempSocketPath() {
-        char tmpl[] = "/tmp/aiden_frame_capture_XXXXXX";
+        char tmpl[] = "/tmp/aico_frame_capture_XXXXXX";
         int fd = ::mkstemp(tmpl);
         REQUIRE(fd >= 0);
         ::close(fd);
@@ -247,7 +247,7 @@ bool wait_for_health_failure(FrameServiceClient* client, HealthResult* out) {
 
 bool wait_for_warmup_count(int expected) {
     for (int i = 0; i < 100; ++i) {
-        if (aiden::jpeg_encoder_stub_warmup_count() >= expected) {
+        if (aico::jpeg_encoder_stub_warmup_count() >= expected) {
             return true;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(2));
@@ -260,10 +260,10 @@ bool wait_for_warmup_count(int expected) {
 TEST_CASE("FrameCaptureManager logs request and capture operation boundaries") {
     FILE* output = tmpfile();
     REQUIRE(output != NULL);
-    aiden::set_log_service("frame_service");
-    aiden::set_log_output(output);
+    aico::set_log_service("frame_service");
+    aico::set_log_output(output);
 
-    FrameServiceServer server("/tmp/aiden_frame_logging_unused.sock", 4);
+    FrameServiceServer server("/tmp/aico_frame_logging_unused.sock", 4);
     FakeCaptureSource source;
     source.frames.push_back(CapturedFrame{metadata(1), std::vector<uint8_t>{1, 2}});
     FrameCaptureManagerOptions options;
@@ -295,14 +295,14 @@ TEST_CASE("FrameCaptureManager logs request and capture operation boundaries") {
     CHECK(log.find("frame_read_ms=") != std::string::npos);
     CHECK(log.find("generation=1") != std::string::npos);
 
-    aiden::set_log_output(NULL);
-    aiden::set_log_service("unknown");
+    aico::set_log_output(NULL);
+    aico::set_log_service("unknown");
     fclose(output);
 }
 
 TEST_CASE("FrameCaptureManager warms NV12 once across same-layout recovery") {
-    aiden::reset_jpeg_encoder_stub();
-    FrameServiceServer server("/tmp/aiden_frame_warmup_unused.sock", 4);
+    aico::reset_jpeg_encoder_stub();
+    FrameServiceServer server("/tmp/aico_frame_warmup_unused.sock", 4);
     FakeCaptureSource source;
     source.repeat_last = true;
     source.capture_delay_ms = 2;
@@ -325,16 +325,16 @@ TEST_CASE("FrameCaptureManager warms NV12 once across same-layout recovery") {
     CHECK(recovered);
     manager.stop();
 
-    CHECK(aiden::jpeg_encoder_stub_prepare_count() == 1);
-    CHECK(aiden::jpeg_encoder_stub_warmup_count() == 1);
-    CHECK(aiden::jpeg_encoder_stub_cancel_count() == 0);
-    CHECK(aiden::jpeg_encoder_stub_last_warmup_width() == 2);
-    CHECK(aiden::jpeg_encoder_stub_last_warmup_height() == 2);
+    CHECK(aico::jpeg_encoder_stub_prepare_count() == 1);
+    CHECK(aico::jpeg_encoder_stub_warmup_count() == 1);
+    CHECK(aico::jpeg_encoder_stub_cancel_count() == 0);
+    CHECK(aico::jpeg_encoder_stub_last_warmup_width() == 2);
+    CHECK(aico::jpeg_encoder_stub_last_warmup_height() == 2);
 }
 
 TEST_CASE("FrameCaptureManager skips JPEG warmup for non-NV12 frames") {
-    aiden::reset_jpeg_encoder_stub();
-    FrameServiceServer server("/tmp/aiden_frame_warmup_uyvy_unused.sock", 4);
+    aico::reset_jpeg_encoder_stub();
+    FrameServiceServer server("/tmp/aico_frame_warmup_uyvy_unused.sock", 4);
     FakeCaptureSource source;
     source.repeat_last = true;
     source.capture_delay_ms = 2;
@@ -348,13 +348,13 @@ TEST_CASE("FrameCaptureManager skips JPEG warmup for non-NV12 frames") {
     REQUIRE(manager.capture(1000, &captured) == FrameServiceStatus::OK);
     manager.stop();
 
-    CHECK(aiden::jpeg_encoder_stub_prepare_count() == 0);
-    CHECK(aiden::jpeg_encoder_stub_warmup_count() == 0);
+    CHECK(aico::jpeg_encoder_stub_prepare_count() == 0);
+    CHECK(aico::jpeg_encoder_stub_warmup_count() == 0);
 }
 
 TEST_CASE("FrameCaptureManager rewarms JPEG after NV12 resolution changes") {
-    aiden::reset_jpeg_encoder_stub();
-    FrameServiceServer server("/tmp/aiden_frame_rewarm_unused.sock", 4);
+    aico::reset_jpeg_encoder_stub();
+    FrameServiceServer server("/tmp/aico_frame_rewarm_unused.sock", 4);
     FakeCaptureSource source;
     source.repeat_last = true;
     source.capture_delay_ms = 2;
@@ -372,10 +372,10 @@ TEST_CASE("FrameCaptureManager rewarms JPEG after NV12 resolution changes") {
     REQUIRE(wait_for_warmup_count(2));
     manager.stop();
 
-    CHECK(aiden::jpeg_encoder_stub_prepare_count() == 2);
-    CHECK(aiden::jpeg_encoder_stub_warmup_count() == 2);
-    CHECK(aiden::jpeg_encoder_stub_last_warmup_width() == 4);
-    CHECK(aiden::jpeg_encoder_stub_last_warmup_height() == 2);
+    CHECK(aico::jpeg_encoder_stub_prepare_count() == 2);
+    CHECK(aico::jpeg_encoder_stub_warmup_count() == 2);
+    CHECK(aico::jpeg_encoder_stub_last_warmup_width() == 4);
+    CHECK(aico::jpeg_encoder_stub_last_warmup_height() == 2);
 }
 
 TEST_CASE("FrameCaptureManager stays paused while idle and captures once per request") {

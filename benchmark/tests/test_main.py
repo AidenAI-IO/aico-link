@@ -44,7 +44,7 @@ class FakeClockClient:
 
 def test_publish_langfuse_cli_reports_experiment_url(monkeypatch, capsys):
     published = langfuse_reporter.PublishResult(
-        dataset_name="aiden-benchmark:memory_v1",
+        dataset_name="aico-benchmark:memory_v1",
         run_name="ci-123",
         dataset_run_id="run-1",
         dataset_run_url="http://langfuse.local/run-1",
@@ -60,7 +60,7 @@ def test_publish_langfuse_cli_reports_experiment_url(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert "Langfuse publish: verification complete" in output
-    assert "dataset=aiden-benchmark:memory_v1" in output
+    assert "dataset=aico-benchmark:memory_v1" in output
     assert "View experiment: http://langfuse.local/run-1" in output
 
 
@@ -619,9 +619,9 @@ def test_unreachable_agent_does_not_reserve_run_directory(monkeypatch, tmp_path)
 
 def test_run_cli_defaults_use_benchmark_agent_and_judge_model_environment(monkeypatch):
     captured = {}
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_MODEL", "agent-model")
-    monkeypatch.setenv("AIDEN_BENCHMARK_JUDGE_MODEL", "judge-model")
-    monkeypatch.setenv("AIDEN_MODEL", "legacy-aiden-model")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_MODEL", "agent-model")
+    monkeypatch.setenv("AICO_BENCHMARK_JUDGE_MODEL", "judge-model")
+    monkeypatch.setenv("AICO_MODEL", "legacy-aico-model")
     monkeypatch.setenv("MODEL_NAME", "legacy-model")
     monkeypatch.setenv("OPENAI_MODEL", "legacy-openai-model")
     monkeypatch.setattr(main, "_cmd_run", lambda args: captured.update(vars(args)) or 0)
@@ -1074,9 +1074,9 @@ def test_run_llm_analysis_env_limits_fall_back_on_invalid_values(monkeypatch, tm
         calls.append(cfg)
         return AnalysisResult(ok=True, markdown_path=run_dir / "llm_analysis.md")
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "not-an-int")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "not-an-int")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "not-an-int")
     monkeypatch.setattr(main, "AgentClient", FakeClient)
     monkeypatch.setattr(main, "wait_for_agent_clock", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "upload_report", lambda *args, **kwargs: False)
@@ -1627,7 +1627,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
     )
     public_endpoint = urllib.parse.urlparse(captured["job"].endpoint)
     docker_endpoint = urllib.parse.urlparse(captured["job"].docker_endpoint)
-    assert public_endpoint.path.startswith("/_aiden_mock/")
+    assert public_endpoint.path.startswith("/_aico_mock/")
     assert docker_endpoint.path == public_endpoint.path
     assert captured["daemon_kwargs"]["environment_bridge_endpoint"] == captured[
         "job"
@@ -1646,7 +1646,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
         key: value for key, value in phone_state.items() if key != "platform"
     }
     assert mock_spec["single_frame"] is False
-    assert manifest["environment_url"].endswith("/_aiden_mock/REDACTED")
+    assert manifest["environment_url"].endswith("/_aico_mock/REDACTED")
     assert manifest["target_platform"] == "ios"
 
 

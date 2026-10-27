@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/ota"
+	"aico-agent/internal/ota"
 )
 
 func TestSplitCommandAndFlagsAllowsGlobalFlagsBeforeCommand(t *testing.T) {

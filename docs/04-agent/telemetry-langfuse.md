@@ -4,7 +4,7 @@ sidebar_position: 16
 
 # Episode Telemetry and Langfuse Integration
 
-After each task completes, Aiden Agent asynchronously reports the complete task episode (metadata, event chain, screenshots) to [Langfuse](https://langfuse.com/) as one trace per episode.
+After each task completes, Aico asynchronously reports the complete task episode (metadata, event chain, screenshots) to [Langfuse](https://langfuse.com/) as one trace per episode.
 
 Traces are sent over Langfuse's OpenTelemetry (OTLP) endpoint (`POST /api/public/otel/v1/traces`) with the `langfuse.*` attribute conventions. The legacy `/api/public/ingestion` event API is deprecated and stops accepting trace and observation events on 2026-11-16, so it is no longer used.
 
@@ -23,7 +23,7 @@ upload_screenshots = true
 upload_timeout_sec = 30
 max_retry = 2
 environment = "prod"
-tags = ["aiden-hardware"]
+tags = ["aico-hardware"]
 ```
 
 | Field | Description |
@@ -56,9 +56,9 @@ Spans are exported once, complete: Langfuse treats ingested spans as immutable, 
 
 ### Langfuse Mapping
 
-| Aiden Episode | Langfuse |
+| Aico Episode | Langfuse |
 | --- | --- |
-| `TaskEpisode` | Trace (`aiden-episode`), one trace per episode |
+| `TaskEpisode` | Trace (`aico-episode`), one trace per episode |
 | Run | Root observation `agent-run` (`agent` type) carrying the user goal and final answer |
 | `loop_phase` | `span` `phase/{phase}` |
 | Iteration | `span` `agent-iteration` with `iteration` in metadata |
@@ -73,7 +73,7 @@ Spans are exported once, complete: Langfuse treats ingested spans as immutable, 
 Typical trace structure:
 
 ```text
-aiden-episode (trace)
+aico-episode (trace)
 └── agent-run (agent)
     ├── session/begin
     ├── memory/retrieve (retriever)
@@ -129,7 +129,7 @@ Components: Langfuse Web + Worker, Postgres, ClickHouse, Redis, MinIO (screensho
 2. Set `telemetry.enabled = true` in device `agent.toml`
 3. Execute a task (Web UI or benchmark)
 4. Confirm in Langfuse UI → Traces:
-   - `aiden-episode` trace exists with root observation `agent-run`
+   - `aico-episode` trace exists with root observation `agent-run`
    - Tool calls appear as `tool` observations with input and output on the same observation
    - Model calls appear as `generation` observations with model, token usage, and cost
    - Screenshots can be previewed in tool observations
@@ -141,7 +141,7 @@ To verify the exporter itself against a running Langfuse, run the opt-in end-to-
 
 ```bash
 cd src/agent
-AIDEN_LANGFUSE_LIVE=1 \
+AICO_LANGFUSE_LIVE=1 \
 LANGFUSE_BASE_URL=http://localhost:3000 \
 LANGFUSE_PUBLIC_KEY=pk-lf-... LANGFUSE_SECRET_KEY=sk-lf-... \
 go test ./internal/agent/ -run TestLangfuseLiveEpisodeExport -v -count=1

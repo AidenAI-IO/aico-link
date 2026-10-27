@@ -105,7 +105,7 @@ The Agent provides:
 GET /api/tool-skills
 ```
 
-This endpoint generates a skill bundle describing the Aiden HTTP Tool API, making it convenient for external Agents like Codex to call device tools in a unified manner.
+This endpoint generates a skill bundle describing the Aico HTTP Tool API, making it convenient for external Agents like Codex to call device tools in a unified manner.
 
 ## Usage Recommendations
 

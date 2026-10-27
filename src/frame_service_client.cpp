@@ -7,7 +7,7 @@
 #include <string.h>
 #include <utility>
 
-namespace aiden {
+namespace aico {
 
 FrameServiceClient::FrameServiceClient(const char* socket_path)
     : socket_path_(socket_path ? socket_path : "") {}
@@ -301,4 +301,4 @@ FrameServiceStatus FrameServiceClient::restart() {
     return status;
 }
 
-}  // namespace aiden
+}  // namespace aico

@@ -11,9 +11,9 @@ Cause: `frame_service` is exclusively using `/dev/video0`.
 Solution:
 
 ```bash
-systemctl stop aiden-frame.service
+systemctl stop aico-frame.service
 example_camera_capture
-systemctl start aiden-frame.service
+systemctl start aico-frame.service
 ```
 
 For daily screenshots and frame testing, use:
@@ -27,7 +27,7 @@ frame_service_cli screenshot --out /tmp/screenshot.bmp
 Check:
 
 ```bash
-systemctl status aiden-frame.service --no-pager
+systemctl status aico-frame.service --no-pager
 frame_service_cli --socket /run/frame_service/frame_service.sock health
 ls -l /run/frame_service/frame_service.sock
 ```
@@ -42,7 +42,7 @@ Common causes:
 On the Debian firmware, the first two cases are distinguishable with:
 
 ```bash
-systemctl status aiden-frame.service --no-pager
+systemctl status aico-frame.service --no-pager
 frame_service_cli --socket /run/frame_service/frame_service.sock health
 ```
 
@@ -62,7 +62,7 @@ tail -f /var/log/frame_service/frame_service.log
 
 Check:
 
-- Whether `/usr/lib/aiden/frame_service` exists and is executable;
+- Whether `/usr/lib/aico/frame_service` exists and is executable;
 - Whether `/dev/video0` and an RK628D or TC358743 subdevice exist;
 - Whether EDID / HDMI signal is normal;
 - Whether other processes are using `/dev/video0`.
@@ -76,7 +76,7 @@ for f in /sys/class/video4linux/v4l-subdev*/name; do echo "$f: $(cat "$f")"; don
 
 If the matching `rk628-csi` or `tc358743` node was not selected, set
 `FRAME_SERVICE_SUBDEV=/dev/v4l-subdevX` in
-`/etc/aiden_frame_service.conf` to that node and restart `aiden-frame.service`.
+`/etc/aico_frame_service.conf` to that node and restart `aico-frame.service`.
 
 ## HDMI bridge probes but capture cannot discover it
 
@@ -86,7 +86,7 @@ until the unused alternative is cleared. Without that completion, the fitted
 bridge can probe successfully but its `/dev/v4l-subdev*` node is not created,
 leaving Frame Service in `RECOVERING` at bridge discovery.
 
-`aiden-media-modules` checks the CIF media topology for an enabled link from
+`aico-media-modules` checks the CIF media topology for an enabled link from
 either bridge to the CSI D-PHY, then writes the CIF and ISP `clr_unready_dev`
 parameters in that order. The D-PHY bound callback creates this link before
 notifier completion, so the check does not depend on a subdevice node or a live
@@ -95,7 +95,7 @@ endpoints and continues loading the independent media/audio modules. Clearing
 them without a bound bridge can Oops in the vendor CIF input-format check.
 
 The helper reports pending initialization to both the system journal and the
-boot console with an `[aiden-media-modules]` prefix. It distinguishes a missing
+boot console with an `[aico-media-modules]` prefix. It distinguishes a missing
 enabled bridge link from a failed topology query (or missing `media-ctl`),
 and explicitly states that CIF/ISP notifiers remain pending, cleanup was
 skipped, and independent modules will continue loading. Query failures include
@@ -108,9 +108,9 @@ has finished, stop capture and rerun the helper so it can safely complete the
 graph:
 
 ```bash
-sudo systemctl stop aiden-frame.service
-sudo /usr/lib/aiden/aiden-media-modules
-sudo systemctl start aiden-frame.service
+sudo systemctl stop aico-frame.service
+sudo /usr/lib/aico/aico-media-modules
+sudo systemctl start aico-frame.service
 ```
 
 An I2C driver symlink alone does not prove binding has finished: Linux creates
@@ -180,7 +180,7 @@ for task in "/proc/$pid"/task/*; do
     cat "$task/stack"
   } >> /tmp/rk628-incident/frame-thread-stacks.txt 2>&1
 done
-cp /etc/aiden_frame_service.conf /tmp/rk628-incident/
+cp /etc/aico_frame_service.conf /tmp/rk628-incident/
 awk '
   /^\[advanced_settings\.hardware\.frame_service\]$/ { copy = 1 }
   copy && /^\[/ && $0 !~ /^\[advanced_settings\.hardware\.frame_service\]$/ { exit }
@@ -199,7 +199,7 @@ means a kernel driver owns the address; it is not an ACK test.
 Check:
 
 ```bash
-systemctl status aiden-agent.service --no-pager
+systemctl status aico-agent.service --no-pager
 tail -f /userdata/agent/log/agent.log
 ss -lntp | grep 8080
 ```
@@ -223,7 +223,7 @@ Solution:
 Check:
 
 ```bash
-systemctl status aiden-audio.service --no-pager
+systemctl status aico-audio.service --no-pager
 audio_service_cli --socket /run/audio_service/audio_service.sock health
 audio_service_cli --socket /run/audio_service/audio_service.sock get-volume
 amixer sget 'DAC HPMIX'
@@ -242,13 +242,13 @@ Recommendations:
 First run helper self-test directly on the board:
 
 ```bash
-/usr/lib/aiden/rknn_vad --model /usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
-/usr/lib/aiden/cpu_vad --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/rknn_vad --model /usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/cpu_vad --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
 ```
 
 On success, it will output `P <probability>`. Current RV1106 helper uses RKNN zero-copy IO; if it outputs `rknn_set_io_mem failed`, `rknn_run failed`, or old helper outputs `rknn_inputs_set failed`, check:
 
-- Whether the RKNN mini runtime embedded in `/usr/lib/aiden/rknn_vad` matches the model;
+- Whether the RKNN mini runtime embedded in `/usr/lib/aico/rknn_vad` matches the model;
 - Whether `silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` is the encoder model re-converted for RV1106 target;
 - Whether input/output tensor type, size, scale, zero-point in helper logs are normal.
 
@@ -264,7 +264,7 @@ Invalid RKNN format
 Import rknn model failed!
 ```
 
-`/usr/lib/aiden/rknn_vad` therefore statically embeds the armhf-uclibc mini
+`/usr/lib/aico/rknn_vad` therefore statically embeds the armhf-uclibc mini
 runtime (`librknnmrt.a`, 2.3.2) instead of linking a dynamic `librknnrt.so`.
 Because that archive was built against uClibc ctype tables,
 `src/rknn_glibc_compat.c` provides the two data symbols it references
@@ -275,15 +275,15 @@ returns. At runtime this helper only needs `/dev/rknpu`.
 ## NPU or media devices are not accessible
 
 `/dev/rknpu` and `/dev/mpi/*` are expected to be `0660 root:video`, and the
-`aiden` user must be in the `video` and `audio` groups:
+`aico` user must be in the `video` and `audio` groups:
 
 ```bash
 ls -l /dev/rknpu /dev/mpi/ 2>/dev/null
-id aiden
+id aico
 ```
 
 - Udev rules set the NPU and media nodes to `0660 root:video`.
-- `aiden-media-modules.service` loads the Rockchip media/NPU modules and
+- `aico-media-modules.service` loads the Rockchip media/NPU modules and
   creates the DMA heap nodes and links, including `/dev/dma_heap/system`,
   before the frame and audio services start.
 - The mini RKNN runtime only needs `/dev/rknpu`; a missing
@@ -302,7 +302,7 @@ lsmod | grep -E 'dwc2|libcomposite'
 Try reinitializing:
 
 ```bash
-systemctl restart aiden-usb-gadget.service
+systemctl restart aico-usb-gadget.service
 ```
 
 For iOS target devices, confirm AssistiveTouch is enabled.

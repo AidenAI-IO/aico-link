@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/decision"
+	"aico-agent/internal/decision"
 )
 
 // DecisionModelTestResult reports one decision-model connection test.

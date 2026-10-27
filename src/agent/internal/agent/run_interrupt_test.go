@@ -9,10 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -33,7 +32,7 @@ func newInterruptTestLoop(t *testing.T, model *interruptTestModel, tools ...lang
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewAgentLoop(model, RoleProfile{Tools: tools}, 10, nil, nil, executor.ScreenshotPruningConfig{}.WithDefaults(), manager)
+	return NewAgentLoop(model, RoleProfile{Tools: tools}, 10, nil, nil, manager)
 }
 
 func requireInterruptNotices(t *testing.T, manager *contextmanager.ContextManager, reasons ...string) {

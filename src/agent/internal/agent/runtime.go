@@ -15,18 +15,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/statemanager"
-	"aiden-agent/internal/agent/tokencounter"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/statemanager"
+	"aico-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/routines"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/agents"
@@ -104,6 +105,7 @@ type Runtime struct {
 	episodeMaintenance      asyncRuntimeWork
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
+	routines                *routines.Manager
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
@@ -127,6 +129,9 @@ type asyncRuntimeWork struct {
 }
 
 type RunRequest struct {
+	// Scheduled work waits for the current run and retains its conversation.
+	WaitForIdle       bool
+	ResumeSessionID   string
 	Input             string
 	Attachments       []InputAttachment
 	Turn              TurnInput
@@ -929,7 +934,9 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 
 	// Preempt any currently active run and its resources.
-	r.Preempt()
+	if !req.WaitForIdle {
+		r.Preempt()
+	}
 
 	unlockRun, err := r.lockRun(ctx)
 	if err != nil {
@@ -1207,6 +1214,15 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
+	if req.ResumeSessionID != "" {
+		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if !matches {
+			return RunResult{}, errors.New("scheduled task session was cleared or replaced; reschedule it in the current conversation")
+		}
+	}
 	// append runtime context as assistant message if present (e.g., voice interruption notification)
 	if runtimeContext := strings.TrimSpace(req.RuntimeContext); runtimeContext != "" {
 		if err := r.contextManager.AppendMessage(messages.Message{
@@ -1260,17 +1276,35 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// configurable trigger. It is intentionally independent from conversation
 	// summarization and provider-managed Responses compaction.
 	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
+	// A screenshot-count prune only drops stale states: its target is one no
+	// request reaches, so it never compacts tool results toward the token
+	// target. That stays with the token threshold.
+	const stateTarget = math.MaxInt
+	stateLimit := cfg.ContextPruneStateLimitOrDefault()
+	pruneReason := ""
 	if pruneEnabled && messageTokenUsage > pruneTrigger {
+		pruneReason = "threshold"
 		if r.logger != nil {
 			r.logger.Info("Historical context prune: token usage reached threshold; tokenUsage=%d trigger=%d target=%d", messageTokenUsage, pruneTrigger, pruneTarget)
 		}
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, pruneTarget)
+	} else if states := r.contextManager.ScreenshotStateCount(); states > stateLimit {
+		pruneReason = "state_count"
+		if r.logger != nil {
+			r.logger.Info("Historical context prune: screenshot states reached limit; states=%d limit=%d", states, stateLimit)
+		}
+	}
+	if pruneReason != "" {
+		target := pruneTarget
+		if pruneReason == "state_count" {
+			target = stateTarget
+		}
+		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, target)
 		if episodeRecorder != nil {
 			episodeRecorder.RecordEvent(historicalPruneEvent(
 				contextCompactor.LastPruneStats(),
 				pruned,
 				pruneErr,
-				"threshold",
+				pruneReason,
 			))
 		}
 		if pruneErr != nil {
@@ -1307,7 +1341,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 
-	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, cfg.ScreenshotPruningOrDefault(), r.contextManager)
+	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
 	agentLoop.SteerRecorder = steerRecorder
@@ -1330,6 +1364,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if pruneEnabled && messageTokens > pruneTrigger {
 			targetTokens = pruneTarget
 			reason = "active_turn_threshold"
+		} else if currentManager.ScreenshotStateCount() > stateLimit {
+			targetTokens = stateTarget
+			reason = "active_turn_state_count"
 		}
 		if usableInputBudget > 0 && activePromptTokens(currentManager, options) > usableInputBudget {
 			hardBudgetExceeded = true
@@ -2959,6 +2996,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.routines != nil {
+		r.routines.Close()
+	}
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

@@ -73,7 +73,7 @@ audit_packages() {
     for package in \
         systemd-sysv udev dbus kmod libpam-systemd openssh-server sudo adb \
         iproute2 iputils-arping wpasupplicant bluez systemd-resolved \
-        systemd-timesyncd dnsmasq-base e2fsprogs v4l-utils libdrm2; do
+        systemd-timesyncd dnsmasq-base e2fsprogs dosfstools exfatprogs util-linux-extra v4l-utils libdrm2; do
         awk -F '\t' -v package="${package}" \
             'NR > 1 && ($1 == package || $1 == package ":armhf") {found=1} END {exit !found}' \
             "${OUTPUT_DIR}/packages.txt" \
@@ -91,19 +91,19 @@ audit_packages() {
 
 audit_business_package() {
     python3 "${REPO_ROOT}/scripts/debian-package/system_config.py" audit "${ROOTFS_MOUNT}"
-    awk -F '\t' 'NR > 1 && $1 == "aiden-business" {found=1} END {exit !found}' \
-        "${OUTPUT_DIR}/packages.txt" || fail "aiden-business is not installed"
+    awk -F '\t' 'NR > 1 && $1 == "aico-business" {found=1} END {exit !found}' \
+        "${OUTPUT_DIR}/packages.txt" || fail "aico-business is not installed"
     for path in \
-        /usr/lib/aiden/agent /usr/lib/aiden/frame_service \
-        /usr/lib/aiden/audio_service /usr/lib/aiden/ble_service \
-        /usr/lib/aiden/frame_service_cli /usr/lib/aiden/audio_service_cli \
-        /usr/lib/aiden/aiden-environment /usr/lib/aiden/ttyd \
-        /usr/share/aiden/config-web/index.html \
-        /usr/share/aiden/skills/aiden/SKILL.md; do
-        test -e "${ROOTFS_MOUNT}${path}" || fail "aiden-business file is missing: ${path}"
+        /usr/lib/aico/agent /usr/lib/aico/frame_service \
+        /usr/lib/aico/audio_service /usr/lib/aico/mcu_service /usr/lib/aico/ble_service \
+        /usr/lib/aico/frame_service_cli /usr/lib/aico/audio_service_cli \
+        /usr/lib/aico/aico-environment /usr/lib/aico/ttyd \
+        /usr/share/aico/config-web/index.html \
+        /usr/share/aico/skills/aico/SKILL.md; do
+        test -e "${ROOTFS_MOUNT}${path}" || fail "aico-business file is missing: ${path}"
     done
-    dpkg-query --root="${ROOTFS_MOUNT}" -S /usr/lib/aiden/agent \
-        | grep -q '^aiden-business:' || fail "agent is not owned by aiden-business"
+    dpkg-query --root="${ROOTFS_MOUNT}" -S /usr/lib/aico/agent \
+        | grep -q '^aico-business:' || fail "agent is not owned by aico-business"
 }
 
 audit_rootfs_cli_tools() {
@@ -150,7 +150,7 @@ audit_rootfs_cli_tools() {
 
 audit_login_sessions() {
     grep -qx 'UsePAM yes' \
-        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aiden.conf" \
+        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aico.conf" \
         || fail "SSH PAM session handling is disabled"
     grep -Eq '^@include[[:space:]]+common-session[[:space:]]*$' \
         "${ROOTFS_MOUNT}/etc/pam.d/sshd" \
@@ -160,7 +160,7 @@ audit_login_sessions() {
         || fail "PAM does not register logind sessions"
     test -s "${ROOTFS_MOUNT}/usr/lib/arm-linux-gnueabihf/security/pam_systemd.so" \
         || fail "pam_systemd module is missing"
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-ssh-session-tty" \
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-ssh-session-tty" \
         || fail "SSH terminal registration helper is missing"
     cmp "${ROOTFS_MOUNT}/etc/ssh/sshrc" "${REPO_ROOT}/overlay-debian/etc/ssh/sshrc" \
         || fail "SSH terminal registration hook is missing or changed"
@@ -173,7 +173,7 @@ audit_rootfs() {
         || fail "Debian locale compatibility link is missing"
     python3 "${REPO_ROOT}/scripts/release/contract.py" platform "${OUTPUT_DIR}/expected-contract.json"
     cmp "${OUTPUT_DIR}/expected-contract.json" \
-        "${ROOTFS_MOUNT}/usr/lib/aiden/platform/contract.json" \
+        "${ROOTFS_MOUNT}/usr/lib/aico/platform/contract.json" \
         || fail "platform contract does not match the base image"
     grep -qx 'status=pass' "${OUTPUT_DIR}/rootfs-import-audit.txt" \
         || fail "rootfs import attribute audit did not pass"
@@ -181,23 +181,24 @@ audit_rootfs() {
         || fail "rootfs ownership or mode is invalid"
     test -x "${ROOTFS_MOUNT}/lib/systemd/systemd" || fail "systemd PID 1 is missing"
     test -x "${ROOTFS_MOUNT}/usr/sbin/sshd" || fail "sshd is missing"
+    test -x "${ROOTFS_MOUNT}/usr/sbin/hwclock" || fail "hwclock is missing"
     audit_login_sessions
-    grep -qx 'aiden:x:1000:1000::/home/aiden:/bin/bash' \
-        "${ROOTFS_MOUNT}/etc/passwd" || fail "aiden login user is missing"
-    grep -qx 'aiden:x:1000:' "${ROOTFS_MOUNT}/etc/group" \
-        || fail "aiden primary group is missing"
+    grep -qx 'aico:x:1000:1000::/home/aico:/bin/bash' \
+        "${ROOTFS_MOUNT}/etc/passwd" || fail "aico login user is missing"
+    grep -qx 'aico:x:1000:' "${ROOTFS_MOUNT}/etc/group" \
+        || fail "aico primary group is missing"
     for group in sudo audio video dialout plugdev netdev; do
-        grep -Eq "^${group}:[^:]*:[^:]*:([^,]*,)*aiden(,|$)" \
+        grep -Eq "^${group}:[^:]*:[^:]*:([^,]*,)*aico(,|$)" \
             "${ROOTFS_MOUNT}/etc/group" \
-            >/dev/null || fail "aiden is missing required ${group} group"
+            >/dev/null || fail "aico is missing required ${group} group"
     done
-    test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/home/aiden")" = 1000:1000:700 \
-        || fail "aiden home ownership or mode is invalid"
+    test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/home/aico")" = 1000:1000:700 \
+        || fail "aico home ownership or mode is invalid"
     test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/usr/bin/sudo")" = 0:0:4755 \
         || fail "sudo executable ownership or mode is invalid"
     test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/etc/sudoers")" = 0:0:440 \
         || fail "sudoers ownership or mode is invalid"
-    test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/etc/sudoers.d/20-aiden-proxy")" = 0:0:440 \
+    test "$(stat -c '%u:%g:%a' "${ROOTFS_MOUNT}/etc/sudoers.d/20-aico-proxy")" = 0:0:440 \
         || fail "sudo proxy policy ownership or mode is invalid"
     grep -Eq '^%sudo[[:space:]]+ALL=\(ALL:ALL\)[[:space:]]+ALL$' \
         "${ROOTFS_MOUNT}/etc/sudoers" \
@@ -207,28 +208,33 @@ audit_rootfs() {
         fail "passwordless sudo policy is present"
     fi
     grep -qx 'PasswordAuthentication yes' \
-        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aiden.conf" \
+        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aico.conf" \
         || fail "ordinary-user SSH password authentication is disabled"
     grep -qx 'PermitRootLogin prohibit-password' \
-        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aiden.conf" \
+        "${ROOTFS_MOUNT}/etc/ssh/sshd_config.d/20-aico.conf" \
         || fail "root SSH password authentication is not prohibited"
     test -x "${ROOTFS_MOUNT}/usr/bin/adb" || fail "Debian adb is missing"
     test -x "${ROOTFS_MOUNT}/usr/bin/python3" || fail "Debian Python is missing"
     test -x "${ROOTFS_MOUNT}/usr/bin/pip3" || fail "Debian pip is missing"
     test -x "${ROOTFS_MOUNT}/usr/bin/hciattach" || fail "hciattach is missing"
+    test -x "${ROOTFS_MOUNT}/usr/bin/aico-power" \
+        || fail "power-state command is missing or not executable"
+    cmp "${ROOTFS_MOUNT}/usr/bin/aico-power" \
+        "${REPO_ROOT}/overlay-debian/usr/bin/aico-power" \
+        || fail "power-state command differs from the image source"
     test -x "${ROOTFS_MOUNT}/usr/sbin/dnsmasq" || fail "dnsmasq-base is missing"
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-usb-gadget" \
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-usb-gadget" \
         || fail "USB gadget helper was not installed"
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-boot-timeline" \
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-boot-timeline" \
         || fail "boot timeline helper was not installed"
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-machine-id-provision" \
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-machine-id-provision" \
         || fail "machine-ID provision helper was not installed"
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-wifi-log-retention" \
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-wifi-log-retention" \
         || fail "Wi-Fi log retention helper is missing or not executable"
-    cmp "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-usb-gadget" \
-        "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-usb-gadget"
-    cmp "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-boot-timeline" \
-        "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-boot-timeline"
+    cmp "${ROOTFS_MOUNT}/usr/lib/aico/aico-usb-gadget" \
+        "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-usb-gadget"
+    cmp "${ROOTFS_MOUNT}/usr/lib/aico/aico-boot-timeline" \
+        "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-boot-timeline"
     test ! -s "${ROOTFS_MOUNT}/etc/machine-id" \
         || fail "generic rootfs contains a machine-id"
     test -L "${ROOTFS_MOUNT}/var/lib/dbus/machine-id" \
@@ -265,38 +271,44 @@ audit_rootfs() {
     test ! -e "${ROOTFS_MOUNT}/etc/opkg" || fail "opkg configuration leaked into Debian"
     test ! -e "${ROOTFS_MOUNT}/usr/bin/opkg" || fail "opkg leaked into Debian"
     if rg -n '\b(ifconfig|dhcpcd|dhclient|udhcpc)\b' \
-        "${ROOTFS_MOUNT}/usr/lib/aiden" "${ROOTFS_MOUNT}/etc/systemd/system"; then
+        "${ROOTFS_MOUNT}/usr/lib/aico" "${ROOTFS_MOUNT}/etc/systemd/system"; then
         fail "retired network manager command leaked into Debian runtime"
     fi
 
     for directory in adb audio_service ble_service frame_service ota ttyd wifi_proxy; do
         grep -Fqx "d /var/log/${directory} 0755 root root -" \
-            "${ROOTFS_MOUNT}/etc/tmpfiles.d/aiden.conf" \
+            "${ROOTFS_MOUNT}/etc/tmpfiles.d/aico.conf" \
             || fail "tmpfiles does not create /var/log/${directory}"
     done
 
-    proxy_watch_path=${ROOTFS_MOUNT}/etc/systemd/system/aiden-wifi-proxy-agent-restart.path
-    for directive in DefaultDependencies=no After=aiden-wifi-proxy.service Before=shutdown.target Conflicts=shutdown.target; do
+    proxy_watch_path=${ROOTFS_MOUNT}/etc/systemd/system/aico-wifi-proxy-agent-restart.path
+    for directive in DefaultDependencies=no After=aico-wifi-proxy.service Before=shutdown.target Conflicts=shutdown.target; do
         grep -Fqx "${directive}" "${proxy_watch_path}" \
             || fail "Wi-Fi proxy path unit is missing safe ordering: ${directive}"
     done
-    wifi_drop_in=${ROOTFS_MOUNT}/etc/systemd/system/wpa_supplicant@wlan0.service.d/20-aiden.conf
-    grep -Fqx 'EnvironmentFile=-/run/aiden/wpa_supplicant-config.env' "${wifi_drop_in}" \
+    wifi_drop_in=${ROOTFS_MOUNT}/etc/systemd/system/wpa_supplicant@wlan0.service.d/20-aico.conf
+    grep -Fqx 'EnvironmentFile=-/run/aico/wpa_supplicant-config.env' "${wifi_drop_in}" \
         || fail "wpa_supplicant does not consume the runtime candidate selector"
-    grep -Fqx 'Environment=AIDEN_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' "${wifi_drop_in}" \
+    grep -Fqx 'Environment=AICO_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' "${wifi_drop_in}" \
         || fail "wpa_supplicant does not define the persistent config fallback"
-    grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AIDEN_WPA_SUPPLICANT_CONFIG} -i %I' "${wifi_drop_in}" \
+    grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -i %I' "${wifi_drop_in}" \
         || fail "wpa_supplicant does not expand the selected config path"
-    grep -Eq '^After=.*aiden-wifi-proxy\.service' \
-        "${ROOTFS_MOUNT}/etc/systemd/system/aiden-wifi-proxy-agent-restart.service" \
+    grep -Eq '^After=.*aico-wifi-proxy\.service' \
+        "${ROOTFS_MOUNT}/etc/systemd/system/aico-wifi-proxy-agent-restart.service" \
         || fail "Wi-Fi proxy restart service is missing proxy ordering"
+    cmp "${ROOTFS_MOUNT}/etc/systemd/system/aico-bluetooth-attach.service" \
+        "${REPO_ROOT}/overlay-debian/etc/systemd/system/aico-bluetooth-attach.service" \
+        || fail "Bluetooth attach service differs from the Aico Link UART0 source"
+    cmp "${ROOTFS_MOUNT}/usr/lib/aico/aico-bluetooth-prepare" \
+        "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-bluetooth-prepare" \
+        || fail "Bluetooth preparation differs from the Aico Link UART0 source"
 
-    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aiden.target" \
-        || fail "aiden.target is not enabled"
-    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aiden-machine-id.service" \
-        || fail "aiden-machine-id.service is not enabled"
-    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aiden-boot-timeline.service" \
-        || fail "aiden-boot-timeline.service is not enabled"
+    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aico.target" \
+        || fail "aico.target is not enabled"
+    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aico-machine-id.service" \
+        || fail "aico-machine-id.service is not enabled"
+    test -L "${ROOTFS_MOUNT}/etc/systemd/system/multi-user.target.wants/aico-boot-timeline.service" \
+        || fail "aico-boot-timeline.service is not enabled"
     test "$(readlink "${ROOTFS_MOUNT}/etc/systemd/system/dnsmasq.service")" = /dev/null \
         || fail "global dnsmasq service is not masked"
     test "$(readlink "${ROOTFS_MOUNT}/etc/systemd/system/wpa_supplicant.service")" = /dev/null \
@@ -309,11 +321,11 @@ audit_rootfs() {
         || fail "serial recovery console is not enabled"
 
     systemd-analyze --root="${ROOTFS_MOUNT}" verify \
-        aiden.target aiden-machine-id.service aiden-agent.service aiden-config-web.service \
-        aiden-wifi-proxy.service aiden-wifi-proxy-agent-restart.path \
-        aiden-wifi-proxy-agent-restart.service \
-        aiden-ttyd.service aiden-usb-gadget.service aiden-boot-timeline-init.service \
-        aiden-boot-timeline.service userdata.mount userdata-ota.mount \
+        aico.target aico-machine-id.service aico-agent.service aico-config-web.service \
+        aico-wifi-proxy.service aico-wifi-proxy-agent-restart.path \
+        aico-wifi-proxy-agent-restart.service \
+        aico-ttyd.service aico-usb-gadget.service aico-boot-timeline-init.service \
+        aico-boot-timeline.service userdata.mount userdata-ota.mount \
         >"${OUTPUT_DIR}/systemd-unit-audit.txt" 2>&1 || {
             cat "${OUTPUT_DIR}/systemd-unit-audit.txt" >&2
             fail "systemd unit verification failed"
@@ -322,24 +334,29 @@ audit_rootfs() {
 
 audit_platform_files() {
     local actual expected library expected_sha actual_sha
-    test -x "${ROOTFS_MOUNT}/usr/lib/aiden/aiden-dynamic-keyboard" \
+    local storage_tool
+    for storage_tool in mkfs.vfat fsck.vfat mkfs.ext4 fsck.ext4 mkfs.exfat fsck.exfat; do
+        test -x "${ROOTFS_MOUNT}/usr/sbin/${storage_tool}" \
+            || fail "storage tool is missing or not executable: ${storage_tool}"
+    done
+    test -x "${ROOTFS_MOUNT}/usr/lib/aico/aico-dynamic-keyboard" \
         || fail "dynamic keyboard helper is missing"
     (cd "${ROOTFS_MOUNT}" && sha256sum -c "${OUTPUT_DIR}/platform-files.sha256") \
         >>"${REPORT}" || fail "platform files changed after rootfs assembly"
-    "${REPO_ROOT}/scripts/validate_ota_pubkey.sh" "${ROOTFS_MOUNT}/usr/share/keyrings/aiden-ota.pem"
-    actual_sha=$(sha256sum "${ROOTFS_MOUNT}/usr/lib/aiden/ttyd" | awk '{print $1}')
+    "${REPO_ROOT}/scripts/validate_ota_pubkey.sh" "${ROOTFS_MOUNT}/usr/share/keyrings/aico-ota.pem"
+    actual_sha=$(sha256sum "${ROOTFS_MOUNT}/usr/lib/aico/ttyd" | awk '{print $1}')
     [ "${actual_sha}" = "${TTYD_SHA256}" ] \
         || fail "ttyd checksum mismatch"
-    if find "${ROOTFS_MOUNT}/usr/lib/aiden/platform" \( -name '*.a' -o -name '*.la' -o -name '*.o' \
+    if find "${ROOTFS_MOUNT}/usr/lib/aico/platform" \( -name '*.a' -o -name '*.la' -o -name '*.o' \
         -o -name '*.map' -o -name '*.pc' -o -name CMakeFiles \
         -o -name pkgconfig -o -name include \) -print -quit | grep -q .; then
         fail "build-only artifact leaked into platform"
     fi
-    test -L "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/librga.so" || fail "librga.so symlink is missing"
-    test "$(readlink "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/librga.so")" = librga.so.2 \
+    test -L "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/librga.so" || fail "librga.so symlink is missing"
+    test "$(readlink "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/librga.so")" = librga.so.2 \
         || fail "librga.so symlink is invalid"
-    test -L "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/librga.so.2" || fail "librga.so.2 symlink is missing"
-    test "$(readlink "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/librga.so.2")" = librga.so.2.1.0 \
+    test -L "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/librga.so.2" || fail "librga.so.2 symlink is missing"
+    test "$(readlink "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/librga.so.2")" = librga.so.2.1.0 \
         || fail "librga.so.2 symlink is invalid"
     for library in libaec_bf_process.so librkaudio_common.so; do
         case "${library}" in
@@ -347,38 +364,54 @@ audit_platform_files() {
             librkaudio_common.so) expected_sha=${VQE_COMMON_SHA256} ;;
             *) fail "unexpected VQE library name: ${library}"; continue ;;
         esac
-        test -s "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/${library}" \
+        test -s "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/${library}" \
             || fail "VQE runtime library is missing: ${library}"
-        cmp "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/${library}" \
-            "${REPO_ROOT}/overlay-debian/usr/lib/aiden/platform/lib/${library}" \
+        cmp "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/${library}" \
+            "${REPO_ROOT}/overlay-debian/usr/lib/aico/platform/lib/${library}" \
             || fail "VQE runtime library differs from the Debian platform source: ${library}"
-        actual_sha=$(sha256sum "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/${library}" | awk '{print $1}')
+        actual_sha=$(sha256sum "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/${library}" | awk '{print $1}')
         [ "${actual_sha}" = "${expected_sha}" ] \
             || fail "VQE runtime library checksum mismatch: ${library}"
     done
-    test ! -e "${ROOTFS_MOUNT}/usr/lib/aiden/platform/lib/librknnrt.so" \
+    test ! -e "${ROOTFS_MOUNT}/usr/lib/aico/platform/lib/librknnrt.so" \
         || fail "obsolete dynamic librknnrt.so leaked into platform"
-    test -s "${ROOTFS_MOUNT}/usr/share/keyrings/aiden-ota.pem" || fail "OTA public key is missing"
-    test -s "${ROOTFS_MOUNT}/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn" \
-        || fail "VAD model is missing from aiden-business"
-    test -s "${ROOTFS_MOUNT}/usr/share/aiden/edid/hdmi_1080p30_cta.hex" \
+    test -s "${ROOTFS_MOUNT}/usr/share/keyrings/aico-ota.pem" || fail "OTA public key is missing"
+    test -s "${ROOTFS_MOUNT}/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn" \
+        || fail "VAD model is missing from aico-business"
+    test -s "${ROOTFS_MOUNT}/usr/share/aico/edid/hdmi_1080p30_cta.hex" \
         || fail "EDID asset is missing"
-    test -s "${ROOTFS_MOUNT}/usr/share/aiden/audio/voice-notifications/tts-unavailable.en-US.wav" \
-        || fail "voice notification is missing from aiden-business"
-    test -s "${ROOTFS_MOUNT}/usr/share/aiden/config-web/index.html" \
-        || fail "config-web assets are missing from aiden-business"
-    test -s "${ROOTFS_MOUNT}/usr/share/aiden/quick_actions.json" \
-        || fail "quick actions are missing from aiden-business"
-    test "$(find "${ROOTFS_MOUNT}/usr/share/aiden/skills" -mindepth 2 -maxdepth 2 \
-        -name SKILL.md -type f | wc -l)" -ge 1 || fail "bundled skills are missing from aiden-business"
+    test -s "${ROOTFS_MOUNT}/usr/share/aico/audio/voice-notifications/tts-unavailable.en-US.wav" \
+        || fail "voice notification is missing from aico-business"
+    test -s "${ROOTFS_MOUNT}/usr/share/aico/config-web/index.html" \
+        || fail "config-web assets are missing from aico-business"
+    test -s "${ROOTFS_MOUNT}/usr/share/aico/quick_actions.json" \
+        || fail "quick actions are missing from aico-business"
+    test "$(find "${ROOTFS_MOUNT}/usr/share/aico/skills" -mindepth 2 -maxdepth 2 \
+        -name SKILL.md -type f | wc -l)" -ge 1 || fail "bundled skills are missing from aico-business"
     for module in \
         libarc4.ko ctr.ko ccm.ko aes_generic.ko cfg80211.ko \
         aic8800_bsp.ko aic8800_fdrv.ko aic8800_btlpm.ko \
         rga3.ko mpp_vcodec.ko rknpu.ko rockit.ko; do
-        test -s "${ROOTFS_MOUNT}/usr/lib/aiden/platform/modules/${module}" || fail "kernel module is missing: ${module}"
+        test -s "${ROOTFS_MOUNT}/usr/lib/aico/platform/modules/${module}" || fail "kernel module is missing: ${module}"
     done
-    test -s "${ROOTFS_MOUNT}/usr/lib/aiden/platform/modules/aic8800dc_fw/fmacfw_patch_8800dc_u02.bin" \
-        || fail "AIC8800 firmware is missing"
+    for module in mpp_vcodec.ko rockit.ko; do
+        grep -aq 'aico_page_abi=kernel-helpers-v1' \
+            "${ROOTFS_MOUNT}/usr/lib/aico/platform/modules/${module}" \
+            || fail "media module lacks Debian kernel page compatibility: ${module}"
+    done
+    local firmware
+    for firmware in \
+        aic_userconfig_8800d80.txt \
+        fmacfw_8800d80_h_u02.bin \
+        fmacfw_8800d80_u02.bin \
+        fw_adid_8800d80_u02.bin \
+        fw_patch_8800d80_u02.bin \
+        fw_patch_8800d80_u02_ext0.bin \
+        fw_patch_table_8800d80_u02.bin \
+        lmacfw_rf_8800d80_u02.bin; do
+        test -s "${ROOTFS_MOUNT}/usr/lib/aico/platform/modules/aic8800dc_fw/${firmware}" \
+            || fail "AIC8800D80 firmware is missing: ${firmware}"
+    done
 }
 
 audit_elf_closure() {
@@ -404,7 +437,7 @@ audit_elf_closure() {
         fi
         runpath=$(sed -n 's/.*(\(RPATH\|RUNPATH\)).*[[]\([^]]*\)[]].*/\2/p' <<<"${dynamic}")
         case "${relative}:${runpath}" in
-            /usr/bin/*:'$ORIGIN/../lib' | /usr/lib/aiden/*:'$ORIGIN/../lib' | *:) ;;
+            /usr/bin/*:'$ORIGIN/../lib' | /usr/lib/aico/*:'$ORIGIN/../lib' | *:) ;;
             *) fail "unapproved runtime RPATH/RUNPATH: ${relative}: ${runpath}" ;;
         esac
         while IFS= read -r dependency; do
@@ -415,7 +448,7 @@ audit_elf_closure() {
         printf '%s\t%s\t%s\t%s\n' "${relative}" "${machine}" "${runpath}" \
             "$(sed -n 's/.*(NEEDED).*[[]\([^]]*\)[]].*/\1/p' <<<"${dynamic}" | paste -sd, -)" \
             >>"${OUTPUT_DIR}/elf-runtime-audit.tsv"
-    done < <(find "${ROOTFS_MOUNT}/usr/lib/aiden" -xdev -type f -print0)
+    done < <(find "${ROOTFS_MOUNT}/usr/lib/aico" -xdev -type f -print0)
 }
 
 audit_boot() {
@@ -432,10 +465,12 @@ audit_boot() {
         "${dumpimage}" -i "${boot}" -T flat_dt -p 0 -o "${fdt}" unused \
             >>"${OUTPUT_DIR}/boot-fit-audit.txt"
         bootargs=$(fdtget -t s "${fdt}" /chosen bootargs)
+        bash "${REPO_ROOT}/scripts/debian-system/audit-tf-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/boot-fit-audit.txt"
         grep -qw "root=PARTLABEL=${root_label}" <<<"${bootargs}" \
             || fail "${boot} has the wrong root PARTLABEL"
-        grep -qw "aiden.slot_suffix=${suffix}" <<<"${bootargs}" \
-            || fail "${boot} has the wrong Aiden slot suffix"
+        grep -qw "aico.slot_suffix=${suffix}" <<<"${bootargs}" \
+            || fail "${boot} has the wrong Aico Link slot suffix"
         grep -qw 'rootfstype=ext4' <<<"${bootargs}" \
             || fail "${boot} is missing rootfstype=ext4"
         grep -qw 'net.ifnames=0' <<<"${bootargs}" \

@@ -1,7 +1,7 @@
 #include "frame_service_protocol.h"
 #include "service_status.h"
 
-namespace aiden {
+namespace aico {
 
 const char* frame_service_status_to_string(FrameServiceStatus status) {
     return service_status_to_string(status);
@@ -56,4 +56,4 @@ bool decode_frame_wire_prefix(const uint8_t* data, size_t len, FrameWirePrefix* 
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

@@ -1,0 +1,22 @@
+[Unit]
+Description=Serve local-only DHCP on the Aico Link usb0 gadget
+Requires=aico-usb-gadget.service
+After=aico-usb-gadget.service systemd-networkd.service
+Before=aico-config-web.service aico-usb-ecm-watchdog.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aico_boot.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_USB_DHCP
+ExecStartPre=/usr/lib/aico/aico-wait-interface-ip usb0
+ExecStartPre=/usr/sbin/dnsmasq --test --conf-file=/etc/dnsmasq.d/usb0.conf
+ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/etc/dnsmasq.d/usb0.conf --pid-file=/run/aico/dnsmasq-usb0.pid
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

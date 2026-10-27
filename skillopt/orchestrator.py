@@ -21,7 +21,7 @@ from pathlib import Path
 from runner.judge import JudgeConfig
 from runner.suite import Suite, TaskSpec
 from skillopt.aggregate import aggregate, format_rejected_context
-from skillopt.backends import AidenDeviceBackend, SkillOptRolloutBackend
+from skillopt.backends import AicoDeviceBackend, SkillOptRolloutBackend
 from skillopt.optimizer_client import OptimizerConfig, OptimizerError
 from skillopt.patch import apply_patch_with_report
 from skillopt.phase_artifacts import write_phase_completed, write_phase_failed, write_phase_started
@@ -64,7 +64,7 @@ def optimize_skill(cfg: OptimizationConfig) -> OptimizationResult:
 
     original = skill_path.read_text(encoding="utf-8")
     current = original
-    backend = cfg.rollout_backend or AidenDeviceBackend(agent_url=cfg.agent_url)
+    backend = cfg.rollout_backend or AicoDeviceBackend(agent_url=cfg.agent_url)
     run_root = cfg.artifact_root / cfg.run_id
     run_root.mkdir(parents=True, exist_ok=True)
     train_suite = cfg.train_suite or cfg.suite

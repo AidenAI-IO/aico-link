@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/langfuse"
+	"aico-agent/internal/agent/langfuse"
 	"encoding/hex"
 	"strings"
 	"time"

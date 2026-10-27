@@ -1,8 +1,8 @@
 package contextmanager
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/tokencounter"
 	"os"
 	"testing"
 )

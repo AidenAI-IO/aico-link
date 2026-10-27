@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"aiden-agent/internal/decision"
+	"aico-agent/internal/decision"
 )
 
 // Questions the decision model answers for each text-input and app-open

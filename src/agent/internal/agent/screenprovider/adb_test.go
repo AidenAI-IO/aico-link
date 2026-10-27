@@ -39,7 +39,7 @@ func TestADBScreenClientCapturesPNGAndJPEG(t *testing.T) {
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = \"-s\" ] && [ \"$2\" = \"serial123\" ] && [ \"$3\" = \"exec-out\" ] && [ \"$4\" = \"screencap\" ] && [ \"$5\" = \"-p\" ]; then\n" +
-		"  cat \"$AIDEN_TEST_PNG\"\n" +
+		"  cat \"$AICO_TEST_PNG\"\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"echo \"unexpected args: $@\" >&2\n" +
@@ -48,9 +48,9 @@ func TestADBScreenClientCapturesPNGAndJPEG(t *testing.T) {
 		t.Fatalf("WriteFile(%s) error = %v", adbPath, err)
 	}
 
-	t.Setenv("AIDEN_ADB_PATH", adbPath)
-	t.Setenv("AIDEN_TEST_PNG", pngPath)
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_PATH", adbPath)
+	t.Setenv("AICO_TEST_PNG", pngPath)
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	defer ClearAutoConfiguredSerial("serial123")
 
@@ -111,7 +111,7 @@ func TestADBScreenClientCapturesPNGAndJPEG(t *testing.T) {
 	}
 }
 
-func TestADBScreenClientAutoSetsAIDENADBSerialForUniqueDevice(t *testing.T) {
+func TestADBScreenClientAutoSetsAICOADBSerialForUniqueDevice(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test shell script uses /bin/sh")
 	}
@@ -129,8 +129,8 @@ func TestADBScreenClientAutoSetsAIDENADBSerialForUniqueDevice(t *testing.T) {
 		t.Fatalf("WriteFile(%s) error = %v", adbPath, err)
 	}
 
-	t.Setenv("AIDEN_ADB_PATH", adbPath)
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_PATH", adbPath)
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	defer ClearAutoConfiguredSerial("serial123")
 
@@ -142,12 +142,12 @@ func TestADBScreenClientAutoSetsAIDENADBSerialForUniqueDevice(t *testing.T) {
 	if serial != "serial123" {
 		t.Fatalf("ResolveSerial() = %q, want serial123", serial)
 	}
-	if got := os.Getenv("AIDEN_ADB_SERIAL"); got != "serial123" {
-		t.Fatalf("AIDEN_ADB_SERIAL = %q, want serial123", got)
+	if got := os.Getenv("AICO_ADB_SERIAL"); got != "serial123" {
+		t.Fatalf("AICO_ADB_SERIAL = %q, want serial123", got)
 	}
 
-	if err := os.Unsetenv("AIDEN_ADB_SERIAL"); err != nil {
-		t.Fatalf("Unsetenv(AIDEN_ADB_SERIAL) error = %v", err)
+	if err := os.Unsetenv("AICO_ADB_SERIAL"); err != nil {
+		t.Fatalf("Unsetenv(AICO_ADB_SERIAL) error = %v", err)
 	}
 	serial, err = client.ResolveSerial(context.Background(), adbPath)
 	if err != nil {
@@ -156,24 +156,24 @@ func TestADBScreenClientAutoSetsAIDENADBSerialForUniqueDevice(t *testing.T) {
 	if serial != "serial123" {
 		t.Fatalf("ResolveSerial() cached = %q, want serial123", serial)
 	}
-	if got := os.Getenv("AIDEN_ADB_SERIAL"); got != "serial123" {
-		t.Fatalf("cached resolve AIDEN_ADB_SERIAL = %q, want serial123", got)
+	if got := os.Getenv("AICO_ADB_SERIAL"); got != "serial123" {
+		t.Fatalf("cached resolve AICO_ADB_SERIAL = %q, want serial123", got)
 	}
 
 	client.InvalidateAutoSerial("serial123")
-	if got := os.Getenv("AIDEN_ADB_SERIAL"); got != "" {
-		t.Fatalf("AIDEN_ADB_SERIAL after invalidate = %q, want empty", got)
+	if got := os.Getenv("AICO_ADB_SERIAL"); got != "" {
+		t.Fatalf("AICO_ADB_SERIAL after invalidate = %q, want empty", got)
 	}
 }
 
 func TestADBScreenClientDoesNotOverrideConfiguredADBSerial(t *testing.T) {
-	t.Setenv("AIDEN_ADB_SERIAL", "manual123")
+	t.Setenv("AICO_ADB_SERIAL", "manual123")
 	t.Setenv("ANDROID_SERIAL", "")
 
 	if err := SetAutoConfiguredSerial("auto123"); err != nil {
 		t.Fatalf("SetAutoConfiguredSerial() error = %v", err)
 	}
-	if got := os.Getenv("AIDEN_ADB_SERIAL"); got != "manual123" {
-		t.Fatalf("AIDEN_ADB_SERIAL = %q, want manual123", got)
+	if got := os.Getenv("AICO_ADB_SERIAL"); got != "manual123" {
+		t.Fatalf("AICO_ADB_SERIAL = %q, want manual123", got)
 	}
 }

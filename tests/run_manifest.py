@@ -182,7 +182,7 @@ def run_suite(suite: dict[str, Any], *, profile: str = "full") -> dict[str, Any]
 
     if suite.get("requires_docker_socket") and not Path("/var/run/docker.sock").exists():
         return unavailable_result(suite, "Docker socket is not mounted; rerun with --docker-socket")
-    if suite.get("requires_host_network") and os.environ.get("AIDEN_TEST_HOST_NETWORK") != "1":
+    if suite.get("requires_host_network") and os.environ.get("AICO_TEST_HOST_NETWORK") != "1":
         return unavailable_result(suite, "host network is required; rerun with --host-network")
 
     missing_dependencies = [
@@ -202,7 +202,7 @@ def run_suite(suite: dict[str, Any], *, profile: str = "full") -> dict[str, Any]
     print(f"$ (cd {suite['workdir']} && {format_command(command)})", flush=True)
     started = time.monotonic()
     env = os.environ.copy()
-    env.setdefault("AIDEN_CONTRACT_FIXTURES", str(REPO_ROOT / "tests" / "contracts"))
+    env.setdefault("AICO_CONTRACT_FIXTURES", str(REPO_ROOT / "tests" / "contracts"))
     command = "set -euo pipefail\n" + command
     process = subprocess.Popen(
         command,

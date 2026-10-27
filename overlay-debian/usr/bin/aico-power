@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+"""Select an RV1106 suspend mode and suspend until a wake event occurs."""
+
+import argparse
+import fcntl
+import os
+from pathlib import Path
+import sys
+
+
+POWER_DIR = Path("/sys/power")
+LOCK_PATH = Path("/run/lock/aico-power.lock")
+MODES = {"sleep": "s2idle", "deep-sleep": "deep"}
+
+
+def suspend(mode):
+    # Hold the lock until resume so concurrent commands cannot change the mode
+    # between selecting it and requesting suspend.
+    with LOCK_PATH.open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as error:
+            raise RuntimeError("another aico-power command is running") from error
+
+        states = (POWER_DIR / "state").read_text().split()
+        modes = [token.strip("[]")
+                 for token in (POWER_DIR / "mem_sleep").read_text().split()]
+        if "mem" not in states:
+            raise RuntimeError("this kernel does not support mem suspend")
+        if mode not in modes:
+            raise RuntimeError(
+                f"this kernel does not advertise {mode}; available modes: "
+                + ", ".join(modes))
+
+        print(f"Requesting {mode} suspend.", flush=True)
+        os.sync()
+        (POWER_DIR / "mem_sleep").write_text(mode + "\n")
+        (POWER_DIR / "state").write_text("mem\n")
+        print("Suspend request returned.", flush=True)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Suspend the board using s2idle or deep sleep.")
+    parser.add_argument("command", choices=MODES,
+                        help="sleep: s2idle; deep-sleep: suspend-to-RAM")
+    args = parser.parse_args(argv)
+    if os.geteuid() != 0:
+        print("aico-power: run as root (for example, sudo aico-power sleep)",
+              file=sys.stderr)
+        return 1
+    try:
+        suspend(MODES[args.command])
+    except (OSError, RuntimeError) as error:
+        print(f"aico-power: {error}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

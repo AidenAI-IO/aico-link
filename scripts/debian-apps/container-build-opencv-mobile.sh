@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPO_ROOT=${AIDEN_REPO_ROOT:-${REPO_ROOT:-/work}}
+readonly REPO_ROOT=${AICO_REPO_ROOT:-${REPO_ROOT:-/work}}
 readonly OUTPUT_DIR=${DEBIAN_APPS_OUTPUT_DIR:-/out}
 readonly SOURCE_ARCHIVE=${OUTPUT_DIR}/cache/opencv-mobile-4.13.0.zip
 readonly SOURCE_DIR=${OUTPUT_DIR}/opencv-mobile-source

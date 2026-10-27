@@ -321,14 +321,14 @@
     {
       "id": "type_long_mixed_text",
       "category": "multi_step",
-      "description_for_judge": "Agent must locate a text input and type the literal string 'Aiden test benchmark-2026!' into it.",
+      "description_for_judge": "Agent must locate a text input and type the literal string 'Aico test benchmark-2026!' into it.",
       "setup": {
         "type": "agent_prompt",
         "prompt": "先打开一个简单的记事类应用（比如 Notepad Free），新建一个空白文档，停在一个空白输入框里，什么都先别输入。",
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "在当前输入框里输入：Aiden test benchmark-2026!",
+      "prompt": "在当前输入框里输入：Aico test benchmark-2026!",
       "rubric": [
         {
           "id": "input_focused",
@@ -336,7 +336,7 @@
         },
         {
           "id": "text_present",
-          "check": "Post-screenshot shows the literal text 'Aiden test benchmark-2026!' in the input."
+          "check": "Post-screenshot shows the literal text 'Aico test benchmark-2026!' in the input."
         },
         {
           "id": "no_extra_garbage",
@@ -356,7 +356,7 @@
       "description_for_judge": "Agent must clear the populated input field using any supported editing operation and leave the empty field visible.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "先打开一个简单的记事类应用，新建一条笔记，在输入框里输入 hello-aiden，保持文字可见。",
+        "prompt": "先打开一个简单的记事类应用，新建一条笔记，在输入框里输入 hello-aico，保持文字可见。",
         "timeout_sec": 120,
         "clear_history_after": true
       },
@@ -388,11 +388,11 @@
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "在第一个输入框输入 hello-aiden（输入前如果是中文输入法，先切到英文键盘），选中复制，再切到第二个输入框粘贴。",
+      "prompt": "在第一个输入框输入 hello-aico（输入前如果是中文输入法，先切到英文键盘），选中复制，再切到第二个输入框粘贴。",
       "rubric": [
         {
           "id": "first_input_typed",
-          "check": "Trace shows hello-aiden being typed into an input."
+          "check": "Trace shows hello-aico being typed into an input."
         },
         {
           "id": "copy_action",
@@ -404,7 +404,7 @@
         },
         {
           "id": "paste_visible",
-          "check": "Post-screenshot shows hello-aiden in the second input field."
+          "check": "Post-screenshot shows hello-aico in the second input field."
         }
       ],
       "hard_assertions": {

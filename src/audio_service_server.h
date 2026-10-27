@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-namespace aiden {
+namespace aico {
 
 // UDS RPC server for audio_service.
 // Dispatches JSON requests to AudioSessionManager and writes JSON responses.
@@ -15,7 +15,7 @@ public:
     AudioServiceServer(const char* socket_path, const char* volume_state_path);
     ~AudioServiceServer();
 
-    AidenServiceStatus start();
+    AicoServiceStatus start();
     void stop();
 
 private:
@@ -35,4 +35,4 @@ private:
     AudioSessionManager manager_;
 };
 
-}  // namespace aiden
+}  // namespace aico

@@ -19,7 +19,7 @@ OTA manifest schema version 2.
   artifacts, or a manually hosted HTTP(S) directory. Channel releases select a
   business package or complete signed OTA from source changes; see
   [Channel Releases](channel-release.md).
-- Update method: The device-side `/usr/lib/aiden/ota` fetches the manifest, verifies signatures, validates SHA256, writes to the inactive slot, switches `misc`, and reboots.
+- Update method: The device-side `/usr/lib/aico/ota` fetches the manifest, verifies signatures, validates SHA256, writes to the inactive slot, switches `misc`, and reboots.
 - Rollback method: Rockchip SPL A/B metadata controls boot tries; mark successful only after application health confirmation.
 
 ## Documentation Index
@@ -50,13 +50,13 @@ OTA manifest schema version 2.
 
 ```bash
 # View OTA status
-/usr/lib/aiden/ota status
+/usr/lib/aico/ota status
 
 # Check and perform OTA update immediately
-/usr/lib/aiden/ota update
+/usr/lib/aico/ota update
 
 # View A/B metadata
-/usr/lib/aiden/abctl read /dev/disk/by-partlabel/misc
+/usr/lib/aico/abctl read /dev/disk/by-partlabel/misc
 
 # View current slot and rootfs
 cat /proc/cmdline
@@ -68,7 +68,7 @@ findmnt /
 `ota check` only checks signed release metadata and prints `available`, `version`,
 `build_time` and `current_version` as JSON. It does not install firmware. Config
 Web uses this check before triggering firmware installation, followed by scoped
-`aiden-business` APT updates. See [APT updates](apt-repository.md).
+`aico-business` APT updates. See [APT updates](apt-repository.md).
 
 ## Related Source Code
 
@@ -77,8 +77,8 @@ Web uses this check before triggering firmware installation, followed by scoped
 | `src/agent/cmd/ota` | OTA CLI entry point, including manual update and health handling |
 | `src/agent/cmd/abctl` | A/B metadata diagnostic tool |
 | `src/agent/internal/ota` | OTA core logic for manifest, download, state machine, slot, health, etc. |
-| `overlay-debian/etc/systemd/system/aiden-slot-resolve.service` | Resolve the active A/B slot before local mounts |
-| `overlay-debian/etc/systemd/system/aiden-ota-health.service` | Process pending OTA health state at boot |
+| `overlay-debian/etc/systemd/system/aico-slot-resolve.service` | Resolve the active A/B slot before local mounts |
+| `overlay-debian/etc/systemd/system/aico-ota-health.service` | Process pending OTA health state at boot |
 | `scripts/generate_ota_manifest.sh` | Generate signed OTA manifest |
 | `scripts/generate_ota_device_config.sh` | Generate factory configuration from manifest |
 | `scripts/ota_partition_layout.sh` | Reads the Debian system OTA partition size and derives release capacity |

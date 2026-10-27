@@ -1,0 +1,10 @@
+[Unit]
+Description=Limit the persistent Aico log
+Requires=aico-userdata-migrate.service
+After=aico-userdata-migrate.service
+ConditionPathExists=/userdata/agent/log/agent.log
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-agent-log-retention
+UMask=0077

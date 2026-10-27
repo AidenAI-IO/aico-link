@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (

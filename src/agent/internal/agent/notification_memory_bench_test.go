@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 )
 
 func BenchmarkNotificationContextReadPending(b *testing.B) {

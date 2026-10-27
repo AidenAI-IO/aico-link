@@ -269,11 +269,11 @@ def make_plan(root, repo, channel, records, ref="HEAD", version=None, force_ota=
 def environment(plan):
     validate_record(plan)
     return {
-        "AIDEN_BUSINESS_VERSION": plan["version"], "AIDEN_BUSINESS_REVISION": "1",
-        "AIDEN_PLATFORM_CONTRACT": str(plan["platform"]["contract"]),
-        "AIDEN_PLATFORM_BASE": plan["platform"]["base_release"],
-        "AIDEN_RELEASE_CHANNEL": plan["channel"],
-        "AIDEN_SYSTEM_FINGERPRINT": plan["fingerprints"]["system"],
+        "AICO_BUSINESS_VERSION": plan["version"], "AICO_BUSINESS_REVISION": "1",
+        "AICO_PLATFORM_CONTRACT": str(plan["platform"]["contract"]),
+        "AICO_PLATFORM_BASE": plan["platform"]["base_release"],
+        "AICO_RELEASE_CHANNEL": plan["channel"],
+        "AICO_SYSTEM_FINGERPRINT": plan["fingerprints"]["system"],
         "OTA_REPO": plan["repo"], "OTA_CHANNEL": plan["channel"],
         "OTA_BUILD_VERSION": plan["tag"], "OTA_BUILD_TIME": plan["build_time"],
         "OTA_BASE_URL": f"https://github.com/{plan['repo']}/releases/download/{plan['tag']}",

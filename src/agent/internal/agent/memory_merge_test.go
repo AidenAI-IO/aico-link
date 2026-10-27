@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	modelpkg "aiden-agent/internal/agent/model"
+	modelpkg "aico-agent/internal/agent/model"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"

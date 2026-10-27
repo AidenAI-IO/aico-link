@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 
 	"github.com/tmc/langchaingo/llms"
 )

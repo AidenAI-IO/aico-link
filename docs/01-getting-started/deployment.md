@@ -37,7 +37,7 @@ sudo scripts/flash.sh flash \
 ```
 
 The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary; use
-the Linux tool from the repository `pico-sdk` submodule. On macOS, flash a
+the Linux tool from the vendored `pico-sdk/` directory. On macOS, flash a
 locally built image with:
 
 ```bash
@@ -46,12 +46,12 @@ locally built image with:
 
 The image installs these main runtime trees:
 ```text
-/usr/lib/aiden/                                  # Audited production applications
-/usr/lib/aiden/platform/lib/                                  # Vendor and application libraries
-/usr/lib/aiden/models/                                # VAD model and weights
-/usr/share/aiden/                          # Config Web, skills, audio, and EDID assets
-/usr/lib/aiden/                                # Debian rootfs service helpers
-/etc/systemd/system/aiden-*.service            # Product systemd units
+/usr/lib/aico/                                  # Audited production applications
+/usr/lib/aico/platform/lib/                                  # Vendor and application libraries
+/usr/lib/aico/models/                                # VAD model and weights
+/usr/share/aico/                          # Config Web, skills, audio, and EDID assets
+/usr/lib/aico/                                # Debian rootfs service helpers
+/etc/systemd/system/aico-*.service            # Product systemd units
 /userdata/agent/agent.toml                     # External build-time Agent configuration
 /userdata/debian/wifi/wpa_supplicant-wlan0.conf
 /userdata/debian/ota/config.json               # Debian OTA factory configuration
@@ -64,7 +64,7 @@ This applies after rebuilding and flashing the BSP boot images; an existing
 board keeps the device tree from its currently installed image.
 
 `overlay-debian/` owns the Debian platform additions. The rootfs stage installs
-`aiden-business`, BSP libraries and modules, and the OTA trust key. Business models
+`aico-business`, BSP libraries and modules, and the OTA trust key. Business models
 and notification sounds come from `assets/business/`. Both rootfs slots start with
 the same image; no OEM filesystem is produced.
 
@@ -80,9 +80,9 @@ Production binaries are under `output/debian-apps/apps/bin/`. For a temporary
 device-side test, stop the owning systemd unit before replacing its binary:
 
 ```bash
-ssh root@<device-ip> 'systemctl stop aiden-frame.service'
-scp output/debian-apps/apps/bin/frame_service root@<device-ip>:/usr/lib/aiden/frame_service
-ssh root@<device-ip> 'chmod 0755 /usr/lib/aiden/frame_service && systemctl start aiden-frame.service'
+ssh root@<device-ip> 'systemctl stop aico-frame.service'
+scp output/debian-apps/apps/bin/frame_service root@<device-ip>:/usr/lib/aico/frame_service
+ssh root@<device-ip> 'chmod 0755 /usr/lib/aico/frame_service && systemctl start aico-frame.service'
 ```
 
 Use the same pattern for `audio_service`, `ble_service`, or `agent`. The Agent
@@ -102,34 +102,37 @@ must move together.
 
 ## Service Relationships
 
-`aiden.target` groups the product services. Important ordering is expressed by
+`aico.target` groups the product services. Important ordering is expressed by
 systemd dependencies rather than filename order:
 
 1. Slot resolution and rootfs growth expose the active rootfs, userdata, and OTA partitions.
 2. Userdata migration, machine identity, platform library registration, and strict environment generation complete.
 3. Media, Wi-Fi, Bluetooth, USB gadget, DHCP, and time services prepare hardware and networking.
 4. Frame, audio, BLE, Agent, Config Web, adb host, and WLAN recovery services start independently.
+   The MCU service owns `/dev/ttyS5`, exposes hardware APIs and wake long polling, and coordinates MCU-requested Linux poweroff.
 5. The OTA health aggregator checks required local services before committing a pending slot.
 
 Inspect the dependency graph with:
 
 ```bash
-systemctl list-dependencies aiden.target
+systemctl list-dependencies aico.target
 systemctl --failed
 ```
 
 ## Common Service Commands
 
 ```bash
-systemctl status aiden-frame.service --no-pager
-systemctl restart aiden-frame.service
-systemctl status aiden-audio.service --no-pager
-systemctl restart aiden-audio.service
-systemctl status aiden-ble.service --no-pager
-systemctl status aiden-agent.service --no-pager
-systemctl restart aiden-agent.service
-systemctl restart aiden-config-web.service
-systemctl status aiden-usb-gadget.service --no-pager
+systemctl status aico-frame.service --no-pager
+systemctl restart aico-frame.service
+systemctl status aico-audio.service --no-pager
+systemctl restart aico-audio.service
+systemctl status aico-ble.service --no-pager
+systemctl status aico-agent.service --no-pager
+systemctl restart aico-agent.service
+systemctl restart aico-config-web.service
+systemctl status aico-usb-gadget.service --no-pager
+systemctl status aico-mcu-event.service --no-pager
+sudo journalctl -u aico-mcu-event.service -f
 ```
 
 ## SSH Sessions and Shutdown Notifications
@@ -144,12 +147,12 @@ before testing. No SSH service restart is needed.
 Session registration alone does not restore shutdown broadcasts on this board.
 Debian armhf systemd 257 is built with `-UTMP`, and OpenSSH opens its PAM session
 before allocating a PTY. The resulting logind session initially has no `TTY`.
-`/etc/ssh/sshrc` runs `aiden-ssh-session-tty` after allocation to register that
+`/etc/ssh/sshrc` runs `aico-ssh-session-tty` after allocation to register that
 terminal through logind's `SetTTY` API. It runs as the login user, briefly takes
 session control without forcing out another controller, then exits. No daemon
 or additional Python package is needed. Connections without a PTY are skipped;
 registration failures do not prevent login. The hook preserves X11 cookie setup.
-Users with a custom `~/.ssh/rc` must invoke `/usr/lib/aiden/aiden-ssh-session-tty`
+Users with a custom `~/.ssh/rc` must invoke `/usr/lib/aico/aico-ssh-session-tty`
 there, because OpenSSH uses the user hook instead of the system hook.
 
 In a fresh interactive SSH login, verify:
@@ -178,13 +181,13 @@ is left enabled (about 3 MB on the tested board).
 
 | File | Description |
 | --- | --- |
-| `/etc/aiden_boot.conf` | Product feature gates loaded by systemd units |
-| `/etc/aiden_frame_service.conf` | Frame service launch and capture settings |
-| `/etc/aiden_audio_service.conf` | Audio service socket and volume-state settings |
-| `/etc/aiden_ble_service.conf` | BLE socket, name, event capacity, and pairing window |
+| `/etc/aico_boot.conf` | Product feature gates loaded by systemd units |
+| `/etc/aico_frame_service.conf` | Frame service launch and capture settings |
+| `/etc/aico_audio_service.conf` | Audio service socket and volume-state settings |
+| `/etc/aico_ble_service.conf` | BLE socket, name, event capacity, and pairing window |
 | `/userdata/agent/agent.toml` | Agent runtime configuration |
 | `/userdata/system/env` | Persistent device environment source |
-| `/run/aiden/system.env` | Validated, generated environment consumed by services |
+| `/run/aico/system.env` | Validated, generated environment consumed by services |
 | `/userdata/debian/wifi/wpa_supplicant-wlan0.conf` | Wi-Fi configuration managed by Config Web |
 | `/userdata/system/wifi-proxies.json` | Per-SSID proxy mode and optional upstream URL |
 | `/userdata/debian/ota/config.json` | Debian OTA repository and factory baseline |
@@ -202,18 +205,18 @@ is left enabled (about 3 MB on the tested board).
 | Config Web OTA update | `/userdata/ota/config_web_ota_update.log` |
 | Agent | `/userdata/agent/log/agent.log` |
 | TTYD terminal | `/var/log/ttyd/ttyd.log` |
-| Bluetooth attach | `/var/log/aiden-hciattach.log` |
+| Bluetooth attach | `/var/log/aico-hciattach.log` |
 | bluetoothd | `/var/log/bluetoothd/bluetoothd.log` |
 | Wi-Fi Proxy | `/var/log/wifi_proxy/wifi_proxy.log` |
 | Wi-Fi driver | `/var/log/wifi_driver/wifi_driver.log` |
 | wpa_supplicant (wlan0) | `/var/log/wpa_supplicant/wlan0.log` |
 | WLAN guard | `/var/log/wlan_guard/wlan_guard.log` |
-| Boot timeline | `/var/log/aiden_boot_timeline.log` |
+| Boot timeline | `/var/log/aico_boot_timeline.log` |
 
 The Config Web **Export logs** action (`GET /api/logs/support`) packages the
-latest diagnostic data into `aiden-logs.tar.gz`. In addition to the Agent,
+latest diagnostic data into `aico-logs.tar.gz`. In addition to the Agent,
 Langfuse episode, and latest LLM HTTP logs, it includes the service logs above,
-the Bluetooth helper logs (`/var/log/aiden-hciattach.log` and
+the Bluetooth helper logs (`/var/log/aico-hciattach.log` and
 `/var/log/bluetoothd/bluetoothd.log`), OTA recovery/TTYD/boot-timeline logs,
 and the current kernel ring buffer as `dmesg.log`. Service logs and dmesg are
 limited to their most recent 1 MiB (the existing LLM HTTP export retains up to
@@ -223,12 +226,20 @@ permission-restricted service log does not abort the export.
 Use `journalctl -u <unit>` for systemd lifecycle and helper failures. Service
 stdout/stderr that is intentionally persisted remains in the files above.
 
+The `aico-mcu-event.service` unit now runs `mcu_service`, the production UART
+peer on `/dev/ttyS5` (115200 8N1). It exposes battery/timer/LED operations and
+cursor-based wake long polling, and coordinates MCU-requested Linux poweroff.
+See [MCU Service](../03-services/mcu-service.md) for application contracts,
+shutdown timing constraints and post-flash validation commands. Stop the unit
+before using another UART owner. Journald is volatile on this board; export
+logs before reboot when the record needs to be retained.
+
 For a Wi-Fi startup failure, collect the following without rebooting if
 possible:
 
 ```bash
-systemctl status aiden-wifi-driver.service wpa_supplicant@wlan0.service \
-    systemd-networkd.service aiden-wlan-guard.service --no-pager
+systemctl status aico-wifi-driver.service wpa_supplicant@wlan0.service \
+    systemd-networkd.service aico-wlan-guard.service --no-pager
 cat /var/log/wifi_driver/wifi_driver.log
 cat /var/log/wpa_supplicant/wlan0.log
 cat /var/log/wlan_guard/wlan_guard.log
@@ -240,6 +251,6 @@ The Wi-Fi logs intentionally record configuration metadata and state changes,
 not the contents of `wpa_supplicant-wlan0.conf`, so the PSK is not copied into
 the diagnostic files.
 
-`frame_service` exclusively owns `/dev/video0`; stop `aiden-frame.service`
+`frame_service` exclusively owns `/dev/video0`; stop `aico-frame.service`
 before a direct camera diagnostic. The Agent screenshot tool depends on the
 frame service, while voice and volume tools depend on the audio service.

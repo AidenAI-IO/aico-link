@@ -148,8 +148,8 @@ bootstrap_rootfs() {
         "${ROOTFS_DIR}/etc/apt/preferences.d"
     install -m 0644 "${SCRIPT_DIR}/debian.sources" \
         "${ROOTFS_DIR}/etc/apt/sources.list.d/debian.sources"
-    install -m 0644 "${SCRIPT_DIR}/aiden-production.pref" \
-        "${ROOTFS_DIR}/etc/apt/preferences.d/aiden-production"
+    install -m 0644 "${SCRIPT_DIR}/aico-production.pref" \
+        "${ROOTFS_DIR}/etc/apt/preferences.d/aico-production"
     install -m 0644 "${SCRIPT_DIR}/packages.list" \
         "${ROOTFS_DIR}/tmp/debian-system-packages.list"
     cat >"${ROOTFS_DIR}/usr/sbin/policy-rc.d" <<'EOF'
@@ -165,14 +165,14 @@ EOF
     record_archive_state
     chroot "${ROOTFS_DIR}" /bin/sh -ec \
         'DEBIAN_FRONTEND=noninteractive SYSTEMD_OFFLINE=1 apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3 install -y --no-install-recommends $(grep -v "^[[:space:]]*#" /tmp/debian-system-packages.list | xargs)'
-    if [ -s /aiden-business.deb ]; then
+    if [ -s /aico-business.deb ]; then
         python3 "${REPO_ROOT}/scripts/release/contract.py" platform \
-            "${ROOTFS_DIR}/usr/lib/aiden/platform/contract.json"
-        install -m 0644 /aiden-business.deb "${ROOTFS_DIR}/tmp/aiden-business.deb"
-        chroot "${ROOTFS_DIR}" dpkg -i /tmp/aiden-business.deb
-        rm -f "${ROOTFS_DIR}/tmp/aiden-business.deb"
+            "${ROOTFS_DIR}/usr/lib/aico/platform/contract.json"
+        install -m 0644 /aico-business.deb "${ROOTFS_DIR}/tmp/aico-business.deb"
+        chroot "${ROOTFS_DIR}" dpkg -i /tmp/aico-business.deb
+        rm -f "${ROOTFS_DIR}/tmp/aico-business.deb"
     else
-        echo 'Missing /aiden-business.deb; business package is required' >&2
+        echo 'Missing /aico-business.deb; business package is required' >&2
         exit 1
     fi
     chroot "${ROOTFS_DIR}" /usr/bin/env \
@@ -182,16 +182,16 @@ EOF
         chroot "${ROOTFS_DIR}" getent group "${group}" >/dev/null \
             || chroot "${ROOTFS_DIR}" groupadd --system "${group}"
     done
-    chroot "${ROOTFS_DIR}" getent group aiden >/dev/null \
-        || chroot "${ROOTFS_DIR}" groupadd --gid 1000 aiden
-    chroot "${ROOTFS_DIR}" getent passwd aiden >/dev/null \
-        || chroot "${ROOTFS_DIR}" useradd --uid 1000 --gid aiden --create-home \
-            --shell /bin/bash --groups sudo,audio,video,dialout,plugdev,netdev aiden
+    chroot "${ROOTFS_DIR}" getent group aico >/dev/null \
+        || chroot "${ROOTFS_DIR}" groupadd --gid 1000 aico
+    chroot "${ROOTFS_DIR}" getent passwd aico >/dev/null \
+        || chroot "${ROOTFS_DIR}" useradd --uid 1000 --gid aico --create-home \
+            --shell /bin/bash --groups sudo,audio,video,dialout,plugdev,netdev aico
     # A fixed SHA-512 crypt hash keeps the factory rootfs reproducible. Root
     # remains key-only even though ordinary-user password SSH is enabled.
     chroot "${ROOTFS_DIR}" usermod -p \
-        '$6$aiden$mgLNEH35w8GS9UrV1Yi4BXg1g.CYyVIAnUAXIXmato37U4M5obgDhGY2YhpIwHd7sNCtBq/uB.5oEk8jHPNYZ.' \
-        aiden
+        '$6$aico$.IiSAzc6XNkYvV3CRDyP031IcVvRKR7F4Y8cItMftzo06ke.hz399b9z/3B442avhFdXyC29l8tdHUHroBOsM.' \
+        aico
 
     # Keep the root account enabled for public-key SSH while making password
     # verification impossible. sshd separately prohibits root passwords.
@@ -218,19 +218,19 @@ validate_platform_inputs() {
 }
 
 stage_platform() {
-    local platform=${ROOTFS_DIR}/usr/lib/aiden/platform
+    local platform=${ROOTFS_DIR}/usr/lib/aico/platform
     python3 "${REPO_ROOT}/scripts/release/contract.py" platform "${platform}/contract.json"
     install -d -m 0755 "${platform}/lib" "${platform}/modules" \
         "${ROOTFS_DIR}/usr/share/keyrings"
     rsync -aH --chown=0:0 /apps/lib/ "${platform}/lib/"
     rsync -aH --chown=0:0 \
         "${SDK_DIR}/output/out/sysdrv_out/kernel_drv_ko/" "${platform}/modules/"
-    install -m 0644 "${OTA_PUBLIC_KEY}" "${ROOTFS_DIR}/usr/share/keyrings/aiden-ota.pem"
+    install -m 0644 "${OTA_PUBLIC_KEY}" "${ROOTFS_DIR}/usr/share/keyrings/aico-ota.pem"
     # Local/unmanaged images have no release channel and cannot select an APT suite.
-    if [ -n "${AIDEN_RELEASE_CHANNEL:-}" ]; then
-        python3 "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-apt-source" \
+    if [ -n "${AICO_RELEASE_CHANNEL:-}" ]; then
+        python3 "${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-apt-source" \
             --root "${ROOTFS_DIR}" \
-            --public-key "${REPO_ROOT}/overlay-debian/usr/share/keyrings/aiden-archive-keyring.asc"
+            --public-key "${REPO_ROOT}/overlay-debian/usr/share/keyrings/aico-archive-keyring.asc"
     fi
     find "${platform}" -type d -exec chmod 0755 {} +
     find "${platform}" -type f -exec chmod 0644 {} +
@@ -245,8 +245,8 @@ stage_platform() {
     fi
     (
         cd "${ROOTFS_DIR}"
-        find usr/lib/aiden/platform usr/share/aiden/edid usr/share/aiden/audio/config_aivqe.json \
-            usr/share/keyrings/aiden-ota.pem -type f -print0 \
+        find usr/lib/aico/platform usr/share/aico/edid usr/share/aico/audio/config_aivqe.json \
+            usr/share/keyrings/aico-ota.pem -type f -print0 \
             | LC_ALL=C sort -z | xargs -0 sha256sum
     ) >"${OUTPUT_DIR}/platform-files.sha256"
     (
@@ -285,11 +285,11 @@ configure_rootfs() {
     install -d -m 0755 \
         "${ROOTFS_DIR}/userdata" \
         "${ROOTFS_DIR}/userdata/ota" \
-        "${ROOTFS_DIR}/var/lib/aiden"
-    printf 'aiden\n' >"${ROOTFS_DIR}/etc/hostname"
+        "${ROOTFS_DIR}/var/lib/aico"
+    printf 'aico\n' >"${ROOTFS_DIR}/etc/hostname"
     cat >"${ROOTFS_DIR}/etc/hosts" <<'EOF'
 127.0.0.1 localhost
-127.0.1.1 aiden
+127.0.1.1 aico
 ::1 localhost ip6-localhost ip6-loopback
 EOF
     ln -sfn /run/systemd/resolve/stub-resolv.conf "${ROOTFS_DIR}/etc/resolv.conf"
@@ -303,15 +303,15 @@ EOF
     systemctl --root="${ROOTFS_DIR}" enable \
         systemd-networkd.service systemd-resolved.service systemd-timesyncd.service \
         wpa_supplicant@wlan0.service ssh.service serial-getty@ttyFIQ0.service \
-        aiden-slot-resolve.service aiden-rootfs-grow.service \
+        aico-slot-resolve.service aico-rootfs-grow.service \
         userdata.mount userdata-ota.mount \
-        aiden-userdata-migrate.service aiden-machine-id.service \
-        aiden-root-home.service aiden-user-home.service \
-        aiden-ssh-identity.service aiden-platform-ldconfig.service \
-        aiden-environment.service aiden-zram.service aiden-swap.service \
-        aiden-media-modules.service aiden-wifi-driver.service \
-        aiden-bluetooth-state.service aiden-bluetooth-attach.service \
-        bluetooth.service aiden-rtc.service aiden-boot-timeline.service aiden.target
+        aico-userdata-migrate.service aico-machine-id.service \
+        aico-root-home.service aico-user-home.service \
+        aico-ssh-identity.service aico-platform-ldconfig.service \
+        aico-environment.service aico-zram.service aico-swap.service \
+        aico-media-modules.service aico-wifi-driver.service \
+        aico-bluetooth-state.service aico-bluetooth-attach.service \
+        bluetooth.service aico-rtc.service aico-boot-timeline.service aico.target
     local unit
     for unit in \
         dnsmasq.service wpa_supplicant.service \

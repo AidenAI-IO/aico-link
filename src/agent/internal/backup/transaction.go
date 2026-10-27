@@ -25,7 +25,7 @@ import (
 
 const (
 	TransactionFormatVersion = 1
-	TransactionDirName       = ".aiden-restore"
+	TransactionDirName       = ".aico-restore"
 	TransactionFileName      = "transaction.json"
 
 	// Transaction states persisted on disk. Only committing and rolling_back
@@ -909,7 +909,7 @@ func missingLayer(roots Roots, txn Transaction, current string, seen map[string]
 			root = roots.SD
 		}
 		// No copy of this job on the other layer: either that layer already
-		// finished and cleaned itself (its .aiden-restore directory exists),
+		// finished and cleaned itself (its .aico-restore directory exists),
 		// or the filesystem is not mounted at all.
 		if _, err := os.Stat(filepath.Join(root, TransactionDirName)); err != nil {
 			return required

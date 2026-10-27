@@ -38,8 +38,7 @@ load boundary; Config Web writes only the grouped paths below.
 3. **Conversation Settings**:
    - Agent Prompt: `prompt`
    - Max Iterations: `max_iterations`
-   - Context Management: `context_prune_threshold`, `context_compaction_threshold`
-   - Screenshot Pruning: `screenshot_keep_n`, `screenshot_prune_interval`
+   - Context Management: `context_prune_threshold`, `context_prune_state_limit`, `context_compaction_threshold`
    - Tool Settings: `[conversation_settings.termination_policy]`, web search `[conversation_settings.search]`
 
 4. **Model Settings**:
@@ -212,7 +211,7 @@ is created on demand, so a directory holding only `agent.toml` is a valid start.
 ## Config Web: the device config page
 
 Config Web is the browser client served by the `config-web` subcommand of the
-Go Agent binary (`/usr/lib/aiden/agent`). It maintains the device Agent
+Go Agent binary (`/usr/lib/aico/agent`). It maintains the device Agent
 configuration, system environment variables, and Wi-Fi configuration, and is
 the primary way to edit the fields documented on this page without manually
 editing `agent.toml`. Its device operations use the
@@ -266,9 +265,8 @@ timezone = "UTC"
 [conversation_settings.agent]
 max_iterations = -1
 context_prune_threshold = 0.5
+context_prune_state_limit = 6
 context_compaction_threshold = 0.8
-screenshot_keep_n = 3
-screenshot_prune_interval = 2
 
 # input_mode is intentionally omitted: this example configures no STT/TTS
 # provider, and stt and realtime each require their own. An unset mode is
@@ -292,7 +290,7 @@ max_response_tokens = 8192
 # For reasoning models, request the encrypted reasoning item needed for exact
 # stateless replay when the provider supports it.
 # responses_include = ["reasoning.encrypted_content"]
-# responses_stateful is available only with OpenAI and Volcengine Ark. Aiden
+# responses_stateful is available only with OpenAI and Volcengine Ark. Aico
 # still persists the local transcript for audit, compaction, and recovery.
 # OpenAI-only provider compaction:
 # responses_context_management = "compaction" # empty/disabled or compaction
@@ -381,8 +379,8 @@ input_mode = "stt"
 
 [voice_settings.classic.runtime]
 vad_backend = "rknn"
-vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-vad_helper_path = "/usr/lib/aiden/rknn_vad"
+vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 silence_ms = 550
 min_speech_ms = 300
@@ -458,13 +456,13 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | `mcp_shell_enabled`         | `false`                     | When on, the MCP allowlist includes the `shell` tool. TOML-only in this release (not on the Config Web Advanced page).                                                                                      |
 | `mcp_config_web_base_url`   | `http://127.0.0.1`          | Loopback HTTP base URL used by MCP `device_status` / `support_bundle`. Non-loopback values are rejected.                                                                                                   |
 | `context_prune_threshold`   | `0.5`                       | Fraction of the usable model input budget that triggers deterministic cleanup of stale state snapshots and older tool exchanges, including while one long-running tool loop is still executing. It cleans down to 6/7 of the trigger (so the default cleans from 50% to ~43%). Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.5`. The effective value is capped at `context_compaction_threshold`, so this cheap deterministic pass always gets a chance to free tokens before the LLM summary runs. A value of `1` or greater is rejected, as are `nan` and `inf`; a legacy absolute token count (for example `12000`) is detected on load, logged, and replaced by the default. |
+| `context_prune_state_limit` | `6`                       | Runs the stale-state cleanup once more `<state>` messages than this carry a screenshot, keeping the latest state of the current turn; does not compact tool results. Must be `0` or greater; `0` uses `6` |
 | `context_compaction_threshold` | `0.8`                    | Fraction of the usable model input budget at which the conversation is summarized into a compaction message. Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.8`. Values of `1` or greater, `nan`, and `inf` are rejected. Compaction itself has no token target: the transcript is reduced structurally by retaining head and tail messages and replacing the middle with one LLM summary, so the post-compaction size follows from the summary rather than from a budget. |
-| `screenshot_keep_n`         | `3`                         | Number of most recent screenshots to keep when pruning screenshots from the LLM context; unset or `0` uses the default                                                                                    |
-| `screenshot_prune_interval` | `2`                         | Once screenshots exceed `screenshot_keep_n + screenshot_prune_interval`, replace old screenshots with placeholders in batches; unset or `0` uses the default                                              |
 | `input_mode`                | unset / `stt` / `realtime`   | Voice mode: unset leaves voice unconfigured (HTTP/Web UI only), `stt` runs the STT/TTS voice loop, `realtime` uses a realtime voice model. `stt` requires `[voice_settings.classic.stt]` and `[...tts]`; `realtime` requires a realtime credential |
 
 Before each model request, the Agent prunes stale state and older completed
-tool-call/result pairs, normally protecting the latest three exchanges. It then
+tool-call/result pairs, normally protecting the latest three exchanges.
+It then
 applies threshold-based conversation summarization and rechecks any rewritten
 context. The hard input-budget check includes tool schemas and can prune the
 protected exchanges if necessary. If deterministic pruning is insufficient, it
@@ -478,12 +476,21 @@ accepted revision; the full history remains in the parent transcript.
 Successful revisions preserve the original transcript on disk and reset provider
 response anchors.
 
+`context_prune_state_limit` runs the same stale-state cleanup once the context
+holds more `<state>` messages with a screenshot than the limit (default 6),
+even when token usage is far below `context_prune_threshold`. It drops the
+older states, text and screenshot together, and keeps the latest state of the
+current turn; it does not compact tool results, which stays the job of
+`context_prune_threshold`. Screenshots are cheap in tokens but each carries
+50-100 KB of image data in every request, so on a long conversation the request
+outgrows a small device's memory long before the token trigger fires.
+
 ### Quick Capture
 
 | Field                           | Default                                                     | Description                                                                                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `quick_capture.enabled`         | `true`                                                       | Enables GPIO-triggered Screen Memory capture; legacy GPIO32/GPIO33 wakeup remains independent                                                                                           |
-| `quick_capture.gpio_pin`        | `3`                                                         | Falling-edge GPIO for Quick Capture; supported values are `3` (physical pin 38) and `0` (disabled), while GPIO32/GPIO33 remain reserved for legacy wakeup                          |
+| `quick_capture.enabled`         | `true`                                                       | Enables GPIO-triggered Screen Memory capture, independent of MCU voice wakeup events                                                                                           |
+| `quick_capture.gpio_pin`        | `3`                                                         | Falling-edge GPIO for Quick Capture; supported values are `3` (physical pin 38) and `0` (disabled). GPIO32/GPIO33 control HDMI power/reset and are unavailable for capture                          |
 | `quick_capture.screen_memory_ttl` | `90d`                                                    | Retention period for captured Screen Memory entries, or `forever`                                                                                                                       |
 
 ### Voice & VAD
@@ -495,12 +502,12 @@ button in both modes.
 | Field                           | Default                                                     | Description                                                                                                                                                                            |
 | ------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `vad_backend`                   | `rknn`                                                      | VAD backend: `rknn` uses NPU encoder + CPU LSTM/decoder, `cpu` uses a pure-CPU helper                                                                                                  |
-| `vad_model_path`                | `/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` | Silero VAD RKNN encoder model path; not used when `vad_backend="cpu"`                                                                                                                  |
-| `vad_helper_path`               | `/usr/lib/aiden/rknn_vad`                                     | VAD helper executable path; the CPU backend defaults to `/usr/lib/aiden/cpu_vad`                                                                                                         |
+| `vad_model_path`                | `/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` | Silero VAD RKNN encoder model path; not used when `vad_backend="cpu"`                                                                                                                  |
+| `vad_helper_path`               | `/usr/lib/aico/rknn_vad`                                     | VAD helper executable path; the CPU backend defaults to `/usr/lib/aico/cpu_vad`                                                                                                         |
 | `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
 | `silence_ms`                    | `550`                                                       | How many milliseconds of silence before an utterance is considered finished                                                                                                            |
 | `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
-| `tap_wakeup_enabled`            | `true`                                                      | When on, the hardware tap button can wake Aiden in Classic STT and Realtime. Turning it off disables only that button path—not all wakeup. Realtime `/api/chat` can still activate a session; Classic STT normally needs the button |
+| `tap_wakeup_enabled`            | `true`                                                      | When on, the MCU touch-key event can wake Aico in Classic STT and Realtime. Turning it off disables only that button path—not ASR wakeup. Realtime `/api/chat` can still activate a session |
 | `voice_followup_enabled`        | `false`                                                     | Enable continuous follow-up after a single wakeup in wakeup mode; defaults to one wakeup per turn                                                                                      |
 | `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
 | `voice_first_turn_timeout_ms`   | `10000`                                                     | Window to wait for the first utterance after wakeup                                                                                                                                    |
@@ -613,8 +620,8 @@ built. When a section is named exactly like a provider type, the section wins.
 | `responses_context_edit_keep` | Ark recent tool-call count to retain after cleanup; `0` uses the recommended value `3`. |
 | `responses_context_edit_clear_thinking` | When true, adds Ark's `clear_thinking` edit and removes previous thinking turns. |
 | `responses_truncation` | OpenAI-compatible Responses truncation policy. Empty/`disabled` preserves the API default; `auto` lets OpenAI or OpenRouter discard the oldest input. This field is not sent to Ark or DeepSeek. |
-| `responses_include` | Optional array of provider-supported Responses include values. In stateless reasoning mode, use `reasoning.encrypted_content` when supported so Aiden can replay the complete opaque reasoning item. DeepSeek does not support `include`; its plain-text reasoning items are replayed directly. Aiden uses `previous_response_id` for provider-managed chaining and intentionally does not expose the separate `conversation` resource ID: the local session transcript remains authoritative and must not be shared across sessions accidentally. |
-| `temperature`             | Sampling temperature. When unset, the default is model-dependent. Kimi K3 uses its required value, Gemini 3 models use Google's documented default of `1.0`, and other non-Gemini providers fall back to `0.2`. Native Gemini models without a registered default omit `generation_config.temperature` so Google can choose the model default. An explicit value normally takes precedence and is forwarded to Gemini; Google warns that lowering Gemini 3 temperature from `1.0` may cause looping or degraded performance on complex reasoning and math. DeepSeek thinking mode does not use temperature, so Aiden omits it whenever `reasoning_effort` is not `none`. |
+| `responses_include` | Optional array of provider-supported Responses include values. In stateless reasoning mode, use `reasoning.encrypted_content` when supported so Aico can replay the complete opaque reasoning item. DeepSeek does not support `include`; its plain-text reasoning items are replayed directly. Aico uses `previous_response_id` for provider-managed chaining and intentionally does not expose the separate `conversation` resource ID: the local session transcript remains authoritative and must not be shared across sessions accidentally. |
+| `temperature`             | Sampling temperature. When unset, the default is model-dependent. Kimi K3 uses its required value, Gemini 3 models use Google's documented default of `1.0`, and other non-Gemini providers fall back to `0.2`. Native Gemini models without a registered default omit `generation_config.temperature` so Google can choose the model default. An explicit value normally takes precedence and is forwarded to Gemini; Google warns that lowering Gemini 3 temperature from `1.0` may cause looping or degraded performance on complex reasoning and math. DeepSeek thinking mode does not use temperature, so Aico omits it whenever `reasoning_effort` is not `none`. |
 | `reasoning_effort`        | Reasoning effort. Unset is auto. Native Anthropic maps supported effort values to adaptive thinking `output_config.effort` and preserves signed thinking blocks across tool-call turns. Gemini maps the shared model-specific effort values to native Interactions `generation_config.thinking_level`; Gemini 3.8/3.7 and Gemini 2.5 accept `low`, `medium`, or `high`. `minimal` is supported by OpenRouter, Volcengine Ark, and selected Gemini 3 models. `none` is supported by OpenRouter, OpenAI, Kimi, DeepSeek, Ollama, and the fake provider, but not by native Anthropic, Ark, or Gemini Interactions. DeepSeek defaults to `none` for faster device interactions; explicit `low`, `high`, or `max` enables thinking with `reasoning_content` replay. Other models may also pin a lighter default in `model_specs.go`; an explicit value always wins. |
 | `reasoning_budget_tokens` | Optional exact reasoning-token budget for models that expose a numeric budget. `0` uses the model default or effort preset. It is currently translated only to Anthropic's native `thinking.budget_tokens` field. |
 | `max_response_tokens`     | Maximum output tokens passed to the model on request                                                                                                                                                                                                 |
@@ -629,7 +636,7 @@ Moonshot's official endpoint implements OpenAI-compatible Chat Completions, not
 the Responses API. Keep `api_mode` unset (or set it to `chat_completions`). A
 third-party protocol-conversion gateway can instead be configured as a custom
 `openai` provider if it genuinely exposes `/responses`. Kimi thinking models
-require preserved thinking across multi-turn and tool-call requests, so Aiden
+require preserved thinking across multi-turn and tool-call requests, so Aico
 replays each returned assistant `reasoning_content` field through the shared
 compatible transport. See the official [Kimi Thinking Models](https://platform.kimi.ai/docs/guide/use-thinking-models)
 guide.
@@ -664,7 +671,7 @@ api_key = "ARK_API_KEY"
 Ark supports `responses_stateful` with `store=true` and
 `previous_response_id`; `caching` is a separate optional cost/latency feature
 and is not required for stored response chaining. Ark's request schema is not
-identical to OpenAI's: Aiden keeps supported `instructions`, `include`, and
+identical to OpenAI's: Aico keeps supported `instructions`, `include`, and
 `reasoning` fields, but does not send OpenAI's compaction array or `truncation`
 field to Ark. Set `responses_context_management = "ark_context_edit"` to send
 Ark's object-shaped `context_management` edit schema. The default edit clears
@@ -707,22 +714,22 @@ API key and base URL do not carry over to it.
 
 ### DeepSeek
 
-Use the `deepseek` provider for DeepSeek's OpenAI-compatible endpoint. Aiden
+Use the `deepseek` provider for DeepSeek's OpenAI-compatible endpoint. Aico
 presets `deepseek-flash`, which supports vision and tool calls with a 1M context
 window. The `deepseek-v4-pro` preset is commented out because it does not support
 vision; it can be restored once vision support is verified.
-DeepSeek defaults to non-thinking mode in Aiden with `reasoning_effort = "none"`.
+DeepSeek defaults to non-thinking mode in Aico with `reasoning_effort = "none"`.
 Set `reasoning_effort` to `low`, `high`, or `max` to enable thinking. In Chat
-Completions mode, Aiden sends DeepSeek's `thinking` toggle and replays assistant
+Completions mode, Aico sends DeepSeek's `thinking` toggle and replays assistant
 `reasoning_content` from the transcript on subsequent tool-call requests. In
 Responses mode, it sends `reasoning.effort` and replays the returned reasoning,
-message, and executed function-call items through Aiden's local context. Since
-DeepSeek does not apply temperature in thinking mode, Aiden omits the field for
+message, and executed function-call items through Aico's local context. Since
+DeepSeek does not apply temperature in thinking mode, Aico omits the field for
 both transports while preserving it in non-thinking mode.
 
 Set `api_mode = "responses"` to use DeepSeek's stateless `/responses` endpoint.
 DeepSeek does not support `responses_stateful`, `store`, or
-`previous_response_id`; Aiden therefore keeps and resubmits the full local
+`previous_response_id`; Aico therefore keeps and resubmits the full local
 transcript. The provider uses its built-in endpoint, so `base_url` is not
 configurable.
 
@@ -926,7 +933,7 @@ provider = "speko-main"
 | `realtime_protocol` | OpenAI | OpenAI Realtime wire schema: empty or `ga` (default) uses the current GA session payload; `legacy` (alias `beta`) uses the older `modalities`, `input_audio_format`, and `output_audio_format` fields required by some compatible gateways. Set this explicitly; the endpoint URL is never used to infer the protocol. |
 | `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`false` (default) disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model; `true` enables the backend agent and exposes its communication tools (`*_agent_task`). This setting does not control provider reasoning, which remains a provider/model capability. |
 | `thinking_level` | Gemini | Thinking depth for Live Extended Thinking models: `LOW` (default), `MINIMAL`, `MEDIUM`, or `HIGH`. Only applies to models that support thinking; other models ignore it. |
-| `upstream_provider` | Speko | Required S2S upstream: `google` (or `gemini`) or `xai`, paired with `model`. Automatic routing is disabled because it may select an unsupported WebRTC route. OpenAI is not a supported Speko route in Aiden; use the top-level `openai` provider instead. |
+| `upstream_provider` | Speko | Required S2S upstream: `google` (or `gemini`) or `xai`, paired with `model`. Automatic routing is disabled because it may select an unsupported WebRTC route. OpenAI is not a supported Speko route in Aico; use the top-level `openai` provider instead. |
 | `agent_id` / `base_url` | Speko | Optional Speko agent ID and API base URL override. |
 
 ## `[advanced_settings.hardware.frame_service]`
@@ -1258,12 +1265,12 @@ upload_screenshots = true
 upload_timeout_sec = 30
 max_retry = 2
 environment = "default"
-tags = ["aiden-hardware"]
+tags = ["aico-hardware"]
 ```
 
 ## System environment variables
 
-The Agent no longer reads `[proxy]` from `agent.toml`. Values in `/userdata/system/env` define the system/default upstream proxy. Outbound HTTP/WebSocket requests, shell tool subprocesses, OTA commands launched through `aiden-env-run`, and SSH login shells use the fixed local address `127.0.0.1:18080`; it selects the system upstream, direct mode, or a custom upstream from the active Wi-Fi's saved policy. The listener accepts both HTTP proxy and SOCKS5 protocols. Its generated environment keeps the local URL scheme aligned with the selected upstream, so a `socks5://` Wi-Fi proxy remains SOCKS5 on both sides of the local endpoint instead of being wrapped in HTTP CONNECT. The local URL uses `socks5h://` so hostname resolution also travels through SOCKS5 rather than depending on the board's DNS. The file is loaded with shell syntax, for example:
+The Agent no longer reads `[proxy]` from `agent.toml`. Values in `/userdata/system/env` define the system/default upstream proxy. Outbound HTTP/WebSocket requests, shell tool subprocesses, OTA commands launched through `aico-env-run`, and SSH login shells use the fixed local address `127.0.0.1:18080`; it selects the system upstream, direct mode, or a custom upstream from the active Wi-Fi's saved policy. The listener accepts both HTTP proxy and SOCKS5 protocols. Its generated environment keeps the local URL scheme aligned with the selected upstream, so a `socks5://` Wi-Fi proxy remains SOCKS5 on both sides of the local endpoint instead of being wrapped in HTTP CONNECT. The local URL uses `socks5h://` so hostname resolution also travels through SOCKS5 rather than depending on the board's DNS. The file is loaded with shell syntax, for example:
 
 ```sh
 HTTP_PROXY=http://127.0.0.1:7890
@@ -1290,13 +1297,13 @@ connects directly.
 
 Per-Wi-Fi policies are configured in the Config Web connection dialog and
 stored in `/userdata/system/wifi-proxies.json` with mode `0600`. Setting
-`AIDEN_WIFI_PROXY_ENABLED=0` in the system environment is an emergency bypass
+`AICO_WIFI_PROXY_ENABLED=0` in the system environment is an emergency bypass
 that restores direct use of the raw environment proxy variables after the
 affected services or shell are restarted.
 
 The selected local URLs are written to `/run/wifi_proxy/proxy-env`. New managed
 commands and login shells read that file. If a Wi-Fi change switches between
-HTTP and SOCKS5, `aiden-wifi-proxy.service` restarts the long-running Agent so its HTTP and
+HTTP and SOCKS5, `aico-wifi-proxy.service` restarts the long-running Agent so its HTTP and
 WebSocket clients also pick up the new URL scheme; changing only the upstream
 host or port does not require an Agent restart.
 

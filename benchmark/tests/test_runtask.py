@@ -34,7 +34,7 @@ def test_phone_control_successful_action_count_reaches_visual_judge(
     history = []
     for index, tool_name in enumerate(tool_names):
         gesture = "drag_start" if index == 0 else "drag_release"
-        tool_input = {"text": "Aiden test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
+        tool_input = {"text": "Aico test benchmark-2026!"} if tool_name == "enter_text" else {"type": gesture}
         history.extend([
             {"type": "tool_call", "tool_name": tool_name, "tool_input": json.dumps(tool_input)},
             {"type": "tool_result", "tool_name": tool_name, "content": '{"ok":true}'},

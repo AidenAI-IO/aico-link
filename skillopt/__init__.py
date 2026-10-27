@@ -1,4 +1,4 @@
-"""SkillOpt: text-space skill optimizer for Aiden.
+"""SkillOpt: text-space skill optimizer for Aico.
 
 Internal developer tool. Runs against a real device through the existing
 benchmark/runner HTTP client, reflects on rollouts using a separate

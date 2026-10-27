@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -12,12 +12,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    aiden::AudioConfig config;
+    aico::AudioConfig config;
     config.sample_rate = 16000;
     config.channels = 1;
     config.bit_width = 16;
 
-    aiden::AudioPlayer player;
+    aico::AudioPlayer player;
 
     printf("Initializing audio player...\n");
     if (!player.init(config)) {

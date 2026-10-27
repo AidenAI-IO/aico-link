@@ -267,7 +267,7 @@ func TestServerDiscoverShape(t *testing.T) {
 	}
 	meta, _ := envelope.Result["_meta"].(map[string]any)
 	info, _ := meta["io.modelcontextprotocol/serverInfo"].(map[string]any)
-	if info["name"] != "aiden-agent" {
+	if info["name"] != "aico-agent" {
 		t.Fatalf("serverInfo=%v", info)
 	}
 	if _, ok := envelope.Result["serverInfo"]; ok {
@@ -316,7 +316,7 @@ func TestSupportBundleEmbeddedResource(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `"type":"resource"`) || !strings.Contains(body, `"blob"`) {
+	if !strings.Contains(body, `"type":"resource"`) || !strings.Contains(body, `"blob"`) || !strings.Contains(body, `"uri":"aico://support-bundle"`) {
 		t.Fatalf("want embedded resource blob: %s", body)
 	}
 	if strings.Contains(body, "encoding=base64\n") {

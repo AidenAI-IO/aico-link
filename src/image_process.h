@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <vector>
 
-namespace aiden_image {
+namespace aico_image {
 
 /** JPEG (memory, via stb). */
 constexpr int kFormatJpeg = 0;
@@ -50,4 +50,4 @@ int encode_to_jpg_fit(const cv::Mat& image_rgb,
                       int quality_start = 88,
                       int quality_min = 18);
 
-}  // namespace aiden_image
+}  // namespace aico_image

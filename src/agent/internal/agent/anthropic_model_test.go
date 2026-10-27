@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/logging"
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
 )

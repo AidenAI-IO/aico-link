@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "camera_frame_utils.h"
 #include "frame_processing.h"
 #include "frame_service_client.h"
@@ -49,7 +49,7 @@ struct CaptureRequest {
         : device_name("/dev/video0"),
           pixel_format("uyvy"),
           subdev_device("/dev/v4l-subdev2") {
-        aiden_demo::set_default_camera_config(&config);
+        aico_demo::set_default_camera_config(&config);
         // The legacy direct-capture HTTP path remains explicitly UYVY. The
         // frame_service path is the C1 NV12 owner and is configured separately.
         sync_strings();
@@ -62,7 +62,7 @@ struct CaptureRequest {
         config.edid_path = edid_path.empty() ? nullptr : edid_path.c_str();
     }
 
-    aiden::CameraConfig config;
+    aico::CameraConfig config;
     std::string device_name;
     std::string pixel_format;
     std::string subdev_device;
@@ -642,24 +642,24 @@ ApiResponse handle_capture_request(const std::string& body) {
         socket_path = "/tmp/frame_service.sock";
     }
 
-    aiden::FrameServiceClient client(socket_path);
+    aico::FrameServiceClient client(socket_path);
     uint64_t since_seq = 0;
     if (request.config.force_trigger) {
-        aiden::HealthResult health;
-        if (client.health(&health) == aiden::FrameServiceStatus::OK) {
+        aico::HealthResult health;
+        if (client.health(&health) == aico::FrameServiceStatus::OK) {
             since_seq = health.latest_seq;
         }
-        aiden::FrameServiceStatus restart_status = client.restart();
-        if (restart_status != aiden::FrameServiceStatus::OK) {
+        aico::FrameServiceStatus restart_status = client.restart();
+        if (restart_status != aico::FrameServiceStatus::OK) {
             g_screenshot = ScreenshotData{};
             return make_json_error(500, std::string("frame service restart failed: ") +
-                                         aiden::frame_service_status_to_string(restart_status));
+                                         aico::frame_service_status_to_string(restart_status));
         }
     }
-    aiden::FrameResult frame;
+    aico::FrameResult frame;
     std::vector<uint8_t> rgb;
 
-    aiden::FrameServiceStatus status = aiden::FrameServiceStatus::INTERNAL_ERROR;
+    aico::FrameServiceStatus status = aico::FrameServiceStatus::INTERNAL_ERROR;
     if (request.config.force_trigger) {
         const uint64_t start_ms = []() -> uint64_t {
             struct timespec ts;
@@ -671,12 +671,12 @@ ApiResponse handle_capture_request(const std::string& body) {
             clock_gettime(CLOCK_MONOTONIC, &ts);
             uint64_t now_ms = static_cast<uint64_t>(ts.tv_sec) * 1000ULL + static_cast<uint64_t>(ts.tv_nsec) / 1000000ULL;
             if (now_ms - start_ms >= 5000) {
-                status = aiden::FrameServiceStatus::TIMEOUT;
+                status = aico::FrameServiceStatus::TIMEOUT;
                 break;
             }
             uint32_t remaining_ms = static_cast<uint32_t>(5000 - (now_ms - start_ms));
             status = client.latest_frame(since_seq, remaining_ms, &frame);
-            if (status != aiden::FrameServiceStatus::OK) {
+            if (status != aico::FrameServiceStatus::OK) {
                 break;
             }
             if (!frame.metadata.stale && frame.metadata.seq > since_seq) {
@@ -687,13 +687,13 @@ ApiResponse handle_capture_request(const std::string& body) {
     } else {
         status = client.latest_frame(0, 0, &frame);
     }
-    if (status != aiden::FrameServiceStatus::OK) {
+    if (status != aico::FrameServiceStatus::OK) {
         g_screenshot = ScreenshotData{};
         return make_json_error(500, std::string("frame service capture failed: ") +
-                                     aiden::frame_service_status_to_string(status));
+                                     aico::frame_service_status_to_string(status));
     }
 
-    if (!aiden::convert_frame_to_rgb(frame.metadata, frame.data, &rgb)) {
+    if (!aico::convert_frame_to_rgb(frame.metadata, frame.data, &rgb)) {
         g_screenshot = ScreenshotData{};
         return make_json_error(500, "unsupported pixel format or incomplete frame buffer");
     }
@@ -707,15 +707,15 @@ ApiResponse handle_capture_request(const std::string& body) {
 
     cv::Mat rgb_mat(h, w, CV_8UC3, rgb.data());
     cv::Mat processed;
-    const int crop_rc = aiden_image::crop_black_bars(rgb_mat, processed);
-    if (crop_rc != aiden_image::kSuccess) {
+    const int crop_rc = aico_image::crop_black_bars(rgb_mat, processed);
+    if (crop_rc != aico_image::kSuccess) {
         std::cerr << "Warning: crop_black_bars failed (" << crop_rc
                   << "); using uncropped frame" << std::endl;
         processed = rgb_mat;
     }
 
     std::vector<uint8_t> jpeg;
-    if (aiden_image::encode_to_jpg_fit(processed, jpeg) != aiden_image::kSuccess) {
+    if (aico_image::encode_to_jpg_fit(processed, jpeg) != aico_image::kSuccess) {
         g_screenshot = ScreenshotData{};
         return make_json_error(500, "jpeg encode failed");
     }
@@ -766,24 +766,24 @@ ApiResponse handle_wait_stable_request(const std::string& body) {
         socket_path = "/tmp/frame_service.sock";
     }
 
-    aiden::FrameServiceClient client(socket_path);
+    aico::FrameServiceClient client(socket_path);
 
     const uint64_t start_ms = now_ms();
     const uint64_t deadline_ms = start_ms + static_cast<uint64_t>(timeout_ms);
 
-    aiden::FrameResult prev_frame;
+    aico::FrameResult prev_frame;
     uint64_t prev_seq = 0;
     {
-        aiden::FrameServiceStatus s = client.latest_frame(0, 0, &prev_frame);
-        if (s != aiden::FrameServiceStatus::OK) {
+        aico::FrameServiceStatus s = client.latest_frame(0, 0, &prev_frame);
+        if (s != aico::FrameServiceStatus::OK) {
             return make_json_error(500, std::string("frame service error: ") +
-                                        aiden::frame_service_status_to_string(s));
+                                        aico::frame_service_status_to_string(s));
         }
         prev_seq = prev_frame.metadata.seq;
     }
 
     std::vector<uint8_t> prev_rgb;
-    if (!aiden::convert_frame_to_rgb(prev_frame.metadata, prev_frame.data, &prev_rgb)) {
+    if (!aico::convert_frame_to_rgb(prev_frame.metadata, prev_frame.data, &prev_rgb)) {
         return make_json_error(500, "unsupported pixel format");
     }
 
@@ -812,15 +812,15 @@ ApiResponse handle_wait_stable_request(const std::string& body) {
         uint32_t remaining = static_cast<uint32_t>(deadline_ms - cur_ms);
         uint32_t poll_ms = remaining < 200 ? remaining : 200;
 
-        aiden::FrameResult next_frame;
-        aiden::FrameServiceStatus s = client.latest_frame(prev_seq, poll_ms, &next_frame);
+        aico::FrameResult next_frame;
+        aico::FrameServiceStatus s = client.latest_frame(prev_seq, poll_ms, &next_frame);
 
-        if (s == aiden::FrameServiceStatus::TIMEOUT) {
+        if (s == aico::FrameServiceStatus::TIMEOUT) {
             continue;
         }
-        if (s != aiden::FrameServiceStatus::OK) {
+        if (s != aico::FrameServiceStatus::OK) {
             return make_json_error(500, std::string("frame service error: ") +
-                                        aiden::frame_service_status_to_string(s));
+                                        aico::frame_service_status_to_string(s));
         }
         if (next_frame.metadata.stale || next_frame.metadata.seq <= prev_seq) {
             usleep(50 * 1000);
@@ -828,7 +828,7 @@ ApiResponse handle_wait_stable_request(const std::string& body) {
         }
 
         std::vector<uint8_t> next_rgb;
-        if (!aiden::convert_frame_to_rgb(next_frame.metadata, next_frame.data, &next_rgb)) {
+        if (!aico::convert_frame_to_rgb(next_frame.metadata, next_frame.data, &next_rgb)) {
             prev_seq = next_frame.metadata.seq;
             stable_since_ms = now_ms();
             continue;

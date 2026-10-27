@@ -1,0 +1,233 @@
+#!/bin/sh
+
+AGENT_BIN=${AGENT_BIN:-${AICO_AGENT_BIN:-/usr/lib/aico/agent}}
+ENV_RUN_BIN=${ENV_RUN_BIN:-${AICO_ENV_RUN_BIN:-/usr/lib/aico/aico-managed-env-run}}
+LISTEN_ADDRESS=${LISTEN_ADDRESS:-${AICO_WIFI_PROXY_ADDRESS:-127.0.0.1:18080}}
+PROXY_CONFIG=${PROXY_CONFIG:-${AICO_WIFI_PROXY_CONFIG:-/userdata/system/wifi-proxies.json}}
+PROXY_ENVIRONMENT=${PROXY_ENVIRONMENT:-${AICO_WIFI_PROXY_ENVIRONMENT:-/run/wifi_proxy/proxy-env}}
+WIFI_INTERFACE=${WIFI_INTERFACE:-${AICO_WIFI_INTERFACE:-wlan0}}
+AGENT_INIT_SCRIPT=${AGENT_INIT_SCRIPT:-${AICO_AGENT_INIT_SCRIPT:-/usr/local/bin/aico-agent-service}}
+LOG_PATH=${LOG_PATH:-/var/log/wifi_proxy/wifi_proxy.log}
+PID_FILE=${PID_FILE:-/run/wifi_proxy/wifi_proxy.pid}
+WATCHDOG_PID_FILE=${WATCHDOG_PID_FILE:-/run/wifi_proxy/wifi_proxy_watchdog.pid}
+
+# The watchdog re-execs this script so its command line has a stable identity.
+# Export the resolved configuration so values supplied through AICO_* aliases
+# survive that re-exec as well.
+export AGENT_BIN ENV_RUN_BIN LISTEN_ADDRESS PROXY_CONFIG PROXY_ENVIRONMENT \
+    WIFI_INTERFACE AGENT_INIT_SCRIPT LOG_PATH PID_FILE WATCHDOG_PID_FILE
+
+canonical_script_path() {
+    candidate="$1"
+    if command -v readlink >/dev/null 2>&1; then
+        resolved="$(readlink -f "$candidate" 2>/dev/null || true)"
+        if [ -n "$resolved" ]; then
+            printf '%s\n' "$resolved"
+            return 0
+        fi
+    fi
+    candidate_dir="$(dirname "$candidate")"
+    case "$candidate" in
+        /*) ;;
+        *) candidate_dir="$(CDPATH= cd -- "$candidate_dir" 2>/dev/null && pwd -P)" || return 1 ;;
+    esac
+    printf '%s/%s\n' "$candidate_dir" "$(basename "$candidate")"
+}
+
+SCRIPT_PATH="$(canonical_script_path "$0" 2>/dev/null || printf '%s' "$0")"
+
+is_running() {
+    [ -n "$1" ] && kill -0 "$1" 2>/dev/null
+}
+
+read_pid() {
+    [ -f "$1" ] && cat "$1" 2>/dev/null
+}
+
+pid_argv_exact() {
+    arguments="$1"
+    shift
+    expected_count="$#"
+    index=1
+    while IFS= read -r argument; do
+        [ "$index" -le "$expected_count" ] || return 1
+        expected=
+        expected_index=1
+        for expected_value in "$@"; do
+            if [ "$expected_index" -eq "$index" ]; then
+                expected="$expected_value"
+                break
+            fi
+            expected_index=$((expected_index + 1))
+        done
+        [ "$argument" = "$expected" ] || return 1
+        index=$((index + 1))
+    done <<EOF
+$arguments
+EOF
+    [ "$index" -eq $((expected_count + 1)) ]
+}
+
+pid_starts_with() {
+    pid="$1"
+    shift
+    [ "$#" -ge 2 ] || return 1
+    [ -r "/proc/$pid/cmdline" ] || return 1
+    arguments="$(tr '\0' '\n' < "/proc/$pid/cmdline" 2>/dev/null)" || return 1
+    if pid_argv_exact "$arguments" "$@"; then
+        return 0
+    fi
+    first="$(printf '%s\n' "$arguments" | sed -n '1p')"
+    case "$first" in
+        sh|*/sh|ash|*/ash|dash|*/dash|bash|*/bash)
+            arguments="$(printf '%s\n' "$arguments" | sed '1d')"
+            pid_argv_exact "$arguments" "$@"
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+pid_matches() {
+    pid_starts_with "$1" "$AGENT_BIN" wifi-proxy \
+        --listen "$LISTEN_ADDRESS" \
+        --config "$PROXY_CONFIG" \
+        --environment "$PROXY_ENVIRONMENT" \
+        --wifi-interface "$WIFI_INTERFACE"
+}
+
+pid_matches_watchdog() {
+    pid_starts_with "$1" "$SCRIPT_PATH" __watchdog
+}
+
+proxy_pid() {
+    pid="$(read_pid "$PID_FILE")"
+    case "$pid" in
+        ''|*[!0-9]*) return ;;
+    esac
+    if pid_matches "$pid"; then
+        echo "$pid"
+    fi
+}
+
+watchdog_pid() {
+    pid="$(read_pid "$WATCHDOG_PID_FILE")"
+    case "$pid" in
+        ''|*[!0-9]*) return ;;
+    esac
+    if pid_matches_watchdog "$pid"; then
+        echo "$pid"
+    fi
+}
+
+stop_pid() {
+    pid="$1"
+    [ -n "$pid" ] || return 0
+    is_running "$pid" || return 0
+    kill "$pid" 2>/dev/null || true
+    elapsed=0
+    while is_running "$pid" && [ "$elapsed" -lt 10 ]; do
+        sleep 1
+        elapsed=$((elapsed + 1))
+    done
+    if is_running "$pid"; then
+        kill -9 "$pid" 2>/dev/null || true
+    fi
+}
+
+watchdog_loop() {
+    trap '' HUP
+    trap 'exit 0' INT TERM
+    while true; do
+        AICO_WIFI_PROXY_BYPASS=1 "$ENV_RUN_BIN" "$AGENT_BIN" wifi-proxy \
+            --listen "$LISTEN_ADDRESS" \
+            --config "$PROXY_CONFIG" \
+            --environment "$PROXY_ENVIRONMENT" \
+            --wifi-interface "$WIFI_INTERFACE" >> "$LOG_PATH" 2>&1 &
+        child="$!"
+        echo "$child" > "$PID_FILE"
+        proxy_environment_seen=0
+        proxy_environment_value=
+        while is_running "$child"; do
+            if [ -r "$PROXY_ENVIRONMENT" ]; then
+                current_proxy_environment="$(cat "$PROXY_ENVIRONMENT" 2>/dev/null)"
+                if [ "$proxy_environment_seen" = "0" ]; then
+                    proxy_environment_value="$current_proxy_environment"
+                    proxy_environment_seen=1
+                elif [ "$current_proxy_environment" != "$proxy_environment_value" ]; then
+                    # Let the SSID/config monitor settle before restarting
+                    # long-lived clients with the new local proxy scheme.
+                    sleep 2
+                    current_proxy_environment="$(cat "$PROXY_ENVIRONMENT" 2>/dev/null)"
+                    if [ "$current_proxy_environment" != "$proxy_environment_value" ]; then
+                        proxy_environment_value="$current_proxy_environment"
+                        if [ -x "$AGENT_INIT_SCRIPT" ]; then
+                            "$AGENT_INIT_SCRIPT" restart >/dev/null 2>&1 || true
+                        fi
+                    fi
+                fi
+            fi
+            sleep 1
+        done
+        wait "$child"
+        status="$?"
+        rm -f "$PID_FILE"
+        echo "$(date -Iseconds 2>/dev/null || date) wifi_proxy exited status=$status; restarting in 2s" >> "$LOG_PATH"
+        sleep 2
+    done
+}
+
+start() {
+    wpid="$(watchdog_pid)"
+    if is_running "$wpid"; then
+        echo "wifi_proxy watchdog already running (pid $wpid)"
+        return 0
+    fi
+    if [ ! -x "$AGENT_BIN" ] || [ ! -x "$ENV_RUN_BIN" ]; then
+        echo "wifi_proxy dependency missing" >&2
+        return 1
+    fi
+    pid="$(proxy_pid)"
+    if is_running "$pid"; then
+        echo "Stopping orphaned wifi_proxy process (pid $pid)"
+        stop_pid "$pid"
+        if is_running "$pid"; then
+            echo "wifi_proxy orphan did not exit (pid $pid)" >&2
+            return 1
+        fi
+    fi
+    rm -f "$PID_FILE" "$WATCHDOG_PID_FILE"
+    mkdir -p "$(dirname "$PID_FILE")" "$(dirname "$LOG_PATH")" "$(dirname "$PROXY_CONFIG")"
+    (
+        exec "$SCRIPT_PATH" __watchdog
+    ) </dev/null >/dev/null 2>&1 &
+    echo "$!" > "$WATCHDOG_PID_FILE"
+    echo "Started wifi_proxy"
+}
+
+stop() {
+    wpid="$(watchdog_pid)"
+    stop_pid "$wpid"
+    rm -f "$WATCHDOG_PID_FILE"
+    pid="$(proxy_pid)"
+    stop_pid "$pid"
+    rm -f "$PID_FILE"
+}
+
+status() {
+    pid="$(proxy_pid)"
+    if is_running "$pid"; then
+        echo "wifi_proxy=running pid=$pid listen=$LISTEN_ADDRESS"
+        return 0
+    fi
+    echo "wifi_proxy=stopped"
+    return 1
+}
+
+case "${1:-}" in
+    start) start ;;
+    __watchdog) watchdog_loop ;;
+    stop) stop ;;
+    restart|reload) stop && start ;;
+    status) status ;;
+    *) echo "Usage: $0 {start|stop|restart|reload|status}" >&2; exit 1 ;;
+esac

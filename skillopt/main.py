@@ -27,7 +27,7 @@ from runner.agent_config import load_agent_model_config
 from runner.judge import JudgeConfig
 from runner.suite import load_suite
 from skillopt.benchmark_backend import BenchmarkRunnerBackend, DEFAULT_DAEMON_IMAGE
-from skillopt.backends import AidenDeviceBackend, SkillOptRolloutBackend
+from skillopt.backends import AicoDeviceBackend, SkillOptRolloutBackend
 from skillopt.optimizer_client import DEFAULT_OPTIMIZER_MODEL, OptimizerConfig
 from skillopt.orchestrator import optimize_skill, OptimizationConfig
 from skillopt.phase_artifacts import load_phase_records
@@ -145,7 +145,7 @@ def _validate_run_id(run_id: str) -> str | None:
 
 def _resolve_skill_path(skill_name: str) -> Path:
     roots: list[Path] = []
-    if env_root := os.environ.get("AIDEN_SKILLS_DIR"):
+    if env_root := os.environ.get("AICO_SKILLS_DIR"):
         roots.append(Path(env_root))
     roots.extend([
         REPO_ROOT / "src" / "agent" / "config" / "skills",
@@ -199,7 +199,7 @@ def _build_rollout_backend(args: argparse.Namespace, skill_path: Path) -> SkillO
             environment_profile="mobilegym" if args.backend == "mobilegym" else "",
         )
     if args.backend == "device":
-        return AidenDeviceBackend(agent_url=args.agent_url)
+        return AicoDeviceBackend(agent_url=args.agent_url)
     raise ValueError("mobilegym backend requires environment_url")
 
 
@@ -216,14 +216,14 @@ def cli(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(
         prog="python -m skillopt",
-        description="SkillOpt: optimize an Aiden skill through rollout reflection.",
+        description="SkillOpt: optimize a skill for Aico through rollout reflection.",
     )
     parser.add_argument("--skill", required=True, help="Skill name (e.g. device-operator)")
     parser.add_argument(
         "--backend",
         choices=["device", "mobilegym"],
         default="device",
-        help="Rollout backend: device uses the current Aiden daemon unless --environment-url is set; mobilegym requires --environment-url and reuses benchmark runner workers.",
+        help="Rollout backend: device uses the current Aico daemon unless --environment-url is set; mobilegym requires --environment-url and reuses benchmark runner workers.",
     )
     parser.add_argument("--suite", help="Suite name to split 70/30 (e.g. phone_control_v1)")
     parser.add_argument("--train-suite", help="Explicit train suite name (e.g. skillopt/device-operator/device_operator_train)")
@@ -265,10 +265,10 @@ def cli(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--environment-url",
-        default=os.environ.get("AIDEN_ENVIRONMENT_URL", ""),
+        default=os.environ.get("AICO_ENVIRONMENT_URL", ""),
         help="Bridge endpoint for benchmark-runner-backed device/mobilegym rollouts",
     )
-    parser.add_argument("--daemon-image", default=os.environ.get("AIDEN_DAEMON_IMAGE", DEFAULT_DAEMON_IMAGE))
+    parser.add_argument("--daemon-image", default=os.environ.get("AICO_DAEMON_IMAGE", DEFAULT_DAEMON_IMAGE))
     parser.add_argument("--no-build-daemon-image", action="store_true")
     parser.add_argument("--base-config-dir", default="")
     parser.add_argument("--agent-config", default="", help="Optional agent.toml to pass to benchmark runner workers")
@@ -517,7 +517,7 @@ def _write_web_artifacts(
         "train_suite": train_suite_label,
         "validation_suite": selection_suite_label,
         "agent_url": cfg.agent_url,
-        "model": os.environ.get("AIDEN_MODEL", ""),
+        "model": os.environ.get("AICO_MODEL", ""),
         "optimizer_config": {"provider": cfg.optimizer_cfg.provider, "model": optimizer_model},
         "judge_config": {"provider": "openrouter", "model": judge_model} if judge_model else None,
         "scores": {"initial": result.initial_score, "best": result.best_score},

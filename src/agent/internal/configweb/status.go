@@ -1,7 +1,7 @@
 package configweb
 
 import (
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 	"encoding/json"
 	"io"
 	"net"
@@ -86,7 +86,7 @@ func (s *Server) queryAgentStatus() map[string]any {
 		"port_host": "127.0.0.1", "port": 8080, "public_port": 8080,
 		"port_reachable": false, "port_detail": "", "detail": "", "startup_error": "",
 	}
-	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("AIDEN_PUBLIC_AGENT_WEB_PORT"))); err == nil && value > 0 && value <= 65535 {
+	if value, err := strconv.Atoi(strings.TrimSpace(os.Getenv("AICO_PUBLIC_AGENT_WEB_PORT"))); err == nil && value > 0 && value <= 65535 {
 		status["public_port"] = value
 	}
 	if _, err := os.Stat(s.options.AgentInitScript); err != nil {
@@ -109,7 +109,7 @@ func (s *Server) queryAgentStatus() map[string]any {
 					status["addr"] = addr
 					host, port := parseAgentAddr(addr)
 					status["port_host"], status["port"] = host, port
-					if os.Getenv("AIDEN_PUBLIC_AGENT_WEB_PORT") == "" {
+					if os.Getenv("AICO_PUBLIC_AGENT_WEB_PORT") == "" {
 						status["public_port"] = port
 					}
 				}
@@ -370,8 +370,8 @@ func normalizeSlot(value any) string {
 func currentSlot(cmdline string) string {
 	rootSlot := ""
 	for _, field := range strings.Fields(cmdline) {
-		if strings.HasPrefix(field, "aiden.slot_suffix=") {
-			if slot := normalizeSlot(strings.TrimPrefix(field, "aiden.slot_suffix=")); slot != "" {
+		if strings.HasPrefix(field, "aico.slot_suffix=") {
+			if slot := normalizeSlot(strings.TrimPrefix(field, "aico.slot_suffix=")); slot != "" {
 				return slot
 			}
 		}

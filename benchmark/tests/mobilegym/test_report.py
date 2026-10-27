@@ -203,7 +203,7 @@ def test_generate_reports_handles_direct_mobilegym_run_directory(tmp_path):
         [
             {
                 "id": "wechat.ConditionalReplyToBoss",
-                "error": "AidenAdapterTimeout: Aiden /api/chat timed out",
+                "error": "AicoAdapterTimeout: Aico /api/chat timed out",
             }
         ],
     )
@@ -225,7 +225,7 @@ def test_generate_reports_handles_direct_mobilegym_run_directory(tmp_path):
     assert "console.log" in html
 
 
-def test_generate_reports_counts_aiden_adapter_timeout_separately(tmp_path):
+def test_generate_reports_counts_aico_adapter_timeout_separately(tmp_path):
     from mobilegym import report
 
     batch = tmp_path / "batch-timeout"
@@ -251,7 +251,7 @@ def test_generate_reports_counts_aiden_adapter_timeout_separately(tmp_path):
                 "execution": {
                     "runtime_s": 300.1,
                     "stop_reason": "ERROR",
-                    "error": "AidenAdapterTimeout: Aiden /api/chat timed out: timed out",
+                    "error": "AicoAdapterTimeout: Aico /api/chat timed out: timed out",
                 },
             }
         ],
@@ -261,7 +261,7 @@ def test_generate_reports_counts_aiden_adapter_timeout_separately(tmp_path):
         [
             {
                 "id": "personamem_lt_recall_v1.case_one",
-                "error": "AidenAdapterTimeout: Aiden /api/chat timed out: timed out",
+                "error": "AicoAdapterTimeout: Aico /api/chat timed out: timed out",
             }
         ],
     )
@@ -360,7 +360,7 @@ def test_report_maps_mobilegym_task_fields_into_drawer_payload(tmp_path):
         {"task_id": "account.WechatAccountCancellation"},
     )
     write_json(
-        shard / "raw" / "run" / "trajectory" / "account_WechatAccountCancellation" / "aiden_bridge_actions.json",
+        shard / "raw" / "run" / "trajectory" / "account_WechatAccountCancellation" / "aico_bridge_actions.json",
         [
             {
                 "action_id": "ep1:0001",
@@ -387,7 +387,7 @@ def test_report_maps_mobilegym_task_fields_into_drawer_payload(tmp_path):
     assert task["errors"].count(["execution_error", "timeout"]) == 1
 
 
-def test_report_maps_aiden_chat_history_tool_calls_into_drawer_payload(tmp_path):
+def test_report_maps_aico_chat_history_tool_calls_into_drawer_payload(tmp_path):
     from mobilegym import report
 
     batch = tmp_path / "batch-history"
@@ -411,8 +411,8 @@ def test_report_maps_aiden_chat_history_tool_calls_into_drawer_payload(tmp_path)
                 "id": "personamem_lt_recall_v1.case_one",
                 "suite": "personamem_lt_recall_v1",
                 "is_success": True,
-                "aiden_last_response": "I found the stored preference.",
-                "aiden_last_chat_history": [
+                "aico_last_response": "I found the stored preference.",
+                "aico_last_chat_history": [
                     {
                         "type": "tool_call",
                         "tool_name": "recall_memory",
@@ -462,7 +462,7 @@ def test_report_embeds_mobilegym_failed_task_error_log(tmp_path):
                 "suite": "report_fixture_v1",
                 "is_success": False,
                 "execution": {"agent_answer": "wrong", "stop_reason": "max_steps"},
-                "aiden_last_chat_history": [{"type": "assistant", "content": "Need one more calculation"}],
+                "aico_last_chat_history": [{"type": "assistant", "content": "Need one more calculation"}],
             }
         ],
     )
@@ -540,15 +540,15 @@ def test_report_falls_back_to_compose_log_tool_calls_when_bridge_artifact_is_mis
     assert "128.40 + 72.60" in tasks[1]["tool_calls_detail"]
 
 
-def test_report_omits_empty_aiden_suite_shards_from_task_records(tmp_path):
+def test_report_omits_empty_aico_suite_shards_from_task_records(tmp_path):
     from mobilegym import report
 
-    batch = tmp_path / "batch-aiden-empty-shard"
+    batch = tmp_path / "batch-aico-empty-shard"
     shard = batch / "episode_memory_v1" / "shard-0"
     write_json(
         shard / "shard.json",
         {
-            "batch_id": "batch-aiden-empty-shard",
+            "batch_id": "batch-aico-empty-shard",
             "suite": "episode_memory_v1",
             "shard_index": 0,
             "shard_count": 2,
@@ -565,7 +565,7 @@ def test_report_omits_empty_aiden_suite_shards_from_task_records(tmp_path):
     write_json(
         empty / "shard.json",
         {
-            "batch_id": "batch-aiden-empty-shard",
+            "batch_id": "batch-aico-empty-shard",
             "suite": "episode_memory_v1",
             "shard_index": 1,
             "shard_count": 2,
@@ -583,15 +583,15 @@ def test_report_omits_empty_aiden_suite_shards_from_task_records(tmp_path):
     assert "episode_memory_v1.shard" not in (batch / "episode_memory_v1" / "index.html").read_text()
 
 
-def test_report_maps_aiden_suite_rubric_and_hard_assertions_into_drawer_payload(tmp_path):
+def test_report_maps_aico_suite_rubric_and_hard_assertions_into_drawer_payload(tmp_path):
     from mobilegym import report
 
-    batch = tmp_path / "batch-aiden-rubric"
+    batch = tmp_path / "batch-aico-rubric"
     shard = batch / "personamem_lt_recall_v1" / "shard-0"
     write_json(
         shard / "shard.json",
         {
-            "batch_id": "batch-aiden-rubric",
+            "batch_id": "batch-aico-rubric",
             "suite": "personamem_lt_recall_v1",
             "shard_index": 0,
             "shard_count": 1,
@@ -645,7 +645,7 @@ def test_report_maps_aiden_suite_rubric_and_hard_assertions_into_drawer_payload(
     assert task["rubric"] != [["mobilegym_status", "is_success false", "no"]]
 
 
-def test_report_uses_shard_task_metadata_when_result_omits_aiden_rubric(tmp_path):
+def test_report_uses_shard_task_metadata_when_result_omits_aico_rubric(tmp_path):
     from mobilegym import report
 
     batch = tmp_path / "batch-shard-meta"
@@ -765,13 +765,13 @@ def test_drawer_task_deduplicates_mobilegym_errors():
             "task_id": "account.WechatAccountCancellation",
             "suite": "account",
             "status": "error",
-            "reason": "AidenAdapterTimeout: timed out",
-            "result": {"execution": {"error": "AidenAdapterTimeout: timed out"}},
-            "error": {"error": "AidenAdapterTimeout: timed out"},
+            "reason": "AicoAdapterTimeout: timed out",
+            "result": {"execution": {"error": "AicoAdapterTimeout: timed out"}},
+            "error": {"error": "AicoAdapterTimeout: timed out"},
         }
     )
 
-    assert task["errors"] == [["error", "AidenAdapterTimeout: timed out"]]
+    assert task["errors"] == [["error", "AicoAdapterTimeout: timed out"]]
 
 
 def test_direct_run_report_reads_bridge_actions_from_trajectory(tmp_path):
@@ -796,7 +796,7 @@ def test_direct_run_report_reads_bridge_actions_from_trajectory(tmp_path):
         {"task_id": "account.WechatAccountCancellation"},
     )
     write_json(
-        run / "trajectory" / "account_WechatAccountCancellation" / "aiden_bridge_actions.json",
+        run / "trajectory" / "account_WechatAccountCancellation" / "aico_bridge_actions.json",
         [
             {
                 "tool_name": "touch_gesture",
@@ -879,7 +879,7 @@ def test_failed_shard_without_selected_tasks_still_generates_report_row(tmp_path
     assert read_report_tasks(batch / "index.html")[0]["status"] == "worker_failed"
 
 
-def test_nested_aiden_suite_shards_are_included_in_batch_report(tmp_path):
+def test_nested_aico_suite_shards_are_included_in_batch_report(tmp_path):
     from mobilegym import report
 
     batch = tmp_path / "batch-nested"
@@ -943,7 +943,7 @@ def test_generate_reports_triggers_llm_analysis_when_env_enabled(monkeypatch, tm
         (run_dir / "llm_analysis.md").write_text("mobilegym analysis", encoding="utf-8")
         return report.AnalysisResult(ok=True, markdown_path=run_dir / "llm_analysis.md")
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_LLM_ANALYSIS", "1")
+    monkeypatch.setenv("AICO_BENCHMARK_LLM_ANALYSIS", "1")
     monkeypatch.setattr(report, "analyze_run", fake_analyze)
 
     report.generate_reports(batch)
@@ -976,7 +976,7 @@ def test_generate_reports_triggers_llm_analysis_for_failed_batch(monkeypatch, tm
         (run_dir / "llm_analysis.md").write_text("failed batch analysis", encoding="utf-8")
         return report.AnalysisResult(ok=True, markdown_path=run_dir / "llm_analysis.md")
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_LLM_ANALYSIS", "1")
+    monkeypatch.setenv("AICO_BENCHMARK_LLM_ANALYSIS", "1")
     monkeypatch.setattr(report, "analyze_run", fake_analyze)
 
     summary = report.generate_reports(batch)
@@ -1003,7 +1003,7 @@ def test_generate_reports_keeps_summary_when_llm_analysis_fails(monkeypatch, tmp
     )
     write_jsonl(shard / "raw" / "run" / "results.jsonl", [{"id": "clock.Task", "is_success": True}])
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_LLM_ANALYSIS", "1")
+    monkeypatch.setenv("AICO_BENCHMARK_LLM_ANALYSIS", "1")
     monkeypatch.setattr(
         report,
         "analyze_run",

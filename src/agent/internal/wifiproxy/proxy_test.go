@@ -180,7 +180,7 @@ func TestLocalProxyEnvironmentKeepsSOCKS5Scheme(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "HTTP_PROXY=socks5h://127.0.0.1:18080\nHTTPS_PROXY=socks5h://127.0.0.1:18080\nALL_PROXY=socks5h://127.0.0.1:18080\nhttp_proxy=socks5h://127.0.0.1:18080\nhttps_proxy=socks5h://127.0.0.1:18080\nall_proxy=socks5h://127.0.0.1:18080\nNO_PROXY='internal.example'\nno_proxy='internal.example'\nAIDEN_WIFI_PROXY_NO_PROXY_SET=1\n"
+	want := "HTTP_PROXY=socks5h://127.0.0.1:18080\nHTTPS_PROXY=socks5h://127.0.0.1:18080\nALL_PROXY=socks5h://127.0.0.1:18080\nhttp_proxy=socks5h://127.0.0.1:18080\nhttps_proxy=socks5h://127.0.0.1:18080\nall_proxy=socks5h://127.0.0.1:18080\nNO_PROXY='internal.example'\nno_proxy='internal.example'\nAICO_WIFI_PROXY_NO_PROXY_SET=1\n"
 	if string(data) != want {
 		t.Fatalf("environment=%q, want %q", data, want)
 	}
@@ -285,7 +285,7 @@ func TestLocalProxyEnvironmentMarksDefaultAndExplicitEmptyNoProxy(t *testing.T) 
 			}
 			contents := string(data)
 			if !strings.Contains(contents, "NO_PROXY='"+test.noProxy+"'\n") ||
-				!strings.Contains(contents, "AIDEN_WIFI_PROXY_NO_PROXY_SET="+test.flag+"\n") {
+				!strings.Contains(contents, "AICO_WIFI_PROXY_NO_PROXY_SET="+test.flag+"\n") {
 				t.Fatalf("environment=%q", contents)
 			}
 		})

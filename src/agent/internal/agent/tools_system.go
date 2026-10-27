@@ -448,7 +448,7 @@ func (t *WaitForWakeupTool) Name() string { return toolWaitForWakeup }
 
 func (t *WaitForWakeupTool) Description() string {
 	return `End the current agent run and return the voice interaction to wakeup-waiting mode. ` +
-		`Use this when the user asks Aiden to stop listening, go idle, or wait for the next wakeup.`
+		`Use this when the user asks Aico to stop listening, go idle, or wait for the next wakeup.`
 }
 
 func (t *WaitForWakeupTool) ArgsSchema() map[string]any {
@@ -464,7 +464,7 @@ func (t *WaitForWakeupTool) Call(ctx context.Context, input string) (string, err
 			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(reason), &args); err != nil {
-			return toolErrorResultf(ctx, CodeInvalidArguments, "invalid input: %v. Expected JSON format: {\"reason\": \"task completed\"} or a bare string describing why Aiden should wait for wakeup", err), nil
+			return toolErrorResultf(ctx, CodeInvalidArguments, "invalid input: %v. Expected JSON format: {\"reason\": \"task completed\"} or a bare string describing why Aico should wait for wakeup", err), nil
 		}
 		reason = strings.TrimSpace(args.Reason)
 	}

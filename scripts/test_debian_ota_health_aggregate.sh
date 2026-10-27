@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly AGGREGATOR=${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-ota-health-aggregate
+readonly AGGREGATOR=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-ota-health-aggregate
 readonly TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
@@ -14,7 +14,7 @@ fail() {
 mkdir -p "${TEST_ROOT}/bin"
 printf '{}\n' >"${TEST_ROOT}/pending_boot.json"
 printf 'SAFE_ENV=1\n' >"${TEST_ROOT}/system.env"
-cat >"${TEST_ROOT}/aiden_boot.conf" <<'EOF'
+cat >"${TEST_ROOT}/aico_boot.conf" <<'EOF'
 ENABLE_AGENT=0
 ENABLE_AUDIO_SERVICE=0
 ENABLE_BLE_SERVICE=0
@@ -60,7 +60,7 @@ run_aggregator() {
     OTA_BIN=${TEST_ROOT}/bin/ota \
     OTA_CONFIG=${TEST_ROOT}/debian-config.json \
     PENDING_PATH=${TEST_ROOT}/pending_boot.json \
-    BOOT_CONFIG=${TEST_ROOT}/aiden_boot.conf \
+    BOOT_CONFIG=${TEST_ROOT}/aico_boot.conf \
     ENVIRONMENT_PATH=${TEST_ROOT}/system.env \
     SYSTEMCTL_BIN=${TEST_ROOT}/bin/systemctl \
     CURL_BIN=${TEST_ROOT}/bin/curl \
@@ -75,8 +75,8 @@ grep -qx "${TEST_ROOT}/debian-config.json" "${TEST_ROOT}/ota.log"
 grep -qx 'mark-health' "${TEST_ROOT}/ota.log"
 for service in \
     userdata.mount userdata-ota.mount \
-    aiden-userdata-migrate.service aiden-environment.service \
-    systemd-networkd.service aiden-config-web.service; do
+    aico-userdata-migrate.service aico-environment.service \
+    systemd-networkd.service aico-config-web.service; do
     grep -qx "${service}" "${TEST_ROOT}/systemctl.log" \
         || fail "core service was not checked: ${service}"
 done
@@ -89,18 +89,18 @@ if FAIL_SERVICE=systemd-networkd.service run_aggregator >/dev/null 2>&1; then
 fi
 [ ! -e "${TEST_ROOT}/ota.log" ] || fail "marker command ran after a failed core check"
 
-printf 'ENABLE_AGENT=1\n' >>"${TEST_ROOT}/aiden_boot.conf"
+printf 'ENABLE_AGENT=1\n' >>"${TEST_ROOT}/aico_boot.conf"
 rm -f "${TEST_ROOT}/ota.log"
-FAIL_SERVICE=aiden-agent.service CURL_FAIL_URL=http://127.0.0.1:8080/ run_aggregator
+FAIL_SERVICE=aico-agent.service CURL_FAIL_URL=http://127.0.0.1:8080/ run_aggregator
 grep -qx 'mark-health' "${TEST_ROOT}/ota.log" \
     || fail "Agent startup failure prevented the health marker"
-grep -qx 'aiden-config-web.service' "${TEST_ROOT}/systemctl.log" \
+grep -qx 'aico-config-web.service' "${TEST_ROOT}/systemctl.log" \
     || fail "Agent failure recovery did not check the configuration portal service"
 grep -qx 'http://127.0.0.1/' "${TEST_ROOT}/curl.log" \
     || fail "Agent failure recovery did not check the configuration portal HTTP"
 
 rm -f "${TEST_ROOT}/ota.log"
-if FAIL_SERVICE=aiden-config-web.service run_aggregator >/dev/null 2>&1; then
+if FAIL_SERVICE=aico-config-web.service run_aggregator >/dev/null 2>&1; then
     fail "aggregator accepted an inactive configuration portal"
 fi
 [ ! -e "${TEST_ROOT}/ota.log" ] || fail "marker command ran after inactive Config Web"
@@ -112,15 +112,15 @@ fi
 [ ! -e "${TEST_ROOT}/ota.log" ] || fail "marker command ran after failed Config Web probe"
 
 # A feature switch must not bypass the recovery portal requirement during OTA.
-cp "${TEST_ROOT}/aiden_boot.conf" "${TEST_ROOT}/aiden_boot.enabled.conf"
+cp "${TEST_ROOT}/aico_boot.conf" "${TEST_ROOT}/aico_boot.enabled.conf"
 for config_web_switch in disabled unset; do
-    sed '/^ENABLE_CONFIG_WEB=/d' "${TEST_ROOT}/aiden_boot.enabled.conf" >"${TEST_ROOT}/aiden_boot.conf"
+    sed '/^ENABLE_CONFIG_WEB=/d' "${TEST_ROOT}/aico_boot.enabled.conf" >"${TEST_ROOT}/aico_boot.conf"
     if [ "${config_web_switch}" = disabled ]; then
-        printf 'ENABLE_CONFIG_WEB=0\n' >>"${TEST_ROOT}/aiden_boot.conf"
+        printf 'ENABLE_CONFIG_WEB=0\n' >>"${TEST_ROOT}/aico_boot.conf"
     fi
 
     rm -f "${TEST_ROOT}/ota.log"
-    if FAIL_SERVICE=aiden-config-web.service run_aggregator >/dev/null 2>&1; then
+    if FAIL_SERVICE=aico-config-web.service run_aggregator >/dev/null 2>&1; then
         fail "aggregator accepted an inactive portal with its switch ${config_web_switch}"
     fi
     [ ! -e "${TEST_ROOT}/ota.log" ] || fail "marker command ran with an inactive portal and its switch ${config_web_switch}"

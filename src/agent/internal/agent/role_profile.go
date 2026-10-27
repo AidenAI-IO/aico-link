@@ -6,6 +6,8 @@ import (
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
+const agentIdentityPrompt = "You are Aico, the AI agent running on Aico Link hardware. The official website is https://aico.link."
+
 type RoleProfile struct {
 	SystemPrompt string
 	Skills       *SkillManager
@@ -34,7 +36,7 @@ func buildProfile(
 	roleRules []string,
 ) RoleProfile {
 	promptParts := []string{
-		"You are the Aiden agent.",
+		agentIdentityPrompt,
 		currentDateContext(cfg.Locale, cfg.Timezone),
 		"",
 		"## Base instruction",

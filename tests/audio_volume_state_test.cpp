@@ -14,7 +14,7 @@ struct TempDir {
     std::string path;
 
     TempDir() {
-        char tmpl[] = "/tmp/aiden_audio_volume_state_XXXXXX";
+        char tmpl[] = "/tmp/aico_audio_volume_state_XXXXXX";
         char* p = ::mkdtemp(tmpl);
         REQUIRE(p != nullptr);
         path = p;
@@ -49,8 +49,8 @@ TEST_CASE("load_playback_volume_state reports missing file") {
 
     int volume = 7;
     std::string error = "unchanged";
-    CHECK(aiden::load_playback_volume_state(path.c_str(), &volume, &error) ==
-          aiden::AudioVolumeStateLoadStatus::MISSING);
+    CHECK(aico::load_playback_volume_state(path.c_str(), &volume, &error) ==
+          aico::AudioVolumeStateLoadStatus::MISSING);
     CHECK(volume == 7);
 }
 
@@ -59,7 +59,7 @@ TEST_CASE("save_playback_volume_state writes integer newline and creates parent 
     std::string path = dir.path + "/audio_service/playback_volume";
 
     std::string error;
-    REQUIRE(aiden::save_playback_volume_state(path.c_str(), 70, &error));
+    REQUIRE(aico::save_playback_volume_state(path.c_str(), 70, &error));
     CHECK(read_file(path) == "70\n");
 
     struct stat st;
@@ -67,8 +67,8 @@ TEST_CASE("save_playback_volume_state writes integer newline and creates parent 
     CHECK((st.st_mode & 0777) == 0644);
 
     int loaded = 0;
-    CHECK(aiden::load_playback_volume_state(path.c_str(), &loaded, &error) ==
-          aiden::AudioVolumeStateLoadStatus::LOADED);
+    CHECK(aico::load_playback_volume_state(path.c_str(), &loaded, &error) ==
+          aico::AudioVolumeStateLoadStatus::LOADED);
     CHECK(loaded == 70);
 }
 
@@ -79,7 +79,7 @@ TEST_CASE("save_playback_volume_state does not chmod existing parent directories
     REQUIRE(::chmod(parent.c_str(), 0700) == 0);
 
     std::string error;
-    REQUIRE(aiden::save_playback_volume_state((parent + "/playback_volume").c_str(), 33, &error));
+    REQUIRE(aico::save_playback_volume_state((parent + "/playback_volume").c_str(), 33, &error));
 
     struct stat st;
     REQUIRE(::stat(parent.c_str(), &st) == 0);
@@ -95,8 +95,8 @@ TEST_CASE("load_playback_volume_state rejects malformed or out-of-range values")
         write_file(path, invalid_values[i]);
         int volume = 42;
         std::string error;
-        CHECK(aiden::load_playback_volume_state(path.c_str(), &volume, &error) ==
-              aiden::AudioVolumeStateLoadStatus::INVALID);
+        CHECK(aico::load_playback_volume_state(path.c_str(), &volume, &error) ==
+              aico::AudioVolumeStateLoadStatus::INVALID);
         CHECK(volume == 42);
         CHECK_FALSE(error.empty());
     }
@@ -107,7 +107,7 @@ TEST_CASE("save_playback_volume_state rejects out-of-range values") {
     std::string path = dir.path + "/playback_volume";
 
     std::string error;
-    CHECK_FALSE(aiden::save_playback_volume_state(path.c_str(), 101, &error));
+    CHECK_FALSE(aico::save_playback_volume_state(path.c_str(), 101, &error));
     CHECK_FALSE(error.empty());
     CHECK(::access(path.c_str(), F_OK) != 0);
 }

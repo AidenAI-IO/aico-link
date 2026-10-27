@@ -108,7 +108,7 @@ def publish_run(
     run_dir: Path,
     *,
     client: Any | None = None,
-    dataset_prefix: str = "aiden-benchmark",
+    dataset_prefix: str = "aico-benchmark",
     progress: Callable[[str], None] | None = None,
 ) -> PublishResult:
     """Publish one completed benchmark run as a Langfuse dataset experiment."""
@@ -229,9 +229,9 @@ def publish_run(
             row = results_by_key[key]
             output = _experiment_output(artifacts.run_dir, row)
             trace_url = getattr(client, "get_trace_url", None)
-            if output["aiden_trace_id"] and callable(trace_url):
+            if output["aico_trace_id"] and callable(trace_url):
                 try:
-                    output["aiden_trace_url"] = trace_url(trace_id=output["aiden_trace_id"])
+                    output["aico_trace_url"] = trace_url(trace_id=output["aico_trace_id"])
                 except Exception:
                     # A missing project lookup must not discard benchmark scores.
                     pass
@@ -244,9 +244,9 @@ def publish_run(
                 }
                 if episode_id:
                     span_metadata.update({
-                        "aiden_episode_id": episode_id,
-                        "aiden_trace_id": _agent_trace_id(episode_id),
-                        "aiden_trace_url": output.get("aiden_trace_url"),
+                        "aico_episode_id": episode_id,
+                        "aico_trace_id": _agent_trace_id(episode_id),
+                        "aico_trace_url": output.get("aico_trace_url"),
                     })
                 update_span(
                     name=f"benchmark/{row['task_id']}#attempt-{row['attempt']}",
@@ -260,9 +260,9 @@ def publish_run(
             f"experiment publication start: items={len(dataset_items)} concurrency=1",
         )
         experiment_args = dict(
-            name=f"Aiden benchmark: {artifacts.suite.name}",
+            name=f"Aico benchmark: {artifacts.suite.name}",
             run_name=run_name,
-            description="Published from completed Aiden benchmark artifacts.",
+            description="Published from completed Aico benchmark artifacts.",
             data=dataset_items,
             task=replay_saved_result,
             evaluators=[],
@@ -364,7 +364,7 @@ def _publish_execution_items(client: Any, **experiment_args: Any) -> Any:
     dataset_run_url = None
     for item in experiment_args["data"]:
         output = experiment_args["task"](item=item, record_replay_span=False)
-        trace_id = output.get("aiden_trace_id")
+        trace_id = output.get("aico_trace_id")
         if not trace_id:
             fallback_items.append(item)
             continue
@@ -392,8 +392,8 @@ def _publish_execution_items(client: Any, **experiment_args: Any) -> Any:
             output=output,
             metadata={
                 **experiment_args["metadata"], "benchmark_execution_trace": True,
-                "aiden_episode_id": output["aiden_episode_id"],
-                "aiden_trace_url": output["aiden_trace_url"],
+                "aico_episode_id": output["aico_episode_id"],
+                "aico_trace_url": output["aico_trace_url"],
             },
         )
         try:
@@ -435,8 +435,8 @@ def _publish_execution_items(client: Any, **experiment_args: Any) -> Any:
             ))
         finally:
             observation.end()
-        if dataset_run_url is None and output.get("aiden_trace_url"):
-            project_url, separator, _ = output["aiden_trace_url"].rpartition("/traces/")
+        if dataset_run_url is None and output.get("aico_trace_url"):
+            project_url, separator, _ = output["aico_trace_url"].rpartition("/traces/")
             if separator:
                 dataset_run_url = (
                     f"{project_url}/experiments/results?"
@@ -446,7 +446,7 @@ def _publish_execution_items(client: Any, **experiment_args: Any) -> Any:
         def replay_without_execution(*, item: Any, **kwargs: Any) -> dict[str, Any]:
             output = experiment_args["task"](item=item, **kwargs)
             output["execution_trace_status"] = (
-                "pending_or_missing" if output.get("aiden_trace_id") else "no_episode"
+                "pending_or_missing" if output.get("aico_trace_id") else "no_episode"
             )
             return output
 
@@ -770,7 +770,7 @@ def _ensure_dataset(client: Any, name: str, artifacts: _RunArtifacts) -> None:
         client.create_dataset(
             name=name,
             description=(
-                f"Aiden benchmark suite {artifacts.suite.name}; suite changes are tracked "
+                f"Aico benchmark suite {artifacts.suite.name}; suite changes are tracked "
                 "through versioned dataset items and experiment metadata."
             ),
             metadata={
@@ -982,9 +982,9 @@ def _experiment_output(run_dir: Path, row: Mapping[str, Any]) -> dict[str, Any]:
         "artifact_dir": artifact_dir,
         "started_at": row.get("started_at"),
         "finished_at": row.get("finished_at"),
-        "aiden_episode_id": _episode_id(row),
-        "aiden_trace_id": _agent_trace_id(_episode_id(row)) if _episode_id(row) else None,
-        "aiden_trace_url": None,
+        "aico_episode_id": _episode_id(row),
+        "aico_trace_id": _agent_trace_id(_episode_id(row)) if _episode_id(row) else None,
+        "aico_trace_url": None,
     }
 
 
@@ -1241,7 +1241,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "selected_task_ids": manifest.get("selected_task_ids"),
         "active_skills": manifest.get("active_skills"),
     }
-    metadata = {"aiden_benchmark": "true"}
+    metadata = {"aico_benchmark": "true"}
     for key, value in values.items():
         if value is None or value == "":
             continue

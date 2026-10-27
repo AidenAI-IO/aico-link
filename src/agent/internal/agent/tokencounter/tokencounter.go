@@ -1,8 +1,8 @@
 package tokencounter
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/logging"
 	"encoding/json"
 	"strings"
 	"unicode"

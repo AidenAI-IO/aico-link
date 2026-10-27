@@ -49,9 +49,9 @@ the experiment to the underlying Agent telemetry.
 | `tool_calls` in Experiment Output | Ordered tool names and arguments from the saved trace, not tool results. This list differs from the numeric `benchmark.tool_calls` score. |
 | `trace_artifact.status` | `available`: valid saved trace; `missing`: absent; `invalid`: malformed or unexpected structure; `unreadable`: file could not be read. |
 | `trace_artifact.path` | Evidence path relative to the run directory; may be null when unavailable. |
-| `aiden_episode_id` | Unambiguous Agent episode ID, or null if unavailable. |
-| `aiden_trace_id` | Execution trace's 32-character hexadecimal OTLP ID. A known ID does not prove successful ingestion. |
-| `aiden_trace_url` | Optional link to the execution trace; null when the episode ID or project lookup is unavailable. |
+| `aico_episode_id` | Unambiguous Agent episode ID, or null if unavailable. |
+| `aico_trace_id` | Execution trace's 32-character hexadecimal OTLP ID. A known ID does not prove successful ingestion. |
+| `aico_trace_url` | Optional link to the execution trace; null when the episode ID or project lookup is unavailable. |
 | `execution_trace_status` | `available`: a benchmark execution root was found and linked; `pending_or_missing`: the episode is known but its execution root was not found; `no_episode`: no unambiguous episode ID. Older items may omit this field. |
 
 When `execution_trace_status=available`, the Experiment drawer uses the execution
