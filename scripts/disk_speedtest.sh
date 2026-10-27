@@ -7,8 +7,8 @@
 # onboard eMMC (/userdata) and the external TF/SD card (/mnt/sdcard).
 #
 # Designed to run ON THE BOARD, as root (read dropping needs privileges):
-#   scp scripts/disk_speedtest.sh aiden@192.168.42.1:/tmp/
-#   ssh aiden@192.168.42.1 'sudo sh /tmp/disk_speedtest.sh'
+#   scp scripts/disk_speedtest.sh aico@192.168.42.1:/tmp/
+#   ssh aico@192.168.42.1 'sudo sh /tmp/disk_speedtest.sh'
 #
 # Note: a card wired/configured for a 1-bit SD bus caps near ~3 MB/s regardless
 # of the card; check `/sys/kernel/debug/mmcN/ios` (bus width) if speeds surprise.

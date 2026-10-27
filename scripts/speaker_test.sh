@@ -1,17 +1,17 @@
 #!/bin/sh
-# speaker_test.sh - Reusable on-board speaker test for the Aiden RV1106 board.
+# speaker_test.sh - Reusable on-board speaker test for the Aico RV1106 board.
 #
 # Generates test tones with python3 and plays them through audio_service
 # (the normal playback path) or, with --aplay, straight to the ALSA device.
 # Designed to run ON THE BOARD. Copy it over and run, e.g.:
-#   scp scripts/speaker_test.sh aiden@192.168.42.1:/tmp/
-#   ssh aiden@192.168.42.1 'sh /tmp/speaker_test.sh --max-volume'
+#   scp scripts/speaker_test.sh aico@192.168.42.1:/tmp/
+#   ssh aico@192.168.42.1 'sh /tmp/speaker_test.sh --max-volume'
 #
 # Exit status is 0 only when playback reports success.
 set -eu
 
 SOCKET="${AUDIO_SOCKET:-/run/audio_service/audio_service.sock}"
-CLI="${AUDIO_CLI:-/usr/lib/aiden/audio_service_cli}"
+CLI="${AUDIO_CLI:-/usr/lib/aico/audio_service_cli}"
 RATE=16000
 PATTERN=all          # all | beeps | sweep | tone
 FREQ=1000            # Hz, used by the "tone" pattern

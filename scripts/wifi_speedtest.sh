@@ -1,5 +1,5 @@
 #!/bin/sh
-# wifi_speedtest.sh - WiFi link quality and throughput test for the Aiden board.
+# wifi_speedtest.sh - WiFi link quality and throughput test for the Aico board.
 #
 # Reports, for the wireless interface:
 #   - link info (band/frequency, signal, negotiated PHY rate) via iw
@@ -7,8 +7,8 @@
 #   - throughput via iperf3 multi-stream download (-R) and upload
 #
 # Designed to run ON THE BOARD, as root (ping and iw need raw/net-admin caps):
-#   scp scripts/wifi_speedtest.sh aiden@192.168.42.1:/tmp/
-#   ssh aiden@192.168.42.1 'sudo sh /tmp/wifi_speedtest.sh'
+#   scp scripts/wifi_speedtest.sh aico@192.168.42.1:/tmp/
+#   ssh aico@192.168.42.1 'sudo sh /tmp/wifi_speedtest.sh'
 #
 # iperf3 must be installed on the board (apt-get install iperf3). The default
 # public server is a best-effort internet endpoint; throughput over a long

@@ -1,5 +1,5 @@
 #!/bin/sh
-# mcu_touch_test.sh - Capacitive touch-key test for the Aiden board.
+# mcu_touch_test.sh - Capacitive touch-key test for the Aico board.
 #
 # Follows the MCU event service log and watches for touch-key events the MCU
 # reports over its UART. Each touch is a WAKEUP event whose wake source is
@@ -7,8 +7,8 @@
 # the total is printed when the capture window ends.
 #
 # Designed to run ON THE BOARD, as root (journalctl of a system service):
-#   scp scripts/mcu_touch_test.sh aiden@192.168.42.1:/tmp/
-#   ssh aiden@192.168.42.1 'sudo sh /tmp/mcu_touch_test.sh --seconds 60'
+#   scp scripts/mcu_touch_test.sh aico@192.168.42.1:/tmp/
+#   ssh aico@192.168.42.1 'sudo sh /tmp/mcu_touch_test.sh --seconds 60'
 #   # then touch the capacitive key repeatedly during the window
 #
 # The MCU reports the touch key as a wake source, so an event is emitted on
@@ -16,7 +16,7 @@
 # 0x03 TOUCH_KEY, 0x04 RTC_TIMER, 0x05 OTHER, 0x06 ASR.
 set -eu
 
-SERVICE="${MCU_SERVICE:-aiden-mcu-event.service}"
+SERVICE="${MCU_SERVICE:-aico-mcu-event.service}"
 SECONDS=0          # capture window; 0 = run until interrupted (Ctrl-C)
 SHOW_ALL=0         # 1 = also print non-touch MCU events for context
 
@@ -28,7 +28,7 @@ Options:
   --seconds N   capture window in seconds; 0 runs until Ctrl-C (default: 0)
   --all         also show other MCU events (not just TOUCH_KEY)
   --service N   systemd unit of the MCU event service
-                (default: aiden-mcu-event.service)
+                (default: aico-mcu-event.service)
   -h, --help    show this help
 
 Run as root; reading a system service journal needs privileges.
