@@ -383,6 +383,25 @@ class PlannerTests(GitFixture):
             with self.assertRaisesRegex(ValueError, "release.json"):
                 plan.github_history(REPO)
 
+    def test_github_history_accepts_whole_tree_record(self):
+        record = self.make()
+        # dev-v0.0.47 published a 9.4 MiB record after pico-sdk was vendored.
+        size = 10 * 1024 * 1024
+        entries = [{"draft": False, "tag_name": record["tag"],
+                    "assets": [{"name": "release.json", "id": 1, "size": size}]}]
+
+        def github(*args, **kwargs):
+            commit_lookup = any("/commits/" in arg for arg in args)
+            return record["source_commit"] if commit_lookup else json.dumps(record)
+
+        with patch.object(plan, "github_releases", return_value=entries), \
+                patch.object(plan, "command", side_effect=github):
+            self.assertEqual(plan.github_history(REPO), [record])
+        entries[0]["assets"][0]["size"] = plan.RELEASE_RECORD_LIMIT + 1
+        with patch.object(plan, "github_releases", return_value=entries):
+            with self.assertRaisesRegex(ValueError, "release.json"):
+                plan.github_history(REPO)
+
     def test_platform_change_does_not_leak_into_other_channel(self):
         self.publish()
         self.publish("staging")
