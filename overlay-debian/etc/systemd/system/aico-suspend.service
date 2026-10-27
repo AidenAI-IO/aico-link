@@ -1,0 +1,11 @@
+[Unit]
+Description=Coordinated Aico Link suspend-to-idle
+After=aico-mcu-event.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/aico-power sleep --execute
+ExecStopPost=/usr/bin/aico-power --recover
+# A valid suspend can last indefinitely. Cleanup also runs on worker failure.
+TimeoutStartSec=infinity
+TimeoutStopSec=30s

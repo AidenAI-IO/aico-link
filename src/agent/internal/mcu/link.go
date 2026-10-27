@@ -42,7 +42,7 @@ type Link struct {
 	OnRX           func()
 	OnResponseSent func(Frame)
 	OnReady        func() bool
-	AllowRequest   func() bool
+	AllowRequest   func(byte) bool
 	Guard          time.Duration
 }
 
@@ -247,7 +247,7 @@ func (l *Link) Run(ctx context.Context) error {
 			}
 		}
 		if current != nil {
-			if l.AllowRequest != nil && !l.AllowRequest() {
+			if l.AllowRequest != nil && !l.AllowRequest(outgoing.Command) {
 				finish(Frame{}, &APIError{Status: "NOT_READY", Message: "MCU service is stopping"})
 			} else if current.ctx.Err() != nil {
 				finish(Frame{}, current.ctx.Err())
@@ -264,7 +264,7 @@ func (l *Link) Run(ctx context.Context) error {
 		if current == nil && readySent {
 			select {
 			case r := <-l.requests:
-				if l.AllowRequest != nil && !l.AllowRequest() {
+				if l.AllowRequest != nil && !l.AllowRequest(r.cmd) {
 					r.result <- linkResult{err: &APIError{Status: "NOT_READY", Message: "MCU service is stopping"}}
 					break
 				}
