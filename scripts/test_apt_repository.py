@@ -261,6 +261,50 @@ class RepositoryTests(unittest.TestCase):
             self.build()
         self.assertFalse(self.site.exists())
 
+    def test_legacy_contract_is_excluded_without_skipping_aico_contracts(self):
+        self.release("0.0.2", kind="ota", contract=1)
+        self.release("0.0.3")
+        for record in self.history:
+            name = f"aico-business_{record['version']}-1_armhf.deb"
+            record["assets"] = {name.replace("aico-", "aiden-"): record["assets"].pop(name)}
+        self.release("0.0.4", kind="ota", contract=2)
+        self.release("0.0.5")
+
+        suites = self.build()
+        self.assertEqual(suites, {"dev-c2": ["dev-v0.0.4", "dev-v0.0.5"]})
+        self.assertFalse((self.site / "apt/dists/dev-c1").exists())
+        self.assertFalse((self.site / "apt/pool/dev-c1").exists())
+
+    def test_missing_aico_package_in_supported_contract_is_rejected(self):
+        self.release("0.0.2", kind="ota", contract=1)
+        self.release("0.0.3")
+        for record in self.history:
+            with self.subTest(tag=record["tag"]):
+                assets = record["assets"]
+                record["assets"] = {}
+                with self.assertRaises(KeyError):
+                    self.build()
+                self.assertFalse(self.site.exists())
+                record["assets"] = assets
+
+    def test_legacy_only_history_cannot_publish_an_empty_site(self):
+        self.release("0.0.2", kind="ota", contract=1)
+        assets = self.history[0]["assets"]
+        assets["aiden-business_0.0.2-1_armhf.deb"] = assets.pop("aico-business_0.0.2-1_armhf.deb")
+        with self.assertRaisesRegex(ValueError, "No supported Aico releases"):
+            self.build()
+        self.assertFalse(self.site.exists())
+
+    def test_legacy_history_is_validated_before_exclusion(self):
+        self.release("0.0.2", kind="ota", contract=1)
+        assets = self.history[0]["assets"]
+        assets["aiden-business_0.0.2-1_armhf.deb"] = assets.pop("aico-business_0.0.2-1_armhf.deb")
+        self.release("0.0.3", kind="ota", contract=2)
+        self.history[0]["previous_tag"] = "dev-v0.0.1"
+        with self.assertRaisesRegex(ValueError, "history is incomplete or forked"):
+            self.build()
+        self.assertFalse(self.site.exists())
+
     def test_retention_preserves_old_contract_suites(self):
         self.release("0.0.2", kind="ota", contract=1)
         for version in ("0.0.3", "0.0.4", "0.0.5"):
