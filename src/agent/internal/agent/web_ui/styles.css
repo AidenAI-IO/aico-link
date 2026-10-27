@@ -678,15 +678,6 @@ textarea:focus-visible {
     display: none;
 }
 
-.load-older-btn {
-    align-self: center;
-    margin-top: 10px;
-}
-
-.load-older-btn.hidden {
-    display: none;
-}
-
 .message-list {
     display: grid;
     gap: 14px;

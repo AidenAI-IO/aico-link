@@ -1,6 +1,5 @@
 const conversationEl = document.getElementById('conversation');
 const messagesDiv = document.getElementById('messages');
-const loadOlderHistoryBtn = document.getElementById('loadOlderHistoryBtn');
 const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const imageInputEl = document.getElementById('imageInput');

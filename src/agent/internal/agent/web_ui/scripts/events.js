@@ -24,7 +24,6 @@ function historyWindowFromPage(page) {
 
 function resetHistoryWindow() {
     historyWindow = null;
-    updateOlderHistoryControl();
 }
 
 async function loadHistory() {
@@ -56,7 +55,7 @@ async function loadHistory() {
                 });
             }
             renderHistory(historyWindow.messages);
-            updateOlderHistoryControl();
+            fillConversationWithOlderHistory();
         } while (historyLoadPending && !(typeof currentChatRequestId !== 'undefined' && currentChatRequestId));
     } catch (err) {
         console.error('Failed to load history:', err);
@@ -70,7 +69,7 @@ async function loadOlderHistory() {
     const current = historyWindow;
     if (!current || current.start <= 0 || olderHistoryLoading) return;
     olderHistoryLoading = true;
-    updateOlderHistoryControl();
+    let loaded = false;
     try {
         const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
         if (current !== historyWindow) return;
@@ -89,19 +88,22 @@ async function loadOlderHistory() {
         const previousTop = conversationEl.scrollTop;
         renderHistory(historyWindow.messages);
         conversationEl.scrollTop = previousTop + (conversationEl.scrollHeight - previousHeight);
+        loaded = true;
     } catch (err) {
         console.error('Failed to load earlier history:', err);
     } finally {
         olderHistoryLoading = false;
-        updateOlderHistoryControl();
     }
+    if (loaded) fillConversationWithOlderHistory();
 }
 
-function updateOlderHistoryControl() {
-    const hasOlder = !!historyWindow && historyWindow.start > 0;
-    loadOlderHistoryBtn.classList.toggle('hidden', !hasOlder);
-    loadOlderHistoryBtn.disabled = olderHistoryLoading;
-    loadOlderHistoryBtn.textContent = olderHistoryLoading ? 'Loading…' : 'Load earlier messages';
+// Older pages load when the user scrolls near the top. A window too short to
+// scroll cannot get there, so keep loading until it fills the view or the
+// start of the conversation is reached.
+function fillConversationWithOlderHistory() {
+    if (!historyWindow || historyWindow.start <= 0) return;
+    // A hidden pane measures 0 and would pull in the whole history.
+    if (conversationEl.clientHeight > 0 && conversationEl.scrollHeight <= conversationEl.clientHeight) loadOlderHistory();
 }
 
 function loadOlderHistoryNearTop() {
