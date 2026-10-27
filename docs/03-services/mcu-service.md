@@ -36,6 +36,8 @@ The Go client is in `src/agent/internal/mcu/uds.go`.
 | `get_led` | `GET /api/mcu/leds/red` or `/white` | `led`: requested/effective mode, timings, remaining lease, output and priority reason |
 | `set_led` | `PUT /api/mcu/leds/red` or `/white` | `mode`, `on_ms`, `off_ms`, `lease_s`; returns `led` |
 | `poweroff` | Root-only local UDS/CLI | `generation`, `request_id`; returns accepted `shutting_down` state |
+| `suspend_prepare` | Root-only local UDS | Requests MCU permission before Linux suspend; returns `sleeping` state |
+| `suspend_resume` | Root-only local UDS | Clears the MCU grant after wake or failed suspend; returns `ready` state |
 
 For UDS LED requests also supply `led: "red"` or `"white"`. HTTP derives the
 LED and operation from the path. All successful responses have `status: "OK"`.
@@ -50,7 +52,22 @@ healthy peer; inspect `last_rx_at` and a successful battery/timer query.
 Battery receipt time is not hardware sample time. Unknown percentage/voltage
 remain null; the MCU's six-byte battery response uses `FF`/`FFFF` sentinels.
 
-Mutations require `generation` from `get_state` and a unique `request_id`.
+Application mutations require `generation` from `get_state` and a unique
+`request_id`. The two root-only suspend operations are reserved for
+`aico-power` and serialized by the service; they do not use mutation IDs.
+Before `suspend_prepare`, the worker persists recovery intent. A timeout or
+lost/invalid PREPARE reply leaves the MCU grant outcome unknown, so the worker
+must abort suspend and send `suspend_resume`. Cleanup intent remains until
+RESUME succeeds. Worker and systemd post-stop cleanup each make one bounded
+attempt; `aico-suspend-recover.timer` retries pending actions every ten seconds
+after the preceding activation. It also runs at boot. Before the first PREPARE
+per RV boot, the worker confirms RESUME even with no `/run` recovery file,
+because MCU/UART power and the grant can survive an RV reboot. An unavailable
+link leaves recovery pending and prevents a new suspend. A shared lock excludes
+recovery while a suspend worker owns the grant.
+This obligation also applies to any direct caller of the root-only operations.
+Repeated RV_READY events do not revoke an MCU grant, and the grant has no timer
+expiry that could interrupt a valid long sleep.
 For example, a timer PUT body is:
 
 ```json
@@ -266,3 +283,16 @@ UDS and HTTP tests, Linux/ARM cross-compilation, and runner tests with no device
 access. The MCU repository separately runs build, host/firmware tool tests and
 dependency verification. Keep board reports outside Git and record exact
 image identities in physical acceptance results.
+
+
+### Persistent deployment for suspend
+
+The installed `aico-mcu-event.service` must own UART5 and run the matching
+`/usr/lib/aico/mcu_service` binary. A drop-in under `/run/systemd/system` is
+only a temporary diagnostic override and disappears on reboot. When adapting
+an older development rootfs, save the original unit and binary, install the
+reviewed override under `/etc/systemd/system/<existing-mcu-unit>.d/`, reload
+systemd and restart that existing unit. Do not start a second UART owner.
+Verify the effective ExecStart, socket permissions and MCU READY state after
+an actual reboot before attempting suspend. New images already install the
+production unit and do not need this compatibility override.

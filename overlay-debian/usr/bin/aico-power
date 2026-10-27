@@ -2,25 +2,177 @@
 """Select an RV1106 suspend mode and suspend until a wake event occurs."""
 
 import argparse
+import contextlib
 import fcntl
+import json
 import os
 from pathlib import Path
+import signal
+import socket
+import struct
+import subprocess
 import sys
+import time
 
 
 POWER_DIR = Path("/sys/power")
 LOCK_PATH = Path("/run/lock/aico-power.lock")
 MODES = {"sleep": "s2idle", "deep-sleep": "deep"}
+MCU_SOCKET = Path("/run/mcu_service/mcu_service.sock")
+WAKEUP_COUNT_TIMEOUT = 5
+WIFI_INTERFACE = Path("/sys/class/net/wlan0")
+RECOVERY_STATE = Path("/run/aico-suspend/state.json")
+BOOT_RECOVERED = Path("/run/aico-suspend/boot-recovered")
+SUSPEND_UNIT = "aico-suspend.service"
+CPU_IDLE_DRIVER = Path("/sys/devices/system/cpu/cpuidle/current_driver")
+CPU_IDLE_DISABLED = Path("/sys/devices/system/cpu/cpu0/cpuidle/state1/disable")
 
 
-def suspend(mode):
-    # Hold the lock until resume so concurrent commands cannot change the mode
-    # between selecting it and requesting suspend.
+def run_control(*args):
+    result = subprocess.run(args, check=True, text=True, capture_output=True,
+                            timeout=10)
+    return result.stdout.strip()
+
+
+def wifi(command):
+    reply = run_control("/usr/sbin/wpa_cli", "-i", "wlan0", command)
+    if command == "status":
+        fields = dict(line.split("=", 1) for line in reply.splitlines() if "=" in line)
+        if "wpa_state" not in fields:
+            raise RuntimeError("cannot read wlan0 supplicant state")
+        return fields["wpa_state"]
+    if reply != "OK":
+        raise RuntimeError("wlan0 " + command + " failed: " + reply)
+    return reply
+
+
+def save_recovery(state):
+    # Write the recovery intent before each external mutation, including
+    # commands whose acknowledgement could be lost on interruption.
+    RECOVERY_STATE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    temporary = RECOVERY_STATE.with_suffix(".tmp")
+    temporary.write_text(json.dumps(state) + "\n")
+    temporary.replace(RECOVERY_STATE)
+
+
+def recover():
+    boot_pending = not BOOT_RECOVERED.exists()
+    if not RECOVERY_STATE.exists() and not boot_pending:
+        return
+    state = (json.loads(RECOVERY_STATE.read_text()) if RECOVERY_STATE.exists()
+             else {"mcu": False, "wifi": False})
+    if boot_pending:
+        # /run is lost on RV reboot, but MCU/UART power can remain enabled.
+        # Confirm RESUME once per boot before accepting a new PREPARE.
+        state["mcu"] = True
+        save_recovery(state)
+    errors = []
+    # Always try both actions. A lost MCU link must not strand Wi-Fi offline.
+    for key, action in (("mcu", lambda: mcu_request("suspend_resume")),
+                        ("wifi", lambda: wifi("reconnect"))):
+        if not state.get(key):
+            continue
+        try:
+            action()
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
+            errors.append(key + ": " + str(error))
+        else:
+            state[key] = False
+            save_recovery(state)
+            if key == "mcu":
+                BOOT_RECOVERED.touch(mode=0o600)
+    if errors:
+        raise RuntimeError("suspend cleanup incomplete: " + "; ".join(errors))
+    RECOVERY_STATE.unlink()
+
+
+def quiesce_wifi(state):
+    if not WIFI_INTERFACE.exists():
+        return
+    previous = wifi("status")
+    if previous in ("DISCONNECTED", "INACTIVE", "INTERFACE_DISABLED"):
+        return
+    if previous not in ("COMPLETED", "SCANNING", "AUTHENTICATING", "ASSOCIATING",
+                        "ASSOCIATED", "4WAY_HANDSHAKE", "GROUP_HANDSHAKE"):
+        raise RuntimeError("unexpected wlan0 state: " + previous)
+    state["wifi"] = True
+    save_recovery(state)
+    wifi("disconnect")
+    deadline = time.monotonic() + 5
+    while wifi("status") != "DISCONNECTED":
+        if time.monotonic() >= deadline:
+            raise RuntimeError("wlan0 did not quiesce before suspend")
+        time.sleep(0.1)
+    print("Wi-Fi disconnected for suspend; reconnecting on return.", flush=True)
+
+
+@contextlib.contextmanager
+def power_lock():
     with LOCK_PATH.open("a") as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError as error:
             raise RuntimeError("another aico-power command is running") from error
+        yield
+
+
+def write_power(path, value):
+    # Buffered close can retry a failed flush, issuing a second suspend after
+    # the kernel has already rejected the wakeup_count-protected attempt.
+    payload = value.encode("ascii")
+    with path.open("wb", buffering=0) as control:
+        if control.write(payload) != len(payload):
+            raise RuntimeError("incomplete write to " + str(path))
+
+
+def mcu_request(operation):
+    payload = json.dumps({"op": operation}).encode("utf-8")
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as peer:
+        peer.settimeout(3)
+        peer.connect(str(MCU_SOCKET))
+        peer.sendall(struct.pack("<IQ", len(payload), 0) + payload)
+
+        def receive(count):
+            data = bytearray()
+            while len(data) < count:
+                block = peer.recv(count - len(data))
+                if not block:
+                    raise RuntimeError("MCU service closed the connection")
+                data.extend(block)
+            return data
+
+        size, reserved = struct.unpack("<IQ", receive(12))
+        if reserved or not 0 < size <= 256 * 1024:
+            raise RuntimeError("invalid MCU service response")
+        response = json.loads(receive(size))
+        if response.get("status") != "OK":
+            raise RuntimeError("MCU " + operation + ": " +
+                               response.get("status", "invalid response"))
+        return response
+
+
+def read_wakeup_count(path):
+    def expired(signum, frame):
+        raise RuntimeError("kernel wakeup sources remain active; suspend canceled")
+
+    previous = signal.signal(signal.SIGALRM, expired)
+    try:
+        signal.setitimer(signal.ITIMER_REAL, WAKEUP_COUNT_TIMEOUT)
+        count = path.read_text().strip()
+        if not count.isdecimal():
+            raise RuntimeError("invalid kernel wakeup_count")
+        return count
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+
+
+def suspend(mode):
+    # Hold the lock until resume so concurrent commands cannot change the mode
+    # between selecting it and requesting suspend.
+    with power_lock():
+        if mode != "s2idle":
+            raise RuntimeError("deep sleep requires an MCU-to-RV PMU wake line; this board has none")
 
         states = (POWER_DIR / "state").read_text().split()
         modes = [token.strip("[]")
@@ -31,27 +183,62 @@ def suspend(mode):
             raise RuntimeError(
                 f"this kernel does not advertise {mode}; available modes: "
                 + ", ".join(modes))
-
+        if (CPU_IDLE_DRIVER.read_text().strip() != "rv1106_idle" or
+                CPU_IDLE_DISABLED.read_text().strip() != "0"):
+            raise RuntimeError("s2idle requires the enabled RV1106 timekeeping idle driver")
         print(f"Requesting {mode} suspend.", flush=True)
         os.sync()
-        (POWER_DIR / "mem_sleep").write_text(mode + "\n")
-        (POWER_DIR / "state").write_text("mem\n")
+        write_power(POWER_DIR / "mem_sleep", mode + "\n")
+        # Retry any interrupted cleanup before starting a new transaction.
+        recover()
+        recovery = {"mcu": False, "wifi": False}
+        try:
+            quiesce_wifi(recovery)
+            recovery["mcu"] = True
+            save_recovery(recovery)
+            mcu_request("suspend_prepare")
+            wakeup_count = POWER_DIR / "wakeup_count"
+            count = read_wakeup_count(wakeup_count)
+            state = mcu_request("get_state").get("state", {})
+            if state.get("rv_state") != "sleeping":
+                raise RuntimeError("MCU wake or shutdown arrived before suspend")
+            write_power(wakeup_count, count + "\n")
+            write_power(POWER_DIR / "state", "mem\n")
+        finally:
+            recover()
         print("Suspend request returned.", flush=True)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Suspend the board using s2idle or deep sleep.")
-    parser.add_argument("command", choices=MODES,
-                        help="sleep: s2idle; deep-sleep: suspend-to-RAM")
+        description="Suspend the board using coordinated s2idle.")
+    parser.add_argument("command", choices=MODES, nargs="?",
+                        help="sleep: s2idle; deep-sleep: unavailable on this board")
+    internal = parser.add_mutually_exclusive_group()
+    internal.add_argument("--execute", action="store_true", help=argparse.SUPPRESS)
+    internal.add_argument("--recover", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         print("aico-power: run as root (for example, sudo aico-power sleep)",
               file=sys.stderr)
         return 1
     try:
-        suspend(MODES[args.command])
-    except (OSError, RuntimeError) as error:
+        if args.recover:
+            with power_lock():
+                recover()
+        elif args.command == "deep-sleep":
+            raise RuntimeError("deep sleep requires an MCU-to-RV PMU wake line; this board has none")
+        elif args.command != "sleep":
+            parser.error("specify sleep or deep-sleep")
+        elif args.execute:
+            suspend("s2idle")
+        else:
+            # PID 1 owns the worker: disconnecting the invoking SSH session
+            # cannot kill it, and ExecStopPost recovers even after SIGKILL.
+            result = subprocess.run(["systemctl", "start", SUSPEND_UNIT], check=False)
+            if result.returncode:
+                raise RuntimeError("suspend failed; see journalctl -u " + SUSPEND_UNIT)
+    except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as error:
         print(f"aico-power: {error}", file=sys.stderr)
         return 1
     return 0

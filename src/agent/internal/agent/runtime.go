@@ -146,7 +146,11 @@ type RunRequest struct {
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
 	// run's own startup preemption.
-	OnRunActive   func(context.Context)
+	OnRunActive func(context.Context)
+	// OnRunComplete runs when the run has returned but still owns the runtime
+	// gate, so the latest turn in the context is still this run's: the next
+	// run appends its input only after it takes the gate.
+	OnRunComplete func()
 	SteerProvider func(context.Context) (RunSteerMessage, bool)
 	// FinalSteerProvider is called at terminal executor boundaries. It should
 	// atomically consume one last pending steer if available; otherwise it should
@@ -977,7 +981,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if req.OnRunActive != nil {
 			req.OnRunActive(isolationCtx)
 		}
-		return r.run(isolationCtx, req)
+		result, err := r.run(isolationCtx, req)
+		if req.OnRunComplete != nil {
+			req.OnRunComplete()
+		}
+		return result, err
 	})
 }
 
@@ -1919,6 +1927,31 @@ func (r *Runtime) WebContextDump() contextmanager.MessageListDump {
 		return r.UserContextDump()
 	}
 	return r.ContextDump()
+}
+
+// WebContextWindow returns one range of the context that WebContextDump
+// would return, copying only that range.
+func (r *Runtime) WebContextWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) contextmanager.MessageListWindow {
+	if r == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	cfg := r.ConfigSnapshot()
+	realtime := cfg.InputModeOrDefault() == "realtime"
+	if !realtime && r.contextManager != nil {
+		return r.contextManager.MessageListWindow(selectRange)
+	}
+	folder := agentpath.UserContextManagerSessionFolder(cfg.ConfigDir)
+	if !realtime {
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return contextmanager.MessageListWindow{}
+		}
+		folder = agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	}
+	manager, err := contextmanager.LoadContextManagerFromCurrentSession(folder)
+	if err != nil || manager == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	return manager.MessageListWindow(selectRange)
 }
 
 // ReadContextAttachment reads an attachment registered in the user or backend

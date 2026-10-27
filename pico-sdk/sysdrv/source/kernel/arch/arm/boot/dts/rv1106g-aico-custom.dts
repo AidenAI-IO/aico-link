@@ -268,6 +268,8 @@
 };
 
 &u2phy_otg {
+	/* SCH v1: VBUSDET is divided from VSYS_LOAD, not connector VBUS. */
+	rockchip,vbus-always-on;
 	status = "okay";
 };
 
