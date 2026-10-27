@@ -39,7 +39,7 @@ def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
         load_catalog(catalog_path=catalog_path, suites_dir=suites_dir)
 
 
-def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
+def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> None:
     catalog = load_catalog()
 
     runnable = select_cases(catalog, profile="runnable")
@@ -49,12 +49,13 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert not any(case.environment in {"adb", "external"} for case in runnable)
-    assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
+    assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
-    assert {case.environment for case in runnable}.isdisjoint(
-        {case.environment for case in hardware}
-    )
+    assert {case.id for case in runnable if case.environment == "adb"} == {
+        "adb-android", "adb-android-aidenbridge",
+        "adb-android-text-editing", "adb-android-text-editing-aidenbridge",
+    }
+    assert len({case.id for case in all_cases}) == len(all_cases)
     assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
         {case.suite for case in catalog.cases}
         - {"suites/mobilegym_scroll_sweep.json"}
@@ -109,9 +110,10 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
 
 
 @pytest.mark.parametrize("suite", ["adb_android_basic", "adb_android_text_editing"])
-def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite):
+@pytest.mark.parametrize("profile", ["runnable", "hardware", "all"])
+def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite, profile):
     catalog = load_catalog()
-    selected = select_cases(catalog, profile="hardware", suite=f"suites/{suite}.json")
+    selected = select_cases(catalog, profile=profile, suite=f"suites/{suite}.json")
 
     assert len(selected) == 2
     baseline, connected = selected

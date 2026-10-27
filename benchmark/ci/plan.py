@@ -11,13 +11,13 @@ BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("suites.json")
 DEFAULT_SUITES_DIR = BENCHMARK_ROOT / "suites"
 ENVIRONMENTS = {"isolated", "mobilegym", "adb", "external"}
-RUNNABLE_ENVIRONMENTS = {"isolated", "mobilegym"}
+# ADB cases use the CI emulator. They are runnable automatically while still
+# belonging to the hardware profile and sharing its exclusive device lock.
+RUNNABLE_ENVIRONMENTS = {"isolated", "mobilegym", "adb"}
 HARDWARE_ENVIRONMENTS = {"adb", "external"}
 PROFILES = {"runnable", "hardware", "all"}
 TARGET_PLATFORMS = {"auto", "ios", "android", "mac", "windows", "linux"}
 
-if RUNNABLE_ENVIRONMENTS & HARDWARE_ENVIRONMENTS:
-    raise RuntimeError("runnable and hardware environments must be disjoint")
 if RUNNABLE_ENVIRONMENTS | HARDWARE_ENVIRONMENTS != ENVIRONMENTS:
     raise RuntimeError("runnable and hardware environments must cover all environments")
 

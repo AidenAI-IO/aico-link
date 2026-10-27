@@ -421,13 +421,17 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
-| Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (17 cases) |
+| Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select a suite |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
-case whose environment is `isolated` or `mobilegym`.
+case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
+`runnable` flag is true. This includes both ADB comparison pairs (four cases)
+on the runner's configured Android emulator. ADB cases remain available through
+the manual `hardware` profile and use the same exclusive device lock in every
+profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
@@ -518,13 +522,14 @@ and state recovery; text-editing tasks cover ASCII spaces, punctuation,
 replacement, and clearing. The `phone_control_v1.json` suite remains registered
 for MobileGym and iOS, without an additional ADB case.
 
-Selecting either Android suite with the `hardware` profile runs both variants.
+Both Android pairs run in the daily `runnable` sweep. Selecting either suite
+manually with `runnable`, `hardware`, or `all` also runs both variants.
 The baseline stops any retained companion App before starting and uses the ADB
 environment without a Phone Bridge connection. The connected variant establishes
 Phone Bridge on each task Agent while ADB continues to provide screenshots and
 input. Both variants retain the task's prepared screen; the connected variant
 does not bring the companion App to the foreground after task setup.
-Hardware cases run exclusively on the shared emulator.
+ADB cases run exclusively on the shared emulator, including scheduled runs.
 
 Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
 `execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
@@ -550,7 +555,8 @@ field; its evidence is included in `results.jsonl` and the local
 the input assertion is unknown; an otherwise passing task becomes an evaluation
 error. Cleanup failures retain the completed task result and are recorded in
 `android_bridge_cleanup_error` and the worker log. Select this suite with the
-`hardware` profile to run only the connected App cases.
+`hardware` profile to run only the connected App cases. This dedicated capability
+suite has `runnable: false` and remains excluded from the daily comparison sweep.
 
 This suite replaces the former separate `android_bridge_data_v1.json` suite.
 It does not claim coverage of iOS-only transports, BLE notification forwarding,

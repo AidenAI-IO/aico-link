@@ -22,7 +22,7 @@
     {"id": "adb-android-aidenbridge", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240, "android_phone_bridge": true},
     {"id": "adb-android-text-editing", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
     {"id": "adb-android-text-editing-aidenbridge", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240, "android_phone_bridge": true},
-    {"id": "aidenbridge-capabilities-android", "suite": "suites/aiden_app/android_bridge_capabilities_v1.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 120, "android_phone_bridge": true},
+    {"id": "aidenbridge-capabilities-android", "suite": "suites/aiden_app/android_bridge_capabilities_v1.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 120, "android_phone_bridge": true, "runnable": false},
     {"id": "app-workflow", "suite": "suites/app_workflow_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL", "timeout_minutes": 360},
     {"id": "episode-memory-before-ios", "suite": "suites/episode_memory_before_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},
     {"id": "episode-memory-after-ios", "suite": "suites/episode_memory_after_v1.json", "environment": "external", "environment_variable": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL", "target_platform": "ios", "timeout_minutes": 360},
