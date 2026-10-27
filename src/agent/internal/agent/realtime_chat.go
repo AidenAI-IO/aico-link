@@ -73,10 +73,14 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 				pending.mu.Lock()
 				pending.history = append(pending.history, normalized)
 				pending.messages = append(pending.messages, normalized)
+				// The request's own user and assistant messages are its turn;
+				// the shared context may already hold another one.
+				pending.turn = append([]Message(nil), pending.history...)
 				pending.done = true
 				pending.mu.Unlock()
 			} else {
 				pending.mu.Lock()
+				pending.turn = append([]Message(nil), pending.history...)
 				pending.done = true
 				pending.mu.Unlock()
 			}

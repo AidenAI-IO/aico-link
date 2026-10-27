@@ -369,8 +369,9 @@ type chatPendingResult struct {
 	err      string
 	// Per-request history (separate from server-level history)
 	history []Message
-	// turn is the latest turn when the run completed. Later polls serve it,
-	// since by then the context may already hold the next request's turn.
+	// turn is this request's turn, captured when it completed. Later polls
+	// serve it, since by then the context may already hold the next
+	// request's turn.
 	turn []Message
 }
 
@@ -1609,6 +1610,12 @@ func (s *Server) handleChatAsync(
 		defer func() {
 			unregisterStreamOutput()
 		}()
+		runReq.OnRunComplete = func() {
+			turn := s.webHistoryTurnSnapshot()
+			pending.mu.Lock()
+			pending.turn = turn
+			pending.mu.Unlock()
+		}
 
 		result, err := s.runtime.Run(runCtx, runReq)
 		if newStream != nil {
@@ -1670,7 +1677,6 @@ func (s *Server) handleChatAsync(
 		if s.liveActivity != nil {
 			s.liveActivity.CompleteTask(requestID, result.Output)
 		}
-		pending.turn = s.webHistoryTurnSnapshot()
 		pending.done = true
 		pending.mu.Unlock()
 
@@ -2020,6 +2026,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Creating stream writer")
 	runReq.StreamWriter = newStreamFanoutWriter(streamWriters...)
 
+	// Capture the turn while the run still owns the runtime gate; see
+	// RunRequest.OnRunComplete.
+	var turn []Message
+	runReq.OnRunComplete = func() {
+		turn = s.webHistoryTurnSnapshot()
+	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
 	if newStream != nil {
@@ -2043,7 +2055,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if s.logger != nil {
 				s.logger.Info("Agent run canceled: request_id=%s", req.RequestID)
 			}
-			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: s.webHistoryTurnSnapshot()})
+			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: turn})
 			return
 		}
 		errorMessage := Message{
@@ -2065,11 +2077,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			s.speakFinalText(ctx, req.RequestID, prepared)
 		}
-		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: s.webHistoryTurnSnapshot()})
+		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: turn})
 		return
 	}
 
-	historySnapshot := s.webHistoryTurnSnapshot()
+	historySnapshot := turn
 	if s.liveActivity != nil {
 		s.liveActivity.CompleteTask(req.RequestID, result.Output)
 	}

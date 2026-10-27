@@ -1,14 +1,19 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/agentpath"
 	"aico-agent/internal/agent/messages"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 func newHistoryPageTestServer(t *testing.T, turns int) *Server {
@@ -200,5 +205,73 @@ func TestChatResultServesTheTurnCapturedAtCompletion(t *testing.T) {
 	}
 	if resp.Status != "complete" || resp.Response != "answer 1" || len(resp.History) != 4 || resp.History[0].Content != "question 1" {
 		t.Fatalf("chat result = %+v, want the completed turn", resp)
+	}
+}
+
+func TestRuntimeOnRunCompleteRunsWhileTheRunOwnsTheGate(t *testing.T) {
+	model := &scriptedModel{responses: []*llms.ContentResponse{contentResponse("done")}}
+	runtime := NewRuntimeWithDeps(
+		withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake"}, Instruction: "test"}),
+		&testModelResolver{model: model},
+		NewMemoryManager(""),
+		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+		NewSkillIndex(),
+	)
+	server := &Server{logger: newTestLogger(), runtime: runtime}
+
+	var gateHeld bool
+	var turn []Message
+	_, err := runtime.Run(context.Background(), RunRequest{
+		Input: "which turn is this",
+		OnRunComplete: func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+			defer cancel()
+			unlock, err := runtime.lockRun(ctx)
+			if err == nil {
+				unlock()
+			}
+			gateHeld = err != nil
+			turn = server.webHistoryTurnSnapshot()
+		},
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !gateHeld {
+		t.Fatal("OnRunComplete ran after the run released the gate")
+	}
+	if len(turn) == 0 || turn[0].Type != "user" || !strings.Contains(turn[0].Content, "which turn is this") {
+		t.Fatalf("turn captured in OnRunComplete = %#v, want this run's turn", turn)
+	}
+}
+
+func TestRealtimeChatResultServesTheRequestTurn(t *testing.T) {
+	server := newHistoryPageTestServer(t, 1)
+	server.pendingResults = map[string]*chatPendingResult{}
+	server.SetRealtimeChatHandler(func(context.Context, RealtimeChatRequest) (<-chan RealtimeChatEvent, error) {
+		events := make(chan RealtimeChatEvent, 1)
+		events <- RealtimeChatEvent{Type: RealtimeChatEventDone, Response: "realtime answer"}
+		close(events)
+		return events, nil
+	})
+
+	const requestID = "realtime-1"
+	server.handleRealtimeChatAsync(httptest.NewRecorder(), ChatRequest{RequestID: requestID}, TurnInput{InputText: "realtime question"})
+
+	var resp ChatResultResponse
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rec := httptest.NewRecorder()
+		server.handleChatResult(rec, httptest.NewRequest(http.MethodGet, "/api/chat/result?request_id="+requestID, nil))
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode chat result: %v", err)
+		}
+		if resp.Status == "complete" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if resp.Status != "complete" || resp.Response != "realtime answer" || len(resp.History) != 2 || resp.History[0].Content != "realtime question" {
+		t.Fatalf("realtime chat result = %+v, want the request's own turn", resp)
 	}
 }

@@ -146,7 +146,11 @@ type RunRequest struct {
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
 	// run's own startup preemption.
-	OnRunActive   func(context.Context)
+	OnRunActive func(context.Context)
+	// OnRunComplete runs when the run has returned but still owns the runtime
+	// gate, so the latest turn in the context is still this run's: the next
+	// run appends its input only after it takes the gate.
+	OnRunComplete func()
 	SteerProvider func(context.Context) (RunSteerMessage, bool)
 	// FinalSteerProvider is called at terminal executor boundaries. It should
 	// atomically consume one last pending steer if available; otherwise it should
@@ -977,7 +981,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if req.OnRunActive != nil {
 			req.OnRunActive(isolationCtx)
 		}
-		return r.run(isolationCtx, req)
+		result, err := r.run(isolationCtx, req)
+		if req.OnRunComplete != nil {
+			req.OnRunComplete()
+		}
+		return result, err
 	})
 }
 
