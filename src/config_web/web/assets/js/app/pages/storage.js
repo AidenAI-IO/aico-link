@@ -1,7 +1,7 @@
 /**
  * Storage & backup route.
  *
- *   - Storage status: eMMC usage from `GET /api/storage/status`.
+ *   - Storage status: system storage usage from `GET /api/storage/status`.
  *   - microSD: the running mode, the file system to format with, and the two
  *     card actions (`POST /api/storage/format`, `POST /api/storage/eject`).
  *     A running format job is polled until it finishes.
@@ -41,7 +41,7 @@ export function gb(bytes) {
 
 /** `effective_mode` as the classic page names it (storage.js `storageModeName`). */
 function modeName(mode) {
-  if (mode === 1) return msg('storage.mode.emmc', '仅 eMMC');
+  if (mode === 1) return msg('storage.mode.emmc', '系统 TF 卡');
   if (mode === 2) return msg('storage.mode.dual', '双存储');
   return msg('storage.mode.auto', '自动');
 }

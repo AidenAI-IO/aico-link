@@ -33,6 +33,8 @@ ensure_pico_sdk
 help_output=$("${BUILD_SCRIPT}" --help)
 grep -Fq 'output/debian/image/update.img' <<<"${help_output}" \
     || fail "help does not describe the final update.img path"
+grep -Fq 'output/debian/image/tf-card.img' <<<"${help_output}" \
+    || fail "help does not describe the raw TF card image"
 for artifact in \
     boot_a.img.tar.gz boot_b.img.tar.gz manifest.json \
     rootfs.img.tar.gz update.img.tar.gz; do
@@ -60,7 +62,7 @@ grep -Fq 'scripts/generate_ota_device_config.sh' "${BUILD_SCRIPT}" \
     || fail "factory OTA config generation is missing"
 grep -Fq 'aico_ota_manifest_max_download_bytes' "${BUILD_SCRIPT}" \
     || fail "signed manifests do not enforce the OTA partition download limit"
-grep -Fq 'scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk' \
+grep -Fq 'scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk' \
     "${BUILD_SCRIPT}" \
     || fail "OTA partition limits do not derive from the Debian board config"
 grep -Fq -- '--base-url "${ota_base_url}"' "${BUILD_SCRIPT}" \
@@ -91,6 +93,7 @@ mkdir -p "${image_dir}"
 for image in boot_a.img boot_b.img rootfs.img update.img; do
     printf '%s\n' "${image}" >"${image_dir}/${image}"
 done
+printf '%s\n' tf-card >"${image_dir}/tf-card.img"
 compress_release_assets \
     "${image_dir}" "${MANIFEST_IMAGE_ASSETS[*]}" 0
 openssl genpkey -algorithm Ed25519 -out "${TEST_ROOT}/signing-key.pem" \
@@ -106,6 +109,8 @@ install_local_release_artifacts "${image_dir}" "${output_dir}" 0
 
 cmp -s "${image_dir}/update.img" "${output_dir}/update.img" \
     || fail "raw update.img was not preserved"
+cmp -s "${image_dir}/tf-card.img" "${output_dir}/tf-card.img" \
+    || fail "raw TF card image was not preserved"
 cmp -s "${image_dir}/manifest.json" "${output_dir}/manifest.json" \
     || fail "manifest.json was not installed"
 jq -e '
@@ -127,6 +132,10 @@ done
     cd "${output_dir}"
     sha256sum --check update.img.sha256 >/dev/null
 ) || fail "update.img.sha256 does not match the installed image"
+(
+    cd "${output_dir}"
+    sha256sum --check tf-card.img.sha256 >/dev/null
+) || fail "tf-card.img.sha256 does not match the installed image"
 
 # The trust anchor burned into the image is separable from the signing key, so
 # an image can accept releases this host cannot sign. Cover the four outcomes.

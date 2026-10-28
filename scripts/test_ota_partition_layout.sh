@@ -17,7 +17,7 @@ board_path="$tmp_dir/BoardConfig.mk"
 (
   unset AICO_OTA_BOARD_CONFIG_PATH AICO_OTA_DEVICE_PATH
   source "$layout_script"
-  expected_board_path="$repo_root/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+  expected_board_path="$repo_root/scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
   if [ "$AICO_OTA_BOARD_CONFIG_PATH" != "$expected_board_path" ]; then
     echo "default OTA layout must use the Debian system board config" >&2
     exit 1
@@ -33,7 +33,7 @@ board_path="$tmp_dir/BoardConfig.mk"
 )
 
 printf '%s\n' \
-  'export RK_PARTITION_CMD_IN_ENV="32K(env),3G(userdata),300M(ota)"' \
+  'export RK_PARTITION_CMD_IN_ENV="32K(env),300M(ota),-(userdata)"' \
   'export RK_PARTITION_FS_TYPE_CFG=rootfs_a@IGNORE@ext4,userdata@/userdata@ext4,ota@/userdata/ota@ext4' \
   > "$board_path"
 

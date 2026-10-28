@@ -378,9 +378,9 @@ func currentSlot(cmdline string) string {
 		if strings.HasPrefix(field, "root=") {
 			value := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(field, "root=")))
 			switch {
-			case value == "partlabel=rootfs_a", value == "rootfs_a", value == "/dev/mmcblk0p7", strings.HasSuffix(value, "/rootfs_a"):
+			case value == "partlabel=rootfs_a", value == "rootfs_a", value == "/dev/mmcblk1p7", strings.HasSuffix(value, "/rootfs_a"):
 				rootSlot = "a"
-			case value == "partlabel=rootfs_b", value == "rootfs_b", value == "/dev/mmcblk0p8", strings.HasSuffix(value, "/rootfs_b"):
+			case value == "partlabel=rootfs_b", value == "rootfs_b", value == "/dev/mmcblk1p8", strings.HasSuffix(value, "/rootfs_b"):
 				rootSlot = "b"
 			}
 		}

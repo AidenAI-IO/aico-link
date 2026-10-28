@@ -11,8 +11,14 @@ OTA is accomplished through three layers: `debian_build.sh` orchestrates the Deb
 Production images use A/B layout:
 
 ```text
-32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)
+32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)
 ```
+
+The final userdata partition fills the physical TF card. The raw factory image
+contains a finite 3 GiB userdata seed; boot-time ext4 growth uses the remaining
+capacity. OTA is p9 and userdata is p10. Devices with the earlier reversed,
+fixed-size data layout must be backed up and reflashed; this is not a slot OTA
+migration. See [TF-only system](../01-getting-started/tf-system.md).
 
 | Partition | A/B | OTA Behavior |
 | --- | --- | --- |
@@ -57,12 +63,12 @@ Production images use A/B layout:
 7. Read actual available bytes from the dedicated OTA filesystem and require the remaining downloads plus the configured safety margin.
 8. Download images and verify the archive size and signed SHA256 before touching a partition.
 9. Mark the inactive target slot unbootable, then stream each extracted image to its partition while calculating and checking `image_sha256`; fsync after the hash passes, and reject the update without activating the slot on any mismatch.
-10. Read the written image bytes back from eMMC and verify the same image SHA256, then personalize rootfs when required.
+10. Read the written image bytes back from the TF target partition and verify the same image SHA256, then personalize rootfs when required.
 11. Delete old `health.ok`, write `/userdata/ota/pending_boot.json`.
 12. Modify `misc`, set target slot as active trial slot with default tries of 3.
 13. Reboot into target slot.
 
-Normal updates therefore decompress a compressed image once, during the write, instead of separately for pre-write image verification and archive pre-scans. The full eMMC readback remains as the independent write-integrity check. Dry-run mode still decompresses and hashes the image without writing it.
+Normal updates therefore decompress a compressed image once, during the write, instead of separately for pre-write image verification and archive pre-scans. The full target-partition readback remains as the independent write-integrity check. Dry-run mode still decompresses and hashes the image without writing it.
 
 ## Health Confirmation and Rollback
 

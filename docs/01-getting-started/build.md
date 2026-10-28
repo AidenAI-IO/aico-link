@@ -82,6 +82,11 @@ the local OTA manifest in one workflow.
 ./debian_build.sh
 ```
 
+The TF-only build writes `output/debian/image/tf-card.img` for whole-card
+factory provisioning. `update.img` remains a Rockchip recovery package and
+must not be written to a raw TF card. See [TF-only RV1106 system](tf-system.md)
+for the partition map and boot-power prerequisite.
+
 Rootfs packaging preserves executable permissions from `overlay-debian/`.
 Keep helpers invoked by systemd executable in Git (`100755`). The required
 `debian-systemd-overlay` test suite checks these permissions, and the image

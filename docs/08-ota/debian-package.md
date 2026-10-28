@@ -76,9 +76,11 @@ New platform paths and package ownership:
 | EDID and VQE configuration | `/usr/share/aico/edid/`, `/usr/share/aico/audio/config_aivqe.json` | base rootfs |
 | OTA Ed25519 public key | `/usr/share/keyrings/aico-ota.pem` | base rootfs |
 
-rootfs A/B are 1792 MiB each, at partition nodes p7/p8; userdata is p9 and ota is p10.
+rootfs A/B are 1792 MiB each, at partition nodes p7/p8; ota is p9 and userdata is p10.
 The former OEM slots' combined 512 MiB is split equally between the rootfs slots.
-userdata remains 3 GiB and OTA remains 300 MiB.
+OTA remains 300 MiB; the final userdata partition uses the remaining TF card
+capacity and grows its ext4 filesystem at boot. Migrating from the former
+fixed 3 GiB userdata layout requires backup and a whole-card reflash.
 The new manifest uses schema 2 and must include both boot and rootfs in full. Release
 assets are `boot_a.img.tar.gz`, `boot_b.img.tar.gz`, `rootfs.img.tar.gz`,
 `update.img.tar.gz`, and `manifest.json`; a `.deb` can also be published separately.

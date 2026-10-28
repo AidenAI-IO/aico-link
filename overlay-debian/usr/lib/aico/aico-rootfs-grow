@@ -71,8 +71,15 @@ grow_persistent_filesystem() {
 if [ ! -e "${marker}" ]; then
     echo "Growing active rootfs ${root_device}"
     resize2fs "${root_device}"
-    grow_persistent_filesystem /dev/disk/by-partlabel/userdata
-    grow_persistent_filesystem /dev/disk/by-partlabel/ota
+fi
+
+# The final userdata partition follows the physical card size. Recheck geometry
+# on every boot so copying a provisioned card to a larger card also grows it.
+# Full filesystems skip both fsck and resize, including after a rootfs OTA.
+grow_persistent_filesystem /dev/disk/by-partlabel/userdata
+grow_persistent_filesystem /dev/disk/by-partlabel/ota
+
+if [ ! -e "${marker}" ]; then
     mkdir -p "$(dirname "${marker}")"
     tmp=${marker}.tmp.$$
     printf 'slot=%s\nroot=%s\n' "${AICO_SLOT_SUFFIX}" "${root_device}" >"${tmp}"

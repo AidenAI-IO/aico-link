@@ -101,12 +101,12 @@ prepare_sdk() {
     # The vendored SDK carries the BSP source changes. The system stage only overlays
     # the production board configuration and kernel config that it owns.
     install -m 0755 \
-        "${SCRIPT_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
-        "${SDK_DIR}/project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+        "${SCRIPT_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk" \
+        "${SDK_DIR}/project/cfg/BoardConfig_IPC/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
     install -m 0644 "${SCRIPT_DIR}/debian-system.config" \
         "${SDK_DIR}/sysdrv/source/kernel/arch/arm/configs/debian-system.config"
     ln -sfn \
-        project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
+        project/cfg/BoardConfig_IPC/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk \
         "${SDK_DIR}/.BoardConfig.mk"
 
     # Keep the metadata field stable: the vendored SDK resolves to its owning
@@ -277,8 +277,12 @@ run_bsp() {
         }
     done
     grep -qx \
-        'blkdevparts=mmcblk0:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
+        'blkdevparts=mmcblk1:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)' \
         "${env_text}"
+    tr '\000' '\n' <"${SDK_DIR}/output/image/env.img" \
+        | grep -x \
+            'sd_parts=mmcblk1:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)' \
+            >/dev/null
     for item in env.img idblock.img uboot.img misc.img boot_a.img boot_b.img download.bin; do
         test -s "${SDK_DIR}/output/image/${item}"
     done
@@ -335,6 +339,12 @@ run_images() {
 
     run_sdk_packer
     test -s "${IMAGE_DIR}/update.img"
+    # The full-card image must contain the personalized userdata image.
+    local layout
+    layout=$(source "${SCRIPT_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"; printf '%s' "${RK_PARTITION_CMD_IN_ENV}")
+    python3 "${SCRIPT_DIR}/assemble-tf-card.py" \
+        --layout "${layout}" --env "${OUTPUT_DIR}/bsp-env.txt" \
+        --image-dir "${IMAGE_DIR}" --output "${IMAGE_DIR}/tf-card.img"
 }
 
 run_sdk_packer() {
@@ -378,6 +388,11 @@ run_config() {
 
     run_sdk_packer
     test -s "${IMAGE_DIR}/update.img"
+    local layout
+    layout=$(source "${SCRIPT_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"; printf '%s' "${RK_PARTITION_CMD_IN_ENV}")
+    python3 "${SCRIPT_DIR}/assemble-tf-card.py" \
+        --layout "${layout}" --env "${OUTPUT_DIR}/bsp-env.txt" \
+        --image-dir "${IMAGE_DIR}" --output "${IMAGE_DIR}/tf-card.img"
 }
 
 run_audit() {

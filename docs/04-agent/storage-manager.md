@@ -12,7 +12,7 @@ problems.
 
 | Component | Responsibility | Primary HTTP API |
 | --- | --- | --- |
-| `StorageManager` (Config Web) | Detects and mounts the SD card, derives eMMC-only or dual-storage mode, routes governed data, migrates older data, safely ejects the card, and formats the card | Config Web `/api/storage/status`, `/api/storage/eject`, `/api/storage/format` |
+| `StorageManager` (Config Web) | Detects and mounts a separate removable SD card, derives system-only or dual-storage mode, routes governed data, migrates older data, safely ejects the extra card, and formats the extra card | Config Web `/api/storage/status`, `/api/storage/eject`, `/api/storage/format` |
 | `StorageMonitor` | Samples persistent-storage capacity, classifies pressure levels, runs cleanup, and degrades non-essential writes when space is low | `/api/storage/monitor/status`, `/api/storage/cleanup` |
 
 `StorageManager` does not replace `StorageMonitor`. Adding an SD card provides a
@@ -28,10 +28,11 @@ Related documentation:
 ## StorageManager: SD Card and Dual-Storage Routing
 
 The production Config Web process creates and starts `StorageManager`
-unconditionally. Missing, removed, rejected, or unusable card hardware falls
-back to eMMC-only operation; there is no user preference that forces a storage
-mode. The Agent creates only a read-only view of the state mirror and never
-touches SD-card hardware.
+unconditionally. On the TF-only board, the TF card containing `/` is system
+storage and cannot be managed as removable media. Missing, removed, rejected,
+or unusable *additional* card hardware leaves the system in mode `1`; there is
+no user preference that forces a storage mode. The Agent creates only a
+read-only view of the state mirror and never touches SD-card hardware.
 
 ### Card Lifecycle and Effective Mode
 
@@ -56,17 +57,18 @@ removal. When a card appears, it:
 
 The default mount point is `/mnt/sdcard`, the default device setting is `auto`,
 and the default minimum free space is 64 MiB. Discovery selects exactly one
-`/sys/block/mmcblk*/device/type` with value `SD`; it excludes eMMC (`MMC`) and
-Wi-Fi (`SDIO`). It does not rely on the kernel's `removable` flag. Aico Link SCH v1
-uses `mmcblk1`; older Pico Zero configurations can use `mmcblk2`. An explicit
-device override is preserved; ambiguous discovery requires an override.
+`/sys/block/mmcblk*/device/type` with value `SD`; it excludes eMMC (`MMC`),
+Wi-Fi (`SDIO`), and the disk that contains `/`. It does not rely on the
+kernel's `removable` flag. The system TF is normally `mmcblk1`; SCH v1 has no
+second card slot. An explicit device override cannot select the system disk.
+Ambiguous discovery requires an override.
 A card normally becomes usable only after it passes the mount and write checks;
 the busy-unmount case above is the exception to the minimum-free-space rejection.
 
 | Effective mode | JSON value | Condition |
 | --- | --- | --- |
-| eMMC only | `1` | No usable card is mounted |
-| Dual storage | `2` | A usable card is mounted |
+| System TF only | `1` | No separate usable card is mounted |
+| Dual storage | `2` | A separate usable card is mounted |
 
 A positively identified blank card is automatically formatted as FAT32 once per
 insertion. Cards with an existing but unsupported, damaged, or otherwise
@@ -81,31 +83,31 @@ file is separate from the StorageMonitor level file at
 
 ### Data Routing and Migration
 
-New governed data is always written to eMMC. The current production integration
+New governed data is always written to `/userdata` on the system TF. The current production integration
 uses this routing for audio archives:
 
 | Operation | No mounted SD card | Mounted SD card |
 | --- | --- | --- |
 | New audio archive | `/userdata/audio` | `/userdata/audio` |
-| Read audio archives | `/userdata/audio` | eMMC first, then `/mnt/sdcard/aico/audio` |
+| Read audio archives | `/userdata/audio` | System TF first, then `/mnt/sdcard/aico/audio` |
 | Retention cleanup roots | `/userdata/audio` | `/mnt/sdcard/aico/audio` |
 
-Keeping new writes on eMMC avoids making active recording depend on removable
-media. When the SD tier is available and eMMC free space falls below the start
+Keeping new writes on the system volume avoids making active recording depend
+on an additional removable card. When that tier is available and `/userdata` free space falls below the start
 watermark, the manager migrates older audio archives to the SD card, oldest
-first. It stops after eMMC reaches the stop watermark, no eligible files remain,
+first. It stops after `/userdata` reaches the stop watermark, no eligible files remain,
 the card becomes unavailable, the next copy would cross the configured SD free
 space reserve, or an eject or format operation cancels the run. Capacity errors
-stop the run and retain the source file on eMMC.
+stop the run and retain the source file on the system TF.
 
 The default migration watermarks are:
 
-- Start when eMMC free space is below 10%.
-- Stop when eMMC free space reaches 50%.
+- Start when `/userdata` free space is below 10%.
+- Stop when `/userdata` free space reaches 50%.
 
 Only regular files at least 60 seconds old are eligible. Each file is copied to
 an `.aico-partial` path, synced, size-checked, renamed into place, and only then
-removed from eMMC. Readers prefer the eMMC copy during the brief window where
+removed from the system TF. Readers prefer the system copy during the brief window where
 both copies may exist. Failed or exhausted runs use a ten-minute retry cooldown.
 
 ### Safe Eject and Formatting
@@ -128,7 +130,7 @@ mirror carries the same warning as `LAST_WARNING` for read-only consumers.
 The page also displays a localized reminder while this historical warning is
 present; it does not mark a later successful eject as having failed to flush.
 
-Manual formatting is destructive: it rewrites the whole card with a fresh MBR,
+Manual formatting applies only to an additional card. It rewrites that whole card with a fresh MBR,
 one partition, and a new filesystem labeled `AICO`. Supported filesystems are
 FAT32, ext4, and exFAT. Formatting runs asynchronously. After `FormatDisk`
 succeeds, the manager attempts to mount the new filesystem; check `card.mounted`
@@ -151,7 +153,7 @@ successful probe clears the capacity reason without requiring reinsertion.
 
 ### StorageManager HTTP API
 
-These endpoints report and control the SD/eMMC manager. They are distinct from
+These endpoints report and control the separate-card manager. They are distinct from
 the StorageMonitor endpoints documented later.
 
 All three endpoints return HTTP 405 for the wrong method and HTTP 503 if the

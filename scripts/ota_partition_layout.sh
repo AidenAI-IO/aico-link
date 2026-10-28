@@ -7,7 +7,7 @@ AICO_OTA_FILESYSTEM="${AICO_OTA_FILESYSTEM:-ext4}"
 AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB="${AICO_OTA_DOWNLOAD_SAFETY_MARGIN_MIB:-16}"
 AICO_OTA_FILESYSTEM_OVERHEAD_MIB="${AICO_OTA_FILESYSTEM_OVERHEAD_MIB:-30}"
 AICO_OTA_LAYOUT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-AICO_OTA_BOARD_CONFIG_PATH="${AICO_OTA_BOARD_CONFIG_PATH:-$AICO_OTA_LAYOUT_ROOT/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk}"
+AICO_OTA_BOARD_CONFIG_PATH="${AICO_OTA_BOARD_CONFIG_PATH:-$AICO_OTA_LAYOUT_ROOT/scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk}"
 
 aico_ota_partition_size_mib() {
   local partition_env definition size_spec partition_name value

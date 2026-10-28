@@ -154,8 +154,10 @@ printf '%s\n' "${bypass_output}" \
     | grep -qx 'HTTP_PROXY=http://upstream.example:8080'
 
 test ! -e "${UNIT_DIR}/oem.mount"
-grep -qx 'What=/dev/mmcblk0p9' "${UNIT_DIR}/userdata.mount"
-grep -qx 'What=/dev/mmcblk0p10' "${UNIT_DIR}/userdata-ota.mount"
+# The TF partition labels are supplied by blkdevparts, but udev only tags its
+# filesystem-label links as systemd devices. Mount units must use those links.
+grep -qx 'What=/dev/disk/by-label/userdata' "${UNIT_DIR}/userdata.mount"
+grep -qx 'What=/dev/disk/by-label/ota' "${UNIT_DIR}/userdata-ota.mount"
 for unit in userdata.mount userdata-ota.mount; do
     grep -q '^Requires=.*aico-rootfs-grow.service' "${UNIT_DIR}/${unit}" \
         || fail "${unit} can mount after failed filesystem preparation"

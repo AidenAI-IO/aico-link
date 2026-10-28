@@ -6,19 +6,19 @@ from pathlib import Path
 import json, re, sys
 root = Path(sys.argv[1])
 def read(name): return (root/name).read_text()
-board = read('scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk')
+board = read('scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk')
 layout = re.search(r'RK_PARTITION_CMD_IN_ENV="([^"]+)"', board)[1]
 parts = re.findall(r'([^,]+)\(([^)]+)\)', layout)
 expected = [('32K','env'),('512K@32K','idblock'),('256K','uboot'),('4M','misc'),
             ('32M','boot_a'),('32M','boot_b'),('1792M','rootfs_a'),('1792M','rootfs_b'),
-            ('3G','userdata'),('300M','ota')]
+            ('300M','ota'),('-','userdata')]
 assert parts == expected, parts
 slot = read('overlay-debian/usr/lib/aico/aico-slot-resolve')
 for number, (_, name) in enumerate(parts, 1):
     if number >= 4:
         assert f'{name}) number={number} ;;' in slot, name
-for unit, number in [('userdata.mount',9),('userdata-ota.mount',10)]:
-    assert f'What=/dev/mmcblk0p{number}\n' in read('overlay-debian/etc/systemd/system/'+unit)
+for unit, label in [('userdata.mount','userdata'),('userdata-ota.mount','ota')]:
+    assert f'What=/dev/disk/by-label/{label}\n' in read('overlay-debian/etc/systemd/system/'+unit)
 assert not (root/'overlay-debian-oem').exists()
 assert not (root/'overlay-debian/oem').exists()
 assert not (root/'overlay-debian/etc/systemd/system/oem.mount').exists()

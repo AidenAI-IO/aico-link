@@ -31,7 +31,7 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Models | `GET /api/models?provider=...&locale=...` | Return the localized model catalog |
 | STT test | `POST /api/config-test/stt/start` | Start a microphone recording test using the submitted unsaved settings |
 | STT test | `POST /api/config-test/stt/stop` | Stop recording and return the transcription result |
-| Storage | `GET /api/storage/status` | Read SD/eMMC state and formatting tasks |
+| Storage | `GET /api/storage/status` | Read system TF and optional-card state and formatting tasks |
 | Storage | `POST /api/storage/format` | Format the SD card asynchronously |
 | Storage | `POST /api/storage/eject` | Sync and safely eject the SD card |
 | Device | `GET /api/device/snapshot` | Read the aggregated initial-page model: configuration, Wi-Fi, device, firmware/component versions, and storage summaries |
@@ -108,9 +108,10 @@ built-in defaults, the page renders those defaults, and saving creates the file.
 
 `format_job` is asynchronous and its status can be `idle`, `running`,
 `success`, or `failed`. `migration` represents the background migration from
-eMMC to SD and uses the same status values. A card can be present without being
+system `/userdata` to a separate SD card and uses the same status values. A card can be present without being
 mounted, so clients must use `card.present` and `card.mounted` independently
-when enabling the format and eject actions.
+when enabling the format and eject actions. The TF disk containing `/` is
+excluded even when explicitly named in the storage configuration.
 
 ## Configuration Save Response
 

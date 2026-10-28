@@ -25,10 +25,11 @@ see [Channel Releases](../08-ota/channel-release.md). Primary and backup entries
 default to verified publication, using `aico-hosted-01` and `aico-hosted-02`
 respectively for firmware builds. Fallback and standalone package builds upload
 artifacts only. You can also build the image locally with
-`./debian_build.sh`, or obtain a reviewed `update.img` through the project's
-manual distribution process.
+`./debian_build.sh`.
 
-When flashing the full firmware, you typically use `update.img`.
+For this TF-only variant, provision the whole card with `tf-card.img`.
+`update.img` remains a Rockchip recovery package. See
+[TF-only RV1106 system](tf-system.md).
 
 ## Firmware Features
 
@@ -207,56 +208,27 @@ kernel version, firmware state, boot ID and suspend counters when comparing
 these paths. A reachable serial shell or a successful SDIO enumeration alone
 does not establish that the Wi-Fi firmware can answer commands.
 
-## Flashing the Firmware
+## Provisioning the TF System Card
 
-> You need to connect the Luckfox Pico Zero's onboard USB-C port to a computer. There are several flashing methods; for the complete instructions, refer to the [Luckfox Pico Zero official flashing guide](https://wiki.luckfox.com/zh/Luckfox-Pico-Zero/Flash-image/).
-
-### 1. Enter Maskrom / Loader Mode
-
-Available methods:
-
-- Hold down the board's BOOT button while plugging in USB-C;
-- If triggering flash mode with the BOOT button doesn't work well, you can first log in to the board via SSH on the USB network or the TTL serial port, then ask systemd to pass the loader argument on reboot:
+Check the board's pre-BootROM TF power path before cold boot. Write the
+locally built raw image to a verified whole-card device, after unmounting
+its filesystems:
 
 ```bash
-systemctl reboot --reboot-argument=loader
+cd output/debian/image
+sha256sum --check tf-card.img.sha256
+sudo dd if=tf-card.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
+
+Replace `/dev/sdX` with the actual whole-card device. See
+[TF-only RV1106 system](tf-system.md) for layout, power requirements, and
+the difference between this image and `update.img`.
 
 The firmware image includes the `adb` client on the board so it can act as an
 ADB host for external Android devices.  It does not expose `adbd` for
 host-side `adb shell` login into the board itself. The client is built from the
 nmeum/android-tools 30.0.5p1 release (AOSP platform-tools-30) and reports
 version 1.0.41, so it speaks the current adb auth and pairing protocol.
-
-### 2. Flash with upgrade_tool
-
-On Linux, use the x86_64 tool in the vendored `pico-sdk/` directory. The
-repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary and will
-not run on Linux. The guarded flash helper verifies the image
-digest and requires an explicit confirmation because a full factory flash
-overwrites userdata:
-
-```bash
-FLASH_TOOL=pico-sdk/tools/linux/Linux_Upgrade_Tool/upgrade_tool
-IMAGE=output/debian/image/update.img
-SHA256=$(awk '{print $1}' "${IMAGE}.sha256")
-scripts/flash.sh inspect --tool "${FLASH_TOOL}"
-sudo scripts/flash.sh flash \
-  --tool "${FLASH_TOOL}" \
-  --image "${IMAGE}" \
-  --sha256 "${SHA256}" \
-  --confirm-erase-all-data
-```
-
-For a prebuilt image, replace `IMAGE` and provide its independently verified
-SHA-256. On macOS, the repository-root `upgrade_tool/upgrade_tool` command can
-be used for a locally built image:
-
-```bash
-./upgrade_tool/upgrade_tool uf ./output/debian/image/update.img
-```
-
-Do not use that Mach-O binary from a Linux shell.
 
 ## Partition Reference
 
@@ -275,7 +247,8 @@ The production image uses an A/B partition layout:
 | `userdata` | 3 GB | Shared non-OTA persistent data |
 | `ota` | 300 MiB | Dedicated OTA state, health markers, and download cache |
 
-`upgrade_tool` supports updating individual partitions; a full upgrade generally uses `uf update.img`.
+The raw `tf-card.img` contains every factory partition at its Rockchip
+`blkdevparts` offset. It has no conventional MBR/GPT.
 
 The production image uses an A/B partition layout. Online OTA only writes to the inactive slot's `boot_*` and `rootfs_*` partitions; `env`, `idblock`, and `uboot` are used only for factory or USB recovery flashing and are not updated via OTA. The `misc` partition holds the Rockchip SPL A/B metadata, which is located at byte offset `2048`.
 

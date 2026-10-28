@@ -20,6 +20,12 @@ for property in bus-width max-frequency pinctrl-2 vqmmc-supply; do
         exit 1
     fi
 done
+cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"
+fdtput -t s "${work_dir}/bad.dtb" /mmc@ffa90000 status okay
+if bash "${audit}" "${work_dir}/bad.dtb" >"${work_dir}/failure.log" 2>&1; then
+    echo 'TF audit accepted enabled eMMC' >&2
+    exit 1
+fi
 for width in 1 8; do
     cp "${work_dir}/board.dtb" "${work_dir}/bad.dtb"
     fdtput -t u "${work_dir}/bad.dtb" /mmc@ffaa0000 bus-width "${width}"

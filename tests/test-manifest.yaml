@@ -189,7 +189,7 @@ suites:
     paths: [overlay-debian/usr/lib/aico/aico-rootfs-grow, overlay-debian/etc/systemd/system/aico-rootfs-grow.service, scripts/test_debian_rootfs_grow.sh]
     command: bash scripts/test_debian_rootfs_grow.sh
     quick: true
-    dependencies: [bash, sh, awk, sed, date, dumpe2fs, e2fsck, mke2fs, resize2fs, debugfs, stat, truncate]
+    dependencies: [bash, sh, awk, sed, date, dumpe2fs, e2fsck, mke2fs, resize2fs, debugfs, stat, truncate, sha256sum, cmp]
     required: true
     timeout_seconds: 60
 
@@ -203,13 +203,15 @@ suites:
 
   - name: tf-card-dtb
     class: deterministic
-    paths: [pico-sdk, tests/test_tf_pinctrl.py, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]
+    paths: [pico-sdk, tests/test_tf_pinctrl.py, tests/test_tf_card_image.py, tests/test_tf_uboot_card_detect.py, scripts/test_tf_dtb.sh, scripts/test_tf_uboot_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/assemble-tf-card.py, scripts/debian-system/packages.list]
     command: |
       python3 pico-sdk/project/scripts/test_aico_custom_dts.py AicoCustomBoardTest.test_tf_card_on_sdmmc0
       python3 tests/test_tf_pinctrl.py
+      python3 tests/test_tf_card_image.py
+      bash scripts/test_tf_uboot_dtb.sh
       bash scripts/test_tf_dtb.sh
     quick: true
-    dependencies: [bash, python3, gcc, dtc, fdtget, fdtput]
+    dependencies: [bash, python3, gcc, dtc, fdtget, fdtput, strings]
     required_inputs:
       - pico-sdk/project/scripts/test_aico_custom_dts.py
       - pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-aico-custom.dts

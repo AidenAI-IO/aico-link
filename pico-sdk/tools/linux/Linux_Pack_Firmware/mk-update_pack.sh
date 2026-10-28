@@ -145,7 +145,9 @@ function get_partition_names()
 		part_size=`echo $part | cut -d '@' -f1`
 		part_name=`echo $part | cut -d '(' -f2|cut -d ')' -f1`
 
-		[[ $part_size =~ "-" ]] && continue
+		# A remaining-capacity partition can carry a finite factory seed.
+		# Keep optional empty tail partitions out of the recovery package.
+		[[ $part_size =~ "-" ]] && [ ! -f "$IMAGE_PATH/$part_name.img" ] && continue
 		PARTITIONS="$part_name,$PARTITIONS"
 	done
 	IFS=

@@ -76,7 +76,10 @@ at 3.3 V through R185.
 The board DTS uses `bus-width = <4>` and `max-frequency = <50000000>`.
 This takes effect at the first kernel probe, without a startup service or
 runtime overlay. The controller uses DAT0-3 with the pinctrl fix described
-below. The independent eMMC and Wi-Fi buses remain 8-bit and 4-bit.
+below. This section records the earlier eMMC-equipped board revision; the
+TF-only system variant disables eMMC. See
+[TF-only RV1106 system](01-getting-started/tf-system.md). The independent
+Wi-Fi bus remains 4-bit.
 SD-only enumeration and a fixed 3.3 V I/O supply avoid probing other card
 protocols or negotiating an unsupported signaling voltage.
 

@@ -13,7 +13,7 @@ for path in "${REPO_ROOT}/debian_build.sh" \
     "${REPO_ROOT}/scripts/debian-system/build.sh"; do
     [ -f "${path}" ] || fail "missing production path: ${path}"
 done
-grep -Fq 'scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk' \
+grep -Fq 'scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk' \
     "${REPO_ROOT}/scripts/ota_partition_layout.sh" \
     || fail "OTA layout does not default to the Debian board configuration"
 if grep -Fq 'pico-sdk/.BoardConfig.mk' \

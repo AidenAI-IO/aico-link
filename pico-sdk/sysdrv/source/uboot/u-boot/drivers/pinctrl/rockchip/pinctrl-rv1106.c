@@ -39,6 +39,8 @@ static int rv1106_set_mux(struct rockchip_pin_bank *bank, int pin, int mux)
 	debug("iomux write reg = %x data = %x\n", reg, data);
 
 	ret = regmap_write(regmap, reg, data);
+	if (!ret && bank->bank_num == 3 && (pin == 6 || pin == 7) && mux == 1)
+		ret = regmap_write(priv->regmap_base, 0x202f4, 0x00010000);
 
 	return ret;
 }

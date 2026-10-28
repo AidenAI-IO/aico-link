@@ -6,6 +6,21 @@ import (
 	"testing"
 )
 
+func TestCurrentSlotFromTFRoot(t *testing.T) {
+	for _, test := range []struct {
+		cmdline string
+		want    string
+	}{
+		{"root=/dev/mmcblk1p7", "a"},
+		{"root=/dev/mmcblk1p8", "b"},
+		{"root=/dev/mmcblk0p7", ""},
+	} {
+		if got := currentSlot(test.cmdline); got != test.want {
+			t.Errorf("currentSlot(%q) = %q, want %q", test.cmdline, got, test.want)
+		}
+	}
+}
+
 func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 	options := testOptions(t)
 	options.OTAConfigPath = filepath.Join(t.TempDir(), "ota-config.json")

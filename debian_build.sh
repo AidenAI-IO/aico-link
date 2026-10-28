@@ -39,13 +39,16 @@ outputs, create a locally signed OTA manifest/config, audit the image set, and
 write the local firmware/OTA artifacts to output/debian/image:
 
   update.img
+  tf-card.img
   boot_a.img.tar.gz
   boot_b.img.tar.gz
   manifest.json
   rootfs.img.tar.gz
   update.img.tar.gz
 
-The directly flashable image remains output/debian/image/update.img.
+Write output/debian/image/tf-card.img to the whole TF card with a raw image
+writer. output/debian/image/update.img is a Rockchip package, not a raw card
+image.
 
 Environment overrides:
   RK_JOBS                   Requested parallel jobs (default: 24, capped at
@@ -304,6 +307,8 @@ install_local_release_artifacts() {
     mkdir -p "${output_dir}"
     [ -s "${image_dir}/update.img" ] || die "the system stage did not produce update.img"
     install -m 0644 "${image_dir}/update.img" "${output_dir}/update.img"
+    [ -s "${image_dir}/tf-card.img" ] || die "the system stage did not produce tf-card.img"
+    install -m 0644 "${image_dir}/tf-card.img" "${output_dir}/tf-card.img"
     for artifact in "${LOCAL_RELEASE_OUTPUT_ASSETS[@]}"; do
         [ -s "${image_dir}/${artifact}" ] \
             || die "local release artifact is missing: ${image_dir}/${artifact}"
@@ -312,6 +317,7 @@ install_local_release_artifacts() {
     (
         cd "${output_dir}"
         sha256sum update.img >update.img.sha256
+        sha256sum tf-card.img >tf-card.img.sha256
     )
 }
 
@@ -436,7 +442,7 @@ main() {
 
     local device_config=${SYSTEM_OUTPUT}/debian-ota-config.json
     local max_download_bytes
-    local ota_board_config=${REPO_ROOT}/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk
+    local ota_board_config=${REPO_ROOT}/scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk
     local -a manifest_location_args=()
     export AICO_OTA_BOARD_CONFIG_PATH=${ota_board_config}
     # shellcheck source=/dev/null
@@ -495,8 +501,8 @@ main() {
         "${SYSTEM_OUTPUT}/image" "${FINAL_OUTPUT}" "${release_archive_epoch}"
 
     log "Debian firmware build completed"
-    printf 'Firmware: %s\n' "${FINAL_OUTPUT}/update.img"
-    printf 'SHA-256: %s\n' "$(sha256_file "${FINAL_OUTPUT}/update.img")"
+    printf 'TF card image: %s\n' "${FINAL_OUTPUT}/tf-card.img"
+    printf 'SHA-256: %s\n' "$(sha256_file "${FINAL_OUTPUT}/tf-card.img")"
     printf 'Release artifacts:\n'
     printf '  %s\n' "${LOCAL_RELEASE_OUTPUT_ASSETS[@]}"
 }
