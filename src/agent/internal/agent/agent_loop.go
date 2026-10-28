@@ -732,14 +732,16 @@ func (l *AgentLoop) persistSteer(ctx context.Context, executor *executor.LLMExec
 	// the model as an empty message while being recorded as the placeholder.
 	steer.Content = steerHumanMessageContent(steer)
 
-	// Persist the interrupt notice and new instruction together.
+	// Persist the interrupt notice and new instruction together. The
+	// instruction keeps its send time, which can be earlier than when the loop
+	// picks it up, so a summary resolves its relative dates correctly.
 	manager := l.contextManager
 	if executor != nil {
 		manager = executor.ContextManager()
 	}
 	if err := manager.AppendMessages([]messages.Message{
 		interruptNotice("steer", "A new instruction interrupted the current execution plan. Continue this run using the following user instruction; the previous plan is not confirmed complete."),
-		{Role: messages.MessageRoleUser, Content: steer.Content},
+		{Role: messages.MessageRoleUser, Content: steer.Content, Timestamp: steer.Timestamp},
 	}); err != nil {
 		return err
 	}

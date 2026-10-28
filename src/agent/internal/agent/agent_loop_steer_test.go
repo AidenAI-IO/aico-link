@@ -144,6 +144,26 @@ func TestAgentLoopPersistSteerNormalizesContentForContextAndRecorder(t *testing.
 	}
 }
 
+func TestAgentLoopPersistSteerKeepsSendTime(t *testing.T) {
+	t.Parallel()
+
+	manager, err := freshNewContextManager("system", "task", nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("freshNewContextManager() error = %v", err)
+	}
+	loop := NewAgentLoop(&scriptedModel{}, RoleProfile{}, 1, nil, nil, manager)
+	sentAt := time.Date(2026, 10, 27, 23, 59, 30, 0, time.UTC)
+
+	if err := loop.persistSteer(context.Background(), nil, RunSteerMessage{Content: "明天早上提醒我", Timestamp: sentAt}); err != nil {
+		t.Fatalf("persistSteer() error = %v", err)
+	}
+
+	contextMessages := manager.CloneMessageList()
+	if last := contextMessages[len(contextMessages)-1]; !last.Timestamp.Equal(sentAt) {
+		t.Fatalf("steer timestamp = %v, want send time %v", last.Timestamp, sentAt)
+	}
+}
+
 func TestAgentLoopBudgetBoundarySteerStartsFreshIterationBudget(t *testing.T) {
 	t.Parallel()
 
