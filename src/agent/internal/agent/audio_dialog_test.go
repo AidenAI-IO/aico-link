@@ -1189,6 +1189,7 @@ func TestAudioDialogRunAgentTurnUsesModelMaxResponseTokens(t *testing.T) {
 	}{
 		{name: "default", maxTokens: DefaultConfig().Model.MaxResponseTokens},
 		{name: "custom", maxTokens: 4096},
+		{name: "zero", maxTokens: 0},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := withTestConfigDir(t, Config{
