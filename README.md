@@ -12,7 +12,7 @@ This repository is for the development-board implementation: firmware overlay,
 C++ hardware services, the Go Agent, OTA tooling, tests, and benchmark support.
 It is not a final integrated hardware product.
 
-![Aico Link Development Board](./aico-dev-board.webp)
+![Aico Link Development Board](./aico-dev-board.png)
 
 ## Hardware & Self-Assembly
 
