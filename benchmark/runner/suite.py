@@ -496,8 +496,7 @@ def validate_assert_memory_setup(
                 raise SuiteValidationError(
                     f"{spec_path} {field} must be a non-empty string"
                 )
-        sensitive = spec.get("sensitive")
-        if sensitive is not None and not isinstance(sensitive, bool):
+        if "sensitive" in spec and not isinstance(spec["sensitive"], bool):
             raise SuiteValidationError(f"{spec_path} sensitive must be a boolean")
         revision = spec.get("revision")
         if revision is not None and (

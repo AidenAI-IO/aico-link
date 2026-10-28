@@ -128,6 +128,7 @@ def test_load_suite_rejects_invalid_range_environment_assertions(tmp_path: Path,
         ([{"id": 123}], "id must be a non-empty string"),
         ([{"revision": "2"}], "revision must be a positive integer"),
         ([{"sensitive": "true"}], "sensitive must be a boolean"),
+        ([{"sensitive": None}], "sensitive must be a boolean"),
     ],
 )
 def test_load_suite_rejects_malformed_assert_memory_nested_schema(
