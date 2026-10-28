@@ -15,8 +15,8 @@ root_suffix=
 for argument in $(cat "${cmdline_path}"); do
     case "${argument}" in
         aico.slot_suffix=*) suffix=${argument#aico.slot_suffix=} ;;
-        root=PARTLABEL=rootfs_a|root=*/rootfs_a|root=/dev/mmcblk0p7) root_suffix=_a ;;
-        root=PARTLABEL=rootfs_b|root=*/rootfs_b|root=/dev/mmcblk0p8) root_suffix=_b ;;
+        root=PARTLABEL=rootfs_a|root=*/rootfs_a|root=/dev/mmcblk1p7) root_suffix=_a ;;
+        root=PARTLABEL=rootfs_b|root=*/rootfs_b|root=/dev/mmcblk1p8) root_suffix=_b ;;
     esac
 done
 
@@ -33,7 +33,7 @@ fi
 mkdir -p "${run_dir}"
 mkdir -p /dev/disk/by-partlabel
 
-# Some Rockchip kernels expose the partition table as mmcblk0pN but do not
+# Some Rockchip kernels expose the TF partition table as mmcblk1pN but do not
 # run udev rules that create /dev/disk/by-partlabel links. Keep the label
 # paths as the stable interface used by systemd and the OTA agent.
 partition_node() {
@@ -50,12 +50,12 @@ partition_node() {
         boot_b) number=6 ;;
         rootfs_a) number=7 ;;
         rootfs_b) number=8 ;;
-        userdata) number=9 ;;
-        ota) number=10 ;;
+        ota) number=9 ;;
+        userdata) number=10 ;;
         *) return 1 ;;
     esac
 
-    candidate=/dev/mmcblk0p${number}
+    candidate=/dev/mmcblk1p${number}
     [ -b "${candidate}" ] || return 1
     ln -sfn "${candidate}" "${label_path}"
     printf '%s\n' "${label_path}"
@@ -83,7 +83,7 @@ for name in misc boot_a boot_b rootfs_a rootfs_b; do
 done
 
 # The OTA writer also accesses misc directly. Create the same compatibility
-# link when the board exposes only numbered mmcblk0 partitions.
+# link when the board exposes only numbered mmcblk1 partitions.
 partition_node misc >/dev/null 2>&1 || true
 
 ln -sfn "/dev/disk/by-partlabel/rootfs${suffix}" "${run_dir}/rootfs-device"

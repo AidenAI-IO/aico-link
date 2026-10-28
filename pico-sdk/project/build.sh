@@ -770,7 +770,11 @@ function build_env() {
 	fi
 
 	echo "$SYS_BOOTARGS" >>$ENV_CFG_FILE
-	echo "sd_parts=mmcblk0:16K@512(env),512K@32K(idblock),4M(uboot)" >>$ENV_CFG_FILE
+	if [ "$RK_BOOT_MEDIUM" = "sd_card" ]; then
+		echo "sd_parts=mmcblk1:$RK_PARTITION_CMD_IN_ENV" >>$ENV_CFG_FILE
+	else
+		echo "sd_parts=mmcblk0:16K@512(env),512K@32K(idblock),4M(uboot)" >>$ENV_CFG_FILE
+	fi
 	# build env.img
 	$RK_PROJECT_PATH_PC_TOOLS/mkenvimage -s $ENV_SIZE -p 0x0 -o $env_cfg_img $ENV_CFG_FILE
 	chmod +r $env_cfg_img

@@ -319,6 +319,12 @@ audit_rootfs() {
         || fail "rsync daemon is unexpectedly enabled"
     test -L "${ROOTFS_MOUNT}/etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service" \
         || fail "serial recovery console is not enabled"
+    grep -Fqx 'What=/dev/disk/by-label/userdata' \
+        "${ROOTFS_MOUNT}/etc/systemd/system/userdata.mount" \
+        || fail "userdata mount does not use its udev-managed filesystem label"
+    grep -Fqx 'What=/dev/disk/by-label/ota' \
+        "${ROOTFS_MOUNT}/etc/systemd/system/userdata-ota.mount" \
+        || fail "OTA mount does not use its udev-managed filesystem label"
 
     systemd-analyze --root="${ROOTFS_MOUNT}" verify \
         aico.target aico-machine-id.service aico-agent.service aico-config-web.service \
@@ -501,6 +507,8 @@ main() {
     : >"${REPORT}"
     printf 'image\tfeatures\n' >"${OUTPUT_DIR}/ext4-features.tsv"
 
+    # userdata.img is capped by the 3 GiB factory seed, not by the final card
+    # partition size; -(userdata) grows beyond that footprint at boot.
     declare -A limits=(
         [env.img]=$((32 * 1024))
         [idblock.img]=$((512 * 1024))
@@ -525,7 +533,7 @@ main() {
             "$((limit - size))" >>"${OUTPUT_DIR}/partition-size-audit.tsv"
     done
     grep -qx \
-        'blkdevparts=mmcblk0:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
+        'blkdevparts=mmcblk1:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)' \
         "${OUTPUT_DIR}/bsp-env.txt" || fail "BSP partition layout changed"
 
     test ! -e "${IMAGE_DIR}/oem.img" || fail "retired OEM image is present"
@@ -578,6 +586,10 @@ main() {
 
     audit_boot
     audit_update_image
+    python3 "${REPO_ROOT}/scripts/debian-system/assemble-tf-card.py" \
+        --layout '32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)' \
+        --env "${OUTPUT_DIR}/bsp-env.txt" --image-dir "${IMAGE_DIR}" \
+        --output "${IMAGE_DIR}/tf-card.img" --verify
     (
         cd "${OUTPUT_DIR}"
         sha256sum image/*.{img,bin} packages.txt sbom.spdx.json >SHA256SUMS

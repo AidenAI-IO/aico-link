@@ -6,7 +6,7 @@ After=userdata.mount aico-rootfs-grow.service
 Before=local-fs.target
 
 [Mount]
-What=/dev/mmcblk0p10
+What=/dev/disk/by-label/ota
 Where=/userdata/ota
 Type=ext4
 Options=noatime,nosuid,nodev

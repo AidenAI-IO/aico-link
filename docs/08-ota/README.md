@@ -14,7 +14,7 @@ OTA manifest schema version 2.
 
 ## Scope
 
-- Target hardware: Luckfox Pico Zero / RV1106 + eMMC.
+- Target hardware: Aico Link SCH v1 / RV1106G3 with TF system storage.
 - Distribution: manually triggered dev/staging/prod GitHub Releases, local build
   artifacts, or a manually hosted HTTP(S) directory. Channel releases select a
   business package or complete signed OTA from source changes; see
@@ -41,6 +41,8 @@ OTA manifest schema version 2.
 
 - OTA does not update `env`, `idblock`, or `uboot`; these are only updated via factory or USB recovery.
 - OTA only writes to `boot_*` and `rootfs_*` of the inactive slot.
+- Factory provisioning writes `tf-card.img` to the whole card; `update.img` is
+  a Rockchip recovery package. See [TF-only system](../01-getting-started/tf-system.md).
 - A dedicated 300 MiB `ota` partition is mounted at `/userdata/ota` and stores OTA state, download cache, and health markers. The factory configuration remains in the persistent userdata filesystem at `/userdata/debian/ota/config.json`.
 - `boot_a.img` and `boot_b.img` contain different slot bootargs; manifests must use slot-specific boot assets.
 - When factory baseline is missing or manifest signature/hash verification fails, devices must fail closed.
@@ -82,5 +84,5 @@ Web uses this check before triggering firmware installation, followed by scoped
 | `scripts/generate_ota_manifest.sh` | Generate signed OTA manifest |
 | `scripts/generate_ota_device_config.sh` | Generate factory configuration from manifest |
 | `scripts/ota_partition_layout.sh` | Reads the Debian system OTA partition size and derives release capacity |
-| `scripts/debian-system/container-install-ota-config.sh` | Install factory OTA configuration and repack `update.img` |
+| `scripts/debian-system/container-install-ota-config.sh` | Install factory OTA configuration before `update.img` repacking and `tf-card.img` assembly |
 | `pico-sdk/project/scripts/mk-ab-misc.py` | Generate factory `misc.img` A/B metadata |

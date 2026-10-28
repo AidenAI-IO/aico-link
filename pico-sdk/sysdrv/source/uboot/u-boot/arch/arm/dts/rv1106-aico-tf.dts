@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+
+/dts-v1/;
+
+#include "rv1106.dtsi"
+#include "rv1106-u-boot.dtsi"
+
+/ {
+	model = "Aico Link TF boot";
+	compatible = "rockchip,rv1106-evb", "rockchip,rv1106";
+
+	chosen {
+		stdout-path = &uart2;
+		u-boot,spl-boot-order = &sdmmc;
+	};
+};
+
+&emmc {
+	status = "disabled";
+};
+
+&sdmmc {
+	/* The board's WS4622C enables VCC3V3_SD when GPIO0_A1 is high. */
+	pwr-en-gpios = <&gpio0 RK_PA1 GPIO_ACTIVE_HIGH>;
+	/* J4 detect is physically active low. The vendor dwmci_get_cd() already
+	 * inverts dm_gpio_get_value(), so pass the raw level here to avoid a
+	 * second inversion. Linux uses the normal GPIO_ACTIVE_LOW binding.
+	 */
+	cd-gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_HIGH>;
+	bus-width = <4>;
+	max-frequency = <50000000>;
+	power-off-delay-ms = <200>;
+	status = "okay";
+};
+
+&sdmmc0_det {
+	rockchip,pins = <3 RK_PA1 0 &pcfg_pull_up>;
+};
+
+&hw_decompress {
+	u-boot,dm-spl;
+	status = "okay";
+};

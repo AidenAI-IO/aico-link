@@ -33,7 +33,7 @@ mkdir -p "${TEST_ROOT}/bin"
 cat >"${TEST_ROOT}/device-map" <<'EOF'
 image_for_device() {
     case "$1" in
-        /dev/mmcblk0p8) printf '%s/rootfs.img\n' "${GROW_TEST_ROOT}" ;;
+        /dev/mmcblk1p8) printf '%s/rootfs.img\n' "${GROW_TEST_ROOT}" ;;
         /dev/disk/by-partlabel/userdata) printf '%s/userdata.img\n' "${GROW_TEST_ROOT}" ;;
         /dev/disk/by-partlabel/ota) printf '%s/ota.img\n' "${GROW_TEST_ROOT}" ;;
         *) echo "Unexpected test device: $1" >&2; exit 1 ;;
@@ -44,7 +44,7 @@ cat >"${TEST_ROOT}/bin/readlink" <<'EOF'
 #!/bin/sh
 set -eu
 case "$2" in
-    /sys/dev/block/179:8|/dev/disk/by-partlabel/rootfs_b) echo /dev/mmcblk0p8 ;;
+    /sys/dev/block/179:8|/dev/disk/by-partlabel/rootfs_b) echo /dev/mmcblk1p8 ;;
     *) exec "${GROW_REAL_READLINK}" "$@" ;;
 esac
 EOF
@@ -178,11 +178,32 @@ grep -qx 'slot=_b' "${AICO_ROOTFS_GROW_MARKER}"
     || fail "already-full data filesystems were resized"
 if grep -q '^e2fsck ' "${TEST_ROOT}/calls"; then fail "already-full data filesystems were checked"; fi
 
-# The completion marker skips growth, while every boot still remounts root rw.
+# A completed slot skips root growth; full persistent filesystems need no fsck.
 : >"${TEST_ROOT}/calls"
 run_helper
 grep -qx 'mount -o remount,rw /' "${TEST_ROOT}/calls"
 [ "$(wc -l <"${TEST_ROOT}/calls")" -eq 1 ] || fail "a completed slot repeated growth"
+
+# Copying an initialized card to a larger card preserves the rootfs marker.
+# Exercise real ext4 growth beyond 4 GiB, while retaining userdata contents and
+# leaving the independent OTA filesystem unchanged.
+prepare_case
+run_helper
+printf 'persistent TF userdata\n' >"${TEST_ROOT}/sentinel"
+debugfs -w -R "write ${TEST_ROOT}/sentinel /sentinel" "${TEST_ROOT}/userdata.img" >/dev/null 2>&1
+ota_before=$(sha256sum "${TEST_ROOT}/ota.img")
+truncate -s 11240M "${TEST_ROOT}/userdata.img"
+: >"${TEST_ROOT}/calls"
+run_helper
+assert_full "${TEST_ROOT}/userdata.img"
+debugfs -R 'cat /sentinel' "${TEST_ROOT}/userdata.img" >"${TEST_ROOT}/sentinel-after" 2>/dev/null
+cmp "${TEST_ROOT}/sentinel" "${TEST_ROOT}/sentinel-after"
+[ "${ota_before}" = "$(sha256sum "${TEST_ROOT}/ota.img")" ] || fail "userdata growth modified OTA"
+grep -qx 'resize2fs /dev/disk/by-partlabel/userdata' "${TEST_ROOT}/calls"
+[ "$(grep -c '^resize2fs ' "${TEST_ROOT}/calls")" -eq 1 ] || fail "larger card resized unrelated filesystems"
+: >"${TEST_ROOT}/calls"
+run_helper
+[ "$(wc -l <"${TEST_ROOT}/calls")" -eq 1 ] || fail "larger card repeated completed growth"
 
 prepare_case
 make_image userdata 16 32 4096

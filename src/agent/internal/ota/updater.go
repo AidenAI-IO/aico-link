@@ -1652,9 +1652,9 @@ func rootSlotFromCmdline(cmdline string) (Slot, bool, error) {
 		}
 		value = strings.Trim(strings.ToLower(value), "\"'")
 		switch {
-		case value == "partlabel=rootfs_a" || value == "rootfs_a" || strings.HasSuffix(value, "/rootfs_a") || value == "/dev/mmcblk0p7":
+		case value == "partlabel=rootfs_a" || value == "rootfs_a" || strings.HasSuffix(value, "/rootfs_a") || value == "/dev/mmcblk1p7":
 			return SlotA, true, nil
-		case value == "partlabel=rootfs_b" || value == "rootfs_b" || strings.HasSuffix(value, "/rootfs_b") || value == "/dev/mmcblk0p8":
+		case value == "partlabel=rootfs_b" || value == "rootfs_b" || strings.HasSuffix(value, "/rootfs_b") || value == "/dev/mmcblk1p8":
 			return SlotB, true, nil
 		default:
 			return SlotA, false, fmt.Errorf("unsupported root device %q", value)

@@ -85,7 +85,7 @@ available.
 | `user_home` | Persistent `/root` content |
 | `preferences` | Local playback preferences |
 | `device_identity` | Machine, SSH, and Bluetooth identity in same-device mode |
-| `audio_archive` | eMMC audio archive |
+| `audio_archive` | System `/userdata` audio archive |
 | `sd_managed_audio` | Aico Link-managed SD audio archive |
 | `sd_user_files` | User files on the SD card outside Aico Link-managed directories |
 | `python_environment` | Dynamically installed user Python environment |

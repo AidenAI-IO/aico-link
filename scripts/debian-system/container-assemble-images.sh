@@ -78,6 +78,8 @@ stage_images() {
     install -m 0600 "${AGENT_CONFIG}" "${USERDATA_ROOT}/agent/agent.toml"
     sha256sum "${AGENT_CONFIG}" | awk '{print $1}' \
         >"${OUTPUT_DIR}/agent-config.sha256"
+    # Finite factory seed only; the final -(userdata) partition fills the card
+    # and aico-rootfs-grow expands this filesystem on the device.
     make_ext4_image "${USERDATA_ROOT}" "${IMAGE_DIR}/userdata.img" 3G userdata "${USERDATA_UUID}"
     make_ext4_image "${OTA_ROOT}" "${IMAGE_DIR}/ota.img" 300M ota "${OTA_UUID}"
     cp --reflink=auto "${ROOTFS_IMAGE}" "${IMAGE_DIR}/rootfs.img"

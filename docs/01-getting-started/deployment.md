@@ -14,35 +14,25 @@ metadata with:
 ./debian_build.sh
 ```
 
-The directly flashable image is:
+The directly writable TF image is:
 
 ```text
-output/debian/image/update.img
+output/debian/image/tf-card.img
 ```
 
-On Linux, flash it with the guarded helper below. It checks the image digest,
-requires Loader/Maskrom mode, and makes the destructive userdata overwrite
-explicit:
+On Linux, identify the **whole TF card** device, unmount its filesystems,
+verify the digest, and write the raw image:
 
 ```bash
-FLASH_TOOL=pico-sdk/tools/linux/Linux_Upgrade_Tool/upgrade_tool
-IMAGE=output/debian/image/update.img
-SHA256=$(awk '{print $1}' "${IMAGE}.sha256")
-scripts/flash.sh inspect --tool "${FLASH_TOOL}"
-sudo scripts/flash.sh flash \
-  --tool "${FLASH_TOOL}" \
-  --image "${IMAGE}" \
-  --sha256 "${SHA256}" \
-  --confirm-erase-all-data
+cd output/debian/image
+sha256sum --check tf-card.img.sha256
+sudo dd if=tf-card.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary; use
-the Linux tool from the vendored `pico-sdk/` directory. On macOS, flash a
-locally built image with:
-
-```bash
-./upgrade_tool/upgrade_tool uf ./output/debian/image/update.img
-```
+Replace `/dev/sdX` with the verified whole-card device. `update.img` is a
+Rockchip recovery package, not a raw TF image. The SCH v1 TF supply is off
+before SPL unless the board hardware is changed; see
+[TF-only RV1106 system](tf-system.md) before attempting a cold boot.
 
 The image installs these main runtime trees:
 ```text

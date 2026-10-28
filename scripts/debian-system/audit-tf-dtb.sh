@@ -23,7 +23,7 @@ pins=/pinctrl
 expect s /aliases mmc0 /mmc@ffa90000
 expect s /aliases mmc1 "${host}"
 expect s /aliases mmc2 /mmc@ff9a0000
-expect u /mmc@ffa90000 bus-width 8
+expect s /mmc@ffa90000 status disabled
 expect u /mmc@ff9a0000 bus-width 4
 expect s "${host}" status okay
 expect u "${host}" bus-width 4
@@ -55,4 +55,4 @@ done
 fdtget -p "${dtb}" "${rail}" | grep -qx enable-active-high || fail 'TF supply is not active high'
 expect u "${pins}/sdmmc0/sdmmc0-idle-pins" rockchip,pins \
     "3 2 0 $(phandle "${pins}/pcfg-pull-down") 3 3 0 $(phandle "${pins}/pcfg-pull-down") 3 4 0 $(phandle "${pins}/pcfg-pull-down") 3 5 0 $(phandle "${pins}/pcfg-pull-down") 3 6 0 $(phandle "${pins}/pcfg-pull-down") 3 7 0 $(phandle "${pins}/pcfg-pull-down")"
-echo 'TF DTB audit passed (SDMMC0, 4-bit, 50 MHz, switchable 3.3 V, normal/idle; eMMC 8-bit, Wi-Fi 4-bit).'
+echo 'TF DTB audit passed (SDMMC0, 4-bit, 50 MHz, switchable 3.3 V, normal/idle; eMMC disabled, Wi-Fi 4-bit).'

@@ -11,7 +11,8 @@ Before=userdata.mount userdata-ota.mount systemd-timesyncd.service local-fs.targ
 Type=oneshot
 ExecStart=/usr/lib/aico/aico-rootfs-grow
 RemainAfterExit=yes
-TimeoutStartSec=90s
+# Large TF cards may need several minutes to initialize new ext4 metadata.
+TimeoutStartSec=15min
 
 [Install]
 WantedBy=local-fs-pre.target

@@ -20,6 +20,8 @@ readonly MODULE_DIR=${SDK_DIR}/output/out/sysdrv_out/kernel_drv_ko
 readonly DUMPIMAGE=${SDK_DIR}/sysdrv/source/uboot/u-boot/tools/dumpimage
 readonly KERNEL_IMAGE=${SDK_DIR}/sysdrv/source/objs_kernel/arch/arm/boot/zImage
 readonly KERNEL_CONFIG=${SDK_DIR}/sysdrv/source/objs_kernel/.config
+readonly UBOOT_CONFIG=${SDK_DIR}/sysdrv/source/uboot/u-boot/.config
+readonly UBOOT_DTB=${SDK_DIR}/sysdrv/source/uboot/u-boot/u-boot.dtb
 readonly BSP_DTB=${SDK_DIR}/output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aico-custom.dtb
 readonly EXPECTED_MODEL='Aico Link SCH v1'
 readonly -a EXPECTED_SERIAL_CONTRACTS=(
@@ -30,7 +32,7 @@ readonly -a EXPECTED_SERIAL_CONTRACTS=(
     '4:/serial@ff4e0000:okay'
     '5:/serial@ff4f0000:okay'
 )
-readonly PARTITION_LAYOUT='32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)'
+readonly PARTITION_LAYOUT='32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)'
 readonly MISC_METADATA_HEX=00414230010000000f00010000000000000000000000000000000000671e21a4
 readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
 
@@ -96,6 +98,29 @@ audit_misc() {
     } >"${OUTPUT_DIR}/bsp-misc-audit.txt"
 }
 
+audit_uboot() {
+    local power_gpio
+    require_file "${UBOOT_CONFIG}"
+    require_file "${UBOOT_DTB}"
+    grep -qx 'CONFIG_DEFAULT_DEVICE_TREE="rv1106-aico-tf"' "${UBOOT_CONFIG}" \
+        || fail "U-Boot did not select the TF-only board"
+    ! grep -qx 'CONFIG_ROCKCHIP_EMMC_IOMUX=y' "${UBOOT_CONFIG}" \
+        || fail "U-Boot still enables eMMC pin muxing"
+    [ "$(fdtget -t s "${UBOOT_DTB}" /mmc@ffa90000 status)" = disabled ] \
+        || fail "U-Boot still probes eMMC"
+    [ "$(fdtget -t s "${UBOOT_DTB}" /mmc@ffaa0000 status)" = okay ] \
+        || fail "U-Boot does not probe TF"
+    power_gpio=$(fdtget -t u "${UBOOT_DTB}" /mmc@ffaa0000 pwr-en-gpios)
+    [[ "${power_gpio}" =~ [[:space:]]1[[:space:]]0$ ]] \
+        || fail "U-Boot TF power switch is not GPIO0_A1 active high"
+    # dwmci_get_cd() inverts the GPIO value itself: use the raw electrical
+    # level so an inserted card (GPIO3_A1 low) is reported as present.
+    [[ "$(fdtget -t u "${UBOOT_DTB}" /mmc@ffaa0000 cd-gpios)" =~ [[:space:]]1[[:space:]]0$ ]] \
+        || fail "U-Boot TF card detect must supply raw GPIO3_A1 to the vendor inversion"
+    [ "$(fdtget -t u "${UBOOT_DTB}" /mmc@ffaa0000 bus-width)" = 4 ] \
+        || fail "U-Boot TF bus is not 4-bit"
+}
+
 audit_boot() {
     local slot suffix root_label boot fdt kernel resource bootargs model
     local serial_contract serial_index expected_path expected_status serial_path serial_status
@@ -139,7 +164,7 @@ audit_boot() {
             [ "${serial_status}" = "${expected_status}" ] \
                 || fail "boot_${slot}.img has the wrong serial${serial_index} status"
         done
-        grep -qw "blkdevparts=mmcblk0:${PARTITION_LAYOUT}" <<<"${bootargs}" \
+        grep -qw "blkdevparts=mmcblk1:${PARTITION_LAYOUT}" <<<"${bootargs}" \
             || fail "boot_${slot}.img has the wrong partition command line"
         grep -qw "root=PARTLABEL=${root_label}" <<<"${bootargs}" \
             || fail "boot_${slot}.img has the wrong root PARTLABEL"
@@ -230,7 +255,7 @@ write_hashes() {
             scripts/debian-system/audit-bsp.sh \
             scripts/debian-system/audit-tf-dtb.sh \
             scripts/debian-system/canonicalize-bsp.py \
-            scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
+            scripts/debian-system/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk \
             scripts/debian-system/debian-system.config
     ) >"${OUTPUT_DIR}/bsp-inputs.sha256"
 }
@@ -274,14 +299,18 @@ main() {
         --fit "${IMAGE_DIR}/boot_b.img" \
         --crc-table-source "${SDK_DIR}/sysdrv/source/uboot/u-boot/tools/rockchip/boot_merger.c" \
         --loader "${IMAGE_DIR}/download.bin"
-    grep -qx "blkdevparts=mmcblk0:${PARTITION_LAYOUT}" "${IMAGE_DIR}/.env.txt" \
+    grep -qx "blkdevparts=mmcblk1:${PARTITION_LAYOUT}" "${IMAGE_DIR}/.env.txt" \
         || fail "BSP partition environment changed"
+    tr '\000' '\n' <"${IMAGE_DIR}/env.img" \
+        | grep -x "sd_parts=mmcblk1:${PARTITION_LAYOUT}" >/dev/null \
+        || fail "BSP TF partition environment changed"
     cmp "${KERNEL_CONFIG}" "${OUTPUT_DIR}/kernel.config"
     cmp "${IMAGE_DIR}/.env.txt" "${OUTPUT_DIR}/bsp-env.txt"
 
     WORK_DIR=$(mktemp -d "${OUTPUT_DIR}/.bsp-audit.XXXXXX")
     audit_partition_sizes
     audit_misc
+    audit_uboot
     audit_boot
     audit_modules
     write_hashes

@@ -200,17 +200,19 @@ for login_path in \
 done
 audit_login_sessions
 
-grep -Fq '1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
-grep -Fq 'RK_UBOOT_DEFCONFIG_FRAGMENT="rk-emmc.config rv1106-ab.config aico-rv1106-rockusb.config"' \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+grep -Fq '1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)' \
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
+grep -Fq 'RK_BOOT_MEDIUM=sd_card' \
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
+grep -Fq 'RK_UBOOT_DEFCONFIG_FRAGMENT="rv1106-ab.config aico-rv1106-rockusb.config aico-rv1106-tf.config"' \
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
 grep -Fq 'RK_KERNEL_DEFCONFIG_FRAGMENT="aico-zram.config rv1106-bt.config rv1106-sdiowifi.config aico-rk628.config debian-system.config rv1106-pm.config"' \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
 grep -Fq 'RK_ENABLE_WIFI_CHIP=AIC8800D80' \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk" \
     || fail "production board config does not select the AIC8800D80"
 grep -Fq 'RK_CAMERA_SENSOR_IQFILES=""' \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk" \
     || fail "bridge-only production board unexpectedly packages camera IQ files"
 for symbol in CONFIG_MEDIA_CONTROLLER CONFIG_VIDEO_V4L2_SUBDEV_API \
     CONFIG_VIDEO_RK628_CSI CONFIG_VIDEO_TC358743 \
@@ -219,7 +221,7 @@ for symbol in CONFIG_MEDIA_CONTROLLER CONFIG_VIDEO_V4L2_SUBDEV_API \
         || fail "system BSP verification does not enforce ${symbol}"
 done
 grep -Fq "RK_KERNEL_CMDLINE_EXTRA=net.ifnames\$'\\x3d'0" \
-    "${SYSTEM_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk"
+    "${SYSTEM_DIR}/BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk"
 if grep -Eq '^[[:space:]]*(restart-poweroff|compatible = "restart-poweroff")' \
     "${REPO_ROOT}/pico-sdk/sysdrv/source/kernel/arch/arm/boot/dts/rv1106g-luckfox-pico-zero.dts"; then
     fail "Pico Zero device tree still converts poweroff into a reboot"

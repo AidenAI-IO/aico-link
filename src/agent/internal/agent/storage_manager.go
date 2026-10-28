@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1522,17 +1523,66 @@ type realStorageOps struct {
 
 func (o *realStorageOps) currentDevice() string {
 	o.mu.RLock()
-	defer o.mu.RUnlock()
-	if o.device == "auto" || o.device == "" {
-		return discoverSDCard("/sys/block")
-	}
-	return o.device
+	device := o.device
+	o.mu.RUnlock()
+	return selectStorageCard(device, "/sys/block", "/proc/self/mountinfo", "/sys/dev/block")
 }
 
-// MMC numbering differs between boards. The card type, unlike the removable
-// flag, reliably separates an SD card from eMMC and SDIO Wi-Fi. Fail closed if
-// more than one SD card is present; an explicit device is then required.
-func discoverSDCard(sysBlock string) string {
+var mmcPartition = regexp.MustCompile(`^(mmcblk[0-9]+)p[0-9]+$`)
+
+func systemMMCDisk(mountInfoPath, sysDevBlock string) (string, error) {
+	data, err := os.ReadFile(mountInfoPath)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 8 || fields[4] != "/" {
+			continue
+		}
+		separator := -1
+		for i, field := range fields {
+			if field == "-" {
+				separator = i
+				break
+			}
+		}
+		if separator < 0 || separator+1 >= len(fields) {
+			return "", fmt.Errorf("invalid root mount entry")
+		}
+		if fields[separator+1] != "ext4" {
+			return "", nil
+		}
+		path, err := filepath.EvalSymlinks(filepath.Join(sysDevBlock, fields[2]))
+		if err != nil {
+			return "", fmt.Errorf("resolve root block device: %w", err)
+		}
+		match := mmcPartition.FindStringSubmatch(filepath.Base(path))
+		if match != nil {
+			return match[1], nil
+		}
+		return "", nil
+	}
+	return "", fmt.Errorf("root mount not found")
+}
+
+func selectStorageCard(configured, sysBlock, mountInfoPath, sysDevBlock string) string {
+	systemDisk, err := systemMMCDisk(mountInfoPath, sysDevBlock)
+	if err != nil {
+		return "" // Never risk treating the system card as removable.
+	}
+	if configured == "auto" || configured == "" {
+		return discoverSDCard(sysBlock, systemDisk)
+	}
+	if configured == systemDisk {
+		return ""
+	}
+	return configured
+}
+
+// The root disk is never an ejectable or formattable SD tier, even when an
+// explicit device override names it. Other SD cards remain discoverable.
+func discoverSDCard(sysBlock, systemDisk string) string {
 	entries, err := os.ReadDir(sysBlock)
 	if err != nil {
 		return ""
@@ -1540,6 +1590,9 @@ func discoverSDCard(sysBlock string) string {
 	device := ""
 	for _, entry := range entries {
 		if !strings.HasPrefix(entry.Name(), "mmcblk") {
+			continue
+		}
+		if entry.Name() == systemDisk {
 			continue
 		}
 		cardType, err := os.ReadFile(filepath.Join(sysBlock, entry.Name(), "device", "type"))

@@ -6,7 +6,7 @@ After=aico-slot-resolve.service aico-rootfs-grow.service
 Before=local-fs.target
 
 [Mount]
-What=/dev/mmcblk0p9
+What=/dev/disk/by-label/userdata
 Where=/userdata
 Type=ext4
 Options=noatime

@@ -33,18 +33,55 @@ func TestDiscoverSDCard(t *testing.T) {
 			add("mmcblk0", "MMC")
 			add("mmcblk0boot0", "MMC")
 			add("mmcblk9", "SDIO")
-			if got := discoverSDCard(root); got != "" {
+			if got := discoverSDCard(root, ""); got != "" {
 				t.Fatalf("discovered non-SD device %q", got)
 			}
 			add(cardName, "SD")
-			if got := discoverSDCard(root); got != cardName {
+			if got := discoverSDCard(root, ""); got != cardName {
 				t.Fatalf("got %q, want %q", got, cardName)
 			}
 			add("mmcblk8", "SD")
-			if got := discoverSDCard(root); got != "" {
+			if got := discoverSDCard(root, ""); got != "" {
 				t.Fatalf("ambiguous cards selected %q", got)
 			}
+			if got := discoverSDCard(root, cardName); got != "mmcblk8" {
+				t.Fatalf("system SD card was not excluded: %q", got)
+			}
 		})
+	}
+}
+
+func TestSystemTFCardCannotBeSelectedOrFormatted(t *testing.T) {
+	root := t.TempDir()
+	block := filepath.Join(root, "block")
+	devBlock := filepath.Join(root, "dev-block")
+	if err := os.MkdirAll(filepath.Join(block, "mmcblk1", "device"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(devBlock, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(block, "mmcblk1", "device", "type"), []byte("SD\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	partition := filepath.Join(block, "mmcblk1", "mmcblk1p7")
+	if err := os.Mkdir(partition, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(partition, filepath.Join(devBlock, "179:7")); err != nil {
+		t.Fatal(err)
+	}
+	mountInfo := filepath.Join(root, "mountinfo")
+	if err := os.WriteFile(mountInfo, []byte("24 1 179:7 / / rw - ext4 /dev/root rw\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, configured := range []string{"auto", "mmcblk1"} {
+		if got := selectStorageCard(configured, block, mountInfo, devBlock); got != "" {
+			t.Fatalf("%s selected system disk %q", configured, got)
+		}
+	}
+	if got := selectStorageCard("auto", block, filepath.Join(root, "missing"), devBlock); got != "" {
+		t.Fatalf("missing root identity selected %q", got)
 	}
 }
 

@@ -12,28 +12,31 @@ Before enabling production OTA rollout, the following acceptance tests should be
 - A local or self-hosted HTTP(S) endpoint contains the signed `manifest.json`
   and compressed image archives: `boot_a.img.tar.gz`, `boot_b.img.tar.gz`,
   `rootfs.img.tar.gz`, and `update.img.tar.gz`.
-- The `update.img` inside `update.img.tar.gz` contains the dedicated empty `ota` partition and the factory baseline in userdata at `/debian/ota/config.json`.
+- The factory `tf-card.img` contains the dedicated empty `ota` partition and
+  the factory baseline in userdata at `/debian/ota/config.json`.
+- The board supplies TF power before BootROM reads the card; see
+  [TF-only system](../01-getting-started/tf-system.md).
 - When UART is available, it is recommended to record SPL rollback logs simultaneously.
 
 `aico-ota-health.service` only handles `/userdata/ota/pending_boot.json` at
 startup; it does not perform network or GitHub update checks. Manual updates
 must be triggered via `ota update`.
 
-## 1. USB Factory Flash Acceptance
+## 1. TF Factory Provisioning Acceptance
 
-Download the local build's `update.img.tar.gz`, extract `update.img`, then flash it with the normal USB recovery flow:
+Verify the local build's `tf-card.img.sha256`, identify the whole TF device,
+unmount its filesystems, and write the raw image:
 
 ```bash
-tar -xzf update.img.tar.gz update.img
-FLASH_TOOL=pico-sdk/tools/linux/Linux_Upgrade_Tool/upgrade_tool
-scripts/flash.sh inspect --tool "${FLASH_TOOL}"
-sudo scripts/flash.sh flash --tool "${FLASH_TOOL}" \
-  --image ./update.img --sha256 "<verified-sha256>" \
-  --confirm-erase-all-data
+cd output/debian/image
+sha256sum --check tf-card.img.sha256
+sudo dd if=tf-card.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-The repository-root `upgrade_tool/upgrade_tool` is a macOS Mach-O binary; use
-the Linux SDK tool above on Linux hosts.
+Replace `/dev/sdX` with the verified whole-card device. Do not write to a
+partition such as `/dev/sdX1`, and do not treat `update.img` as a raw card
+image. Record the TF supply waveform and BootROM/SPL UART log on the first
+cold start.
 
 After device boots, check:
 
@@ -56,8 +59,13 @@ Expected:
 
 - Factory boot is in slot A.
 - `/proc/cmdline` contains `aico.slot_suffix=_a` and `root=PARTLABEL=rootfs_a`.
-- `/` is mounted from `rootfs_a` (`/dev/mmcblk0p7`); `/oem` is absent.
+- `/` is mounted from `rootfs_a` (`/dev/mmcblk1p7`); `/oem` is absent.
 - `/userdata/ota` is an ext4 mount whose source resolves to `/dev/disk/by-partlabel/ota`, and it reports an independent filesystem from `/userdata`.
+- OTA is the fixed 300 MiB partition `mmcblk1p9`. Userdata is `mmcblk1p10`,
+  extends to the end of the TF card, and its ext4 filesystem fills the partition
+  to filesystem block granularity. Repeat provisioning on two card capacities
+  and verify that the A/B and OTA offsets do not change. A card copied to a
+  larger card must grow userdata on its next boot while preserving its data.
 - `misc` metadata can be parsed normally from byte offset `2048`, slot A is successful.
 - `/userdata/debian/ota/config.json` exists, `ota status` does not report missing factory baseline.
 
@@ -82,7 +90,7 @@ findmnt /
 Expected:
 
 - `/proc/cmdline` contains `aico.slot_suffix=_b` and `root=PARTLABEL=rootfs_b`.
-- `/` is mounted from `rootfs_b` (`/dev/mmcblk0p8`); `/oem` is absent.
+- `/` is mounted from `rootfs_b` (`/dev/mmcblk1p8`); `/oem` is absent.
 - Slot B has remaining tries before mark successful.
 
 ## 3. Mark Successful

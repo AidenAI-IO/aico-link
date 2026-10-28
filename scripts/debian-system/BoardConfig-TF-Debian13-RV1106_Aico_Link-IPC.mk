@@ -3,7 +3,7 @@
 #################################################
 # Debian 13 production A/B board configuration
 #################################################
-export LF_ORIGIN_BOARD_CONFIG=BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk
+export LF_ORIGIN_BOARD_CONFIG=BoardConfig-TF-Debian13-RV1106_Aico_Link-IPC.mk
 export RK_CHIP=rv1106
 export RK_APP_TYPE=RKIPC_RV1106
 export RK_BOOTARGS_CMA_SIZE="100M"
@@ -12,12 +12,14 @@ export RK_BOOTARGS_CMA_SIZE="100M"
 export RK_KERNEL_CMDLINE_EXTRA=net.ifnames$'\x3d'0
 export RK_KERNEL_DTS=rv1106g-aico-custom.dts
 
-export RK_BOOT_MEDIUM=emmc
-export RK_UBOOT_DEFCONFIG_FRAGMENT="rk-emmc.config rv1106-ab.config aico-rv1106-rockusb.config"
+export RK_BOOT_MEDIUM=sd_card
+export RK_UBOOT_DEFCONFIG_FRAGMENT="rv1106-ab.config aico-rv1106-rockusb.config aico-rv1106-tf.config"
 
 # Fresh-flash layout. Devices using an older partition table must be reflashed;
 # OTA only updates boot/rootfs within this layout.
-export RK_PARTITION_CMD_IN_ENV="32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)"
+# Keep userdata last so BootROM-compatible raw images work across card sizes.
+# The 3 GiB factory seed expands to the remaining physical capacity on boot.
+export RK_PARTITION_CMD_IN_ENV="32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),300M(ota),-(userdata)"
 export RK_PARTITION_FS_TYPE_CFG=rootfs_a@IGNORE@ext4,rootfs_b@IGNORE@ext4,userdata@/userdata@ext4,ota@/userdata/ota@ext4
 
 # The SDK builds only U-Boot, the kernel, DTBs and modules. Debian rootfs and

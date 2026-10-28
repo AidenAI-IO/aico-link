@@ -11,11 +11,15 @@ partition. This replaces the former reserve-file design on `/userdata`.
 Ordinary logs, recordings, swap, and Agent state cannot consume OTA capacity,
 and OTA activity cannot make `/userdata` appear artificially full.
 
-The production layout appends the partition without shrinking userdata:
+The production layout places OTA before the final userdata partition:
 
 ```text
-...,1792M(rootfs_b),3G(userdata),300M(ota)
+...,1792M(rootfs_b),300M(ota),-(userdata)
 ```
+
+Userdata uses all remaining TF capacity. The earlier fixed 3 GiB userdata
+layout requires backup and a whole-card reflash; ordinary slot OTA cannot
+move the two filesystems into this order.
 
 The partition is mounted at `/userdata/ota`, preserving the existing OTA
 runtime paths while placing them on a separate filesystem.
@@ -27,7 +31,7 @@ systemd mounts it with `userdata-ota.mount`:
 
 ```text
 300M(ota)
-/dev/mmcblk0p10 -> /userdata/ota (ext4)
+/dev/disk/by-partlabel/ota -> /userdata/ota (ext4)
 ```
 
 `aico-slot-resolve.service` runs before `userdata.mount`,
@@ -40,7 +44,7 @@ lock, state, or download files. The mount must be the ext4 filesystem rooted at
 is rejected. If the expected mount is not active, `ota update`, `ota health`,
 and `ota status` fail instead of writing into the underlying userdata directory.
 
-There is intentionally no legacy reserve-file fallback and no SD-card OTA
+There is intentionally no legacy reserve-file fallback and no removable-card OTA
 cache route. The product has not shipped with the previous layout, so factory
 images can move directly to the partition design.
 
@@ -84,7 +88,7 @@ vary by device.
 ## Factory Image Flow
 
 The firmware build generates an empty generic `ota.img` and includes it in
-`update.img`. Runtime state and downloads populate that filesystem only after
+both the raw `tf-card.img` and Rockchip `update.img`. Runtime state and downloads populate that filesystem only after
 the device boots.
 
 After the signed manifest is generated, the Debian system config action writes
@@ -94,7 +98,7 @@ the factory baseline into `userdata.img` at:
 /debian/ota/config.json
 ```
 
-It then repacks `update.img` and audits the mounted userdata image against the
+It then repacks `update.img`, rebuilds `tf-card.img`, and audits the mounted userdata image against the
 signed manifest. The OTA partition itself is not an online OTA target; online
 updates continue to write only the inactive `boot` and `rootfs`
 partitions.
@@ -122,8 +126,8 @@ mounted filesystem, OTA downloads do not reduce the `statfs` availability
 reported for `/userdata`. Its existing cleanup stages and notifications still
 protect Agent logs, audio archives, and session archives and should remain.
 
-The SD-card StorageManager continues to mount cards and migrate eligible audio
-data based on the existing eMMC watermarks. It neither hosts OTA downloads nor
+The StorageManager continues to mount separate cards and migrate eligible audio
+data based on the existing `/userdata` watermarks. It neither hosts OTA downloads nor
 shares capacity or locks with OTA, so SD insertion, removal, formatting, and
 migration do not change OTA capacity.
 
