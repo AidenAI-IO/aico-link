@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func init() {

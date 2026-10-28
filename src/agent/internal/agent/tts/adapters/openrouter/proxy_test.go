@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestSessionHTTPClientHonorsNoProxy(t *testing.T) {

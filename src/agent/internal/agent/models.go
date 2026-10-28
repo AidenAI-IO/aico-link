@@ -1,9 +1,9 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
 	"bytes"
 	"context"
 	"errors"

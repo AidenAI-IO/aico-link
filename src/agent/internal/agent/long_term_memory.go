@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -26,6 +27,10 @@ type ProfileFn func(ctx context.Context, entries []ProfileEntry) string
 type ProfileEntry struct {
 	Type    string
 	Content string
+	// FromNotification marks an entry whose content came from a notification,
+	// which third parties control and which therefore never becomes a
+	// system-prompt instruction.
+	FromNotification bool
 }
 
 type LongTermMemoryStore struct {
@@ -92,32 +97,39 @@ type MemorySourceRef struct {
 }
 
 type MemoryItem struct {
-	ID               string            `yaml:"id"`
-	Type             string            `yaml:"type"`
-	Status           string            `yaml:"status"`
-	Revision         int               `yaml:"revision,omitempty"`
-	Priority         int               `yaml:"priority"`
-	Confidence       float64           `yaml:"confidence"`
-	Tags             []string          `yaml:"tags,omitempty"`
-	Entities         []string          `yaml:"entities,omitempty"`
-	TimeScope        string            `yaml:"time_scope"`
-	CreatedAt        string            `yaml:"created_at"`
-	UpdatedAt        string            `yaml:"updated_at"`
-	TTL              string            `yaml:"ttl,omitempty"`
-	ExpiresAt        string            `yaml:"expires_at,omitempty"`
-	Applicability    map[string]string `yaml:"applicability,omitempty"`
-	SourceRefs       []MemorySourceRef `yaml:"source_refs,omitempty"`
-	EvidenceRefs     []MemorySourceRef `yaml:"evidence_refs,omitempty"`
-	LastValidatedAt  string            `yaml:"last_validated_at,omitempty"`
-	SuccessCount     int               `yaml:"success_count,omitempty"`
-	FailureCount     int               `yaml:"failure_count,omitempty"`
-	ConflictsWith    []string          `yaml:"conflicts_with,omitempty"`
-	Supersedes       string            `yaml:"supersedes,omitempty"`
-	SupersededBy     string            `yaml:"superseded_by,omitempty"`
-	Traceability     string            `yaml:"traceability"`
-	Title            string            `yaml:"-"`
-	Content          string            `yaml:"-"`
-	EvidenceExcerpts []string          `yaml:"-"`
+	ID              string            `yaml:"id"`
+	Type            string            `yaml:"type"`
+	Status          string            `yaml:"status"`
+	Revision        int               `yaml:"revision,omitempty"`
+	Priority        int               `yaml:"priority"`
+	Confidence      float64           `yaml:"confidence"`
+	Tags            []string          `yaml:"tags,omitempty"`
+	Entities        []string          `yaml:"entities,omitempty"`
+	TimeScope       string            `yaml:"time_scope"`
+	CreatedAt       string            `yaml:"created_at"`
+	UpdatedAt       string            `yaml:"updated_at"`
+	TTL             string            `yaml:"ttl,omitempty"`
+	ExpiresAt       string            `yaml:"expires_at,omitempty"`
+	Applicability   map[string]string `yaml:"applicability,omitempty"`
+	SourceRefs      []MemorySourceRef `yaml:"source_refs,omitempty"`
+	EvidenceRefs    []MemorySourceRef `yaml:"evidence_refs,omitempty"`
+	LastValidatedAt string            `yaml:"last_validated_at,omitempty"`
+	SuccessCount    int               `yaml:"success_count,omitempty"`
+	FailureCount    int               `yaml:"failure_count,omitempty"`
+	ConflictsWith   []string          `yaml:"conflicts_with,omitempty"`
+	Supersedes      string            `yaml:"supersedes,omitempty"`
+	SupersededBy    string            `yaml:"superseded_by,omitempty"`
+	Traceability    string            `yaml:"traceability"`
+	// Sensitive marks a secret the user explicitly asked to keep. It is
+	// recalled only by a topical query and never enters the user profile.
+	Sensitive bool `yaml:"sensitive,omitempty"`
+	// Origin names who wrote the current content: memoryOriginUser for
+	// save_memory, memoryOriginNotification for Notification Memory. Evidence
+	// added by a reinforcement does not change it.
+	Origin           string   `yaml:"origin,omitempty"`
+	Title            string   `yaml:"-"`
+	Content          string   `yaml:"-"`
+	EvidenceExcerpts []string `yaml:"-"`
 }
 
 type MemoryQuery struct {
@@ -125,6 +137,9 @@ type MemoryQuery struct {
 	Entities []string
 	Types    []string
 	Limit    int
+	// includeSensitive lets internal callers, such as the duplicate check and
+	// maintenance, see sensitive records that a browse by the Agent omits.
+	includeSensitive bool
 }
 
 type MemoryResult struct {
@@ -141,6 +156,7 @@ type MemoryResult struct {
 	Entities      []string          `json:"entities,omitempty"`
 	FilePath      string            `json:"file_path"`
 	MemoryScope   string            `json:"memory_scope,omitempty"`
+	Sensitive     bool              `json:"sensitive,omitempty"`
 	ExpiresAt     string            `json:"expires_at,omitempty"`
 	Applicability map[string]string `json:"applicability,omitempty"`
 	SourceRefs    []MemorySourceRef `json:"source_refs,omitempty"`
@@ -164,6 +180,7 @@ type memoryIndexEntry struct {
 	Tags       []string `yaml:"tags,omitempty"`
 	Entities   []string `yaml:"entities,omitempty"`
 	Summary    string   `yaml:"summary"`
+	Sensitive  bool     `yaml:"sensitive,omitempty"`
 }
 
 type scoredMemoryResult struct {
@@ -233,7 +250,7 @@ func (s *LongTermMemoryStore) searchAll(ctx context.Context) ([]MemoryResult, er
 	if err != nil {
 		return nil, err
 	}
-	return s.searchLocked(ctx, MemoryQuery{Limit: len(index.Memories)})
+	return s.searchLocked(ctx, MemoryQuery{Limit: len(index.Memories), includeSensitive: true})
 }
 
 func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuery) ([]MemoryResult, error) {
@@ -264,6 +281,11 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 		if entry.Type == "failure" {
 			continue
 		}
+		// A secret is returned only when the query names its topic, never by a
+		// browse-style recall that lists everything of a type.
+		if entry.Sensitive && !query.includeSensitive && !memoryQueryHasTopicalTerms(query) {
+			continue
+		}
 		parsed, path, expired, err := s.resolveActiveEntry(entry, now)
 		if expired {
 			expiredPaths = append(expiredPaths, path)
@@ -289,6 +311,7 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 			Tags:          append([]string(nil), entry.Tags...),
 			Entities:      append([]string(nil), entry.Entities...),
 			FilePath:      path,
+			Sensitive:     entry.Sensitive,
 			ExpiresAt:     firstNonEmpty(parsed.Item.ExpiresAt, entry.ExpiresAt),
 			Applicability: cloneStringMap(parsed.Item.Applicability),
 			SourceRefs:    append([]MemorySourceRef(nil), parsed.Item.SourceRefs...),
@@ -418,6 +441,11 @@ func (s *LongTermMemoryStore) supersedeMemoryLocked(ctx context.Context, oldID s
 	}
 
 	newItem = normalizeMemoryItem(newItem, time.Now().UTC())
+	// A new version of a secret is still a secret.
+	newItem.Sensitive = newItem.Sensitive || oldParsed.Item.Sensitive
+	if newItem.Origin == "" {
+		newItem.Origin = oldParsed.Item.Origin
+	}
 	newItem.Supersedes = oldID
 
 	oldParsed.Item.Status = "replaced"
@@ -534,10 +562,11 @@ func (s *LongTermMemoryStore) DecideAction(ctx context.Context, candidate Memory
 
 func (s *LongTermMemoryStore) decideActionLocked(ctx context.Context, candidate MemoryItem) (string, string, error) {
 	results, err := s.searchLocked(ctx, MemoryQuery{
-		Tags:     candidate.Tags,
-		Entities: candidate.Entities,
-		Types:    []string{candidate.Type},
-		Limit:    10,
+		Tags:             candidate.Tags,
+		Entities:         candidate.Entities,
+		Types:            []string{candidate.Type},
+		Limit:            10,
+		includeSensitive: true,
 	})
 	if err != nil {
 		return "add", "", err
@@ -688,7 +717,7 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 	var expiredPaths []string
 	unreadableEntries := 0
 	for _, entry := range index.Memories {
-		if entry.Status != "active" || !isProfileRelevantType(entry.Type) {
+		if entry.Status != "active" || entry.Sensitive || !isProfileRelevantType(entry.Type) {
 			continue
 		}
 		parsed, path, expired, err := s.resolveActiveEntry(entry, now)
@@ -700,12 +729,71 @@ func (s *LongTermMemoryStore) profileEntriesLocked(ctx context.Context) ([]Profi
 			unreadableEntries++
 			continue
 		}
-		entries = append(entries, ProfileEntry{Type: entry.Type, Content: strings.TrimSpace(parsed.Content)})
+		entries = append(entries, ProfileEntry{Type: entry.Type, Content: strings.TrimSpace(parsed.Content), FromNotification: memoryFromNotification(parsed.Item)})
 	}
 	if len(expiredPaths) > 0 {
 		s.invalidateParsedMemoryCache(expiredPaths...)
 	}
 	return entries, unreadableEntries, indexSignature, nil
+}
+
+// ProfilePrompt formats the active profile, preference, and rule memories as
+// a bullet list for the system prompt, highest priority first, stopping before
+// maxChars. Sensitive and notification-derived memories are excluded. It
+// reads the records directly
+// rather than profile.md, whose rebuild is debounced and may lag a save.
+func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (string, error) {
+	if s == nil {
+		return "", nil
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	entries, unreadable, _, err := s.profileEntriesLocked(ctx)
+	if err != nil {
+		return "", err
+	}
+	// A partial read is a failure: a profile missing an unreadable entry must
+	// not replace the complete one a session already carries.
+	if unreadable > 0 {
+		return "", fmt.Errorf("%d profile memories are unreadable", unreadable)
+	}
+	// An entry that does not fit is skipped rather than ending the list, so
+	// one long entry cannot hide the shorter ones after it.
+	var b strings.Builder
+	used := 0
+	for _, entry := range entries {
+		content := strings.Join(strings.Fields(entry.Content), " ")
+		if content == "" || entry.FromNotification {
+			continue
+		}
+		line := "- (" + entry.Type + ") " + content + "\n"
+		size := utf8.RuneCountInString(line)
+		if used+size > maxChars {
+			continue
+		}
+		b.WriteString(line)
+		used += size
+	}
+	return strings.TrimSpace(b.String()), nil
+}
+
+const (
+	memoryOriginUser         = "user"
+	memoryOriginNotification = "notification"
+)
+
+// memoryFromNotification reports whether a notification wrote the memory's
+// content. Records saved before Origin existed fall back to their source refs.
+func memoryFromNotification(item MemoryItem) bool {
+	if item.Origin != "" {
+		return item.Origin == memoryOriginNotification
+	}
+	for _, ref := range item.SourceRefs {
+		if ref.Type == "notification" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *LongTermMemoryStore) RequestProfileRebuild() {
@@ -784,6 +872,7 @@ func (s *LongTermMemoryStore) rebuildIndexLocked(ctx context.Context) error {
 			Tags:       append([]string(nil), parsed.Item.Tags...),
 			Entities:   append([]string(nil), parsed.Item.Entities...),
 			Summary:    firstSentence(parsed.Content),
+			Sensitive:  parsed.Item.Sensitive,
 		})
 	}
 	sort.SliceStable(index.Memories, func(i, j int) bool {

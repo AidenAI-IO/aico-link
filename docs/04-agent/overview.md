@@ -4,7 +4,9 @@ sidebar_position: 1
 
 # Agent Overview
 
-The Aiden Go Agent is located in `src/agent/` and is built on `github.com/tmc/langchaingo`. It serves as both a long-running daemon and the device-side tool control plane.
+Aico is the AI Agent running on Aico Link hardware. Its Go implementation is
+located in `src/agent/` and is built on `github.com/tmc/langchaingo`. It serves
+as both a long-running daemon and the device-side tool control plane.
 
 ## Binaries
 
@@ -21,7 +23,7 @@ output/debian-apps/apps/bin/agent
 In the firmware, it is installed by default to:
 
 ```text
-/usr/lib/aiden/agent
+/usr/lib/aico/agent
 ```
 
 ## Current Capabilities
@@ -61,7 +63,7 @@ go run ./cmd/daemon -dir ./config -addr :8080
 Device service:
 
 ```bash
-/usr/lib/aiden/aiden-managed-env-run /usr/lib/aiden/agent -dir /userdata/agent -addr :8080
+/usr/lib/aico/aico-managed-env-run /usr/lib/aico/agent -dir /userdata/agent -addr :8080
 ```
 
 ## Built-in Tools

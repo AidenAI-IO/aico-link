@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -936,7 +936,6 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 		Turn:           input,
 		RequestID:      requestID,
 		RuntimeContext: turnContext.RuntimeContext,
-		MaxTokens:      d.config.VoiceMaxResponseTokensOrDefault(),
 		EventHandler: func(event RunEvent) {
 			if event.Type == "assistant_output" {
 				captured := event

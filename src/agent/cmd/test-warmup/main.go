@@ -9,8 +9,8 @@ import (
 	"net/http/httptest"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
 )
 
 func main() {

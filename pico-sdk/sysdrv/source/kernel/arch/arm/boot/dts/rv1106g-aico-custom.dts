@@ -1,0 +1,575 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Aico Link SCH v1 (RV1106G) board device tree
+ *
+ * Derived from rv1106g-luckfox-pico-zero.dts and
+ * rv1106-luckfox-pico-zero-ipc.dtsi and adapted to the Aico Link SCH v1
+ * hardware (GD32L235 MCU + MP2720 charger + BQ27220 fuel gauge,
+ * RK628F/H HDMI-to-CSI bridge on I2C4, SDMMC0 TF card, SKI.WB800D80S.1
+ * (AIC8800D80) WiFi/BT, AW8010 amplifier and ASRPro voice module).
+ */
+
+/dts-v1/;
+#include "rv1106.dtsi"
+#include "rv1106-evb.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/display/media-bus-format.h>
+
+/ {
+	model = "Aico Link SCH v1";
+	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3",
+		     "rockchip,rv1106";
+
+	chosen {
+		bootargs = "root=/dev/mmcblk0p7 rootwait snd_soc_core.prealloc_buffer_size_kbytes=16 coherent_pool=0";
+	};
+
+	reserved_memory: reserved-memory {
+		status = "okay";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		mmc_ecsd: mmc@3f000 {
+			reg = <0x3f000 0x00001000>;
+		};
+	};
+
+	acodec_sound: acodec-sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "rv1106-acodec";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		status = "okay";
+		simple-audio-card,cpu {
+			sound-dai = <&i2s0_8ch>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&acodec>;
+		};
+	};
+
+	dsm_sound: dsm-sound {
+		status = "disabled";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,dsm-sound";
+		simple-audio-card,bitclock-master = <&sndcodec>;
+		simple-audio-card,frame-master = <&sndcodec>;
+		sndcpu: simple-audio-card,cpu {
+			sound-dai = <&i2s0_8ch>;
+		};
+		sndcodec: simple-audio-card,codec {
+			sound-dai = <&dsm>;
+		};
+	};
+
+	vcc_1v8: vcc-1v8 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_1v8";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+	};
+
+	vcc_3v3: vcc-3v3 {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	/*
+	 * SCH v1 p4: SY8892, R82=56k, R84=100k, R85=24k,
+	 * R86=150k, R87=10k; 0.6V feedback and 3.3V PWM.
+	 * Vout = 1.149933V - 0.104869 * Vpwm (nominal).
+	 */
+	vdd_arm: vdd-arm {
+		compatible = "pwm-regulator";
+		pwms = <&pwm0 0 5000 1>;
+		regulator-name = "vdd_arm";
+		regulator-min-microvolt = <804000>;
+		regulator-max-microvolt = <1150000>;
+		regulator-init-microvolt = <950000>;
+		regulator-settling-time-up-us = <250>;
+		pwm-dutycycle-unit = <1000>;
+		pwm-dutycycle-range = <0 1000>;
+		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/* TF card supply switch driven by the WS4622C (SDMMC0_PWREN). */
+	vcc3v3_sd: vcc3v3-sd-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc3v3_sd";
+		gpio = <&gpio0 RK_PA1 GPIO_ACTIVE_HIGH>;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		enable-active-high;
+		vin-supply = <&vcc_3v3>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&sdmmc0_power_en>;
+		startup-delay-us = <10000>;
+		off-on-delay-us = <200000>;
+	};
+
+	/* WiFi (SKI.WB800D80S.1 / AIC8800D80) 3.3V rail. */
+	v_wifi_vcc: v-wifi-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "v_wifi_vcc";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+	};
+
+	/*
+	 * MCU owns WIFI_VCC_PWREN (p1). WL_EN (module pin 12) has an
+	 * external pull-up to V_WIFI_1V8 on SCH v1. Do not bind a Linux
+	 * mmc-pwrseq reset GPIO here: a failed probe must not leave WL_EN
+	 * asserted low and keep the module disabled on subsequent attempts.
+	 */
+
+	wireless_bluetooth: wireless-bluetooth {
+		compatible = "bluetooth-platdata";
+		BT,wake_gpio = <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>;
+		/* BT_WAKE_MCU terminates at the MCU, not an RV1106 IRQ. */
+		status = "okay";
+
+	};
+	/*
+	 * GD32L235 companion MCU interface.
+	 *
+	 * RV_HOLD keeps VCC5V0_SYS enabled: the MCU forces the rail up at
+	 * power-on and cuts it again unless the SoC takes over the signal
+	 * within its supervision window.  The kernel drives GPIO1_D1 high
+	 * through the gpio-leds default state.
+	 */
+	mcu_control {
+		compatible = "gpio-leds";
+
+		rv_hold {
+			label = "rv-hold";
+			gpios = <&gpio1 RK_PD1 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+			retain-state-suspended;
+		};
+	};
+
+	/*
+	 * RECOVERY shares the GPIO4_C0 / SARADC_IN0 ball.  Pulling it low
+	 * while the BootROM samples the pin enters Loader/download mode; at
+	 * runtime it is reported as a KEY_VENDOR key event.
+	 */
+	gpio-keys {
+		compatible = "gpio-keys";
+		autorepeat;
+
+		recovery {
+			label = "recovery";
+			linux,code = <KEY_VENDOR>;
+			gpios = <&gpio4 RK_PC0 GPIO_ACTIVE_LOW>;
+			debounce-interval = <100>;
+		};
+	};
+
+	/*
+	 * The EVB ADC volume keys are not populated; GPIO4_C0 is used as
+	 * RECOVERY instead of as SARADC_IN0.
+	 */
+	adc-keys {
+		status = "disabled";
+	};
+};
+
+&rockchip_suspend {
+	/* SCH v1 has no external 32 kHz crystal; use the internal oscillator. */
+	rockchip,sleep-mode-config = <0>;
+	/* Preserve board pinmux/pulls instead of applying the EVB GPIO0 table. */
+	/delete-property/ rockchip,sleep-io-config;
+};
+
+/**********CRU**********/
+&cru {
+	assigned-clocks =
+		<&cru PLL_GPLL>, <&cru PLL_CPLL>,
+		<&cru ARMCLK>,
+		<&cru ACLK_PERI_ROOT>, <&cru HCLK_PERI_ROOT>,
+		<&cru PCLK_PERI_ROOT>, <&cru ACLK_BUS_ROOT>,
+		<&cru PCLK_TOP_ROOT>, <&cru PCLK_PMU_ROOT>,
+		<&cru HCLK_PMU_ROOT>, <&cru CLK_500M_SRC>;
+	assigned-clock-rates =
+		<1188000000>, <700000000>,
+		<1104000000>,
+		<400000000>, <200000000>,
+		<100000000>, <300000000>,
+		<100000000>, <100000000>,
+		<200000000>, <700000000>;
+};
+
+/**********NPU**********/
+&npu {
+	assigned-clock-rates = <700000000>;
+};
+
+/**********EMMC**********/
+&emmc {
+	bus-width = <8>;
+	cap-mmc-highspeed;
+	non-removable;
+	// mmc-hs200-1_8v;
+	rockchip,default-sample-phase = <90>;
+	no-sdio;
+	no-sd;
+	memory-region-ecsd = <&mmc_ecsd>;
+	post-power-on-delay-ms = <0>;
+	status = "okay";
+};
+
+&pwm0 {
+	status = "okay";
+	pinctrl-0 = <&pwm0m0_pins>;
+};
+
+&cpu0 {
+	cpu-supply = <&vdd_arm>;
+};
+
+/************************* FIQ_DUBUGGER ****************************/
+&fiq_debugger {
+	rockchip,irq-mode-enable = <1>;
+	status = "okay";
+};
+
+/***************************** audio ********************************/
+&i2s0_8ch {
+	#sound-dai-cells = <0>;
+	status = "okay";
+};
+
+&acodec {
+	#sound-dai-cells = <0>;
+	/* SPK_SDn_1V8, pin 22; GPIO3_C0 is CSI clock. */
+	pa-ctl-gpios = <&gpio4 RK_PC1 GPIO_ACTIVE_HIGH>;
+	status = "okay";
+};
+
+/***************************** DSM *********************************/
+&dsm {
+	status = "disabled";
+};
+
+/***************************** USB *********************************/
+&u2phy {
+	status = "okay";
+};
+
+&u2phy_otg {
+	/* SCH v1: VBUSDET is divided from VSYS_LOAD, not connector VBUS. */
+	rockchip,vbus-always-on;
+	status = "okay";
+};
+
+&usbdrd {
+	status = "okay";
+};
+
+&usbdrd_dwc3 {
+	extcon = <&u2phy>;
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+/**********SDIO-WIFI (SKI.WB800D80S.1 / AIC8800D80)**********/
+&sdio {
+	/* The companion MCU retains module power across RV1106 resets. */
+	aico,aic8800d80-retained-sdio;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	non-removable;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	keep-power-in-suspend;
+	rockchip,default-sample-phase = <90>;
+	supports-sdio;
+	vmmc-supply = <&v_wifi_vcc>; /* MCU-controlled supply */
+	vqmmc-supply = <&vcc_1v8>;
+	no-sd;
+	no-mmc;
+	pinctrl-names = "default";
+	pinctrl-0 = <&sdmmc1m0_cmd &sdmmc1m0_clk &sdmmc1m0_bus4>;
+	status = "okay";
+};
+
+/**********SD_CARD / TF (SDMMC0)**********/
+&sdmmc {
+	/* RV1106 pinctrl disables the JTAG override on SDMMC DAT2/DAT3. */
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	supports-sd;
+	disable-wp;
+	vmmc-supply = <&vcc3v3_sd>; /* TF card supply */
+	vqmmc-supply = <&vcc_3v3>; /* VCCIO4 is fixed at 3.3 V through R185. */
+	no-sdio;
+	no-mmc;
+	post-power-on-delay-ms = <20>;
+	power-off-delay-ms = <200>;
+	cd-gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_LOW>; /* SDMMC_DET */
+	/* Vendor DW-MMC requires normal/idle for power-cycle recovery. */
+	pinctrl-names = "default", "normal", "idle";
+	pinctrl-0 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4 &sdmmc0_card_detect>;
+	pinctrl-1 = <&sdmmc0_clk &sdmmc0_cmd &sdmmc0_bus4 &sdmmc0_card_detect>;
+	pinctrl-2 = <&sdmmc0_idle_pins &sdmmc0_card_detect>;
+	status = "okay";
+};
+
+/**********ETH**********/
+&gmac {
+	status = "disabled";
+};
+
+/**********RTC**********/
+&rtc {
+	status = "okay";
+};
+
+/* Charger/fuel gauge are on the MCU bus. I2C1 M1 conflicts with BT UART0. */
+&i2c1 {
+	status = "disabled";
+};
+
+/*************************** CSI *********************************/
+&csi2_dphy_hw {
+	status = "okay";
+};
+
+&csi2_dphy0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* RK628F/H HDMI-to-CSI bridge (four lanes). */
+			rk628_csi_in: endpoint@0 {
+				reg = <0>;
+				remote-endpoint = <&rk628_csi_out>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			csi_dphy_output: endpoint@0 {
+					reg = <0>;
+					remote-endpoint = <&mipi_csi2_input>;
+			};
+		};
+	};
+};
+
+/* SCH v1 p8/p13: RK628_I2C_{SCL,SDA}_3V3 on GPIO1_C2/C3. */
+&i2c4 {
+	status = "okay";
+	clock-frequency = <100000>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2c4m1_xfer>;
+
+	rk628: rk628@50 {
+		compatible = "rockchip,rk628-csi-v4l2";
+		reg = <0x50>;
+		status = "okay";
+		continues-clk;
+		/* Preserve the HDMI timing on CSI; userspace advertises 1080p60-only EDID. */
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&rk628_power_pin &rk628_reset_pin &rk628_int_pin>;
+		enable-gpios = <&gpio1 RK_PA0 GPIO_ACTIVE_HIGH>; /* RK628H_3V3_PWREN */
+		reset-gpios = <&gpio1 RK_PA1 GPIO_ACTIVE_LOW>; /* RK628_RESET_H */
+		interrupt-parent = <&gpio1>;
+		interrupts = <RK_PB1 IRQ_TYPE_LEVEL_HIGH>; /* RK628_INT_H */
+
+		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-facing = "back";
+		rockchip,camera-module-name = "RK628-CSI";
+		rockchip,camera-module-lens-name = "NC";
+
+		port {
+			rk628_csi_out: endpoint {
+				remote-endpoint = <&rk628_csi_in>;
+				data-lanes = <1 2 3 4>;
+				clock-lanes = <0>;
+			};
+		};
+	};
+};
+
+/* RV_I2C3_{SCL,SDA}_1V8 goes to the header, not RK628. */
+&i2c3 {
+	status = "disabled";
+};
+
+&mipi0_csi2 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			mipi_csi2_input: endpoint@1 {
+					reg = <1>;
+					remote-endpoint = <&csi_dphy_output>;
+			};
+		};
+
+		port@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			mipi_csi2_output: endpoint@0 {
+					reg = <0>;
+					remote-endpoint = <&cif_mipi_in>;
+			};
+		};
+	};
+};
+
+&rkcif {
+	status = "okay";
+};
+
+&rkcif_mipi_lvds {
+	status = "okay";
+
+	pinctrl-names = "default";
+	pinctrl-0 = <&mipi_pins>;
+	port {
+		/* MIPI CSI-2 endpoint */
+		cif_mipi_in: endpoint {
+				remote-endpoint = <&mipi_csi2_output>;
+		};
+	};
+};
+
+&rkcif_mipi_lvds_sditf {
+	status = "okay";
+
+	port {
+		/* MIPI CSI-2 endpoint */
+		mipi_lvds_sditf: endpoint {
+				remote-endpoint = <&isp_in>;
+		};
+	};
+};
+
+&rkisp {
+	status = "okay";
+};
+
+&rkisp_vir0 {
+	status = "okay";
+
+	port@0 {
+		isp_in: endpoint {
+				remote-endpoint = <&mipi_lvds_sditf>;
+		};
+	};
+};
+
+/***************************** ADC ********************************/
+&saradc {
+	status = "okay";
+	vref-supply = <&vcc_1v8>;
+};
+
+&tsadc {
+	status = "okay";
+};
+
+/**************************** UART ********************************/
+/* Bluetooth (SKI.WB800D80S.1 / AIC8800D80) on UART0 with RTS/CTS
+ * hardware flow control. */
+&uart0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m1_xfer &uart0m1_ctsn &uart0m1_rtsn>;
+};
+
+/* UART2 M1 is the debug UART owned by fiq_debugger. */
+&uart2 {
+	status = "disabled";
+};
+
+/* UART3 M1 RX is RV_HOLD, not the MCU serial link. */
+&uart3 {
+	status = "disabled";
+};
+
+/* ASRPro: GPIO1_C4/C5, pins 91/90. */
+&uart4 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4m1_xfer>;
+};
+
+/* GD32L235 LPUART1: GPIO1_D2/D3, pins 86/85. */
+&uart5 {
+	status = "okay";
+	wakeup-source;
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart5m1_xfer>;
+};
+
+/**************************** SPI *********************************/
+&spi0 {
+	status = "disabled";
+};
+
+/**************************** PINCTRL ******************************/
+&pinctrl {
+	/* Keep WL_EN passive and independent of the SDIO host lifetime. */
+	pinctrl-names = "default";
+	pinctrl-0 = <&wifi_enable>;
+	tf-card {
+		sdmmc0_power_en: sdmmc0-power-en {
+			rockchip,pins = <0 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+		sdmmc0_card_detect: sdmmc0-card-detect {
+			rockchip,pins = <3 RK_PA1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+	wifi {
+		wifi_enable: wifi-enable {
+			rockchip,pins = <3 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+	rk628 {
+		rk628_power_pin: rk628-power-pin {
+			rockchip,pins = <1 RK_PA0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+		rk628_reset_pin: rk628-reset-pin {
+			rockchip,pins = <1 RK_PA1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+		rk628_int_pin: rk628-int-pin {
+			rockchip,pins = <1 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+};

@@ -1052,3 +1052,36 @@ def test_seed_memory_rejects_ambiguous_expiry():
         per_task_setup(RecordingSetupClient(), {"type": "seed_memory", "memories": [
             {"id": "temporary", "content": "Fact", "expires_in_sec": 60, "expires_at": "2026-09-30T00:00:00Z"}
         ]})
+
+
+@pytest.mark.parametrize("steps, accepted", [
+    (["Open preferences", "Change setting", "Reopen to verify"], True),
+    (["Open preferences", "Read status", "Change setting", "Reopen to verify"], False),
+    (["Failed attempt", "Open preferences", "Change setting", "Reopen to verify"], False),
+    (["Change setting", "Reopen to verify"], False),
+    (["Change setting", "Open preferences", "Reopen to verify"], False),
+    (["Open preferences, Change setting, Reopen to verify"], False),
+    ([], False),
+])
+def test_consolidation_checks_ordered_procedure_steps_not_prose(steps, accepted):
+    class ProcedureClient(RecordingSetupClient):
+        def invoke_tool(self, name, args, timeout=90):
+            item = {
+                "id": "devmem-1", "type": "procedure",
+                "content": "Open preferences, Change setting, Reopen to verify",
+                "steps": [{"Description": text} for text in steps],
+            }
+            return ToolInvokeResult(output=json.dumps({"results": [item]}), is_error=False, duration_ms=1)
+
+    setup = {
+        "type": "seed_episode", "episode": {"id": "ep-path", "user_goal": "Change and verify a setting"}, "consolidate": True,
+        "consolidation_expectation": {
+            "required_procedure_steps": ["Open preferences", "Change setting", "Reopen to verify"],
+        },
+    }
+    if accepted:
+        result = per_task_setup(ProcedureClient(), setup)
+        assert result["consolidation"]["inspected_memories"][0]["steps"]
+    else:
+        with pytest.raises(SetupAssertionError, match="no single memory matching"):
+            per_task_setup(ProcedureClient(), setup)

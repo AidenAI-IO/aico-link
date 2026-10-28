@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/ble"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/ble"
+	"aico-agent/internal/logging"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -997,5 +997,24 @@ func TestNotificationMemoryPromoteRejectsUnrelatedDeletedTemporary(t *testing.T)
 	proposal := notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "promote", Scope: "long_term", MemoryID: item.ID, MemoryRevision: 1}}}
 	if _, err := processor.validateNotificationProposal(context.Background(), record, proposal, nil); err == nil {
 		t.Fatal("deleted temporary without a completed promotion was accepted")
+	}
+}
+
+func TestNotificationMemoryRelatedSearchSkipsSensitiveMemories(t *testing.T) {
+	root := t.TempDir()
+	longTerm := NewLongTermMemoryStore(filepath.Join(root, "long_term"))
+	if _, err := longTerm.AddMemory(context.Background(), MemoryItem{ID: "mem_bank_pin", Type: "fact", Priority: 80, Confidence: 0.9, Tags: []string{"com.bank"}, Title: "网银口令", Content: "用户的网银口令是 7316", Sensitive: true, EvidenceExcerpts: []string{"帮我记住"}}); err != nil {
+		t.Fatal(err)
+	}
+	processor := NewNotificationMemoryProcessor(nil, root, longTerm, nil)
+	record := NotificationRecord{ContextID: "bank", NotificationEvent: ble.NotificationEvent{ID: "bank-event", AppIdentifier: "com.bank", Title: "账单", Message: "本月账单 300 元"}}
+	refs, err := processor.searchRelatedNotificationMemories(context.Background(), record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range refs {
+		if ref.ID == "mem_bank_pin" {
+			t.Fatalf("sensitive memory reached the notification prompt: %#v", ref)
+		}
 	}
 }

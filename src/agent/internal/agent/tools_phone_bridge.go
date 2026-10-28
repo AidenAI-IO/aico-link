@@ -299,7 +299,7 @@ func sendBridgeOpenCommand(ctx context.Context, bridge *PhoneBridge, restorer *P
 	if bridge != nil && !phoneBridgeReadyForCommand(bridge.getStatus(), cmd.Type) {
 		reportToolProgress(ctx, ToolProgress{
 			Status:  "preparing",
-			Content: "Preparing to switch apps; restoring Aiden App",
+			Content: "Preparing to switch apps; restoring the companion app",
 		})
 	}
 	restored, err := ensurePhoneBridgeReadyForCommand(ctx, bridge, restorer, "open_app")

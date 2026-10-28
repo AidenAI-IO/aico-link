@@ -1,8 +1,8 @@
 package executor
 
 import (
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"context"
 	"errors"
 	"fmt"

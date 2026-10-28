@@ -30,12 +30,12 @@ Production images use A/B layout:
 1. ROM loads SPL.
 2. SPL reads Android AVB A/B metadata from `misc` partition at byte offset `2048`.
 3. SPL selects the slot with highest priority and bootable status, loading `boot_a` or `boot_b`.
-4. Slot-specific FIT boot image provides `root=PARTLABEL=rootfs_a|rootfs_b` and `aiden.slot_suffix=_a|_b`.
+4. Slot-specific FIT boot image provides `root=PARTLABEL=rootfs_a|rootfs_b` and `aico.slot_suffix=_a|_b`.
 5. Linux mounts the matching `rootfs_*`.
-6. `aiden-slot-resolve.service` resolves stable partition paths for the active slot.
+6. `aico-slot-resolve.service` resolves stable partition paths for the active slot.
 7. `userdata.mount` and `userdata-ota.mount` mount persistent data and the dedicated OTA workspace. Platform files and business binaries are already in the active rootfs.
-8. `aiden-ota-health-marker.service` aggregates required application health and
-   the Config Web recovery portal, then `aiden-ota-health.service` processes
+8. `aico-ota-health-marker.service` aggregates required application health and
+   the Config Web recovery portal, then `aico-ota-health.service` processes
    pending OTA state once. Agent startup is optional during this confirmation.
    The OTA command controls the health-marker wait through `health_timeout_seconds`
    (five minutes by default). The health service has a ten-minute outer startup
@@ -45,7 +45,7 @@ Production images use A/B layout:
 
 ## Update Process
 
-1. `ota` reads `/userdata/debian/ota/config.json` and `/usr/share/keyrings/aiden-ota.pem`.
+1. `ota` reads `/userdata/debian/ota/config.json` and `/usr/share/keyrings/aico-ota.pem`.
 2. Fetch the configured `manifest_url`, or discover the highest OTA version for
    the configured dev/staging/prod channel from the repository's release list.
    Business-only releases are skipped. Older factory configurations retain the
@@ -69,7 +69,7 @@ Normal updates therefore decompress a compressed image once, during the write, i
 After the new slot boots, the Go daemon calls OTA health write logic after runtime init completes. `/userdata/ota/health.ok` is only written when all the following conditions are met:
 
 - `pending_boot.json` exists.
-- Current `aiden.slot_suffix` equals pending target slot.
+- Current `aico.slot_suffix` equals pending target slot.
 - Current rootfs slot equals pending target slot.
 - Health marker write includes version, build time, nonce, and current boot ID from pending.
 
@@ -120,7 +120,7 @@ repacks `update.img` before the final mounted-image audit.
 Optional configuration fields:
 
 - `manifest_url` - directly specify the manifest URL (the current local/self-hosted path)
-- `public_key_path` - override default public key path (default `/usr/share/keyrings/aiden-ota.pem`)
+- `public_key_path` - override default public key path (default `/usr/share/keyrings/aico-ota.pem`)
 - `github_token_path` - GitHub token file path (required for private repositories)
 - `download_safety_margin_bytes` - free bytes retained beyond remaining downloads (default 16 MiB)
 

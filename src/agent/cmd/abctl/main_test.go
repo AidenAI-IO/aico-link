@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/ota"
+	"aico-agent/internal/ota"
 )
 
 func TestRunInitAndRead(t *testing.T) {

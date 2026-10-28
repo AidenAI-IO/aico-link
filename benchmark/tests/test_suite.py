@@ -30,6 +30,19 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+def test_android_bridge_input_text_requires_non_empty_string(tmp_path: Path):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["android_bridge_input_text"] = "Aiden 输入验证 #42"
+    path = tmp_path / "bridge_input.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    assert load_suite(path).tasks[0].android_bridge_input_text == "Aiden 输入验证 #42"
+
+    fixture["tasks"][0]["android_bridge_input_text"] = ""
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match="android_bridge_input_text"):
+        load_suite(path)
+
+
 @pytest.mark.parametrize("assertions", [
     {}, [], {"expected": []}, {"absent_ids": []}, {"expected_count": None},
     {"expected_count": True}, {"expected_count": -1}, {"expected_count": "1"},
@@ -285,43 +298,87 @@ def test_vphone_ios_basic_warmup_requires_screenshot():
     assert warmup.hard_assertions.required_tools == ["screenshot"]
 
 
-def test_adb_android_basic_suite_loads_device_operation_tasks():
+def test_adb_android_suites_keep_navigation_and_text_editing_separate():
+    suites_dir = Path(__file__).resolve().parents[1] / "suites"
+    basic = load_suite(suites_dir / "adb_android_basic.json")
+    editing = load_suite(suites_dir / "adb_android_text_editing.json")
+    assert len(basic.tasks) == 16
+    assert {task.id for task in editing.tasks} == {
+        "search_ascii_with_spaces", "search_ascii_punctuation",
+        "replace_search_query", "clear_search_query",
+    }
+    assert {task.id for task in basic.tasks}.isdisjoint(task.id for task in editing.tasks)
+    for suite in (basic, editing):
+        assert suite.prompt_prefix == ""
+        for task in suite.tasks:
+            assert "shell" in task.hard_assertions.forbidden_tools
+            assert "request_user_action" in task.hard_assertions.forbidden_tools
+            # Generic ADB pairs must preserve task setup, without foregrounding
+            # the companion App only in the connected variant.
+            assert task.foreground_app_id is None
+    by_id = {task.id: task for task in basic.tasks}
+    assert by_id["tap_back"].setup is not None
+    assert by_id["scroll_page_down"].setup is not None
+    assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
+
+
+def test_adb_android_basic_suite_loads_general_operations_and_navigation():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json"
     suite = load_suite(suite_path)
 
     assert suite.name == "adb_android_basic"
-    assert {task.category for task in suite.tasks} == {"device_operation"}
+    assert {task.category for task in suite.tasks} == {
+        "device_operation", "single_step", "multi_step",
+    }
     assert [task.id for task in suite.tasks] == [
-        "screenshot_home",
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
+        "screenshot_home", "open_settings", "settings_check_wifi", "open_app_drawer",
+        "tap_back", "scroll_page_down", "scroll_to_bottom",
+        "quick_action_home", "quick_action_app_switch", "quick_action_notification_center",
+        "clock_from_settings", "notification_round_trip", "about_device_and_back",
+        "settings_scroll_round_trip", "reopen_settings_context", "return_to_settings_via_recents",
     ]
-    # Action tasks must not require any specific tool: every action tool
-    # already returns a post-action screenshot, so the agent legitimately
-    # completes them without ever invoking the standalone screenshot tool,
-    # and it may pick quick_action vs touch_gesture for the same outcome.
     by_id = {task.id: task for task in suite.tasks}
     assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
     assert suite.prompt_prefix == ""
-    for task_id in (
-        "go_home",
-        "open_settings",
-        "swipe_screen",
-        "type_english_text",
-        "clock_count_alarms",
-        "settings_check_wifi",
-        "open_app_drawer",
-    ):
-        assert by_id[task_id].hard_assertions.required_tools == []
+    for task in suite.tasks:
+        if task.id != "screenshot_home":
+            assert task.hard_assertions.required_tools == []
+        assert task.rubric and all(item.check for item in task.rubric)
+
     assert by_id["settings_check_wifi"].hard_assertions.min_tool_calls == 1
-    # These ported multi-step tasks genuinely need navigation before observing.
-    for task_id in ("clock_count_alarms", "open_app_drawer"):
-        assert by_id[task_id].hard_assertions.min_tool_calls >= 2
+
+
+@pytest.mark.parametrize("task_id,action", [
+    ("quick_action_home", "home"),
+    ("quick_action_app_switch", "app_switch"),
+    ("quick_action_notification_center", "notification_center"),
+])
+def test_adb_shortcut_contract_requires_successful_execution(task_id, action):
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == task_id)
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="quick_action", input={"action": action})],
+                  final_response="Done", total_tool_calls=1, total_duration_ms=100)
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = True
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+    trace.tool_calls[0].is_error = False
+    trace.tool_calls[0].input = {"action": "screenshot"}
+    assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
+
+
+def test_adb_bottom_scroll_accepts_one_successful_scroll():
+    from runner.assertions import evaluate_hard_assertions
+    from runner.models import Trace, ToolCall
+
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json")
+    task = next(task for task in suite.tasks if task.id == "scroll_to_bottom")
+    trace = Trace(tool_calls=[ToolCall(step=1, tool="touch_gesture", input={"type": "swipe"})],
+                  final_response="Reached the bottom", total_tool_calls=1, total_duration_ms=100)
+    # The visual rubric judges whether the bottom was actually reached.
+    assert evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
 
 
 @pytest.mark.parametrize("task_id,tool,tool_input", [
@@ -1198,7 +1255,7 @@ def test_phone_control_unicode_search_tasks_exclude_adb_android():
 
     assert "android" not in task_by_id["settings_search_bluetooth"].platforms
     assert task_by_id["type_long_mixed_text"].platforms == []
-    assert "Aiden test benchmark-2026!" in task_by_id["type_long_mixed_text"].prompt
+    assert "Aico test benchmark-2026!" in task_by_id["type_long_mixed_text"].prompt
 
 
 def test_skill_discovery_mixed_text_task_excludes_adb_android():
@@ -1493,11 +1550,13 @@ def test_episode_reflection_suite_covers_assessment_contracts():
         "recorded_success_without_proof_is_not_trusted",
         "failed_episode_creates_actionable_guard",
         "transient_value_is_not_memorized",
+        "tool_remediation_is_not_memorized",
     }
     assert task_by_id["successful_workaround_is_extracted"].consolidation_expectation.goal_result == "achieved"
     assert task_by_id["recorded_success_without_proof_is_not_trusted"].consolidation_expectation.allow_empty_memory is True
     assert task_by_id["failed_episode_creates_actionable_guard"].consolidation_expectation.goal_result == "not_achieved"
     assert task_by_id["transient_value_is_not_memorized"].consolidation_expectation.allow_empty_memory is True
+    assert task_by_id["tool_remediation_is_not_memorized"].consolidation_expectation.max_memory_ids == 0
 
 
 def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():
@@ -1697,7 +1756,7 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
     )
 
 def test_notes_entry_policy_suite_covers_three_screen_states():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "notes_entry_policy_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1739,7 +1798,7 @@ def test_notes_entry_policy_suite_covers_three_screen_states():
 
 
 def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "phone_bridge_data_policy_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1811,8 +1870,8 @@ def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
         assert "bridge_open_app" in task.hard_assertions.forbidden_tools
 
 
-def test_aiden_app_connection_capabilities_suite_covers_real_proxy_contract():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aiden_app"
+def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
+    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "connection_capabilities_v1.json")
     tasks = {task.id: task for task in suite.tasks}
 
@@ -1879,7 +1938,7 @@ def test_aiden_app_connection_capabilities_suite_covers_real_proxy_contract():
     assert notification_call.tool == "bridge_notification"
     assert notification_call.input_contains == {
         "action": "send",
-        "title": "AIDEN_BRIDGE_NOTIFICATION_V1",
+        "title": "AICO_BRIDGE_NOTIFICATION_V1",
         "body": "forwarded app connection verified",
         "sound": False,
         "badge": 1,
@@ -1911,3 +1970,17 @@ def test_numeric_matcher_bounds_are_validated_when_the_suite_loads(tmp_path, bou
     path.write_text(json.dumps({"name": "s", "tasks": [task]}))
     with pytest.raises(SuiteValidationError, match=message):
         load_suite(path)
+
+
+def test_consolidation_procedure_steps_are_a_positive_contract():
+    from runner.suite import _parse_consolidation_expectation
+
+    expected = ["Open preferences", "Apply", "Verify"]
+    parsed = _parse_consolidation_expectation({"required_procedure_steps": expected}, "path")
+    assert parsed.required_procedure_steps == expected
+    for invalid in ("Apply", [""], [1]):
+        with pytest.raises(SuiteValidationError, match="required_procedure_steps"):
+            _parse_consolidation_expectation({"required_procedure_steps": invalid}, "path")
+    for empty in ({"allow_empty_memory": True}, {"max_memory_ids": 0}):
+        with pytest.raises(SuiteValidationError):
+            _parse_consolidation_expectation({"required_procedure_steps": expected, **empty}, "path")

@@ -16,6 +16,7 @@ type fakeStorageOps struct {
 	dev        string
 	prepareErr error
 	healthy    bool
+	probeErr   error
 	// prepareBlock, when non-nil, makes Prepare block until it is closed. Used
 	// to prove the read endpoints stay responsive while a mount is in flight.
 	// prepareEntered is closed by Prepare once it has begun blocking.
@@ -38,6 +39,7 @@ type fakeStorageOps struct {
 
 	mounted          bool
 	prepares         int
+	probes           int
 	unmounts         int
 	lazyUnmnts       int
 	configuredDevice string
@@ -87,15 +89,23 @@ func (f *fakeStorageOps) Unmount(mountPoint string, lazy bool) error {
 	if lazy {
 		f.lazyUnmnts++
 	}
-	if f.unmountErr != nil && !lazy {
+	if f.unmountErr != nil && !lazy && !errors.Is(f.unmountErr, ErrStorageFlush) {
 		return f.unmountErr // mount point busy: the mount survives
 	}
 	f.mounted = false
+	if !lazy {
+		return f.unmountErr
+	}
 	return nil
 }
 
 func (f *fakeStorageOps) IsMounted(mountPoint string) bool { return f.mounted }
 func (f *fakeStorageOps) Healthy(mountPoint string) bool   { return f.healthy }
+
+func (f *fakeStorageOps) VerifyWritable(string) error {
+	f.probes++
+	return f.probeErr
+}
 
 func (f *fakeStorageOps) SpaceInfo(path string) (int64, int64, error) {
 	if f.spaceErr != nil {
@@ -369,7 +379,7 @@ func TestStorageManagerReadEndpointsStayResponsiveDuringMount(t *testing.T) {
 }
 
 // A format must never run concurrently with an in-flight mount: during the
-// ops.Prepare window m.card.Mounted is still false, so without the m.mounting
+// ops.Prepare window m.card.Mounted is still false, so without the m.cardOperation
 // guard StartFormat would skip its unmount step and hand mkfs a device that
 // mount is actively working on.
 func TestStorageManagerFormatRejectedWhileMountInFlight(t *testing.T) {
@@ -1112,7 +1122,7 @@ func TestParseBlkidLine(t *testing.T) {
 		wantPT string
 	}{
 		{`/dev/mmcblk2p1: UUID="0a1b2c3d" TYPE="apfs" PARTUUID="deadbeef-01"`, "apfs", ""},
-		{`/dev/mmcblk2p1: LABEL="AIDEN" UUID="ABCD-1234" TYPE="vfat"`, "vfat", ""},
+		{`/dev/mmcblk2p1: LABEL="AICO" UUID="ABCD-1234" TYPE="vfat"`, "vfat", ""},
 		{`/dev/mmcblk2p1: TYPE="hfsplus"`, "hfsplus", ""},
 		// Whole-device probe of a card whose volumes were deleted on a PC:
 		// a partition table signature but no filesystem.
@@ -1218,7 +1228,7 @@ func TestStorageStateViewReadsConfigWebMirrorWithoutStartingHardwarePoller(t *te
 		t.Fatalf("status=%+v", status)
 	}
 	roots := view.ReadRoots(StorageClassAudio)
-	if len(roots) != 2 || roots[1] != "/media/card/aiden/audio" {
+	if len(roots) != 2 || roots[1] != "/media/card/aico/audio" {
 		t.Fatalf("roots=%v", roots)
 	}
 	view.Stop()

@@ -29,7 +29,7 @@ func TestHybridUpdateQueuesSystemdAndRejectsDuplicateAcrossRestart(t *testing.T)
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 	args, err := os.ReadFile(filepath.Join(root, "args"))
-	if err != nil || string(args) != "start\n--no-block\naiden-hybrid-update.service\n" {
+	if err != nil || string(args) != "start\n--no-block\naico-hybrid-update.service\n" {
 		t.Fatalf("systemctl args=%q err=%v", args, err)
 	}
 	server, err = NewServer(options)

@@ -3,9 +3,9 @@ package agent
 import (
 	"sort"
 
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/tts"
 )
 
 // This file is the single source of truth for config field metadata consumed
@@ -655,10 +655,10 @@ func ConfigMeta() ConfigMetadata {
 				Fields: []FieldMeta{
 					{Key: "enabled", Label: "Enabled", Widget: WidgetBoolean,
 						Default: defaults.QuickCapture.EnabledOrDefault(),
-						Help:    "Enable GPIO-triggered Screen Memory capture. Legacy GPIO32/GPIO33 wakeup remains independent."},
+						Help:    "Enable GPIO-triggered Screen Memory capture. MCU ASR voice wakeup remains independent."},
 					{Key: "gpio_pin", Label: "GPIO Pin", Widget: WidgetNumber,
 						Default: defaults.QuickCapture.GPIOPin,
-						Help:    "Falling-edge trigger pin. Supported values are 0 (disabled) and GPIO3 (physical pin 38 on Luckfox Pico Zero). GPIO32 and GPIO33 remain reserved for legacy wakeup."},
+						Help:    "Falling-edge trigger pin. Supported values are 0 (disabled) and GPIO3 (physical pin 38 on Luckfox Pico Zero). GPIO32 and GPIO33 are unavailable; on Aico Link SCH v1 they control HDMI power/reset."},
 					{Key: "screen_memory_ttl", Label: "Screen Memory TTL", Widget: WidgetText,
 						Default: defaults.QuickCapture.ScreenMemoryTTLOrDefault(),
 						Help:    "Retention period for captured Screen Memory entries, such as 90d, or forever."},
@@ -793,7 +793,7 @@ func ConfigMeta() ConfigMetadata {
 						Enum:    enumOptions("stt", "realtime"),
 						Default: defaults.InputMode},
 					{Key: "tap_wakeup_enabled", Label: "Tap wakeup", Widget: WidgetBoolean,
-						Help:    "When on, the tap button can wake Aiden. Turning it off disables only that button path, not other activation such as Realtime /api/chat.",
+						Help:    "When on, the tap button can wake Aico. Turning it off disables only that button path, not other activation such as Realtime /api/chat.",
 						Default: defaults.TapWakeupEnabledOrDefault()},
 					{Key: "mcp_enabled", Label: "MCP", Widget: WidgetBoolean,
 						Help:    "When on, Agent tools can be used over MCP.",
@@ -836,19 +836,18 @@ func ConfigMeta() ConfigMetadata {
 						VisibleWhen: all(eq("agent.input_mode", "stt"))},
 					{Key: "voice_progress_speech_enabled", Widget: WidgetBoolean, Default: defaults.VoiceProgressSpeechEnabledOrDefault(),
 						VisibleWhen: all(eq("agent.input_mode", "stt"))},
-					{Key: "voice_max_response_tokens", Widget: WidgetNumber, Default: defaults.VoiceMaxResponseTokens,
-						VisibleWhen: all(eq("agent.input_mode", "stt"))},
 					{Key: "max_iterations", Label: "Maximum tool-call iterations", Widget: WidgetNumber,
 						Help:    "Maximum number of model and tool loops for one task. -1 allows unlimited iterations.",
 						Default: defaults.MaxIterations},
 					{Key: "context_prune_threshold", Label: "Context prune threshold (fraction)", Widget: WidgetNumber,
 						Help:    "Fraction of the usable model input budget that triggers cleanup of stale state and older tool exchanges, including during one long-running tool loop, cleaning down to 6/7 of the trigger. Must be 0 or greater than 0 and less than 1; 0 uses 0.5. Capped at context_compaction_threshold so this cheap pass runs before the conversation summary.",
 						Default: defaults.ContextPruneThreshold, Placeholder: "0 = automatic (0.5)"},
+					{Key: "context_prune_state_limit", Label: "Screenshot state limit", Widget: WidgetNumber,
+						Help:    "Runs the same stale-state cleanup once the context holds more <state> messages with a screenshot than this, keeping the latest state of the current turn. 0 uses 6.",
+						Default: defaults.ContextPruneStateLimit, Placeholder: "0 = automatic (6)"},
 					{Key: "context_compaction_threshold", Label: "Context compaction threshold (fraction)", Widget: WidgetNumber,
 						Help:    "Fraction of the usable model input budget at which the conversation is summarized. Must be 0 or greater than 0 and less than 1; 0 uses 0.8.",
 						Default: defaults.ContextCompactionThreshold, Placeholder: "0 = automatic (0.8)"},
-					{Key: "screenshot_keep_n", Widget: WidgetNumber, Default: defaults.ScreenshotKeepN},
-					{Key: "screenshot_prune_interval", Widget: WidgetNumber, Default: defaults.ScreenshotPruneInterval},
 					{Key: "screen_stable_timeout_ms", Widget: WidgetNumber, Default: defaults.ScreenStableTimeoutMs},
 					{Key: "screen_stable_ms", Widget: WidgetNumber, Default: defaults.ScreenStableMs},
 					{Key: "screen_stable_diff_threshold", Widget: WidgetNumber, Default: defaults.ScreenStableDiffThreshold},

@@ -36,7 +36,7 @@ const maxToolObservationRunes = 4000
 const maxSkillReadObservationRunes = 20000
 
 type toolActionLog struct {
-	Version     int    `json:"aiden_action_log_version"`
+	Version     int    `json:"aico_action_log_version"`
 	Message     string `json:"message"`
 	ToolContent string `json:"tool_content,omitempty"`
 }
@@ -159,7 +159,7 @@ func ensureToolCallID(id string, index int) string {
 	return fmt.Sprintf("call_%d", index+1)
 }
 
-func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep, includeVisual bool) (string, []llms.MessageContent) {
+func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (string, []llms.MessageContent) {
 	visual, ok := a.visualScreenshotObservation(step)
 	if !ok {
 		return compactToolObservationForTool(step.Action.Tool, step.Observation), nil
@@ -174,16 +174,6 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep, includ
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
 		caption += " " + summary
 	}
-	if !includeVisual {
-		return toolContent, []llms.MessageContent{{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextPart(caption),
-				llms.TextPart("[Image omitted]"),
-			},
-		}}
-	}
-
 	return toolContent, []llms.MessageContent{{
 		Role: llms.ChatMessageTypeHuman,
 		Parts: []llms.ContentPart{

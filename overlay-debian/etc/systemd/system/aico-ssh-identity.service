@@ -1,0 +1,16 @@
+[Unit]
+Description=Provision persistent Aico Link SSH host identity
+Requires=aico-userdata-migrate.service aico-root-home.service
+After=aico-userdata-migrate.service aico-root-home.service
+Before=ssh.service
+
+[Service]
+Type=oneshot
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+ExecStart=/usr/lib/aico/aico-ssh-identity
+RemainAfterExit=yes
+TimeoutStartSec=180s
+
+[Install]
+WantedBy=multi-user.target

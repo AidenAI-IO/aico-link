@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // Config is the single definition of the config_web <-> agent wire contract: keys
@@ -459,6 +459,7 @@ type Agent struct {
 	Timezone                   string  `json:"timezone"`
 	Prompt                     string  `json:"prompt"`
 	ContextPruneThreshold      float64 `json:"context_prune_threshold,omitempty"`
+	ContextPruneStateLimit     int     `json:"context_prune_state_limit,omitempty"`
 	ContextCompactionThreshold float64 `json:"context_compaction_threshold,omitempty"`
 	InputMode                  string  `json:"input_mode"`
 	VADBackend                 string  `json:"vad_backend"`
@@ -477,10 +478,7 @@ type Agent struct {
 	VoiceStreamingTTSEnabled   bool    `json:"voice_streaming_tts_enabled"`
 	VoiceToolCallSpeech        bool    `json:"voice_tool_call_speech"`
 	VoiceProgressSpeechEnabled bool    `json:"voice_progress_speech_enabled"`
-	VoiceMaxResponseTokens     int     `json:"voice_max_response_tokens"`
 	MaxIterations              int     `json:"max_iterations"`
-	ScreenshotKeepN            int     `json:"screenshot_keep_n"`
-	ScreenshotPruneInterval    int     `json:"screenshot_prune_interval"`
 	ScreenStableTimeoutMs      int     `json:"screen_stable_timeout_ms"`
 	ScreenStableMs             int     `json:"screen_stable_ms"`
 	ScreenStableDiffThreshold  float64 `json:"screen_stable_diff_threshold"`
@@ -693,6 +691,7 @@ func (d Config) ToAgentConfig() agent.Config {
 		Timezone:                   d.Agent.Timezone,
 		Prompt:                     d.Agent.Prompt,
 		ContextPruneThreshold:      d.Agent.ContextPruneThreshold,
+		ContextPruneStateLimit:     d.Agent.ContextPruneStateLimit,
 		ContextCompactionThreshold: d.Agent.ContextCompactionThreshold,
 		InputMode:                  d.Agent.InputMode,
 		VADBackend:                 d.Agent.VADBackend,
@@ -711,10 +710,7 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceStreamingTTSEnabled:   boolPtr(d.Agent.VoiceStreamingTTSEnabled),
 		VoiceToolCallSpeech:        boolPtr(d.Agent.VoiceToolCallSpeech),
 		VoiceProgressSpeechEnabled: boolPtr(d.Agent.VoiceProgressSpeechEnabled),
-		VoiceMaxResponseTokens:     d.Agent.VoiceMaxResponseTokens,
 		MaxIterations:              d.Agent.MaxIterations,
-		ScreenshotKeepN:            d.Agent.ScreenshotKeepN,
-		ScreenshotPruneInterval:    d.Agent.ScreenshotPruneInterval,
 		ScreenStableTimeoutMs:      d.Agent.ScreenStableTimeoutMs,
 		ScreenStableMs:             d.Agent.ScreenStableMs,
 		ScreenStableDiffThreshold:  d.Agent.ScreenStableDiffThreshold,
@@ -1098,6 +1094,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			Timezone:                   cfg.TimezoneOrDefault(),
 			Prompt:                     cfg.Prompt,
 			ContextPruneThreshold:      cfg.ContextPruneThreshold,
+			ContextPruneStateLimit:     cfg.ContextPruneStateLimit,
 			ContextCompactionThreshold: cfg.ContextCompactionThreshold,
 			InputMode:                  cfg.InputModeOrDefault(),
 			VADBackend:                 cfg.VADBackendOrDefault(),
@@ -1116,10 +1113,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceStreamingTTSEnabled:   cfg.VoiceStreamingTTSEnabledOrDefault(),
 			VoiceToolCallSpeech:        cfg.VoiceToolCallSpeechOrDefault(),
 			VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabledOrDefault(),
-			VoiceMaxResponseTokens:     cfg.VoiceMaxResponseTokensOrDefault(),
 			MaxIterations:              cfg.MaxIterations,
-			ScreenshotKeepN:            cfg.ScreenshotKeepN,
-			ScreenshotPruneInterval:    cfg.ScreenshotPruneInterval,
 			ScreenStableTimeoutMs:      cfg.ScreenStableTimeoutMs,
 			ScreenStableMs:             cfg.ScreenStableMs,
 			ScreenStableDiffThreshold:  cfg.ScreenStableDiffThreshold,

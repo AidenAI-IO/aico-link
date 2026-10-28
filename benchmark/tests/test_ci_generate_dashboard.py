@@ -42,6 +42,22 @@ def _record(**overrides):
     return record
 
 
+def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
+    runs = _group_into_runs([
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic",
+                execution_environment="adb", passed=2, pass_at_1=0.5),
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic-aidenbridge",
+                timestamp="2026-10-10T01:00:00+00:00", execution_environment="adb_aidenbridge",
+                passed=3, pass_at_1=0.75),
+    ])
+    summary, = _summarize_suites(runs)
+    assert summary["changed_fields"] == ["execution_environment"]
+    assert summary["previous"]["environment_label"] == "ADB device"
+    assert summary["latest"]["environment_label"] == "ADB + AidenBridge"
+    assert summary["delta"] == 0.25
+    assert len(summary["points"]) == 2
+
+
 def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     # One workflow run covers every suite, so a 2-task suite must not count as
     # much as a 10-task one: 11/12 is the run's rate, not the mean of 0.5 and 1.0.

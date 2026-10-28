@@ -18,16 +18,17 @@ jobs:
     steps:
       - name: Dispatch documentation build
         env:
-          GH_TOKEN: ${{ secrets.AIDEN_WEBSITE_DISPATCH_TOKEN }}
+          GH_TOKEN: ${{ secrets.AICO_WEBSITE_DISPATCH_TOKEN }}
           SOURCE_REPOSITORY: ${{ github.repository }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ -z "$GH_TOKEN" ]; then
-            echo "AIDEN_WEBSITE_DISPATCH_TOKEN is not configured" >&2
+            echo "AICO_WEBSITE_DISPATCH_TOKEN is not configured" >&2
             exit 1
           fi
 
+          # The separately maintained website still subscribes to this event.
           payload=$(jq -n \
             --arg event_type "aiden-firmware-docs-updated" \
             --arg repository "$SOURCE_REPOSITORY" \

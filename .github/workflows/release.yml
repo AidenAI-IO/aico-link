@@ -1,4 +1,4 @@
-name: Aiden Channel Release
+name: Aico Link Channel Release
 
 on:
   workflow_call:
@@ -29,7 +29,7 @@ on:
       runner:
         description: Firmware build runner
         type: string
-        default: aiden-hosted-01
+        default: aico-hosted-01
     secrets:
       OTA_ED25519_PRIVATE_KEY:
         required: false
@@ -66,15 +66,15 @@ on:
       runner:
         description: Firmware build runner
         type: choice
-        options: [aiden-hosted-01, aiden-hosted-02, ubuntu-24.04]
-        default: aiden-hosted-01
+        options: [aico-hosted-01, aico-hosted-02, ubuntu-24.04]
+        default: aico-hosted-01
 
 permissions:
   contents: read
 
 # Contracts and versions are allocated globally; serialize every channel.
 concurrency:
-  group: aiden-channel-release
+  group: aico-channel-release
   cancel-in-progress: false
 
 jobs:
@@ -126,7 +126,6 @@ jobs:
         with:
           name: release-plan
           path: output/release/
-      - run: git submodule update --init --depth=1 pico-sdk
       - uses: actions/cache@v4
         with:
           path: |

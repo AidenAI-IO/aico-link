@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"github.com/tmc/langchaingo/llms"
 )
 

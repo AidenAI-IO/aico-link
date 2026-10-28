@@ -49,7 +49,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --artifact-dir)
             [ "$#" -ge 2 ] || die "--artifact-dir requires an argument"
-            AIDEN_LOW_LEVEL_ARTIFACT_DIR="$2"
+            AICO_LOW_LEVEL_ARTIFACT_DIR="$2"
             shift 2
             ;;
         --run-id)

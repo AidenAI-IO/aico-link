@@ -186,13 +186,13 @@ function progressOverlay(copy) {
 export async function performRestart(level) {
   const copy = COPY[level];
   if (!copy) return true;
-  postToHost({type: 'aiden_config_restart', apply: level, phase: 'started'});
+  postToHost({type: 'aico_config_restart', apply: level, phase: 'started'});
   const overlay = progressOverlay(copy);
   try {
     if (level === APPLY_REBOOT) {
       await request('/api/device/reboot', {method: 'POST'});
       await waitForReboot();
-      postToHost({type: 'aiden_config_restart', apply: level, phase: 'finished'});
+      postToHost({type: 'aico_config_restart', apply: level, phase: 'finished'});
       window.location.reload();
       return true;
     }
@@ -200,11 +200,11 @@ export async function performRestart(level) {
     await request('/api/agent/restart', {method: 'POST'});
     await waitForAgentRestart(before && before.ok ? before.body.runtime_id : '');
     overlay.remove();
-    postToHost({type: 'aiden_config_restart', apply: level, phase: 'finished'});
+    postToHost({type: 'aico_config_restart', apply: level, phase: 'finished'});
     return true;
   } catch (error) {
     overlay.fail(error && error.message ? error.message : resolve(msg('apply.restart_timeout', '等待重启超时，请检查设备。')));
-    postToHost({type: 'aiden_config_restart', apply: level, phase: 'failed'});
+    postToHost({type: 'aico_config_restart', apply: level, phase: 'failed'});
     return false;
   }
 }

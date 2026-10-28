@@ -1,11 +1,11 @@
 #include "frame_capture_manager.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include "frame_jpeg_encoder.h"
 #include <chrono>
 #include <memory>
 #include <thread>
 
-namespace aiden {
+namespace aico {
 
 FrameCaptureManager::FrameCaptureManager(FrameCaptureSource* source,
                                          FrameServiceServer* server,
@@ -35,7 +35,7 @@ bool FrameCaptureManager::start() {
     }
     running_ = true;
     server_->set_state("STARTING");
-    AIDEN_LOG_INFO("capture", "manager_started",
+    AICO_LOG_INFO("capture", "manager_started",
                    "keep_streamon=%d warmup_frames=%d request_timeout_ms=%d recovery_initial_backoff_ms=%d recovery_max_backoff_ms=%d recovery_idle_max_backoff_ms=%d",
                    options_.keep_streamon ? 1 : 0, options_.warmup_frames,
                    options_.request_timeout_ms, options_.recovery_initial_backoff_ms,
@@ -78,7 +78,7 @@ void FrameCaptureManager::stop() {
         requested_generation = requested_generation_;
         completed_generation = completed_generation_;
     }
-    AIDEN_LOG_INFO("capture", "manager_stopped",
+    AICO_LOG_INFO("capture", "manager_stopped",
                    "requested_generation=%llu completed_generation=%llu",
                    static_cast<unsigned long long>(requested_generation),
                    static_cast<unsigned long long>(completed_generation));
@@ -122,7 +122,7 @@ void FrameCaptureManager::maybe_start_jpeg_warmup(const CapturedFrame& frame) {
     } catch (...) {
         jpeg_warmup_running_ = false;
         cancel_jpeg_encoder_warmup();
-        AIDEN_LOG_ERROR("jpeg", "venc_warmup_thread_failed",
+        AICO_LOG_ERROR("jpeg", "venc_warmup_thread_failed",
                         "width=%u height=%u", frame.metadata.width,
                         frame.metadata.height);
     }
@@ -154,13 +154,13 @@ FrameServiceStatus FrameCaptureManager::capture(uint32_t timeout_ms, CapturedFra
         }
     }
     if (!manager_running) {
-        AIDEN_LOG_WARN("capture", "request_rejected",
+        AICO_LOG_WARN("capture", "request_rejected",
                        "request_number=%llu reason=manager_not_running serialization_wait_ms=%llu",
                        static_cast<unsigned long long>(request_number),
                        static_cast<unsigned long long>(serialization_wait_ms));
         return FrameServiceStatus::SERVICE_RECOVERING;
     }
-    AIDEN_LOG_INFO("capture", "request_queued",
+    AICO_LOG_INFO("capture", "request_queued",
                    "request_number=%llu generation=%llu client_timeout_ms=%u serialization_wait_ms=%llu",
                    static_cast<unsigned long long>(request_number),
                    static_cast<unsigned long long>(generation), timeout_ms,
@@ -183,7 +183,7 @@ FrameServiceStatus FrameCaptureManager::capture(uint32_t timeout_ms, CapturedFra
         const uint64_t elapsed_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - request_started).count());
-        AIDEN_LOG_WARN("capture", "request_timed_out",
+        AICO_LOG_WARN("capture", "request_timed_out",
                        "request_number=%llu generation=%llu wait_ms=%u elapsed_ms=%llu completed_generation=%llu",
                        static_cast<unsigned long long>(request_number),
                        static_cast<unsigned long long>(generation), wait_ms,
@@ -195,7 +195,7 @@ FrameServiceStatus FrameCaptureManager::capture(uint32_t timeout_ms, CapturedFra
         const uint64_t completed_generation = completed_generation_;
         const bool still_running = running_;
         lock.unlock();
-        AIDEN_LOG_WARN("capture", "request_interrupted",
+        AICO_LOG_WARN("capture", "request_interrupted",
                        "request_number=%llu generation=%llu running=%d completed_generation=%llu",
                        static_cast<unsigned long long>(request_number),
                        static_cast<unsigned long long>(generation),
@@ -212,7 +212,7 @@ FrameServiceStatus FrameCaptureManager::capture(uint32_t timeout_ms, CapturedFra
         const uint64_t elapsed_ms = static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - request_started).count());
-        AIDEN_LOG_WARN("capture", "request_completed",
+        AICO_LOG_WARN("capture", "request_completed",
                        "request_number=%llu generation=%llu status=%s elapsed_ms=%llu",
                        static_cast<unsigned long long>(request_number),
                        static_cast<unsigned long long>(generation),
@@ -234,7 +234,7 @@ void FrameCaptureManager::recover(int* backoff_ms,
         requested_generation = requested_generation_;
         completed_generation = completed_generation_;
     }
-    AIDEN_LOG_WARN("capture", "recovery_started",
+    AICO_LOG_WARN("capture", "recovery_started",
                    "recovery_id=%llu reason=%s count_failure=%d backoff_ms=%d max_backoff_ms=%d requested_generation=%llu completed_generation=%llu",
                    static_cast<unsigned long long>(recovery_id),
                    error ? error : "", count_failure ? 1 : 0, *backoff_ms,
@@ -252,7 +252,7 @@ void FrameCaptureManager::recover(int* backoff_ms,
     }
     if (restart_requested_.exchange(false)) {
         *backoff_ms = initial_backoff_ms();
-        AIDEN_LOG_INFO("capture", "recovery_backoff_completed",
+        AICO_LOG_INFO("capture", "recovery_backoff_completed",
                        "recovery_id=%llu interrupted=1 reason=restart_requested next_backoff_ms=%d running=%d",
                        static_cast<unsigned long long>(recovery_id), *backoff_ms,
                        running_ ? 1 : 0);
@@ -264,7 +264,7 @@ void FrameCaptureManager::recover(int* backoff_ms,
             *backoff_ms = max_backoff_ms;
         }
     }
-    AIDEN_LOG_INFO("capture", "recovery_backoff_completed",
+    AICO_LOG_INFO("capture", "recovery_backoff_completed",
                    "recovery_id=%llu interrupted=%d next_backoff_ms=%d running=%d",
                    static_cast<unsigned long long>(recovery_id),
                    interrupted ? 1 : 0, *backoff_ms, running_ ? 1 : 0);
@@ -283,7 +283,7 @@ void FrameCaptureManager::run() {
         ++open_attempt;
         const std::chrono::steady_clock::time_point open_started =
             std::chrono::steady_clock::now();
-        AIDEN_LOG_INFO("capture", "source_open_started",
+        AICO_LOG_INFO("capture", "source_open_started",
                        "open_attempt=%llu keep_streamon=%d",
                        static_cast<unsigned long long>(open_attempt),
                        options_.keep_streamon ? 1 : 0);
@@ -292,7 +292,7 @@ void FrameCaptureManager::run() {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - open_started).count());
         if (!source_opened) {
-            AIDEN_LOG_WARN("capture", "source_open_completed",
+            AICO_LOG_WARN("capture", "source_open_completed",
                            "open_attempt=%llu ok=0 elapsed_ms=%llu",
                            static_cast<unsigned long long>(open_attempt),
                            static_cast<unsigned long long>(open_elapsed_ms));
@@ -302,14 +302,14 @@ void FrameCaptureManager::run() {
                     true);
             continue;
         }
-        AIDEN_LOG_INFO("capture", "source_open_completed",
+        AICO_LOG_INFO("capture", "source_open_completed",
                        "open_attempt=%llu ok=1 elapsed_ms=%llu",
                        static_cast<unsigned long long>(open_attempt),
                        static_cast<unsigned long long>(open_elapsed_ms));
         if (!options_.keep_streamon) {
             const std::chrono::steady_clock::time_point pause_started =
                 std::chrono::steady_clock::now();
-            AIDEN_LOG_INFO("capture", "initial_pause_started",
+            AICO_LOG_INFO("capture", "initial_pause_started",
                            "open_attempt=%llu",
                            static_cast<unsigned long long>(open_attempt));
             const bool initially_paused = source_->pause();
@@ -317,7 +317,7 @@ void FrameCaptureManager::run() {
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - pause_started).count());
             if (!initially_paused) {
-                AIDEN_LOG_WARN("capture", "initial_pause_completed",
+                AICO_LOG_WARN("capture", "initial_pause_completed",
                                "open_attempt=%llu ok=0 elapsed_ms=%llu",
                                static_cast<unsigned long long>(open_attempt),
                                static_cast<unsigned long long>(pause_elapsed_ms));
@@ -327,7 +327,7 @@ void FrameCaptureManager::run() {
                         true);
                 continue;
             }
-            AIDEN_LOG_INFO("capture", "initial_pause_completed",
+            AICO_LOG_INFO("capture", "initial_pause_completed",
                            "open_attempt=%llu ok=1 elapsed_ms=%llu",
                            static_cast<unsigned long long>(open_attempt),
                            static_cast<unsigned long long>(pause_elapsed_ms));
@@ -348,7 +348,7 @@ void FrameCaptureManager::run() {
             idle_requested_generation = requested_generation_;
             idle_completed_generation = completed_generation_;
         }
-        AIDEN_LOG_INFO("capture", "worker_idle",
+        AICO_LOG_INFO("capture", "worker_idle",
                        "open_attempt=%llu stream_active=%d requested_generation=%llu completed_generation=%llu",
                        static_cast<unsigned long long>(open_attempt),
                        options_.keep_streamon ? 1 : 0,
@@ -387,7 +387,7 @@ void FrameCaptureManager::run() {
             CapturedFrame frame;
             const std::chrono::steady_clock::time_point cycle_started =
                 std::chrono::steady_clock::now();
-            AIDEN_LOG_INFO("capture", "cycle_started",
+            AICO_LOG_INFO("capture", "cycle_started",
                            "generation=%llu keep_streamon=%d warmup_frames=%d",
                            static_cast<unsigned long long>(generation),
                            options_.keep_streamon ? 1 : 0, options_.warmup_frames);
@@ -406,7 +406,7 @@ void FrameCaptureManager::run() {
             const std::chrono::steady_clock::time_point warmup_started =
                 std::chrono::steady_clock::now();
             if (warmed_up && options_.warmup_frames > 0) {
-                AIDEN_LOG_INFO("capture", "warmup_started",
+                AICO_LOG_INFO("capture", "warmup_started",
                                "generation=%llu frames=%d",
                                static_cast<unsigned long long>(generation),
                                options_.warmup_frames);
@@ -419,7 +419,7 @@ void FrameCaptureManager::run() {
                     std::chrono::steady_clock::now() - warmup_started).count());
             bool captured = false;
             if (warmed_up) {
-                AIDEN_LOG_INFO("capture", "frame_read_started",
+                AICO_LOG_INFO("capture", "frame_read_started",
                                "generation=%llu",
                                static_cast<unsigned long long>(generation));
                 const std::chrono::steady_clock::time_point frame_started =
@@ -440,7 +440,7 @@ void FrameCaptureManager::run() {
                 std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - cycle_started).count());
             if (ok) {
-                AIDEN_LOG_INFO("capture", "cycle_completed",
+                AICO_LOG_INFO("capture", "cycle_completed",
                                "generation=%llu ok=1 elapsed_ms=%llu resume_ms=%llu warmup_ms=%llu frame_read_ms=%llu pause_ms=%llu bytes=%zu width=%u height=%u format=%s",
                                static_cast<unsigned long long>(generation),
                                static_cast<unsigned long long>(cycle_elapsed_ms),
@@ -452,7 +452,7 @@ void FrameCaptureManager::run() {
                                frame.metadata.height,
                                frame.metadata.pixel_format.c_str());
             } else {
-                AIDEN_LOG_WARN("capture", "cycle_completed",
+                AICO_LOG_WARN("capture", "cycle_completed",
                                "generation=%llu ok=0 elapsed_ms=%llu resume_ms=%llu warmup_ms=%llu frame_read_ms=%llu pause_ms=%llu resumed=%d warmed_up=%d captured=%d paused=%d",
                                static_cast<unsigned long long>(generation),
                                static_cast<unsigned long long>(cycle_elapsed_ms),
@@ -492,7 +492,7 @@ void FrameCaptureManager::run() {
             captured_since_open = true;
             backoff_ms = initial_backoff_ms();
             server_->set_state("RUNNING");
-            AIDEN_LOG_INFO("capture", "worker_idle",
+            AICO_LOG_INFO("capture", "worker_idle",
                            "open_attempt=%llu stream_active=%d requested_generation=%llu completed_generation=%llu",
                            static_cast<unsigned long long>(open_attempt),
                            options_.keep_streamon ? 1 : 0,
@@ -502,4 +502,4 @@ void FrameCaptureManager::run() {
     }
 }
 
-}  // namespace aiden
+}  // namespace aico

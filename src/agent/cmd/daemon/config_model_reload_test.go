@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // A model-settings save must wait for the current Agent task, but not for a

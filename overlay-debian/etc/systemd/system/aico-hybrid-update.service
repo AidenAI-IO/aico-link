@@ -1,0 +1,18 @@
+[Unit]
+Description=Check and install Aico Link firmware and business package updates
+Requires=userdata-ota.mount aico-environment.service
+Wants=aico-ota-health.service
+After=userdata-ota.mount aico-environment.service aico-ota-health.service
+ConditionPathExists=/userdata/ota/hybrid-update.pending
+
+[Service]
+Type=oneshot
+EnvironmentFile=/run/aico/system.env
+ExecStart=/usr/lib/aico/aico-managed-env-run /usr/lib/aico/aico-hybrid-update
+TimeoutStartSec=infinity
+UMask=0077
+StandardOutput=append:/userdata/ota/config_web_ota_update.log
+StandardError=append:/userdata/ota/config_web_ota_update.log
+
+[Install]
+WantedBy=multi-user.target

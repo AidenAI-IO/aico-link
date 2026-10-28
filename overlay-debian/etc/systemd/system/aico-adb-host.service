@@ -1,0 +1,18 @@
+[Unit]
+Description=Start the local Aico Link adb host server
+Requires=aico-environment.service
+After=aico-environment.service aico-media-modules.service
+ConditionPathExists=/usr/bin/adb
+
+[Service]
+Type=oneshot
+EnvironmentFile=/run/aico/system.env
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/adb start-server
+RemainAfterExit=yes
+TimeoutStartSec=20s
+StandardOutput=append:/var/log/adb/adb-startup.log
+StandardError=append:/var/log/adb/adb-startup.log
+
+[Install]
+WantedBy=multi-user.target

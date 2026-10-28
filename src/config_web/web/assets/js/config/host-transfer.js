@@ -14,7 +14,7 @@ export function triggerBrowserDownload(url, filename) {
   setTimeout(() => link.remove(), 1000);
 }
 
-export const ARCHIVE_MAGIC = 'AIDENBKP';
+export const ARCHIVE_MAGIC = 'AICOBKP1';
 const HEADER_PREFIX_LENGTH = 14;
 const MAX_PUBLIC_HEADER = 64 * 1024;
 
@@ -22,8 +22,9 @@ const MAX_PUBLIC_HEADER = 64 * 1024;
 // the device can bound the KDF parameters before any chunk is uploaded.
 export async function readArchiveHeader(file) {
   const prefix = new Uint8Array(await file.slice(0, HEADER_PREFIX_LENGTH).arrayBuffer());
-  if (prefix.length < HEADER_PREFIX_LENGTH || new TextDecoder().decode(prefix.slice(0, 8)) !== ARCHIVE_MAGIC) {
-    throw new Error('not_aiden_backup');
+  const magic = new TextDecoder().decode(prefix.slice(0, 8));
+  if (prefix.length < HEADER_PREFIX_LENGTH || magic !== ARCHIVE_MAGIC) {
+    throw new Error('not_aico_backup');
   }
   const view = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength);
   if (view.getUint16(8) !== 1) throw new Error('unsupported_format');

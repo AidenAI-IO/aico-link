@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -346,8 +346,8 @@ func (r *recordingADBRunner) run(ctx context.Context, _ string, args ...string) 
 
 func newTestADBInputController(t *testing.T, runner *recordingADBRunner) *ADBInputController {
 	t.Helper()
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial123")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial123")
 	return &ADBInputController{
 		client: NewADBScreenClient(),
 		runADB: runner.run,

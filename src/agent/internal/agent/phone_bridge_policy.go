@@ -10,7 +10,7 @@ const phoneBridgeBackgroundStateMaxAge = 15 * time.Second
 
 const (
 	phoneBridgeDisconnectedRecoveryGuidance = "If Phone Bridge recovery is unavailable, do not stop the task: call screenshot first to inspect the current phone state, then use visible app search or suitable HID/touch tools. Call request_user_action only after observation or input fallback is also unavailable, or the next step truly requires user action."
-	phoneBridgeIOSOpenAppRecoveryGuidance   = "If a Dynamic Island entry is visible, tap it to reopen the Aiden App, wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
+	phoneBridgeIOSOpenAppRecoveryGuidance   = "If a Dynamic Island entry is visible, tap it to reopen the companion app, wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
 )
 
 const (
@@ -153,7 +153,7 @@ func phoneBridgeUnsupportedBLEBackgroundError(status PhoneBridgeStatus, commandT
 	}
 	return NewToolErrorWithDetails(
 		CodeAppBackgrounded,
-		fmt.Sprintf("%s is unavailable through iOS BLE Wake; bring Aiden to the foreground and retry", commandType),
+		fmt.Sprintf("%s is unavailable through iOS BLE Wake; bring the companion app to the foreground and retry", commandType),
 		map[string]any{
 			"command_type": commandType,
 			"transport":    "ios_ble_wake",
@@ -250,7 +250,7 @@ func phoneBridgeHasReturnEntry(status PhoneBridgeStatus) bool {
 
 func phoneBridgeRecoveryGuidance(status PhoneBridgeStatus) string {
 	if phoneBridgeCanRestoreFromReturnEntry(status) {
-		return "Retry the companion app tool; it can reopen the Aiden App through the Dynamic Island entry, wait for Phone Bridge to reconnect, then send the command. Use home-screen search or HID fallback only if restore fails."
+		return "Retry the companion app tool; it can reopen the companion app through the Dynamic Island entry, wait for Phone Bridge to reconnect, then send the command. Use home-screen search or HID fallback only if restore fails."
 	}
 	if phoneBridgeIsAndroid(status) {
 		return "Use screenshot plus HID/touch fallback; Android FGS Bridge mode only supports background-safe data tools."
@@ -266,9 +266,9 @@ func phoneBridgeOpenAppRecoveryGuidance(status PhoneBridgeStatus) string {
 		return phoneBridgeIOSOpenAppRecoveryGuidance
 	}
 	if phoneBridgeIsAndroid(status) {
-		return "On Android, keep Aiden open in the foreground and wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
+		return "On Android, keep the companion app open in the foreground and wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
 	}
-	return "Open Aiden and wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
+	return "Open the companion app and wait for Phone Bridge to reconnect, then retry. " + phoneBridgeDisconnectedRecoveryGuidance
 }
 
 func phoneBridgeRestoreUnavailableError(status PhoneBridgeStatus) error {
@@ -292,7 +292,7 @@ func phoneBridgeRestoreUnavailableError(status PhoneBridgeStatus) error {
 			return fmt.Errorf("phone bridge is connected but not ready for foreground command")
 		}
 		if phoneBridgeIsAndroid(status) {
-			return fmt.Errorf("phone bridge app is %s; Android bridge commands require a connected foreground Aiden App", state)
+			return fmt.Errorf("phone bridge app is %s; Android bridge commands require a connected foreground companion app", state)
 		}
 		if !phoneBridgeIsIOS(status) {
 			return fmt.Errorf("phone bridge app is %s and no supported foreground return entry is available", state)

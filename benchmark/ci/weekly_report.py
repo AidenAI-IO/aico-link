@@ -100,20 +100,22 @@ CAPABILITY_SUITES = {
     "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),
     "Visual grounding": ("perception_v1",),
     "UI operation": ("mobilegym_basic", "mobilegym_scroll_regression", "mobilegym_scroll_sweep",
-                     "phone_control_v1", "adb_android_basic", "vphone_ios_basic",
+                     "phone_control_v1", "adb_android_basic", "adb_android_text_editing", "vphone_ios_basic",
                      "app_workflow_v1", "quick_action_v1"),
-    "Device integration": ("aiden_app_connection_capabilities_v1",
-                           "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
+    "Device integration": ("aico_app_connection_capabilities_v1",
+                           "aico_app_android_bridge_capabilities_v1",
+                           "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
 }
-DIAGNOSTIC_SUITES = ("skill_discovery_v1",)
+DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"
 OTHER_CAPABILITY = "Other"
 _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
 AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
 ENVIRONMENT_LABELS = {
     "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
-    "adb": "ADB device", "external": "External device", "mixed": "Mixed",
+    "adb": "ADB device", "adb_aidenbridge": "ADB + AidenBridge",
+    "external": "External device", "mixed": "Mixed",
 }
 
 

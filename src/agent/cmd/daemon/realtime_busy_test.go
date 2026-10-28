@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/realtimevoice"
 )
 
 // Exercise the real daemon select loop, including its audio traffic and chat

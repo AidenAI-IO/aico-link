@@ -15,25 +15,25 @@ from runner.process import terminate_process_tree
 
 
 ACTION_ENVIRONMENT_ALIASES = {
-    "BENCHMARK_AGENT_PROVIDER": "AIDEN_BENCHMARK_AGENT_PROVIDER",
-    "BENCHMARK_AGENT_MODEL": "AIDEN_BENCHMARK_AGENT_MODEL",
-    "BENCHMARK_AGENT_BASE_URL": "AIDEN_BENCHMARK_AGENT_BASE_URL",
-    "BENCHMARK_AGENT_API_KEY": "AIDEN_BENCHMARK_AGENT_API_KEY",
-    "BENCHMARK_JUDGE_MODEL": "AIDEN_BENCHMARK_JUDGE_MODEL",
-    "BENCHMARK_JUDGE_BASE_URL": "AIDEN_BENCHMARK_JUDGE_BASE_URL",
-    "BENCHMARK_JUDGE_API_KEY": "AIDEN_BENCHMARK_JUDGE_API_KEY",
-    "BENCHMARK_TELEMETRY": "AIDEN_BENCHMARK_TELEMETRY",
-    "LANGFUSE_HTTPS_PROXY": "AIDEN_LANGFUSE_HTTPS_PROXY",
-    "DAEMON_IMAGE": "AIDEN_DAEMON_IMAGE",
-    "BENCHMARK_PHONE_ENVIRONMENT_URL": "AIDEN_BENCHMARK_PHONE_ENVIRONMENT_URL",
-    "BENCHMARK_IOS_ENVIRONMENT_URL": "AIDEN_BENCHMARK_IOS_ENVIRONMENT_URL",
-    "BENCHMARK_MAC_ENVIRONMENT_URL": "AIDEN_BENCHMARK_MAC_ENVIRONMENT_URL",
-    "BENCHMARK_VPHONE_ENVIRONMENT_URL": "AIDEN_BENCHMARK_VPHONE_ENVIRONMENT_URL",
-    "BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL": (
-        "AIDEN_BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL"
+    "BENCHMARK_AGENT_PROVIDER": "AICO_BENCHMARK_AGENT_PROVIDER",
+    "BENCHMARK_AGENT_MODEL": "AICO_BENCHMARK_AGENT_MODEL",
+    "BENCHMARK_AGENT_BASE_URL": "AICO_BENCHMARK_AGENT_BASE_URL",
+    "BENCHMARK_AGENT_API_KEY": "AICO_BENCHMARK_AGENT_API_KEY",
+    "BENCHMARK_JUDGE_MODEL": "AICO_BENCHMARK_JUDGE_MODEL",
+    "BENCHMARK_JUDGE_BASE_URL": "AICO_BENCHMARK_JUDGE_BASE_URL",
+    "BENCHMARK_JUDGE_API_KEY": "AICO_BENCHMARK_JUDGE_API_KEY",
+    "BENCHMARK_TELEMETRY": "AICO_BENCHMARK_TELEMETRY",
+    "LANGFUSE_HTTPS_PROXY": "AICO_LANGFUSE_HTTPS_PROXY",
+    "DAEMON_IMAGE": "AICO_DAEMON_IMAGE",
+    "BENCHMARK_PHONE_ENVIRONMENT_URL": "AICO_BENCHMARK_PHONE_ENVIRONMENT_URL",
+    "BENCHMARK_IOS_ENVIRONMENT_URL": "AICO_BENCHMARK_IOS_ENVIRONMENT_URL",
+    "BENCHMARK_MAC_ENVIRONMENT_URL": "AICO_BENCHMARK_MAC_ENVIRONMENT_URL",
+    "BENCHMARK_VPHONE_ENVIRONMENT_URL": "AICO_BENCHMARK_VPHONE_ENVIRONMENT_URL",
+    "BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL": (
+        "AICO_BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL"
     ),
-    "BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL": (
-        "AIDEN_BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL"
+    "BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL": (
+        "AICO_BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL"
     ),
 }
 IMAGES_PREPARED_ENV = "BENCHMARK_CI_IMAGES_PREPARED"
@@ -130,6 +130,18 @@ def _environment_url(
         serial = environment.get("ANDROID_SERIAL", "").strip()
         if not serial:
             raise RuntimeError("ADB case requires ANDROID_SERIAL")
+        if not case.android_phone_bridge:
+            # A retained emulator may have just run the Bridge-enabled variant.
+            adb_timeout = min(30, timeout_seconds) if timeout_seconds is not None else 30
+            installed = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "list", "packages", "com.aidenbridge"],
+                check=True, capture_output=True, text=True, timeout=adb_timeout,
+            )
+            if "package:com.aidenbridge" in installed.stdout.splitlines():
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "am", "force-stop", "com.aidenbridge"],
+                    check=True, stdout=log_file, stderr=log_file, timeout=adb_timeout,
+                )
         payload = _run_json(
             [
                 python,
@@ -174,7 +186,7 @@ def _stop_service(payload: dict[str, Any] | None) -> None:
 
 def _stop_mobilegym_by_run_id(run_id: str) -> None:
     subprocess.run(
-        ["docker", "rm", "-f", f"aiden-mobilegym-env-mobilegym-{run_id}"],
+        ["docker", "rm", "-f", f"aico-mobilegym-env-mobilegym-{run_id}"],
         cwd=BENCHMARK_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -190,7 +202,7 @@ def _stop_daemon_projects_by_run_id(run_id: str) -> None:
         return
     compose_file = BENCHMARK_ROOT / "docker" / "docker-compose.agent-daemon.yml"
     for worker_dir in worker_dirs:
-        project = f"aiden-benchmark-agent-{run_id}-{worker_dir.name}"
+        project = f"aico-benchmark-agent-{run_id}-{worker_dir.name}"
         try:
             subprocess.run(
                 [
@@ -419,6 +431,8 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
+        for task_id in case.task_ids:
+            command.extend(["--task-id", task_id])
         repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()
         if repeats:
             try:
@@ -438,6 +452,11 @@ def run_case(
             command.extend(["--environment-url", environment_url])
         if case.target_platform != "auto":
             command.extend(["--target-platform", case.target_platform])
+        if case.android_phone_bridge:
+            command.extend([
+                "--android-phone-bridge-serial",
+                runtime_environment["ANDROID_SERIAL"],
+            ])
         if _images_prepared(runtime_environment):
             command.append("--no-build-daemon-image")
         if timeout_seconds is None:
@@ -469,7 +488,8 @@ def run_case(
                     log_file.write(f"\n{message}\n")
                 print(f"Error: {message}", file=sys.stderr, flush=True)
                 return 1
-        return _effective_exit_code(returncode, BENCHMARK_ROOT / "runs" / run_id / "manifest.json")
+        manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
+        return _effective_exit_code(returncode, manifest_path)
     finally:
         _stop_daemon_projects_by_run_id(run_id)
         _stop_service(service)

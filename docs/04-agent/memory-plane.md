@@ -4,7 +4,7 @@ sidebar_position: 9
 
 # Memory Plane
 
-This document describes the current filesystem-backed memory architecture used by the Aiden Agent. Session memory is documented separately in [Session Memory Compaction](session-memory.md).
+This document describes the current filesystem-backed memory architecture used by Aico. Session memory is documented separately in [Session Memory Compaction](session-memory.md).
 
 ## Responsibilities
 
@@ -16,6 +16,98 @@ The memory plane separates four kinds of persisted state:
 - task episodes keep immutable execution evidence for audit and background consolidation.
 
 Automatic Episode learning writes only Device Memory. It does not create user profile, preference, or rule entries in Long-Term Memory.
+
+## Memory Admission Policy
+
+Three writers persist memory, and each one applies the same rules about what
+may be kept. The model proposes a memory; code enforces the rules that do not
+depend on understanding the language the user spoke.
+
+| Writer | Trigger | Writes |
+| --- | --- | --- |
+| `save_memory` | The Agent calls it during a conversation | Long-Term Memory |
+| Notification Memory | Shared idle window | Temporary or Long-Term Memory |
+| Episode Memory | Shared idle window, after a device task | Device Memory |
+
+| Information | Rule |
+| --- | --- |
+| An explicit request to remember, or a forward-looking preference, form of address, or rule | Save |
+| Stable personal facts such as home city, role, or employee ID | May be saved |
+| A request to act or remind at a later time | Handed to the `schedule` tool; see [Schedules and Routines](schedules-and-routines.md). Not saved as memory |
+| Near-term plans the user mentions without asking for a reminder | Not saved to Long-Term Memory. The conversation keeps them, and context compaction preserves them; see [Near-Term Plans](#near-term-plans) |
+| Time-bound facts from notifications, such as bills and deliveries | Temporary Memory with an expiry; Notification Memory only |
+| Credentials and payment card numbers | Not saved by default; see [Sensitive Memory](#sensitive-memory) |
+| Public information, small talk, marketing, and anything the user said not to keep | Never saved |
+| Device lessons | Episode Memory only, subject to the evidence rules below |
+
+### Near-Term Plans
+
+A plan such as "I have a check-up tomorrow morning" is useful for days, not
+for the user's lasting profile, so `save_memory` does not keep it. It stays in
+the conversation. When context compaction summarizes older messages, the
+summary has a section for user plans and time-bound information: the compactor
+labels each message with its send time in the configured timezone and asks the
+model to resolve relative dates to absolute ones, so "tomorrow" stays correct
+after the day it was said. A clock time is kept only when the user gave one. Clearing the conversation history drops
+these plans with the rest of the conversation.
+
+### Sensitive Memory
+
+`save_memory` takes a `sensitive` argument: `credential` for a password, PIN,
+or similar secret, or `payment_card` for a card number. The model declares the kind, because no keyword list or
+number pattern can recognize secrets reliably in every language a user might
+speak; a card checksum, for example, also accepts one in ten order or tracking
+numbers.
+
+A sensitive memory is saved only when the model also sets `user_request` to the
+user's own words asking to remember it. Code checks that those words appear in
+the run's user input or steer messages, or in the user's two messages before
+the run, comparing letters and digits without case. The earlier messages cover
+a request made one turn before the secret, such as "remember my door code"
+followed by the code after the Agent asks for it. The quote must contain at least two letters, so citing the secret value
+alone does not count. Otherwise the tool returns `status=refused`, nothing is
+written, and the Agent tells the user it was not remembered. The quote check
+stops the model from inventing a request; whether the quoted words ask to
+remember remains the model's judgment.
+
+A saved sensitive memory is marked `sensitive: true` in its file and index
+entry. It is returned by `recall_memory` only for a query with tags or entities
+that match it, never by a browse by type. It is excluded from the user profile
+and from the related memories shown to Notification Memory. The memory is still
+a plain file, like every other memory.
+
+Notifications are never an explicit request to remember, and the Notification
+Memory prompt tells the model to ignore OTPs and secrets.
+
+### User Profile In The System Prompt
+
+The system prompt ends with a "User profile" section that lists the active
+`profile`, `preference`, and `rule` memories, highest priority first, within
+about 1,500 characters. An entry that does not fit is skipped, so the shorter
+entries after it are still listed. They are read from the records, not from the
+model-written `profile.md`, so the section matches what was saved. The Agent
+therefore applies saved preferences without calling `recall_memory`.
+
+A session keeps its system prompt until the history is cleared or the
+configuration changes, which can be days. Before each run, the runtime rebuilds
+the section from the records. When it differs from the one in the session, for
+example because the user saved, changed, or forgot a profile memory, the system
+message is rewritten in a new session revision, the same mechanism context
+compaction uses: the conversation continues, the old transcript stays on disk,
+and scheduled tasks keep following the lineage. An unchanged profile leaves the
+session and any provider prompt cache untouched. The profile section is not
+part of the configuration that decides whether a saved session is resumed, so a
+profile change never starts a new conversation. If the profile cannot be read
+or the session cannot be rewritten, the run logs a warning and continues with
+the section the session already carries.
+
+Sensitive memories, `fact` memories, and memories whose content was written by
+Notification Memory are not listed; notification content is written by third
+parties and must not become an instruction. Each record's `origin` (`user` or
+`notification`) names who wrote its current content. A notification that only
+reinforces a user's memory adds evidence without changing its origin; one that
+rewrites the content takes it over. Records saved before `origin` existed are
+treated as notification-written when they carry a notification source.
 
 ## Runtime Flow
 
@@ -79,6 +171,13 @@ The same relevance scoring is used when merging results from both stores.
 Active-state and expiry checks still apply, and a matching type alone cannot
 make an unrelated record satisfy a topical query.
 
+For a topical query, an equally relevant temporary record ranks ahead of a
+long-term one. A browse with only `types` or no terms matches every record
+equally, so long-term records come first and temporary records fill at most
+half of the limit when long-term records are available. A backlog of
+notification conclusions therefore cannot push the user's saved preferences
+out of the results.
+
 Explicit requests to remember information or a rule for future conversations
 require a successful `save_memory` call before the Agent confirms persistence.
 When correcting an existing long-term memory, the Agent recalls it first and
@@ -104,6 +203,13 @@ Normal `recall_device_memory` results have the following limits:
 - `pending`, `disputed`, and legacy `conflicted` records are consolidation-only context.
 
 The recall tool searches active, applicable Device Memory using the query supplied by the model. It records the IDs actually returned on the Episode; no runtime-side candidate list is injected or used to rewrite the model's query.
+
+If a query combining tags with search terms or entities returns no matches, the
+tool retries with the tags as ranking terms. Entity, type, and device filters
+remain in effect. When topic terms or tags are supplied, at least one must match
+the memory; an entity match alone cannot establish topic relevance. A query
+containing only tags keeps its exact tag filtering. Procedures are returned with
+all stored steps intact, or omitted if they cannot fit the recall budget.
 
 ## Episode Recording
 
@@ -230,21 +336,37 @@ One Episode can produce zero to three independent candidates.
 
 An Episode-level failure does not automatically create Failure Memory. A Failure candidate must contain reusable guidance for a future task.
 
-Candidates hold knowledge specific to the device, app, or page that the Agent
-cannot get elsewhere. The Agent already receives every tool result, including
-the `suggestion` a failed tool returns, so guidance that only restates a tool
-result in the Episode or describes generic tool use (take a screenshot after a
-failure, refocus the field, retry) is not stored. Attaching an app, page, or
-control name to that guidance does not make it specific. A workaround for a
-tool that misbehaved is a defect to fix in the tool; it is stored only when it
-also records a fact about the device, app, or page that no tool result in the
-Episode gave, such as a coordinate, route, page layout, or stop condition. The
-extractor sees tool results but not tool definitions, so the rule is judged
-against the results in the Episode. The extraction prompt, the omission
-review, and the retention audit share this rule
-(`episodeMemoryBuiltInGuidanceRule`).
+Tool observations are evidence for device, app, or page knowledge. The fact that
+an observation arrived through a tool result is not a reason to discard it.
+Retention requires actionable, scoped information beyond general knowledge and
+the advice the Agent already receives. Repeating retry instructions or adding an
+app name to generic advice does not meet that requirement. An observed constraint
+or workaround qualifies when its evidenced conditions change a future task's
+execution. Observation alone does not establish durability or make a run-specific
+value reusable.
+
+Extraction, omission review, and retention audit share this policy through
+`episodeMemoryBuiltInGuidanceRule`. Omission review also receives the complete
+proposal schema and type rules, once. Procedure guidance and candidate evidence
+must describe the same supported path; a shorter path needs its own evidence.
+These semantic decisions remain model judgments, not guarantees supplied by the
+structural evidence validator.
 
 When `goal_result=not_achieved`, a candidate cannot claim that the full goal path succeeded. A locally proven Procedure is allowed only when its scope explicitly marks it as partial.
+
+A Procedure selects its executable path with `step_refs`: ordered tool-result
+event IDs, each paired with a device call and included in `evidence_refs`.
+The broader evidence can include failed alternatives that explain a workaround;
+only selected steps become executable actions. Missing, duplicate, out-of-order,
+unpaired, uncited, or explicitly failed step results are rejected. The model and
+retention audit still judge whether a non-error observation establishes success
+and whether the selected path is complete. Existing stored memories are not
+rewritten; pending procedure candidates without an explicit path are not admitted.
+
+Evaluation fixtures use `consolidation_expectation.required_procedure_steps` for
+the complete returned sequence: one description substring per step, in order,
+with no extra steps. Matching prose or a subsequence cannot hide a failed action
+inserted before or within the valid path.
 
 ## Create, Update, And Conflict
 
@@ -252,7 +374,7 @@ The model proposes `create` or `update`, but code owns admission, storage paths,
 
 If a create proposal missed an existing record outside the bounded view, duplicate resolution is handled as a later explicit consolidation/update operation rather than silently rewriting the create intent at persistence time.
 
-Update requires the exact Memory revision observed during extraction. It preserves prior evidence and existing Procedure steps. Material body changes append the previous value to bounded revision history.
+Update requires the exact Memory revision observed during extraction. It preserves prior evidence. A Procedure update replaces executable steps with the complete `step_refs` path; older steps remain in bounded revision history rather than being appended to the active path. Other Device Memory updates continue to merge steps. Material body changes append the previous value to bounded revision history.
 
 If evidence can be reconciled by adding a version, page, account state, or other precondition, the Memory remains active with a conditioned rule.
 
@@ -270,7 +392,7 @@ processing/proposed -> ignored
 
 The proposal is persisted before Device Memory writes. Recovery can therefore apply an existing proposal without repeating the model call.
 
-Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
+Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results for a single Episode. When a batch of several Episodes fails without a retryable cause, the failure does not show which Episode caused it, so each Episode is retried on its own instead of being discarded with the batch. That split does not count as an attempt for any of its Episodes; the individual retry that follows does. A model request that fails or times out is retried, because no response arrived. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. Logs and the processing ledger keep the failure class (request failed, timed out, invalid JSON, batch shape mismatch, truncation, empty response, or a review failure) and drop the wrapped provider text. Each scheduled retry is logged with its attempt number. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
 
 If a target Memory revision changes before update, the stale proposal is discarded and the Episode is re-extracted against the latest revision. Output-token truncation and retention/omission review failures may also schedule another model call for the same extractor version.
 

@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestNormalizeRejectsUnusableCodes(t *testing.T) {

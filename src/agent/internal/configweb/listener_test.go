@@ -60,7 +60,7 @@ func TestListenAndServeStartsWithoutUSBInterface(t *testing.T) {
 	options := testOptions(t)
 	options.BindAddress = "0.0.0.0"
 	options.Port = port
-	options.USBInterface = "aiden-no-such-if0"
+	options.USBInterface = "aico-no-such-if0"
 	server, err := NewServer(options)
 	if err != nil {
 		t.Fatal(err)

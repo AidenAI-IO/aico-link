@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 const (

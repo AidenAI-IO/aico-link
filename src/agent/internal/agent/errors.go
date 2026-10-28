@@ -18,11 +18,11 @@ const (
 	CategoryInternal           = "internal"
 )
 
-// Stable error codes. Wire consumers (LLM, aiden-app, telemetry) may switch
+// Stable error codes. Wire consumers (LLM, aico-app, telemetry) may switch
 // on these. Adding a new code requires a registry entry below.
 // The code set comes from a real inventory of error sites in the codebase
 // (tool_execution.go, phone_bridge.go, tools_phone_bridge.go,
-// tools_quick_actions.go, aiden-app/src/services/PhoneBridge.ts).
+// tools_quick_actions.go, aico-app/src/services/PhoneBridge.ts).
 const (
 	// invalid_input — caller can fix args and retry
 	CodeInvalidArguments   = "invalid_arguments"

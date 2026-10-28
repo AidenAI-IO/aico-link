@@ -372,7 +372,7 @@ function getRoleLabel(type, toolName, role) {
     if (type === 'tool_call') return toolName ? 'Tool Call · ' + toolName : 'Tool Call';
     if (type === 'tool_result') return toolName ? 'Tool Result · ' + toolName : 'Tool Result';
     if (type === 'state') return 'State';
-    return 'Aiden';
+    return 'Aico';
 }
 
 function getAvatarLabel(type) {

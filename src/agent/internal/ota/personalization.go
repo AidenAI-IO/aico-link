@@ -261,7 +261,7 @@ func writeExt4MachineID(blockPath string, machineID string, debugfsPath string, 
 		run = runPersonalizationCommand
 	}
 
-	tmpDir, err := os.MkdirTemp("", "aiden-ota-personalize-")
+	tmpDir, err := os.MkdirTemp("", "aico-ota-personalize-")
 	if err != nil {
 		return err
 	}

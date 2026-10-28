@@ -5,17 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
@@ -106,6 +107,35 @@ func TestGenerateSummaryIncludesToolPayloads(t *testing.T) {
 		"tool_call_name: echo",
 		`tool_call_arguments: {"input":"hello"}`,
 		`tool_call_result: {"output":"world"}`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("summary prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A plan the user mentions in passing is not saved to long-term memory, so the
+// summary must keep it, dated absolutely: "tomorrow" means nothing once the
+// summary outlives the day it was written.
+func TestGenerateSummaryAsksForDatedUserPlans(t *testing.T) {
+	model := &promptCapturingModel{reply: "summary"}
+	compactor := NewCompactor(DefaultProtectRule, &testModel{Model: model})
+	location := time.FixedZone("UTC+8", 8*60*60)
+	compactor.Location = location
+	sentAt := time.Date(2026, 10, 27, 2, 0, 0, 0, time.UTC)
+
+	if _, err := compactor.generateSummary(context.Background(), []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "明天上午我要去医院复查", Timestamp: sentAt},
+		{Role: messages.MessageRoleAssistant, Content: "好的"},
+	}); err != nil {
+		t.Fatalf("generateSummary() error = %v", err)
+	}
+	prompt := model.prompts[0]
+	for _, want := range []string{
+		"## User Plans and Time-Bound Information",
+		"[user 2026-10-27T10:00:00+08:00] 明天上午我要去医院复查",
+		"[assistant] 好的",
+		"+08:00. Message labels show when each message was sent.",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("summary prompt missing %q:\n%s", want, prompt)
@@ -263,6 +293,48 @@ func TestPruneHistoricalRemovesStateAndBoundsToolResultsWithoutSummary(t *testin
 	stats := compactor.LastPruneStats()
 	if stats.HistoricalStatesDropped != 2 || stats.HistoricalToolResultsPruned != 1 || stats.TokensAfter > 3_000 || stats.TokensBefore <= stats.TokensAfter {
 		t.Fatalf("prune stats = %#v", stats)
+	}
+}
+
+// The runtime's screenshot-count prune passes an unreachable target, so it
+// drops expired states without compacting historical tool results.
+func TestPruneHistoricalWithUnreachableTargetOnlyDropsStates(t *testing.T) {
+	oldOutput := strings.Repeat("large historical output ", 1_000)
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleState, Content: "app: stale-old-app", Attachments: []messages.Attachment{{Source: messages.AttachmentSourceScreenshotObservation}}},
+		{Role: messages.MessageRoleUser, Content: "old request"},
+		{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: "old_call", Name: "shell", Arguments: `{"command":"go test ./..."}`}}},
+		{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: "old_call", Name: "shell", Content: oldOutput}}},
+		{Role: messages.MessageRoleAssistant, Content: "old work completed"},
+		{Role: messages.MessageRoleState, Content: "app: current-app", Attachments: []messages.Attachment{{Source: messages.AttachmentSourceScreenshotObservation}}},
+		{Role: messages.MessageRoleUser, Content: "current request"},
+	})
+	if err != nil {
+		t.Fatalf("NewContextManagerFromMessageList() error = %v", err)
+	}
+	compactor := NewCompactor(DefaultProtectRule, &testModel{Model: &promptCapturingModel{reply: "unused"}})
+
+	newManager, pruned, err := compactor.PruneHistorical(manager, math.MaxInt)
+	if err != nil {
+		t.Fatalf("PruneHistorical() error = %v", err)
+	}
+	if !pruned || newManager == nil {
+		t.Fatal("PruneHistorical() did not drop the expired state")
+	}
+	states := 0
+	for _, message := range newManager.CloneMessageList() {
+		if message.Role == messages.MessageRoleState {
+			states++
+		}
+		for _, result := range message.ToolResults {
+			if result.Content != oldOutput || result.Meta != nil {
+				t.Fatalf("historical tool result was compacted: %#v", result)
+			}
+		}
+	}
+	if stats := compactor.LastPruneStats(); states != 1 || stats.HistoricalStatesDropped != 1 || stats.HistoricalToolResultsPruned != 0 {
+		t.Fatalf("states=%d stats=%#v, want one current state and no tool result compaction", states, stats)
 	}
 }
 

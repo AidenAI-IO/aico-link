@@ -6,7 +6,7 @@ static const char* HID_SERVER_HTML = R"HTML(
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Aiden HID Control</title>
+<title>Aico Link HID Control</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a1a; color: #e0e0e0; padding: 20px; }
@@ -38,7 +38,7 @@ select { padding: 8px; background: #333; border: 1px solid #444; border-radius: 
 </head>
 <body>
 <div class="container">
-<h1>Aiden HID Control</h1>
+<h1>Aico Link HID Control</h1>
 
 <div class="section">
 <h2>Screen Capture</h2>

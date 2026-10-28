@@ -196,13 +196,13 @@ const {applyLocale, getActiveLocale, getPersistedLocale, initI18n, saveLocale, t
 assert.equal(t('config.save_failed', {section: 'agent'}), 'Save [agent] failed.');
 initI18n();
 assert.equal(document.documentElement.lang, 'en-US');
-assert.equal(document.title, 'Aiden Setup');
+assert.equal(document.title, 'Aico Link Setup');
 assert.equal(title.textContent, 'Device Settings');
 assert.equal(password.getAttribute('placeholder'), 'Open network can leave empty');
 
 applyLocale('zh-CN', false);
 assert.equal(t('config.save_failed', {section: 'agent'}), '保存 [agent] 失败。');
-assert.equal(t('wifi.connected_to', {ssid: 'Aiden Lab'}), '已连接到“Aiden Lab”。');
+assert.equal(t('wifi.connected_to', {ssid: 'Aico Lab'}), '已连接到“Aico Lab”。');
 assert.equal(
   t('config.fields.device.device_type.help'),
   'Android 使用 HID touchscreen 模式。iOS、macOS、windows 和 linux 使用 absolute 指针模式。',
@@ -241,7 +241,7 @@ assert.equal(t('config.fields.device.device_type.label'), 'Device type');
 assert.equal(t('config.fields.device.device_type.options.windows'), 'Windows');
 assert.equal(t('config.fields.hid.input_backend.label'), 'Input backend');
 assert.equal(t('config.fields.agent.input_mode.label'), 'Voice mode');
-assert.equal(stored.get('aiden.config.locale'), 'en-US');
+assert.equal(stored.get('aico.config.locale'), 'en-US');
 
 const source = await fs.readFile(i18nPath, 'utf8');
 assert.doesNotMatch(source, /MutationObserver/);

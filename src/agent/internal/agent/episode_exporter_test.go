@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/langfuse"
+	"aico-agent/internal/agent/langfuse"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -217,7 +217,7 @@ func TestBuildLangfuseSpansUsesCapturedPromptsForGenerations(t *testing.T) {
 	if _, ok := langfuseSpanByName(spans, "agent_prompt_1"); ok {
 		t.Fatal("generation still uses a per-call index name")
 	}
-	if _, ok := langfuseSpanByName(spans, "aiden-run-usage"); ok {
+	if _, ok := langfuseSpanByName(spans, "aico-run-usage"); ok {
 		t.Fatal("aggregate fallback generation emitted despite captured prompts")
 	}
 
@@ -1195,7 +1195,7 @@ func TestExportEpisodeDirOTLPPayloadCarriesTraceContext(t *testing.T) {
 		"memory/retrieve":   "retriever",
 		"echo":              "tool",
 		"candidate_answer":  "event",
-		"aiden-run-usage":   "generation",
+		"aico-run-usage":    "generation",
 	} {
 		if got := typeOf(name); got != want {
 			t.Fatalf("%s observation type = %q, want %q", name, got, want)
@@ -1204,7 +1204,7 @@ func TestExportEpisodeDirOTLPPayloadCarriesTraceContext(t *testing.T) {
 
 	// The aggregate usage generation stands in for the model calls when none
 	// were captured; its structured attributes are JSON-encoded strings.
-	generation := otlpSpanByName(t, spans, "aiden-run-usage")
+	generation := otlpSpanByName(t, spans, "aico-run-usage")
 	if got := generation.attributeString(t, "langfuse.observation.model.name"); got != "openrouter/wire-model" {
 		t.Fatalf("generation model name = %q, want openrouter/wire-model", got)
 	}

@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/executor"
 	"context"
 	"strings"
 	"testing"
@@ -48,7 +47,6 @@ func TestAgentLoopSteerInterruptOnTermination(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = steerProvider
@@ -91,7 +89,6 @@ func TestAgentLoopNoSteerProviderDoesNotBlock(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	// No SteerProvider set
@@ -123,7 +120,6 @@ func TestAgentLoopPersistSteerNormalizesContentForContextAndRecorder(t *testing.
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	tracker := newSteerConversationTracker()
@@ -148,6 +144,26 @@ func TestAgentLoopPersistSteerNormalizesContentForContextAndRecorder(t *testing.
 	}
 }
 
+func TestAgentLoopPersistSteerKeepsSendTime(t *testing.T) {
+	t.Parallel()
+
+	manager, err := freshNewContextManager("system", "task", nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("freshNewContextManager() error = %v", err)
+	}
+	loop := NewAgentLoop(&scriptedModel{}, RoleProfile{}, 1, nil, nil, manager)
+	sentAt := time.Date(2026, 10, 27, 23, 59, 30, 0, time.UTC)
+
+	if err := loop.persistSteer(context.Background(), nil, RunSteerMessage{Content: "明天早上提醒我", Timestamp: sentAt}); err != nil {
+		t.Fatalf("persistSteer() error = %v", err)
+	}
+
+	contextMessages := manager.CloneMessageList()
+	if last := contextMessages[len(contextMessages)-1]; !last.Timestamp.Equal(sentAt) {
+		t.Fatalf("steer timestamp = %v, want send time %v", last.Timestamp, sentAt)
+	}
+}
+
 func TestAgentLoopBudgetBoundarySteerStartsFreshIterationBudget(t *testing.T) {
 	t.Parallel()
 
@@ -167,7 +183,6 @@ func TestAgentLoopBudgetBoundarySteerStartsFreshIterationBudget(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -221,7 +236,6 @@ func TestAgentLoopRetriesAfterCanceledSteerInterruptWithoutReplacementText(t *te
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerInterrupt = func() <-chan struct{} {
@@ -274,7 +288,6 @@ func TestAgentLoopRetriesAfterCanceledSteerInterruptDuringToolWithoutReplacement
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -356,7 +369,6 @@ func TestAgentLoopPersistsOneShotSteerAfterToolInterrupt(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {
@@ -423,7 +435,6 @@ func TestAgentLoopPendingSteerBeforeFirstModelGetsFreshIterationBudget(t *testin
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.SteerProvider = func(context.Context) (RunSteerMessage, bool) {

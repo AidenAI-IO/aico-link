@@ -87,7 +87,7 @@ func TestBuildSpeechTextNormalizesMarkdownInsideTTSTag(t *testing.T) {
 		"<tts>",
 		"**重点**：已完成 `audio_service` 检查。",
 		"- 当前音量是 **42**。",
-		"详情见 [PR #237](https://github.com/AidenAI-IO/aiden-firmware/pull/237)。",
+		"详情见 [PR #237](https://github.com/AidenAI-IO/aico-link/pull/237)。",
 		"</tts>",
 	}, "\n")
 
@@ -95,7 +95,7 @@ func TestBuildSpeechTextNormalizesMarkdownInsideTTSTag(t *testing.T) {
 	want := strings.Join([]string{
 		"重点：已完成 audio_service 检查。",
 		"当前音量是 42。",
-		"详情见 PR #237（https://github.com/AidenAI-IO/aiden-firmware/pull/237）。",
+		"详情见 PR #237（https://github.com/AidenAI-IO/aico-link/pull/237）。",
 	}, "\n")
 
 	if speech != want {

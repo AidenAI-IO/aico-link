@@ -15,18 +15,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/statemanager"
-	"aiden-agent/internal/agent/tokencounter"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/statemanager"
+	"aico-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/routines"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/agents"
@@ -104,6 +105,7 @@ type Runtime struct {
 	episodeMaintenance      asyncRuntimeWork
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
+	routines                *routines.Manager
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
@@ -127,6 +129,9 @@ type asyncRuntimeWork struct {
 }
 
 type RunRequest struct {
+	// Scheduled work waits for the current run and retains its conversation.
+	WaitForIdle       bool
+	ResumeSessionID   string
 	Input             string
 	Attachments       []InputAttachment
 	Turn              TurnInput
@@ -141,7 +146,11 @@ type RunRequest struct {
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
 	// run's own startup preemption.
-	OnRunActive   func(context.Context)
+	OnRunActive func(context.Context)
+	// OnRunComplete runs when the run has returned but still owns the runtime
+	// gate, so the latest turn in the context is still this run's: the next
+	// run appends its input only after it takes the gate.
+	OnRunComplete func()
 	SteerProvider func(context.Context) (RunSteerMessage, bool)
 	// FinalSteerProvider is called at terminal executor boundaries. It should
 	// atomically consume one last pending steer if available; otherwise it should
@@ -593,9 +602,10 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 
 	rt.screenState = screenState
 
-	// Create PhoneBridge in proxy mode if environment bridge is enabled
+	// An ADB environment bridge handles screen and input, but the benchmark App
+	// can connect directly to this Agent for Phone Bridge commands.
 	endpoint := strings.TrimSpace(cfg.EnvironmentBridge.Endpoint)
-	if cfg.EnvironmentBridge.Enabled && endpoint != "" {
+	if cfg.EnvironmentBridge.Enabled && endpoint != "" && !cfg.EnvironmentBridge.LocalPhoneBridge {
 		rt.phoneBridge = NewPhoneBridgeProxy(
 			endpoint,
 			cfg.EnvironmentBridge.BenchmarkTaskID,
@@ -929,7 +939,9 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 
 	// Preempt any currently active run and its resources.
-	r.Preempt()
+	if !req.WaitForIdle {
+		r.Preempt()
+	}
 
 	unlockRun, err := r.lockRun(ctx)
 	if err != nil {
@@ -970,7 +982,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if req.OnRunActive != nil {
 			req.OnRunActive(isolationCtx)
 		}
-		return r.run(isolationCtx, req)
+		result, err := r.run(isolationCtx, req)
+		if req.OnRunComplete != nil {
+			req.OnRunComplete()
+		}
+		return result, err
 	})
 }
 
@@ -1167,7 +1183,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if streamCallbackHandler != nil {
 		executorHandler = streamCallbackHandler
 	}
-	profile := r.buildAgentProfile(r.skills, availableTools)
+	// Read the user profile once per run: new sessions start with it and the
+	// refresh below brings an existing session up to date.
+	userProfile, profileErr := r.memories.UserProfilePrompt(ctx)
+	if profileErr != nil {
+		r.memories.warnProfileReadFailure(profileErr)
+	}
+	profile := r.buildAgentProfile(r.skills, availableTools, userProfile)
 	var steerStatus steerConversationStatus
 	var steerRecorder steerConversationRecorder
 	if req.SteerProvider != nil {
@@ -1207,6 +1229,24 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
+	// The profile only enriches the prompt, so a read or refresh failure keeps
+	// the section the session already carries instead of failing the run.
+	if profileErr == nil {
+		if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
+			r.logger.Warn("[memory] refresh user profile section failed: %v", err)
+		}
+	}
+	// A request to keep a secret may come a turn before the secret itself.
+	episodeRecorder.setPriorUserTexts(recentUserTexts(r.contextManager, priorUserTurnsForMemoryRequests))
+	if req.ResumeSessionID != "" {
+		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if !matches {
+			return RunResult{}, errors.New("scheduled task session was cleared or replaced; reschedule it in the current conversation")
+		}
+	}
 	// append runtime context as assistant message if present (e.g., voice interruption notification)
 	if runtimeContext := strings.TrimSpace(req.RuntimeContext); runtimeContext != "" {
 		if err := r.contextManager.AppendMessage(messages.Message{
@@ -1232,6 +1272,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// counted and traced as part of the episode rather than disappearing from the
 	// run's token accounting.
 	contextCompactor := compactor.NewCompactor(compactor.DefaultProtectRule, m)
+	if location, _, err := loadConfiguredTimezone(cfg.TimezoneOrDefault()); err == nil {
+		contextCompactor.Location = location
+	}
 	budgetContextWindow := contextWindow
 	if budgetContextWindow <= 0 {
 		budgetContextWindow = r.models.Spec().ContextWindow
@@ -1260,17 +1303,35 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// configurable trigger. It is intentionally independent from conversation
 	// summarization and provider-managed Responses compaction.
 	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
+	// A screenshot-count prune only drops stale states: its target is one no
+	// request reaches, so it never compacts tool results toward the token
+	// target. That stays with the token threshold.
+	const stateTarget = math.MaxInt
+	stateLimit := cfg.ContextPruneStateLimitOrDefault()
+	pruneReason := ""
 	if pruneEnabled && messageTokenUsage > pruneTrigger {
+		pruneReason = "threshold"
 		if r.logger != nil {
 			r.logger.Info("Historical context prune: token usage reached threshold; tokenUsage=%d trigger=%d target=%d", messageTokenUsage, pruneTrigger, pruneTarget)
 		}
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, pruneTarget)
+	} else if states := r.contextManager.ScreenshotStateCount(); states > stateLimit {
+		pruneReason = "state_count"
+		if r.logger != nil {
+			r.logger.Info("Historical context prune: screenshot states reached limit; states=%d limit=%d", states, stateLimit)
+		}
+	}
+	if pruneReason != "" {
+		target := pruneTarget
+		if pruneReason == "state_count" {
+			target = stateTarget
+		}
+		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, target)
 		if episodeRecorder != nil {
 			episodeRecorder.RecordEvent(historicalPruneEvent(
 				contextCompactor.LastPruneStats(),
 				pruned,
 				pruneErr,
-				"threshold",
+				pruneReason,
 			))
 		}
 		if pruneErr != nil {
@@ -1307,7 +1368,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 
-	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, cfg.ScreenshotPruningOrDefault(), r.contextManager)
+	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
 	agentLoop.SteerRecorder = steerRecorder
@@ -1330,6 +1391,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if pruneEnabled && messageTokens > pruneTrigger {
 			targetTokens = pruneTarget
 			reason = "active_turn_threshold"
+		} else if currentManager.ScreenshotStateCount() > stateLimit {
+			targetTokens = stateTarget
+			reason = "active_turn_state_count"
 		}
 		if usableInputBudget > 0 && activePromptTokens(currentManager, options) > usableInputBudget {
 			hardBudgetExceeded = true
@@ -1536,8 +1600,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 }
 
 func (r *Runtime) getSystemPrompt() string {
-	profile := r.buildAgentProfile(r.skills, r.availableTools())
-	return profile.SystemPrompt
+	userProfile, err := r.memories.UserProfilePrompt(context.Background())
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	return r.buildAgentProfile(r.skills, r.availableTools(), userProfile).SystemPrompt
 }
 
 // sessionChunkWriter builds the writer that persists a compacted conversation
@@ -1876,6 +1943,31 @@ func (r *Runtime) WebContextDump() contextmanager.MessageListDump {
 		return r.UserContextDump()
 	}
 	return r.ContextDump()
+}
+
+// WebContextWindow returns one range of the context that WebContextDump
+// would return, copying only that range.
+func (r *Runtime) WebContextWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) contextmanager.MessageListWindow {
+	if r == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	cfg := r.ConfigSnapshot()
+	realtime := cfg.InputModeOrDefault() == "realtime"
+	if !realtime && r.contextManager != nil {
+		return r.contextManager.MessageListWindow(selectRange)
+	}
+	folder := agentpath.UserContextManagerSessionFolder(cfg.ConfigDir)
+	if !realtime {
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return contextmanager.MessageListWindow{}
+		}
+		folder = agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	}
+	manager, err := contextmanager.LoadContextManagerFromCurrentSession(folder)
+	if err != nil || manager == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	return manager.MessageListWindow(selectRange)
 }
 
 // ReadContextAttachment reads an attachment registered in the user or backend
@@ -2276,8 +2368,8 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 	}()
 }
 
-func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool) RoleProfile {
-	return buildProfile(
+func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
+	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
 			Prompt:      r.ConfigSnapshot().Prompt,
@@ -2288,6 +2380,11 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
+	// A new session has no earlier section to keep, so on a read failure the
+	// caller passes an empty profile; the next run's refresh adds it once the
+	// read works.
+	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
+	return profile
 }
 
 // runtimeCallbackHandler implements callbacks.Handler for streaming output and
@@ -2959,6 +3056,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.routines != nil {
+		r.routines.Close()
+	}
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

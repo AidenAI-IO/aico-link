@@ -43,7 +43,7 @@ function intro(inCard) {
     text(
       msg(
         'ui.wifi_intro',
-        '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化复杂任务。',
+        '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化复杂任务。',
       ),
       'page__description',
     ),

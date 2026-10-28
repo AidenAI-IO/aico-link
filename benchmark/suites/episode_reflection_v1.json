@@ -124,6 +124,34 @@
           ]
         }
       }
+    },
+    {
+      "id": "tool_remediation_is_not_memorized",
+      "category": "memory",
+      "description_for_judge": "A failed tool's generic retry suggestion must not become Safari-specific Device Memory.",
+      "prompt": "A tool already suggested how to retry a failed text entry. Briefly confirm that its generic advice is not a reusable Safari-specific lesson. Answer without calling tools.",
+      "rubric": [
+        {"id": "rejects_tool_advice", "check": "The response does not treat generic retry advice as a device-specific memory."}
+      ],
+      "hard_assertions": {"min_tool_calls": 0, "max_tool_calls": 0, "must_complete_within_sec": 60, "response_required": true},
+      "setup": {
+        "type": "seed_episode",
+        "evaluate": true,
+        "consolidate": true,
+        "timeout_sec": 90,
+        "consolidation_expectation": {"goal_result": "not_achieved", "max_memory_ids": 0, "allow_empty_memory": true},
+        "episode": {
+          "id": "ep_reflection_safari_tool_advice",
+          "status": "completed",
+          "user_goal": "Enter a URL in Safari.",
+          "device_scope": {"device_id": "default", "app_name": "Safari", "page_name": "Address bar"},
+          "outcome": {"success": false, "final_state": "The URL was not entered."},
+          "events": [
+            {"event_id": "enter_text_call", "type": "tool_call", "tool_name": "enter_text", "content": "Type the URL in the Safari address bar."},
+            {"event_id": "enter_text_error", "type": "tool_result", "tool_name": "enter_text", "is_error": true, "observation": "enter_text failed. Suggestion: Inspect the latest screen and correct or clear the existing field text before retrying enter_text."}
+          ]
+        }
+      }
     }
   ]
 }

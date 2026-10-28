@@ -10,8 +10,8 @@ target_include_directories(doctest INTERFACE
     ${CMAKE_SOURCE_DIR}/third_party/doctest
 )
 
-set(AIDEN_TEST_SOURCES
-    ${CMAKE_SOURCE_DIR}/src/aiden_log.cpp
+set(AICO_TEST_SOURCES
+    ${CMAKE_SOURCE_DIR}/src/aico_log.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_playback_session.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_record_session.cpp
     ${CMAKE_SOURCE_DIR}/src/service_status.cpp
@@ -22,6 +22,7 @@ set(AIDEN_TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/uds_server.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_ipc.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_capture_manager.cpp
+    ${CMAKE_SOURCE_DIR}/src/rk628_hdmi_mode.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_layout.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_processing.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_service_client.cpp
@@ -71,16 +72,16 @@ if(NOT OpenCV_FOUND AND NOT CMAKE_CROSSCOMPILING)
     endif()
 endif()
 
-set(AIDEN_IMAGE_TEST_SOURCES "")
+set(AICO_IMAGE_TEST_SOURCES "")
 if(OpenCV_FOUND)
-    add_library(aiden_image STATIC ${CMAKE_SOURCE_DIR}/src/image_process.cpp)
-    target_include_directories(aiden_image
+    add_library(aico_image STATIC ${CMAKE_SOURCE_DIR}/src/image_process.cpp)
+    target_include_directories(aico_image
         PUBLIC
             ${CMAKE_SOURCE_DIR}/src
             ${OpenCV_INCLUDE_DIRS}
             ${CMAKE_SOURCE_DIR}/third_party/stb
     )
-    target_link_libraries(aiden_image PUBLIC opencv_imgproc)
+    target_link_libraries(aico_image PUBLIC opencv_imgproc)
     if(APPLE)
         foreach(_ocv_t opencv_core opencv_imgproc opencv_photo opencv_video opencv_features2d opencv_highgui)
             if(TARGET ${_ocv_t})
@@ -93,21 +94,22 @@ if(OpenCV_FOUND)
             endif()
         endforeach()
     endif()
-    list(APPEND AIDEN_IMAGE_TEST_SOURCES image_process_test.cpp)
-    message(STATUS "OpenCV ${OpenCV_VERSION} found; image_process tests enabled in aiden_tests")
+    list(APPEND AICO_IMAGE_TEST_SOURCES image_process_test.cpp)
+    message(STATUS "OpenCV ${OpenCV_VERSION} found; image_process tests enabled in aico_tests")
 else()
-    message(STATUS "OpenCV not found; image_process tests omitted from aiden_tests")
+    message(STATUS "OpenCV not found; image_process tests omitted from aico_tests")
 endif()
 
-list(APPEND AIDEN_IMAGE_TEST_SOURCES frame_jpeg_encoder_stub.cpp)
-list(APPEND AIDEN_IMAGE_TEST_SOURCES aiden_sdk_audio_stub.cpp)
+list(APPEND AICO_IMAGE_TEST_SOURCES frame_jpeg_encoder_stub.cpp)
+list(APPEND AICO_IMAGE_TEST_SOURCES aico_sdk_audio_stub.cpp)
 
-add_executable(aiden_tests
+add_executable(aico_tests
     test_main.cpp
     contract_fixtures_test.cpp
-    aiden_log_test.cpp
+    aico_log_test.cpp
     frame_service_protocol_test.cpp
     frame_service_defaults_test.cpp
+    rk628_hdmi_mode_test.cpp
     uds_message_test.cpp
     uds_client_server_test.cpp
     frame_ring_buffer_test.cpp
@@ -130,29 +132,29 @@ add_executable(aiden_tests
     audio_volume_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_parser.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_generator.cpp
-    ${AIDEN_IMAGE_TEST_SOURCES}
-    ${AIDEN_TEST_SOURCES}
+    ${AICO_IMAGE_TEST_SOURCES}
+    ${AICO_TEST_SOURCES}
 )
 
-target_include_directories(aiden_tests PRIVATE
+target_include_directories(aico_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-target_compile_definitions(aiden_tests PRIVATE
-    AIDEN_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+target_compile_definitions(aico_tests PRIVATE
+    AICO_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
-target_link_libraries(aiden_tests PRIVATE doctest)
+target_link_libraries(aico_tests PRIVATE doctest)
 if(OpenCV_FOUND)
-    target_link_libraries(aiden_tests PRIVATE aiden_image)
+    target_link_libraries(aico_tests PRIVATE aico_image)
 endif()
 
 find_library(UTIL_LIBRARY util)
 if(UTIL_LIBRARY)
-    target_link_libraries(aiden_tests PRIVATE ${UTIL_LIBRARY})
+    target_link_libraries(aico_tests PRIVATE ${UTIL_LIBRARY})
 endif()
 
-add_test(NAME aiden_tests COMMAND $<TARGET_FILE:aiden_tests>)
+add_test(NAME aico_tests COMMAND $<TARGET_FILE:aico_tests>)
 
 # Config Web is implemented by the Go Agent binary. Its Go package tests replace
 # the legacy E2E driver that launched the retired C++ server. Focused Node tests

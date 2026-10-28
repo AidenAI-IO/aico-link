@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 /**
  * Encode frame data to JPEG using opencv-mobile hardware encoder.
@@ -59,9 +59,9 @@ bool encode_yuv_to_jpeg_hw(const std::vector<uint8_t>& yuv_data, uint32_t width,
                             uint32_t minimal_width = 0, bool crop_black = true,
                             bool crop_by_aspect = false);
 
-// Metadata-aware entry point used by frame_service. NV12 can use Rockit VENC
-// when FRAME_SERVICE_JPEG_ENCODER=hardware; every other case falls back to the
-// software path while honoring the negotiated frame layout.
+// Metadata-aware entry point used by frame_service. NV12 uses Rockit VENC by
+// default. FRAME_SERVICE_JPEG_ENCODER=software disables hardware encoding.
+// Unsupported formats and encoder failures use the software path.
 bool encode_yuv_to_jpeg_hw(const std::vector<uint8_t>& yuv_data,
                            const FrameMetadata& metadata,
                            int quality,
@@ -86,11 +86,10 @@ bool encode_yuv_to_jpeg_hw_with_crop(const std::vector<uint8_t>& yuv_data,
 void clear_yuv_jpeg_hw_unavailable();
 
 // Warm a hardware NV12 encoder after the first frame for a layout has been
-// captured. Requests racing the warm-up use software encoding rather than
-// waiting for the kernel-facing cold path.
+// captured. JPEG requests wait for the encoder when warm-up is in progress.
 bool prepare_jpeg_encoder_warmup(const FrameMetadata& metadata);
 void cancel_jpeg_encoder_warmup();
 void warmup_jpeg_encoder(const FrameMetadata& metadata,
                          const std::vector<uint8_t>& yuv_data);
 
-}  // namespace aiden
+}  // namespace aico

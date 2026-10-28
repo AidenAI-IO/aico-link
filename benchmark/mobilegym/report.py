@@ -273,7 +273,7 @@ def _read_errors(raw_dir: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
 
 def _read_bridge_actions(raw_dir: Path) -> dict[str, list[dict[str, Any]]]:
     actions: dict[str, list[dict[str, Any]]] = {}
-    for path in sorted(raw_dir.glob("**/aiden_bridge_actions.json")):
+    for path in sorted(raw_dir.glob("**/aico_bridge_actions.json")):
         task_id = _task_id_from_artifact_dir(path.parent)
         if not task_id:
             continue
@@ -474,11 +474,11 @@ def _is_timeout(result: dict[str, Any] | None, error: dict[str, Any] | None) -> 
         stop_reason = _stop_reason(result).lower()
         if stop_reason in {"overdue_termination", "timeout"}:
             return True
-        if "aidenadaptertimeout" in _execution_error(result).lower():
+        if "aicoadaptertimeout" in _execution_error(result).lower():
             return True
     if error is None:
         return False
-    return "aidenadaptertimeout" in str(error.get("error") or error.get("message") or error).lower()
+    return "aicoadaptertimeout" in str(error.get("error") or error.get("message") or error).lower()
 
 
 def _execution_error(result: dict[str, Any]) -> str:
@@ -643,7 +643,7 @@ def _drawer_task(row: dict[str, Any]) -> dict[str, Any]:
     history_tool_calls = _history_tool_calls(result, execution)
     prompt = _first_text(result, "task_name", "prompt", "instruction", "goal")
     description = _first_text(result, "description_for_judge", "task_name", "prompt", "instruction", "goal") or str(row.get("reason") or "")
-    response = _first_text(execution, "agent_answer", "agent_message") or _first_text(result, "aiden_last_response", "response", "answer")
+    response = _first_text(execution, "agent_answer", "agent_message") or _first_text(result, "aico_last_response", "response", "answer")
     wall_ms = _runtime_ms(result, execution)
     tool_calls_detail = _tool_calls_detail(history_tool_calls, actions)
     tool_calls_count = len(history_tool_calls) if history_tool_calls else len(actions)
@@ -706,11 +706,9 @@ def _task_error_log_detail(
                 }
             )
         )
-    history = result.get("aiden_last_chat_history")
-    if not isinstance(history, list):
-        history = execution.get("aiden_last_chat_history")
+    history = _chat_history(result, execution)
     if isinstance(history, list) and history:
-        parts.append("### Aiden chat history\n" + _json_excerpt(history))
+        parts.append("### Aico chat history\n" + _json_excerpt(history))
     return "\n\n".join(parts)
 
 
@@ -804,10 +802,16 @@ def _hard_assertion_failures(result: dict[str, Any]) -> list[dict[str, str]]:
     return rows
 
 
+def _chat_history(result: dict[str, Any], execution: dict[str, Any]) -> list[Any] | None:
+    for source in (result, execution):
+        history = source.get("aico_last_chat_history")
+        if isinstance(history, list):
+            return history
+    return None
+
+
 def _history_tool_calls(result: dict[str, Any], execution: dict[str, Any]) -> list[dict[str, Any]]:
-    history = result.get("aiden_last_chat_history")
-    if not isinstance(history, list):
-        history = execution.get("aiden_last_chat_history")
+    history = _chat_history(result, execution)
     if not isinstance(history, list):
         return []
     calls = []

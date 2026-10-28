@@ -5,7 +5,7 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -389,10 +389,19 @@ def evaluate_task_history(
             base.finished_at = now_iso()
             return base
     # Tasks without a rubric are fully decided by their deterministic assertions.
-    if judge_cfg is None or not task.rubric:
+    if not task.rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)
+        base.finished_at = now_iso()
+        return base
+    if judge_cfg is None:
+        base.status = "skipped"
+        base.metrics["judging_disabled"] = True
+        base.metrics["error"] = "Rubric evaluation skipped because judging is disabled; run rejudge to score this attempt."
+        base.metrics["quality_score"] = None
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        base.metrics["failure_event_ref"] = None
         base.finished_at = now_iso()
         return base
     try:
@@ -449,6 +458,7 @@ def run_one_task(
     environment_url: str | None = None,
     benchmark_task_id: str | None = None,
     active_skills: list[str] | None = None,
+    after_setup: Callable[[], None] | None = None,
 ) -> TaskResult:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     started = now_iso()
@@ -474,6 +484,8 @@ def run_one_task(
             environment_url=environment_url,
             benchmark_task_id=benchmark_task_id,
         )
+        if after_setup is not None:
+            after_setup()
         base.metrics["setup_ms"] = int((time.monotonic() - setup_started_mono) * 1000)
     except SetupAssertionError as e:
         eligible = e.agent_eligible
@@ -802,7 +814,10 @@ def _apply_environment_assertions(
                     actual=f"Observed {check.actual!r}.",
                 )
             )
-        if result.status == "passed":
+        if result.status == "passed" or (result.status == "skipped" and result.metrics.get("judging_disabled")):
+            if result.metrics.pop("judging_disabled", False):
+                result.metrics.pop("error", None)
+                result.metrics["first_failure_stage"] = "unknown"
             result.status = "failed"
             result.metrics["quality_score"] = 0.0
             _set_outcome_metrics(

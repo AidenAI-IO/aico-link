@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "audio_service_protocol.h"
 #include <atomic>
 #include <chrono>
@@ -12,7 +12,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 inline std::chrono::milliseconds playback_tail_drain_grace(const AudioFormat& fmt,
                                                            size_t last_chunk_bytes) {
@@ -62,7 +62,7 @@ public:
 
     // Enqueue a PCM chunk for playback.
     // is_final: when true, the playback thread drains remaining chunks then exits.
-    AidenServiceStatus push_chunk(const uint8_t* data, size_t len, bool is_final);
+    AicoServiceStatus push_chunk(const uint8_t* data, size_t len, bool is_final);
 
     // Abort playback immediately.
     void stop();
@@ -94,4 +94,4 @@ private:
     bool joined_;
 };
 
-}  // namespace aiden
+}  // namespace aico

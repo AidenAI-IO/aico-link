@@ -5,7 +5,7 @@ sidebar_position: 0
 
 # Agent Benchmark
 
-Agent benchmark evaluates the Aiden Go agent on phone UI, memory, planning,
+Agent benchmark evaluates the Aico Go agent on phone UI, memory, planning,
 perception, and environment-control tasks. The current recommended entry points
 are:
 
@@ -98,7 +98,7 @@ uv run python -m runner run \
 `--auto-agent-setup` ignores `--agent-url`, reads bridge capacity from
 `/api/concurrent`, and starts one isolated agent daemon per active task worker.
 
-### Aiden App Policy Without a Phone
+### Companion App Policy Without a Phone
 
 Use suite-level defaults or task-level `mock_environment` fixtures for
 deterministic Phone Bridge strategy tests. The runner simulates platform/app state
@@ -107,20 +107,20 @@ phone or emulator. Task-level fixtures let one suite hold a runtime policy matri
 without creating a JSON file for every case:
 
 In the WebUI, select one or more mock suites and click `Run selected suites`. The
-run configuration changes to `Mock Aiden App environment`, skips the device
+run configuration changes to `Mock Aico companion app environment`, skips the device
 picker, and starts the task-level fixtures automatically. Mock and external-device
 suites must be run as separate jobs.
 
 ```bash
 cd benchmark
 uv run python -m runner run \
-  --suite suites/aiden_app/phone_bridge_data_policy_v1.json \
+  --suite suites/aico_app/phone_bridge_data_policy_v1.json \
   --auto-agent-setup \
   --no-judge \
   --verbose
 ```
 
-The Aiden App cases are consolidated into two suites:
+The Aico companion app cases are consolidated into two suites:
 
 - `notes_entry_policy_v1.json`: Notes is already open, its icon is visible, or
   neither is visible. The Agent respectively enters text directly, clicks the
@@ -145,7 +145,7 @@ and Phone Bridge availability filtering still use the scripted status.
 
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the
-tool restores the Aiden App internally before executing, so the Agent must not click the
+tool restores the Aico companion app internally before executing, so the Agent must not click the
 Dynamic Island or call `bridge_open_app`. With iOS PiP or Android FGS enabled,
 background-safe data tools execute directly through the background queue.
 `bridge_open_app` remains excluded because PiP/FGS do not provide background app
@@ -260,7 +260,7 @@ Common options:
 - `--environment-url URL` - Environment bridge URL for setup, pre/post screen capture, and release.
 - `--auto-agent-setup` - Start isolated agent daemon workers and schedule by bridge concurrency.
 - `--agent-config PATH` - Agent config used for auto-started daemon workers.
-- `--no-judge` - Skip LLM judge and only run hard assertions.
+- `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
@@ -271,7 +271,7 @@ Suites with suite-level or task-level `mock_environment` require
 the scripted bridge itself and activates the matching fixture before each task.
 
 Auto-started Docker workers receive a host-resolved, read-only `agent.toml`.
-Credential references such as `api_key = "$AIDEN_BENCHMARK_AGENT_API_KEY"` must resolve on the
+Credential references such as `api_key = "$AICO_BENCHMARK_AGENT_API_KEY"` must resolve on the
 host before the daemon starts. MobileGym endpoints also pass a functional
 `setup` / `release` preflight before workers are created.
 
@@ -281,7 +281,7 @@ bridge gateway interface; the simulator web UI remains bound to loopback.
 The bridge is unauthenticated. Gateway binding does not isolate it from other
 containers on the same host; use a trusted benchmark host without untrusted
 workloads sharing the Docker daemon.
-Override `AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
+Override `AICO_MOBILEGYM_BRIDGE_BIND_HOST` for a custom Linux bridge, a
 daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
 `/health` success alone does not establish worker connectivity.
 
@@ -341,7 +341,7 @@ different suite versions can still be inspected in Langfuse, but their aggregate
 scores should not be treated as a like-for-like regression unless the unchanged
 item intersection is used or the old product version is rerun against the new
 suite definition. When an Agent episode ID is present, the experiment trace also
-records the deterministic Agent trace ID for correlation with Aiden telemetry.
+records the deterministic Agent trace ID for correlation with Aico telemetry.
 
 Publishing is idempotent by run ID. A retry verifies the Dataset Run Item set,
 adds any missing items, and rewrites scores with stable IDs. A conflicting run ID
@@ -401,6 +401,8 @@ of pass@1 trends and efficiency metrics. A separate `benchmark-weekly-report.yml
 workflow runs every Thursday and sends a Lark card summarizing the last 7 days
 and each dataset's change from its own previous 7 days, with a link to the dashboard. History comes from
 Langfuse v4 experiments and scores; neither downloads earlier Actions artifacts.
+Both workflows default to history from the workflow's branch. For a manual
+weekly report, set `branch_filter` to another branch or `*` for all branches.
 
 See [Cross-run dashboard and weekly report](../../benchmark/manual.md#cross-run-dashboard-and-weekly-report)
 for credentials, report commands, time windows, and comparison rules.
@@ -421,13 +423,18 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
-| Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (12 cases) |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (17 cases) |
+| Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select a suite |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
+| Manual dispatch | `adb` | Native Android comparisons and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
-case whose environment is `isolated` or `mobilegym`.
+case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
+`runnable` flag is true. This includes both ADB comparison pairs (four cases)
+on the runner's configured Android emulator. ADB cases remain available through
+the manual `hardware` profile and use the same exclusive device lock in every
+profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
@@ -436,17 +443,28 @@ dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
 
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
-single-suite run must use the matching `runnable` or `hardware` profile; use
+single-suite run must use the matching `runnable`, `hardware`, or `adb` profile; use
 `all` when intentionally overriding that boundary.
 
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
 the Android-style MobileGym simulator automatically; no external iOS bridge is
-required. This case is excluded from the scheduled sweep while its baseline is
-being assessed. The iOS-only Bluetooth search task is filtered out, leaving 17
+required. This case is available through manual dispatch only. The iOS-only
+Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
 from Agent capability failures. The same suite with profile `hardware` selects
-the existing external iOS case; profile `all` selects both environments.
+the external iOS case; profile `all` selects both environments.
+
+For native Android, dispatch profile `adb` with
+`suites/adb_android_basic.json` for general operations or
+`suites/adb_android_text_editing.json` for text editing. Leave the suite input
+blank to run both comparison pairs and the dedicated Bridge capability suite.
+See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
+for coverage and device prerequisites.
+
+Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
+exist, be unique, and support the case's target platform. An empty list selects
+the entire suite, subject to platform filtering. ADB cases require concurrency 1.
 
 When a suite has cases in multiple environment profiles, an explicit suite
 selection runs only cases belonging to the requested profile. A selection with
@@ -458,14 +476,8 @@ device. Real benchmark execution comes from the daily schedule on the default
 branch or a manual `workflow_dispatch` on any repository branch. Manual
 dispatch remains unavailable to pull request and fork refs.
 
-Treat the first two weeks as a baseline period. Review each scheduled case's run
-duration, Langfuse cost, and failure class before deciding whether the policy of
-running every locally runnable case needs to change. Only add VPhone or another
-external environment to the schedule after its bridge has at least 99% health
-availability over that baseline period.
-
 The workflow expects these GitHub configuration values. GitHub-facing names omit
-the `AIDEN_` prefix; the workflow maps them to the runner variables documented
+the `AICO_` prefix; the workflow maps them to the runner variables documented
 below.
 
 - Variables: `BENCHMARK_REPEATS`, `BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
@@ -475,8 +487,8 @@ below.
   `LANGFUSE_BASE_URL`, `BENCHMARK_PHONE_ENVIRONMENT_URL`,
   `BENCHMARK_IOS_ENVIRONMENT_URL`, `BENCHMARK_MAC_ENVIRONMENT_URL`,
   `BENCHMARK_VPHONE_ENVIRONMENT_URL`,
-  `BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL`, and
-  `BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL`.
+  `BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL`, and
+  `BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL`.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
 
@@ -496,8 +508,72 @@ ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
 
-The benchmark job uses the `aiden-hosted-02` runner because the
-MobileGym and agent-daemon paths require Docker. One job performs checkout,
+When any selected case enables AidenBridge, CI reads the current release
+filename from the unversioned distribution URL and compares its `versionCode`
+with the App already installed on the emulator. It downloads and installs the
+APK only when the versions differ. The job summary records the release filename,
+installed `versionCode`, and whether the installation was reused; when an APK is
+downloaded, it also records its SHA-256. A republished APK with the same
+`versionCode` is treated as the same release.
+
+The general Android suites run as matched pairs using the same JSON tasks,
+setup, prompts, rubrics, repeat count, and one worker:
+
+| Suite | Without AidenBridge | With AidenBridge |
+| --- | --- | --- |
+| `adb_android_basic.json` (16 tasks) | `adb_android_basic` | `adb_android_basic-aidenbridge` |
+| `adb_android_text_editing.json` (4 tasks) | `adb_android_text_editing` | `adb_android_text_editing-aidenbridge` |
+
+These task definitions are synced from main commit
+`16ab57b50c68a91a05915a4112f8bc2a896170af`. Basic tasks cover general UI navigation
+and state recovery; text-editing tasks cover ASCII spaces, punctuation,
+replacement, and clearing. The `phone_control_v1.json` suite remains registered
+for MobileGym and iOS, without an additional ADB case.
+
+Both Android pairs run in the daily `runnable` sweep. Selecting either suite
+manually with `runnable`, `hardware`, `adb`, or `all` also runs both variants.
+The baseline stops any retained companion App before starting and uses the ADB
+environment without a Phone Bridge connection. The connected variant establishes
+Phone Bridge on each task Agent while ADB continues to provide screenshots and
+input. Both variants retain the task's prepared screen; the connected variant
+does not bring the companion App to the foreground after task setup.
+ADB cases run exclusively on the shared emulator, including scheduled runs.
+
+Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
+`execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
+**ADB device** and **ADB + AidenBridge** in its configuration comparison and
+run history. Compare matching tasks from the same workflow attempt/model/repeat
+count using pass rates, tool calls, task time, and token/cost metrics. Historical
+runs with different suite hashes are not a controlled Bridge comparison.
+
+`aico_app/android_bridge_capabilities_v1.json` is the connected AidenBridge
+suite. It tests Bridge-specific APIs rather than serving as the no-Bridge
+comparison workload. It explicitly starts its tasks with the companion App in
+the foreground. It runs with a rooted Android emulator and one Agent worker, checks the
+Phone Bridge connection per task, and covers clipboard round trips, semantic
+app and URL opening, calendar create/query/delete, contacts create/query/update,
+local notifications, and single-line and multiline Unicode text entry. The
+write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar and
+`AidenBridgeBenchmarkContact` contact). The runner removes only those fixtures
+before and after each write task, including failures. Calendar/contact write
+permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
+diagnostic event from the App and the exact text in a non-Bridge Android input
+field; its evidence is included in `results.jsonl` and the local
+`android_bridge_input.json` task artifact. If input evidence cannot be collected,
+the input assertion is unknown; an otherwise passing task becomes an evaluation
+error. Cleanup failures retain the completed task result and are recorded in
+`android_bridge_cleanup_error` and the worker log. Select this suite with the
+`hardware` profile to run only the connected App cases. This dedicated capability
+suite has `runnable: false` and remains excluded from the daily comparison sweep.
+
+This suite replaces the former separate `android_bridge_data_v1.json` suite.
+It does not claim coverage of iOS-only transports, BLE notification forwarding,
+or every permission/background failure mode. Scheduled notification delivery
+and optional calendar reminders also need separate device-side assertions.
+
+The benchmark job uses the `aiden-hosted-02` runner by default (override with
+`AICO_RUNNER_PRIMARY`) because the MobileGym and agent-daemon paths require
+Docker. One job performs checkout,
 dependency and Docker setup once, prepares the reusable images, and fans the
 selected cases out with a configurable concurrency limit. MobileGym cases are
 scheduled first so multiple container-backed benchmarks can overlap;
@@ -513,17 +589,17 @@ credentials.
 
 ## Runner and Local CLI Environment Variables
 
-- `AIDEN_BENCHMARK_AGENT_PROVIDER` - Agent provider type for the default config template.
-- `AIDEN_BENCHMARK_AGENT_MODEL` - Agent model for the default config template and run manifest.
-- `AIDEN_BENCHMARK_AGENT_BASE_URL` - Agent model endpoint for the default config template.
-- `AIDEN_BENCHMARK_AGENT_API_KEY` - Agent credential embedded in the generated read-only config.
-- `AIDEN_BENCHMARK_JUDGE_MODEL` - Default judge model.
-- `AIDEN_BENCHMARK_JUDGE_BASE_URL` - Default OpenAI-compatible judge endpoint.
-- `AIDEN_BENCHMARK_JUDGE_API_KEY` - Required when judge is enabled.
-- `AIDEN_BENCHMARK_ANALYSIS_API_KEY` - Optional post-run analysis credential; defaults to the Judge key.
-- `AIDEN_AGENT_URL` - Default `--agent-url`.
-- `AIDEN_ENVIRONMENT_URL` - Default `--environment-url`.
-- `AIDEN_DAEMON_IMAGE` - Default daemon worker image for auto agent setup.
+- `AICO_BENCHMARK_AGENT_PROVIDER` - Agent provider type for the default config template.
+- `AICO_BENCHMARK_AGENT_MODEL` - Agent model for the default config template and run manifest.
+- `AICO_BENCHMARK_AGENT_BASE_URL` - Agent model endpoint for the default config template.
+- `AICO_BENCHMARK_AGENT_API_KEY` - Agent credential embedded in the generated read-only config.
+- `AICO_BENCHMARK_JUDGE_MODEL` - Default judge model.
+- `AICO_BENCHMARK_JUDGE_BASE_URL` - Default OpenAI-compatible judge endpoint.
+- `AICO_BENCHMARK_JUDGE_API_KEY` - Required when judge is enabled.
+- `AICO_BENCHMARK_ANALYSIS_API_KEY` - Optional post-run analysis credential; defaults to the Judge key.
+- `AICO_AGENT_URL` - Default `--agent-url`.
+- `AICO_ENVIRONMENT_URL` - Default `--environment-url`.
+- `AICO_DAEMON_IMAGE` - Default daemon worker image for auto agent setup.
 - `LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS` - Maximum publication read-back wait; defaults to 660 seconds to cover Langfuse asynchronous ingestion lag.
 
 ## Execution Modes

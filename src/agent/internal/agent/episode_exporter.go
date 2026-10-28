@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/langfuse"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/langfuse"
+	"aico-agent/internal/util"
 	"context"
 	"encoding/json"
 	"errors"
@@ -20,7 +20,7 @@ import (
 const (
 	langfuseBatchSize          = 20
 	langfuseTraceIngestReserve = 5 * time.Second
-	langfuseTraceName          = "aiden-episode"
+	langfuseTraceName          = "aico-episode"
 )
 
 type langfuseClient = langfuse.Client

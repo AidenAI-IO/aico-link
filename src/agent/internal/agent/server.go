@@ -25,20 +25,21 @@ import (
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screenprovider"
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tts"
-	_ "aiden-agent/internal/agent/tts/adapters/alicloud"
-	_ "aiden-agent/internal/agent/tts/adapters/fishaudio"
-	_ "aiden-agent/internal/agent/tts/adapters/google_cloud"
-	_ "aiden-agent/internal/agent/tts/adapters/minimax"
-	_ "aiden-agent/internal/agent/tts/adapters/openrouter"
-	_ "aiden-agent/internal/agent/tts/adapters/volcengine"
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tts"
+	_ "aico-agent/internal/agent/tts/adapters/alicloud"
+	_ "aico-agent/internal/agent/tts/adapters/fishaudio"
+	_ "aico-agent/internal/agent/tts/adapters/google_cloud"
+	_ "aico-agent/internal/agent/tts/adapters/minimax"
+	_ "aico-agent/internal/agent/tts/adapters/openrouter"
+	_ "aico-agent/internal/agent/tts/adapters/volcengine"
+	"aico-agent/internal/ble"
+	"aico-agent/internal/mcu"
 )
 
 const (
@@ -79,6 +80,7 @@ type Server struct {
 	sttConfigTestSession    *sttConfigTestLiveSession
 	bridge                  *PhoneBridge
 	bleSocketPath           string
+	mcuRequest              func(context.Context, mcu.Request) (mcu.Response, error)
 	bleStatusRequest        func(context.Context, string) (ble.RuntimeStatus, error)
 	blePairingStartRequest  func(context.Context, string) (ble.RuntimeStatus, error)
 	blePairingForgetRequest func(context.Context, string) (ble.ForgetResult, error)
@@ -367,6 +369,10 @@ type chatPendingResult struct {
 	err      string
 	// Per-request history (separate from server-level history)
 	history []Message
+	// turn is this request's turn, captured when it completed. Later polls
+	// serve it, since by then the context may already hold the next
+	// request's turn.
+	turn []Message
 }
 
 // ChatResultResponse is the JSON shape for GET /api/chat/result.
@@ -569,6 +575,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/phone-bridge/results", s.handlePhoneBridgeResults)
 	mux.HandleFunc("/api/phone-bridge/results/", s.handlePhoneBridgeResults)
 	mux.HandleFunc("/api/bluetooth/status", s.handleBluetoothStatus)
+	mux.HandleFunc("/api/mcu/", s.handleMCU)
 	mux.HandleFunc("/api/bluetooth/pairing/start", s.handleBluetoothPairingStart)
 	mux.HandleFunc("/api/bluetooth/pairing/reset", s.handleBluetoothPairingReset)
 	mux.HandleFunc("/api/bluetooth/disconnect", s.handleBluetoothDisconnect)
@@ -703,7 +710,7 @@ func (s *Server) Start() error {
 
 	// Milestone: the agent Web UI (http://192.168.42.1:8080) is now accepting
 	// connections. Stamped with kernel uptime so it can be lined up against the
-	// init-script timeline in /var/log/aiden_boot_timeline.log.
+	// init-script timeline in /var/log/aico_boot_timeline.log.
 	if s.logger != nil {
 		s.logger.Info("Starting HTTP server on %s%s", s.addr, bootUptimeLogSuffix())
 	}
@@ -831,7 +838,7 @@ func ipInAddrs(ip net.IP, addrs []net.Addr) bool {
 // Runs asynchronously: generates request_id if not provided, returns {request_id} immediately,
 // agent runs in a background goroutine, and intermediate tool_call messages become
 // available via GET /api/chat/result?request_id=xxx&offset=N.
-// For streaming responses, set Accept: application/x-ndjson or X-Aiden-Stream: ndjson.
+// For streaming responses, set Accept: application/x-ndjson or X-Aico-Stream: ndjson.
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1603,6 +1610,12 @@ func (s *Server) handleChatAsync(
 		defer func() {
 			unregisterStreamOutput()
 		}()
+		runReq.OnRunComplete = func() {
+			turn := s.webHistoryTurnSnapshot()
+			pending.mu.Lock()
+			pending.turn = turn
+			pending.mu.Unlock()
+		}
 
 		result, err := s.runtime.Run(runCtx, runReq)
 		if newStream != nil {
@@ -1752,7 +1765,7 @@ func (s *Server) handleChatResult(w http.ResponseWriter, r *http.Request) {
 		var historySnapshot []Message
 		response := ""
 		if done {
-			historySnapshot = s.webHistorySnapshot()
+			historySnapshot = pending.turn
 			for i := len(historySnapshot) - 1; i >= 0; i-- {
 				if historySnapshot[i].Type == "assistant" {
 					response = historySnapshot[i].Content
@@ -1854,7 +1867,7 @@ func (s *Server) bridgeEnvironment() *PhoneEnvironment {
 
 func wantsChatStream(r *http.Request) bool {
 	return strings.Contains(r.Header.Get("Accept"), "application/x-ndjson") ||
-		strings.EqualFold(r.Header.Get("X-Aiden-Stream"), "ndjson") ||
+		strings.EqualFold(r.Header.Get("X-Aico-Stream"), "ndjson") ||
 		r.URL.Query().Get("stream") == "1"
 }
 
@@ -2013,6 +2026,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Creating stream writer")
 	runReq.StreamWriter = newStreamFanoutWriter(streamWriters...)
 
+	// Capture the turn while the run still owns the runtime gate; see
+	// RunRequest.OnRunComplete.
+	var turn []Message
+	runReq.OnRunComplete = func() {
+		turn = s.webHistoryTurnSnapshot()
+	}
 	s.logger.Info("Running runtime")
 	result, err := s.runtime.Run(ctx, runReq)
 	if newStream != nil {
@@ -2036,7 +2055,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			if s.logger != nil {
 				s.logger.Info("Agent run canceled: request_id=%s", req.RequestID)
 			}
-			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: s.webHistorySnapshot()})
+			stream.Write(ChatStreamEvent{Type: "error", Error: "request canceled", History: turn})
 			return
 		}
 		errorMessage := Message{
@@ -2058,11 +2077,11 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			s.speakFinalText(ctx, req.RequestID, prepared)
 		}
-		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: s.webHistorySnapshot()})
+		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: turn})
 		return
 	}
 
-	historySnapshot := s.webHistorySnapshot()
+	historySnapshot := turn
 	if s.liveActivity != nil {
 		s.liveActivity.CompleteTask(req.RequestID, result.Output)
 	}
@@ -2582,17 +2601,26 @@ func (s *Server) playPromptSoundAsync(kind promptSoundKind, label string) {
 	}()
 }
 
-// handleHistory returns the conversation history
+// handleHistory returns the conversation history. Without paging parameters
+// it returns the full history as an array for older clients; with them it
+// returns one HistoryPage.
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	historySnapshot := s.webHistorySnapshot()
-
+	query, paged, err := parseHistoryPageQuery(r.URL.Query())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(historySnapshot)
+	if !paged {
+		json.NewEncoder(w).Encode(s.webHistorySnapshot())
+		return
+	}
+	json.NewEncoder(w).Encode(s.webHistoryPage(query))
 }
 
 type ContextResponse struct {
@@ -2744,6 +2772,7 @@ type benchmarkSeedMemoryRequest struct {
 	EvidenceRefs []MemorySourceRef `json:"evidence_refs"`
 	ExpiresAt    string            `json:"expires_at"`
 	Priority     int               `json:"priority"`
+	Sensitive    bool              `json:"sensitive"`
 }
 
 type benchmarkSeedSessionChunkRequest struct {
@@ -3119,6 +3148,7 @@ func (s *Server) handleBenchmarkSeedMemory(w http.ResponseWriter, r *http.Reques
 			EvidenceRefs:     req.EvidenceRefs,
 			ExpiresAt:        req.ExpiresAt,
 			EvidenceExcerpts: evidence,
+			Sensitive:        req.Sensitive,
 		}
 		id, err = store.AddMemory(r.Context(), item)
 	}
@@ -3179,7 +3209,7 @@ func (s *Server) authorizeBenchmarkRequest(r *http.Request) bool {
 	if expected == "" {
 		return false
 	}
-	supplied := strings.TrimSpace(r.Header.Get("X-Aiden-Benchmark-Token"))
+	supplied := strings.TrimSpace(r.Header.Get("X-Aico-Benchmark-Token"))
 	if supplied == "" {
 		auth := strings.TrimSpace(r.Header.Get("Authorization"))
 		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
@@ -3624,23 +3654,34 @@ func (s *Server) BroadcastMessage(msg Message) {
 }
 
 func (s *Server) webHistorySnapshot() []Message {
+	_, history := s.webHistoryWindow(func(_ string, view []messages.Message) (int, int) {
+		return 0, len(view)
+	})
+	return history
+}
+
+// webHistoryWindow converts one range of the Web context to public messages.
+// Each message keeps its absolute context index in RequestID, so a page and
+// a full snapshot identify the same message the same way.
+func (s *Server) webHistoryWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) (contextmanager.MessageListWindow, []Message) {
 	if s == nil || s.runtime == nil {
-		return nil
+		return contextmanager.MessageListWindow{}, nil
 	}
-	dump := s.runtime.WebContextDump()
-	result := make([]Message, 0, len(dump.Messages))
+	window := s.runtime.WebContextWindow(selectRange)
+	result := make([]Message, 0, len(window.Messages))
 	role := "backend"
 	if s.runtime.ConfigSnapshot().InputModeOrDefault() == "realtime" {
 		role = "user"
 	}
-	for i, item := range dump.Messages {
+	for i, item := range window.Messages {
 		message, ok := webMessageFromContextMessage(item, role)
 		if ok {
-			message.RequestID = fmt.Sprintf("context-%s-%d", role, i)
+			message.RequestID = fmt.Sprintf("context-%s-%d", role, window.Start+i)
 			result = append(result, message)
 		}
 	}
-	return result
+	window.Messages = nil
+	return window, result
 }
 
 func webMessageFromContextMessage(item messages.Message, contextRole string) (Message, bool) {
@@ -4111,7 +4152,7 @@ const keyboardTapAndroidKeysGuideHTML = `<!DOCTYPE html>
 </head>
 <body>
     <main>
-        <p class="eyebrow">Aiden Agent</p>
+        <p class="eyebrow">Aico</p>
         <h1>keyboard_tap Android key guide</h1>
         <p>
             These aliases use <code>hid.usb2</code>. In <code>hid.pointer_mode = "touchscreen"</code>,

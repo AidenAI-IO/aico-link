@@ -16,6 +16,14 @@ func TestWakeCharacteristicFlagsKeepPairingProbeEncrypted(t *testing.T) {
 	}
 }
 
+func TestWakeGattHandlesMatchFreshBlueZLayout(t *testing.T) {
+	// Bonded iPhones cache these. The service declaration is followed by the
+	// characteristic declaration, the value, and the CCC descriptor.
+	if wakeServiceHandle != 0x0013 || wakeCharValueHandle != wakeServiceHandle+2 {
+		t.Fatalf("Wake handles moved: service 0x%04x value 0x%04x", wakeServiceHandle, wakeCharValueHandle)
+	}
+}
+
 func TestWakeReasonCodeIncludesLocalLiveActivityRefresh(t *testing.T) {
 	if got := wakeReasonCode("live_activity"); got != 4 {
 		t.Fatalf("wakeReasonCode(live_activity) = %d, want 4", got)
@@ -70,7 +78,7 @@ func TestConnectionWindowRequiresSubscriptionAndAuthenticatedReadInSameWindow(t 
 }
 
 func newOpenWindowBackend(openedAt time.Time) *blueZBackend {
-	backend := newBlueZBackend(NewService(8), "Aiden", time.Minute)
+	backend := newBlueZBackend(NewService(8), "Aico Link", time.Minute)
 	backend.pairingOpen = true
 	backend.pairingOpenedAt = openedAt
 	backend.pairingDeadline = openedAt.Add(time.Minute)
@@ -166,7 +174,7 @@ func TestANCSRescanDoesNotWaitForWakeSubscriber(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	backend := newBlueZBackend(service, "Aiden", 0)
+	backend := newBlueZBackend(service, "Aico Link", 0)
 	backend.ancs = ancsPaths{
 		device:             dbus.ObjectPath("/org/bluez/hci0/dev_phone"),
 		notificationSource: dbus.ObjectPath("/org/bluez/hci0/dev_phone/service/notification"),

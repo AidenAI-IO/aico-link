@@ -10,7 +10,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -146,7 +146,7 @@ func (u *Updater) ProvisionFactoryIdentity() (FactoryIdentityResult, error) {
 		return FactoryIdentityResult{}, err
 	}
 	if !ok {
-		return FactoryIdentityResult{}, errors.New("aiden.slot_suffix missing from cmdline")
+		return FactoryIdentityResult{}, errors.New("aico.slot_suffix missing from cmdline")
 	}
 	rootSlot, rootOK, err := u.currentRootSlot()
 	if err != nil {

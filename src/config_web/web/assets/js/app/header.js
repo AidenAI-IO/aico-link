@@ -16,7 +16,7 @@
 
 import {el, replace} from '../ui/dom.js';
 import {icon} from '../ui/icon.js';
-import {aidenLogo} from '../ui/logo.js';
+import {aicoLinkLogo} from '../ui/logo.js';
 import {msg, resolve, text} from '../ui/text.js';
 
 /**
@@ -39,7 +39,10 @@ export function createHeader(options = {}) {
   const nav = el('div', {class: 'app__topbar-nav'});
   const element = el('div', {class: 'app__topbar'}, [
     el('div', {class: 'app__brand'}, [
-      aidenLogo({width: 116}),
+      el('a', {
+        class: 'app__brand-link',
+        attrs: {href: 'https://aico.link', target: '_blank', rel: 'noopener noreferrer', 'aria-label': 'Aico Link — aico.link'},
+      }, [aicoLinkLogo({width: 116})]),
       text({key: 'ui.app_title', fallback: '配置'}, 'app__brand-title'),
     ]),
     nav,

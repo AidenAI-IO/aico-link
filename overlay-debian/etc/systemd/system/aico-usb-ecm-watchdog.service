@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover stalled Aico Link USB ECM sessions
+Requires=aico-usb-gadget.service aico-usb-dnsmasq.service
+After=aico-usb-gadget.service aico-usb-dnsmasq.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/aico/aico-usb-ecm-watchdog
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

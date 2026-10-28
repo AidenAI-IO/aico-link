@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // Run serves the device configuration portal until SIGINT or SIGTERM.

@@ -4,6 +4,8 @@ import sys
 import threading
 import time
 import urllib.parse
+from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,7 +46,7 @@ class FakeClockClient:
 
 def test_publish_langfuse_cli_reports_experiment_url(monkeypatch, capsys):
     published = langfuse_reporter.PublishResult(
-        dataset_name="aiden-benchmark:memory_v1",
+        dataset_name="aico-benchmark:memory_v1",
         run_name="ci-123",
         dataset_run_id="run-1",
         dataset_run_url="http://langfuse.local/run-1",
@@ -60,7 +62,7 @@ def test_publish_langfuse_cli_reports_experiment_url(monkeypatch, capsys):
 
     output = capsys.readouterr().out
     assert "Langfuse publish: verification complete" in output
-    assert "dataset=aiden-benchmark:memory_v1" in output
+    assert "dataset=aico-benchmark:memory_v1" in output
     assert "View experiment: http://langfuse.local/run-1" in output
 
 
@@ -619,9 +621,9 @@ def test_unreachable_agent_does_not_reserve_run_directory(monkeypatch, tmp_path)
 
 def test_run_cli_defaults_use_benchmark_agent_and_judge_model_environment(monkeypatch):
     captured = {}
-    monkeypatch.setenv("AIDEN_BENCHMARK_AGENT_MODEL", "agent-model")
-    monkeypatch.setenv("AIDEN_BENCHMARK_JUDGE_MODEL", "judge-model")
-    monkeypatch.setenv("AIDEN_MODEL", "legacy-aiden-model")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_MODEL", "agent-model")
+    monkeypatch.setenv("AICO_BENCHMARK_JUDGE_MODEL", "judge-model")
+    monkeypatch.setenv("AICO_MODEL", "legacy-aico-model")
     monkeypatch.setenv("MODEL_NAME", "legacy-model")
     monkeypatch.setenv("OPENAI_MODEL", "legacy-openai-model")
     monkeypatch.setattr(main, "_cmd_run", lambda args: captured.update(vars(args)) or 0)
@@ -1074,9 +1076,9 @@ def test_run_llm_analysis_env_limits_fall_back_on_invalid_values(monkeypatch, tm
         calls.append(cfg)
         return AnalysisResult(ok=True, markdown_path=run_dir / "llm_analysis.md")
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "not-an-int")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "not-an-int")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "not-an-int")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "not-an-int")
     monkeypatch.setattr(main, "AgentClient", FakeClient)
     monkeypatch.setattr(main, "wait_for_agent_clock", lambda *args, **kwargs: True)
     monkeypatch.setattr(main, "upload_report", lambda *args, **kwargs: False)
@@ -1138,7 +1140,39 @@ def test_read_optional_token_fails_fast_for_empty_file(tmp_path):
         main._read_optional_token(token_file)
 
 
-def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path):
+@pytest.mark.parametrize("options", [
+    [],
+    ["--auto-agent-setup"],
+    ["--environment-url", "http://127.0.0.1:19090"],
+])
+def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, tmp_path, capsys, options):
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps({
+        "name": "ordinary_suite",
+        "tasks": [{
+            "id": "screen", "category": "device_operation", "prompt": "Describe the screen",
+            "description_for_judge": "Describe the screen",
+            "rubric": [{"id": "described", "check": "The screen is described."}],
+        }],
+    }), encoding="utf-8")
+
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("Invalid Bridge arguments must fail before contacting or starting an Agent")
+
+    monkeypatch.setattr(main, "_read_environment_health", unexpected_execution)
+    monkeypatch.setattr(main, "_new_agent_client", unexpected_execution)
+    monkeypatch.setattr(main, "_cmd_run_auto_agent_setup", unexpected_execution)
+
+    assert main.cli([
+        "run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"),
+        "--android-phone-bridge-serial", "emulator-5554", *options,
+    ]) == 2
+    assert "--android-phone-bridge-serial requires --auto-agent-setup and --environment-url" in capsys.readouterr().err
+    assert not (tmp_path / "runs").exists()
+
+
+@pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
+def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path, bridge_mode):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1147,6 +1181,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
                 "tasks": [
                     {
                         "id": "open_clock",
+                        "foreground_app_id": "com.aidenbridge" if bridge_mode == "foreground" else None,
                         "category": "diagnostic",
                         "prompt": "open clock",
                         "description_for_judge": "open clock",
@@ -1160,6 +1195,16 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
 
     captured = {}
     stale_clears = []
+    bridge_actions = []
+    monkeypatch.setenv("BENCHMARK_EXECUTION_ENVIRONMENT", "adb")
+
+    @contextmanager
+    def connected_bridge(*args):
+        yield
+
+    monkeypatch.setattr(main, "connected_android_phone_bridge", connected_bridge)
+    monkeypatch.setattr(main, "wait_for_android_phone_bridge", lambda client: bridge_actions.append("wait"))
+    monkeypatch.setattr(main, "foreground_android_phone_bridge", lambda *args: bridge_actions.append("foreground"))
 
     class FakeClient:
         def __init__(self, base_url, benchmark_token=""):
@@ -1202,6 +1247,8 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
 
     def fake_run_one_task(client, suite, task, attempt, artifact_dir, *args, **kwargs):
         captured["task_kwargs"] = kwargs
+        if kwargs.get("after_setup"):
+            kwargs["after_setup"]()
         return TaskResult(
             suite=suite.name,
             run_id="auto-run",
@@ -1232,7 +1279,8 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
             "--skill",
             "device-operator",
             "--no-judge",
-        ]
+        ] + (["--android-phone-bridge-serial", "emulator-5554", "--max-concurrency", "1"]
+             if bridge_mode != "none" else [])
     )
 
     assert rc == 0
@@ -1248,6 +1296,112 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     assert "device_type" not in captured["prepare_config_kwargs"]
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]
+    assert captured["kwargs"]["benchmark_local_phone_bridge"] == (bridge_mode != "none")
+    assert bridge_actions == {"none": [], "background": ["wait"], "foreground": ["foreground"]}[bridge_mode]
+    manifest = json.loads((tmp_path / "runs/auto-run/manifest.json").read_text())
+    assert manifest["execution_environment"] == ("adb" if bridge_mode == "none" else "adb_aidenbridge")
+
+
+@pytest.mark.parametrize("status", ["passed", "failed"])
+@pytest.mark.parametrize("failure_stage", ["fixture_cleanup", "routing_cleanup", "input_evidence"])
+def test_android_bridge_preserves_completed_results_and_unknown_evidence(
+    monkeypatch, tmp_path, status, failure_stage,
+):
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps({
+        "name": "android_bridge_suite",
+        "tasks": [{
+            "id": "input", "category": "diagnostic", "prompt": "enter text",
+            "description_for_judge": "enter text",
+            "rubric": [{"id": "done", "check": "done"}],
+            "android_bridge_input_text": "test text",
+            "android_bridge_fixture": "calendar",
+        }],
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(main, "_new_agent_client", lambda *args: SimpleNamespace(close=lambda: None))
+    monkeypatch.setattr(main, "wait_for_agent_ready", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "_read_environment_health", lambda url: {"platform": "android"})
+    monkeypatch.setattr(main, "_preflight_mobilegym_environment", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "clear_stale_adb_android_owner", lambda *args: None)
+    monkeypatch.setattr(main, "call_environment_release", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "generate_report_html", lambda run_dir: "<html></html>")
+    monkeypatch.setattr(webui, "ensure_daemon_image", lambda *args: None)
+    monkeypatch.setattr(webui, "read_environment_bridge_concurrency", lambda *args: 1)
+    monkeypatch.setattr(webui, "docker_published_port", lambda *args: 18081)
+    monkeypatch.setattr(webui, "start_daemon_compose", lambda *args, **kwargs: "container-id")
+    monkeypatch.setattr(webui, "start_daemon_logs", lambda *args: None)
+    monkeypatch.setattr(webui, "stop_daemon_compose", lambda *args: None)
+
+    def prepare_config(base_config_dir, config_dir, **kwargs):
+        config_dir.mkdir(parents=True)
+        (config_dir / "control_token").write_text("test-token", encoding="utf-8")
+
+    monkeypatch.setattr(webui, "prepare_run_config", prepare_config)
+
+    @contextmanager
+    def bridge(*args):
+        try:
+            yield
+        finally:
+            if failure_stage == "routing_cleanup":
+                raise RuntimeError("routing_cleanup failed")
+
+    @contextmanager
+    def fixture(*args):
+        try:
+            yield
+        finally:
+            if failure_stage == "fixture_cleanup":
+                raise RuntimeError("fixture_cleanup failed")
+
+    monkeypatch.setattr(main, "connected_android_phone_bridge", bridge)
+    monkeypatch.setattr(main, "android_bridge_fixture", fixture)
+    monkeypatch.setattr(main, "clipboard_write_ids", lambda serial: set())
+
+    def verify_input(*args):
+        if failure_stage == "input_evidence":
+            raise RuntimeError("UIAutomator unavailable")
+        return {"bridge_clipboard_write": True, "field_contains_exact_text": True}
+
+    monkeypatch.setattr(main, "verify_android_bridge_input", verify_input)
+    failures = [] if status == "passed" else [HardAssertionFailure(
+        id="required_tools", label="Required Tools", requirement="enter_text", actual="missing",
+    )]
+
+    def run_task(client, suite, task, attempt, artifact_dir, *args, **kwargs):
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        return TaskResult(
+            suite=suite.name, run_id="bridge-run", task_id=task.id,
+            category=task.category, attempt=attempt, status=status, rubric=[],
+            hard_assertions=HardAssertionResults(required_tools=status == "passed"),
+            hard_assertion_failures=failures,
+            metrics={"success": status == "passed", "agent_eligible": True, "total_tool_calls": 2},
+            artifact_dir=str(artifact_dir),
+        )
+
+    monkeypatch.setattr(main, "run_one_task", run_task)
+    main.cli([
+        "run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"),
+        "--run-id", "bridge-run", "--environment-url", "http://127.0.0.1:19090",
+        "--auto-agent-setup", "--max-concurrency", "1", "--no-judge", "--skip-clock-wait",
+        "--android-phone-bridge-serial", "emulator-5554",
+    ])
+
+    result = json.loads((tmp_path / "runs/bridge-run/results.jsonl").read_text(encoding="utf-8"))
+    assert result["metrics"]["total_tool_calls"] == 2
+    assert [failure["id"] for failure in result["hard_assertion_failures"]] == [f.id for f in failures]
+    if failure_stage == "input_evidence":
+        assert result["hard_assertions"]["android_bridge_input"] is None
+        assert result["metrics"]["android_bridge_input"]["error"] == "UIAutomator unavailable"
+        assert result["status"] == ("judge_error" if status == "passed" else "failed")
+        assert result["metrics"]["agent_eligible"] is (status == "failed")
+        assert result["metrics"]["success"] is (None if status == "passed" else False)
+    else:
+        assert result["status"] == status
+        assert result["metrics"]["success"] is (status == "passed")
+        assert result["hard_assertions"]["android_bridge_input"] is True
+        assert result["metrics"]["android_bridge_cleanup_error"] == f"{failure_stage} failed"
 
 
 def test_auto_agent_setup_runs_memory_suite_without_environment_bridge(monkeypatch, tmp_path):
@@ -1627,7 +1781,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
     )
     public_endpoint = urllib.parse.urlparse(captured["job"].endpoint)
     docker_endpoint = urllib.parse.urlparse(captured["job"].docker_endpoint)
-    assert public_endpoint.path.startswith("/_aiden_mock/")
+    assert public_endpoint.path.startswith("/_aico_mock/")
     assert docker_endpoint.path == public_endpoint.path
     assert captured["daemon_kwargs"]["environment_bridge_endpoint"] == captured[
         "job"
@@ -1646,7 +1800,7 @@ def test_auto_agent_setup_starts_mock_environment_and_injects_phone_state(
         key: value for key, value in phone_state.items() if key != "platform"
     }
     assert mock_spec["single_frame"] is False
-    assert manifest["environment_url"].endswith("/_aiden_mock/REDACTED")
+    assert manifest["environment_url"].endswith("/_aico_mock/REDACTED")
     assert manifest["target_platform"] == "ios"
 
 

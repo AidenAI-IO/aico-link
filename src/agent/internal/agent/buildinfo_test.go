@@ -14,7 +14,7 @@ func TestEnrichEpisodeTelemetryAddsModelAndVersion(t *testing.T) {
 	if err := os.WriteFile(statePath, []byte(`{"current_version":"20260603-120000-deadbeef"}`), 0o644); err != nil {
 		t.Fatalf("write state.json: %v", err)
 	}
-	t.Setenv("AIDEN_OTA_STATE_PATH", statePath)
+	t.Setenv("AICO_OTA_STATE_PATH", statePath)
 
 	buildCommit = "abc1234"
 	buildVersion = "20260603-120000-abc1234"

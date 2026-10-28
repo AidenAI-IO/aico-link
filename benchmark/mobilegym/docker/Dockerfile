@@ -1,4 +1,4 @@
-# Aiden MobileGym Docker Setup
+# Aico MobileGym Docker Setup
 
 # ============ MobileGym Simulator ============
 ARG MOBILEGYM_NODE_IMAGE=node:22-bookworm
@@ -69,7 +69,7 @@ RUN test -n "${MOBILEGYM_COMMIT}" && \
     test "$(git -C /tmp/mobilegym rev-parse HEAD)" = "${MOBILEGYM_COMMIT}" && \
     cp -a /tmp/mobilegym/. /mobilegym/ && \
     rm -rf /tmp/mobilegym
-LABEL io.aiden.mobilegym.commit="${MOBILEGYM_COMMIT}"
+LABEL io.aico.mobilegym.commit="${MOBILEGYM_COMMIT}"
 
 # Install Python dependencies
 RUN cd /mobilegym && \

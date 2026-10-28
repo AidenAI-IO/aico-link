@@ -47,7 +47,7 @@ const DEFAULT_TIMEZONE = 'UTC';
 
 /** Mirror the top bar to the companion app's native navigation bar. */
 function notifyHost(title, dirty) {
-  postToHost({type: 'aiden_config_save_state', title: resolve(title), dirty, apply: 'live', action_label: resolve(saveLabel('live'))});
+  postToHost({type: 'aico_config_save_state', title: resolve(title), dirty, apply: 'live', action_label: resolve(saveLabel('live'))});
 }
 
 function configValue(snapshot, section, key, fallback) {
@@ -68,7 +68,7 @@ function languageIntro() {
   return el('div', {class: 'basic-intro'}, [
     languageTile(),
     text(msg('basic.language_title', '语言与时区'), 'page__title'),
-    text(msg('basic.language_description', '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
+    text(msg('basic.language_description', '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
   ]);
 }
 
@@ -245,7 +245,7 @@ export async function basicPage(context) {
     if (tapSaving) tapToggle.disabled = true;
     const tapWakeup = row({
       label: msg('config.fields.agent.tap_wakeup_enabled.label', '轻触唤醒'),
-      description: msg('config.fields.agent.tap_wakeup_enabled.help', '开启后，轻触按键可唤醒 Aiden。关闭后只禁用该按键，不影响其它唤醒方式。'),
+      description: msg('config.fields.agent.tap_wakeup_enabled.help', '开启后，MCU 轻触按键可唤醒 Aico。关闭后不影响 ASR 等其它唤醒方式。'),
       accessory: tapToggle,
       action: 'toggle-tap-wakeup',
     });

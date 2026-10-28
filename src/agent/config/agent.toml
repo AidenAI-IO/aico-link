@@ -56,17 +56,18 @@
 # context_compaction_threshold below.
 # context_prune_threshold = 0.5
 
+# The same stale-state cleanup also runs once more <state> messages than this
+# carry a screenshot, keeping the latest state of the current turn. It does not
+# compact tool results. Screenshots are cheap in tokens but heavy in bytes, so
+# this bounds the request size long before the token threshold above fires.
+# 0 selects the default.
+# context_prune_state_limit = 6
+
 # Context compaction threshold
 # Point at which the conversation is summarized into a compaction message by the
 # LLM. Lower it to summarize earlier and keep prompts smaller; raise it to keep
 # more raw transcript at the cost of larger prompts.
 # context_compaction_threshold = 0.8
-
-# Screenshot context pruning:
-# keep the latest N screenshots and batch-prune older screenshots every interval
-# to keep long runs bounded without changing the cached message prefix every turn.
-# screenshot_keep_n = 3
-# screenshot_prune_interval = 2
 
 # Tool Settings
 
@@ -126,7 +127,7 @@ api_key = "$OPENAI_API_KEY"
 # built-in OpenAI-compatible endpoint, so only model + api_key are needed.
 # Custom base_url values are not supported for Volcengine providers.
 # Ark supports api_mode = "responses_stateful" with store + previous_response_id,
-# without requiring caching. Aiden does not send its OpenAI-specific compaction
+# without requiring caching. Aico does not send its OpenAI-specific compaction
 # array or truncation setting to Ark; Ark's own context_management schema differs.
 # [model_settings.providers.ark-main]
 # type = "volcengine"      # https://ark.cn-beijing.volces.com/api/v3
@@ -139,7 +140,7 @@ api_key = "$OPENAI_API_KEY"
 # reasoning_effort = "minimal"
 
 # For DeepSeek, use the built-in OpenAI-compatible endpoint. DeepSeek's API
-# defaults to thinking mode; Aiden selects reasoning_effort = "none" for the
+# defaults to thinking mode; Aico selects reasoning_effort = "none" for the
 # built-in model entries for fast replies. Explicit low/high/max enables
 # thinking with reasoning_content replay across tool-call turns; temperature is
 # omitted while thinking is enabled because DeepSeek does not apply it.
@@ -244,8 +245,8 @@ input_mode = "stt"
 # Only used when input_mode is "stt"
 [voice_settings.classic.runtime]
 # vad_backend = "rknn" # "rknn" (NPU encoder + CPU LSTM/decoder) or "cpu"
-# vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-# vad_helper_path = "/usr/lib/aiden/rknn_vad"
+# vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+# vad_helper_path = "/usr/lib/aico/rknn_vad"
 # vad_speech_threshold = 0.5
 # silence_ms = 550          # Silence duration to end utterance (ms)
 # min_speech_ms = 300       # Minimum speech duration to accept (ms)
@@ -265,7 +266,6 @@ input_mode = "stt"
 # voice_streaming_tts_enabled = true
 # voice_tool_call_speech = true
 # voice_progress_speech_enabled = true
-# voice_max_response_tokens = 300
 
 # Speech-to-Text (STT) configuration
 # Required when input_mode = "stt"
@@ -369,7 +369,7 @@ provider = "minimax-main"
 # eMMC only. StorageMonitor independently protects the persistent data root.
 [storage_settings.storage]
 # mount_point = "/mnt/sdcard"       # Where a usable card is mounted
-# device = "mmcblk2"                # SD card block device base name
+# device = "auto"                   # Discover SD card; set mmcblk1/mmcblk2 to override
 # min_card_free_mb = 64             # Cards with less free space are rejected
 # migrate_start_free_pct = 10       # Start migrating below this eMMC free %
 # migrate_stop_free_pct = 50        # Stop once eMMC free % reaches this
@@ -439,7 +439,7 @@ provider = "minimax-main"
 # upload_timeout_sec = 30
 # max_retry = 2
 # environment = "default"
-# tags = ["aiden-hardware"]
+# tags = ["aico-hardware"]
 
 ################################################################################
 # About

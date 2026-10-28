@@ -57,12 +57,12 @@ bool read_next_int(std::FILE* fp, int* value) {
 
 int output_format_from_path(const std::string& path, int* format) {
     if (ends_with(path, ".ppm") || ends_with(path, ".PPM")) {
-        *format = aiden_image::kFormatPpm;
+        *format = aico_image::kFormatPpm;
         return 0;
     }
     if (ends_with(path, ".jpg") || ends_with(path, ".JPG") || ends_with(path, ".jpeg") ||
         ends_with(path, ".JPEG")) {
-        *format = aiden_image::kFormatJpeg;
+        *format = aico_image::kFormatJpeg;
         return 0;
     }
     return -1;
@@ -133,8 +133,8 @@ bool write_output(const std::string& path, const cv::Mat& rgb, int jpeg_quality)
         return false;
     }
     std::vector<unsigned char> buf;
-    const int rc = aiden_image::encode(rgb, buf, fmt, jpeg_quality);
-    if (rc != aiden_image::kSuccess) {
+    const int rc = aico_image::encode(rgb, buf, fmt, jpeg_quality);
+    if (rc != aico_image::kSuccess) {
         std::fprintf(stderr, "encode failed (%d)\n", rc);
         return false;
     }
@@ -208,22 +208,22 @@ int main(int argc, char** argv) {
     }
 
     cv::Mat work;
-    int rc = aiden_image::kSuccess;
+    int rc = aico_image::kSuccess;
 
     if (args.cmd == "crop") {
-        rc = aiden_image::crop(img, work, args.crop_t, args.crop_r, args.crop_b, args.crop_l);
+        rc = aico_image::crop(img, work, args.crop_t, args.crop_r, args.crop_b, args.crop_l);
     } else if (args.cmd == "crop_black_bars") {
-        rc = aiden_image::crop_black_bars(img, work);
+        rc = aico_image::crop_black_bars(img, work);
     } else if (args.cmd == "scale") {
-        rc = aiden_image::scale(img, work, args.scale);
+        rc = aico_image::scale(img, work, args.scale);
     } else if (args.cmd == "rotate") {
-        rc = aiden_image::rotate(img, work, args.rotate_deg);
+        rc = aico_image::rotate(img, work, args.rotate_deg);
     } else {
         print_usage();
         return 1;
     }
 
-    if (rc != aiden_image::kSuccess) {
+    if (rc != aico_image::kSuccess) {
         std::fprintf(stderr, "Operation failed (%d)\n", rc);
         return 1;
     }

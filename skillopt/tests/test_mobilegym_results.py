@@ -3,6 +3,9 @@ from pathlib import Path
 
 import pytest
 
+from runner.judge import JudgeConfig, JudgeOutput
+from runner.models import RubricVerdict
+import runner.runtask as runtask_mod
 from runner.suite import HardAssertions, RubricItem, Suite, TaskSpec, TraceObservationSpec
 
 
@@ -71,21 +74,21 @@ def _write_evidence(batch: Path, suite: Suite, task: TaskSpec, evidence: dict) -
     path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _load_results(batch: Path, suite: Suite, tmp_path: Path):
+def _load_results(batch: Path, suite: Suite, tmp_path: Path, *, judge_cfg=None):
     from skillopt import mobilegym_results
 
-    return mobilegym_results.load_aiden_suite_task_results(
+    return mobilegym_results.load_aico_suite_task_results(
         batch_dir=batch,
         suite=suite,
         tasks=suite.tasks,
         run_id="run-1",
         phase_artifact_dir=tmp_path / "phase",
-        judge_cfg=None,
+        judge_cfg=judge_cfg,
         judge_cache_dir=None,
     )
 
 
-def test_mobilegym_passed_row_without_aiden_history_is_hard_failure(tmp_path: Path):
+def test_mobilegym_passed_row_without_aico_history_is_hard_failure(tmp_path: Path):
     suite = _suite(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -96,10 +99,10 @@ def test_mobilegym_passed_row_without_aiden_history_is_hard_failure(tmp_path: Pa
     results = _load_results(batch, suite, tmp_path)
 
     assert results[0].status == "failed"
-    assert "missing aiden_last_chat_history" in results[0].metrics["error"]
+    assert "missing aico_last_chat_history" in results[0].metrics["error"]
 
 
-def test_mobilegym_passed_row_uses_execution_agent_message_as_aiden_response(tmp_path: Path):
+def test_mobilegym_passed_row_uses_execution_agent_message_as_aico_response(tmp_path: Path):
     suite = _suite(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -116,12 +119,15 @@ def test_mobilegym_passed_row_uses_execution_agent_message_as_aiden_response(tmp
 
     results = _load_results(batch, suite, tmp_path)
 
-    assert results[0].status == "passed"
+    assert results[0].status == "skipped"
+    assert results[0].metrics["success"] is None
+    assert results[0].metrics["quality_score"] is None
+    assert results[0].metrics["agent_eligible"] is False
     assert results[0].metrics["mobilegym_status"] == "passed"
-    assert results[0].metrics["aiden_history_source"] == "mobilegym_execution_agent_message"
+    assert results[0].metrics["aico_history_source"] == "mobilegym_execution_agent_message"
 
 
-def test_mobilegym_passed_row_with_mobilegym_judge_still_uses_aiden_checks(tmp_path: Path):
+def test_mobilegym_passed_row_with_mobilegym_judge_still_uses_aico_checks(tmp_path: Path):
     suite = _suite_with_trace_requirement(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -142,10 +148,13 @@ def test_mobilegym_passed_row_with_mobilegym_judge_still_uses_aiden_checks(tmp_p
 
     assert results[0].status == "failed"
     assert results[0].rubric_pass_count == 0
-    assert "missing aiden_last_chat_history" in results[0].metrics["error"]
+    assert "missing aico_last_chat_history" in results[0].metrics["error"]
 
 
-def test_mobilegym_passed_row_uses_meta_evidence_and_aiden_checks(tmp_path: Path):
+@pytest.mark.parametrize("verdict,expected_status", [(None, "skipped"), ("yes", "passed"), ("no", "failed")])
+def test_mobilegym_passed_row_uses_meta_evidence_and_aico_checks(
+    tmp_path: Path, monkeypatch, verdict, expected_status
+):
     suite = _suite(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -157,17 +166,34 @@ def test_mobilegym_passed_row_uses_meta_evidence_and_aiden_checks(tmp_path: Path
         suite,
         suite.tasks[0],
         {
-            "aiden_last_response": "done",
-            "aiden_last_chat_history": [{"type": "assistant", "content": "done"}],
+            "aico_last_response": "done",
+            "aico_last_chat_history": [{"type": "assistant", "content": "done"}],
         },
     )
 
-    results = _load_results(batch, suite, tmp_path)
+    judged = []
 
-    assert results[0].status == "passed"
+    def judge(**kwargs):
+        judged.append(kwargs)
+        return JudgeOutput([RubricVerdict("ok", verdict, "Evidence checked")], "", "key", "")
+
+    monkeypatch.setattr(runtask_mod, "judge_task", judge)
+    results = _load_results(batch, suite, tmp_path, judge_cfg=JudgeConfig() if verdict else None)
+
+    assert results[0].status == expected_status
+    assert results[0].metrics["mobilegym_status"] == "passed"
+    assert results[0].metrics["success"] is (verdict == "yes" if verdict else None)
+    assert results[0].metrics["agent_eligible"] is (verdict is not None)
+    if verdict:
+        assert len(judged) == 1
+        assert judged[0]["final_response"] == "done"
+        assert judged[0]["rubric"] == suite.tasks[0].rubric
+    else:
+        assert judged == []
+        assert results[0].metrics["quality_score"] is None
 
 
-def test_mobilegym_passed_row_over_task_timeout_fails_aiden_timeout_check(tmp_path: Path):
+def test_mobilegym_passed_row_over_task_timeout_fails_aico_timeout_check(tmp_path: Path):
     suite = _suite(tmp_path, timeout_sec=1)
     batch = _write_result(
         tmp_path / "batch",
@@ -183,8 +209,8 @@ def test_mobilegym_passed_row_over_task_timeout_fails_aiden_timeout_check(tmp_pa
         suite,
         suite.tasks[0],
         {
-            "aiden_last_response": "done",
-            "aiden_last_chat_history": [{"type": "assistant", "content": "done"}],
+            "aico_last_response": "done",
+            "aico_last_chat_history": [{"type": "assistant", "content": "done"}],
         },
     )
 
@@ -203,8 +229,8 @@ def test_mobilegym_passed_row_still_fails_expected_answer_mismatch(tmp_path: Pat
         {
             "id": f"{suite.name}.case_one",
             "is_success": True,
-            "aiden_last_response": "<final_answer>(b)</final_answer>",
-            "aiden_last_chat_history": [{"type": "assistant", "content": "<final_answer>(b)</final_answer>"}],
+            "aico_last_response": "<final_answer>(b)</final_answer>",
+            "aico_last_chat_history": [{"type": "assistant", "content": "<final_answer>(b)</final_answer>"}],
         },
     )
 
@@ -214,7 +240,7 @@ def test_mobilegym_passed_row_still_fails_expected_answer_mismatch(tmp_path: Pat
     assert results[0].metrics["expected_answer_match"] is False
 
 
-def test_mobilegym_raw_failure_gates_before_aiden_checks(tmp_path: Path):
+def test_mobilegym_raw_failure_gates_before_aico_checks(tmp_path: Path):
     suite = _suite(tmp_path)
     batch = _write_result(
         tmp_path / "batch",
@@ -222,8 +248,8 @@ def test_mobilegym_raw_failure_gates_before_aiden_checks(tmp_path: Path):
         {
             "id": f"{suite.name}.case_one",
             "is_success": False,
-            "aiden_last_response": "done",
-            "aiden_last_chat_history": [{"type": "assistant", "content": "done"}],
+            "aico_last_response": "done",
+            "aico_last_chat_history": [{"type": "assistant", "content": "done"}],
         },
     )
 
@@ -241,14 +267,14 @@ def test_mobilegym_errors_jsonl_wins_over_success_row(tmp_path: Path):
         {
             "id": f"{suite.name}.case_one",
             "is_success": True,
-            "aiden_last_response": "done",
-            "aiden_last_chat_history": [{"type": "assistant", "content": "done"}],
+            "aico_last_response": "done",
+            "aico_last_chat_history": [{"type": "assistant", "content": "done"}],
         },
     )
     _write_error(
         batch,
         suite,
-        {"id": f"{suite.name}.case_one", "error": "AidenAdapterTimeout: deadline"},
+        {"id": f"{suite.name}.case_one", "error": "AicoAdapterTimeout: deadline"},
     )
 
     results = _load_results(batch, suite, tmp_path)

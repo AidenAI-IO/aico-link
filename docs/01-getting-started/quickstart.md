@@ -4,13 +4,13 @@ sidebar_position: 2
 
 # Newcomer Quickstart
 
-This page is the main path for anyone touching Aiden hardware for the first time. It follows the order **wire up → flash → connect Wi-Fi → configure → run → develop → upgrade → troubleshoot**, stringing the whole onboarding flow into one page. Each step covers only the key action; details are linked to the corresponding topic docs.
+This page is the main path for anyone touching Aico Link hardware for the first time. It follows the order **wire up → flash → connect Wi-Fi → configure → run → develop → upgrade → troubleshoot**, stringing the whole onboarding flow into one page. Each step covers only the key action; details are linked to the corresponding topic docs.
 
-> No development board yet? Start with [Try Aiden on PC](try-aiden-on-pc.md)
+> No development board yet? Start with [Try Aico on PC](try-aico-on-pc.md)
 > to open Config Web and Agent Web locally, then optionally connect the Agent to
 > MobileGym, an ADB target, or another compatible environment bridge.
 
-> Voice interaction is Aiden's core usage scenario. The Agent Web UI is available in every input mode. `text` mode is mainly for development and testing because it disables the device-side audio loop while keeping the HTTP interface available.
+> Voice interaction is Aico's core usage scenario. The Agent Web UI is available in every input mode. `text` mode is mainly for development and testing because it disables the device-side audio loop while keeping the HTTP interface available.
 
 ## Overview
 
@@ -112,7 +112,7 @@ Field meanings, minimal working config examples, and TTS/STT provider values are
 ## 5. Bring the Board Up
 
 After the four steps above, the board is ready to run. The Agent is supervised
-by `aiden-agent.service` and starts with the firmware.
+by `aico-agent.service` and starts with the firmware.
 
 **Configuration changes**: Config Web applies supported settings online as you save them. Locale and prompt changes take effect for the next task or session boundary; only documented restart exceptions require an explicit Agent restart or device reboot, which the page indicates.
 
@@ -158,7 +158,7 @@ After development, build the firmware and upgrade the device:
 
 ### OTA for a development build
 
-The **Aiden Channel Release** workflow manually publishes `dev`, `staging`, or
+The **Aico Link Channel Release** workflow manually publishes `dev`, `staging`, or
 `prod`, selecting a business package or full OTA from the changes since that
 channel's previous release. See [Channel Releases](../08-ota/channel-release.md).
 For a local build that was not published, use a test device with a matching
@@ -170,7 +170,7 @@ BASE_URL="http://192.168.1.100:8000"
 
 ota update \
   --manifest-url "$BASE_URL/manifest.json" \
-  --public-key /usr/share/keyrings/aiden-ota.pem \
+  --public-key /usr/share/keyrings/aico-ota.pem \
   --dry-run
 ```
 

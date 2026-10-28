@@ -2,13 +2,13 @@
 
 Controls an Android emulator (Genymotion) or a physical device through adb, and
 exposes an HTTP protocol to the benchmark that is **fully compatible with the
-MobileGym bridge**. The Aiden Go agent uses the bridge's screen and MNK
+MobileGym bridge**. The Aico Go Agent uses the bridge's screen and MNK
 providers directly.
 
 ```text
 benchmark/runner (test orchestration)
   ↓ /api/chat
-Aiden Go Daemon (environment-bridge mode)
+Aico Go Daemon (environment-bridge mode)
   ↓ POST /api/providers/mnk              ← input primitives
   ↓ POST /api/providers/screenshot       ← screen provider
 ADB Android Bridge (this module, local Python process)
@@ -62,7 +62,7 @@ uv run python -m runner start-agent-daemon \
   --environment-bridge-endpoint http://127.0.0.1:8899
 
 # 3. Run the benchmark (take --agent-url / token from step 2's output).
-#    This command enables the judge — export AIDEN_BENCHMARK_JUDGE_API_KEY first;
+#    This command enables the judge — export AICO_BENCHMARK_JUDGE_API_KEY first;
 #    see the "Judging" section. Append --no-judge to only exercise the pipeline.
 uv run python -m runner run \
   --suite suites/adb_android_basic.json \
@@ -114,16 +114,17 @@ correct?"), over an OpenAI-compatible endpoint. The judge model is
 completely independent of the agent-under-test model (the agent model is set in
 `agent.toml`).
 
-- **`--no-judge`**: no judging; rubrics record 0/N and pass/fail depends only on
-  the hard assertions (an action ran, no timeout). Good for first verifying that
-  the pipeline works end to end.
+- **`--no-judge`**: runs hard assertions to check the execution pipeline. Tasks
+  with a rubric remain unscored (`skipped`) and are excluded from success rates
+  until rejudged; known assertion failures still fail. Tasks without a rubric
+  are decided by their deterministic assertions.
 - **Judge enabled** (the default for `run`, i.e. without `--no-judge`): you must
-  provide `AIDEN_BENCHMARK_JUDGE_API_KEY`, otherwise it fails with
-  `missing env var AIDEN_BENCHMARK_JUDGE_API_KEY`.
+  provide `AICO_BENCHMARK_JUDGE_API_KEY`, otherwise it fails with
+  `missing env var AICO_BENCHMARK_JUDGE_API_KEY`.
 
 ```bash
 cd benchmark
-export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+export AICO_BENCHMARK_JUDGE_API_KEY=...
 
 uv run python -m runner run \
   --suite suites/adb_android_basic.json \
@@ -149,7 +150,7 @@ saved in the run directory, so you can re-score **without re-running the
 device**:
 
 ```bash
-export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+export AICO_BENCHMARK_JUDGE_API_KEY=...
 uv run python -m runner rejudge \
   --run-dir runs/<that run's directory> \
   --judge-model anthropic/claude-sonnet-4-6
@@ -167,19 +168,33 @@ remain unchanged.
 
 ## Test suite
 
-`benchmark/suites/adb_android_basic.json`, 8 tasks:
+The `adb` CI profile runs two suites and 20 tasks per repeat:
 
-- Basic capabilities (5): screenshot, go Home, open Settings, swipe, enter
-  English text.
-- Multi-step tasks (3, ported from mobilegym_basic): count alarms in Clock,
-  check WiFi status, open the app drawer.
+- `adb_android_basic` (`suites/adb_android_basic.json`), 16 tasks: screen reading,
+  Settings, Wi-Fi status, app drawer, Back, scrolling, Home, recents entry,
+  notifications, cross-app navigation, and state recovery.
+- `adb_android_text_editing` (`suites/adb_android_text_editing.json`), 4 tasks: spaces,
+  punctuation, query replacement, and clearing in Settings search.
 
-Note: `required_tools` for the action tasks is intentionally left empty — every
-action tool on the daemon already returns a post-action screenshot, and the
-agent may reach the same outcome with either `quick_action` or `touch_gesture`.
-The correctness of the multi-step tasks is judged mainly by the rubric; under
-`--no-judge` the hard assertions can only check "an action ran and it did not
-time out".
+Use an unlocked device with an app drawer, Settings search, and Clock's alarm
+list available. Complete first-run onboarding before running the suites. Tasks
+use English instructions and accept equivalent localized Android screens.
+
+The bridge returns Home and dismisses the keyboard before each task; it does
+not reset app data or launcher layout. Task setup prepares the required screen
+or search query. Both suites run serially on the connected device.
+
+The three `quick_action_*` tasks require successful execution of the named
+shortcut. Other tasks accept any supported route unless the goal explicitly
+requires recents. Judging uses pre/post screenshots and the execution trace;
+`--no-judge` checks execution only, not UI correctness.
+
+In GitHub Actions, select profile `adb` and leave `suite` empty to run both
+suites, or enter one suite path to run it alone. The workflow requires an
+already booted device and `BENCHMARK_ANDROID_SERIAL`; see
+[CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
+For local runs, use either suite path in the quick-start command above. Add
+`--task-id <id>` to select individual tasks and `--repeats <count>` to repeat them.
 
 ## HTTP protocol
 

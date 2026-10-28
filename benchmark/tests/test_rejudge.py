@@ -1,9 +1,60 @@
+import dataclasses as dc
 import json
 from pathlib import Path
 import pytest
 
 from runner import rejudge
 from runner.models import RubricVerdict
+from runner.runtask import evaluate_task_history
+from runner.suite import HardAssertions, RubricItem, Suite, TaskSpec
+
+
+@pytest.mark.parametrize("outcome", ["yes", "no", "judge_error", "setup_skip", "hard_failure"])
+def test_rejudge_scores_no_judge_attempts_but_preserves_execution_gates(tmp_path, monkeypatch, outcome):
+    task = TaskSpec(
+        id="task", category="navigation", prompt="Open Settings",
+        description_for_judge="Settings is open",
+        rubric=[RubricItem(id="opened", check="Settings is open")],
+        hard_assertions=HardAssertions(min_tool_calls=0),
+    )
+    suite = Suite(name="test", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    result = evaluate_task_history(
+        suite=suite, task=task, history=[{"type": "assistant", "content": "Done"}],
+        attempt=1, artifact_dir=tmp_path / "tasks" / "task" / "attempt_1",
+        judge_cfg=None, judge_cache_dir=None, run_id="test", timed_out=False,
+    )
+    assert result.status == "skipped"
+    row = dc.asdict(result)
+    if outcome == "setup_skip":
+        row["metrics"].pop("judging_disabled")
+    elif outcome == "hard_failure":
+        row["hard_assertions"]["environment_state"] = False
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    judged = []
+
+    def judge(**kwargs):
+        judged.append(kwargs)
+        if outcome == "judge_error":
+            raise RuntimeError("judge unavailable")
+        return type("Verdict", (), {"verdicts": [RubricVerdict("opened", outcome, "Evidence checked")]})()
+
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    scored = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    if outcome in {"setup_skip", "hard_failure"}:
+        assert judged == []
+        assert scored == row
+    elif outcome == "judge_error":
+        assert scored["status"] == "judge_error"
+        assert scored["metrics"]["success"] is None
+        assert scored["metrics"]["agent_eligible"] is False
+    else:
+        assert len(judged) == 1
+        assert scored["status"] == ("passed" if outcome == "yes" else "failed")
+        assert scored["metrics"]["success"] is (outcome == "yes")
+        assert scored["metrics"]["agent_eligible"] is True
+        assert "judging_disabled" not in scored["metrics"]
+        assert "error" not in scored["metrics"]
 
 
 def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):

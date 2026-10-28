@@ -17,10 +17,10 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/screen"
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -50,20 +50,20 @@ type livePerceptionResult struct {
 }
 
 func TestVisualCoordinatesLive(t *testing.T) {
-	if os.Getenv("AIDEN_VISUAL_LIVE") != "1" {
-		t.Skip("set AIDEN_VISUAL_LIVE=1 to make paid real-model requests")
+	if os.Getenv("AICO_VISUAL_LIVE") != "1" {
+		t.Skip("set AICO_VISUAL_LIVE=1 to make paid real-model requests")
 	}
 	base, token := os.Getenv("ANTHROPIC_BASE_URL"), os.Getenv("ANTHROPIC_AUTH_TOKEN")
-	modelName := os.Getenv("AIDEN_VISUAL_MODEL")
-	output := os.Getenv("AIDEN_VISUAL_RESULTS")
+	modelName := os.Getenv("AICO_VISUAL_MODEL")
+	output := os.Getenv("AICO_VISUAL_RESULTS")
 	if base == "" || token == "" || modelName == "" || output == "" {
-		t.Fatal("requires ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, AIDEN_VISUAL_MODEL, AIDEN_VISUAL_RESULTS")
+		t.Fatal("requires ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN, AICO_VISUAL_MODEL, AICO_VISUAL_RESULTS")
 	}
 	if err := os.MkdirAll(output, 0700); err != nil {
 		t.Fatal(err)
 	}
 	repeats := 1
-	if raw := os.Getenv("AIDEN_VISUAL_REPEATS"); raw != "" {
+	if raw := os.Getenv("AICO_VISUAL_REPEATS"); raw != "" {
 		var err error
 		repeats, err = strconv.Atoi(raw)
 		if err != nil || repeats < 1 || repeats > 10 {
@@ -89,7 +89,7 @@ func TestVisualCoordinatesLive(t *testing.T) {
 	variants := []string{"baseline", "prepared"}
 	for repeat := 1; repeat <= repeats; repeat++ {
 		for _, task := range suite.Tasks {
-			if filter := os.Getenv("AIDEN_VISUAL_TASK"); filter != "" && task.ID != filter {
+			if filter := os.Getenv("AICO_VISUAL_TASK"); filter != "" && task.ID != filter {
 				continue
 			}
 			for _, variant := range variants {

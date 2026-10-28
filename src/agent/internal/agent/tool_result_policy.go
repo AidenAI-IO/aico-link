@@ -10,9 +10,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/llms"
 )

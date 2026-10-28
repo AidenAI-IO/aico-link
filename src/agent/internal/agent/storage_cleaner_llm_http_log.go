@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // LLMHTTPLogCleaner cleans up old LLM HTTP log files
