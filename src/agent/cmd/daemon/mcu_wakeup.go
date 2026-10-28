@@ -18,6 +18,7 @@ import (
 const (
 	defaultMCUVoiceCursorPath = "/run/aico/agent-mcu-wakeup.json"
 	mcuVoiceWakeupMaxAge      = 30 * time.Second
+	mcuVoiceStartupMaxAge     = 2 * time.Minute
 )
 
 type mcuWakeupEvents interface {
@@ -40,6 +41,7 @@ type mcuWakeupSource struct {
 	active    bool
 	loaded    bool
 	cursor    mcuVoiceCursor
+	startupAt time.Time
 }
 
 func newMCUWakeupSource(client mcuWakeupEvents, statePath string) *mcuWakeupSource {
@@ -148,6 +150,11 @@ func (s *mcuWakeupSource) run(ctx context.Context, callback func(), tapEnabled b
 	for ctx.Err() == nil {
 		page, err := s.client.EventsSince(ctx, s.cursor.ID, s.cursor.Generation, 50, 25000)
 		if err == nil && ctx.Err() == nil {
+			if page != nil && page.Generation != "" && s.cursor.Generation == "" && s.startupAt.IsZero() {
+				// With no saved cursor, include wakes received during initial
+				// subscription retries in the retained startup history.
+				s.startupAt = s.now()
+			}
 			err = s.consumeWithTap(ctx, page, callback, tapEnabled)
 		}
 		if ctx.Err() != nil {
@@ -184,6 +191,7 @@ func (s *mcuWakeupSource) consumeWithTap(ctx context.Context, page *mcu.EventPag
 	}
 	if page.ResetRequired {
 		logging.Warnf("agent", "wakeup", "MCU event generation/cursor reset; reading retained history")
+		s.startupAt = time.Time{}
 		return s.checkpoint(mcuVoiceCursor{Generation: page.Generation, ID: "0"})
 	}
 	if s.cursor.Generation != "" && s.cursor.Generation != page.Generation {
@@ -216,7 +224,11 @@ func (s *mcuWakeupSource) consumeWithTap(ctx context.Context, page *mcu.EventPag
 			continue
 		}
 		received, err := time.Parse(time.RFC3339Nano, event.ReceivedAt)
-		if err != nil || s.now().Sub(received) > mcuVoiceWakeupMaxAge {
+		maxAge := mcuVoiceWakeupMaxAge
+		if !s.startupAt.IsZero() && !received.After(s.startupAt) {
+			maxAge = mcuVoiceStartupMaxAge
+		}
+		if err != nil || s.now().Sub(received) > maxAge {
 			logging.Warnf("agent", "wakeup", "Skipping stale or undated MCU wakeup event generation=%s id=%s", page.Generation, event.ID)
 			continue
 		}
@@ -229,5 +241,13 @@ func (s *mcuWakeupSource) consumeWithTap(ctx context.Context, page *mcu.EventPag
 	if err != nil || next < cursorID {
 		return errors.New("invalid MCU next_id")
 	}
-	return s.checkpoint(mcuVoiceCursor{Generation: page.Generation, ID: page.NextID})
+	if err := s.checkpoint(mcuVoiceCursor{Generation: page.Generation, ID: page.NextID}); err != nil {
+		return err
+	}
+	if page.NextID == page.LastID {
+		// Keep the allowance across limited pages, then restore normal
+		// freshness checks as soon as retained startup history is drained.
+		s.startupAt = time.Time{}
+	}
+	return nil
 }
