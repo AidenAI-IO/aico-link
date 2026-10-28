@@ -15,7 +15,9 @@ import (
 const priorUserTurnsForMemoryRequests = 2
 
 // recentUserTexts returns the text of the last limit user messages in the
-// session, oldest first.
+// session, oldest first. A compaction summary is stored as a user message but
+// written by the model, and it carries remarks from outside the window, so it
+// is skipped.
 func recentUserTexts(manager *contextmanager.ContextManager, limit int) []string {
 	if manager == nil || limit <= 0 {
 		return nil
@@ -24,7 +26,7 @@ func recentUserTexts(manager *contextmanager.ContextManager, limit int) []string
 	var texts []string
 	manager.MessageListWindow(func(_ string, view []messages.Message) (int, int) {
 		for i := len(view) - 1; i >= 0 && len(texts) < limit; i-- {
-			if view[i].Role == messages.MessageRoleUser && strings.TrimSpace(view[i].Content) != "" {
+			if view[i].Role == messages.MessageRoleUser && !view[i].CompactionSummary && strings.TrimSpace(view[i].Content) != "" {
 				texts = append(texts, view[i].Content)
 			}
 		}

@@ -164,6 +164,21 @@ func TestSaveMemoryToolAcceptsRequestFromPreviousTurn(t *testing.T) {
 	}
 }
 
+func TestRecentUserTextsSkipsCompactionSummary(t *testing.T) {
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleUser, Content: "<summary>\n用户说过：帮我记住门禁密码\n</summary>\n", CompactionSummary: true},
+		{Role: messages.MessageRoleUser, Content: "今天几号"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	texts := recentUserTexts(manager, 2)
+	if len(texts) != 1 || texts[0] != "今天几号" {
+		t.Fatalf("recentUserTexts() = %q, want only the user's own message", texts)
+	}
+}
+
 func TestSaveMemoryToolSavesOrdinaryMemoryWithoutRequestQuote(t *testing.T) {
 	tool := NewSaveMemoryTool(NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term")))
 	result := saveMemoryForTest(t, context.Background(), tool, `{"type":"profile","content":"用户希望回复尽量简短"}`)
