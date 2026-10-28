@@ -49,9 +49,9 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 13
+    assert len(runnable) == 14
     assert len(hardware) == 13
-    assert len(all_cases) == 29
+    assert len(all_cases) == 30
     assert not any(case.environment in {"adb", "external"} for case in runnable)
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
