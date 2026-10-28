@@ -8,6 +8,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 )
 
 func TestParseMemorySensitiveKind(t *testing.T) {
@@ -132,6 +135,32 @@ func TestSaveMemoryToolAcceptsRequestFromSteer(t *testing.T) {
 	result := saveMemoryForTest(t, ctx, tool, `{"type":"fact","content":"门禁卡密码 2690","sensitive":"credential","user_request":"先帮我记一下"}`)
 	if result["status"] != "saved" {
 		t.Fatalf("result = %v, want saved", result)
+	}
+}
+
+func TestSaveMemoryToolAcceptsRequestFromPreviousTurn(t *testing.T) {
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	tool := NewSaveMemoryTool(store)
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleUser, Content: "今天天气怎么样"},
+		{Role: messages.MessageRoleUser, Content: "记住我的门禁密码"},
+		{Role: messages.MessageRoleAssistant, Content: "好的，密码是多少？"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The request came a turn before the secret.
+	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{Input: "是 4821"}, MemoryContext{})
+	recorder.setPriorUserTexts(recentUserTexts(manager, 1))
+	ctx := WithEpisodeRecorder(context.Background(), recorder)
+	result := saveMemoryForTest(t, ctx, tool, `{"type":"fact","content":"门禁密码 4821","sensitive":"credential","user_request":"记住我的门禁密码"}`)
+	if result["status"] != "saved" {
+		t.Fatalf("result = %v, want saved", result)
+	}
+	// Older messages outside the window do not count.
+	if result := saveMemoryForTest(t, ctx, tool, `{"type":"fact","content":"门禁密码 4821","sensitive":"credential","user_request":"今天天气怎么样"}`); result["status"] != "refused" {
+		t.Fatalf("result = %v, want refused for a quote outside the window", result)
 	}
 }
 

@@ -592,8 +592,15 @@ func classifyEpisodeMemoryRequestError(err error) error {
 
 func (p *episodeMemoryProcessor) retryEpisodeMemoryWork(state *episodeMemoryStateFile, work *episodeMemoryWork, cause error, result *MemoryBatchResult) error {
 	cause = safeEpisodeMemoryError(cause)
-	attemptCount := max(work.originalStatus.AttemptCount, work.status.AttemptCount) + 1
-	if attemptCount >= episodeMemoryMaxAttempts {
+	attemptCount := max(work.originalStatus.AttemptCount, work.status.AttemptCount)
+	// A batch split does not show which Episode failed, so it costs none of
+	// them an attempt. Its retry runs alone (RetryBatchLimit 1), so the split
+	// cannot repeat and the solo attempt is the one that counts.
+	splitOnly := errors.Is(cause, errEpisodeMemoryBatchSplit)
+	if !splitOnly {
+		attemptCount++
+	}
+	if !splitOnly && attemptCount >= episodeMemoryMaxAttempts {
 		return p.ignoreEpisodeMemoryWork(state, work, cause)
 	}
 	retryAt := p.now().Add(episodeMemoryRetryDelay)

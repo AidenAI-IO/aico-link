@@ -1182,7 +1182,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if streamCallbackHandler != nil {
 		executorHandler = streamCallbackHandler
 	}
-	profile := r.buildAgentProfile(r.skills, availableTools)
+	// Read the user profile once per run: new sessions start with it and the
+	// refresh below brings an existing session up to date.
+	userProfile, profileErr := r.memories.UserProfilePrompt(ctx)
+	if profileErr != nil {
+		r.memories.warnProfileReadFailure(profileErr)
+	}
+	profile := r.buildAgentProfile(r.skills, availableTools, userProfile)
 	var steerStatus steerConversationStatus
 	var steerRecorder steerConversationRecorder
 	if req.SteerProvider != nil {
@@ -1222,12 +1228,15 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
-	// A profile read failure keeps the section the session already carries.
-	if userProfile, err := r.memories.UserProfilePrompt(ctx); err != nil {
-		r.memories.warnProfileReadFailure(err)
-	} else if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
-		return RunResult{}, err
+	// The profile only enriches the prompt, so a read or refresh failure keeps
+	// the section the session already carries instead of failing the run.
+	if profileErr == nil {
+		if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
+			r.logger.Warn("[memory] refresh user profile section failed: %v", err)
+		}
 	}
+	// A request to keep a secret may come a turn before the secret itself.
+	episodeRecorder.setPriorUserTexts(recentUserTexts(r.contextManager, priorUserTurnsForMemoryRequests))
 	if req.ResumeSessionID != "" {
 		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
 		if err != nil {
@@ -1590,8 +1599,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 }
 
 func (r *Runtime) getSystemPrompt() string {
-	profile := r.buildAgentProfile(r.skills, r.availableTools())
-	return profile.SystemPrompt
+	userProfile, err := r.memories.UserProfilePrompt(context.Background())
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	return r.buildAgentProfile(r.skills, r.availableTools(), userProfile).SystemPrompt
 }
 
 // sessionChunkWriter builds the writer that persists a compacted conversation
@@ -2355,7 +2367,7 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 	}()
 }
 
-func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool) RoleProfile {
+func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
 	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
@@ -2367,12 +2379,9 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
-	// A new session has no earlier section to keep, so on a read failure it
-	// starts without one; the next run's refresh adds it once the read works.
-	userProfile, err := r.memories.UserProfilePrompt(context.Background())
-	if err != nil {
-		r.memories.warnProfileReadFailure(err)
-	}
+	// A new session has no earlier section to keep, so on a read failure the
+	// caller passes an empty profile; the next run's refresh adds it once the
+	// read works.
 	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
 	return profile
 }

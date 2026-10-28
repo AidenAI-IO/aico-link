@@ -216,10 +216,11 @@ func InitializeContextManager(
 		if err != nil {
 			return nil, fmt.Errorf("failed to create context manager: %w", err)
 		}
-	} else if strings.TrimSpace(manager.MessageListDump().Messages[0].Content) != strings.TrimSpace(systemPrompt) {
+	} else if strings.TrimSpace(withUserProfileSection(manager.MessageListDump().Messages[0].Content, "")) != strings.TrimSpace(withUserProfileSection(systemPrompt, "")) {
 		// The generated date is runtime context, not a configuration change.
 		// Keep the append-only transcript and provider continuation intact while
 		// supplying the new date before the next task resumes this conversation.
+		// A changed user profile section is refreshed separately by the run.
 		dateContext := strings.SplitN(strings.TrimSpace(systemPrompt), "\n", 3)[1]
 		if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleState, Content: dateContext}); err != nil {
 			return nil, fmt.Errorf("refresh session date: %w", err)
@@ -246,11 +247,13 @@ func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, syste
 		systemPromptIdentity(messageList[0].Content) == systemPromptIdentity(systemPrompt)
 }
 
-// Only the date line emitted at the beginning of buildProfile is volatile.
-// Preserve the timezone and every instruction, including date-like user text,
-// so actual configuration changes still start a new conversation.
+// Only the date line emitted at the beginning of buildProfile and the trailing
+// user profile section are volatile. Preserve the timezone and every
+// instruction, including date-like user text, so actual configuration changes
+// still start a new conversation.
 var generatedPromptDate = regexp.MustCompile(`^(` + regexp.QuoteMeta(agentIdentityPrompt) + `\nCurrent date: )[0-9]{4}-[0-9]{2}-[0-9]{2} \((?:Sunday|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|星期[一二三四五六日]), timezone: ([^)\n]+)\)\n`)
 
 func systemPromptIdentity(prompt string) string {
-	return generatedPromptDate.ReplaceAllString(strings.TrimSpace(prompt), "${1}(timezone: ${2})\n")
+	prompt = strings.TrimSpace(withUserProfileSection(prompt, ""))
+	return generatedPromptDate.ReplaceAllString(prompt, "${1}(timezone: ${2})\n")
 }

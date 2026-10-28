@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
@@ -732,17 +733,22 @@ func (s *LongTermMemoryStore) ProfilePrompt(ctx context.Context, maxChars int) (
 	if unreadable > 0 {
 		return "", fmt.Errorf("%d profile memories are unreadable", unreadable)
 	}
+	// An entry that does not fit is skipped rather than ending the list, so
+	// one long entry cannot hide the shorter ones after it.
 	var b strings.Builder
+	used := 0
 	for _, entry := range entries {
 		content := strings.Join(strings.Fields(entry.Content), " ")
 		if content == "" || entry.FromNotification {
 			continue
 		}
 		line := "- (" + entry.Type + ") " + content + "\n"
-		if b.Len()+len(line) > maxChars {
-			break
+		size := utf8.RuneCountInString(line)
+		if used+size > maxChars {
+			continue
 		}
 		b.WriteString(line)
+		used += size
 	}
 	return strings.TrimSpace(b.String()), nil
 }

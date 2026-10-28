@@ -122,11 +122,14 @@ type EpisodeRecorder struct {
 	request      MemoryRetrieveRequest
 	retrieved    MemoryContext
 	recalledRefs []string
-	events       []TaskEpisodeEvent
-	counter      int
-	store        *TaskEpisodeStore
-	started      bool
-	startErr     error
+	// priorUserTexts are the user's messages from the turns just before this
+	// run; see UserTexts.
+	priorUserTexts []string
+	events         []TaskEpisodeEvent
+	counter        int
+	store          *TaskEpisodeStore
+	started        bool
+	startErr       error
 }
 
 type episodeRecorderCtxKey struct{}
@@ -425,16 +428,30 @@ func (r *EpisodeRecorder) RecordMemoryRecall(memoryIDs []string) {
 	r.recalledRefs = append(r.recalledRefs, memoryIDs...)
 }
 
-// UserTexts returns the user's words in this run: the original input and any
-// steer messages received while it was running. Memory writers use them to
-// verify an explicit request instead of trusting the model's own claim.
+// setPriorUserTexts records the user's messages from the turns just before
+// this run, so a request made in one turn still counts when the content it
+// asked to keep arrives in the next.
+func (r *EpisodeRecorder) setPriorUserTexts(texts []string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.priorUserTexts = append([]string(nil), texts...)
+}
+
+// UserTexts returns the user's words available to this run: the messages from
+// the turns just before it, the original input, and any steer messages
+// received while it was running. Memory writers use them to verify an explicit
+// request instead of trusting the model's own claim.
 func (r *EpisodeRecorder) UserTexts() []string {
 	if r == nil {
 		return nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	texts := []string{r.request.Input}
+	texts := append([]string(nil), r.priorUserTexts...)
+	texts = append(texts, r.request.Input)
 	for _, event := range r.events {
 		if event.Type == "steer" {
 			texts = append(texts, event.Content)

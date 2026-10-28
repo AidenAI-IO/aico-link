@@ -61,8 +61,10 @@ numbers.
 
 A sensitive memory is saved only when the model also sets `user_request` to the
 user's own words asking to remember it. Code checks that those words appear in
-the run's user input or steer messages, comparing letters and digits without
-case. The quote must contain at least two letters, so citing the secret value
+the run's user input or steer messages, or in the user's two messages before
+the run, comparing letters and digits without case. The earlier messages cover
+a request made one turn before the secret, such as "remember my door code"
+followed by the code after the Agent asks for it. The quote must contain at least two letters, so citing the secret value
 alone does not count. Otherwise the tool returns `status=refused`, nothing is
 written, and the Agent tells the user it was not remembered. The quote check
 stops the model from inventing a request; whether the quoted words ask to
@@ -81,7 +83,8 @@ Memory prompt tells the model to ignore OTPs and secrets.
 
 The system prompt ends with a "User profile" section that lists the active
 `profile`, `preference`, and `rule` memories, highest priority first, within
-about 1,500 characters. They are read from the records, not from the
+about 1,500 characters. An entry that does not fit is skipped, so the shorter
+entries after it are still listed. They are read from the records, not from the
 model-written `profile.md`, so the section matches what was saved. The Agent
 therefore applies saved preferences without calling `recall_memory`.
 
@@ -92,7 +95,11 @@ example because the user saved, changed, or forgot a profile memory, the system
 message is rewritten in a new session revision, the same mechanism context
 compaction uses: the conversation continues, the old transcript stays on disk,
 and scheduled tasks keep following the lineage. An unchanged profile leaves the
-session and any provider prompt cache untouched.
+session and any provider prompt cache untouched. The profile section is not
+part of the configuration that decides whether a saved session is resumed, so a
+profile change never starts a new conversation. If the profile cannot be read
+or the session cannot be rewritten, the run logs a warning and continues with
+the section the session already carries.
 
 Sensitive memories, `fact` memories, and memories whose content was written by
 Notification Memory are not listed; notification content is written by third
@@ -381,7 +388,7 @@ processing/proposed -> ignored
 
 The proposal is persisted before Device Memory writes. Recovery can therefore apply an existing proposal without repeating the model call.
 
-Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results for a single Episode. When a batch of several Episodes fails without a retryable cause, the failure does not show which Episode caused it, so each Episode is retried on its own instead of being discarded with the batch. A model request that fails or times out is retried, because no response arrived. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. Logs and the processing ledger keep the failure class (request failed, timed out, invalid JSON, batch shape mismatch, truncation, empty response, or a review failure) and drop the wrapped provider text. Each scheduled retry is logged with its attempt number. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
+Empty responses and invalid JSON from a normally finished model response are terminal `ignored` results for a single Episode. When a batch of several Episodes fails without a retryable cause, the failure does not show which Episode caused it, so each Episode is retried on its own instead of being discarded with the batch. That split does not count as an attempt for any of its Episodes; the individual retry that follows does. A model request that fails or times out is retried, because no response arrived. A response identified as output-token truncation is scheduled for retry; its Episodes are retried individually so the worker does not replay the same oversized batch, and extraction, omission-review, and retention-audit calls receive a larger output budget on each retry. Failure logs record response sizes but never the response body, which may repeat sensitive Episode values. Logs and the processing ledger keep the failure class (request failed, timed out, invalid JSON, batch shape mismatch, truncation, empty response, or a review failure) and drop the wrapped provider text. Each scheduled retry is logged with its attempt number. A process crash after entering `processing` but before persisting a proposal is ignored after its lease expires.
 
 If a target Memory revision changes before update, the stale proposal is discarded and the Episode is re-extracted against the latest revision. Output-token truncation and retention/omission review failures may also schedule another model call for the same extractor version.
 

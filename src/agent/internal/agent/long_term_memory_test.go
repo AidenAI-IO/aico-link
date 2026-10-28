@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestLongTermMemoryAddWritesMarkdownAndSearchableIndex(t *testing.T) {
@@ -620,12 +621,23 @@ func TestLongTermMemoryProfilePromptListsProfileEntriesWithinBudget(t *testing.T
 	if prompt != want {
 		t.Fatalf("ProfilePrompt() = %q, want %q", prompt, want)
 	}
-	short, err := store.ProfilePrompt(ctx, len("- (profile) 用户是一名护士，经常上夜班。\n"))
+	short, err := store.ProfilePrompt(ctx, utf8.RuneCountInString("- (profile) 用户是一名护士，经常上夜班。\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if short != "- (profile) 用户是一名护士，经常上夜班。" {
 		t.Fatalf("ProfilePrompt(short) = %q, want only the highest-priority entry", short)
+	}
+	// An entry that does not fit is skipped; shorter ones after it still apply.
+	if _, err := store.AddMemory(ctx, MemoryItem{ID: "mem_long", Type: "rule", Priority: 99, Confidence: 0.9, Content: strings.Repeat("回复前先确认上下文。", 10), EvidenceExcerpts: []string{"规则"}}); err != nil {
+		t.Fatal(err)
+	}
+	tight, err := store.ProfilePrompt(ctx, utf8.RuneCountInString(want+"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tight != want {
+		t.Fatalf("ProfilePrompt(tight) = %q, want %q after skipping the entry that does not fit", tight, want)
 	}
 }
 

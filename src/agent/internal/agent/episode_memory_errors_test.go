@@ -82,6 +82,45 @@ func TestEpisodeMemoryMalformedBatchRetriesEpisodesIndividually(t *testing.T) {
 	}
 }
 
+// A batch split is not any one Episode's failure, so it must not use up the
+// attempts of Episodes that already failed for other reasons.
+func TestEpisodeMemoryBatchSplitDoesNotUseAnAttempt(t *testing.T) {
+	ctx := context.Background()
+	plane := NewFilesystemMemoryPlane(filepath.Join(t.TempDir(), "memory"), DefaultMemoryExtractionConfig(), nil)
+	model := &episodeMemoryScriptedModel{responses: []string{`not-json`}}
+	processor := newEpisodeMemoryProcessor(plane, model)
+	processor.state.bootstrapAt = time.Date(2026, 8, 13, 0, 0, 0, 0, time.UTC)
+	if err := processor.Initialize(); err != nil {
+		t.Fatalf("Initialize() error = %v", err)
+	}
+	ids := addEpisodeMemoryTestEpisodes(t, plane, "ep_split", 2)
+	now := time.Date(2026, 8, 14, 13, 0, 0, 0, time.UTC)
+	processor.now = func() time.Time { return now }
+	for _, id := range ids {
+		if err := processor.state.SetEpisode(id, episodeMemoryEpisodeStatus{
+			Status:           episodeMemoryStatusRetry,
+			ExtractorVersion: episodeMemoryExtractorVersion,
+			RetryAt:          now.Add(-time.Minute).Format(time.RFC3339Nano),
+			AttemptCount:     episodeMemoryMaxAttempts - 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := processor.ProcessBatch(ctx, nil); err != nil {
+		t.Fatalf("ProcessBatch() error = %v", err)
+	}
+	state, err := processor.state.Snapshot()
+	if err != nil {
+		t.Fatalf("Snapshot() error = %v", err)
+	}
+	for _, id := range ids {
+		status := state.Episodes[episodeMemoryStateKey(id, episodeMemoryExtractorVersion)]
+		if status.Status != episodeMemoryStatusRetry || status.RetryBatchLimit != 1 || status.AttemptCount != episodeMemoryMaxAttempts-1 {
+			t.Fatalf("status[%s] = %#v, want an individual retry with its attempts unchanged", id, status)
+		}
+	}
+}
+
 // A request that never got an answer says nothing about the Episode, so it is
 // retried, and the ledger records the failure class without the provider text.
 func TestEpisodeMemoryModelCallFailureIsRetriedWithItsClass(t *testing.T) {

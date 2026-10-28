@@ -146,8 +146,6 @@ func splitDelimitedArgValues(s string) []string {
 	return out
 }
 
-// flexInt decodes a JSON number, but also tolerates a numeric string ("3"),
-// a float ("3.0" or 3.0), and an empty/null value (-> 0).
 // flexScalarString decodes a JSON string, boolean, or number as its text, so
 // a model that sends `"sensitive": true` still yields a usable value.
 type flexScalarString string
@@ -179,6 +177,8 @@ func (f *flexScalarString) UnmarshalJSON(data []byte) error {
 	}
 }
 
+// flexInt decodes a JSON number, but also tolerates a numeric string ("3"),
+// a float ("3.0" or 3.0), and an empty/null value (-> 0).
 type flexInt int
 
 func (f *flexInt) UnmarshalJSON(data []byte) error {
