@@ -1,0 +1,186 @@
+{
+  "name": "adb_android_builtin_apps",
+  "version": "1.0",
+  "description": "Real workflows in preinstalled Android apps: Chrome browsing, Google Maps discovery and directions, and device-local Contacts editing.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "trace_observations": [],
+  "tasks": [
+    {
+      "id": "chrome_open_reserved_domains",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Chrome and visit https://www.iana.org/domains/reserved. Find the example domains section, name one reserved domain shown there, and leave that section visible.",
+      "description_for_judge": "Verify native Chrome navigation to the IANA reserved domains page and grounded reading of a domain shown in its example domains section. Judge the successful tool trace and final screenshot; do not credit an answer based only on prior knowledge.",
+      "rubric": [
+        {"id": "page_loaded", "check": "The post-screenshot shows the IANA-managed Reserved Domains page in Chrome, not a search result or browser error."},
+        {"id": "example_section_visible", "check": "The post-screenshot shows the example domains section or a reserved example domain on that page."},
+        {"id": "domain_grounded", "check": "The final answer names a reserved domain visible in the post-screenshot."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 24,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "chrome_find_domain_in_page",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Chrome at https://www.iana.org/domains/reserved and leave the page visible. Dismiss any open browser menu or Find in page bar.",
+        "timeout_sec": 150,
+        "clear_history_after": true
+      },
+      "prompt": "Use Chrome's Find in page to find exactly example.org on this page. Leave the search bar and matching text visible, then report what you found.",
+      "description_for_judge": "The pre-screenshot must show the IANA page. The final screenshot must show Chrome's in-page search for example.org with a visible match on the same page; an address-bar search or a different site does not count.",
+      "rubric": [
+        {"id": "page_before", "check": "The pre-screenshot shows the IANA reserved domains page in Chrome."},
+        {"id": "find_query", "check": "The post-screenshot shows Chrome's Find in page interface containing exactly example.org."},
+        {"id": "match_visible", "check": "A matching example.org occurrence is visible on the page, and the answer describes that observed match."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 20,
+        "must_complete_within_sec": 210,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "chrome_two_iana_tabs",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Chrome at https://www.iana.org/domains/reserved and leave that page visible in a normal tab, with no browser menu or tab switcher open.",
+        "timeout_sec": 150,
+        "clear_history_after": true
+      },
+      "prompt": "Open a new Chrome tab and visit https://www.iana.org/domains/root/db. Open the tab switcher and leave the IANA-managed Reserved Domains and Top-Level Domains tabs visible. Tell me which two IANA pages are open.",
+      "description_for_judge": "Evaluate tab creation and switching in native Chrome. The final screenshot must show separate tab previews for the two IANA pages; pre-existing tabs and truncated tab titles are allowed. Do not count two pages opened sequentially in one tab.",
+      "rubric": [
+        {"id": "reserved_before", "check": "The pre-screenshot shows the IANA reserved domains page in Chrome."},
+        {"id": "two_tabs_visible", "check": "The post-screenshot shows Chrome's tab switcher with separate tabs for IANA-managed Reserved Domains and Top-Level Domains."},
+        {"id": "titles_grounded", "check": "The final answer identifies the two IANA pages visible in the tab previews without claiming a different site loaded."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "maps_find_eiffel_tower",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Google Maps, search for Eiffel Tower, and open its place details. Expand the details until its address is visible, tell me which city it is in, and leave the address visible. Do not save the place or start navigation.",
+      "description_for_judge": "Verify a real Maps place search and grounded reading. Accept localized labels and changing ratings or photos; the destination must be Eiffel Tower in Paris.",
+      "rubric": [
+        {"id": "maps_search", "check": "Successful tool results show a Maps search for Eiffel Tower, rather than only opening the app."},
+        {"id": "place_details", "check": "The post-screenshot shows Eiffel Tower place details and an address in Google Maps, not merely search suggestions or a browser page."},
+        {"id": "city_grounded", "check": "The final answer correctly identifies Paris from the address visible in the post-screenshot."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 28,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "maps_walking_route_louvre_to_eiffel",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "In Google Maps, get walking directions from Louvre Museum to Eiffel Tower in Paris. Leave the walking route preview open without starting turn-by-turn navigation. Report whether a walking route is displayed; do not use your current location as the starting point.",
+      "description_for_judge": "Verify route planning between two explicit landmarks without relying on emulator GPS. Route time and distance may vary. A transit, driving, or current-location route does not satisfy the task.",
+      "rubric": [
+        {"id": "endpoints", "check": "The post-screenshot shows Louvre Museum as origin and Eiffel Tower as destination, or their localized equivalent names."},
+        {"id": "walking_preview", "check": "The post-screenshot shows a walking route preview in Google Maps rather than active navigation, another travel mode, or an error screen."},
+        {"id": "grounded_report", "check": "The final answer accurately reports whether the walking route is visible, without inventing an exact travel time."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 420,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "contacts_create_benchmark_contact",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Contacts. If an exact contact named Aiden Benchmark Contact already exists, delete that benchmark contact first. Create a new contact stored on Device with name Aiden Benchmark Contact and phone number 5550102026. Save it and leave its details visible. Do not call or message anyone.",
+      "description_for_judge": "Verify creation of a device-local contact with the exact name and phone number. Deleting an existing contact is permitted only for the exact synthetic benchmark name. Judge the final saved detail screen and successful interaction trace.",
+      "rubric": [
+        {"id": "contact_created", "check": "The successful tool trace shows the Agent created and saved the synthetic contact in Contacts, rather than only finding a pre-existing record."},
+        {"id": "name_visible", "check": "The post-screenshot shows a saved contact detail page for Aiden Benchmark Contact."},
+        {"id": "phone_visible", "check": "The saved contact's phone number has digits 5550102026 in the post-screenshot; Android formatting separators are allowed."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 45,
+        "must_complete_within_sec": 480,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "contacts_edit_benchmark_contact",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Contacts, find the exact contact Aiden Benchmark Contact. If it is absent, create it on Device. Set its phone number to 5550102026, save it, and leave its saved detail page visible.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Change this contact's phone number from 5550102026 to 5550103030. Save the change and leave the updated details visible. Do not call or message anyone.",
+      "description_for_judge": "The pre-screenshot must show the synthetic contact with phone digits 5550102026. The post-screenshot must show the same contact saved with phone digits 5550103030 and without the old number. Ignore Android phone-number formatting separators.",
+      "rubric": [
+        {"id": "original_number", "check": "The pre-screenshot shows Aiden Benchmark Contact with phone digits 5550102026, allowing Android formatting separators."},
+        {"id": "number_updated", "check": "The post-screenshot shows the saved contact with phone digits 5550103030 and no old number, allowing formatting separators."},
+        {"id": "edit_saved", "check": "Successful tool results show that the Agent edited and saved the contact rather than only describing the requested change."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "contacts_delete_benchmark_contact",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Contacts, find the exact contact Aiden Benchmark Contact. If it is absent, create it on Device with phone number 5550103030. Leave its saved detail page visible without deleting it.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Delete this Aiden Benchmark Contact, then search Contacts for that exact name to verify it is gone. Leave the search result or empty state visible. Do not delete any other contact.",
+      "description_for_judge": "The pre-screenshot must show the synthetic contact. The final screenshot must show a search for that exact name with no matching contact. Judge deletion from the successful trace and final UI, not the final claim alone.",
+      "rubric": [
+        {"id": "contact_before", "check": "The pre-screenshot shows the saved Aiden Benchmark Contact detail page."},
+        {"id": "deleted_contact", "check": "Successful tool results show the exact synthetic contact was deleted in Contacts."},
+        {"id": "absence_verified", "check": "The post-screenshot shows a search for Aiden Benchmark Contact with no matching contact, or the Contacts empty state if no contacts remain."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    }
+  ]
+}

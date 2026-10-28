@@ -168,32 +168,51 @@ remain unchanged.
 
 ## Test suite
 
-The `adb` CI profile runs two suites and 20 tasks per repeat:
+The `adb` CI profile runs three suites and 28 tasks per repeat:
 
 - `adb_android_basic` (`suites/adb_android_basic.json`), 16 tasks: screen reading,
   Settings, Wi-Fi status, app drawer, Back, scrolling, Home, recents entry,
   notifications, cross-app navigation, and state recovery.
 - `adb_android_text_editing` (`suites/adb_android_text_editing.json`), 4 tasks: spaces,
   punctuation, query replacement, and clearing in Settings search.
+- `adb_android_builtin_apps` (`suites/adb_android_builtin_apps.json`), 8 tasks:
+  Chrome navigation, in-page search, and tabs; Google Maps place search and
+  walking directions; and device-local Contacts creation, editing, and deletion.
+
+The built-in app tasks share one suite because they use the same ADB device and
+setup. Task IDs carry an app prefix so results remain easy to filter by app.
+Split an app into its own suite when it needs a separate account, fixture, or
+run schedule. MobileGym's upstream app registry is a task reference, while
+this benchmark runner loads JSON suites from `benchmark/suites`.
 
 Use an unlocked device with an app drawer, Settings search, and Clock's alarm
-list available. Complete first-run onboarding before running the suites. Tasks
-use English instructions and accept equivalent localized Android screens.
+list available. The built-in app suite also requires Chrome, Google Maps,
+Contacts with Device storage, and access to `www.iana.org` and Maps search.
+Complete first-run onboarding before running the suites. Tasks use English
+instructions and accept equivalent localized Android screens. The Contacts
+tasks only modify an exact synthetic contact named `Aiden Benchmark Contact`;
+creation removes a stale matching contact, and the delete task removes it.
+
+YouTube is present on the current runner2 emulator, but its installed app opens
+only a mandatory update screen, while `m.youtube.com` currently fails to load
+in emulator Chrome. Add a playback task after the emulator image and network
+path can load public videos without an account; otherwise a failed score would
+measure the environment rather than Agent operation.
 
 The bridge returns Home and dismisses the keyboard before each task; it does
 not reset app data or launcher layout. Task setup prepares the required screen
-or search query. Both suites run serially on the connected device.
+or search query. All three suites run serially on the connected device.
 
 The three `quick_action_*` tasks require successful execution of the named
 shortcut. Other tasks accept any supported route unless the goal explicitly
 requires recents. Judging uses pre/post screenshots and the execution trace;
 `--no-judge` checks execution only, not UI correctness.
 
-In GitHub Actions, select profile `adb` and leave `suite` empty to run both
-suites, or enter one suite path to run it alone. The workflow requires an
+In GitHub Actions, select profile `adb` and leave `suite` empty to run all
+three suites, or enter one suite path to run it alone. The workflow requires an
 already booted device and `BENCHMARK_ANDROID_SERIAL`; see
 [CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
-For local runs, use either suite path in the quick-start command above. Add
+For local runs, use any suite path in the quick-start command above. Add
 `--task-id <id>` to select individual tasks and `--repeats <count>` to repeat them.
 
 ## HTTP protocol
