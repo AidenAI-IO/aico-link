@@ -73,6 +73,9 @@ func TestReplaceMemoryRequiresCurrentRevisionAndPreservesOtherRecords(t *testing
 		}
 	}
 	replacement := MemoryItem{Type: "preference", Content: "Use light mode.", EvidenceExcerpts: []string{"Use light mode."}}
+	if _, err := store.ReplaceMemory(ctx, "missing", 1, replacement); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("absent replacement target: %v, want target missing", err)
+	}
 	if _, err := store.ReplaceMemory(ctx, "theme?", 1, replacement); !errors.Is(err, errMemoryTargetMissing) {
 		t.Fatalf("different id resolving to the same file: %v, want target mismatch", err)
 	}

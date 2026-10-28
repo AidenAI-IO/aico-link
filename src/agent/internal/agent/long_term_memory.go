@@ -414,6 +414,9 @@ func (s *LongTermMemoryStore) ReplaceMemory(ctx context.Context, oldID string, e
 	defer s.writeMu.Unlock()
 	old, err := readMemoryMarkdown(s.memoryPath(oldID))
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errMemoryTargetMissing
+		}
 		return "", err
 	}
 	if old.Item.ID != oldID {

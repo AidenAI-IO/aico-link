@@ -749,6 +749,9 @@ func TestSaveMemoryToolReplacesRecalledMemory(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := NewSaveMemoryTool(store)
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"tmp_preference","expected_revision":1}`); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("replacement target outside long-term store: %v, want target missing", err)
+	}
 	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference"}`); err == nil {
 		t.Fatal("replacement without a revision succeeded")
 	}
