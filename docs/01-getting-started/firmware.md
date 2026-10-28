@@ -244,8 +244,8 @@ The production image uses an A/B partition layout:
 | `boot_b` | 32 MB | Slot B FIT boot image, points to `rootfs_b` |
 | `rootfs_a` | 1792 MiB | Slot A root filesystem |
 | `rootfs_b` | 1792 MiB | Slot B root filesystem |
-| `userdata` | 3 GB | Shared non-OTA persistent data |
 | `ota` | 300 MiB | Dedicated OTA state, health markers, and download cache |
+| `userdata` | Remaining TF capacity | Shared non-OTA persistent data; filesystem expands at boot |
 
 The raw `tf-card.img` contains every factory partition at its Rockchip
 `blkdevparts` offset. It has no conventional MBR/GPT.
