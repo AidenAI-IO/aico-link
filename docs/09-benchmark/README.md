@@ -508,11 +508,13 @@ ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
 
-When any selected case enables AidenBridge, CI downloads the current APK from
-the unversioned distribution URL and installs it with `adb install -r`. The job
-summary records the installed `versionCode` and downloaded APK SHA-256 so each
-comparison can be traced to the exact App binary used. The distribution object
-can change between runs; compare results across runs with that version in mind.
+When any selected case enables AidenBridge, CI reads the current release
+filename from the unversioned distribution URL and compares its `versionCode`
+with the App already installed on the emulator. It downloads and installs the
+APK only when the versions differ. The job summary records the release filename,
+installed `versionCode`, and whether the installation was reused; when an APK is
+downloaded, it also records its SHA-256. A republished APK with the same
+`versionCode` is treated as the same release.
 
 The general Android suites run as matched pairs using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:

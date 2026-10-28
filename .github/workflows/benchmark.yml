@@ -302,27 +302,47 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
-          apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
-          trap 'rm -f "$apk_path"' EXIT
-          echo "Downloading current AidenBridge APK"
-          curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
-          apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
-          echo "AidenBridge APK SHA-256: $apk_sha256"
-          echo "Installing current AidenBridge APK"
-          adb -s "$ANDROID_SERIAL" install -r "$apk_path"
-          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
-            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
-          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
-          [[ -n "$installed_version" && "$installed_path" == package:* ]] || {
-            echo "$AIDENBRIDGE_PACKAGE was not installed correctly" >&2
+          release_name="$(curl --fail --silent --show-error --location --head --retry 3 --max-time 30 "$AIDENBRIDGE_APK_URL" |
+            tr -d '\r' | sed -n 's/^[Cc]ontent-[Dd]isposition:.*filename="\([^"]*\)".*/\1/p' | tail -n 1)"
+          [[ "$release_name" =~ -([0-9]+)\.apk$ ]] || {
+            echo "Cannot determine AidenBridge version from release filename: $release_name" >&2
             exit 1
           }
-          echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
+          release_version="${BASH_REMATCH[1]}"
+          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')" || true
+          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")" || true
+          apk_sha256=""
+          if [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]]; then
+            install_status="Reused"
+            echo "Reusing $AIDENBRIDGE_PACKAGE version $installed_version"
+          else
+            install_status="Installed"
+            apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
+            trap 'rm -f "$apk_path"' EXIT
+            echo "Downloading $release_name"
+            curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
+            apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
+            echo "AidenBridge APK SHA-256: $apk_sha256"
+            adb -s "$ANDROID_SERIAL" install -r "$apk_path"
+            installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+              sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
+            installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+            [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]] || {
+              echo "Expected $AIDENBRIDGE_PACKAGE version $release_version, found ${installed_version:-none}" >&2
+              exit 1
+            }
+            echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
+          fi
           {
             echo "### AidenBridge APK"
             echo "Source: $AIDENBRIDGE_APK_URL"
+            echo "Release: $release_name"
             echo "Installed versionCode: $installed_version"
-            echo "SHA-256: $apk_sha256"
+            echo "Status: $install_status"
+            if [[ -n "$apk_sha256" ]]; then
+              echo "SHA-256: $apk_sha256"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Enable emulator routing for AidenBridge cases
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
