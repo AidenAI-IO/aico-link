@@ -76,7 +76,7 @@ def test_clipboard_write_events_ignores_other_diagnostics(monkeypatch) -> None:
 
 
 def test_bridge_input_requires_new_app_write_and_exact_other_app_field(monkeypatch) -> None:
-    target = "Aiden 输入验证 #42"
+    target = "Aiden résumé check #42"
     event = {"component": "clipboard", "event": "write_completed", "fields": {"text_length": len(target), "command_id": "write-current"}}
     xml = (
         '<hierarchy><node class="android.widget.EditText" package="com.android.settings" '
@@ -100,11 +100,11 @@ def test_bridge_input_requires_new_app_write_and_exact_other_app_field(monkeypat
 
 
 @pytest.mark.parametrize("package,text", [
-    ("com.aidenbridge", "Aiden 输入验证 #42"),
-    ("com.android.settings", "Aiden 输入验证 #42 wrong"),
+    ("com.aidenbridge", "Aiden résumé check #42"),
+    ("com.android.settings", "Aiden résumé check #42 wrong"),
 ])
 def test_bridge_write_alone_does_not_pass_input(monkeypatch, package, text):
-    target = "Aiden 输入验证 #42"
+    target = "Aiden résumé check #42"
     monkeypatch.setattr(android_phone_bridge, "clipboard_write_events", lambda serial: [
         {"fields": {"command_id": "current", "text_length": len(target)}}
     ])

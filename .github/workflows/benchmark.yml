@@ -140,10 +140,8 @@ jobs:
       BENCHMARK_TELEMETRY: '1'
       LANGFUSE_HTTPS_PROXY: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
       ANDROID_SERIAL: ${{ vars.BENCHMARK_ANDROID_SERIAL }}
-      AIDENBRIDGE_APK_URL: https://foxwallet.oss-cn-hongkong.aliyuncs.com/downloads/aidenbridge.apk?v=261022018
-      AIDENBRIDGE_APK_SHA256: 02439556d3f890177f8ff1ef79138d4a0c4073c90564ddc9fdc69aac05ccca93
+      AIDENBRIDGE_APK_URL: https://foxwallet.oss-cn-hongkong.aliyuncs.com/downloads/aidenbridge.apk
       AIDENBRIDGE_PACKAGE: com.aidenbridge
-      AIDENBRIDGE_VERSION_CODE: '261022018'
       BENCHMARK_PHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_PHONE_ENVIRONMENT_URL }}
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
       BENCHMARK_MAC_ENVIRONMENT_URL: ${{ vars.BENCHMARK_MAC_ENVIRONMENT_URL }}
@@ -304,28 +302,28 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
-          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" 2>/dev/null |
-            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')" || true
-          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE" 2>/dev/null)" || true
-          echo "Current version ${installed_version:-none}; package location ${installed_path:-none}"
-          if [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]]; then
-            echo "$AIDENBRIDGE_PACKAGE version $installed_version is already installed"
-            exit 0
-          fi
           apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
           trap 'rm -f "$apk_path"' EXIT
-          echo "Downloading pinned AidenBridge APK"
+          echo "Downloading current AidenBridge APK"
           curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
-          echo "$AIDENBRIDGE_APK_SHA256  $apk_path" | sha256sum --check --status
-          echo "Installing AidenBridge version $AIDENBRIDGE_VERSION_CODE"
+          apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
+          echo "AidenBridge APK SHA-256: $apk_sha256"
+          echo "Installing current AidenBridge APK"
           adb -s "$ANDROID_SERIAL" install -r "$apk_path"
           installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
             sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
           installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
-          [[ "$installed_version" == "$AIDENBRIDGE_VERSION_CODE" && "$installed_path" == package:* ]] || {
-            echo "Expected $AIDENBRIDGE_PACKAGE version $AIDENBRIDGE_VERSION_CODE, found ${installed_version:-none}" >&2
+          [[ -n "$installed_version" && "$installed_path" == package:* ]] || {
+            echo "$AIDENBRIDGE_PACKAGE was not installed correctly" >&2
             exit 1
           }
+          echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
+          {
+            echo "### AidenBridge APK"
+            echo "Source: $AIDENBRIDGE_APK_URL"
+            echo "Installed versionCode: $installed_version"
+            echo "SHA-256: $apk_sha256"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Enable emulator routing for AidenBridge cases
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
         run: |

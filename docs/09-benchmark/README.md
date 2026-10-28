@@ -508,13 +508,11 @@ ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
 
-When any selected case enables AidenBridge, CI checks `com.aidenbridge` on the emulator. It reuses
-version code `261022018` when present; otherwise it downloads the pinned APK,
-checks its SHA-256, and installs it with `adb install -r`. Update the URL,
-checksum, and expected version together in `benchmark.yml` when intentionally
-changing the tested App build. The upstream download path can be republished;
-the checksum makes a changed binary fail before installation. The emulator must
-retain its data between jobs for the installation to be reused.
+When any selected case enables AidenBridge, CI downloads the current APK from
+the unversioned distribution URL and installs it with `adb install -r`. The job
+summary records the installed `versionCode` and downloaded APK SHA-256 so each
+comparison can be traced to the exact App binary used. The distribution object
+can change between runs; compare results across runs with that version in mind.
 
 The general Android suites run as matched pairs using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:

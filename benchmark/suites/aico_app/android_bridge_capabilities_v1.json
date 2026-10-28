@@ -10,7 +10,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "multi_step",
       "description_for_judge": "Read the Android system clipboard through Phone Bridge, write a temporary marker, verify it, then restore and verify the original value, including an empty original value.",
-      "prompt": "请通过已连接手机的 Bridge 读取当前剪贴板文本，暂时写入 AIDEN_BRIDGE_CI_MARKER，读回确认，然后恢复原始文本并再次读回确认。原始文本为空时也要恢复为空。不要用屏幕操作来读写剪贴板。",
+      "prompt": "Use the connected phone's Bridge to read the current clipboard text. Temporarily write AIDEN_BRIDGE_CI_MARKER and read it back to confirm. Restore the original text, even if it was empty, and read it back again to confirm. Do not use screen controls to read or write the clipboard.",
       "rubric": [
         {"id": "marker_verified", "check": "The Phone Bridge clipboard write succeeds and a later bridge read returns AIDEN_BRIDGE_CI_MARKER exactly."},
         {"id": "original_restored", "check": "The original clipboard text is restored and verified by a final bridge read."}
@@ -35,7 +35,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
-      "prompt": "请直接通过已连接手机的 Bridge 打开 https://example.com/ ，不要手动操作浏览器界面。",
+      "prompt": "Open https://example.com/ directly through the connected phone's Bridge. Do not operate the browser UI manually.",
       "rubric": [
         {"id": "url_command_succeeded", "check": "The Agent calls open_url for exactly https://example.com/ and the Phone Bridge result succeeds."},
         {"id": "browser_opened", "check": "The post-screenshot shows Android handling the URL in a browser; a network loading error is acceptable."}
@@ -56,7 +56,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Launch Android Settings through the foreground AidenBridge semantic app command.",
-      "prompt": "请通过已连接手机的 Bridge 打开 Android Settings 应用，不要手动点击屏幕上的应用图标或搜索应用。",
+      "prompt": "Open Android Settings through the connected phone's Bridge. Do not tap an app icon or search for the app on screen.",
       "rubric": [
         {"id": "app_command_succeeded", "check": "open_app launches Settings successfully through the foreground Phone Bridge route."},
         {"id": "settings_visible", "check": "The post-screenshot shows Android Settings."}
@@ -77,7 +77,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Query a fixed date range through the Android Phone Bridge calendar API and report the structured result, including an empty event list.",
-      "prompt": "请仅通过已连接手机的 Bridge 查询系统日历在 2037-11-18T00:00:00+08:00 到 2037-11-19T00:00:00+08:00 之间的事件。请报告返回的事件数；如果为空，明确说没有事件。不要打开日历 App 或操作屏幕。",
+      "prompt": "Query system calendar events from 2037-11-18T00:00:00+08:00 to 2037-11-19T00:00:00+08:00 through the connected phone's Bridge only. Report the number of returned events; explicitly say when the list is empty. Do not open Calendar or operate the screen.",
       "rubric": [
         {"id": "calendar_bridge_query", "check": "bridge_calendar performs the requested query successfully and returns a structured events list."},
         {"id": "result_reported", "check": "The response reports the returned event count without inventing events."}
@@ -98,7 +98,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Query a dedicated benchmark contact name through the Android Phone Bridge contacts API; an empty list is valid, but transport and permission errors are not.",
-      "prompt": "请仅通过已连接手机的 Bridge 查询通讯录中姓名包含 Aiden Benchmark Fixture 的联系人，并报告返回数量。找不到时明确说返回了空列表，不要创建联系人，也不要操作屏幕。",
+      "prompt": "Query contacts whose names contain Aiden Benchmark Fixture through the connected phone's Bridge only, and report the number returned. If none are found, explicitly report an empty list. Do not create a contact or operate the screen.",
       "rubric": [
         {"id": "contacts_bridge_query", "check": "bridge_contacts queries Aiden Benchmark Fixture successfully and returns a structured contacts list."},
         {"id": "result_reported", "check": "The response reports the returned count without inventing contact details."}
@@ -119,7 +119,7 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "single_step",
       "description_for_judge": "Send an immediate local notification through Phone Bridge, report its ID, and verify its visible title and body in Android's notification shade.",
-      "prompt": "通过已连接手机的 Bridge 立即发送一条无声本地通知，标题为 AIDEN_BRIDGE_CI_NOTIFICATION，正文为 Android bridge notification verified。然后用 quick_action 的 notification_center 打开通知栏，确认这条通知的标题和正文可见，并报告返回的通知 ID。",
+      "prompt": "Send an immediate silent local notification through the connected phone's Bridge, with title AIDEN_BRIDGE_CI_NOTIFICATION and body Android bridge notification verified. Then use quick_action with action=notification_center to open the notification shade. Confirm the title and body are visible and report the returned notification ID.",
       "rubric": [
         {"id": "notification_bridge_send", "check": "bridge_notification sends the exact title and body with sound=false and returns a successful structured result."},
         {"id": "notification_id_reported", "check": "The response reports the notification_id returned by the Bridge app."},
@@ -143,9 +143,9 @@
       "category": "multi_step",
       "android_bridge_fixture": "calendar",
       "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
-      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes 中文日历验证. Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
+      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes Calendar verification. Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
       "rubric": [
-        {"id": "created_event_read_back", "check": "The created event is returned by query with matching ID, title, equivalent timestamps, location and Unicode notes."},
+        {"id": "created_event_read_back", "check": "The created event is returned by query with matching ID, title, equivalent timestamps, location and notes."},
         {"id": "created_event_deleted", "check": "Only the event created by this task is deleted and the final query confirms its ID is absent. Permission and provider errors do not count as success."}
       ],
       "hard_assertions": {
@@ -153,7 +153,7 @@
         "required_tools": ["bridge_calendar"],
         "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
         "required_tool_calls": [
-          {"tool": "bridge_calendar", "input_contains": {"action": "create", "title": "AidenBridgeBenchmarkEvent", "start_at": "2037-11-18T10:00:00+08:00", "end_at": "2037-11-18T10:30:00+08:00", "location": "Lab 42", "notes": "中文日历验证"}},
+          {"tool": "bridge_calendar", "input_contains": {"action": "create", "title": "AidenBridgeBenchmarkEvent", "start_at": "2037-11-18T10:00:00+08:00", "end_at": "2037-11-18T10:30:00+08:00", "location": "Lab 42", "notes": "Calendar verification"}},
           {"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2037-11-18T00:00:00+08:00", "to": "2037-11-19T00:00:00+08:00"}},
           {"tool": "bridge_calendar", "input_contains": {"action": "delete"}},
           {"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2037-11-18T00:00:00+08:00", "to": "2037-11-19T00:00:00+08:00"}}
@@ -188,10 +188,10 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "device_operation",
       "description_for_judge": "Open an SMS draft via Phone Bridge and enter multiline Unicode text using enter_text. Never send the draft. Harness checks App write evidence and exact editable field text.",
-      "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline and emoji:\nBridge 多行输入 ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
-      "android_bridge_input_text": "Bridge 多行输入 ✅\nLine 2: 100% & #42",
+      "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline, accented character and emoji:\nBridge café input ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
+      "android_bridge_input_text": "Bridge café input ✅\nLine 2: 100% & #42",
       "rubric": [
-        {"id": "draft_entered", "check": "The SMS composer contains both exact lines, including the newline, Chinese characters, emoji, percent sign and punctuation."},
+        {"id": "draft_entered", "check": "The SMS composer contains both exact lines, including the newline, accented character, emoji, percent sign and punctuation."},
         {"id": "not_sent", "check": "The text remains an unsent draft, with no sent message bubble or send action."}
       ],
       "hard_assertions": {
@@ -200,7 +200,7 @@
         "forbidden_tools": ["keyboard_text", "bridge_clipboard", "shell"],
         "required_tool_calls": [
           {"tool": "open_url", "input_contains": {"url": "sms:+12025550147"}},
-          {"tool": "enter_text", "input_contains": {"text": "Bridge 多行输入 ✅\nLine 2: 100% & #42"}}
+          {"tool": "enter_text", "input_contains": {"text": "Bridge café input ✅\nLine 2: 100% & #42"}}
         ]
       }
     },
@@ -209,10 +209,10 @@
       "foreground_app_id": "com.aidenbridge",
       "category": "device_operation",
       "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new AidenBridge clipboard write and exact UIAutomator field text.",
-      "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden 输入验证 #42. Use enter_text once the editable field is visible, then leave that field on screen.",
-      "android_bridge_input_text": "Aiden 输入验证 #42",
+      "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden résumé check #42. Use enter_text once the editable field is visible, then leave that field on screen.",
+      "android_bridge_input_text": "Aiden résumé check #42",
       "rubric": [
-        {"id": "target_field_visible", "check": "The post-screenshot shows the Android Settings search field containing Aiden 输入验证 #42 exactly."}
+        {"id": "target_field_visible", "check": "The post-screenshot shows the Android Settings search field containing Aiden résumé check #42 exactly."}
       ],
       "hard_assertions": {
         "min_tool_calls": 2,
@@ -221,7 +221,7 @@
         "required_tools": ["enter_text"],
         "forbidden_tools": ["keyboard_text", "bridge_clipboard"],
         "required_tool_calls": [
-          {"tool": "enter_text", "input_contains": {"text": "Aiden 输入验证 #42"}}
+          {"tool": "enter_text", "input_contains": {"text": "Aiden résumé check #42"}}
         ]
       }
     }
