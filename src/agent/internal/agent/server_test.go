@@ -4666,6 +4666,28 @@ func TestHandleBenchmarkSeedMemorySucceeds(t *testing.T) {
 	}
 }
 
+func TestHandleBenchmarkSeedMemoryMarksSensitive(t *testing.T) {
+	server, configDir := newBenchmarkSeedMemoryServer(t)
+	body := `{"id":"fixture_secret","type":"fact","content":"Safe code 5093.","tags":["safe"],"sensitive":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/benchmark/seed_memory", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-benchmark-token")
+	rec := httptest.NewRecorder()
+
+	server.handleBenchmarkSeedMemory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "memory", "long_term", "memories", "fixture_secret.md"))
+	if err != nil {
+		t.Fatalf("read seeded memory file: %v", err)
+	}
+	if !strings.Contains(string(data), "sensitive: true") {
+		t.Fatalf("memory file lacks the sensitive flag, got: %s", string(data))
+	}
+}
+
 func TestHandleBenchmarkSeedSessionChunkSucceeds(t *testing.T) {
 	server, configDir := newBenchmarkSeedMemoryServer(t)
 	body := `{

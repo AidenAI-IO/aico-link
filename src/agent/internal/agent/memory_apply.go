@@ -107,6 +107,13 @@ func (s *LongTermMemoryStore) applyMemoryCandidateLocked(ctx context.Context, it
 	}
 	switch action {
 	case "ignore":
+		claimed, err := s.claimDuplicateLocked(ctx, existingID, item)
+		if err != nil {
+			return MemoryApplyResult{}, err
+		}
+		if claimed {
+			return MemoryApplyResult{Operation: MemoryOperationReinforce, ID: existingID}, nil
+		}
 		return MemoryApplyResult{Operation: MemoryOperationIgnore, ID: existingID}, nil
 	case "supersede":
 		id, err := s.supersedeMemoryLocked(ctx, existingID, item)
@@ -115,6 +122,40 @@ func (s *LongTermMemoryStore) applyMemoryCandidateLocked(ctx context.Context, it
 		id, err := s.addMemoryLocked(ctx, item)
 		return MemoryApplyResult{Operation: MemoryOperationAdd, ID: id}, err
 	}
+}
+
+// claimDuplicateLocked folds a duplicate candidate into the existing record
+// when the candidate changes who owns it or how it is protected: a user's
+// explicit save takes over a conclusion that Notification Memory wrote, and a
+// sensitive save marks an ordinary duplicate sensitive. A claimed record keeps
+// only the user's words, since a duplicate may be a longer notification text
+// that contains them, and drops the notification's expiry. It reports whether
+// the record was rewritten.
+func (s *LongTermMemoryStore) claimDuplicateLocked(ctx context.Context, id string, candidate MemoryItem) (bool, error) {
+	path := s.memoryPath(id)
+	parsed, err := readMemoryMarkdown(path)
+	if err != nil {
+		return false, err
+	}
+	userClaim := candidate.Origin == memoryOriginUser && memoryFromNotification(parsed.Item)
+	if !userClaim && !(candidate.Sensitive && !parsed.Item.Sensitive) {
+		return false, nil
+	}
+	reinforceMemoryItem(&parsed.Item, candidate, time.Now().UTC())
+	if userClaim {
+		parsed.Item.Origin = memoryOriginUser
+		parsed.Item.Content = candidate.Content
+		if candidate.Title != "" {
+			parsed.Item.Title = candidate.Title
+		}
+		parsed.Item.ExpiresAt = ""
+		parsed.Item.TTL = ""
+	}
+	if err := writeFileAtomic(path, []byte(formatMemoryMarkdown(parsed.Item)), 0o644); err != nil {
+		return false, err
+	}
+	s.invalidateParsedMemoryCache(path)
+	return true, s.rebuildIndexLocked(ctx)
 }
 
 func (s *LongTermMemoryStore) applyMemoryIntentLocked(ctx context.Context, intent MemoryIntent) (MemoryApplyResult, error) {
@@ -355,6 +396,11 @@ func effectiveMemoryRevision(item MemoryItem) int {
 }
 
 func mergeMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) {
+	// Whoever writes new content owns it; an unchanged conclusion keeps its
+	// author.
+	if candidate.Origin != "" && candidate.Content != "" && candidate.Content != existing.Content {
+		existing.Origin = candidate.Origin
+	}
 	if candidate.Title != "" {
 		existing.Title = candidate.Title
 	}
@@ -373,6 +419,7 @@ func mergeMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) 
 	if candidate.TTL != "" {
 		existing.TTL = candidate.TTL
 	}
+	existing.Sensitive = existing.Sensitive || candidate.Sensitive
 	if candidate.Priority > existing.Priority {
 		existing.Priority = candidate.Priority
 	}
@@ -411,6 +458,7 @@ func updateMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time)
 }
 
 func reinforceMemoryItem(existing *MemoryItem, candidate MemoryItem, now time.Time) {
+	existing.Sensitive = existing.Sensitive || candidate.Sensitive
 	existing.Tags = mergeUniqueStrings(existing.Tags, candidate.Tags)
 	existing.Entities = mergeUniqueStrings(existing.Entities, candidate.Entities)
 	existing.SourceRefs = mergeMemorySourceRefs(existing.SourceRefs, candidate.SourceRefs)

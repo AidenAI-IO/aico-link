@@ -107,6 +107,43 @@ func TestInitializeContextManagerDateRolloverPreservesConfigurationChanges(t *te
 	}
 }
 
+func TestInitializeContextManagerReusesSessionWhenOnlyUserProfileChanges(t *testing.T) {
+	originalNow := promptNow
+	t.Cleanup(func() { promptNow = originalNow })
+	promptNow = func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
+	base := testPromptProfile(AgentConfig{}).SystemPrompt
+	folder := t.TempDir()
+	original, err := InitializeContextManager(withUserProfileSection(base, "- Prefers metric units."), folder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := original.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, profile := range []string{"- Prefers imperial units.", ""} {
+		reloaded, err := InitializeContextManager(withUserProfileSection(base, profile), folder, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.GetSessionID() != original.GetSessionID() {
+			t.Fatalf("profile %q started a new session", profile)
+		}
+		dump := reloaded.MessageListDump().Messages
+		if last := dump[len(dump)-1]; last.Role != messages.MessageRoleUser || last.Content != "hello" {
+			t.Fatalf("profile change appended %#v, want transcript untouched", last)
+		}
+	}
+
+	changed, err := InitializeContextManager(withUserProfileSection(testPromptProfile(AgentConfig{Locale: "zh-CN"}).SystemPrompt, "- Prefers metric units."), folder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.GetSessionID() == original.GetSessionID() {
+		t.Fatal("profile section hid a configuration change")
+	}
+}
+
 func TestUserMessageFromInputPreservesAttachments(t *testing.T) {
 	manager, err := InitializeContextManager("system", t.TempDir(), nil)
 	if err != nil {

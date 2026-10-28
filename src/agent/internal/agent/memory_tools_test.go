@@ -585,6 +585,74 @@ func TestRecallMemoryToolMergesTemporaryBeforeLongTerm(t *testing.T) {
 	}
 }
 
+// A browse by type must not let a backlog of notification conclusions push
+// out what the user saved: every result ties on type, so scope decides.
+func TestRecallMemoryToolBrowseKeepsLongTermAmongTemporaryBacklog(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	longTerm := NewLongTermMemoryStore(filepath.Join(root, "long_term"))
+	temporary := NewLongTermMemoryStore(filepath.Join(root, "temporary"))
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	for i := 0; i < 12; i++ {
+		item := MemoryItem{ID: fmt.Sprintf("tmp_notification_%02d", i), Type: "fact", Priority: 90, Confidence: 0.9, Title: fmt.Sprintf("通知 %d", i), Content: fmt.Sprintf("第 %d 条账单通知。", i), ExpiresAt: expiresAt, EvidenceExcerpts: []string{"通知"}}
+		if _, err := temporary.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := longTerm.AddMemory(ctx, MemoryItem{ID: "mem_brevity", Type: "preference", Priority: 80, Confidence: 0.9, Title: "回复长度", Content: "用户希望回复尽量简短。", EvidenceExcerpts: []string{"用户原话"}}); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewRecallMemoryToolWithTemporary(longTerm, temporary)
+	out, err := tool.Call(ctx, `{"types":["profile","preference","rule","fact"],"limit":10}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 10 || decoded.Results[0].ID != "mem_brevity" {
+		t.Fatalf("results = %#v, want the saved preference first in 10 results", decoded.Results)
+	}
+}
+
+func TestCapTemporaryRecallResults(t *testing.T) {
+	results := func(longTerm, temporary int) []MemoryResult {
+		var out []MemoryResult
+		for i := 0; i < longTerm; i++ {
+			out = append(out, MemoryResult{ID: fmt.Sprintf("mem_%d", i), MemoryScope: "long_term"})
+		}
+		for i := 0; i < temporary; i++ {
+			out = append(out, MemoryResult{ID: fmt.Sprintf("tmp_%d", i), MemoryScope: "temporary"})
+		}
+		return out
+	}
+	count := func(items []MemoryResult, scope string) int {
+		n := 0
+		for _, item := range items {
+			if item.MemoryScope == scope {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tc := range []struct {
+		longTerm, temporary, limit, wantLong, wantTemp int
+	}{
+		{longTerm: 20, temporary: 20, limit: 10, wantLong: 5, wantTemp: 5},
+		{longTerm: 2, temporary: 20, limit: 10, wantLong: 2, wantTemp: 8},
+		{longTerm: 20, temporary: 1, limit: 10, wantLong: 9, wantTemp: 1},
+		{longTerm: 3, temporary: 3, limit: 10, wantLong: 3, wantTemp: 3},
+	} {
+		got := capTemporaryRecallResults(results(tc.longTerm, tc.temporary), tc.limit)
+		if count(got, "long_term") != tc.wantLong || count(got, "temporary") != tc.wantTemp {
+			t.Errorf("%+v: got %d long-term, %d temporary", tc, count(got, "long_term"), count(got, "temporary"))
+		}
+	}
+}
+
 func TestSaveMemoryToolExcludesScreenSnapshotType(t *testing.T) {
 	props := NewSaveMemoryTool(nil).ArgsSchema()["properties"].(map[string]any)
 	typeSchema := props["type"].(map[string]any)

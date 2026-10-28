@@ -2462,7 +2462,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	largeSchemaTool := &structuredStubTool{
 		// Cross the summary threshold while leaving room for the protected
 		// head/tail messages under the hard input budget after summarization.
-		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 800)},
+		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 740)},
 		schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
