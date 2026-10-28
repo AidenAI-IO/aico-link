@@ -335,7 +335,6 @@ type Config struct {
 	VoiceStreamingTTSEnabled   *bool                         `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                         `toml:"voice_tool_call_speech,omitempty"`
 	VoiceProgressSpeechEnabled *bool                         `toml:"voice_progress_speech_enabled,omitempty"`
-	VoiceMaxResponseTokens     int                           `toml:"voice_max_response_tokens,omitempty"`
 	MaxIterations              int                           `toml:"max_iterations,omitempty"`
 	TerminationPolicy          TerminationPolicyConfig       `toml:"termination_policy,omitempty"`
 	ForceSimpleLoop            bool                          `toml:"-"`
@@ -1888,9 +1887,6 @@ func (c Config) Validate() error {
 	if c.VoiceMaxTurns < 0 {
 		return fmt.Errorf("voice_max_turns must be >= 0, got %d", c.VoiceMaxTurns)
 	}
-	if c.VoiceMaxResponseTokens < 0 {
-		return fmt.Errorf("voice_max_response_tokens must be >= 0, got %d", c.VoiceMaxResponseTokens)
-	}
 	if err := c.QuickCapture.Validate(); err != nil {
 		return err
 	}
@@ -2281,13 +2277,6 @@ func (c Config) VoiceProgressSpeechEnabledOrDefault() bool {
 		return *c.VoiceProgressSpeechEnabled
 	}
 	return true
-}
-
-func (c Config) VoiceMaxResponseTokensOrDefault() int {
-	if c.VoiceMaxResponseTokens > 0 {
-		return c.VoiceMaxResponseTokens
-	}
-	return defaultVoiceMaxResponseTokens
 }
 
 // ContextCompactionThresholdOrDefault returns the fraction of the usable input

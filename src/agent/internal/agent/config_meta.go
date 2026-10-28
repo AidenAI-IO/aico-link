@@ -836,8 +836,6 @@ func ConfigMeta() ConfigMetadata {
 						VisibleWhen: all(eq("agent.input_mode", "stt"))},
 					{Key: "voice_progress_speech_enabled", Widget: WidgetBoolean, Default: defaults.VoiceProgressSpeechEnabledOrDefault(),
 						VisibleWhen: all(eq("agent.input_mode", "stt"))},
-					{Key: "voice_max_response_tokens", Widget: WidgetNumber, Default: defaults.VoiceMaxResponseTokens,
-						VisibleWhen: all(eq("agent.input_mode", "stt"))},
 					{Key: "max_iterations", Label: "Maximum tool-call iterations", Widget: WidgetNumber,
 						Help:    "Maximum number of model and tool loops for one task. -1 allows unlimited iterations.",
 						Default: defaults.MaxIterations},
