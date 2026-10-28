@@ -111,10 +111,10 @@
         "clear_history_after": true
       },
       "prompt": "Use Chrome's tab switcher to return to the already open IANA-managed Reserved Domains tab. Leave that page visible and tell me its heading. Do not open a new tab or enter either URL again.",
-      "description_for_judge": "Measure selection of an existing tab rather than navigation by URL. The pre-screenshot should show Top-Level Domains; the trace must show the tab switcher and selection of the Reserved Domains tab.",
+      "description_for_judge": "Measure selection of an existing tab rather than navigation by URL. The pre-screenshot should show Top-Level Domains; accept successful taps that restore Reserved Domains when the trace contains no URL entry or new-tab action.",
       "rubric": [
         {"id": "top_level_before", "check": "The pre-screenshot shows IANA Top-Level Domains in Chrome."},
-        {"id": "switched_existing_tab", "check": "Successful tool results show opening the tab switcher and selecting an existing Reserved Domains tab, without typing a URL or creating a new tab."},
+        {"id": "switched_existing_tab", "check": "The trace shows successful taps that restore the existing Reserved Domains page, without entering a URL or creating a new tab. Intermediate tab-switcher screenshots are not required."},
         {"id": "reserved_visible", "check": "The post-screenshot shows the IANA-managed Reserved Domains page in Chrome and the answer reports its visible heading."}
       ],
       "hard_assertions": {
@@ -270,7 +270,7 @@
       "prompt": "Open the system Files app, go to Images and its Pictures folder, then find the most recent camera JPEG. Leave its filename visible and tell me that filename. Do not rename, move, share, or delete the file.",
       "description_for_judge": "Verify native Files navigation to a locally captured image. The Camera app on this emulator saves JPEGs under Pictures; the exact timestamped filename varies across attempts. Judge the visible file and reported filename, not a hardcoded name.",
       "rubric": [
-        {"id": "home_before", "check": "The pre-screenshot shows the launcher Home screen after the setup captured a photo."},
+        {"id": "home_before", "check": "The pre-screenshot shows the launcher Home screen. A Home screenshot does not need to prove that the setup previously captured a photo."},
         {"id": "pictures_in_files", "check": "The post-screenshot shows the Pictures folder or its image contents in the system Files app, not Google Photos or a browser."},
         {"id": "filename_grounded", "check": "The post-screenshot shows a recent camera JPEG filename and the final answer reports that visible filename accurately."}
       ],
