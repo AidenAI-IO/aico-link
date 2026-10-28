@@ -114,6 +114,35 @@ func TestGenerateSummaryIncludesToolPayloads(t *testing.T) {
 	}
 }
 
+// A plan the user mentions in passing is not saved to long-term memory, so the
+// summary must keep it, dated absolutely: "tomorrow" means nothing once the
+// summary outlives the day it was written.
+func TestGenerateSummaryAsksForDatedUserPlans(t *testing.T) {
+	model := &promptCapturingModel{reply: "summary"}
+	compactor := NewCompactor(DefaultProtectRule, &testModel{Model: model})
+	location := time.FixedZone("UTC+8", 8*60*60)
+	compactor.Location = location
+	sentAt := time.Date(2026, 10, 27, 2, 0, 0, 0, time.UTC)
+
+	if _, err := compactor.generateSummary(context.Background(), []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "明天上午我要去医院复查", Timestamp: sentAt},
+		{Role: messages.MessageRoleAssistant, Content: "好的"},
+	}); err != nil {
+		t.Fatalf("generateSummary() error = %v", err)
+	}
+	prompt := model.prompts[0]
+	for _, want := range []string{
+		"## User Plans and Time-Bound Information",
+		"[user 2026-10-27T10:00:00+08:00] 明天上午我要去医院复查",
+		"[assistant] 好的",
+		"+08:00. Message labels show when each message was sent.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("summary prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestCompactPreservesLLMFailureSource(t *testing.T) {
 	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
 		{Role: messages.MessageRoleUser, Content: "one"},

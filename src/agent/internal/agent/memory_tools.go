@@ -134,6 +134,7 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 		longTerm[i].MemoryScope = "long_term"
 	}
 	results = append(results, longTerm...)
+	topical := memoryQueryHasTopicalTerms(query)
 	sort.SliceStable(results, func(i, j int) bool {
 		si := recallMemoryResultScore(query, results[i])
 		sj := recallMemoryResultScore(query, results[j])
@@ -141,25 +142,28 @@ func (t *RecallMemoryTool) Call(ctx context.Context, input string) (string, erro
 			return si > sj
 		}
 		if results[i].MemoryScope != results[j].MemoryScope {
-			return results[i].MemoryScope == "temporary"
+			// A topical match prefers the fresher temporary conclusion. A
+			// browse by type prefers what the user saved over notifications.
+			return (results[i].MemoryScope == "temporary") == topical
 		}
 		if results[i].Priority != results[j].Priority {
 			return results[i].Priority > results[j].Priority
 		}
 		return results[i].ID < results[j].ID
 	})
-	if query.Limit > 0 && len(results) > query.Limit {
+	if !topical {
+		results = capTemporaryRecallResults(results, query.Limit)
+	} else if query.Limit > 0 && len(results) > query.Limit {
 		results = results[:query.Limit]
 	}
 	recordRecalledMemoryIDs(ctx, results, func(r MemoryResult) string { return r.ID })
 	return encodeToolJSON(map[string]any{"results": results})
 }
 
+// recallMemoryResultScore ranks merged results. Without topical terms every
+// result matched only by type, so all score alike and scope decides the order.
 func recallMemoryResultScore(query MemoryQuery, result MemoryResult) int {
-	if len(query.Tags) == 0 && len(query.Entities) == 0 && len(query.Types) == 0 {
-		if result.MemoryScope == "temporary" {
-			return 1
-		}
+	if !memoryQueryHasTopicalTerms(query) {
 		return 0
 	}
 	score := scoreMemoryEntry(query, memoryIndexEntry{
@@ -169,6 +173,37 @@ func recallMemoryResultScore(query MemoryQuery, result MemoryResult) int {
 		score++
 	}
 	return score
+}
+
+// capTemporaryRecallResults trims a browse-style recall to limit while keeping
+// at most half of it for temporary memories, so a backlog of notification
+// conclusions cannot push every saved preference or profile entry out.
+// results must already list long-term memories ahead of temporary ones.
+func capTemporaryRecallResults(results []MemoryResult, limit int) []MemoryResult {
+	if limit <= 0 || len(results) <= limit {
+		return results
+	}
+	temporaryCount := 0
+	for _, result := range results {
+		if result.MemoryScope == "temporary" {
+			temporaryCount++
+		}
+	}
+	longTermKeep := min(len(results)-temporaryCount, limit-min(temporaryCount, limit/2))
+	temporaryKeep := limit - longTermKeep
+	kept := make([]MemoryResult, 0, limit)
+	for _, result := range results {
+		if result.MemoryScope == "temporary" {
+			if temporaryKeep > 0 {
+				kept = append(kept, result)
+				temporaryKeep--
+			}
+		} else if longTermKeep > 0 {
+			kept = append(kept, result)
+			longTermKeep--
+		}
+	}
+	return kept
 }
 
 // recordRecalledMemoryIDs reports the IDs of memories surfaced by a recall tool
@@ -207,19 +242,22 @@ func (t *SaveMemoryTool) Description() string {
 		"Save long-term memory for future recall. Mandatory when the user asks to remember/save; also use for observed stable preferences, rules, or procedures.",
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
-		"Returns status=saved with id, or status=ignored when it is a duplicate.",
+		"Skip one-off plans and chat. A secret is kept only if the user asked: set sensitive and quote their request in user_request, else it is refused and you must say so.",
+		"Returns status=saved with id, ignored for a duplicate, or refused.",
 	}, " ")
 }
 
 func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"type":     stringEnumArgSchema("Memory category.", "preference", "rule", "procedure", "fact", "profile"),
-		"title":    stringArgSchema("Short title for the memory."),
-		"content":  stringArgSchema("The stable information to remember."),
-		"tags":     stringArrayArgSchema("Topic or domain keywords for future search, e.g. verification, payment, expense. Not time words or vague terms."),
-		"entities": stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people."),
-		"evidence": stringArrayArgSchema("Original user quotes or observations that led to this memory, to help verify relevance later."),
-		"priority": rangedIntegerArgSchema("Importance from 1 to 100: 80+ for user-stated rules/preferences, 60+ for inferred patterns, 40+ for observations.", 1, 100),
+		"type":         stringEnumArgSchema("Memory category.", "preference", "rule", "procedure", "fact", "profile"),
+		"title":        stringArgSchema("Short title for the memory."),
+		"content":      stringArgSchema("The stable information to remember."),
+		"tags":         stringArrayArgSchema("Topic or domain keywords for future search, e.g. verification, payment, expense. Not time words or vague terms."),
+		"entities":     stringArrayArgSchema("Specific named things mentioned by the memory, such as apps, accounts, services, or people."),
+		"evidence":     stringArrayArgSchema("Original user quotes or observations that led to this memory, to help verify relevance later."),
+		"sensitive":    stringEnumArgSchema("Secret kind, if any.", "none", "credential", "payment_card"),
+		"user_request": stringArgSchema("For a secret: the user's verbatim words asking to remember it."),
+		"priority":     rangedIntegerArgSchema("Importance from 1 to 100: 80+ for user-stated rules/preferences, 60+ for inferred patterns, 40+ for observations.", 1, 100),
 	}, "type", "content")
 }
 
@@ -233,6 +271,13 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	}
 	if strings.TrimSpace(req.Content) == "" {
 		return "", fmt.Errorf("content is required")
+	}
+	sensitive := parseMemorySensitiveKind(req.Sensitive)
+	if sensitive != memorySensitiveNone && !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
+		return encodeToolJSON(map[string]string{
+			"status": "refused",
+			"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+		})
 	}
 	if len(req.Evidence) == 0 {
 		req.Evidence = []string{req.Content}
@@ -249,6 +294,8 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		Tags:             req.Tags,
 		Entities:         req.Entities,
 		EvidenceExcerpts: req.Evidence,
+		Sensitive:        sensitive != memorySensitiveNone,
+		Origin:           memoryOriginUser,
 	}
 	result, err := t.store.ApplyMemoryCandidate(ctx, item)
 	if err != nil {
@@ -258,7 +305,11 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 		return encodeToolJSON(map[string]string{"status": "ignored", "reason": "duplicate of " + result.ID})
 	}
 	t.store.RequestProfileRebuild()
-	return encodeToolJSON(map[string]string{"status": "saved", "id": result.ID, "operation": string(result.Operation)})
+	saved := map[string]string{"status": "saved", "id": result.ID, "operation": string(result.Operation)}
+	if item.Sensitive {
+		saved["note"] = "saved as sensitive: it is recalled only when the user asks about it directly"
+	}
+	return encodeToolJSON(saved)
 }
 
 func NewForgetMemoryTool(store *LongTermMemoryStore) *ForgetMemoryTool {

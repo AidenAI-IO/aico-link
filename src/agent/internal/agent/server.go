@@ -2772,6 +2772,7 @@ type benchmarkSeedMemoryRequest struct {
 	EvidenceRefs []MemorySourceRef `json:"evidence_refs"`
 	ExpiresAt    string            `json:"expires_at"`
 	Priority     int               `json:"priority"`
+	Sensitive    bool              `json:"sensitive"`
 }
 
 type benchmarkSeedSessionChunkRequest struct {
@@ -3147,6 +3148,7 @@ func (s *Server) handleBenchmarkSeedMemory(w http.ResponseWriter, r *http.Reques
 			EvidenceRefs:     req.EvidenceRefs,
 			ExpiresAt:        req.ExpiresAt,
 			EvidenceExcerpts: evidence,
+			Sensitive:        req.Sensitive,
 		}
 		id, err = store.AddMemory(r.Context(), item)
 	}

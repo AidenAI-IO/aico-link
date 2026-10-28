@@ -449,7 +449,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			if !result.Sensitive {
+				temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			}
 		}
 	}
 	if p.longTerm != nil {
@@ -458,7 +460,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			if !result.Sensitive {
+				longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			}
 		}
 	}
 	refs := make([]MemoryMergeReference, 0, 8)
@@ -680,7 +684,7 @@ func (p *NotificationMemoryProcessor) applyNotificationProposal(ctx context.Cont
 			sourceRefs := mergeMemorySourceRefs(ref.SourceRefs, []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}})
 			memoryType := firstNonEmptyString([]string{action.Type, ref.Type, "fact"})
 			priority, confidence := notificationMemoryMetadata(action, memoryType, ref)
-			item := MemoryItem{ID: "mem_notification_" + record.ContextID, Type: memoryType, TimeScope: "long_term", Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, ref.Title}), Content: firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary}), ExpiresAt: p.now().Add(notificationLongTermTTL).Format(time.RFC3339Nano), Tags: mergeUniqueStrings(ref.Tags, action.Tags), Entities: mergeUniqueStrings(ref.Entities, action.Entities), SourceRefs: sourceRefs, EvidenceRefs: ref.EvidenceRefs, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
+			item := MemoryItem{ID: "mem_notification_" + record.ContextID, Type: memoryType, TimeScope: "long_term", Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, ref.Title}), Content: firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary}), ExpiresAt: p.now().Add(notificationLongTermTTL).Format(time.RFC3339Nano), Tags: mergeUniqueStrings(ref.Tags, action.Tags), Entities: mergeUniqueStrings(ref.Entities, action.Entities), SourceRefs: sourceRefs, EvidenceRefs: ref.EvidenceRefs, Origin: memoryOriginNotification, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
 			if _, err := p.longTerm.ApplyMemoryIntent(ctx, MemoryIntent{Item: item, Action: MemoryIntentActionCreate}); err != nil {
 				return err
 			}
@@ -702,7 +706,7 @@ func (p *NotificationMemoryProcessor) applyNotificationProposal(ctx context.Cont
 		}
 		memoryType := firstNonEmptyString([]string{action.Type, existingRef.Type, "fact"})
 		priority, confidence := notificationMemoryMetadata(action, memoryType, existingRef)
-		item := MemoryItem{ID: id, Type: memoryType, TimeScope: action.Scope, Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, existingRef.Title}), Content: firstNonEmptyString([]string{action.Content, existingRef.Content}), Tags: mergeUniqueStrings(mergeUniqueStrings(notificationMemoryTags(record.NotificationEvent), existingRef.Tags), action.Tags), Entities: mergeUniqueStrings(mergeUniqueStrings(compactNotificationEntities(record.NotificationEvent), existingRef.Entities), action.Entities), ExpiresAt: action.ExpiresAt, SourceRefs: []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}}, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, existingRef.Content, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
+		item := MemoryItem{ID: id, Type: memoryType, TimeScope: action.Scope, Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, existingRef.Title}), Content: firstNonEmptyString([]string{action.Content, existingRef.Content}), Tags: mergeUniqueStrings(mergeUniqueStrings(notificationMemoryTags(record.NotificationEvent), existingRef.Tags), action.Tags), Entities: mergeUniqueStrings(mergeUniqueStrings(compactNotificationEntities(record.NotificationEvent), existingRef.Entities), action.Entities), ExpiresAt: action.ExpiresAt, SourceRefs: []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}}, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, existingRef.Content, record.NotificationEvent.Message, record.NotificationEvent.Title})}, Origin: memoryOriginNotification}
 		if action.Action == "remove" {
 			item = MemoryItem{ID: id}
 		}

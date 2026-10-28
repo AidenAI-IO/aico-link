@@ -1222,6 +1222,12 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
+	// A profile read failure keeps the section the session already carries.
+	if userProfile, err := r.memories.UserProfilePrompt(ctx); err != nil {
+		r.memories.warnProfileReadFailure(err)
+	} else if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
+		return RunResult{}, err
+	}
 	if req.ResumeSessionID != "" {
 		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
 		if err != nil {
@@ -1256,6 +1262,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// counted and traced as part of the episode rather than disappearing from the
 	// run's token accounting.
 	contextCompactor := compactor.NewCompactor(compactor.DefaultProtectRule, m)
+	if location, _, err := loadConfiguredTimezone(cfg.TimezoneOrDefault()); err == nil {
+		contextCompactor.Location = location
+	}
 	budgetContextWindow := contextWindow
 	if budgetContextWindow <= 0 {
 		budgetContextWindow = r.models.Spec().ContextWindow
@@ -2347,7 +2356,7 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 }
 
 func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool) RoleProfile {
-	return buildProfile(
+	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
 			Prompt:      r.ConfigSnapshot().Prompt,
@@ -2358,6 +2367,14 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
+	// A new session has no earlier section to keep, so on a read failure it
+	// starts without one; the next run's refresh adds it once the read works.
+	userProfile, err := r.memories.UserProfilePrompt(context.Background())
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
+	return profile
 }
 
 // runtimeCallbackHandler implements callbacks.Handler for streaming output and
