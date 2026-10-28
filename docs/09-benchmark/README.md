@@ -454,7 +454,8 @@ the external iOS case; profile `all` selects both environments.
 For native Android, dispatch profile `adb` with
 `suites/adb_android_basic.json` for general operations,
 `suites/adb_android_text_editing.json` for text editing, or
-`suites/adb_android_builtin_apps.json` for Chrome, Maps, and Contacts workflows.
+`suites/adb_android_builtin_apps.json` for Chrome, Maps, Camera, Photos,
+Files, Messages, Clock, and Contacts workflows.
 Leave the suite input blank to run all three. See
 [Android suites](../../benchmark/adbandroid/README.md#test-suite) for coverage
 and device prerequisites.

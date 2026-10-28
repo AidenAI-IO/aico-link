@@ -1,7 +1,7 @@
 {
   "name": "adb_android_builtin_apps",
-  "version": "1.0",
-  "description": "Real workflows in preinstalled Android apps: Chrome browsing, Google Maps discovery and directions, and device-local Contacts editing.",
+  "version": "1.2",
+  "description": "Real workflows in preinstalled Android apps: Chrome browsing, Maps discovery and directions, device-local Contacts, Camera and Photos, Files, Messages drafts, and Clock timers.",
   "prompt_prefix": "",
   "global_reset": {},
   "trace_observations": [],
@@ -76,6 +76,56 @@
       "repeats": 1
     },
     {
+      "id": "chrome_back_to_reserved_domains",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In one normal Chrome tab, open https://www.iana.org/domains/reserved, then navigate in that same tab to https://www.iana.org/domains/root/db. Leave the Top-Level Domains page visible with no browser menu open.",
+        "timeout_sec": 180,
+        "clear_history_after": true
+      },
+      "prompt": "Go back one page in this Chrome tab to the IANA-managed Reserved Domains page. Leave that page visible and tell me its heading. Do not open another tab or type a new URL.",
+      "description_for_judge": "The pre-screenshot must show IANA Top-Level Domains in Chrome. A successful Back action should restore the earlier IANA-managed Reserved Domains page in the same tab; opening the URL afresh does not count.",
+      "rubric": [
+        {"id": "top_level_before", "check": "The pre-screenshot shows the IANA Top-Level Domains page in a Chrome tab."},
+        {"id": "used_back", "check": "Successful tool results show browser or system Back navigation, with no new tab or typed URL replacing it."},
+        {"id": "reserved_restored", "check": "The post-screenshot shows the IANA-managed Reserved Domains heading in the same Chrome tab, and the answer matches it."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 16,
+        "must_complete_within_sec": 210,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "chrome_switch_between_iana_tabs",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Chrome, open https://www.iana.org/domains/reserved in one normal tab and https://www.iana.org/domains/root/db in another. Leave the Top-Level Domains page visible, with the tab switcher closed.",
+        "timeout_sec": 210,
+        "clear_history_after": true
+      },
+      "prompt": "Use Chrome's tab switcher to return to the already open IANA-managed Reserved Domains tab. Leave that page visible and tell me its heading. Do not open a new tab or enter either URL again.",
+      "description_for_judge": "Measure selection of an existing tab rather than navigation by URL. The pre-screenshot should show Top-Level Domains; the trace must show the tab switcher and selection of the Reserved Domains tab.",
+      "rubric": [
+        {"id": "top_level_before", "check": "The pre-screenshot shows IANA Top-Level Domains in Chrome."},
+        {"id": "switched_existing_tab", "check": "Successful tool results show opening the tab switcher and selecting an existing Reserved Domains tab, without typing a URL or creating a new tab."},
+        {"id": "reserved_visible", "check": "The post-screenshot shows the IANA-managed Reserved Domains page in Chrome and the answer reports its visible heading."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 18,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
       "id": "maps_find_eiffel_tower",
       "category": "multi_step",
       "platforms": ["android"],
@@ -109,6 +159,232 @@
         "min_tool_calls": 1,
         "max_tool_calls": 40,
         "must_complete_within_sec": 420,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "maps_open_walking_steps",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Google Maps, open a walking route preview from Louvre Museum to Eiffel Tower in Paris. Leave the walking preview visible without starting navigation or opening its step list.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Open the step-by-step walking directions for this route. Tell me the first visible instruction and leave the steps list open. Do not start turn-by-turn navigation.",
+      "description_for_judge": "Measure navigation from a route preview into its instruction list. The pre-screenshot must show the walking route from Louvre Museum to Eiffel Tower; the final answer must reflect a step visible in the post-screenshot.",
+      "rubric": [
+        {"id": "walking_preview_before", "check": "The pre-screenshot shows a walking route preview from Louvre Museum to Eiffel Tower in Google Maps."},
+        {"id": "steps_open", "check": "The post-screenshot shows the step-by-step walking instructions for that route, not the initial overview or active navigation."},
+        {"id": "instruction_grounded", "check": "The answer describes the first instruction visible in the post-screenshot without inventing an unseen step."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 18,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "maps_switch_walking_to_driving",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Google Maps, show a walking route preview from Louvre Museum to Eiffel Tower in Paris, with both endpoints entered explicitly. Do not start navigation.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Switch this route to driving directions. Leave the driving route preview open, tell me which travel mode is selected, and do not start navigation or change either endpoint.",
+      "description_for_judge": "Measure changing the travel mode on an existing route. Route duration may vary; judge the selected mode and unchanged landmarks, not the duration.",
+      "rubric": [
+        {"id": "walking_before", "check": "The pre-screenshot shows a walking route from Louvre Museum to Eiffel Tower in Google Maps."},
+        {"id": "same_endpoints", "check": "The post-screenshot still shows Louvre Museum as origin and Eiffel Tower as destination, or their localized names."},
+        {"id": "driving_preview", "check": "The post-screenshot shows driving selected on a route preview, not walking or active navigation, and the answer identifies driving."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 16,
+        "must_complete_within_sec": 210,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "camera_photo_in_photos",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Camera, take one photo, then open Google Photos and find the photo you just took in the device's local pictures. Open that photo and leave it visible. Do not sign in or enable cloud backup.",
+      "description_for_judge": "Verify a Camera shutter action followed by cross-app discovery of the new local image in Google Photos. The emulator camera uses a synthetic scene; no real-world subject or cloud upload is required.",
+      "rubric": [
+        {"id": "camera_capture", "check": "Successful tool results show Camera opened and its shutter activated once during this task."},
+        {"id": "photos_opened", "check": "Successful tool results show the Agent switched to Google Photos after capture without signing in or enabling backup."},
+        {"id": "new_photo_visible", "check": "The post-screenshot shows the newly captured local image open in Google Photos, not just the camera preview or a sign-in dialog."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 360,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "photos_view_local_photo_details",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Take one photo in Camera, then open that newest local photo in Google Photos. Leave it visible without opening its details or enabling cloud backup.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Open this photo's information or details panel in Google Photos. Tell me the filename shown there and leave the details visible. Do not edit, share, or delete the photo.",
+      "description_for_judge": "Measure metadata inspection for a newly captured local image. The camera filename changes per run; only credit a filename read from the visible Photos details panel.",
+      "rubric": [
+        {"id": "photo_before", "check": "The pre-screenshot shows a local photo open in Google Photos."},
+        {"id": "details_open", "check": "The post-screenshot shows that photo's information or details in Google Photos, not the gallery grid or another app."},
+        {"id": "filename_grounded", "check": "A filename is visible in the details panel and the final answer reports that filename accurately."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 18,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "files_locate_camera_image",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Open Camera, take one photo, then return to the launcher Home screen. Do not open the photo or delete any image.",
+        "timeout_sec": 180,
+        "clear_history_after": true
+      },
+      "prompt": "Open the system Files app, go to Images and its Pictures folder, then find the most recent camera JPEG. Leave its filename visible and tell me that filename. Do not rename, move, share, or delete the file.",
+      "description_for_judge": "Verify native Files navigation to a locally captured image. The Camera app on this emulator saves JPEGs under Pictures; the exact timestamped filename varies across attempts. Judge the visible file and reported filename, not a hardcoded name.",
+      "rubric": [
+        {"id": "home_before", "check": "The pre-screenshot shows the launcher Home screen after the setup captured a photo."},
+        {"id": "pictures_in_files", "check": "The post-screenshot shows the Pictures folder or its image contents in the system Files app, not Google Photos or a browser."},
+        {"id": "filename_grounded", "check": "The post-screenshot shows a recent camera JPEG filename and the final answer reports that visible filename accurately."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 28,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "files_preview_camera_image",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "Take one photo in Camera. Open the system Files app and navigate to the Pictures folder containing the newest camera JPEG. Leave the file list visible without opening any image.",
+        "timeout_sec": 240,
+        "clear_history_after": true
+      },
+      "prompt": "Open the newest camera JPEG from this Files list and leave its image preview visible. Do not rename, move, share, or delete it.",
+      "description_for_judge": "Measure opening a local file from Files after locating it. The filename and image content vary across runs; do not require a particular scene.",
+      "rubric": [
+        {"id": "file_list_before", "check": "The pre-screenshot shows a camera JPEG in the system Files app's Pictures folder."},
+        {"id": "opened_from_files", "check": "Successful tool results show selection of the newest camera JPEG from that file list."},
+        {"id": "image_preview", "check": "The post-screenshot shows the selected image open in a file preview or Android image viewer, rather than the unchanged file list."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 16,
+        "must_complete_within_sec": 210,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "messages_compose_unsent_draft",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Messages and compose a new SMS draft addressed to 5550104040 with the exact text Aiden benchmark draft 2026. Leave the recipient and unsent text visible in the composer. Do not tap Send or contact the recipient.",
+      "description_for_judge": "Measure recipient entry and message composition without transmitting an SMS. The final screenshot must show the recipient and exact draft text in Messages. A sent message fails even if the text matches.",
+      "rubric": [
+        {"id": "recipient", "check": "The post-screenshot shows 5550104040 as the draft recipient in Messages, allowing phone-number formatting separators."},
+        {"id": "exact_draft", "check": "The post-screenshot shows the unsent composer text exactly as Aiden benchmark draft 2026."},
+        {"id": "not_sent", "check": "No successful Send action appears in the trace and the post-screenshot shows a draft, not a sent message bubble."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "messages_revise_unsent_draft",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "setup": {
+        "type": "agent_prompt",
+        "prompt": "In Messages, compose an unsent SMS draft for 5550104040 containing exactly Aiden benchmark draft 2026. Leave the composer open with that text visible. Do not send it.",
+        "timeout_sec": 180,
+        "clear_history_after": true
+      },
+      "prompt": "Replace the entire unsent message with exactly Aiden revised draft 2026. Leave the same recipient and the revised text visible in the composer. Do not send the message.",
+      "description_for_judge": "Measure in-place text replacement in an SMS draft without sending. The initial text must be visible before the task; the final composer must contain only the revised text.",
+      "rubric": [
+        {"id": "draft_before", "check": "The pre-screenshot shows an unsent Messages draft to 5550104040 containing Aiden benchmark draft 2026."},
+        {"id": "revised_text", "check": "The post-screenshot shows the same recipient and exactly Aiden revised draft 2026 in the unsent composer, with no leftover old text."},
+        {"id": "not_sent", "check": "No successful Send action appears in the trace and the post-screenshot does not show a sent message bubble."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 20,
+        "must_complete_within_sec": 240,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "clock_pause_timer",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Clock, set a timer for three minutes, start it, then pause it before it finishes. Leave the paused timer visible and report its current state. Do not create an alarm.",
+      "description_for_judge": "Measure configuring, starting, and pausing a timer in the preinstalled Clock app. The exact remaining time varies; an alarm or an unstarted timer does not count.",
+      "rubric": [
+        {"id": "timer_configured", "check": "Successful tool results show a three-minute timer was configured and started in Clock."},
+        {"id": "timer_paused", "check": "The post-screenshot shows the timer paused with time remaining, rather than running, completed, or only entered in an editor."},
+        {"id": "state_reported", "check": "The final answer identifies the timer as paused without inventing a precise remaining time not visible on screen."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 300,
+        "forbidden_tools": ["shell", "request_user_action"]
+      },
+      "repeats": 1
+    },
+    {
+      "id": "contacts_search_absent_name",
+      "category": "multi_step",
+      "platforms": ["android"],
+      "prompt": "Open Contacts and search for the exact name Aiden Missing Contact 2026. Tell me whether a matching contact is shown, and leave the search results or empty state visible. Do not create, edit, delete, call, or message any contact.",
+      "description_for_judge": "Measure Contacts search and grounded empty-state reading without relying on device-local contact creation. The synthetic query should have no match on the benchmark emulator.",
+      "rubric": [
+        {"id": "exact_query", "check": "The post-screenshot shows Contacts search for Aiden Missing Contact 2026, allowing a visible query field or equivalent search context."},
+        {"id": "result_grounded", "check": "The answer correctly reports whether a matching contact appears in the visible result or empty state."},
+        {"id": "read_only", "check": "No successful contact creation, edit, deletion, call, or message action appears in the tool trace."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 20,
+        "must_complete_within_sec": 210,
         "forbidden_tools": ["shell", "request_user_action"]
       },
       "repeats": 1

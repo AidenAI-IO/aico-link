@@ -168,16 +168,19 @@ remain unchanged.
 
 ## Test suite
 
-The `adb` CI profile runs three suites and 28 tasks per repeat:
+The `adb` CI profile runs three suites and 40 tasks per repeat:
 
 - `adb_android_basic` (`suites/adb_android_basic.json`), 16 tasks: screen reading,
   Settings, Wi-Fi status, app drawer, Back, scrolling, Home, recents entry,
   notifications, cross-app navigation, and state recovery.
 - `adb_android_text_editing` (`suites/adb_android_text_editing.json`), 4 tasks: spaces,
   punctuation, query replacement, and clearing in Settings search.
-- `adb_android_builtin_apps` (`suites/adb_android_builtin_apps.json`), 8 tasks:
-  Chrome navigation, in-page search, and tabs; Google Maps place search and
-  walking directions; and device-local Contacts creation, editing, and deletion.
+- `adb_android_builtin_apps` (`suites/adb_android_builtin_apps.json`), 20 tasks:
+  Chrome navigation, in-page search, and tab switching; Google Maps place
+  search, walking directions, step lists, and travel-mode switching;
+  Camera-to-Photos capture and photo details; Files image browsing and preview;
+  unsent Messages drafting and revision; Clock timer control; and Contacts
+  search, creation, editing, and deletion.
 
 The built-in app tasks share one suite because they use the same ADB device and
 setup. Task IDs carry an app prefix so results remain easy to filter by app.
@@ -187,11 +190,14 @@ this benchmark runner loads JSON suites from `benchmark/suites`.
 
 Use an unlocked device with an app drawer, Settings search, and Clock's alarm
 list available. The built-in app suite also requires Chrome, Google Maps,
-Contacts with Device storage, and access to `www.iana.org` and Maps search.
+Camera, Google Photos, system Files, Messages, Clock, Contacts with Device storage,
+and access to `www.iana.org` and Maps search.
 Complete first-run onboarding before running the suites. Tasks use English
 instructions and accept equivalent localized Android screens. The Contacts
 tasks only modify an exact synthetic contact named `Aiden Benchmark Contact`;
 creation removes a stale matching contact, and the delete task removes it.
+The Camera and Files tasks create local JPEGs with timestamped names; they
+must not assume an empty gallery. The Messages task leaves text unsent.
 
 YouTube is present on the current runner2 emulator, but its installed app opens
 only a mandatory update screen, while `m.youtube.com` currently fails to load

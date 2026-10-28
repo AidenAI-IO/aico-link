@@ -33,7 +33,7 @@ def test_adb_profile_selects_only_serial_native_android_cases():
             assert not task.environment_assertions  # ADB has no MobileGym state API.
             assert task.mock_environment is None and suite.mock_environment is None
             assert task.input_screenshot is None  # Observe the real device.
-    assert total == 28
+    assert total == 40
 
 
 def test_adb_profile_rejects_non_adb_suite():
