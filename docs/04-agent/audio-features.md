@@ -64,6 +64,8 @@ provider capability differences, and event lifecycle.
 
 Waits for the hardware tap button to start recording. On current boards the MCU reports a `touch_key` wakeup event to the Agent; the MCU's ASR wakeup event uses the same voice flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable ASR or other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a voice session, so disabling it leaves the voice loop waiting until another wakeup arrives or the setting is turned back on. When `input_mode = "stt"` and `voice_followup_enabled = true`, wakeup opens a continuous voice session: the first turn still requires a wakeup event, but after the Agent replies it will continue listening for follow-up questions within the `voice_followup_timeout_ms` window. `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Repeated wakeup triggers during listening or recording are merged or ignored and will not restart recording or discard already-recorded audio; whether triggering wakeup again during thinking cancels the current LLM request is controlled by `voice_interrupt_on_wakeup`; the microphone is not open by default during TTS playback, and recording continues only after playback ends; triggering wakeup again during playback will interrupt the current turn and immediately start recording. This path requires the MCU event service to be running.
 
+Classic STT Agent turns share the main model's `max_response_tokens` output limit (8192 by default), including any reasoning tokens counted toward that limit by the provider. They do not apply a separate voice-specific token cap.
+
 ## Configuration Snippet
 
 ```toml
@@ -85,7 +87,6 @@ voice_max_turns = 0
 voice_interrupt_on_wakeup = true
 voice_streaming_tts_enabled = true
 voice_tool_call_speech = true
-voice_max_response_tokens = 300
 
 [voice_settings.classic.audio]
 socket = "/run/audio_service/audio_service.sock"

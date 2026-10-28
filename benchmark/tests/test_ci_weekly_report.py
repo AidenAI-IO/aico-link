@@ -194,6 +194,7 @@ def test_every_ci_suite_has_a_capability():
     ("shell_utility_v1", "Shell utilities"),
     ("episode_memory_before_v1", "Memory"), ("episode_memory_after_v1", "Memory"),
     ("episode_memory_legacy_v1", "Memory"), ("adb_android_basic", "UI operation"),
+    ("adb_android_text_editing", "UI operation"),
     ("vphone_ios_basic", "UI operation"), ("app_workflow_v1", "UI operation"),
     ("quick_action_v1", "UI operation"), ("phone_control_v1", "UI operation"),
     ("mobilegym_basic", "UI operation"),
@@ -250,3 +251,5 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "mobilegym"}) == "Simulator"
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "external"}) == "External device"
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
+    assert environment_of({"execution_environment": "adb"}) == "ADB device"
+    assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"

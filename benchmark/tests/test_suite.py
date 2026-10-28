@@ -30,6 +30,19 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+def test_android_bridge_input_text_requires_non_empty_string(tmp_path: Path):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["android_bridge_input_text"] = "Aiden 输入验证 #42"
+    path = tmp_path / "bridge_input.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    assert load_suite(path).tasks[0].android_bridge_input_text == "Aiden 输入验证 #42"
+
+    fixture["tasks"][0]["android_bridge_input_text"] = ""
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+    with pytest.raises(SuiteValidationError, match="android_bridge_input_text"):
+        load_suite(path)
+
+
 @pytest.mark.parametrize("assertions", [
     {}, [], {"expected": []}, {"absent_ids": []}, {"expected_count": None},
     {"expected_count": True}, {"expected_count": -1}, {"expected_count": "1"},
@@ -285,6 +298,30 @@ def test_vphone_ios_basic_warmup_requires_screenshot():
     assert warmup.prompt == "看一眼当前屏幕。"
     assert warmup.hard_assertions.min_tool_calls == 1
     assert warmup.hard_assertions.required_tools == ["screenshot"]
+
+
+def test_adb_android_suites_keep_navigation_and_text_editing_separate():
+    suites_dir = Path(__file__).resolve().parents[1] / "suites"
+    basic = load_suite(suites_dir / "adb_android_basic.json")
+    editing = load_suite(suites_dir / "adb_android_text_editing.json")
+    assert len(basic.tasks) == 16
+    assert {task.id for task in editing.tasks} == {
+        "search_ascii_with_spaces", "search_ascii_punctuation",
+        "replace_search_query", "clear_search_query",
+    }
+    assert {task.id for task in basic.tasks}.isdisjoint(task.id for task in editing.tasks)
+    for suite in (basic, editing):
+        assert suite.prompt_prefix == ""
+        for task in suite.tasks:
+            assert "shell" in task.hard_assertions.forbidden_tools
+            assert "request_user_action" in task.hard_assertions.forbidden_tools
+            # Generic ADB pairs must preserve task setup, without foregrounding
+            # the companion App only in the connected variant.
+            assert task.foreground_app_id is None
+    by_id = {task.id: task for task in basic.tasks}
+    assert by_id["tap_back"].setup is not None
+    assert by_id["scroll_page_down"].setup is not None
+    assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
 
 
 def test_adb_android_basic_suite_loads_general_operations_and_navigation():

@@ -15,15 +15,17 @@ from runner.suite import load_suite
 def test_adb_profile_selects_only_serial_native_android_cases():
     catalog = load_catalog()
     cases = select_cases(catalog, profile="adb")
-    assert len(cases) == 2
+    assert len(cases) == 5
     assert all(case.environment == "adb" and case.target_platform == "android"
                and case.max_concurrency == 1 for case in cases)
-    assert not set(case.id for case in cases) & {
+    comparisons = [case for case in cases if case.runnable]
+    assert len(comparisons) == 4
+    assert {case.id for case in comparisons} <= {
         case.id for case in select_cases(catalog, profile="runnable")
     }
 
     total = 0
-    for case in cases:
+    for case in comparisons:
         suite = load_suite(BENCHMARK_ROOT / case.suite)
         selected = [task for task in suite.tasks if not case.task_ids or task.id in case.task_ids]
         total += len(selected)
@@ -33,7 +35,7 @@ def test_adb_profile_selects_only_serial_native_android_cases():
             assert not task.environment_assertions  # ADB has no MobileGym state API.
             assert task.mock_environment is None and suite.mock_environment is None
             assert task.input_screenshot is None  # Observe the real device.
-    assert total == 20
+    assert total == 40
 
 
 def test_adb_profile_rejects_non_adb_suite():
