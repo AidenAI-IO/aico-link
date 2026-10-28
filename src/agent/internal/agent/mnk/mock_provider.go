@@ -178,3 +178,12 @@ func (m *MockProvider) KeypressCalls() []MockKeypress {
 	copy(out, m.keypresses)
 	return out
 }
+
+func (m *MockProvider) ClickCalls() []MockClick {
+	if m == nil {
+		return nil
+	}
+	out := make([]MockClick, len(m.clicks))
+	copy(out, m.clicks)
+	return out
+}

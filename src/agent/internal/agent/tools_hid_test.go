@@ -1284,7 +1284,7 @@ func TestPostActionScreenshotToolFallsBackScreenshotWhenScreenUnstable(t *testin
 	if err != nil {
 		t.Fatalf("decode expected screenshot: %v", err)
 	}
-	marked, err := drawTouchGesturePostMarker(raw, touchGesturePostMarkerInfo{Type: "tap", X: 500, Y: 500})
+	marked, err := drawTouchGesturePostMarkers(raw, []touchGesturePostMarkerInfo{{Type: "tap", X: 500, Y: 500}})
 	if err != nil {
 		t.Fatalf("mark expected screenshot: %v", err)
 	}
@@ -2291,9 +2291,17 @@ func TestTouchGestureSchemaRequiresNamedCoordinateObjectsAndValidExamples(t *tes
 		}
 	}
 
+	points, ok := properties["points"].(map[string]any)
+	if !ok || points["type"] != "array" {
+		t.Fatalf("points schema = %#v", properties["points"])
+	}
+	if item, ok := points["items"].(map[string]any); !ok || item["type"] != "object" || item["additionalProperties"] != false {
+		t.Fatalf("points items schema is not a strict object: %#v", points["items"])
+	}
+
 	examples, ok := schema["examples"].([]map[string]any)
-	if !ok || len(examples) != 5 {
-		t.Fatalf("schema examples = %#v, want tap, both swipe forms, and both drag phases", schema["examples"])
+	if !ok || len(examples) != 6 {
+		t.Fatalf("schema examples = %#v, want tap, both swipe forms, both drag phases, and tap_sequence", schema["examples"])
 	}
 	encoded, err := json.Marshal(examples)
 	if err != nil || !json.Valid(encoded) {
