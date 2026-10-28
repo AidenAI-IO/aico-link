@@ -1,0 +1,229 @@
+{
+  "name": "aico_app_android_bridge_capabilities_v1",
+  "suite_category": "Aiden App / Real Connection",
+  "description": "Verify AidenBridge clipboard, launch, calendar, contacts, notification, and text-entry behavior on the connected Android emulator.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "tasks": [
+    {
+      "id": "clipboard_round_trip",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "multi_step",
+      "description_for_judge": "Read the Android system clipboard through Phone Bridge, write a temporary marker, verify it, then restore and verify the original value, including an empty original value.",
+      "prompt": "Use the connected phone's Bridge to read the current clipboard text. Temporarily write AIDEN_BRIDGE_CI_MARKER and read it back to confirm. Restore the original text, even if it was empty, and read it back again to confirm. Do not use screen controls to read or write the clipboard.",
+      "rubric": [
+        {"id": "marker_verified", "check": "The Phone Bridge clipboard write succeeds and a later bridge read returns AIDEN_BRIDGE_CI_MARKER exactly."},
+        {"id": "original_restored", "check": "The original clipboard text is restored and verified by a final bridge read."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 5,
+        "max_tool_calls": 7,
+        "must_complete_within_sec": 180,
+        "required_tools": ["bridge_clipboard"],
+        "forbidden_tools": ["touch_gesture", "enter_text", "quick_action"],
+        "required_tool_calls": [
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "write", "text": "AIDEN_BRIDGE_CI_MARKER"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "write"}},
+          {"tool": "bridge_clipboard", "input_contains": {"action": "read"}}
+        ]
+      }
+    },
+    {
+      "id": "open_url_through_bridge",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "single_step",
+      "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
+      "prompt": "Open https://example.com/ directly through the connected phone's Bridge. Do not operate the browser UI manually.",
+      "rubric": [
+        {"id": "url_command_succeeded", "check": "The Agent calls open_url for exactly https://example.com/ and the Phone Bridge result succeeds."},
+        {"id": "browser_opened", "check": "The post-screenshot shows Android handling the URL in a browser; a network loading error is acceptable."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 3,
+        "must_complete_within_sec": 120,
+        "required_tools": ["open_url"],
+        "forbidden_tools": ["open_app", "search_launch_app", "touch_gesture", "enter_text"],
+        "required_tool_calls": [
+          {"tool": "open_url", "input_contains": {"url": "https://example.com/"}}
+        ]
+      }
+    },
+    {
+      "id": "open_app_through_bridge",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "single_step",
+      "description_for_judge": "Launch Android Settings through the foreground AidenBridge semantic app command.",
+      "prompt": "Open Android Settings through the connected phone's Bridge. Do not tap an app icon or search for the app on screen.",
+      "rubric": [
+        {"id": "app_command_succeeded", "check": "open_app launches Settings successfully through the foreground Phone Bridge route."},
+        {"id": "settings_visible", "check": "The post-screenshot shows Android Settings."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 3,
+        "must_complete_within_sec": 120,
+        "required_tools": ["open_app"],
+        "forbidden_tools": ["search_launch_app", "touch_gesture", "enter_text"],
+        "required_tool_calls": [
+          {"tool": "open_app", "input_contains": {"app": "Settings"}}
+        ]
+      }
+    },
+    {
+      "id": "calendar_query",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "single_step",
+      "description_for_judge": "Query a fixed date range through the Android Phone Bridge calendar API and report the structured result, including an empty event list.",
+      "prompt": "Query system calendar events from 2037-11-18T00:00:00+08:00 to 2037-11-19T00:00:00+08:00 through the connected phone's Bridge only. Report the number of returned events; explicitly say when the list is empty. Do not open Calendar or operate the screen.",
+      "rubric": [
+        {"id": "calendar_bridge_query", "check": "bridge_calendar performs the requested query successfully and returns a structured events list."},
+        {"id": "result_reported", "check": "The response reports the returned event count without inventing events."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 3,
+        "must_complete_within_sec": 120,
+        "required_tools": ["bridge_calendar"],
+        "forbidden_tools": ["open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [
+          {"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2037-11-18T00:00:00+08:00", "to": "2037-11-19T00:00:00+08:00"}}
+        ]
+      }
+    },
+    {
+      "id": "contacts_query",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "single_step",
+      "description_for_judge": "Query a dedicated benchmark contact name through the Android Phone Bridge contacts API; an empty list is valid, but transport and permission errors are not.",
+      "prompt": "Query contacts whose names contain Aiden Benchmark Fixture through the connected phone's Bridge only, and report the number returned. If none are found, explicitly report an empty list. Do not create a contact or operate the screen.",
+      "rubric": [
+        {"id": "contacts_bridge_query", "check": "bridge_contacts queries Aiden Benchmark Fixture successfully and returns a structured contacts list."},
+        {"id": "result_reported", "check": "The response reports the returned count without inventing contact details."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 3,
+        "must_complete_within_sec": 120,
+        "required_tools": ["bridge_contacts"],
+        "forbidden_tools": ["open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [
+          {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "Aiden Benchmark Fixture"}}
+        ]
+      }
+    },
+    {
+      "id": "send_local_notification",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "single_step",
+      "description_for_judge": "Send an immediate local notification through Phone Bridge, report its ID, and verify its visible title and body in Android's notification shade.",
+      "prompt": "Send an immediate silent local notification through the connected phone's Bridge, with title AIDEN_BRIDGE_CI_NOTIFICATION and body Android bridge notification verified. Then use quick_action with action=notification_center to open the notification shade. Confirm the title and body are visible and report the returned notification ID.",
+      "rubric": [
+        {"id": "notification_bridge_send", "check": "bridge_notification sends the exact title and body with sound=false and returns a successful structured result."},
+        {"id": "notification_id_reported", "check": "The response reports the notification_id returned by the Bridge app."},
+        {"id": "notification_visible", "check": "The post-screenshot shows the exact title and body in Android's notification shade."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 5,
+        "must_complete_within_sec": 120,
+        "required_tools": ["bridge_notification"],
+        "forbidden_tools": ["open_app", "search_launch_app", "touch_gesture"],
+        "required_tool_calls": [
+          {"tool": "bridge_notification", "input_contains": {"action": "send", "title": "AIDEN_BRIDGE_CI_NOTIFICATION", "body": "Android bridge notification verified", "sound": false}},
+          {"tool": "quick_action", "input_contains": {"action": "notification_center"}}
+        ]
+      }
+    },
+    {
+      "id": "calendar_create_query_delete",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "multi_step",
+      "android_bridge_fixture": "calendar",
+      "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
+      "prompt": "This emulator task is pre-authorized to create and delete one test event. Through Bridge only, create AidenBridgeBenchmarkEvent from 2037-11-18T10:00:00+08:00 to 2037-11-18T10:30:00+08:00, location Lab 42, notes Calendar verification. Query using exactly from=2037-11-18T00:00:00+08:00 and to=2037-11-19T00:00:00+08:00, and verify the created event's ID, title, times, location and notes. Delete only the event ID returned by this create, query the same exact range again and confirm that ID is absent. Do not operate the calendar UI.",
+      "rubric": [
+        {"id": "created_event_read_back", "check": "The created event is returned by query with matching ID, title, equivalent timestamps, location and notes."},
+        {"id": "created_event_deleted", "check": "Only the event created by this task is deleted and the final query confirms its ID is absent. Permission and provider errors do not count as success."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 4, "max_tool_calls": 7, "must_complete_within_sec": 180,
+        "required_tools": ["bridge_calendar"],
+        "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
+        "required_tool_calls": [
+          {"tool": "bridge_calendar", "input_contains": {"action": "create", "title": "AidenBridgeBenchmarkEvent", "start_at": "2037-11-18T10:00:00+08:00", "end_at": "2037-11-18T10:30:00+08:00", "location": "Lab 42", "notes": "Calendar verification"}},
+          {"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2037-11-18T00:00:00+08:00", "to": "2037-11-19T00:00:00+08:00"}},
+          {"tool": "bridge_calendar", "input_contains": {"action": "delete"}},
+          {"tool": "bridge_calendar", "input_contains": {"action": "query", "from": "2037-11-18T00:00:00+08:00", "to": "2037-11-19T00:00:00+08:00"}}
+        ]
+      }
+    },
+    {
+      "id": "contacts_create_query_update",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "multi_step",
+      "android_bridge_fixture": "contacts",
+      "description_for_judge": "Create a reserved test contact and verify phone/email values before and after an update through the real Bridge app. The harness removes the reserved contact afterward.",
+      "prompt": "This emulator task is pre-authorized to create and update one test contact. Through Bridge only, create AidenBridgeBenchmarkContact with phone +12025550147 and email bridge-before@example.com. Query that exact name to verify the returned contact. Update only the newly created contact ID to phone +12025550148 and email bridge-after@example.com, keeping its name unchanged. Query again and verify the new values replaced the old ones. The harness cleans up this test contact afterward. Do not operate the contacts UI.",
+      "rubric": [
+        {"id": "contact_created", "check": "The first query returns the newly created contact ID, name, +12025550147 and bridge-before@example.com."},
+        {"id": "contact_updated", "check": "The second query returns the same contact ID with +12025550148 and bridge-after@example.com replacing the original phone and email. No unrelated contact is modified."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 4, "max_tool_calls": 7, "must_complete_within_sec": 180,
+        "required_tools": ["bridge_contacts"],
+        "forbidden_tools": ["touch_gesture", "shell", "enter_text"],
+        "required_tool_calls": [
+          {"tool": "bridge_contacts", "input_contains": {"action": "create", "name": "AidenBridgeBenchmarkContact", "phone_numbers": ["+12025550147"], "emails": ["bridge-before@example.com"]}},
+          {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "AidenBridgeBenchmarkContact"}},
+          {"tool": "bridge_contacts", "input_contains": {"action": "update", "phone_numbers": ["+12025550148"], "emails": ["bridge-after@example.com"]}},
+          {"tool": "bridge_contacts", "input_contains": {"action": "query", "query": "AidenBridgeBenchmarkContact"}}
+        ]
+      }
+    },
+    {
+      "id": "sms_multiline_unicode_input",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "device_operation",
+      "description_for_judge": "Open an SMS draft via Phone Bridge and enter multiline Unicode text using enter_text. Never send the draft. Harness checks App write evidence and exact editable field text.",
+      "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline, accented character and emoji:\nBridge café input ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
+      "android_bridge_input_text": "Bridge café input ✅\nLine 2: 100% & #42",
+      "rubric": [
+        {"id": "draft_entered", "check": "The SMS composer contains both exact lines, including the newline, accented character, emoji, percent sign and punctuation."},
+        {"id": "not_sent", "check": "The text remains an unsent draft, with no sent message bubble or send action."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2, "max_tool_calls": 10, "must_complete_within_sec": 180,
+        "required_tools": ["open_url", "enter_text"],
+        "forbidden_tools": ["keyboard_text", "bridge_clipboard", "shell"],
+        "required_tool_calls": [
+          {"tool": "open_url", "input_contains": {"url": "sms:+12025550147"}},
+          {"tool": "enter_text", "input_contains": {"text": "Bridge café input ✅\nLine 2: 100% & #42"}}
+        ]
+      }
+    },
+    {
+      "id": "settings_search_unicode_input",
+      "foreground_app_id": "com.aidenbridge",
+      "category": "device_operation",
+      "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new AidenBridge clipboard write and exact UIAutomator field text.",
+      "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden résumé check #42. Use enter_text once the editable field is visible, then leave that field on screen.",
+      "android_bridge_input_text": "Aiden résumé check #42",
+      "rubric": [
+        {"id": "target_field_visible", "check": "The post-screenshot shows the Android Settings search field containing Aiden résumé check #42 exactly."}
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 2,
+        "max_tool_calls": 12,
+        "must_complete_within_sec": 180,
+        "required_tools": ["enter_text"],
+        "forbidden_tools": ["keyboard_text", "bridge_clipboard"],
+        "required_tool_calls": [
+          {"tool": "enter_text", "input_contains": {"text": "Aiden résumé check #42"}}
+        ]
+      }
+    }
+  ]
+}

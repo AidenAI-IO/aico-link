@@ -5,7 +5,7 @@ import json
 import shutil
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from PIL import Image
 
@@ -458,6 +458,7 @@ def run_one_task(
     environment_url: str | None = None,
     benchmark_task_id: str | None = None,
     active_skills: list[str] | None = None,
+    after_setup: Callable[[], None] | None = None,
 ) -> TaskResult:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     started = now_iso()
@@ -483,6 +484,8 @@ def run_one_task(
             environment_url=environment_url,
             benchmark_task_id=benchmark_task_id,
         )
+        if after_setup is not None:
+            after_setup()
         base.metrics["setup_ms"] = int((time.monotonic() - setup_started_mono) * 1000)
     except SetupAssertionError as e:
         eligible = e.agent_eligible

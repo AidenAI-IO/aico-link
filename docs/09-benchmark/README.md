@@ -423,14 +423,18 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Every automatic case CI can run without external hardware (13 cases) |
-| Manual dispatch | `runnable` | Rerun all isolated, mock, and MobileGym cases |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (13 cases) |
-| Manual dispatch | `adb` | Native Android UI and text editing; requires a connected emulator or device |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (17 cases) |
+| Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select a suite |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
+| Manual dispatch | `adb` | Native Android comparisons and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
-case whose environment is `isolated` or `mobilegym`.
+case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
+`runnable` flag is true. This includes both ADB comparison pairs (four cases)
+on the runner's configured Android emulator. ADB cases remain available through
+the manual `hardware` profile and use the same exclusive device lock in every
+profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
 suites run with isolated Agent workers and need no external device.
 VPhone is currently excluded because it requires a separately hosted macOS
@@ -454,7 +458,8 @@ the external iOS case; profile `all` selects both environments.
 For native Android, dispatch profile `adb` with
 `suites/adb_android_basic.json` for general operations or
 `suites/adb_android_text_editing.json` for text editing. Leave the suite input
-blank to run both. See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
+blank to run both comparison pairs and the dedicated Bridge capability suite.
+See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
 for coverage and device prerequisites.
 
 Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
@@ -502,6 +507,69 @@ host. Set `BENCHMARK_ANDROID_SERIAL` to its adb serial, for example
 ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
+
+When any selected case enables AidenBridge, CI reads the current release
+filename from the unversioned distribution URL and compares its `versionCode`
+with the App already installed on the emulator. It downloads and installs the
+APK only when the versions differ. The job summary records the release filename,
+installed `versionCode`, and whether the installation was reused; when an APK is
+downloaded, it also records its SHA-256. A republished APK with the same
+`versionCode` is treated as the same release.
+
+The general Android suites run as matched pairs using the same JSON tasks,
+setup, prompts, rubrics, repeat count, and one worker:
+
+| Suite | Without AidenBridge | With AidenBridge |
+| --- | --- | --- |
+| `adb_android_basic.json` (16 tasks) | `adb_android_basic` | `adb_android_basic-aidenbridge` |
+| `adb_android_text_editing.json` (4 tasks) | `adb_android_text_editing` | `adb_android_text_editing-aidenbridge` |
+
+These task definitions are synced from main commit
+`16ab57b50c68a91a05915a4112f8bc2a896170af`. Basic tasks cover general UI navigation
+and state recovery; text-editing tasks cover ASCII spaces, punctuation,
+replacement, and clearing. The `phone_control_v1.json` suite remains registered
+for MobileGym and iOS, without an additional ADB case.
+
+Both Android pairs run in the daily `runnable` sweep. Selecting either suite
+manually with `runnable`, `hardware`, `adb`, or `all` also runs both variants.
+The baseline stops any retained companion App before starting and uses the ADB
+environment without a Phone Bridge connection. The connected variant establishes
+Phone Bridge on each task Agent while ADB continues to provide screenshots and
+input. Both variants retain the task's prepared screen; the connected variant
+does not bring the companion App to the foreground after task setup.
+ADB cases run exclusively on the shared emulator, including scheduled runs.
+
+Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
+`execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
+**ADB device** and **ADB + AidenBridge** in its configuration comparison and
+run history. Compare matching tasks from the same workflow attempt/model/repeat
+count using pass rates, tool calls, task time, and token/cost metrics. Historical
+runs with different suite hashes are not a controlled Bridge comparison.
+
+`aico_app/android_bridge_capabilities_v1.json` is the connected AidenBridge
+suite. It tests Bridge-specific APIs rather than serving as the no-Bridge
+comparison workload. It explicitly starts its tasks with the companion App in
+the foreground. It runs with a rooted Android emulator and one Agent worker, checks the
+Phone Bridge connection per task, and covers clipboard round trips, semantic
+app and URL opening, calendar create/query/delete, contacts create/query/update,
+local notifications, and single-line and multiline Unicode text entry. The
+write tasks use reserved fixtures (`AidenBridgeBenchmark` local calendar and
+`AidenBridgeBenchmarkContact` contact). The runner removes only those fixtures
+before and after each write task, including failures. Calendar/contact write
+permissions are granted on the CI emulator. Text-entry tasks require both a new clipboard-write
+diagnostic event from the App and the exact text in a non-Bridge Android input
+field; its evidence is included in `results.jsonl` and the local
+`android_bridge_input.json` task artifact. If input evidence cannot be collected,
+the input assertion is unknown; an otherwise passing task becomes an evaluation
+error. Cleanup failures retain the completed task result and are recorded in
+`android_bridge_cleanup_error` and the worker log. Select this suite with the
+`hardware` profile to run only the connected App cases. This dedicated capability
+suite has `runnable: false` and remains excluded from the daily comparison sweep.
+
+This suite replaces the former separate `android_bridge_data_v1.json` suite.
+It does not claim coverage of iOS-only transports, BLE notification forwarding,
+or every permission/background failure mode. Scheduled notification delivery
+and optional calendar reminders also need separate device-side assertions.
 
 The benchmark job uses the `aiden-hosted-02` runner by default (override with
 `AICO_RUNNER_PRIMARY`) because the MobileGym and agent-daemon paths require

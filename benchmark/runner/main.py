@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import concurrent.futures
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -11,10 +12,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
+from runner.android_phone_bridge import (
+    android_bridge_fixture,
+    clipboard_write_ids,
+    connected_android_phone_bridge,
+    foreground_android_phone_bridge,
+    verify_android_bridge_input,
+    wait_for_android_phone_bridge,
+)
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
 from runner.judge import DEFAULT_JUDGE_BASE_URL, JUDGE_PROMPT_VERSION, JudgeConfig
+from runner.models import HardAssertionFailure
 from runner.platform import (
     TargetPlatform,
     read_environment_health,
@@ -110,6 +120,8 @@ def cli(argv: list[str] | None = None) -> int:
                        help="Optional environment bridge endpoint; when set, each task calls /api/setup, POST /api/providers/screenshot, and /api/release")
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
+    p_run.add_argument("--android-phone-bridge-serial", default="",
+                       help="Connect a rooted Android emulator's AidenBridge app to each isolated Agent")
     p_run.add_argument("--max-concurrency", type=int, default=0,
                        help="Cap auto-agent-setup worker concurrency; 0 means no explicit cap")
     p_run.add_argument("--daemon-image", default=os.environ.get("AICO_DAEMON_IMAGE", "aico-agent-daemon:local"))
@@ -597,6 +609,10 @@ def _cmd_run_auto_agent_setup_inner(
     if args.repeats is not None and args.repeats <= 0:
         print(f"Error: --repeats must be positive, got {args.repeats}", file=sys.stderr)
         return 2
+    bridge_serial = getattr(args, "android_phone_bridge_serial", "")
+    if bridge_serial and args.max_concurrency != 1:
+        print("Error: Android Phone Bridge requires one worker", file=sys.stderr)
+        return 2
     if args.max_concurrency < 0:
         print("Error: max-concurrency must be non-negative", file=sys.stderr)
         return 2
@@ -733,6 +749,7 @@ def _cmd_run_auto_agent_setup_inner(
         )
         log_proc = None
         client = None
+        completed_result = None
         try:
             print(
                 f"[{progress}] STARTING   {unit.task.id} attempt={unit.attempt}",
@@ -760,6 +777,7 @@ def _cmd_run_auto_agent_setup_inner(
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
+                benchmark_local_phone_bridge=bool(bridge_serial),
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")
@@ -807,21 +825,81 @@ def _cmd_run_auto_agent_setup_inner(
                 f"[{progress}] RUNNING    {unit.task.id} attempt={unit.attempt}",
                 flush=True,
             )
-            return run_one_task(
-                client,
-                suite,
-                unit.task,
-                unit.attempt,
-                art_dir,
-                judge_cfg,
-                judge_cache,
-                run_id,
-                environment_url=args.environment_url or None,
-                benchmark_task_id=route_id,
-                active_skills=active_skills,
+            bridge = (
+                connected_android_phone_bridge(
+                    bridge_serial, published_port, client
+                )
+                if bridge_serial
+                else nullcontext()
             )
+            with bridge, android_bridge_fixture(bridge_serial, unit.task.android_bridge_fixture):
+                prior_writes = (
+                    clipboard_write_ids(bridge_serial)
+                    if unit.task.android_bridge_input_text else set()
+                )
+                result = run_one_task(
+                    client,
+                    suite,
+                    unit.task,
+                    unit.attempt,
+                    art_dir,
+                    judge_cfg,
+                    judge_cache,
+                    run_id,
+                    environment_url=args.environment_url or None,
+                    benchmark_task_id=route_id,
+                    active_skills=active_skills,
+                    after_setup=(
+                        (lambda: foreground_android_phone_bridge(bridge_serial, client)
+                         if unit.task.foreground_app_id == "com.aidenbridge"
+                         else wait_for_android_phone_bridge(client))
+                        if bridge_serial else None
+                    ),
+                )
+                if unit.task.android_bridge_input_text:
+                    try:
+                        evidence = verify_android_bridge_input(
+                            bridge_serial, unit.task.android_bridge_input_text, prior_writes
+                        )
+                    except Exception as exc:
+                        evidence = {"error": str(exc)}
+                    (art_dir / "android_bridge_input.json").write_text(
+                        json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    result.metrics["android_bridge_input"] = evidence
+                    verified = (
+                        None if evidence.get("error") else
+                        bool(evidence.get("bridge_clipboard_write") and evidence.get("field_contains_exact_text"))
+                    )
+                    if result.hard_assertions is not None:
+                        result.hard_assertions.android_bridge_input = verified
+                    if evidence.get("error"):
+                        if result.status == "passed":
+                            result.status = "judge_error"
+                            result.metrics.update(success=None, quality_score=None, agent_eligible=False,
+                                                  failure_class="evaluation", first_failure_stage="evaluation",
+                                                  failure_event_ref="android_bridge_input.json")
+                    elif not verified:
+                        result.hard_assertion_failures.append(HardAssertionFailure(
+                            id="android_bridge_input",
+                            label="Android Bridge Input",
+                            requirement="AidenBridge clipboard write and exact text in a non-Bridge editable field",
+                            actual=json.dumps(evidence, ensure_ascii=False),
+                        ))
+                        if result.status == "passed":
+                            result.status = "failed"
+                            result.metrics.update(success=False, quality_score=0.0, failure_class="agent",
+                                              first_failure_stage="state_verification",
+                                              failure_event_ref="android_bridge_input.json")
+                # Only preserve a result once evaluation is complete; errors
+                # exiting the context managers are cleanup failures.
+                completed_result = result
+                return result
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
+            if completed_result is not None:
+                completed_result.metrics["android_bridge_cleanup_error"] = str(exc)
+                return completed_result
             return skipped_task_result(
                 suite,
                 unit.task,
@@ -894,7 +972,10 @@ def _cmd_run_auto_agent_setup_inner(
         "auto_agent_setup": True,
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
-        "execution_environment": _execution_environment(suite, selected_task_ids),
+        "execution_environment": (
+            "adb_aidenbridge" if bridge_serial
+            else _execution_environment(suite, selected_task_ids)
+        ),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -940,6 +1021,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"Error: task id(s) not found in suite: {', '.join(missing)}", file=sys.stderr)
             return 2
         suite.tasks = [by_id[task_id] for task_id in selected_task_ids]
+
+    if getattr(args, "android_phone_bridge_serial", "") and not (
+        args.auto_agent_setup and args.environment_url
+    ):
+        print("Error: --android-phone-bridge-serial requires --auto-agent-setup and --environment-url", file=sys.stderr)
+        return 2
+    if any(task.android_bridge_input_text or task.android_bridge_fixture for task in suite.tasks):
+        if not args.auto_agent_setup or not getattr(args, "android_phone_bridge_serial", ""):
+            print("Error: Android Bridge assertions/fixtures require --auto-agent-setup and --android-phone-bridge-serial", file=sys.stderr)
+            return 2
 
     if _suite_has_mixed_mock_and_real_tasks(suite):
         print(

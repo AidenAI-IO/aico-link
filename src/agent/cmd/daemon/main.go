@@ -79,6 +79,7 @@ func main() {
 		benchmarkTaskID           = flag.String("benchmark-task-id", "", "Benchmark task id to include on environment bridge requests for task routing")
 		benchmarkHeadless         = flag.Bool("benchmark-headless", false, "Hide unavailable device tools in a benchmark container without an environment bridge")
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
+		benchmarkLocalPhoneBridge = flag.Bool("benchmark-local-phone-bridge", false, "Keep Phone Bridge local while a benchmark environment bridge handles screen and input")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
 	)
 	flag.Parse()
@@ -157,6 +158,13 @@ func main() {
 			os.Exit(1)
 		}
 		cfg.Benchmark.MockTools = true
+	}
+	if *benchmarkLocalPhoneBridge {
+		if cfg.Benchmark.Token == "" || !cfg.EnvironmentBridge.Enabled {
+			fmt.Fprintln(os.Stderr, "benchmark-local-phone-bridge requires benchmark-token-file and environment-bridge-mode")
+			os.Exit(1)
+		}
+		cfg.EnvironmentBridge.LocalPhoneBridge = true
 	}
 	proxyConfig := agent.ProxyConfigFromEnvironment()
 	if err := proxyConfig.Validate(); err != nil {

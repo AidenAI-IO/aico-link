@@ -130,6 +130,18 @@ def _environment_url(
         serial = environment.get("ANDROID_SERIAL", "").strip()
         if not serial:
             raise RuntimeError("ADB case requires ANDROID_SERIAL")
+        if not case.android_phone_bridge:
+            # A retained emulator may have just run the Bridge-enabled variant.
+            adb_timeout = min(30, timeout_seconds) if timeout_seconds is not None else 30
+            installed = subprocess.run(
+                ["adb", "-s", serial, "shell", "pm", "list", "packages", "com.aidenbridge"],
+                check=True, capture_output=True, text=True, timeout=adb_timeout,
+            )
+            if "package:com.aidenbridge" in installed.stdout.splitlines():
+                subprocess.run(
+                    ["adb", "-s", serial, "shell", "am", "force-stop", "com.aidenbridge"],
+                    check=True, stdout=log_file, stderr=log_file, timeout=adb_timeout,
+                )
         payload = _run_json(
             [
                 python,
@@ -440,6 +452,11 @@ def run_case(
             command.extend(["--environment-url", environment_url])
         if case.target_platform != "auto":
             command.extend(["--target-platform", case.target_platform])
+        if case.android_phone_bridge:
+            command.extend([
+                "--android-phone-bridge-serial",
+                runtime_environment["ANDROID_SERIAL"],
+            ])
         if _images_prepared(runtime_environment):
             command.append("--no-build-daemon-image")
         if timeout_seconds is None:
@@ -471,7 +488,8 @@ def run_case(
                     log_file.write(f"\n{message}\n")
                 print(f"Error: {message}", file=sys.stderr, flush=True)
                 return 1
-        return _effective_exit_code(returncode, BENCHMARK_ROOT / "runs" / run_id / "manifest.json")
+        manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
+        return _effective_exit_code(returncode, manifest_path)
     finally:
         _stop_daemon_projects_by_run_id(run_id)
         _stop_service(service)

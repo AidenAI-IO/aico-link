@@ -4111,6 +4111,25 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	}
 }
 
+func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+	rt, err := NewRuntime(Config{
+		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
+		Model:     ModelConfig{Provider: "fake"},
+		EnvironmentBridge: EnvironmentBridgeConfig{
+			Enabled:          true,
+			Endpoint:         "http://127.0.0.1:18080",
+			LocalPhoneBridge: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer rt.Close()
+	if rt.phoneBridge.proxyMode {
+		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
+	}
+}
+
 func TestNewRuntimeLoadsBundledSkillsSeededOnFirstStartup(t *testing.T) {
 	configDir := ensureTestConfigDir(t, t.TempDir())
 	bundledDir := t.TempDir()
