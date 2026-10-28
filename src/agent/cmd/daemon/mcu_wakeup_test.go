@@ -59,7 +59,7 @@ func TestMCUWakeupFiltersSourcesAndRetainsPaginationCursor(t *testing.T) {
 	}
 }
 
-func TestMCUTapWakeupSettingOnlyGatesTouchKey(t *testing.T) {
+func TestMCUWakeupTapSettingOnlyGatesTouchKey(t *testing.T) {
 	now := time.Now()
 	for _, tc := range []struct {
 		name       string
@@ -253,5 +253,70 @@ func TestMCUWakeupStartsExistingVoiceRecording(t *testing.T) {
 	}
 	if dialog.starts != 1 || len(dialog.utterances) != 1 || !opsHasPrefix(dialog.ops, []string{"interrupt_output", "start", "reset"}) {
 		t.Fatalf("voice behavior: starts=%d ops=%v utterances=%d", dialog.starts, dialog.ops, len(dialog.utterances))
+	}
+}
+
+func TestMCUWakeupRetainsBootTouchThroughSlowAgentStartup(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		age         time.Duration
+		savedCursor bool
+		wantCalls   int
+	}{
+		{name: "observed boot delay", age: 53 * time.Second, wantCalls: 1},
+		{name: "startup limit", age: 2 * time.Minute, wantCalls: 1},
+		{name: "old boot history", age: 2*time.Minute + time.Second},
+		{name: "restart retains normal limit", age: 53 * time.Second, savedCursor: true},
+		{name: "fresh after restart", age: time.Second, savedCursor: true, wantCalls: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			path := filepath.Join(t.TempDir(), "cursor.json")
+			if tc.savedCursor {
+				if err := os.WriteFile(path, []byte(`{"generation":"g1","id":"1"}`), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			drained := make(chan struct{})
+			client := mcuWakeupEventsFunc(func(ctx context.Context, since, _ string, _, _ int) (*mcu.EventPage, error) {
+				switch since {
+				case "0":
+					// The touch can be on a later page of boot history.
+					return &mcu.EventPage{Generation: "g1", NextID: "1", LastID: "2", Events: []mcu.HardwareEvent{{ID: "1", Type: "rk628_plugin_det_changed"}}}, nil
+				case "1":
+					return &mcu.EventPage{Generation: "g1", NextID: "2", LastID: "2", Events: []mcu.HardwareEvent{
+						{ID: "2", Type: "wakeup", Source: "touch_key", SourceCode: 3, ReceivedAt: now.Add(-tc.age).Format(time.RFC3339Nano)},
+					}}, nil
+				default:
+					close(drained)
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}
+			})
+			source := newMCUWakeupSource(client, path)
+			source.now = func() time.Time { return now }
+			calls := 0
+			watcher, _ := source.newWatcherWithTap(true, func() { calls++ })
+			if err := watcher.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer watcher.Stop()
+			select {
+			case <-drained:
+			case <-time.After(2 * time.Second):
+				t.Fatal("initial history did not drain")
+			}
+			watcher.Stop()
+			if calls != tc.wantCalls || source.cursor.ID != "2" {
+				t.Fatalf("calls=%d cursor=%+v, want calls=%d and cursor=2", calls, source.cursor, tc.wantCalls)
+			}
+			// Once caught up, a delayed runtime event must use the 30s limit.
+			page := &mcu.EventPage{Generation: "g1", NextID: "3", LastID: "3", Events: []mcu.HardwareEvent{
+				{ID: "3", Type: "wakeup", Source: "touch_key", SourceCode: 3, ReceivedAt: now.Add(-53 * time.Second).Format(time.RFC3339Nano)},
+			}}
+			if err := source.consumeWithTap(context.Background(), page, func() { t.Error("startup allowance leaked into runtime") }, true); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
