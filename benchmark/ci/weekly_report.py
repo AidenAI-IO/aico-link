@@ -103,6 +103,7 @@ CAPABILITY_SUITES = {
                      "phone_control_v1", "adb_android_basic", "adb_android_text_editing", "vphone_ios_basic",
                      "app_workflow_v1", "quick_action_v1"),
     "Device integration": ("aico_app_connection_capabilities_v1",
+                           "aico_app_android_bridge_capabilities_v1",
                            "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
 }
@@ -113,7 +114,8 @@ _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.item
 AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
 ENVIRONMENT_LABELS = {
     "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
-    "adb": "ADB device", "external": "External device", "mixed": "Mixed",
+    "adb": "ADB device", "adb_aidenbridge": "ADB + AidenBridge",
+    "external": "External device", "mixed": "Mixed",
 }
 
 

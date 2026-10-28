@@ -458,10 +458,10 @@ function selectDataset(index) {
     "</tbody>";
   el("history-title").textContent = selected.suite + " · run history";
   el("history").innerHTML = `
-    <thead><tr><th>When</th><th>Commit</th><th>Agent model</th><th>Judge</th><th class="n">k</th>
+    <thead><tr><th>When</th><th>Commit</th><th>Environment</th><th>Agent model</th><th>Judge</th><th class="n">k</th>
     <th class="n">pass@1</th><th class="n">pass@k</th><th class="n">pass^k</th><th>Run</th></tr></thead><tbody>` +
     points.slice().reverse().map(r => `<tr>
-      <td>${when(r.timestamp)}</td><td>${commitLink(r.commit_sha)}</td><td>${esc(configValue(r, "agent_model"))}</td>
+      <td>${when(r.timestamp)}</td><td>${commitLink(r.commit_sha)}</td><td>${esc(r.environment_label)}</td><td>${esc(configValue(r, "agent_model"))}</td>
       <td>${esc(configValue(r, "judge_model"))} · ${esc(configValue(r, "judge_prompt_version"))}</td><td class="n">${esc(r.metrics_k)}</td>
       ${metrics.map(m => `<td class="n">${pct(r[m.key])}</td>`).join("")}
       <td>${DATA.repo && r.workflow_run_id

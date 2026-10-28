@@ -2313,6 +2313,7 @@ type scriptedModel struct {
 	tools             [][]llms.Tool
 	toolChoices       []any
 	rawHTTPLogEnabled []bool
+	maxTokens         []int
 }
 
 func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -2320,6 +2321,7 @@ func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.Mes
 	for _, option := range options {
 		option(&callOptions)
 	}
+	m.maxTokens = append(m.maxTokens, callOptions.MaxTokens)
 	m.sawStreaming = append(m.sawStreaming, callOptions.StreamingFunc != nil)
 	m.messages = append(m.messages, messages)
 	m.tools = append(m.tools, callOptions.Tools)
@@ -4108,6 +4110,25 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	case <-rt.storage.stop:
 	default:
 		t.Fatal("Close() did not stop the storage poller")
+	}
+}
+
+func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+	rt, err := NewRuntime(Config{
+		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
+		Model:     ModelConfig{Provider: "fake"},
+		EnvironmentBridge: EnvironmentBridgeConfig{
+			Enabled:          true,
+			Endpoint:         "http://127.0.0.1:18080",
+			LocalPhoneBridge: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer rt.Close()
+	if rt.phoneBridge.proxyMode {
+		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
 	}
 }
 

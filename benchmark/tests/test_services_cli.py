@@ -435,6 +435,17 @@ def test_daemon_compose_env_enables_benchmark_token_for_config_dir(tmp_path: Pat
     assert env["AICO_BENCHMARK_TOKEN_FILE"] == "/config/control_token"
 
 
+def test_daemon_compose_env_keeps_phone_bridge_local_for_adb_case():
+    env = webui.daemon_compose_env(
+        image="aico-agent-daemon:test",
+        environment_bridge_endpoint="http://host.docker.internal:18080",
+        benchmark_local_phone_bridge=True,
+    )
+
+    assert env["AICO_ENVIRONMENT_BRIDGE_MODE"] == "1"
+    assert env["AICO_BENCHMARK_LOCAL_PHONE_BRIDGE"] == "1"
+
+
 def test_daemon_compose_env_uses_ephemeral_port_for_zero_host_port():
     env = webui.daemon_compose_env(
         image="aico-agent-daemon:test",
