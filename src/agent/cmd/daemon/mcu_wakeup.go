@@ -90,10 +90,6 @@ func (w *mcuWakeupWatcher) Start() error {
 			s.cursor = cursor
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("read MCU wakeup cursor: %w", err)
-		} else {
-			// A boot wake can precede slow Agent initialization. Only an
-			// uncheckpointed first subscription gets the startup allowance.
-			s.startupAt = s.now()
 		}
 		s.loaded = true
 	}
@@ -154,6 +150,11 @@ func (s *mcuWakeupSource) run(ctx context.Context, callback func(), tapEnabled b
 	for ctx.Err() == nil {
 		page, err := s.client.EventsSince(ctx, s.cursor.ID, s.cursor.Generation, 50, 25000)
 		if err == nil && ctx.Err() == nil {
+			if page != nil && page.Generation != "" && s.cursor.Generation == "" && s.startupAt.IsZero() {
+				// With no saved cursor, include wakes received during initial
+				// subscription retries in the retained startup history.
+				s.startupAt = s.now()
+			}
 			err = s.consumeWithTap(ctx, page, callback, tapEnabled)
 		}
 		if ctx.Err() != nil {

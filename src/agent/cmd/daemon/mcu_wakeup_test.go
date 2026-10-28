@@ -260,13 +260,16 @@ func TestMCUWakeupRetainsBootTouchThroughSlowAgentStartup(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		age         time.Duration
+		retryDelay  time.Duration
 		savedCursor bool
 		wantCalls   int
 	}{
 		{name: "observed boot delay", age: 53 * time.Second, wantCalls: 1},
 		{name: "startup limit", age: 2 * time.Minute, wantCalls: 1},
 		{name: "old boot history", age: 2*time.Minute + time.Second},
+		{name: "wake during initial retry", age: 44 * time.Second, retryDelay: 45 * time.Second, wantCalls: 1},
 		{name: "restart retains normal limit", age: 53 * time.Second, savedCursor: true},
+		{name: "restart retry retains normal limit", age: 44 * time.Second, retryDelay: 45 * time.Second, savedCursor: true},
 		{name: "fresh after restart", age: time.Second, savedCursor: true, wantCalls: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -278,7 +281,14 @@ func TestMCUWakeupRetainsBootTouchThroughSlowAgentStartup(t *testing.T) {
 				}
 			}
 			drained := make(chan struct{})
+			retried := false
 			client := mcuWakeupEventsFunc(func(ctx context.Context, since, _ string, _, _ int) (*mcu.EventPage, error) {
+				if tc.retryDelay > 0 && !retried {
+					retried = true
+					// The wake arrives after Start, while the initial request fails.
+					now = now.Add(tc.retryDelay)
+					return nil, errors.New("service offline during startup")
+				}
 				switch since {
 				case "0":
 					// The touch can be on a later page of boot history.
@@ -295,6 +305,7 @@ func TestMCUWakeupRetainsBootTouchThroughSlowAgentStartup(t *testing.T) {
 			})
 			source := newMCUWakeupSource(client, path)
 			source.now = func() time.Time { return now }
+			source.retry = time.Millisecond
 			calls := 0
 			watcher, _ := source.newWatcherWithTap(true, func() { calls++ })
 			if err := watcher.Start(); err != nil {

@@ -140,8 +140,9 @@ The Agent atomically checkpoints `(generation,id)` before each action in
 configuration reloads and Agent process restarts within the same boot. A fresh
 boot or MCU-service generation starts from retained history, so a touch or ASR
 wake can reach voice after Agent initialization. When no saved cursor exists,
-events received before the first subscription get a two-minute freshness
-window while retained startup history is drained. After catching up, restarting
+events received before the first successful subscription, including connection
+retries, get a two-minute freshness window while retained startup history is
+drained. After catching up, restarting
 with a saved cursor, or resetting the MCU generation, the normal 30-second
 limit applies. Invalid timestamps and events older than the applicable limit
 are skipped to avoid starting a delayed conversation from old history. This
