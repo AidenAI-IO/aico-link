@@ -672,7 +672,7 @@ func TestConfigTestAcceptsRealtimeInputMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := `{"section":"agent","values":{"input_mode":"realtime","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+	request := `{"section":"agent","values":{"input_mode":"realtime","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
 	resp := httptest.NewRecorder()
 	server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
 	if resp.Code != http.StatusOK {
@@ -725,7 +725,7 @@ func TestConfigTestInputModeAcceptsUnsetAndRejectsRemovedModes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := `{"section":"agent","values":{` + test.value + `"vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+			request := `{"section":"agent","values":{` + test.value + `"vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
 			resp := httptest.NewRecorder()
 			server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
 			if resp.Code != http.StatusOK {
@@ -777,7 +777,7 @@ func TestConfigTestStatePruneLimitIsOptional(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			request := `{"section":"agent","values":{` + test.value + `"input_mode":"stt","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"voice_max_response_tokens":100,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
+			request := `{"section":"agent","values":{` + test.value + `"input_mode":"stt","vad_speech_threshold":0.5,"screen_stable_diff_threshold":6,"silence_ms":550,"min_speech_ms":300,"voice_followup_timeout_ms":1000,"voice_first_turn_timeout_ms":1000,"voice_max_turns":2,"screen_stable_timeout_ms":2000,"screen_stable_ms":250,"max_iterations":-1}}`
 			resp := httptest.NewRecorder()
 			server.ServeHTTP(resp, httptest.NewRequest(http.MethodPost, "/api/config/test", strings.NewReader(request)))
 			if resp.Code != http.StatusOK {

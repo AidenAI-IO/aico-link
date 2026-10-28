@@ -393,7 +393,6 @@ voice_interrupt_on_wakeup = true
 voice_streaming_tts_enabled = true
 voice_tool_call_speech = true
 voice_progress_speech_enabled = true
-voice_max_response_tokens = 300
 
 [model_settings.providers.openrouter-main]
 type = "openrouter"
@@ -516,7 +515,8 @@ button in both modes.
 | `voice_streaming_tts_enabled`   | `true`                                                      | Feed the LLM streaming output into TTS sentence by sentence, reducing the wait before the first sentence plays                                                                         |
 | `voice_tool_call_speech`        | `true`                                                      | Whether to asynchronously read the `content` of a tool-call event; this content comes only from the assistant content in the same LLM tool-call response, and stays silent when absent |
 | `voice_progress_speech_enabled` | `true`                                                      | Whether to announce a short progress message when a todo item enters `in_progress`; todo state is still sent to the UI/trace                                                           |
-| `voice_max_response_tokens`     | `300`                                                       | Per-turn output token limit for voice replies (must be `>= 0`)                                                                                                                         |
+
+Classic STT Agent turns use the main model's `max_response_tokens` output limit; there is no separate voice output-token setting. Voice replies should still be kept short through the voice instructions rather than a second token cap.
 
 The model pointed to by `vad_model_path` must first be converted from the Silero ONNX to RV1106 RKNN on a PC using `silero-vad/convert_silero_vad_to_rknn.py`, then placed at the corresponding path on the device. The CPU backend requires `silero_vad_6_2_lstm_decoder_weights.bin` to include the Conv1d encoder extension, which can be generated from the TorchScript file shipped with the repo using `silero-vad/export_silero_vad_v6_2_weights.py`.
 When `vad_helper_path` is still the built-in default, switching `vad_backend` automatically switches the helper; only when set to a custom path does it run that custom path.

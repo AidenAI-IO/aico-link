@@ -34,7 +34,7 @@ const (
 	defaultModelName                         = "bytedance-seed/seed-2.0-lite"
 	defaultModelTemperature                  = 0.2
 	// 8192 leaves room for hidden reasoning tokens while keeping a bounded
-	// default cost ceiling. Voice replies use their separate 300-token default.
+	// default cost ceiling for both text and Classic STT voice replies.
 	defaultModelMaxResponseTokens = 8192
 	// minReasoningBudgetTokens is Anthropic's documented floor for
 	// thinking.budget_tokens; other budget-style APIs are at or below it.
@@ -88,7 +88,6 @@ const (
 	defaultVoiceFollowupTimeoutMs  = 5000
 	defaultVoiceFirstTurnTimeoutMs = 10000
 	defaultVoiceMaxTurns           = 0
-	defaultVoiceMaxResponseTokens  = 300
 	defaultMaxIterations           = -1
 	defaultVoiceModelProvider      = realtimevoice.ProviderQwen
 	defaultVoiceModelModel         = realtimevoice.DefaultQwenRealtimeModel
@@ -271,7 +270,6 @@ func DefaultConfig() Config {
 		VoiceStreamingTTSEnabled:   defaultBoolPtr(true),
 		VoiceToolCallSpeech:        defaultBoolPtr(true),
 		VoiceProgressSpeechEnabled: defaultBoolPtr(true),
-		VoiceMaxResponseTokens:     defaultVoiceMaxResponseTokens,
 		MaxIterations:              defaultMaxIterations,
 		TerminationPolicy:          DefaultTerminationPolicyConfig(),
 		ContextCompactionThreshold: defaultContextCompactionThreshold,

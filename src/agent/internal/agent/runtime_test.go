@@ -2313,6 +2313,7 @@ type scriptedModel struct {
 	tools             [][]llms.Tool
 	toolChoices       []any
 	rawHTTPLogEnabled []bool
+	maxTokens         []int
 }
 
 func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -2320,6 +2321,7 @@ func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.Mes
 	for _, option := range options {
 		option(&callOptions)
 	}
+	m.maxTokens = append(m.maxTokens, callOptions.MaxTokens)
 	m.sawStreaming = append(m.sawStreaming, callOptions.StreamingFunc != nil)
 	m.messages = append(m.messages, messages)
 	m.tools = append(m.tools, callOptions.Tools)

@@ -266,7 +266,6 @@ input_mode = "stt"
 # voice_streaming_tts_enabled = true
 # voice_tool_call_speech = true
 # voice_progress_speech_enabled = true
-# voice_max_response_tokens = 300
 
 # Speech-to-Text (STT) configuration
 # Required when input_mode = "stt"
