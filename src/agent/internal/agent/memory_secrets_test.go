@@ -164,9 +164,12 @@ func TestSaveMemoryToolAcceptsRequestFromPreviousTurn(t *testing.T) {
 	}
 }
 
-func TestRecentUserTextsSkipsCompactionSummary(t *testing.T) {
+func TestRecentUserTextsStopsAtCompactionSummary(t *testing.T) {
+	// The compacted layout keeps the session's first user message as a head
+	// before the summary; neither may count as a recent user message.
 	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
 		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleUser, Content: "帮我记住门禁密码"},
 		{Role: messages.MessageRoleUser, Content: "<summary>\n用户说过：帮我记住门禁密码\n</summary>\n", CompactionSummary: true},
 		{Role: messages.MessageRoleUser, Content: "今天几号"},
 	})
