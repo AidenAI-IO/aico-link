@@ -301,9 +301,16 @@ def evaluate_task_history(
         base.status = "timeout" if timed_out else "failed"
         execution_started = (
             trace.total_tool_calls > 0
-            or bool(base.metrics.get("llm_calls"))
             or bool(trace.final_response)
+            or any(message.get("type") == "assistant" and bool(message.get("content", "").strip())
+                   for message in history)
+            or any(isinstance(base.metrics.get(key), (int, float)) and base.metrics[key] > 0
+                   for key in ("output_tokens", "reasoning_tokens"))
         )
+        # A request/retry count is not evidence of model execution. Some
+        # adapters emit zero-usage assistant records for connection errors,
+        # while others emit none. Apply the same evidence rule to both.
+        base.metrics["execution_started"] = execution_started
         if (execution_error or timed_out) and not execution_started:
             base.metrics["quality_score"] = None
             _set_outcome_metrics(

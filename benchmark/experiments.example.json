@@ -1,0 +1,16 @@
+{
+  "suite": "mobilegym_basic.json",
+  "environment_url": "http://127.0.0.1:9090",
+  "agents": [
+    {"id": "aiden", "kind": "aiden"},
+    {
+      "id": "pi",
+      "kind": "pi",
+      "provider": "openrouter",
+      "model": "replace-with-exact-provider-model-id",
+      "thinking": "medium"
+    }
+  ],
+  "repeats": 3,
+  "seed": 0
+}

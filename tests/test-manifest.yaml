@@ -85,7 +85,7 @@ suites:
     paths: [benchmark]
     command: cd benchmark && uv run --locked pytest -q tests ../tests/benchmark mobilegym/bridge/test_tools_api.py
     quick: true
-    quick_command: cd benchmark && uv run --locked pytest -q tests/test_suite.py tests/test_mnk_provider.py
+    quick_command: cd benchmark && uv run --locked pytest -q tests/test_suite.py tests/test_mnk_provider.py tests/test_harness.py tests/test_experiment.py tests/test_experiment_web.py tests/test_operations.py
     dependencies: [uv]
     required: true
     timeout_seconds: 1200

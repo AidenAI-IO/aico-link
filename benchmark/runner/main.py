@@ -189,6 +189,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("--runs", nargs=2, required=True)
+    p_experiment = sub.add_parser("experiment", help="Compare Aiden/pi on an existing operation suite")
+    p_experiment.add_argument("--config", required=True, help="Experiment JSON (suite, agents, repeats, seed)")
+    p_experiment.add_argument("--suites-dir", default=str(REPO_ROOT / "benchmark" / "suites"))
+    p_experiment.add_argument("--out", default=str(REPO_ROOT / "benchmark" / "runs"))
+    p_experiment.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
+    p_experiment.add_argument("--agent-config", default="")
+    p_experiment.add_argument("--daemon-image", default="aiden-agent-daemon:local")
+    p_experiment.add_argument("--no-build-daemon-image", action="store_true")
+    p_experiment.add_argument("--judge-model", default=JudgeConfig().model)
+    p_experiment.add_argument("--judge-base-url", default=JudgeConfig().base_url)
     p_publish = sub.add_parser("publish-langfuse")
     p_publish.add_argument("--run-dir", required=True)
     p_publish.add_argument("--dataset-prefix", default="aiden-benchmark")
@@ -206,6 +216,9 @@ def cli(argv: list[str] | None = None) -> int:
     from runner.services import add_service_parsers
     add_service_parsers(sub)
     args = parser.parse_args(argv)
+    if args.cmd == "experiment":
+        from runner.experiment import experiment_cli
+        return experiment_cli(args)
     if args.cmd == "run":
         return _cmd_run(args)
     if args.cmd == "rejudge":

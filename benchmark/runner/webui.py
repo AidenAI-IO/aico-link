@@ -226,6 +226,14 @@ class BenchmarkWebApp:
         )
         self._migrate_persisted_webui_secret()
         self._load_persisted_jobs()
+        from runner.experiment import ExperimentManager
+        self.experiments = ExperimentManager(
+            runs_dir=config.runs_dir, suites_dir=config.suites_dir,
+            base_config_dir=config.base_config_dir, daemon_image=config.daemon_image,
+            build_daemon_image=config.build_daemon_image,
+            config_loader=lambda: self.config_manager.get_config()[0],
+            judge_loader=lambda: self._load_webui_settings(include_secrets=True).get("judge", {}),
+        )
 
     def list_suites(self) -> list[dict[str, Any]]:
         return list_benchmark_suites(self.config.suites_dir)
@@ -457,6 +465,7 @@ class BenchmarkWebApp:
         return self._adb_android_environment_payload(env)
 
     def shutdown(self) -> None:
+        self.experiments.shutdown()
         with self._lock:
             job_ids = list(self._jobs)
         environment_ids = [env.id for env in self.env_manager.list_all()]
@@ -2745,6 +2754,10 @@ class WebHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if path == "/experiments" or path.startswith(("/experiments/", "/api/experiments")):
+            from runner.experiment_web import handle_experiment_request
+            if handle_experiment_request(self, path):
+                return
         if path == "/":
             self._send_html(INDEX_HTML)
             return
@@ -2783,6 +2796,10 @@ class WebHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        if path.startswith("/api/experiments"):
+            from runner.experiment_web import handle_experiment_request
+            if handle_experiment_request(self, path, post=True):
+                return
         if path == "/api/jobs":
             try:
                 payload = self._read_json()
@@ -3898,6 +3915,7 @@ INDEX_HTML = r"""<!doctype html>
       <div class="brand-mark">A</div>
       <div class="brand-title">Aiden Benchmark</div>
     </div>
+    <a href="/experiments">Agent experiments</a>
     <div id="headerStatus" class="header-meta">Idle</div>
   </header>
   <main class="layout">

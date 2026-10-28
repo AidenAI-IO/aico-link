@@ -8,6 +8,10 @@ current `benchmark/` directory, covering the recommended entry points:
 - CLI: best for scripted runs, single-suite debugging, rejudge, compare, and unit
   tool tests.
 
+For Aiden/pi comparisons, use **Agent experiments** in the WebUI or the
+`experiment` CLI command. See [Native agent experiments](experiments.md) for
+setup, supported tasks, comparison semantics, and the CI policy.
+
 The commands below assume you have entered `benchmark/` from the repo root:
 
 ```bash
