@@ -260,6 +260,7 @@ function semanticEventNeedsHistoryRefresh(kind) {
         kind === 'transcript.segment_final' ||
         kind === 'turn.committed' ||
         kind === 'response.terminal' ||
+        kind === 'run.terminal' ||
         kind === 'tool.call_ready' ||
         kind === 'tool.completed' ||
         kind === 'tool.failed' ||
