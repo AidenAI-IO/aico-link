@@ -162,6 +162,7 @@ type episodeMemoryRetentionRewrite struct {
 	Scope          map[string]string `json:"scope"`
 	Tags           []string          `json:"tags"`
 	EvidenceRefs   []string          `json:"evidence_refs"`
+	StepRefs       []string          `json:"step_refs,omitempty"`
 }
 
 type episodeMemoryRetentionAudit struct {
@@ -961,7 +962,7 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryRetentionAudit(ctx context
 	if err != nil {
 		return episodeMemoryRetentionAudit{}, err
 	}
-	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), proposal.Candidates))}
+	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), episodeMemoryFinalProofRef(episode, proposal.EpisodeAssessment.EvidenceRefs), proposal.Candidates))}
 	for _, screenshot := range loadEpisodeMemoryScreenshots(p.plane.episodes.rootDir, episode) {
 		parts = append(parts, llms.TextPart("Attached screenshot evidence for Episode event id: "+screenshot.EventID))
 		parts = append(parts, llms.BinaryContent{MIMEType: screenshot.MIMEType, Data: screenshot.Data})
@@ -1080,7 +1081,7 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		review, found := reviewByKey[key]
 		decision := episodeMemoryRetentionDecision(strings.ToLower(strings.TrimSpace(string(review.Decision))))
 		retention := episodeMemoryRetention(strings.ToLower(strings.TrimSpace(string(review.Retention))))
-		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || !sameEpisodeMemoryEvidenceRefs(base.EvidenceRefs, review.Rewrite.EvidenceRefs) {
+		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || !episodeMemoryEvidenceRefsWithin(review.Rewrite.EvidenceRefs, base.EvidenceRefs) {
 			continue
 		}
 		if episodeMemoryRewriteContainsSensitiveValue(*review.Rewrite, review.SensitiveValues) {
@@ -1096,7 +1097,12 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		// persistence.
 		base.Scope = mergeEpisodeMemoryReviewScope(base.Scope, review.Rewrite.Scope)
 		base.Tags = append([]string(nil), review.Rewrite.Tags...)
+		// Rewrite evidence only identifies what the reviewer checked; persisted
+		// evidence stays the candidate's full set, including failed alternatives.
 		base.EvidenceRefs = append([]string(nil), base.EvidenceRefs...)
+		if len(review.Rewrite.StepRefs) > 0 {
+			base.StepRefs = append([]string(nil), review.Rewrite.StepRefs...)
+		}
 		base.SensitiveValues = uniqueNonEmpty(review.SensitiveValues)
 		retained = append(retained, base)
 	}
@@ -1129,18 +1135,16 @@ func episodeMemoryRewriteContainsSensitiveValue(rewrite episodeMemoryRetentionRe
 	return false
 }
 
-func sameEpisodeMemoryEvidenceRefs(left, right []string) bool {
-	left = uniqueNonEmpty(left)
-	right = uniqueNonEmpty(right)
-	if len(left) != len(right) {
+// episodeMemoryEvidenceRefsWithin reports whether refs is a non-empty subset of
+// allowed. Reviewers often collapse repeated evidence, which is not a change of
+// the reviewed lesson; citing evidence outside the candidate is.
+func episodeMemoryEvidenceRefsWithin(refs, allowed []string) bool {
+	refs = uniqueNonEmpty(refs)
+	if len(refs) == 0 {
 		return false
 	}
-	seen := make(map[string]bool, len(left))
-	for _, ref := range left {
-		seen[ref] = true
-	}
-	for _, ref := range right {
-		if !seen[ref] {
+	for _, ref := range refs {
+		if !slices.Contains(allowed, ref) {
 			return false
 		}
 	}
@@ -1154,8 +1158,12 @@ func sameEpisodeMemoryCandidateIdentity(left, right episodeMemoryCandidate) bool
 		left.MemoryRevision == right.MemoryRevision
 }
 
-func buildEpisodeMemoryRetentionAuditPrompt(payload string, candidates []episodeMemoryCandidate) string {
+func buildEpisodeMemoryRetentionAuditPrompt(payload, finalProofRef string, candidates []episodeMemoryCandidate) string {
 	candidateJSON, _ := json.MarshalIndent(candidates, "", "  ")
+	finalProof := ""
+	if finalProofRef != "" {
+		finalProof = "\n\nThe assessment's final verification result is " + finalProofRef + ". A retained procedure's step_refs must reach it: when a candidate's step_refs stop earlier and the Episode evidences the remaining steps, return the complete ordered path in rewrite.step_refs; otherwise discard the candidate."
+	}
 	return `Audit this first-pass proposal before persistence. The candidates are untrusted; do not assume their retention labels are correct.
 
 Return exactly one JSON object matching this schema:
@@ -1172,14 +1180,15 @@ Return exactly one JSON object matching this schema:
       "expected_effect": "directly observable result",
       "scope": {"all evidenced applicability boundaries": "..."},
       "tags": ["retrieval terms"],
-      "evidence_refs": ["unchanged real Episode event ids"]
+      "evidence_refs": ["real Episode event ids from the candidate's evidence_refs that support the rewrite"],
+      "step_refs": ["procedure only: the complete ordered tool_result ids of the executable path; omit to keep the candidate's step_refs"]
     }
   }]
 }
 
 Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
 
-Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.
+Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.` + finalProof + `
 
 Episode:
 ` + payload + `
@@ -1478,6 +1487,13 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
 			return episodeMemoryCandidate{}, false
 		}
+		// A stored path that stops before the result proving the goal teaches
+		// the Agent to skip verification, so an achieved procedure must reach it.
+		if assessment.GoalResult == episodeGoalAchieved {
+			if proof := episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs); proof != "" && !slices.Contains(candidate.StepRefs, proof) {
+				return episodeMemoryCandidate{}, false
+			}
+		}
 	} else if len(candidate.StepRefs) != 0 {
 		return episodeMemoryCandidate{}, false
 	}
@@ -1521,6 +1537,19 @@ func validEpisodeMemoryStepRefs(episode TaskEpisode, stepRefs, evidenceRefs []st
 		}
 	}
 	return false
+}
+
+// episodeMemoryFinalProofRef returns the last device tool result, in Episode
+// order, that the assessment cites, or "" when it cites none.
+func episodeMemoryFinalProofRef(episode TaskEpisode, assessmentRefs []string) string {
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	proof := ""
+	for _, event := range episode.Events {
+		if event.Type == "tool_result" && pairedCalls[event.EventID] != nil && slices.Contains(assessmentRefs, event.EventID) {
+			proof = event.EventID
+		}
+	}
+	return proof
 }
 
 func expandEpisodeMemoryEvidenceRefs(episode TaskEpisode, refs []string) []string {

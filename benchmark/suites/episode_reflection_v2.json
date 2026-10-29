@@ -234,12 +234,24 @@
           "device_scope": {"device_id": "default", "app_name": "QA Notes", "app_version": "7", "page_name": "Note editor"},
           "outcome": {"success": true, "final_state": "The changed title remained visible after reopening."},
           "events": [
-            {"event_id": "v2_repeat_one_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Run the Preview, Edit, Save, reopen flow."},
-            {"event_id": "v2_repeat_one", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview, Edit, Save, reopen: title persisted."},
-            {"event_id": "v2_repeat_two_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Run the same verified flow again."},
-            {"event_id": "v2_repeat_two", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview, Edit, Save, reopen: title persisted again."},
-            {"event_id": "v2_repeat_three_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Run the same verified flow a third time."},
-            {"event_id": "v2_repeat_three", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview, Edit, Save, reopen: title persisted a third time."}
+            {"event_id": "v2_repeat_direct_save_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Tap Save immediately after editing."},
+            {"event_id": "v2_repeat_direct_save_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "After reopening, the title reverted; direct Save did not persist."},
+            {"event_id": "v2_repeat_one_preview_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Switch from Edit to Preview."},
+            {"event_id": "v2_repeat_one_preview_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview showed the changed title."},
+            {"event_id": "v2_repeat_one_edit_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Return from Preview to Edit."},
+            {"event_id": "v2_repeat_one_edit_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Edit showed the changed title."},
+            {"event_id": "v2_repeat_one_save_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Tap Save after the round trip."},
+            {"event_id": "v2_repeat_one_save_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Save completed."},
+            {"event_id": "v2_repeat_one_verify_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Close and reopen the note."},
+            {"event_id": "v2_repeat_one_verify_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The changed title remained visible after reopening."},
+            {"event_id": "v2_repeat_two_preview_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Edit the title again, then switch from Edit to Preview."},
+            {"event_id": "v2_repeat_two_preview_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview showed the second changed title."},
+            {"event_id": "v2_repeat_two_edit_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Return from Preview to Edit."},
+            {"event_id": "v2_repeat_two_edit_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Edit showed the second changed title."},
+            {"event_id": "v2_repeat_two_save_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Tap Save after the round trip."},
+            {"event_id": "v2_repeat_two_save_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Save completed."},
+            {"event_id": "v2_repeat_two_verify_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Close and reopen the note."},
+            {"event_id": "v2_repeat_two_verify_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The second changed title remained visible after reopening."}
           ]
         }
       }
@@ -268,6 +280,8 @@
           "device_scope": {"device_id": "default", "app_name": "QA Notes", "app_version": "7", "page_name": "Note editor"},
           "outcome": {"success": true, "final_state": "The changed title remained visible after reopening."},
           "events": [
+            {"event_id": "v2_versioned_direct_save_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "In build 7, tap Save immediately after editing."},
+            {"event_id": "v2_versioned_direct_save_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "In build 7, after reopening, the title reverted; direct Save did not persist."},
             {"event_id": "v2_versioned_preview_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "In build 7, switch from Edit to Preview."},
             {"event_id": "v2_versioned_preview_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview showed the changed title in build 7."},
             {"event_id": "v2_versioned_edit_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Return from Preview to Edit."},
@@ -355,6 +369,8 @@
           "device_scope": {"device_id": "default", "app_name": "QA Notes", "page_name": "Editor"},
           "outcome": {"success": true, "final_state": "The title persisted after reopening."},
           "events": [
+            {"event_id": "v2_auditable_direct_save_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Tap Save immediately after editing."},
+            {"event_id": "v2_auditable_direct_save_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "After reopening, the title reverted; direct Save did not persist."},
             {"event_id": "v2_auditable_preview_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Switch from Edit to Preview."},
             {"event_id": "v2_auditable_preview_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "Preview showed the changed title."},
             {"event_id": "v2_auditable_edit_call", "type": "tool_call", "tool_name": "touch_gesture", "content": "Return from Preview to Edit."},
