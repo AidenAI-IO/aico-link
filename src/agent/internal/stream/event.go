@@ -4,6 +4,7 @@
 package stream
 
 import (
+	"context"
 	"errors"
 	"time"
 )
@@ -50,7 +51,15 @@ const (
 	EventStreamError         EventKind = "stream.error"
 	EventUsageUpdated        EventKind = "usage.updated"
 	EventRunTerminal         EventKind = "run.terminal"
+	EventReasoningDelta      EventKind = "reasoning.delta"
+	EventReasoningReset      EventKind = "reasoning.reset"
 )
+
+// EventSink accepts validated semantic events. Implementations may apply
+// backpressure, but must honor the supplied context while doing so.
+type EventSink interface {
+	Emit(context.Context, Event) error
+}
 
 // Visibility describes which projections may consume an event.
 type Visibility string
@@ -80,6 +89,23 @@ type EventIdentity struct {
 	CallID         string `json:"call_id,omitempty"`
 	TaskID         string `json:"task_id,omitempty"`
 	ParentID       string `json:"parent_id,omitempty"`
+}
+
+// EventScope contains the correlation identifiers shared by one run. EventID
+// and Sequence are assigned by the producer for each emitted event.
+type EventScope struct {
+	ConversationID string
+	SessionEpoch   uint64
+	TurnID         string
+	RunID          string
+	ResponseID     string
+	AttemptID      string
+	ItemID         string
+	StreamID       string
+	OutputEpoch    uint64
+	CallID         string
+	TaskID         string
+	ParentID       string
 }
 
 // Identity is a short alias for callers that do not need the Event prefix.

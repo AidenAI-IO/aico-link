@@ -27,6 +27,7 @@ import (
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/routines"
+	"aico-agent/internal/stream"
 	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
@@ -142,6 +143,10 @@ type RunRequest struct {
 	StreamWriter      io.Writer
 	MaxTokens         int
 	EventHandler      func(RunEvent)
+	// StreamSink receives typed v2 events in addition to the legacy event
+	// handler. It is optional so existing callers retain their current output.
+	StreamSink  stream.EventSink
+	StreamScope stream.EventScope
 	// OnRunActive runs after the previous run and its resources have been
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
@@ -1158,7 +1163,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		callOptions = append(callOptions, chains.WithMaxTokens(req.MaxTokens))
 	}
 	var streamCallbackHandler *runtimeCallbackHandler
-	if req.StreamWriter != nil || req.EventHandler != nil || req.SteerProvider != nil || r.logger != nil {
+	if req.StreamWriter != nil || req.EventHandler != nil || req.StreamSink != nil || req.SteerProvider != nil || r.logger != nil {
 		streamCallbackHandler = &runtimeCallbackHandler{
 			writer:       req.StreamWriter,
 			metrics:      metrics,
@@ -1170,6 +1175,24 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			requestID:    req.RequestID,
 			runID:        runID,
 			episode:      episodeRecorder,
+		}
+		if req.StreamSink != nil {
+			streamCallbackHandler.streamEmitter = newStreamEventEmitter(
+				req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID,
+			)
+			defer func(emitter *streamEventEmitter) {
+				state := stream.TerminalCompleted
+				if runErr != nil {
+					state = stream.TerminalFailed
+					if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+						state = stream.TerminalCancelled
+					}
+				}
+				emitter.emit(ctx, stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
+					"state": string(state),
+					"error": streamErrorString(runErr),
+				}, nil)
+			}(streamCallbackHandler.streamEmitter)
 		}
 	}
 	if streamCallbackHandler != nil && req.StreamWriter != nil {
@@ -2399,6 +2422,7 @@ type runtimeCallbackHandler struct {
 	streamErr        error
 	logger           *Logger
 	eventHandler     func(RunEvent)
+	streamEmitter    *streamEventEmitter
 	episodeID        string
 	runtimeID        string
 	requestID        string
@@ -2521,6 +2545,9 @@ func (h *runtimeCallbackHandler) emitRunEvent(event RunEvent) {
 	}
 	if h.eventHandler != nil {
 		h.eventHandler(event)
+	}
+	if h.streamEmitter != nil {
+		h.streamEmitter.emitRunEvent(context.Background(), event)
 	}
 }
 
@@ -2836,6 +2863,9 @@ func (h *runtimeCallbackHandler) HandleRetrieverEnd(ctx context.Context, query s
 }
 
 func (h *runtimeCallbackHandler) HandleStreamingFunc(ctx context.Context, chunk []byte) {
+	if h.streamEmitter != nil {
+		h.streamEmitter.emitTextDelta(ctx, string(chunk))
+	}
 	if h.writer != nil && !h.streamingFailed() {
 		if _, err := h.writer.Write(chunk); err != nil {
 			h.recordStreamError(err)
