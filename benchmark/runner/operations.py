@@ -12,7 +12,7 @@ import uuid
 
 from runner.capture import take_environment_screenshot
 from runner.environment_state import read_environment_state
-from runner.harness import AidenAdapter, Execution, PiAdapter
+from runner.harness import AidenAdapter, Execution, OpenClawAdapter, PiAdapter
 from runner.reset import call_environment_release, call_environment_setup
 from runner.suite import TaskSpec
 from runner.trace import extract_trace
@@ -39,9 +39,11 @@ def preparation_steps(setup) -> list[dict]:
 
 class OperationAdapter:
     def __init__(self, *, daemon: AidenAdapter, environment_url: str,
-                 pi: PiAdapter | None = None, global_reset: dict | None = None, prompt_prefix: str = ""):
+                 pi: PiAdapter | None = None, openclaw: OpenClawAdapter | None = None,
+                 global_reset: dict | None = None, prompt_prefix: str = ""):
 
         self.daemon, self.environment_url, self.pi = daemon, environment_url, pi
+        self.openclaw = openclaw
         self.global_reset, self.prompt_prefix = global_reset, prompt_prefix
 
     def execute_operation(self, prompt: str, timeout: int, artifacts: Path,
@@ -85,6 +87,7 @@ class OperationAdapter:
             result = self.daemon.execute(
                 prompt, timeout, artifacts, stop, environment_url=self.environment_url,
                 benchmark_task_id=route, pi=self.pi, tool_names=OPERATION_TOOLS,
+                openclaw=self.openclaw,
             )
             result.pre_screenshot = pre
             if not result.canceled and task.environment_assertions:

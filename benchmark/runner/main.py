@@ -189,7 +189,7 @@ def cli(argv: list[str] | None = None) -> int:
     )
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("--runs", nargs=2, required=True)
-    p_experiment = sub.add_parser("experiment", help="Compare Aiden/pi on an existing operation suite")
+    p_experiment = sub.add_parser("experiment", help="Compare native agents on an existing operation suite")
     p_experiment.add_argument("--config", required=True, help="Experiment JSON (suite, agents, repeats, seed)")
     p_experiment.add_argument("--suites-dir", default=str(REPO_ROOT / "benchmark" / "suites"))
     p_experiment.add_argument("--out", default=str(REPO_ROOT / "benchmark" / "runs"))

@@ -500,11 +500,18 @@ def _full_trace_payload(task_dir: Path | None, history: list[dict[str, Any]]) ->
             })
         elif mtype == "tool_result":
             raw = str(msg.get("content") or "")
+            step_image = ""
+            if task_dir is not None:
+                for suffix in (".jpg", ".png"):
+                    shot = task_dir / f"step_{tool_step}{suffix}"
+                    if shot.is_file():
+                        step_image = _image_data_uri(shot)
+                        break
             events.append({
                 "kind": "tool-result",
                 "title": f"Tool result: {msg.get('tool_name') or last_tool}",
                 "detail": _compact_tool_result(raw),
-                "image": "",
+                "image": step_image,
             })
         elif mtype == "assistant":
             events.append({

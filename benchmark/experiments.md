@@ -1,6 +1,6 @@
 # Agent operation experiments
 
-The benchmark supports one experiment containing separate Aiden and pi runs.
+The benchmark supports one experiment containing separate Aiden, pi, and OpenClaw runs.
 Use **Agent experiments** in the WebUI header, or open `/experiments`. Existing
 device benchmark jobs and Aiden regression suites keep their existing workflow.
 
@@ -32,6 +32,12 @@ API, forwards images as native image content, and retains actual execution
 inputs and errors for the existing scorer. It never delegates the task to
 Aiden's chat API. Native planning, context, retry, and memory behavior stay
 agent-owned. Each measured attempt starts cold.
+OpenClaw receives the same frozen tool catalog through a per-attempt stdio MCP
+server. Its `agent exec` owns the agent loop and native image/context behavior;
+the bridge records each actual business-tool request and result for scoring and
+saves step screenshots. OpenClaw's normal workspace, personal sessions, and
+ambient configuration are not loaded. The comparison tool policy exposes only
+the named MCP business tools, not filesystem, shell, or browser tools.
 
 Existing `phone_control_v1` and `app_workflow_v1` definitions are also accepted
 when their requirements are supported. Choose tasks whose apps and capabilities
@@ -53,8 +59,12 @@ from measured time/tokens/cost. Setup that needs retained conversation, seeded
 memory, or evaluated preparation is rejected instead of silently changing it.
 The preparer is an environment fixture, and is not part of pi's harness.
 
-Both agents require Docker for the shared tool runtime. Pi runs on the WebUI
+All agents require Docker for the shared tool runtime. Pi runs on the WebUI
 host with isolated configuration and workspace, which is not a shell sandbox.
+OpenClaw runs on the WebUI host with a fresh one-shot state directory and
+workspace. Install OpenClaw 2026.10.8 or a compatible version and Node 24.22.1+
+(or 26.12.1+) there. Set `AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE` and
+`AIDEN_BENCHMARK_OPENCLAW_NODE` if they are not on the WebUI's `PATH`.
 Personal pi configuration and sessions are not loaded. Model/tool-runtime costs
 and preparation costs are not an all-in billing comparison. Use the same model
 and comparable budgets when measuring harness differences; otherwise report
@@ -80,9 +90,10 @@ agent-plus-model operation performance.
    uv run python -m runner webui
    ```
 
-5. Open **Agent experiments**, select the comparison suite and agents, enter pi's
-   provider and exact model ID, and choose repetitions. Aiden uses its model
-   from Agent Config; the pi model field does not override Aiden. Select a
+5. Open **Agent experiments**, select the comparison suite and agents, enter the
+   provider and exact model ID, and choose repetitions. pi and OpenClaw share
+   the model settings in this UI. Aiden uses its model
+   from Agent Config; the shared model field does not override Aiden. Select a
    running MobileGym environment from the selector, or click **Start MobileGym**
    to create one on this page. A ready environment is selected automatically when
    none is selected. Configure Judge in the main page Settings.
@@ -195,7 +206,9 @@ runs/<agent-id>/report.html     detailed existing benchmark report
 runs/<agent-id>/tasks/.../      normalized history, trace, and native evidence
 ```
 
-Raw pi events and stderr are retained. Tool results are matched by call ID
+Raw pi events and stderr are retained. OpenClaw retains its one-shot output,
+native transcript when available, MCP audit, and per-step screenshots. Tool
+results are matched by call ID
 before conversion to the existing scorer's adjacent call/result representation;
 the raw stream preserves original ordering. Native tool names are retained.
 Adapters never add task-solving hints or retry a failed task. Native agent
@@ -243,6 +256,37 @@ Experiments use unique directories and never overwrite earlier results. The
 server lists interrupted experiments after restart, preserving their artifacts.
 Automatic resume and merging independently launched experiments are not yet
 implemented; start a new experiment to rerun, retaining the original evidence.
+
+## OpenClaw model setup
+
+Select OpenClaw in the experiment form and set an explicit custom API endpoint,
+provider, model, API protocol, key environment variable name, and model token
+limits. The configured key must be present in the WebUI process environment.
+For a like-for-like comparison with pi, both consume these same model settings;
+the OpenClaw run uses its own native model request and image handling. The
+adapter writes a one-shot OpenClaw config with the credential referenced through
+an environment variable; neither the key nor personal OpenClaw auth profiles
+are copied into experiment artifacts. OpenClaw cost remains unknown for a custom
+endpoint. No Gateway or channel delivery is used.
+
+For CLI experiments, include an `openclaw` agent alongside `aiden` or `pi`:
+
+```json
+{
+  "id": "openclaw", "kind": "openclaw", "provider": "apibest",
+  "model": "gpt-5.6-sol", "thinking": "medium",
+  "base_url": "https://apibest.ai/v1", "api": "openai-completions",
+  "api_key_env": "AIDEN_BENCHMARK_PI_API_KEY",
+  "context_window": 1050000, "max_tokens": 16384
+}
+```
+
+The OpenClaw CLI and a compatible Node are checked before task execution. Its
+MCP bridge runs on the WebUI host and calls the same benchmark daemon tool API
+used by pi. OpenClaw may name the exposed tools with its MCP server prefix; the
+scorer maps observed calls to the original business tool names. Reports mark
+adapter/setup errors as ineligible. Use a small smoke experiment before a full
+suite to confirm the selected OpenClaw version exposes and calls the MCP tools.
 
 ## CI policy
 

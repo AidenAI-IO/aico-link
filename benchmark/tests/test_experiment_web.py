@@ -71,19 +71,44 @@ def test_experiment_http_rejects_bad_config_and_artifact_traversal(experiment_se
         assert error.value.code == 404
 
 
-def test_pi_experiment_can_only_be_started_over_loopback(experiment_server):
+@pytest.mark.parametrize("kind", ["pi", "openclaw"])
+def test_external_agent_experiment_can_only_be_started_over_loopback(experiment_server, kind):
     app, _ = experiment_server
     class Handler:
         client_address = ("192.0.2.5", 1234)
         server = type("Server", (), {"app": app})()
         def _read_json(self):
-            return {"agents": [{"kind": "pi"}]}
+            return {"agents": [{"kind": kind}]}
         def _send_json(self, payload, status):
             self.payload, self.status = payload, status
     handler = Handler()
     from runner.experiment_web import handle_experiment_request
     assert handle_experiment_request(handler, "/api/experiments", post=True)
     assert handler.status == 403
+
+
+def test_openclaw_experiment_serves_native_evidence(experiment_server, monkeypatch):
+    app, base = experiment_server
+    page = request(base, "/experiments")[1]
+    assert 'id="openclaw"' in page
+    monkeypatch.setenv("BENCHMARK_OPENCLAW_TEST_KEY", "fixture-secret")
+    status, body = request(base, "/api/experiments", {
+        "suite": SUITE_PATH.name, "environment_url": "http://env", "repeats": 1,
+        "agents": [{"kind": "openclaw", "provider": "custom", "model": "vision",
+                    "base_url": "https://example.test/v1", "api_key_env": "BENCHMARK_OPENCLAW_TEST_KEY"}],
+    })
+    assert status == 201
+    experiment = json.loads(body)["experiment"]
+    app.experiments._active[2].join(timeout=10)
+    root = app.experiments.root / experiment["id"] / "runs/openclaw/tasks/clock_count_alarms/attempt_1"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "mcp-audit.jsonl").write_text('{"tool_name":"screenshot"}\n')
+    (root / "step_1.png").write_bytes(b"image")
+    assert "screenshot" in request(base, f"/experiments/{experiment['id']}/runs/openclaw/tasks/clock_count_alarms/attempt_1/mcp-audit.jsonl")[1]
+    with urllib.request.urlopen(base + f"/experiments/{experiment['id']}/runs/openclaw/tasks/clock_count_alarms/attempt_1/step_1.png") as response:
+        assert response.headers["Content-Type"] == "image/png"
+        assert response.read() == b"image"
+    assert "fixture-secret" not in request(base, f"/experiments/{experiment['id']}/manifest.json")[1]
 
 
 def test_operation_ui_requires_environment_and_serves_screenshot_evidence(experiment_server):

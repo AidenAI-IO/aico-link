@@ -353,6 +353,7 @@ def test_generate_report_includes_full_trace_with_screenshots(tmp_path: Path):
     (task_dir / "pre.jpg").write_bytes(pre)
     (task_dir / "post.jpg").write_bytes(post)
     (steps_dir / "step_01_screenshot.jpg").write_bytes(step)
+    (task_dir / "step_1.jpg").write_bytes(step)
     image_payload = base64.b64encode(b"history-shot").decode("ascii")
     (task_dir / "history.json").write_text(
         json.dumps(
@@ -414,7 +415,7 @@ def test_generate_report_includes_full_trace_with_screenshots(tmp_path: Path):
     assert "<base64 image data" in html
     assert f"data:image/png;base64,{base64.b64encode(pre).decode('ascii')}" in html
     assert f"data:image/jpeg;base64,{base64.b64encode(post).decode('ascii')}" in html
-    assert f"data:image/jpeg;base64,{base64.b64encode(step).decode('ascii')}" not in html
+    assert f"data:image/jpeg;base64,{base64.b64encode(step).decode('ascii')}" in html
     assert image_payload not in html
 
 

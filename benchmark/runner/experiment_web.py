@@ -30,14 +30,14 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         try:
             if post:
                 payload = handler._read_json()
-                if any(isinstance(agent, dict) and agent.get("kind") == "pi"
+                if any(isinstance(agent, dict) and agent.get("kind") in {"pi", "openclaw"}
                        for agent in payload.get("agents", [])):
                     remote = str(handler.client_address[0]).split("%", 1)[0]
                     address = ipaddress.ip_address(remote)
                     mapped = getattr(address, "ipv4_mapped", None)
                     if not (address.is_loopback or (mapped is not None and mapped.is_loopback)):
                         handler._send_json(
-                            {"error": "pi experiments can only be started from a local connection"},
+                            {"error": "External agent experiments can only be started from a local connection"},
                             status=HTTPStatus.FORBIDDEN,
                         )
                         return True
@@ -77,16 +77,17 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         # Serve reports and evidence only; runtime configuration is never here.
         allowed = {"report.html", "manifest.json", "comparison.json", "results.jsonl", "metrics.json",
                    "suite.json", "history.json", "trace.json", "episode.json", "native-history.json",
-                   "native-events.jsonl", "stderr.log", "daemon-setup.log", "setup.log", "summary.md",
+                   "native-events.jsonl", "native-output.json", "native-transcript.jsonl", "mcp-audit.jsonl", "stderr.log", "daemon-setup.log", "setup.log", "summary.md",
                    "business-tools.json", "judge.json", "environment_state.json", "initial_environment_state.json", "setup.json", "release-error.txt", "pre.jpg", "post.jpg"}
-        if root not in target.parents or target.name not in allowed or not target.is_file():
+        step_image = target.name.startswith("step_") and target.suffix in {".jpg", ".png"}
+        if root not in target.parents or (target.name not in allowed and not step_image) or not target.is_file():
             handler.send_error(HTTPStatus.NOT_FOUND)
         elif target.name == "report.html":
             handler._send_html(target.read_text(encoding="utf-8"))
-        elif target.suffix == ".jpg":
+        elif step_image or target.name in {"pre.jpg", "post.jpg"}:
             data = target.read_bytes()
             handler.send_response(HTTPStatus.OK)
-            handler.send_header("Content-Type", "image/jpeg")
+            handler.send_header("Content-Type", "image/png" if target.suffix == ".png" else "image/jpeg")
             handler.send_header("Content-Length", str(len(data)))
             handler.end_headers()
             handler.wfile.write(data)
@@ -103,7 +104,7 @@ EXPERIMENT_HTML = r"""<!doctype html>
 :root{font-family:system-ui,sans-serif;color:#202a35;background:#f5f7f8}body{max-width:1100px;margin:32px auto;padding:0 20px}a{color:#17654b}h1{margin-bottom:8px}p{line-height:1.6}.muted{color:#546171}.panel{background:white;border:1px solid #dce1e5;border-radius:12px;padding:24px;margin:24px 0}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}label{display:block;font-weight:600;margin-bottom:8px}input:not([type=checkbox]),select{box-sizing:border-box;width:100%;font:inherit;padding:10px;border:1px solid #aab6bd;border-radius:6px}fieldset{border:1px solid #dce1e5;border-radius:8px;padding:16px}fieldset>div{margin:12px 0}button{font:inherit;padding:10px 16px;border:1px solid #17654b;border-radius:6px;background:#17654b;color:white;cursor:pointer}button:disabled{opacity:.55;cursor:wait}button.secondary{background:white;color:#17654b}table{border-collapse:collapse;width:100%}td,th{padding:12px;text-align:left;border-bottom:1px solid #dce1e5}#error{color:#a12828;white-space:pre-wrap}.scroll{overflow:auto}@media(max-width:700px){.grid{grid-template-columns:1fr}.panel{padding:16px}body{padding:0 12px}}
 </style></head><body>
 <a href="/">← Device benchmarks</a><h1>Agent experiments</h1>
-<p class="muted">Compare Aiden and pi on the same tasks. Each agent gets an independent run; attempts run in a seeded, shuffled order.</p>
+<p class="muted">Compare native agents on the same tasks. Each agent gets an independent run; attempts run in a seeded, shuffled order.</p>
 <section class="panel" id="runStatusPanel" hidden aria-live="polite">
 <strong id="runStatus"></strong><p id="runDetail"></p>
 <progress id="runProgress" style="width:100%"></progress>
@@ -119,24 +120,25 @@ EXPERIMENT_HTML = r"""<!doctype html>
 <p id="environmentStatus" class="muted" role="status" aria-live="polite"></p>
 <div id="externalEnvironment" hidden><label for="environment">External MobileGym environment URL</label>
 <input id="environment" type="url" placeholder="http://127.0.0.1:9090" autocomplete="off"></div>
-<p class="muted">Both agents operate the same simulator with a fresh device state for every attempt. Choose an existing environment or start one here. Model API settings are separate. Rubric tasks use Judge from the main page Settings.</p></div>
+<p class="muted">Selected agents operate the same simulator with a fresh device state for every attempt. Choose an existing environment or start one here. Model API settings are separate. Rubric tasks use Judge from the main page Settings.</p></div>
 <div class="grid" style="margin-top:20px">
 <fieldset><legend><label><input id="aiden" type="checkbox" checked> Aiden</label></legend>
 <p>Uses the current <a href="/">Agent Config</a>, frozen at experiment creation. Each attempt starts a fresh Docker daemon.</p></fieldset>
-<fieldset><legend><label><input id="pi" type="checkbox" checked> pi</label></legend>
+<fieldset><legend><label><input id="pi" type="checkbox" checked> pi</label> <label><input id="openclaw" type="checkbox"> OpenClaw</label></legend>
+<p class="muted">pi and OpenClaw share the model settings below for like-for-like comparisons. Each uses its own native runtime.</p>
 <div><label for="provider">Provider</label><input id="provider" value="openrouter" autocomplete="off"></div>
 <div><label for="model">Exact model ID</label><input id="model" placeholder="Provider model ID" autocomplete="off"></div>
 <div><label for="thinking">Thinking level</label><select id="thinking"><option>off</option><option>minimal</option><option>low</option><option selected>medium</option><option>high</option><option>xhigh</option><option>max</option></select></div>
-<details><summary>Custom API endpoint (optional)</summary>
+<details id="customEndpoint"><summary id="customEndpointLabel">Custom API endpoint (optional)</summary>
 <p><label for="piBaseUrl">API base URL</label><input id="piBaseUrl" type="url" placeholder="https://gateway.example.com/v1" autocomplete="off"></p>
 <p><label for="piApi">API protocol</label><select id="piApi"><option value="openai-completions">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option><option value="google-generative-ai">Google Generative AI</option></select></p>
 <p><label for="piKeyEnv">API key environment variable</label><input id="piKeyEnv" value="AIDEN_BENCHMARK_PI_API_KEY" autocomplete="off"></p>
 <div class="grid"><div><label for="piContext">Context window (tokens)</label><input id="piContext" type="number" min="1" step="1" value="128000"></div><div><label for="piMaxTokens">Max output tokens</label><input id="piMaxTokens" type="number" min="1" step="1" value="16384"></div></div>
 <p class="muted">Use the endpoint's base URL, not its full chat request path. Enter an environment variable name, not the secret key. Match token limits to your backend; these defaults are pi defaults, not detected model limits. Set Thinking to off unless your backend supports reasoning. Custom endpoint costs are unknown.</p>
 </details>
-<p><button id="savePi" type="button" class="secondary">Save pi settings</button> <span id="piSettingsStatus" role="status"></span></p>
-<p class="muted">Requires pi on the WebUI server and the provider API key in its environment. Personal pi settings, extensions, skills, and sessions are not loaded.</p></fieldset></div>
-<p class="muted" id="scope">Aiden runs in Docker; pi runs on the server host in a fresh working directory. This directory does not sandbox its shell. Native memory, planning, and context management remain agent-owned. Each attempt starts with fresh agent state.</p>
+<p><button id="savePi" type="button" class="secondary">Save model settings</button> <span id="piSettingsStatus" role="status"></span></p>
+<p class="muted">OpenClaw requires its CLI and Node 24.22.1+ on the WebUI server; set AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE and AIDEN_BENCHMARK_OPENCLAW_NODE if needed. The provider API key must be in the server environment. Personal pi settings, extensions, skills, and sessions are not loaded.</p></fieldset></div>
+<p class="muted" id="scope">Aiden runs in Docker; pi and OpenClaw run on the server host in fresh working directories. These directories do not sandbox shell access. Native memory, planning, and context management remain agent-owned. Each attempt starts with fresh agent state.</p>
 <label for="seed">Scheduling seed</label><input id="seed" type="number" step="1" value="0" required style="max-width:180px">
 <p><button id="start" type="submit">Start experiment</button> <span id="estimate" class="muted"></span></p>
 <div id="error" role="alert"></div></form>
@@ -165,8 +167,11 @@ function estimate() {
   const environment = environments.find(item => item.id === $('environmentSelect').value);
   $('externalEnvironment').hidden = !external;
   $('environment').required = external;
-  $('provider').required = $('pi').checked;
-  $('model').required = $('pi').checked;
+  $('provider').required = $('pi').checked || $('openclaw').checked;
+  $('model').required = $('pi').checked || $('openclaw').checked;
+  $('piBaseUrl').required = $('openclaw').checked;
+  $('customEndpointLabel').textContent = $('openclaw').checked ? 'Custom API endpoint (required for OpenClaw)' : 'Custom API endpoint (optional)';
+  if ($('openclaw').checked) $('customEndpoint').open = true;
   $('start').disabled = !settingsLoaded || submitting || (!external && environment?.status !== 'running');
   $('startEnvironment').disabled = startingEnvironment || environments.some(item => ['starting','building'].includes(item.status));
   $('environmentStatus').textContent = external ? 'Connect a MobileGym environment managed outside this WebUI.' : environment
@@ -174,7 +179,7 @@ function estimate() {
     : 'No environment is selected. Start MobileGym to prepare a simulator.';
   $('environmentPreview').hidden = !environment?.web_url || environment.status !== 'running';
   if (environment?.web_url) $('environmentPreview').href = environment.web_url;
-  $('estimate').textContent = suite ? `${suite.tasks * Number($('repeats').value) * (Number($('aiden').checked) + Number($('pi').checked))} planned attempts` : '';
+  $('estimate').textContent = suite ? `${suite.tasks * Number($('repeats').value) * (Number($('aiden').checked) + Number($('pi').checked) + Number($('openclaw').checked))} planned attempts` : '';
 }
 async function refresh() {
   const data = await api('/api/experiments');
@@ -266,7 +271,7 @@ function piConfiguration() {
         base_url:$('piBaseUrl').value.trim(),api:$('piApi').value,api_key_env:$('piKeyEnv').value.trim(),
         context_window:Number($('piContext').value),max_tokens:Number($('piMaxTokens').value)
       });
-  if (!agent.provider.trim() || !agent.model.trim()) throw new Error('Enter and save a pi provider and model before starting.');
+  if (!agent.provider.trim() || !agent.model.trim()) throw new Error('Enter a provider and model before starting.');
   return agent;
 }
 async function savePiSettings() {
@@ -289,7 +294,11 @@ $('experimentForm').addEventListener('submit', async event => {
   try {
     const agents = [];
     if ($('aiden').checked) agents.push({id:'aiden',kind:'aiden'});
-    if ($('pi').checked) agents.push(await savePiSettings());
+    if ($('pi').checked || $('openclaw').checked) {
+      const pi = await savePiSettings();
+      if ($('pi').checked) agents.push(pi);
+      if ($('openclaw').checked) agents.push({...pi,id:'openclaw',kind:'openclaw'});
+    }
     const payload = {suite:$('suite').value,agents,repeats:Number($('repeats').value),seed:Number($('seed').value)};
     if ($('environmentSelect').value === 'external') payload.environment_url = $('environment').value;
     else payload.environment_id = $('environmentSelect').value;

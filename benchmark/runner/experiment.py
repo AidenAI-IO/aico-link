@@ -19,7 +19,7 @@ import urllib.parse
 from typing import Any
 import uuid
 
-from runner.harness import AidenAdapter, HarnessAdapter, PiAdapter
+from runner.harness import AidenAdapter, HarnessAdapter, OpenClawAdapter, PiAdapter
 from runner.html_report import generate_report_html
 from runner.judge import JudgeConfig, DEFAULT_JUDGE_API_KEY_ENV
 from runner.models import TaskResult
@@ -32,6 +32,23 @@ SAFE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\Z")
 THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 PI_CUSTOM_FIELDS = {"base_url", "api", "api_key_env", "context_window", "max_tokens"}
 PI_CUSTOM_APIS = {"openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"}
+OPENCLAW_MIN_NODE = (24, 22, 1)
+
+
+def openclaw_runtime() -> tuple[str, str, str]:
+    """Resolve the installed CLI and a compatible Node without changing host PATH."""
+    executable = shutil.which(os.environ.get("AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE", "openclaw"))
+    node = shutil.which(os.environ.get("AIDEN_BENCHMARK_OPENCLAW_NODE", "node"))
+    if not executable or not node:
+        raise ValueError("OpenClaw CLI and Node 24.22.1+ are required; set AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE and AIDEN_BENCHMARK_OPENCLAW_NODE")
+    version = subprocess.check_output([node, "--version"], text=True, timeout=10).strip()
+    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version)
+    version_tuple = tuple(map(int, match.groups())) if match else ()
+    if not ((version_tuple[0] == 24 and version_tuple >= OPENCLAW_MIN_NODE)
+            or version_tuple >= (26, 12, 1)):
+        raise ValueError(f"OpenClaw requires Node 24.22.1+ or 26.12.1+; found {version}")
+    cli_version = subprocess.check_output([node, executable, "--version"], text=True, timeout=20).strip()
+    return executable, node, cli_version
 
 
 def comparison_suite(path: Path) -> Suite:
@@ -68,14 +85,14 @@ def validate_agents(value: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or set(item) - ({"id", "kind", "provider", "model", "thinking"} | PI_CUSTOM_FIELDS):
             raise ValueError("Unknown agent configuration fields")
         agent = {key: str(val).strip() for key, val in item.items()}
-        if agent.get("kind") not in {"aiden", "pi"}:
-            raise ValueError("Supported agents: aiden, pi")
+        if agent.get("kind") not in {"aiden", "pi", "openclaw"}:
+            raise ValueError("Supported agents: aiden, pi, openclaw")
         agent.setdefault("id", agent["kind"])
         if not SAFE_ID.fullmatch(agent["id"]) or agent["id"] in ids:
             raise ValueError("Agent IDs must be unique safe directory names")
-        if agent["kind"] == "pi":
+        if agent["kind"] in {"pi", "openclaw"}:
             if not agent.get("provider") or not agent.get("model"):
-                raise ValueError("pi requires an explicit provider and model")
+                raise ValueError(f"{agent['kind']} requires an explicit provider and model")
             agent.setdefault("thinking", "medium")
             if agent["thinking"] not in THINKING_LEVELS:
                 raise ValueError("Unsupported pi thinking level")
@@ -105,6 +122,8 @@ def validate_agents(value: Any) -> list[dict[str, Any]]:
                     raise ValueError("pi max_tokens must not exceed context_window")
             elif set(item) & PI_CUSTOM_FIELDS:
                 raise ValueError("pi custom endpoint fields require base_url")
+            if agent["kind"] == "openclaw" and not agent.get("base_url"):
+                raise ValueError("OpenClaw comparison requires an explicit custom API base_url")
         elif set(agent) - {"id", "kind"}:
             raise ValueError("Aiden uses the frozen Agent Config; set its model there")
         ids.add(agent["id"])
@@ -226,7 +245,7 @@ def comparison_html(manifest: dict, data: dict) -> str:
 <title>Agent comparison</title><style>body{{font:16px system-ui;max-width:1100px;margin:40px auto;padding:0 20px;color:#202a35}}table{{border-collapse:collapse;width:100%;margin:24px 0}}th,td{{text-align:left;padding:12px;border-bottom:1px solid #ddd}}.scroll{{overflow:auto}}a{{color:#17654b}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}</style>
 <a href="/experiments">Experiments</a><h1>{escape(manifest['id'])}</h1>
 <p>Status: {escape(manifest['status'])}. {scope}</p>
-<p>Aiden runs in Docker; pi runs on the host with fresh configuration and workspace. Coverage excludes infrastructure/evaluation errors. Missing cost is unknown; pi costs are model-pricing estimates.</p>
+<p>Aiden runs in Docker; pi and OpenClaw run on the host with fresh configuration and workspace. Coverage excludes infrastructure/evaluation errors. Missing cost is unknown; pi costs are model-pricing estimates.</p>
 <p>{preparation}</p>
 <h2>Matched comparison</h2><p>Compare the same task and repeat only when both attempts are eligible. Latency uses only pairs where both passed. Exclusions can bias the remaining sample; report coverage alongside success.</p>
 <div class="scroll"><table><thead><tr><th>Pair</th><th>Agent</th><th>Matched success</th><th>Paired coverage</th><th>Both-pass median execution</th></tr></thead><tbody>{''.join(pairwise)}</tbody></table></div>
@@ -418,7 +437,7 @@ class ExperimentManager:
         agents = validate_agents(payload.get("agents"))
         for agent in agents:
             if agent.get("base_url") and not os.environ.get(agent["api_key_env"], "").strip():
-                raise ValueError(f"Set {agent['api_key_env']} in the benchmark server environment before running pi")
+                raise ValueError(f"Set {agent['api_key_env']} in the benchmark server environment before running {agent['kind']}")
         environment_url = str(payload.get("environment_url") or "").strip()
         from runner.environment_endpoint import EnvironmentEndpoint
         environment_url = EnvironmentEndpoint(environment_url).base
@@ -510,7 +529,7 @@ class ExperimentManager:
                         agent.update(model=model.get("model", ""), provider=model.get("provider", ""),
                                      image_id=image_id, config_sha256=config_sha)
                         adapters[agent["id"]] = AidenAdapter(image=image_id, prepared_config=prepared)
-                    else:
+                    elif agent["kind"] == "pi":
                         executable = shutil.which(os.environ.get("AIDEN_BENCHMARK_PI_EXECUTABLE", "pi"))
                         if not executable:
                             raise ValueError("pi executable not found; install pi or set AIDEN_BENCHMARK_PI_EXECUTABLE")
@@ -522,11 +541,21 @@ class ExperimentManager:
                             executable=executable, provider=agent["provider"], model=agent["model"],
                             thinking=agent["thinking"], **{key: agent[key] for key in PI_CUSTOM_FIELDS if key in agent},
                         )
+                    else:
+                        executable, node, version = openclaw_runtime()
+                        agent.update(version=version, executable=executable, node_version=subprocess.check_output(
+                            [node, "--version"], text=True).strip())
+                        adapters[agent["id"]] = OpenClawAdapter(
+                            executable=executable, node=node, provider=agent["provider"],
+                            model=agent["model"], thinking=agent["thinking"],
+                            **{key: agent[key] for key in PI_CUSTOM_FIELDS if key in agent},
+                        )
                     native = adapters[agent["id"]]
                     adapters[agent["id"]] = OperationAdapter(
                         daemon=native if agent["kind"] == "aiden" else AidenAdapter(image=image_id, prepared_config=prepared),
                         environment_url=manifest["environment_url"],
                         pi=native if agent["kind"] == "pi" else None,
+                        openclaw=native if agent["kind"] == "openclaw" else None,
                         global_reset=suite.global_reset, prompt_prefix=suite.prompt_prefix,
                     )
                 if stop.is_set():

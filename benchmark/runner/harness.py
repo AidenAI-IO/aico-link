@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -314,6 +315,126 @@ class PiAdapter:
             return result
 
 
+class OpenClawAdapter:
+    """One embedded OpenClaw turn with an isolated config, state, and MCP tools."""
+
+    def __init__(self, *, executable: str, node: str, provider: str, model: str,
+                 thinking: str, base_url: str, api_key_env: str,
+                 context_window: int = 128000, max_tokens: int = 16384,
+                 api: str = "openai-completions"):
+        self.executable, self.node = executable, node
+        self.provider, self.model, self.thinking = provider, model, thinking
+        self.base_url, self.api_key_env, self.api = base_url, api_key_env, api
+        self.context_window, self.max_tokens = context_window, max_tokens
+
+    def execute(self, prompt: str, timeout: int, artifacts: Path, stop: threading.Event,
+                *, tool_endpoint: str, tool_catalog: list[dict]) -> Execution:
+        artifacts.mkdir(parents=True, exist_ok=True)
+        if stop.is_set():
+            return Execution(canceled=True)
+        key = os.environ.get(self.api_key_env, "").strip()
+        if not key:
+            raise ValueError(f"Set {self.api_key_env} in the benchmark server environment before running OpenClaw")
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory(prefix="aiden-openclaw-") as scratch:
+            root = Path(scratch)
+            workspace, state = root / "workspace", root / "state"
+            workspace.mkdir()
+            state.mkdir()
+            bridge_config = root / "operation-tools.json"
+            bridge_config.write_text(json.dumps({"endpoint": tool_endpoint, "tools": tool_catalog,
+                                                 "audit_path": str(artifacts / "mcp-audit.jsonl")}), encoding="utf-8")
+            config = {"models": {"mode": "replace", "providers": {self.provider: {
+                "baseUrl": self.base_url, "api": self.api,
+                "apiKey": "${AIDEN_BENCHMARK_OPENCLAW_KEY}",
+                "models": [{"id": self.model, "name": self.model, "reasoning": self.thinking != "off",
+                            "input": ["text", "image"], "contextWindow": self.context_window,
+                            "maxTokens": self.max_tokens}],
+            }}}, "agents": {"defaults": {"contextInjection": "never"}},
+                "tools": {"profile": "full", "allow": ["benchmark__*"], "toolSearch": False},
+                "mcp": {"servers": {"benchmark": {"command": sys.executable,
+                    "args": [str(Path(__file__).with_name("openclaw_tools.py")), str(bridge_config)]}}}}
+            config_path = root / "openclaw.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+            env = {key: value for key, value in os.environ.items()
+                   if key in {"LANG", "TMPDIR", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+                              "http_proxy", "https_proxy", "no_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR"}}
+            env.update(HOME=str(root / "home"), OPENCLAW_AGENT_DIR=str(state / "agent"),
+                       AIDEN_BENCHMARK_OPENCLAW_KEY=key,
+                       PATH=os.pathsep.join((str(Path(self.node).parent), str(Path(self.executable).parent), os.defpath)))
+            (root / "home").mkdir()
+            command = [self.node, self.executable, "agent", "exec", "--config", str(config_path),
+                       "--state-dir", str(state), "--cwd", str(workspace),
+                       "--message-file", "-", "--json", "--model", f"{self.provider}/{self.model}",
+                       "--thinking", self.thinking, "--code-mode", "direct", "--timeout", str(timeout)]
+            timed_out = canceled = False
+            with (artifacts / "native-output.json").open("wb") as output, \
+                    (artifacts / "stderr.log").open("wb") as errors:
+                proc = subprocess.Popen(command, cwd=workspace, env=env, stdin=subprocess.PIPE,
+                                        stdout=output, stderr=errors, start_new_session=True)
+                try:
+                    assert proc.stdin is not None
+                    proc.stdin.write(prompt.encode())
+                    proc.stdin.close()
+                    while proc.poll() is None:
+                        if stop.wait(0.1):
+                            canceled = True
+                            break
+                        if time.monotonic() - started >= timeout:
+                            timed_out = True
+                            break
+                finally:
+                    terminate_process_tree(proc)
+            try:
+                parsed = json.loads((artifacts / "native-output.json").read_text(encoding="utf-8"))
+                envelope = parsed if isinstance(parsed, dict) else {}
+            except (ValueError, UnicodeDecodeError):
+                envelope = {}
+            for transcript in sorted(state.rglob("*.jsonl")):
+                if "sessions" in transcript.parts:
+                    shutil.copyfile(transcript, artifacts / "native-transcript.jsonl")
+                    break
+            audit = artifacts / "mcp-audit.jsonl"
+            calls = []
+            if audit.exists():
+                for line in audit.read_text(encoding="utf-8").splitlines():
+                    try:
+                        call = json.loads(line)
+                    except ValueError:
+                        # A terminated MCP process can leave a partial final line.
+                        break
+                    if isinstance(call, dict):
+                        calls.append(call)
+            history = []
+            evidence = []
+            for call in calls:
+                name = call["tool_name"]
+                raw = call.get("raw_input") or "{}"
+                history.append({"type": "tool_call", "tool_name": name, "tool_input": raw})
+                history.append({"type": "tool_result", "tool_name": name,
+                                "is_error": call["is_error"], "content": call["observation"]})
+                evidence.append({"type": "visual_coordinate_mapping", "metadata": {
+                    "tool": name, "normalized_input": raw}})
+                evidence.append({"type": "tool_result", "tool_name": name,
+                                 "is_error": call["is_error"], "tool_error": call.get("tool_error")})
+            final = envelope.get("final") if isinstance(envelope, dict) else None
+            if isinstance(final, str) and final.strip():
+                history.append({"type": "assistant", "content": final})
+            result = Execution(history=history, episode={"source": "openclaw-mcp-audit", "events": evidence},
+                               timed_out=timed_out, canceled=canceled)
+            result.metrics.update(task_wall_ms=int((time.monotonic() - started) * 1000),
+                                  exit_code=proc.returncode, observed_models=[f"{self.provider}/{self.model}"],
+                                  cost_usd=None, cost_source=None,
+                                  cost_unavailable_reason="Custom endpoint pricing is not configured")
+            if not (timed_out or canceled) and (proc.returncode or envelope.get("ok") is not True
+                                            or envelope.get("status") != "ok"):
+                error = envelope.get("error")
+                message = error.get("message") if isinstance(error, dict) else error
+                result.metrics["agent_error"] = str(message or
+                                                    f"OpenClaw exited with code {proc.returncode}; see stderr.log")
+            return result
+
+
 class AidenAdapter:
     """Each attempt owns a fresh Docker daemon and its persistent state."""
 
@@ -322,7 +443,8 @@ class AidenAdapter:
 
     def execute(self, prompt: str, timeout: int, artifacts: Path, stop: threading.Event,
                 *, environment_url: str = "", benchmark_task_id: str = "",
-                pi: PiAdapter | None = None, tool_names: tuple[str, ...] = ()) -> Execution:
+                pi: PiAdapter | None = None, openclaw: OpenClawAdapter | None = None,
+                tool_names: tuple[str, ...] = ()) -> Execution:
         # Import lazily: the existing WebUI owns the daemon provisioning helpers.
         from runner.webui import (Job, docker_published_port, prepare_run_config,
                                   start_daemon_compose, stop_daemon_compose, endpoint_for_docker)
@@ -365,6 +487,11 @@ class AidenAdapter:
                     if pi is not None:
                         execution = pi.execute(prompt, timeout, artifacts, stop,
                                                tool_endpoint=client.base_url, tool_catalog=catalog)
+                        execution.metrics.update(result.metrics)
+                        return execution
+                    if openclaw is not None:
+                        execution = openclaw.execute(prompt, timeout, artifacts, stop,
+                                                     tool_endpoint=client.base_url, tool_catalog=catalog)
                         execution.metrics.update(result.metrics)
                         return execution
                 started = time.monotonic()
