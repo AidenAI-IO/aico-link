@@ -44,11 +44,11 @@ func TestEpisodeMemoryProcedureSeparatesSupportingEvidence(t *testing.T) {
 			if err := json.Unmarshal(encoded, &candidate); err != nil {
 				t.Fatal(err)
 			}
-			candidate, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
-			if ok != tt.valid {
-				t.Fatalf("valid=%v, want %v", ok, tt.valid)
+			candidate, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
+			if (err == nil) != tt.valid {
+				t.Fatalf("validation error = %v, want valid=%v", err, tt.valid)
 			}
-			if !ok {
+			if err != nil {
 				return
 			}
 			plane := NewFilesystemMemoryPlane(t.TempDir(), DefaultMemoryExtractionConfig(), nil)

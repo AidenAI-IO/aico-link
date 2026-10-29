@@ -168,6 +168,13 @@ type episodeMemoryRetentionAudit struct {
 	Reviews []episodeMemoryRetentionReview `json:"reviews"`
 }
 
+// episodeMemoryCandidateRejection records why a proposed lesson was not
+// persisted, so a missing Device Memory can be traced to the gate that dropped it.
+type episodeMemoryCandidateRejection struct {
+	LessonKey string
+	Reason    string
+}
+
 type episodeMemoryRetentionAuditStats struct {
 	RetainDecisions int
 	Rewrites        int
@@ -900,9 +907,20 @@ func (p *episodeMemoryProcessor) postProcessEpisodeMemoryProposal(ctx context.Co
 	}
 	originalCount := len(proposal.Candidates)
 	stats := summarizeEpisodeMemoryRetentionAudit(proposal.Candidates, audit)
-	proposal.Candidates = retainedEpisodeMemoryCandidates(proposal.Candidates, audit)
+	var rejections []episodeMemoryCandidateRejection
+	proposal.Candidates, rejections = retainedEpisodeMemoryCandidates(proposal.Candidates, audit)
 	p.logEpisodeMemoryRetentionAudit("completed", originalCount, len(audit.Reviews), len(proposal.Candidates), stats)
+	for _, rejection := range rejections {
+		p.logEpisodeMemoryCandidateRejection(episode.ID, "retention_audit", rejection)
+	}
 	return proposal, nil
+}
+
+func (p *episodeMemoryProcessor) logEpisodeMemoryCandidateRejection(episodeID, stage string, rejection episodeMemoryCandidateRejection) {
+	if p == nil || p.plane == nil || p.plane.logger == nil {
+		return
+	}
+	p.plane.logger.Info("[episode-memory] candidate rejected: episode_id=%s stage=%s lesson_key=%s reason=%s", episodeID, stage, rejection.LessonKey, rejection.Reason)
 }
 
 func normalizeEpisodeMemoryAssessment(episode TaskEpisode, proposal episodeMemoryProposal, existing []DeviceMemoryItem) (episodeMemoryProposal, error) {
@@ -1062,31 +1080,23 @@ func episodeMemoryProposalNeedsRetentionAudit(proposal episodeMemoryProposal) bo
 	return len(proposal.Candidates) > 0
 }
 
-func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit episodeMemoryRetentionAudit) []episodeMemoryCandidate {
-	reviewCounts := make(map[string]int, len(audit.Reviews))
-	for _, review := range audit.Reviews {
-		reviewCounts[strings.TrimSpace(review.LessonKey)]++
-	}
-	reviewByKey := make(map[string]episodeMemoryRetentionReview, len(audit.Reviews))
+func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit episodeMemoryRetentionAudit) ([]episodeMemoryCandidate, []episodeMemoryCandidateRejection) {
+	reviewsByKey := make(map[string][]episodeMemoryRetentionReview, len(audit.Reviews))
 	for _, review := range audit.Reviews {
 		key := strings.TrimSpace(review.LessonKey)
-		if reviewCounts[key] == 1 {
-			reviewByKey[key] = review
-		}
+		reviewsByKey[key] = append(reviewsByKey[key], review)
 	}
 	retained := make([]episodeMemoryCandidate, 0, len(original))
+	var rejections []episodeMemoryCandidateRejection
 	for _, base := range original {
 		key := strings.TrimSpace(base.LessonKey)
-		review, found := reviewByKey[key]
-		decision := episodeMemoryRetentionDecision(strings.ToLower(strings.TrimSpace(string(review.Decision))))
-		retention := episodeMemoryRetention(strings.ToLower(strings.TrimSpace(string(review.Retention))))
-		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || !sameEpisodeMemoryEvidenceRefs(base.EvidenceRefs, review.Rewrite.EvidenceRefs) {
+		reviews := reviewsByKey[key]
+		if reason := episodeMemoryRetentionRejection(base, reviews); reason != "" {
+			rejections = append(rejections, episodeMemoryCandidateRejection{LessonKey: key, Reason: reason})
 			continue
 		}
-		if episodeMemoryRewriteContainsSensitiveValue(*review.Rewrite, review.SensitiveValues) {
-			continue
-		}
-		base.Retention = retention
+		review := reviews[0]
+		base.Retention = episodeMemoryRetentionDurable
 		base.Situation = strings.TrimSpace(review.Rewrite.Situation)
 		base.Guidance = strings.TrimSpace(review.Rewrite.Guidance)
 		base.ExpectedEffect = strings.TrimSpace(review.Rewrite.ExpectedEffect)
@@ -1100,7 +1110,35 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		base.SensitiveValues = uniqueNonEmpty(review.SensitiveValues)
 		retained = append(retained, base)
 	}
-	return retained
+	return retained, rejections
+}
+
+// episodeMemoryRetentionRejection returns why the audit reviews do not allow
+// base to be retained, or "" when its single review retains it.
+func episodeMemoryRetentionRejection(base episodeMemoryCandidate, reviews []episodeMemoryRetentionReview) string {
+	switch len(reviews) {
+	case 0:
+		return "no review for lesson_key"
+	case 1:
+	default:
+		return fmt.Sprintf("%d reviews for lesson_key", len(reviews))
+	}
+	review := reviews[0]
+	decision := episodeMemoryRetentionDecision(strings.ToLower(strings.TrimSpace(string(review.Decision))))
+	retention := episodeMemoryRetention(strings.ToLower(strings.TrimSpace(string(review.Retention))))
+	switch {
+	case decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable:
+		return fmt.Sprintf("decision=%s retention=%s: %s", decision, retention, strings.TrimSpace(review.Reason))
+	case strings.TrimSpace(review.Reason) == "":
+		return "retain review has no reason"
+	case review.Rewrite == nil:
+		return "retain review has no rewrite"
+	case !sameEpisodeMemoryEvidenceRefs(base.EvidenceRefs, review.Rewrite.EvidenceRefs):
+		return fmt.Sprintf("rewrite changed evidence_refs from %v to %v", base.EvidenceRefs, review.Rewrite.EvidenceRefs)
+	case episodeMemoryRewriteContainsSensitiveValue(*review.Rewrite, review.SensitiveValues):
+		return "rewrite still contains a listed sensitive value"
+	}
+	return ""
 }
 
 func mergeEpisodeMemoryReviewScope(base, rewrite map[string]string) map[string]string {
@@ -1373,8 +1411,9 @@ func episodeMemoryPayload(episode TaskEpisode) map[string]interface{} {
 func (p *episodeMemoryProcessor) applyProposal(ctx context.Context, episode TaskEpisode, proposal episodeMemoryProposal) error {
 	seenLessonKeys := map[string]bool{}
 	for _, raw := range proposal.Candidates {
-		candidate, ok := validateEpisodeMemoryCandidate(episode, proposal.EpisodeAssessment, raw, seenLessonKeys)
-		if !ok {
+		candidate, err := validateEpisodeMemoryCandidate(episode, proposal.EpisodeAssessment, raw, seenLessonKeys)
+		if err != nil {
+			p.logEpisodeMemoryCandidateRejection(episode.ID, "validation", episodeMemoryCandidateRejection{LessonKey: strings.TrimSpace(raw.LessonKey), Reason: err.Error()})
 			continue
 		}
 		seenLessonKeys[candidate.LessonKey] = true
@@ -1414,8 +1453,8 @@ func (p *episodeMemoryProcessor) applyProposal(ctx context.Context, episode Task
 	return nil
 }
 
-func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemoryAssessment, candidate episodeMemoryCandidate, seen map[string]bool) (episodeMemoryCandidate, bool) {
-	hadExplicitScope := len(candidate.Scope) > 0
+func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemoryAssessment, candidate episodeMemoryCandidate, seen map[string]bool) (episodeMemoryCandidate, error) {
+	proposedScope := candidate.Scope
 	candidate.LessonKey = strings.TrimSpace(candidate.LessonKey)
 	candidate.Type = episodeMemoryType(strings.ToLower(strings.TrimSpace(string(candidate.Type))))
 	candidate.Action = episodeMemoryAction(strings.ToLower(strings.TrimSpace(string(candidate.Action))))
@@ -1428,67 +1467,73 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 	candidate.SensitiveValues = uniqueNonEmpty(candidate.SensitiveValues)
 	var scopeOK bool
 	candidate.Scope, scopeOK = mergeEpisodeMemoryHardScope(episode, candidate.Scope)
-	if !scopeOK || !hadExplicitScope {
-		return episodeMemoryCandidate{}, false
+	if len(proposedScope) == 0 {
+		return episodeMemoryCandidate{}, errors.New("candidate has no scope")
 	}
-	if candidate.LessonKey == "" || seen[candidate.LessonKey] {
-		return episodeMemoryCandidate{}, false
+	if !scopeOK {
+		return episodeMemoryCandidate{}, fmt.Errorf("scope %v conflicts with Episode device scope %v", proposedScope, episode.DeviceScope)
+	}
+	if candidate.LessonKey == "" {
+		return episodeMemoryCandidate{}, errors.New("candidate has no lesson_key")
+	}
+	if seen[candidate.LessonKey] {
+		return episodeMemoryCandidate{}, errors.New("lesson_key already applied in this proposal")
 	}
 	confidence, err := normalizeEpisodeMemoryConfidence(candidate.Confidence)
 	if err != nil {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, err
 	}
 	candidate.Confidence = episodeMemoryConfidencePointer(confidence)
 	switch candidate.Type {
 	case episodeMemoryTypeProcedure, episodeMemoryTypeNavigation, episodeMemoryTypeCalibration, episodeMemoryTypeFailure, episodeMemoryTypeFact:
 	default:
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("unsupported type %q", candidate.Type)
 	}
 	if candidate.Action != episodeMemoryActionCreate && candidate.Action != episodeMemoryActionUpdate {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("unsupported action %q", candidate.Action)
 	}
 	if candidate.Retention != episodeMemoryRetentionDurable {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("retention %q is not durable", candidate.Retention)
 	}
 	if candidate.Action == episodeMemoryActionUpdate && (candidate.MemoryID == "" || candidate.MemoryRevision <= 0) {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, errors.New("update requires memory_id and memory_revision")
 	}
 	if candidate.Action == episodeMemoryActionCreate && (candidate.MemoryID != "" || candidate.UnresolvedConflict) {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, errors.New("create cannot carry memory_id or an unresolved conflict")
 	}
 	if candidate.Action == episodeMemoryActionCreate {
 		candidate.MemoryRevision = 0
 	}
 	if candidate.UnresolvedConflict && candidate.ConflictReason == "" {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, errors.New("unresolved conflict has no conflict_reason")
 	}
 	if !candidate.UnresolvedConflict {
 		candidate.ConflictReason = ""
 	}
 	if candidate.Situation == "" || candidate.Guidance == "" || candidate.ExpectedEffect == "" || len(candidate.Scope) == 0 {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, errors.New("situation, guidance, expected_effect, and scope are required")
 	}
 	originalRefs := uniqueNonEmpty(candidate.EvidenceRefs)
 	candidate.EvidenceRefs = validEpisodeMemoryEventIDs(episode, originalRefs)
 	if len(candidate.EvidenceRefs) == 0 || len(candidate.EvidenceRefs) != len(originalRefs) {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("evidence_refs %v include ids missing from the Episode", originalRefs)
 	}
 	candidate.EvidenceRefs = expandEpisodeMemoryEvidenceRefs(episode, candidate.EvidenceRefs)
 	if candidate.Type == episodeMemoryTypeProcedure {
 		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
-			return episodeMemoryCandidate{}, false
+			return episodeMemoryCandidate{}, fmt.Errorf("step_refs %v are not an ordered path of at least two cited, paired device tool results", candidate.StepRefs)
 		}
 	} else if len(candidate.StepRefs) != 0 {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("step_refs are only valid for procedures, not %s", candidate.Type)
 	}
 	if !episodeMemoryTypeEvidenceValid(candidate.Type, episode, candidate.EvidenceRefs, assessment) {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, fmt.Errorf("evidence_refs do not support a %s with goal_result %s", candidate.Type, assessment.GoalResult)
 	}
 	if candidate.Type == episodeMemoryTypeProcedure && assessment.GoalResult == episodeGoalNotAchieved && !isPartialProcedureScope(candidate.Scope) {
-		return episodeMemoryCandidate{}, false
+		return episodeMemoryCandidate{}, errors.New("a procedure from a not_achieved Episode must be scoped as partial")
 	}
 	candidate.Tags = normalizeEpisodeMemoryTags(candidate.Tags)
-	return candidate, true
+	return candidate, nil
 }
 
 // Step refs name results, not all evidence: failed alternatives can justify a

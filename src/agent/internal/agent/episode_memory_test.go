@@ -1129,11 +1129,11 @@ func TestFailureCandidateMustReferenceNotAchievedEvidence(t *testing.T) {
 		EvidenceRefs:   []string{"call"},
 	}
 
-	if _, ok := validateEpisodeMemoryCandidate(episode, assessment, candidate, map[string]bool{}); ok {
+	if _, err := validateEpisodeMemoryCandidate(episode, assessment, candidate, map[string]bool{}); err == nil {
 		t.Fatal("failure Candidate citing only an action was accepted")
 	}
 	candidate.EvidenceRefs = []string{"call", "result"}
-	if _, ok := validateEpisodeMemoryCandidate(episode, assessment, candidate, map[string]bool{}); !ok {
+	if _, err := validateEpisodeMemoryCandidate(episode, assessment, candidate, map[string]bool{}); err != nil {
 		t.Fatal("failure Candidate citing the not-achieved result was rejected")
 	}
 }
@@ -1148,21 +1148,21 @@ func TestEpisodeMemoryCandidateUsesModelConfidenceWithExplicitDefault(t *testing
 		ExpectedEffect: "Display controls are visible", Scope: map[string]string{"app_name": "Settings"},
 		EvidenceRefs: []string{"result"},
 	}
-	validated, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
-	if !ok || validated.Confidence == nil || *validated.Confidence != 0.7 {
-		t.Fatalf("validated=%#v ok=%v, want omitted confidence default 0.7", validated, ok)
+	validated, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
+	if err != nil || validated.Confidence == nil || *validated.Confidence != 0.7 {
+		t.Fatalf("validated=%#v err=%v, want omitted confidence default 0.7", validated, err)
 	}
 	candidate.Confidence = episodeMemoryConfidencePointer(0.88)
-	validated, ok = validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
-	if !ok || validated.Confidence == nil || *validated.Confidence != 0.88 {
-		t.Fatalf("validated=%#v ok=%v, want model confidence 0.88", validated, ok)
+	validated, err = validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
+	if err != nil || validated.Confidence == nil || *validated.Confidence != 0.88 {
+		t.Fatalf("validated=%#v err=%v, want model confidence 0.88", validated, err)
 	}
 	candidate.Confidence = episodeMemoryConfidencePointer(1.01)
-	if _, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); ok {
+	if _, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); err == nil {
 		t.Fatal("candidate with confidence above 1 was accepted")
 	}
 	candidate.Confidence = episodeMemoryConfidencePointer(0)
-	if _, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); ok {
+	if _, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); err == nil {
 		t.Fatal("candidate with explicit zero confidence was accepted")
 	}
 	var decoded episodeMemoryCandidate
@@ -1204,9 +1204,9 @@ func TestEpisodeMemoryCandidatePreservesExplicitVersionScope(t *testing.T) {
 		EvidenceRefs: []string{"result"},
 	}
 
-	validated, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
-	if !ok {
-		t.Fatal("candidate with an omitted explicit version boundary was rejected")
+	validated, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
+	if err != nil {
+		t.Fatalf("candidate with an omitted explicit version boundary was rejected: %v", err)
 	}
 	for key, want := range map[string]string{"device_id": "device_a", "app_name": "QA Notes", "app_version": "7", "page_name": "Note editor"} {
 		if got := validated.Scope[key]; !strings.EqualFold(got, want) {
@@ -1233,7 +1233,7 @@ func TestEpisodeMemoryCandidateRejectsConflictingVersionScope(t *testing.T) {
 		Scope:          map[string]string{"app_name": "QA Notes", "app_version": "8"},
 		EvidenceRefs:   []string{"result"},
 	}
-	if _, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); ok {
+	if _, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{}); err == nil {
 		t.Fatal("candidate with a conflicting app_version was accepted")
 	}
 }
@@ -1251,7 +1251,7 @@ func TestRetainedEpisodeMemoryCandidateUsesRewrittenScope(t *testing.T) {
 			Scope: map[string]string{"app_name": "QA Notes", "app_version": "7"}, EvidenceRefs: []string{"result"},
 		},
 	}}}
-	retained := retainedEpisodeMemoryCandidates(original, audit)
+	retained, _ := retainedEpisodeMemoryCandidates(original, audit)
 	if len(retained) != 1 || retained[0].Scope["app_version"] != "7" {
 		t.Fatalf("retained candidate scope = %#v, want rewritten app_version=7", retained)
 	}
@@ -1270,7 +1270,7 @@ func TestRetainedEpisodeMemoryCandidatePreservesScopeOmittedByRewrite(t *testing
 			Scope: map[string]string{"precondition": "title edited"}, EvidenceRefs: []string{"result"},
 		},
 	}}}
-	retained := retainedEpisodeMemoryCandidates(original, audit)
+	retained, _ := retainedEpisodeMemoryCandidates(original, audit)
 	if len(retained) != 1 {
 		t.Fatalf("retained candidates = %#v, want one", retained)
 	}
@@ -1294,7 +1294,7 @@ func TestRetainedEpisodeMemoryCandidateRejectsSensitiveValueLeftInRewrite(t *tes
 			Scope: map[string]string{"app_name": "Auth"}, EvidenceRefs: []string{"result"},
 		},
 	}}}
-	if retained := retainedEpisodeMemoryCandidates(original, audit); len(retained) != 0 {
+	if retained, _ := retainedEpisodeMemoryCandidates(original, audit); len(retained) != 0 {
 		t.Fatalf("retained candidates = %#v, want sensitive rewrite discarded", retained)
 	}
 }
@@ -1312,7 +1312,7 @@ func TestRetainedEpisodeMemoryCandidateAcceptsGeneralizedSensitiveWorkflow(t *te
 			Scope: map[string]string{"app_name": "Auth"}, EvidenceRefs: []string{"result"},
 		},
 	}}}
-	if retained := retainedEpisodeMemoryCandidates(original, audit); len(retained) != 1 {
+	if retained, _ := retainedEpisodeMemoryCandidates(original, audit); len(retained) != 1 {
 		t.Fatalf("retained candidates = %#v, want generalized workflow retained", retained)
 	}
 }
@@ -1359,9 +1359,9 @@ func TestNavigationCandidateLinksResultEvidenceToToolCalls(t *testing.T) {
 		EvidenceRefs:   []string{"ethernet_result", "interface_result"},
 	}
 
-	validated, ok := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
-	if !ok {
-		t.Fatal("navigation Candidate citing paired tool results was rejected")
+	validated, err := validateEpisodeMemoryCandidate(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved}, candidate, map[string]bool{})
+	if err != nil {
+		t.Fatalf("navigation Candidate citing paired tool results was rejected: %v", err)
 	}
 	if validated.MemoryRevision != 0 {
 		t.Fatalf("create memory_revision = %d, want 0", validated.MemoryRevision)
