@@ -54,18 +54,18 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         {"tag": "markdown", "content": overview},
     ]
 
-    # Group by primary test objective; diagnostics stay separate.
+    # Group datasets under their primary test objective; diagnostics stay separate.
     capabilities = weekly.get("capabilities", [])
     if capabilities:
-        lines = []
-        for cap in capabilities:
-            header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
-            if cap.get("eligible_tasks"):
-                runs = cap["run_count"]
-                header += (f" ({cap['task_count']:.0f} tasks, {runs} run{'s' if runs != 1 else ''},"
-                           f" {cap['passed']:.0f}/{cap['eligible_tasks']:.0f} eligible first attempts passed)")
-            lines.append(header)
-        elements.append({"tag": "markdown", "content": "**By test area**\n" + "\n".join(lines)})
+        elements.append({"tag": "hr"})
+    for cap in capabilities:
+        names = set(cap["suites"])
+        lines = [f"- {suite['suite']}: {_format_rate(suite['pass_at_1'])}{_format_change(suite['change'])}"
+                 for suite in sorted((suite for suite in suites if suite["suite"] in names),
+                                     key=lambda suite: (suite["pass_at_1"] is None,
+                                                        suite["pass_at_1"] or 0.0, suite["suite"]))]
+        header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
+        elements.append({"tag": "markdown", "content": "\n".join([header, *lines])})
 
     if weekly.get("diagnostics"):
         lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s['change'])}"
@@ -73,11 +73,6 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         elements.append({"tag": "markdown", "content": "**Diagnostics** (skill read observation, not task pass@1)\n" + "\n".join(lines)})
 
     if suites:
-        # Weakest suites first, so those needing attention lead.
-        lines = [f"{s['suite']}: {_format_rate(s['pass_at_1'])}{_format_change(s['change'])}"
-                 for s in suites]
-        elements += [{"tag": "hr"},
-                     {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]
         changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
         note = "Changes describe each window's task mix, not matched runs."
         if changed:

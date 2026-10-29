@@ -1226,11 +1226,12 @@ history from the workflow's branch in Langfuse by default, writes `weekly-report
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
-last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
-over the week with its change from the previous seven days (green up, red down),
-and links to the dashboard. Each dataset occupies one line with only its name,
-pass@1, and change. The card notes that changes describe different task mixes
-and counts datasets with configuration changes. Run counts and the distinct
+last seven days (runs, overall pass@1, known cost), then groups datasets under
+their test areas. Each area retains its pass@1 and change from the previous
+seven days, and each dataset occupies one line with its name, pass@1, and
+change (green up, red down), ordered by pass@1 within each area. The card links
+to the dashboard, notes that changes describe different task mixes, and counts
+datasets with configuration changes. Run counts and the distinct
 configuration values in each window are available in the detailed reports.
 Historical data comes
 from Langfuse v4 experiments and scores. Only suites present in the current
