@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -106,5 +107,18 @@ func TestPrepareAudioInputSTTUsesTranscriptHintWithoutClient(t *testing.T) {
 
 	if input.Transcript != "streaming transcript" {
 		t.Fatalf("Transcript = %q, want streaming transcript", input.Transcript)
+	}
+}
+
+func TestPrepareAudioInputWithContextCancelsSTTBeforeBuildingTurn(t *testing.T) {
+	wav := pcm16MonoToWAV([]int16{100, -100}, 16000)
+	client := &contextAwareSTTTestClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := PrepareAudioInputWithContext(ctx, "stt", client, wav, "", "", nil); err == nil {
+		t.Fatal("PrepareAudioInputWithContext() error = nil, want cancellation")
+	}
+	if client.contextCalls != 1 || client.legacyCalls != 0 {
+		t.Fatalf("context calls=%d legacy calls=%d", client.contextCalls, client.legacyCalls)
 	}
 }
