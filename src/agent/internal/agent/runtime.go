@@ -1283,8 +1283,29 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 	// append user message to context manager
-	if err := r.contextManager.AppendMessage(userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)); err != nil {
+	userMessage := userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)
+	stateMessageStart := -1
+	if streamCallbackHandler != nil && streamCallbackHandler.streamEmitter != nil {
+		stateMessageStart = len(r.contextManager.CloneMessageList())
+	}
+	if err := r.contextManager.AppendMessage(userMessage); err != nil {
 		return RunResult{}, err
+	}
+	if stateMessageStart >= 0 {
+		contextRole := "backend"
+		if cfg.InputModeOrDefault() == "realtime" {
+			contextRole = "user"
+		}
+		emitAppendedStateEvents(
+			ctx,
+			r.contextManager,
+			stateMessageStart,
+			streamCallbackHandler.streamEmitter,
+			req.RequestID,
+			runID,
+			episodeID,
+			contextRole,
+		)
 	}
 
 	notices, err := startRunNotices(func() *contextmanager.ContextManager { return r.contextManager }, runID)
@@ -1700,6 +1721,44 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			Message: &message,
 			After:   []messages.Message{},
 		}
+	}
+}
+
+// emitAppendedStateEvents publishes state messages inserted by the user
+// message append hook as soon as they are persisted. History refreshes are
+// intentionally paused while a run is active, so without this event the Web
+// UI cannot show the state divider until the model turn has finished.
+func emitAppendedStateEvents(
+	ctx context.Context,
+	manager *contextmanager.ContextManager,
+	beforeCount int,
+	emitter *streamEventEmitter,
+	requestID string,
+	runID string,
+	episodeID string,
+	contextRole string,
+) {
+	if manager == nil || emitter == nil || beforeCount < 0 {
+		return
+	}
+	current := manager.CloneMessageList()
+	if beforeCount >= len(current) {
+		return
+	}
+	if strings.TrimSpace(requestID) == "" {
+		requestID = runID
+	}
+	for _, item := range current[beforeCount:] {
+		if item.Role != messages.MessageRoleState {
+			continue
+		}
+		message, ok := webMessageFromContextMessage(item, contextRole)
+		if !ok {
+			continue
+		}
+		message.RequestID = requestID
+		message.EpisodeID = episodeID
+		emitter.emit(ctx, stream.EventStateUpdated, stream.VisibilityUser, message, nil)
 	}
 }
 

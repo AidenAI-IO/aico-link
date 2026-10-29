@@ -250,6 +250,13 @@ function handleSemanticEvent(event) {
                 timestamp
             });
             return;
+        case 'state.updated':
+            // State is persisted before the model starts, but history refreshes
+            // are paused during a run to protect live assistant drafts. Render
+            // the semantic state message directly so its divider appears as
+            // soon as the context hook inserts it.
+            if (payload && typeof payload === 'object') addMessage(payload);
+            return;
         default:
             if (semanticEventNeedsHistoryRefresh(event.kind)) refreshHistoryFromContext();
     }
@@ -271,6 +278,14 @@ function semanticEventNeedsHistoryRefresh(kind) {
 
 function handleServerEvent(data) {
     if (!data || data.type === 'connected') return;
+    // Context markers are durable messages, but they are also produced before
+    // the model starts generating a response. Render them from the live event
+    // immediately so the state divider does not wait for the final history
+    // refresh at run completion.
+    if (data.type === 'state' || data.type === 'notice') {
+        addMessage(data);
+        return;
+    }
     if (data.type === 'assistant' && data.status === 'streaming') {
         const key = assistantStreamKey(data);
         let draft = streamingAssistantDrafts[key];

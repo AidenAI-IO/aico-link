@@ -241,6 +241,23 @@ handleSemanticEvent({
 });
 assert.equal(streamingAssistantDrafts['response-a'].content, 'a');
 assert.equal(streamingAssistantDrafts['response-b'].content, 'b');
+
+handleServerEvent({
+    type: 'state', request_id: 'state-live-1', content: 'app: Browser', timestamp: 't-live'
+});
+const liveStateNode = Array.from(messagesDiv.children).find(node => node._stateMessage && node._stateMessage.request_id === 'state-live-1');
+assert.ok(liveStateNode, 'live state should render before history refresh');
+assert.equal(liveStateNode._stateMessage.content, 'app: Browser');
+
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'state.updated',
+    turn_id: 'state-live-semantic',
+    payload: {type: 'state', request_id: 'state-live-semantic', content: 'app: Settings', timestamp: 't-live-2'}
+});
+const semanticStateNode = Array.from(messagesDiv.children).find(node => node._stateMessage && node._stateMessage.request_id === 'state-live-semantic');
+assert.ok(semanticStateNode, 'semantic state should render before history refresh');
+assert.equal(semanticStateNode._stateMessage.content, 'app: Settings');
 `
 ].join('\n');
 

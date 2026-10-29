@@ -50,6 +50,7 @@ const (
 	EventStreamDiscontinuity EventKind = "stream.discontinuity"
 	EventStreamError         EventKind = "stream.error"
 	EventUsageUpdated        EventKind = "usage.updated"
+	EventStateUpdated        EventKind = "state.updated"
 	EventRunTerminal         EventKind = "run.terminal"
 	EventReasoningDelta      EventKind = "reasoning.delta"
 	EventReasoningReset      EventKind = "reasoning.reset"

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/stream"
 )
 
@@ -89,6 +91,44 @@ func TestRuntimeStreamEmitterPreservesWhitespaceDelta(t *testing.T) {
 	}
 	if payload, ok := sink.events[0].Payload.(map[string]string); !ok || payload["text"] != " " {
 		t.Fatalf("payload=%#v", sink.events[0].Payload)
+	}
+}
+
+func TestEmitAppendedStateEventsPublishesWebMessageImmediately(t *testing.T) {
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+	})
+	if err != nil {
+		t.Fatalf("create context manager: %v", err)
+	}
+	beforeCount := len(manager.CloneMessageList())
+	if err := manager.AppendMessages([]messages.Message{
+		{Role: messages.MessageRoleState, Content: "device: connected"},
+		{Role: messages.MessageRoleUser, Content: "hello"},
+	}); err != nil {
+		t.Fatalf("append messages: %v", err)
+	}
+
+	sink := &recordingStreamSink{}
+	emitter := newStreamEventEmitter(sink, stream.EventScope{}, "request-1", "run-1", "episode-1")
+	emitAppendedStateEvents(context.Background(), manager, beforeCount, emitter, "request-1", "run-1", "episode-1", "backend")
+
+	if len(sink.events) != 1 {
+		t.Fatalf("event count=%d, want 1", len(sink.events))
+	}
+	event := sink.events[0]
+	if event.Kind != stream.EventStateUpdated {
+		t.Fatalf("event kind=%q, want %q", event.Kind, stream.EventStateUpdated)
+	}
+	message, ok := event.Payload.(Message)
+	if !ok {
+		t.Fatalf("payload type=%T, want agent.Message", event.Payload)
+	}
+	if message.Type != "state" || message.Content != "device: connected" {
+		t.Fatalf("state message=%+v", message)
+	}
+	if message.RequestID != "request-1" || message.EpisodeID != "episode-1" {
+		t.Fatalf("state identity=%+v", message)
 	}
 }
 
