@@ -43,8 +43,7 @@ def file_hash(path):
 
 
 def notes(plan):
-    text = (f"# Aico Link {plan['tag']}\n\n"
-            f"Channel: `{plan['channel']}`; kind: `{plan['kind']}`.\n\n"
+    text = (f"Channel: `{plan['channel']}`; kind: `{plan['kind']}`.\n\n"
             f"Source: `{plan['source_commit']}`. Previous release: `{plan['previous_tag'] or 'none'}`.\n\n"
             f"Platform contract: `{plan['platform']['contract']}`; base OTA: `{plan['platform']['base_release']}`.\n\n")
     if plan["previous_tag"]:
