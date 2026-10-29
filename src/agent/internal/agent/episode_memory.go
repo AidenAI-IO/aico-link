@@ -1081,7 +1081,7 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		review, found := reviewByKey[key]
 		decision := episodeMemoryRetentionDecision(strings.ToLower(strings.TrimSpace(string(review.Decision))))
 		retention := episodeMemoryRetention(strings.ToLower(strings.TrimSpace(string(review.Retention))))
-		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || !episodeMemoryEvidenceRefsWithin(review.Rewrite.EvidenceRefs, base.EvidenceRefs) {
+		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || len(uniqueNonEmpty(review.Rewrite.EvidenceRefs)) == 0 {
 			continue
 		}
 		if episodeMemoryRewriteContainsSensitiveValue(*review.Rewrite, review.SensitiveValues) {
@@ -1097,9 +1097,10 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		// persistence.
 		base.Scope = mergeEpisodeMemoryReviewScope(base.Scope, review.Rewrite.Scope)
 		base.Tags = append([]string(nil), review.Rewrite.Tags...)
-		// Rewrite evidence only identifies what the reviewer checked; persisted
-		// evidence stays the candidate's full set, including failed alternatives.
-		base.EvidenceRefs = append([]string(nil), base.EvidenceRefs...)
+		// Reviewers collapse repeated evidence and cite steps they add to an
+		// incomplete path, so keep both. validateEpisodeMemoryCandidate rejects
+		// ids outside the Episode and steps that are not cited, paired results.
+		base.EvidenceRefs = uniqueNonEmpty(append(append([]string(nil), base.EvidenceRefs...), review.Rewrite.EvidenceRefs...))
 		if episodeMemoryType(strings.ToLower(strings.TrimSpace(string(base.Type)))) == episodeMemoryTypeProcedure && len(review.Rewrite.StepRefs) > 0 {
 			base.StepRefs = append([]string(nil), review.Rewrite.StepRefs...)
 		}
@@ -1133,22 +1134,6 @@ func episodeMemoryRewriteContainsSensitiveValue(rewrite episodeMemoryRetentionRe
 		}
 	}
 	return false
-}
-
-// episodeMemoryEvidenceRefsWithin reports whether refs is a non-empty subset of
-// allowed. Reviewers often collapse repeated evidence, which is not a change of
-// the reviewed lesson; citing evidence outside the candidate is.
-func episodeMemoryEvidenceRefsWithin(refs, allowed []string) bool {
-	refs = uniqueNonEmpty(refs)
-	if len(refs) == 0 {
-		return false
-	}
-	for _, ref := range refs {
-		if !slices.Contains(allowed, ref) {
-			return false
-		}
-	}
-	return true
 }
 
 func sameEpisodeMemoryCandidateIdentity(left, right episodeMemoryCandidate) bool {
@@ -1491,7 +1476,7 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 		// A stored path that stops before the result proving the goal teaches
 		// the Agent to skip verification, so an achieved procedure must reach it.
 		if assessment.GoalResult == episodeGoalAchieved {
-			if proof := episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs); proof != "" && !slices.Contains(candidate.StepRefs, proof) {
+			if proof := episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs); proof != "" && !episodeMemoryPathReachesFinalProof(episode, candidate.StepRefs, proof) {
 				return episodeMemoryCandidate{}, false
 			}
 		}
@@ -1572,6 +1557,24 @@ func episodeMemoryFinalProofRef(episode TaskEpisode, assessmentRefs []string) st
 		}
 	}
 	return proof
+}
+
+// episodeMemoryPathReachesFinalProof reports whether a procedure path includes
+// the final verification, or ends with a repeat of that same verification
+// action, as when an Episode runs the same verified flow more than once.
+func episodeMemoryPathReachesFinalProof(episode TaskEpisode, stepRefs []string, proof string) bool {
+	if slices.Contains(stepRefs, proof) {
+		return true
+	}
+	if len(stepRefs) == 0 {
+		return false
+	}
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	last, final := pairedCalls[stepRefs[len(stepRefs)-1]], pairedCalls[proof]
+	return last != nil && final != nil &&
+		strings.EqualFold(strings.TrimSpace(last.ToolName), strings.TrimSpace(final.ToolName)) &&
+		strings.TrimSpace(last.Content) == strings.TrimSpace(final.Content) &&
+		strings.TrimSpace(last.ToolInput) == strings.TrimSpace(final.ToolInput)
 }
 
 func expandEpisodeMemoryEvidenceRefs(episode TaskEpisode, refs []string) []string {

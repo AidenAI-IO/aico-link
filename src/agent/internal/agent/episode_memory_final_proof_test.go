@@ -56,7 +56,7 @@ func TestEpisodeMemoryFinalProofIsTheLastCitedDeviceResult(t *testing.T) {
 	}
 }
 
-func TestRetainedEpisodeMemoryCandidateAcceptsSubsetOfRewriteEvidence(t *testing.T) {
+func TestRetainedEpisodeMemoryCandidateKeepsEvidenceFromBothCandidateAndRewrite(t *testing.T) {
 	retainReview := func(evidence []string) episodeMemoryRetentionAudit {
 		return episodeMemoryRetentionAudit{Reviews: []episodeMemoryRetentionReview{{
 			LessonKey: "commit_path", Decision: episodeMemoryRetentionDecisionRetain, Retention: episodeMemoryRetentionDurable,
@@ -66,16 +66,41 @@ func TestRetainedEpisodeMemoryCandidateAcceptsSubsetOfRewriteEvidence(t *testing
 			},
 		}}}
 	}
-	original := []episodeMemoryCandidate{finalProofTestCandidate([]string{"prepare_result", "commit_result", "verify_result"})}
+	candidate := finalProofTestCandidate([]string{"commit_result", "verify_result"})
+	candidate.EvidenceRefs = []string{"commit_result", "verify_result"}
+	original := []episodeMemoryCandidate{candidate}
 
+	// Reviewers collapse repeated evidence; the candidate's evidence is kept.
 	retained := retainedEpisodeMemoryCandidates(original, retainReview([]string{"verify_result"}))
-	if len(retained) != 1 || !reflect.DeepEqual(retained[0].EvidenceRefs, original[0].EvidenceRefs) {
-		t.Fatalf("retained = %#v, want the candidate with its full evidence", retained)
+	if len(retained) != 1 || !reflect.DeepEqual(retained[0].EvidenceRefs, []string{"commit_result", "verify_result"}) {
+		t.Fatalf("retained = %#v, want the candidate's full evidence", retained)
 	}
-	for _, evidence := range [][]string{nil, {"verify_result", "unrelated_result"}} {
-		if retained := retainedEpisodeMemoryCandidates(original, retainReview(evidence)); len(retained) != 0 {
-			t.Fatalf("rewrite evidence %v retained %#v, want rejection", evidence, retained)
-		}
+	// A reviewer completing the path cites the step the candidate skipped.
+	retained = retainedEpisodeMemoryCandidates(original, retainReview([]string{"prepare_result", "commit_result", "verify_result"}))
+	if len(retained) != 1 || !reflect.DeepEqual(retained[0].EvidenceRefs, []string{"commit_result", "verify_result", "prepare_result"}) {
+		t.Fatalf("retained = %#v, want evidence extended by the rewrite", retained)
+	}
+	if retained := retainedEpisodeMemoryCandidates(original, retainReview(nil)); len(retained) != 0 {
+		t.Fatalf("rewrite without evidence retained %#v, want rejection", retained)
+	}
+}
+
+func TestAchievedProcedureMayEndWithARepeatOfTheFinalVerification(t *testing.T) {
+	episode := finalProofTestEpisode()
+	episode.Events = append(episode.Events,
+		TaskEpisodeEvent{EventID: "commit_again_call", Type: runEventToolCall, ToolName: "touch_gesture", Content: "Commit the change"},
+		TaskEpisodeEvent{EventID: "commit_again_result", Type: "tool_result", ToolName: "touch_gesture", Observation: "Committed"},
+		TaskEpisodeEvent{EventID: "verify_again_call", Type: runEventToolCall, ToolName: "touch_gesture", Content: "Reopen to verify"},
+		TaskEpisodeEvent{EventID: "verify_again_result", Type: "tool_result", ToolName: "touch_gesture", Observation: "Change persisted again"},
+	)
+	assessment := episodeMemoryAssessment{GoalResult: episodeGoalAchieved, Reason: "persisted twice", EvidenceRefs: []string{"verify_result", "verify_again_result"}}
+	firstRun := finalProofTestCandidate([]string{"prepare_result", "commit_result", "verify_result"})
+	if _, ok := validateEpisodeMemoryCandidate(episode, assessment, firstRun, map[string]bool{}); !ok {
+		t.Fatal("complete first run ending with the same verification was rejected")
+	}
+	stopsEarly := finalProofTestCandidate([]string{"prepare_result", "commit_result"})
+	if _, ok := validateEpisodeMemoryCandidate(episode, assessment, stopsEarly, map[string]bool{}); ok {
+		t.Fatal("path ending before any verification was accepted")
 	}
 }
 
