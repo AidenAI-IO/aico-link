@@ -90,7 +90,7 @@ func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
 	if strings.Contains(body, `"type":"resync_required"`) {
 		t.Fatalf("empty replay window incorrectly required resync: %s", body)
 	}
-	if !strings.Contains(body, "id: 1") {
+	if !strings.Contains(body, "id: 1:1") {
 		t.Fatalf("v2 SSE body missing event id: %s", body)
 	}
 }

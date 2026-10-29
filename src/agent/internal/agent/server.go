@@ -2762,7 +2762,9 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return false
 		}
-		_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.Sequence, data)
+		// Keep the session epoch in Last-Event-ID so EventSource reconnects
+		// preserve the complete replay cursor across session rotations.
+		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data)
 		flusher.Flush()
 		return true
 	}
