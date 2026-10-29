@@ -13,6 +13,7 @@ import (
 	"aico-agent/internal/agent/speech"
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/stream"
 )
 
 const (
@@ -52,6 +53,7 @@ type AudioDialog struct {
 	activeOutputs       map[*activeTTSOutput]struct{}
 	runControl          voiceRunControl
 	messagePublish      func(Message)
+	transcriptObserver  func(uint64, stream.TranscriptEvent)
 	audioArchive        *AudioArchiveManager
 	connWarmer          *ConnectionWarmer
 }
@@ -422,6 +424,7 @@ func (d *AudioDialog) StartRecording() error {
 			_ = recordSTT.Close()
 			return
 		}
+		go d.forwardRecordSTTEvents(sttSessionID, recordSTT)
 		for _, pcm := range queued {
 			if err := recordSTT.UploadPCM(pcm); err != nil {
 				d.markRecordSTTUploadError(sttSessionID, err)
@@ -434,6 +437,39 @@ func (d *AudioDialog) StartRecording() error {
 	}()
 
 	return nil
+}
+
+// SetSTTTranscriptObserver installs an optional observer for revisioned
+// streaming transcript updates. The observer is presentation-only: events
+// are still folded into the final transcript by the provider/session path, and
+// updates from a stopped or superseded recording are discarded.
+func (d *AudioDialog) SetSTTTranscriptObserver(observer func(uint64, stream.TranscriptEvent)) {
+	if d == nil {
+		return
+	}
+	d.recordSTTMu.Lock()
+	d.transcriptObserver = observer
+	d.recordSTTMu.Unlock()
+}
+
+func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamingSTTSession) {
+	if d == nil || session == nil {
+		return
+	}
+	events := session.TranscriptEvents()
+	if events == nil {
+		return
+	}
+	for event := range events {
+		d.recordSTTMu.Lock()
+		current := d.recordSTT == session
+		observer := d.transcriptObserver
+		d.recordSTTMu.Unlock()
+		if !current || observer == nil {
+			continue
+		}
+		observer(sessionID, event)
+	}
 }
 
 // StopRecording stops the current recording session

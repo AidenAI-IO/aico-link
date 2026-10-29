@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +19,47 @@ import (
 
 	"aico-agent/internal/agent/model"
 	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/stream"
 )
+
+func TestAudioDialogForwardsCurrentSTTTranscriptEventsOnly(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 2)
+	session := &streamingSTTSession{events: events}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan struct {
+		sessionID uint64
+		event     stream.TranscriptEvent
+	}, 1)
+	dialog.SetSTTTranscriptObserver(func(sessionID uint64, event stream.TranscriptEvent) {
+		observed <- struct {
+			sessionID uint64
+			event     stream.TranscriptEvent
+		}{sessionID: sessionID, event: event}
+	})
+
+	go dialog.forwardRecordSTTEvents(42, session)
+	want := stream.NewTranscriptHypothesis("segment-1", 1, "hello")
+	events <- want
+	select {
+	case got := <-observed:
+		if got.sessionID != 42 || !reflect.DeepEqual(got.event, want) {
+			t.Fatalf("observed = %#v, want session 42 event %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for transcript observer")
+	}
+
+	dialog.recordSTTMu.Lock()
+	dialog.recordSTT = nil
+	dialog.recordSTTMu.Unlock()
+	events <- stream.NewTranscriptHypothesis("segment-1", 2, "stale")
+	close(events)
+	select {
+	case got := <-observed:
+		t.Fatalf("stale transcript reached observer: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
 
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
 	t.Helper()
