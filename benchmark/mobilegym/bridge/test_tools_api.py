@@ -194,6 +194,8 @@ def test_invoke_touch_gesture_tap(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
+    assert {"tool", "raw_input", "output", "is_error", "duration_ms"} <= data.keys()
+    assert data["tool"]["name"] == "touch_gesture"
     output = json.loads(data["output"])
     assert "action_output" in output
     assert "data" in output  # Screenshot included

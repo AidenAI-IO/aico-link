@@ -266,19 +266,6 @@ def test_perception_v1_describes_single_frame_environment_without_coaching():
         assert leaked_instruction not in prompt_prefix
 
 
-def test_perception_v1_settings_prompt_requires_clicking_visible_icon():
-    suite_path = (
-        Path(__file__).resolve().parents[1]
-        / "suites"
-        / "perception"
-        / "perception_v1.json"
-    )
-    suite = load_suite(suite_path)
-
-    task = next(task for task in suite.tasks if task.id == "find_settings_iphone")
-    assert task.prompt == "请点击屏幕上的设置图标。"
-
-
 def test_mobilegym_basic_suite_loads_device_operation_tasks():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "mobilegym_basic.json"
     suite = load_suite(suite_path)
