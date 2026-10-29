@@ -123,7 +123,9 @@ func (e *streamEventEmitter) emitRunEvent(ctx context.Context, event RunEvent) {
 }
 
 func (e *streamEventEmitter) emitTextDelta(ctx context.Context, text string) {
-	if strings.TrimSpace(text) == "" {
+	// Whitespace is meaningful in streamed text (for example, a token that
+	// separates two words). Only suppress genuinely empty chunks.
+	if text == "" {
 		return
 	}
 	e.emit(ctx, stream.EventTextDelta, stream.VisibilityUser, map[string]string{"text": text}, nil)

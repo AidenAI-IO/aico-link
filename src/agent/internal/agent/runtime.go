@@ -1188,7 +1188,10 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 						state = stream.TerminalCancelled
 					}
 				}
-				emitter.emit(ctx, stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
+				// A cancellation-triggered run commonly reaches this defer with ctx
+				// already done. Terminal delivery is still required, so use a fresh
+				// bounded context for the observer instead of inheriting cancellation.
+				emitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
 					"state": string(state),
 					"error": streamErrorString(runErr),
 				}, nil)

@@ -80,6 +80,18 @@ func TestRuntimeCallbackEmitsTypedTextAlongsideLegacyWriter(t *testing.T) {
 	}
 }
 
+func TestRuntimeStreamEmitterPreservesWhitespaceDelta(t *testing.T) {
+	sink := &recordingStreamSink{}
+	emitter := newStreamEventEmitter(sink, stream.EventScope{}, "request-1", "run-1", "episode-1")
+	emitter.emitTextDelta(context.Background(), " ")
+	if len(sink.events) != 1 {
+		t.Fatalf("whitespace event count=%d, want 1", len(sink.events))
+	}
+	if payload, ok := sink.events[0].Payload.(map[string]string); !ok || payload["text"] != " " {
+		t.Fatalf("payload=%#v", sink.events[0].Payload)
+	}
+}
+
 func TestRuntimeStreamEmitterBoundsFailedSink(t *testing.T) {
 	sink := &blockingStreamSink{}
 	emitter := newStreamEventEmitter(sink, stream.EventScope{}, "request-1", "run-1", "episode-1")
