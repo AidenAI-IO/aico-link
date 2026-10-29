@@ -6,7 +6,7 @@ sidebar_position: 3
 
 ## Target Hardware
 
-This page describes the current Aico Link development-board reference setup. It is intended for prototyping and development. Complete all FPC and Dupont-wire connections with the power disconnected, then recheck power and signal wiring before first power-on.
+This page describes the legacy self-assembled Aico Link development-board setup. It is no longer maintained; the last firmware commit that supports it is [`ad07c4d363f2948048415ed3af0b5e4da86bcac0`](https://github.com/AidenAI-IO/aico-link/tree/ad07c4d363f2948048415ed3af0b5e4da86bcac0). Complete all FPC and Dupont-wire connections with the power disconnected, then recheck power and signal wiring before first power-on.
 
 Board markings, header orientation, and connector placement can vary by module revision, so always follow the markings on the physical module.
 

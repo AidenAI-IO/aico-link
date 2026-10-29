@@ -16,7 +16,7 @@ This page is the main path for anyone touching Aico Link hardware for the first 
 
 | Step | Goal | Detailed doc |
 | --- | --- | --- |
-| 1 | Wire up per the hardware design | [Hardware & Wiring](hardware.md) |
+| 1 | Wire up per the hardware design (legacy self-assembled board only) | [Hardware & Wiring (legacy)](hardware.md) |
 | 2 | Flash the `update.img` firmware onto the Pico Zero | [Firmware Build & Flashing](firmware.md) |
 | 3 | Open the config page and connect to Wi-Fi | [Config Web](../04-agent/configuration.md#config-web-the-device-config-page) |
 | 4 | Configure keys such as model / tts / stt | [Agent Configuration](../04-agent/configuration.md) |
@@ -27,7 +27,7 @@ This page is the main path for anyone touching Aico Link hardware for the first 
 
 ## 1. Hardware & Wiring
 
-Follow [Hardware & Wiring](hardware.md) to complete the wiring. Key connection flow:
+The self-assembled board covered in this step is legacy and no longer maintained; see [Hardware & Wiring (legacy)](hardware.md) for the last supported firmware commit. Follow that page to complete the wiring. Key connection flow:
 
 - The target device (iPhone / PC) connects to a **USB-C hub**;
 - The hub's **HDMI output** goes to the Firefly RK628D HDMI-to-CSI bridge, which feeds the Pico Zero's `/dev/video0` through four CSI lanes;
