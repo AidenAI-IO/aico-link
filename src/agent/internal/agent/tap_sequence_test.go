@@ -73,15 +73,41 @@ func tapSequenceFrames(frames ...lumaFrame) frameCapturer {
 // tapSequenceTestPoints taps keys 1, 2, 2, 6, 9 of tapSequenceTestKeys.
 var tapSequenceTestPoints = []normalizedPoint{tapSequenceTestKeys[0], tapSequenceTestKeys[1], tapSequenceTestKeys[1], tapSequenceTestKeys[5], tapSequenceTestKeys[8]}
 
+// tapSequencePressed brightens rect by 15, about how much the pointer and
+// press highlight change a just-tapped key on the board's raw frames.
+func tapSequencePressed(frame lumaFrame, rect image.Rectangle) lumaFrame {
+	for y := rect.Min.Y; y < rect.Max.Y; y++ {
+		for x := rect.Min.X; x < rect.Max.X; x++ {
+			frame.y[y*frame.stride+x] = byte(min(255, int(frame.y[y*frame.stride+x])+15))
+		}
+	}
+	return frame
+}
+
 func TestTapSequenceGuardIgnoresChangesAwayFromRemainingTargets(t *testing.T) {
 	baseline := tapSequenceKeypadFrame(0, 0)
 	// The number display filling a third of the screen and the just-tapped key
-	// lighting up are both expected while entering digits.
+	// lighting up are both expected while entering digits; the pressed key is
+	// tapped again next, so it is still compared.
 	display := image.Rect(0, 80, 400, 330)
-	pressed := image.Rect(186, 346, 214, 374)
-	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, display, pressed)), nil, baseline, tapSequenceTestPoints)
+	frame := tapSequencePressed(tapSequenceKeypadFrame(0, 0, display), image.Rect(180, 340, 220, 380))
+	guard := newTapSequenceGuard(tapSequenceFrames(frame), nil, baseline, tapSequenceTestPoints)
 	if stop, reason, err := guard(context.Background(), 2); err != nil || stop {
 		t.Fatalf("stop=%v reason=%q err=%v, want continue", stop, reason, err)
+	}
+}
+
+// Pressing one key several times leaves no other target to watch, so the
+// repeated key itself must be checked from the first tap on.
+func TestTapSequenceGuardChecksARepeatedKeyFromTheFirstTap(t *testing.T) {
+	baseline := tapSequenceKeypadFrame(0, 0)
+	key := tapSequenceTestKeys[4]
+	points := []normalizedPoint{key, key, key, key}
+	popup := image.Rect(170, 440, 230, 510)
+	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, popup)), nil, baseline, points)
+	stop, reason, err := guard(context.Background(), 1)
+	if err != nil || !stop || !strings.Contains(reason, "target 2 changed after tap 1") {
+		t.Fatalf("stop=%v reason=%q err=%v, want the repeated key checked after the first tap", stop, reason, err)
 	}
 }
 
