@@ -17,7 +17,7 @@ on:
           - adb
           - all
       suite:
-        description: Optional suite path, for example suites/memory_v1.json
+        description: Optional suite path or comma-separated paths, for example suites/memory_v1.json,suites/quick_capture_v1.json
         required: false
         type: string
       repeats:

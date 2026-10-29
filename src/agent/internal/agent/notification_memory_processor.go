@@ -500,6 +500,9 @@ func (p *NotificationMemoryProcessor) validateNotificationProposal(ctx context.C
 		default:
 			return notificationMemoryProposal{}, fmt.Errorf("notification proposal has unsupported action %q", action.Action)
 		}
+		if action.Scope == "" {
+			action.Scope = inferNotificationTargetScope(action, refs)
+		}
 		if action.Scope != "temporary" && action.Scope != "long_term" {
 			return notificationMemoryProposal{}, fmt.Errorf("notification proposal has invalid scope %q", action.Scope)
 		}
@@ -780,6 +783,33 @@ func notificationMemoryMetadata(action notificationMemoryAction, memoryType stri
 		}
 	}
 	return priority, confidence
+}
+
+// inferNotificationTargetScope fills an omitted scope for update, reinforce,
+// and remove from the catalog: the target memory_id already fixes its store
+// when exactly one active catalog entry has that id. Add and promote choose a
+// destination, so their scope is never inferred.
+func inferNotificationTargetScope(action notificationMemoryAction, refs []MemoryMergeReference) string {
+	switch action.Action {
+	case "update", "reinforce", "remove":
+	default:
+		return ""
+	}
+	id := strings.TrimSpace(action.MemoryID)
+	if id == "" {
+		return ""
+	}
+	scope := ""
+	for _, ref := range refs {
+		if ref.ID != id || ref.Status != "active" {
+			continue
+		}
+		if scope != "" && scope != ref.Scope {
+			return ""
+		}
+		scope = ref.Scope
+	}
+	return scope
 }
 
 func findNotificationReference(id, scope string, refs []MemoryMergeReference) (MemoryMergeReference, bool) {

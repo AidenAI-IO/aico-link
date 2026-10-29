@@ -116,6 +116,25 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     assert {case.target_platform for case in selected} == {"ios", "android"}
 
 
+def test_comma_separated_suites_select_each_suite_in_request_order() -> None:
+    catalog = load_catalog()
+    first = "suites/quick_capture_v1.json"
+    second = "suites/adb_android_basic.json"
+
+    selected = select_cases(
+        catalog,
+        profile="runnable",
+        suite=f" {first} , {second},{first},",
+    )
+
+    expected = select_cases(catalog, profile="runnable", suite=first) + select_cases(
+        catalog, profile="runnable", suite=second
+    )
+    assert selected == expected
+    with pytest.raises(CatalogError, match="not in the CI catalog"):
+        select_cases(catalog, profile="runnable", suite=f"{first},suites/missing.json")
+
+
 def test_phone_control_selection_uses_only_the_requested_environment_profile() -> None:
     catalog = load_catalog()
     suite = "suites/phone_control_v1.json"

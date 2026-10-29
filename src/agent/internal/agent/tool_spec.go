@@ -583,7 +583,7 @@ func validateTouchGestureFields(input string) error {
 		}
 	}
 	if missing != "" {
-		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":900},\"direction\":\"up\"}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
+		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":800},\"end\":{\"x\":500,\"y\":300}}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
 	}
 	return nil
 }
