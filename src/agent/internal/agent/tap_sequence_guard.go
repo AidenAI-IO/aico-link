@@ -137,18 +137,18 @@ func imageLuma(img image.Image) lumaFrame {
 	return lumaFrame{width: b.Dx(), height: b.Dy(), stride: b.Dx(), y: y}
 }
 
-// tapSequenceInput parses a tap_sequence request whose default screen check
-// is enabled; ok is false for any other input.
+// tapSequenceInput parses a tap_sequence request; ok is false for any other
+// input. The screen check is not optional: a model saving time must not be
+// able to send the remaining taps onto a screen that changed.
 func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 	var args struct {
-		Type               string         `json:"type"`
-		Points             []pointerPoint `json:"points"`
-		StopOnScreenChange *bool          `json:"stop_on_screen_change"`
+		Type   string         `json:"type"`
+		Points []pointerPoint `json:"points"`
 	}
 	if json.Unmarshal([]byte(input), &args) != nil || !strings.EqualFold(strings.TrimSpace(args.Type), "tap_sequence") {
 		return nil, false
 	}
-	if args.StopOnScreenChange != nil && !*args.StopOnScreenChange || len(args.Points) == 0 {
+	if len(args.Points) == 0 {
 		return nil, false
 	}
 	points = make([]normalizedPoint, len(args.Points))

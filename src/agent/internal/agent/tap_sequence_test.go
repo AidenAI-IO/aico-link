@@ -235,13 +235,16 @@ func TestTouchGestureToolTapSequenceSendsNothingWithoutBaseline(t *testing.T) {
 		t.Fatalf("clicks = %#v, want none", clicks)
 	}
 
-	// The check is opt-out: without it the sequence runs without a baseline.
+	// Asking to skip the check does not bypass it.
 	ctx, _ = WithToolError(context.Background())
-	if _, err := tool.Call(ctx, `{"type":"tap_sequence","points":[{"x":100,"y":100},{"x":200,"y":200}],"interval_ms":80,"stop_on_screen_change":false}`); err != nil || ToolErrorFromContext(ctx) != nil {
-		t.Fatalf("err=%v tool_error=%v", err, ToolErrorFromContext(ctx))
+	if _, err := tool.Call(ctx, `{"type":"tap_sequence","points":[{"x":100,"y":100},{"x":200,"y":200}],"interval_ms":80,"stop_on_screen_change":false}`); err != nil {
+		t.Fatal(err)
 	}
-	if clicks := provider.ClickCalls(); len(clicks) != 2 {
-		t.Fatalf("clicks = %#v, want two", clicks)
+	if te := ToolErrorFromContext(ctx); te == nil || !strings.Contains(te.Message, "no tap was sent") {
+		t.Fatalf("tool error = %#v, want the missing baseline to block the sequence", te)
+	}
+	if clicks := provider.ClickCalls(); len(clicks) != 0 {
+		t.Fatalf("clicks = %#v, want none", clicks)
 	}
 }
 
