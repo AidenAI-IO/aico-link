@@ -49,9 +49,9 @@ def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> 
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 19
+    assert len(runnable) == 18
     assert len(hardware) == 17
-    assert len(all_cases) == 34
+    assert len(all_cases) == 33
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.id for case in runnable if case.environment == "adb"} == {
