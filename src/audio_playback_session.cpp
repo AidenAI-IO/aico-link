@@ -9,7 +9,13 @@ namespace aico {
 const size_t AudioPlaybackSession::kMaxQueueChunks;
 
 AudioPlaybackSession::AudioPlaybackSession(uint64_t session_id, const AudioFormat& fmt)
-    : session_id_(session_id), fmt_(fmt), stopped_(false), final_received_(false), joined_(false) {}
+    : session_id_(session_id),
+      fmt_(fmt),
+      queue_bytes_(0),
+      max_queue_bytes_(playback_queue_byte_limit(fmt)),
+      stopped_(false),
+      final_received_(false),
+      joined_(false) {}
 
 AudioPlaybackSession::~AudioPlaybackSession() {
     stop();
@@ -65,6 +71,11 @@ int AudioPlaybackSession::get_volume() const {
     return player_.get_volume();
 }
 
+size_t AudioPlaybackSession::queued_bytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queue_bytes_;
+}
+
 AicoServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t len,
                                                     bool is_final) {
     if (stopped_.load()) return AicoServiceStatus::SESSION_NOT_FOUND;
@@ -72,27 +83,32 @@ AicoServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t l
     std::unique_lock<std::mutex> lock(mutex_);
     if (stopped_.load() || final_received_) return AicoServiceStatus::SESSION_NOT_FOUND;
 
-    while (queue_.size() >= kMaxQueueChunks) {
+    if (len > max_queue_bytes_) return AicoServiceStatus::TIMEOUT;
+    while (queue_.size() >= kMaxQueueChunks ||
+           queue_bytes_ > max_queue_bytes_ - len) {
         // Apply back-pressure without ever allowing a producer to cross the
         // hard queue bound. A timeout is reported explicitly so callers can
         // account for a saturated playback path instead of silently growing
         // the queue.
         const bool woke = cv_.wait_for(
             lock, std::chrono::milliseconds(200),
-            [this] {
-                return queue_.size() < kMaxQueueChunks || final_received_ ||
-                       stopped_.load();
+            [this, len] {
+                return (queue_.size() < kMaxQueueChunks &&
+                        queue_bytes_ <= max_queue_bytes_ - len) ||
+                       final_received_ || stopped_.load();
             });
         if (final_received_ || stopped_.load()) {
             return AicoServiceStatus::SESSION_NOT_FOUND;
         }
-        if (!woke && queue_.size() >= kMaxQueueChunks) {
+        if (!woke && (queue_.size() >= kMaxQueueChunks ||
+                      queue_bytes_ > max_queue_bytes_ - len)) {
             return AicoServiceStatus::TIMEOUT;
         }
     }
 
     if (data && len > 0) {
         queue_.push(std::vector<uint8_t>(data, data + len));
+        queue_bytes_ += len;
     }
     if (is_final) final_received_ = true;
     if (is_final) {
@@ -133,6 +149,7 @@ void AudioPlaybackSession::playback_loop() {
             if (!queue_.empty()) {
                 chunk = std::move(queue_.front());
                 queue_.pop();
+                queue_bytes_ -= chunk.size();
                 cv_.notify_one();  // wake push_chunk back-pressure waiter
             } else if (final_received_) {
                 // Queue drained and final chunk received — no more PCM writes are

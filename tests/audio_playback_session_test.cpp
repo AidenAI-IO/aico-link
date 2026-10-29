@@ -251,3 +251,41 @@ TEST_CASE("backpressure timeout preserves the hard queue bound") {
     std::lock_guard<std::mutex> lock(session.mutex_);
     CHECK(session.queue_.size() == aico::AudioPlaybackSession::kMaxQueueChunks);
 }
+
+TEST_CASE("playback queue enforces a byte latency bound") {
+    aico::AudioFormat fmt;
+    fmt.sample_rate = 16000;
+    fmt.channels = 1;
+    fmt.bit_width = 16;
+
+    aico::AudioPlaybackSession session(5, fmt);
+    const size_t byte_limit = aico::playback_queue_byte_limit(fmt);
+    REQUIRE(byte_limit == 32000);
+    const std::vector<uint8_t> chunk(byte_limit / 2, 0);
+
+    REQUIRE(session.push_chunk(chunk.data(), chunk.size(), false) ==
+            aico::AicoServiceStatus::OK);
+    CHECK(session.queued_bytes() == chunk.size());
+    CHECK(session.push_chunk(chunk.data(), chunk.size(), false) ==
+          aico::AicoServiceStatus::OK);
+    CHECK(session.queued_bytes() == byte_limit);
+    CHECK(session.push_chunk(chunk.data(), chunk.size(), false) ==
+          aico::AicoServiceStatus::TIMEOUT);
+    CHECK(session.queued_bytes() == byte_limit);
+
+    session.stop();
+}
+
+TEST_CASE("playback queue rejects a frame larger than its byte bound") {
+    aico::AudioFormat fmt;
+    fmt.sample_rate = 16000;
+    fmt.channels = 1;
+    fmt.bit_width = 16;
+
+    aico::AudioPlaybackSession session(6, fmt);
+    const size_t byte_limit = aico::playback_queue_byte_limit(fmt);
+    const std::vector<uint8_t> oversized(byte_limit + 1, 0);
+    CHECK(session.push_chunk(oversized.data(), oversized.size(), false) ==
+          aico::AicoServiceStatus::TIMEOUT);
+    CHECK(session.queued_bytes() == 0);
+}
