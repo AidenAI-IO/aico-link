@@ -168,7 +168,7 @@ remain unchanged.
 
 ## Test suite
 
-The `adb` CI profile runs three suites and 40 tasks per repeat:
+The native UI suites contain 40 distinct tasks:
 
 - `adb_android_basic` (`suites/adb_android_basic.json`), 16 tasks: screen reading,
   Settings, Wi-Fi status, app drawer, Back, scrolling, Home, recents entry,
@@ -181,6 +181,13 @@ The `adb` CI profile runs three suites and 40 tasks per repeat:
   Camera-to-Photos capture and photo details; Files image browsing and preview;
   unsent Messages drafting and revision; Clock timer control; and Contacts
   search, creation, editing, and deletion.
+
+The `adb` CI profile runs six cases and 70 task attempts per repeat. Basic and
+text-editing each run with and without AidenBridge (40 attempts), built-in apps
+run without AidenBridge (20 attempts), and the dedicated
+`suites/aico_app/android_bridge_capabilities_v1.json` suite adds 10 tasks.
+The daily `runnable` profile includes the five UI cases (60 attempts); the
+dedicated Bridge capability case remains manual.
 
 The built-in app tasks share one suite because they use the same ADB device and
 setup. Task IDs carry an app prefix so results remain easy to filter by app.
@@ -207,7 +214,7 @@ measure the environment rather than Agent operation.
 
 The bridge returns Home and dismisses the keyboard before each task; it does
 not reset app data or launcher layout. Task setup prepares the required screen
-or search query. All three suites run serially on the connected device.
+or search query. All ADB cases run serially on the connected device.
 
 The three `quick_action_*` tasks require successful execution of the named
 shortcut. Other tasks accept any supported route unless the goal explicitly
@@ -215,7 +222,8 @@ requires recents. Judging uses pre/post screenshots and the execution trace;
 `--no-judge` checks execution only, not UI correctness.
 
 In GitHub Actions, select profile `adb` and leave `suite` empty to run all
-three suites, or enter one suite path to run it alone. The workflow requires an
+six cases, or enter one suite path to run its matching cases. Basic and
+text-editing suite paths each select both comparison variants. The workflow requires an
 already booted device and `BENCHMARK_ANDROID_SERIAL`; see
 [CI configuration](../../docs/09-benchmark/README.md#github-actions-ci).
 For local runs, use any suite path in the quick-start command above. Add

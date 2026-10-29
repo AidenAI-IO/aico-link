@@ -92,8 +92,6 @@ func ParseConfigValidationErrors(err error) []ConfigValidationError {
 		field = "voice_first_turn_timeout_ms"
 	case strings.Contains(errMsg, "voice_max_turns"):
 		field = "voice_max_turns"
-	case strings.Contains(errMsg, "voice_max_response_tokens"):
-		field = "voice_max_response_tokens"
 	case strings.Contains(errMsg, "screen_stable_timeout_ms"):
 		field = "screen_stable_timeout_ms"
 	case strings.Contains(errMsg, "screen_stable_ms"):

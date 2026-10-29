@@ -71,7 +71,6 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
 		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
 		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
-		VoiceMaxResponseTokens: cfg.VoiceMaxResponseTokens,
 	}
 }
 

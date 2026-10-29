@@ -440,6 +440,44 @@ baseline before evaluating Agent changes; scores from the previous suite are
 not directly comparable. City names and equivalent natural-language facts are
 judged semantically, while identifiers such as employee IDs remain exact.
 
+#### Memory admission benchmark
+
+`suites/memory_admission_v1.json` checks the
+[Memory Admission Policy](../docs/04-agent/memory-plane.md#memory-admission-policy):
+what the Agent chooses to keep and whether saved memory reaches later answers.
+Run it with `--auto-agent-setup`, like `memory_v1`.
+
+Prompts are ordinary user messages in Chinese and English that never say
+whether to save; the Agent decides. Tasks are scored on the persisted
+`memory_state` and on the response:
+
+- Durable user information (an allergy, handedness, a units preference, a work
+  background) must be persisted with the same meaning, judged semantically.
+- One-off plans, ordinary requests, passing states, pleasantries, content the
+  user asked not to keep, a reminder request, and a password given without a
+  request must leave no memory. The password task queries by the password
+  itself, because a sensitive memory is hidden from browse queries.
+- A secret the user explicitly asks to keep must be persisted with
+  `"sensitive": true`.
+- A changed preference must replace the outdated one.
+- The response must not claim something was saved, or that a reminder was set,
+  unless the matching tool call succeeded; the judge checks this against the
+  tool trace.
+- Seeded preferences, profile entries, and rules must be applied after the
+  history is cleared. These tasks check the outcome, not whether the Agent read
+  the memory from the system prompt or through `recall_memory`.
+- Saved memories must be found among temporary notification memories, both for
+  a direct question and for "what do you remember about me". Setup for the
+  direct question first asserts that a browse by memory type still returns the
+  saved fact, which fails when notification conclusions crowd saved memories
+  out of the ranking.
+- A sensitive memory must be given when asked for directly and must not be
+  revealed by a broad question.
+
+The `schedule` tool is not available in benchmark runtimes, so the reminder
+task checks only that nothing is written to memory. All passwords and PINs in
+the suite are fictional.
+
 #### Notification Memory benchmark
 
 Use `suites/notification_memory_v1.json` to validate the notification memory
@@ -1246,7 +1284,7 @@ were called or which environment executed the task:
 
 | Test area | Suites | Primary objective |
 | --- | --- | --- |
-| Memory | `memory_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
+| Memory | `memory_v1`, `memory_admission_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
 | Experience reflection | `episode_reflection_v1`, `episode_reflection_v2` | Extract evidence-backed lessons |
 | Visual grounding | `perception_v1` | Identify and locate visual targets |
 | UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `adb_android_text_editing`, `adb_android_builtin_apps`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |

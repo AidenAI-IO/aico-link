@@ -49,6 +49,9 @@ fi
 if [ "${AICO_BENCHMARK_MOCK_TOOLS:-0}" = "1" ]; then
     set -- "$@" --benchmark-mock-tools
 fi
+if [ "${AICO_BENCHMARK_LOCAL_PHONE_BRIDGE:-0}" = "1" ]; then
+    set -- "$@" --benchmark-local-phone-bridge
+fi
 
 # These containers have no physical device services. Real-device CLI runs do not
 # use this entrypoint; bridged and scripted environments retain their tool catalog.

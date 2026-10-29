@@ -39,6 +39,7 @@ class HardAssertionResults:
     expected_recalled_memory: bool | None = None
     environment_state: bool | None = None
     memory_state: bool | None = None
+    android_bridge_input: bool | None = None
 
 @dc.dataclass
 class HardAssertionFailure:

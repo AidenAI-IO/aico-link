@@ -782,6 +782,12 @@ def _memory_result_matches(result: dict[str, Any], spec: dict[str, Any]) -> bool
     for field in ("id", "memory_scope", "type"):
         if field in spec and str(result.get(field) or "").strip().lower() != str(spec[field]).strip().lower():
             return False
+    if "sensitive" in spec:
+        # The Agent omits the field for ordinary memories; any other
+        # non-boolean value is malformed and never matches.
+        sensitive = result.get("sensitive", False)
+        if not isinstance(sensitive, bool) or sensitive != spec["sensitive"]:
+            return False
     if "revision" in spec:
         try:
             if int(result.get("revision") or 0) != int(spec["revision"]):
