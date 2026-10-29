@@ -19,10 +19,10 @@ VOICE_SIDE_EFFECT_DEFAULTS = (
     "voice_progress_speech_enabled",
 )
 
-BENCHMARK_AGENT_PROVIDER_ENV = "AIDEN_BENCHMARK_AGENT_PROVIDER"
-BENCHMARK_AGENT_MODEL_ENV = "AIDEN_BENCHMARK_AGENT_MODEL"
-BENCHMARK_AGENT_BASE_URL_ENV = "AIDEN_BENCHMARK_AGENT_BASE_URL"
-BENCHMARK_AGENT_API_KEY_ENV = "AIDEN_BENCHMARK_AGENT_API_KEY"
+BENCHMARK_AGENT_PROVIDER_ENV = "AICO_BENCHMARK_AGENT_PROVIDER"
+BENCHMARK_AGENT_MODEL_ENV = "AICO_BENCHMARK_AGENT_MODEL"
+BENCHMARK_AGENT_BASE_URL_ENV = "AICO_BENCHMARK_AGENT_BASE_URL"
+BENCHMARK_AGENT_API_KEY_ENV = "AICO_BENCHMARK_AGENT_API_KEY"
 
 AGENT_CREDENTIAL_KEYS = ("api_key", "relay_api_key", "public_key", "secret_key")
 _AGENT_CREDENTIAL_ENV_REFERENCE = re.compile(
@@ -259,7 +259,7 @@ def render_agent_template(text: str) -> str:
 
 def apply_benchmark_telemetry(content: str) -> str:
     """Opt CI workers into execution tracing; explicit Agent settings take precedence."""
-    if os.getenv("AIDEN_BENCHMARK_TELEMETRY", "").strip().lower() not in {"1", "true"}:
+    if os.getenv("AICO_BENCHMARK_TELEMETRY", "").strip().lower() not in {"1", "true"}:
         return content
     try:
         import tomllib

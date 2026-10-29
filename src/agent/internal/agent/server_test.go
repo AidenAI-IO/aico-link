@@ -29,13 +29,13 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
-	speechtext "aiden-agent/internal/agent/speech"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
+	speechtext "aico-agent/internal/agent/speech"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 type stubSTTClient struct {
@@ -462,7 +462,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 			&llms.ContentResponse{Choices: []*llms.ContentChoice{{Content: "The current audio volume is 42.", ReasoningContent: "read the volume"}}},
 		},
 	}
-	configDir, err := os.MkdirTemp("", "aiden-server-chat-stream-*")
+	configDir, err := os.MkdirTemp("", "aico-server-chat-stream-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp() error = %v", err)
 	}
@@ -491,7 +491,7 @@ func TestServerHandleChatStreamsToolAndAssistantMessages(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"What is the current volume?"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -590,7 +590,7 @@ func TestServerHandleChatStreamsLeadingToolSpeechWithoutDuplicatePlayback(t *tes
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"What is the current volume?","request_id":"`+requestID+`"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -989,7 +989,7 @@ func TestServerHandleChatStreamBroadcastsRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"hello","request_id":"web-req-1"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -1266,7 +1266,7 @@ func TestHandleProviderScreenshotIncludesADBDeviceWhenFallbackUsed(t *testing.T)
 		"  exit 0\n" +
 		"fi\n" +
 		"if [ \"$1\" = \"-s\" ] && [ \"$2\" = \"serial123\" ] && [ \"$3\" = \"exec-out\" ] && [ \"$4\" = \"screencap\" ] && [ \"$5\" = \"-p\" ]; then\n" +
-		"  cat \"$AIDEN_TEST_PNG\"\n" +
+		"  cat \"$AICO_TEST_PNG\"\n" +
 		"  exit 0\n" +
 		"fi\n" +
 		"echo \"unexpected args: $@\" >&2\n" +
@@ -1275,9 +1275,9 @@ func TestHandleProviderScreenshotIncludesADBDeviceWhenFallbackUsed(t *testing.T)
 		t.Fatalf("WriteFile(%s) error = %v", adbPath, err)
 	}
 
-	t.Setenv("AIDEN_ADB_PATH", adbPath)
-	t.Setenv("AIDEN_TEST_PNG", pngPath)
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_PATH", adbPath)
+	t.Setenv("AICO_TEST_PNG", pngPath)
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	defer clearAutoConfiguredADBSerial("serial123")
 
@@ -3082,7 +3082,7 @@ func TestServerHandleChatStreamRejectsDuplicateRequestID(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/chat", bytes.NewBufferString(`{"message":"hello","request_id":" req-1 "}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/x-ndjson")
-	req.Header.Set("X-Aiden-Stream", "ndjson")
+	req.Header.Set("X-Aico-Stream", "ndjson")
 	rec := httptest.NewRecorder()
 
 	server.handleChat(rec, req)
@@ -4437,7 +4437,7 @@ func TestServerToolSkillsEndpointReturnsGeneratedSkills(t *testing.T) {
 	}
 
 	skill := resp.Skills[0]
-	if skill.Name != "aiden-http-tool-suite" {
+	if skill.Name != "aico-http-tool-suite" {
 		t.Fatalf("unexpected skill name: %#v", skill)
 	}
 	hasShell := false
@@ -4493,7 +4493,7 @@ func TestWebUIRedactsScreenshotBase64Payloads(t *testing.T) {
 func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audioResponse, []byte)) string {
 	t.Helper()
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-audio-test-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-test-*")
 	if err != nil {
 		t.Fatalf("create fake audio socket dir: %v", err)
 	}
@@ -4551,7 +4551,7 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 func startFakeFrameServiceSocket(t *testing.T, handler func(map[string]any) (string, []byte)) string {
 	t.Helper()
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-frame-test-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-frame-test-*")
 	if err != nil {
 		t.Fatalf("create fake frame socket dir: %v", err)
 	}
@@ -4663,6 +4663,28 @@ func TestHandleBenchmarkSeedMemorySucceeds(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "id: personamem_test_seed_1") {
 		t.Fatalf("memory file missing fixed id, got: %s", string(data))
+	}
+}
+
+func TestHandleBenchmarkSeedMemoryMarksSensitive(t *testing.T) {
+	server, configDir := newBenchmarkSeedMemoryServer(t)
+	body := `{"id":"fixture_secret","type":"fact","content":"Safe code 5093.","tags":["safe"],"sensitive":true}`
+	req := httptest.NewRequest(http.MethodPost, "/api/benchmark/seed_memory", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-benchmark-token")
+	rec := httptest.NewRecorder()
+
+	server.handleBenchmarkSeedMemory(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unexpected status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "memory", "long_term", "memories", "fixture_secret.md"))
+	if err != nil {
+		t.Fatalf("read seeded memory file: %v", err)
+	}
+	if !strings.Contains(string(data), "sensitive: true") {
+		t.Fatalf("memory file lacks the sensitive flag, got: %s", string(data))
 	}
 }
 
@@ -5002,7 +5024,8 @@ func TestBenchmarkProcessEpisodeMemoryConsolidatesSeededEpisode(t *testing.T) {
     "expected_effect":"The changed title remains visible after reopening the note",
     "scope":{"device_id":"benchmark-device","app_name":"QA Notes","app_version":"7","goal_pattern":"persist edited note title"},
     "tags":["qa-notes","title","save"],
-    "evidence_refs":["preview_call","preview_result","edit_call","edit_result","save_call","save_result","verify_call","verify_result"]
+    "evidence_refs":["direct_save_result","preview_call","preview_result","edit_call","edit_result","save_call","save_result","verify_call","verify_result"],
+    "step_refs":["preview_result","edit_result","save_result","verify_result"]
   }]
 }`}}
 	runtime := NewRuntimeWithDeps(

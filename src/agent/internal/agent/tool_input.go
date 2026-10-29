@@ -146,6 +146,37 @@ func splitDelimitedArgValues(s string) []string {
 	return out
 }
 
+// flexScalarString decodes a JSON string, boolean, or number as its text, so
+// a model that sends `"sensitive": true` still yields a usable value.
+type flexScalarString string
+
+func (f *flexScalarString) UnmarshalJSON(data []byte) error {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || string(trimmed) == "null" {
+		*f = ""
+		return nil
+	}
+	if trimmed[0] == '"' {
+		var s string
+		if err := json.Unmarshal(trimmed, &s); err != nil {
+			return err
+		}
+		*f = flexScalarString(s)
+		return nil
+	}
+	var scalar any
+	if err := json.Unmarshal(trimmed, &scalar); err != nil {
+		return err
+	}
+	switch scalar.(type) {
+	case bool, float64:
+		*f = flexScalarString(string(trimmed))
+		return nil
+	default:
+		return fmt.Errorf("expected a string, boolean, or number, got %s", trimmed)
+	}
+}
+
 // flexInt decodes a JSON number, but also tolerates a numeric string ("3"),
 // a float ("3.0" or 3.0), and an empty/null value (-> 0).
 type flexInt int
@@ -263,37 +294,52 @@ func decodeDeviceMemoryQuery(input string) (DeviceMemoryQuery, error) {
 
 // SaveMemoryRequest represents the input for save_memory tool.
 type SaveMemoryRequest struct {
-	Type     string
-	Title    string
-	Content  string
-	Tags     []string
-	Entities []string
-	Evidence []string
-	Priority int
+	Type             string
+	Title            string
+	Content          string
+	Tags             []string
+	Entities         []string
+	Evidence         []string
+	Priority         int
+	ReplacesID       string
+	ExpectedRevision int
+	// Sensitive names the kind of secret the memory holds, if any.
+	Sensitive string
+	// UserRequest quotes the user's words asking to remember this. It is
+	// required only for a secret.
+	UserRequest string
 }
 
 // decodeSaveMemoryRequest tolerantly decodes a save_memory argument.
 func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 	var flex struct {
-		Type     string                 `json:"type"`
-		Title    string                 `json:"title"`
-		Content  string                 `json:"content"`
-		Tags     flexLiteralStringSlice `json:"tags"`
-		Entities flexLiteralStringSlice `json:"entities"`
-		Evidence flexLiteralStringSlice `json:"evidence"`
-		Priority flexInt                `json:"priority"`
+		Type             string                 `json:"type"`
+		Title            string                 `json:"title"`
+		Content          string                 `json:"content"`
+		Tags             flexLiteralStringSlice `json:"tags"`
+		Entities         flexLiteralStringSlice `json:"entities"`
+		Evidence         flexLiteralStringSlice `json:"evidence"`
+		Priority         flexInt                `json:"priority"`
+		ReplacesID       string                 `json:"replaces_id"`
+		ExpectedRevision flexInt                `json:"expected_revision"`
+		Sensitive        flexScalarString       `json:"sensitive"`
+		UserRequest      string                 `json:"user_request"`
 	}
 	if err := json.Unmarshal([]byte(input), &flex); err != nil {
 		return SaveMemoryRequest{}, err
 	}
 	return SaveMemoryRequest{
-		Type:     flex.Type,
-		Title:    flex.Title,
-		Content:  flex.Content,
-		Tags:     flex.Tags,
-		Entities: flex.Entities,
-		Evidence: flex.Evidence,
-		Priority: int(flex.Priority),
+		Type:             flex.Type,
+		Title:            flex.Title,
+		Content:          flex.Content,
+		Tags:             flex.Tags,
+		Entities:         flex.Entities,
+		Evidence:         flex.Evidence,
+		Priority:         int(flex.Priority),
+		ReplacesID:       flex.ReplacesID,
+		ExpectedRevision: int(flex.ExpectedRevision),
+		Sensitive:        string(flex.Sensitive),
+		UserRequest:      flex.UserRequest,
 	}, nil
 }
 

@@ -11,7 +11,9 @@ BENCHMARK_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CATALOG_PATH = Path(__file__).with_name("suites.json")
 DEFAULT_SUITES_DIR = BENCHMARK_ROOT / "suites"
 ENVIRONMENTS = {"isolated", "mobilegym", "adb", "external"}
-RUNNABLE_ENVIRONMENTS = {"isolated", "mobilegym"}
+# ADB cases use the CI emulator. They are runnable automatically while still
+# belonging to the hardware profile and sharing its exclusive device lock.
+RUNNABLE_ENVIRONMENTS = {"isolated", "mobilegym", "adb"}
 HARDWARE_ENVIRONMENTS = {"adb", "external"}
 PROFILE_ENVIRONMENTS = {
     "runnable": RUNNABLE_ENVIRONMENTS,
@@ -22,8 +24,6 @@ PROFILE_ENVIRONMENTS = {
 PROFILES = set(PROFILE_ENVIRONMENTS)
 TARGET_PLATFORMS = {"auto", "ios", "android", "mac", "windows", "linux"}
 
-if RUNNABLE_ENVIRONMENTS & HARDWARE_ENVIRONMENTS:
-    raise RuntimeError("runnable and hardware environments must be disjoint")
 if RUNNABLE_ENVIRONMENTS | HARDWARE_ENVIRONMENTS != ENVIRONMENTS:
     raise RuntimeError("runnable and hardware environments must cover all environments")
 
@@ -44,6 +44,7 @@ class SuiteCase:
     # False keeps the case out of the automatic runnable profile; it stays
     # selectable by explicit --suite (workflow_dispatch).
     runnable: bool = True
+    android_phone_bridge: bool = False
     # Reuse a suite's tasks without copying or changing its scoring contract.
     task_ids: list[str] = dc.field(default_factory=list)
 
@@ -83,6 +84,14 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         )
     if case.environment == "external" and not case.environment_variable:
         raise CatalogError(f"external case {case.id} requires environment_variable")
+    if case.android_phone_bridge and (
+        case.environment != "adb"
+        or case.target_platform != "android"
+        or case.max_concurrency != 1
+    ):
+        raise CatalogError(
+            f"{case.id} requires a single Android ADB worker for phone bridge"
+        )
     if case.max_concurrency < 1:
         raise CatalogError(f"max_concurrency for {case.id} must be positive")
     if case.timeout_minutes < 1:

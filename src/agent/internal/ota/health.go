@@ -240,7 +240,7 @@ func writeHealthMarkerIfPending(pendingPath string, markerPath string, currentSl
 		return false, err
 	}
 	if !ok {
-		return false, fmt.Errorf("aiden.slot_suffix missing from cmdline")
+		return false, fmt.Errorf("aico.slot_suffix missing from cmdline")
 	}
 	runningName, err := slotName(running)
 	if err != nil {

@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # Image Processing Tools
 
-The project provides `libaiden_image.a` and `image_process` CLI for basic screenshot and image processing.
+The project provides `libaico_image.a` and `image_process` CLI for basic screenshot and image processing.
 
 ## Capabilities
 
@@ -54,7 +54,7 @@ image_process rotate -d 90 -i input.jpg -o rotated.jpg
 
 CMake targets:
 
-- `aiden_image`: Static library;
+- `aico_image`: Static library (produces `libaico_image.a`);
 - `image_process`: CLI.
 
 Main source files:

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/mcp"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/mcp"
+	"aico-agent/internal/netproxy"
 
 	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"

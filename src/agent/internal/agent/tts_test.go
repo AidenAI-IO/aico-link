@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestStopPlaybackIgnoringEndedIgnoresMissingSession(t *testing.T) {
@@ -326,7 +326,7 @@ type testAudioService struct {
 
 func newTestAudioService(t *testing.T) *testAudioService {
 	t.Helper()
-	tempDir, err := os.MkdirTemp("", "aiden-tts-")
+	tempDir, err := os.MkdirTemp("", "aico-tts-")
 	if err != nil {
 		t.Fatalf("create temp dir: %v", err)
 	}

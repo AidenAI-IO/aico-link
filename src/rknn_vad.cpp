@@ -1,5 +1,5 @@
-#include "aiden_log.h"
-#if defined(AIDEN_RKNN_FULL_RUNTIME)
+#include "aico_log.h"
+#if defined(AICO_RKNN_FULL_RUNTIME)
 #include <rknn_api.h>
 #else
 #include "rknn_api_minimal.h"
@@ -20,8 +20,8 @@
 #include <string>
 #include <vector>
 
-#if defined(AIDEN_RKNN_GLIBC_COMPAT)
-extern "C" int aiden_rknn_glibc_compat_init(void);
+#if defined(AICO_RKNN_GLIBC_COMPAT)
+extern "C" int aico_rknn_glibc_compat_init(void);
 #endif
 
 namespace {
@@ -261,8 +261,8 @@ public:
     }
 
     bool init(const std::string& model_path, std::string* err) {
-#if defined(AIDEN_RKNN_GLIBC_COMPAT)
-        if (aiden_rknn_glibc_compat_init() != 0) {
+#if defined(AICO_RKNN_GLIBC_COMPAT)
+        if (aico_rknn_glibc_compat_init() != 0) {
             *err = "RKNN glibc compatibility initialization failed";
             return false;
         }
@@ -760,7 +760,7 @@ private:
         const int retry_ret = rknn_set_io_mem(ctx_, mem, &retry_attr);
         if (retry_ret == RKNN_SUCC) {
             *attr = retry_attr;
-            AIDEN_LOG_INFO("model", "io_memory_retry_succeeded",
+            AICO_LOG_INFO("model", "io_memory_retry_succeeded",
                            "tensor_group=%s index=%u name=%s pass_through=%d", label,
                            attr->index, attr->name, static_cast<int>(attr->pass_through));
             return true;
@@ -881,14 +881,14 @@ private:
         rknn_sdk_version version;
         std::memset(&version, 0, sizeof(version));
         if (rknn_query(ctx_, RKNN_QUERY_SDK_VERSION, &version, sizeof(version)) == RKNN_SUCC) {
-            AIDEN_LOG_INFO("runtime", "sdk_version", "api_version=%s driver_version=%s",
+            AICO_LOG_INFO("runtime", "sdk_version", "api_version=%s driver_version=%s",
                            version.api_version, version.drv_version);
         }
     }
 
     void log_attr(const char* label, const rknn_tensor_attr& attr) const {
         const std::string dims = dims_string(attr);
-        AIDEN_LOG_DEBUG("model", "tensor_discovered",
+        AICO_LOG_DEBUG("model", "tensor_discovered",
                         "tensor_group=%s index=%u name=%s dims=%s elements=%u size=%u stride_size=%u format=%s type=%s quantization=%s zero_point=%d scale=%g fractional_length=%d pass_through=%d",
                         label, attr.index, attr.name, dims.c_str(), attr.n_elems, attr.size,
                         attr.size_with_stride, tensor_format_name(attr.fmt),
@@ -1073,10 +1073,10 @@ private:
         output_attr_.index = 0;
         rknn_query(encoder_ctx_, RKNN_QUERY_OUTPUT_ATTR, &output_attr_, sizeof(output_attr_));
 
-        AIDEN_LOG_DEBUG("split_encoder", "input_tensor_discovered",
+        AICO_LOG_DEBUG("split_encoder", "input_tensor_discovered",
                         "elements=%u type=%s scale=%g zero_point=%d", input_attr_.n_elems,
                         tensor_type_name(input_attr_.type), input_attr_.scale, input_attr_.zp);
-        AIDEN_LOG_DEBUG("split_encoder", "output_tensor_discovered",
+        AICO_LOG_DEBUG("split_encoder", "output_tensor_discovered",
                         "elements=%u type=%s scale=%g zero_point=%d", output_attr_.n_elems,
                         tensor_type_name(output_attr_.type), output_attr_.scale, output_attr_.zp);
 
@@ -1114,7 +1114,7 @@ private:
         std::chrono::steady_clock::time_point start;
         if (totals) start = std::chrono::steady_clock::now();
         uint8_t* dst = static_cast<uint8_t*>(input_mem_->virt_addr);
-        for (int i = 0; i < aiden_vad::kSTFTBins * aiden_vad::kFeatureFrames; ++i) {
+        for (int i = 0; i < aico_vad::kSTFTBins * aico_vad::kFeatureFrames; ++i) {
             int32_t q = static_cast<int32_t>(
                 std::nearbyint(features_[i] / input_attr_.scale + input_attr_.zp));
             if (q < -128) q = -128;
@@ -1137,7 +1137,7 @@ private:
             start = now;
         }
         const uint8_t* src = static_cast<const uint8_t*>(output_mem_->virt_addr);
-        for (int i = 0; i < aiden_vad::kHidden; ++i) {
+        for (int i = 0; i < aico_vad::kHidden; ++i) {
             int8_t raw = static_cast<int8_t>(src[i]);
             encoder_out_[i] = (static_cast<float>(raw) - output_attr_.zp) * output_attr_.scale;
         }
@@ -1155,11 +1155,11 @@ private:
     rknn_tensor_mem* input_mem_ = nullptr;
     rknn_tensor_mem* output_mem_ = nullptr;
 
-    aiden_vad::SileroWeights weights_;
-    aiden_vad::STFTFeatureExtractor feature_extractor_;
-    aiden_vad::SileroLSTMDecoder decoder_;
-    float features_[aiden_vad::kSTFTBins * aiden_vad::kFeatureFrames];
-    float encoder_out_[aiden_vad::kHidden];
+    aico_vad::SileroWeights weights_;
+    aico_vad::STFTFeatureExtractor feature_extractor_;
+    aico_vad::SileroLSTMDecoder decoder_;
+    float features_[aico_vad::kSTFTBins * aico_vad::kFeatureFrames];
+    float encoder_out_[aico_vad::kHidden];
     bool profile_stages_ = false;
     SplitStageTotals stage_totals_;
 };
@@ -1214,7 +1214,7 @@ Args parse_args(int argc, char** argv) {
 template <typename Vad>
 bool run_benchmark(Vad* vad, const Args& args, const std::string& label, std::string* err) {
     vad->set_profile_stages(args.benchmark_stages);
-    std::vector<std::vector<int16_t> > frames = aiden_vad::make_benchmark_frames();
+    std::vector<std::vector<int16_t> > frames = aico_vad::make_benchmark_frames();
     float probability = 0.0f;
     for (int i = 0; i < args.benchmark_warmup; ++i) {
         const std::vector<int16_t>& frame = frames[static_cast<std::size_t>(i) % frames.size()];
@@ -1225,7 +1225,7 @@ bool run_benchmark(Vad* vad, const Args& args, const std::string& label, std::st
     vad->reset();
     vad->reset_stage_totals();
 
-    const aiden_vad::CPUUsage cpu_start = aiden_vad::current_cpu_usage();
+    const aico_vad::CPUUsage cpu_start = aico_vad::current_cpu_usage();
     const std::chrono::steady_clock::time_point wall_start = std::chrono::steady_clock::now();
     for (int i = 0; i < args.benchmark_frames; ++i) {
         const std::vector<int16_t>& frame = frames[static_cast<std::size_t>(i) % frames.size()];
@@ -1234,10 +1234,10 @@ bool run_benchmark(Vad* vad, const Args& args, const std::string& label, std::st
         }
     }
     const std::chrono::steady_clock::time_point wall_end = std::chrono::steady_clock::now();
-    const aiden_vad::CPUUsage cpu_end = aiden_vad::current_cpu_usage();
+    const aico_vad::CPUUsage cpu_end = aico_vad::current_cpu_usage();
     const double wall_ms =
         std::chrono::duration_cast<std::chrono::duration<double, std::milli> >(wall_end - wall_start).count();
-    aiden_vad::print_benchmark_result(label, args.benchmark_frames, args.benchmark_warmup,
+    aico_vad::print_benchmark_result(label, args.benchmark_frames, args.benchmark_warmup,
                                       wall_ms, cpu_start, cpu_end, probability);
     vad->print_stage_totals(label, args.benchmark_frames);
     return true;
@@ -1246,7 +1246,7 @@ bool run_benchmark(Vad* vad, const Args& args, const std::string& label, std::st
 }  // namespace
 
 int main(int argc, char** argv) {
-    aiden::set_log_service("rknn_vad");
+    aico::set_log_service("rknn_vad");
     Args args = parse_args(argc, argv);
     if (args.model_path.empty()) {
         protocol_error("missing --model path");

@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -281,6 +281,8 @@ type TouchGestureTool struct {
 	touchscreen        bool
 	primeScreenMapping func(context.Context) error
 	deviceTypeFn       func() string
+	// captureFrame backs the tap_sequence screen-change check; nil disables it.
+	captureFrame frameCapturer
 }
 
 func (t *TouchGestureTool) Name() string { return "touch_gesture" }
@@ -292,7 +294,7 @@ func (t *TouchGestureTool) SetDeviceTypeFunc(fn func() string) {
 }
 
 func (t *TouchGestureTool) Description() string {
-	return `Perform touch/pointer gestures. Standard examples: {"type":"tap","point":{"x":500,"y":500}}; {"type":"swipe","start":{"x":500,"y":900},"direction":"up"}. Always include type for a standard gesture; swipe needs start and either end or direction in the SAME call. Provide either type or actions. Use the type form for normal interaction: tap, double_tap, long_press, swipe, drag_start, or drag_release. Atomic actions are a low-frequency advanced option only for an uninterrupted custom contact sequence that cannot be expressed by those standard gestures. Do not use actions for ordinary taps, long presses, swipes, scrolling, or moving draggable UI targets. Atomic actions execute in order and keep the contact pressed until touch_up. Atomic move_to accepts speed in normalized coordinate units per second; duration_ms overrides speed, and omitting both preserves immediate movement. ` +
+	return `Perform touch/pointer gestures. Standard examples: {"type":"tap","point":{"x":500,"y":500}}; {"type":"swipe","start":{"x":500,"y":900},"direction":"up"}. Always include type for a standard gesture; swipe needs start and either end or direction in the SAME call. Provide either type or actions. Use the type form for normal interaction: tap, double_tap, long_press, swipe, drag_start, drag_release, or tap_sequence. Use tap_sequence {"type":"tap_sequence","points":[{"x":250,"y":320},{"x":750,"y":320}]} to tap several targets in order in one call when every target is visible in the latest screenshot and the taps do not change the layout, such as keypad digits, calculator keys, PIN pads, or several checkboxes; plan the full ordered list from the current screenshot, then verify the returned screenshot once. Do not use tap_sequence when a tap navigates, opens a menu or dialog, or moves the remaining targets; tap those one at a time. tap_sequence stops early when the screen layout changes between taps and reports executed and stop_reason in action_output. Prefer enter_text for text fields. Atomic actions are a low-frequency advanced option only for an uninterrupted custom contact sequence that cannot be expressed by those standard gestures. Do not use actions for ordinary taps, long presses, swipes, scrolling, or moving draggable UI targets. Atomic actions execute in order and keep the contact pressed until touch_up. Atomic move_to accepts speed in normalized coordinate units per second; duration_ms overrides speed, and omitting both preserves immediate movement. ` +
 		`Base coordinates on the latest screenshot using normalized 0-1000 coordinates where (500,500) is center. For taps and long presses, aim at the visual center of the target. Point, start, and end never accept screenshot pixels: convert a target measured at (pixel_x,pixel_y) in the latest image with x=pixel_x/max(image_width-1,1)*1000 and y=pixel_y/max(image_height-1,1)*1000 before calling. The tool returns a post-action screenshot. Swipe direction names describe finger movement, not content scroll. ` +
 		`Many scroll controls continue receiving the same gesture after the initial press, even when the pointer moves outside their visible bounds. For browsing, searching, or picker scrolling, use type:swipe with explicit start and end. Start inside the intended scrollable region near the appropriate edge, with a small margin chosen from the latest screenshot. The end may extend beyond that region along the scroll direction while remaining inside the screen with a margin from physical screen edges. Use the available travel for larger movements and shorter travel near the target. Inspect the returned screenshot to confirm that the intended control moved; behavior can vary by control. Leave timing at defaults; the tool handles acceleration, braking, and release. ` +
 		`For swipe, provide start and either end or direction (up/down/left/right). Speed is normalized coordinate units per second and defaults to 2500; duration_ms may be supplied to override the calculated duration. For HID swipes starting outside the outer 1% screen border with hold_after_ms=0, duration_ms controls main motion with a 180ms minimum and excludes an additional 100ms low-speed release tail, in both absolute-mouse and touchscreen modes. hold_before_ms and hold_after_ms optionally dwell after press and before release, and steps controls HID interpolation (provider default 24). A direction-only swipe travels toward the corresponding screen edge when duration_ms is omitted, or travels speed*duration_ms/1000 normalized units when duration_ms is supplied. ` +
@@ -301,7 +303,7 @@ func (t *TouchGestureTool) Description() string {
 }
 
 func (t *TouchGestureTool) ArgsSchema() map[string]any {
-	typeDescription := "Gesture type. tap, double_tap, long_press, drag_start, and drag_release require point. swipe requires start and either end or direction."
+	typeDescription := "Gesture type. tap, double_tap, long_press, drag_start, and drag_release require point. swipe requires start and either end or direction. tap_sequence requires points."
 	speedSchema := numberArgSchema("Swipe speed in normalized coordinate units per second. Defaults to 2500.", 2500)
 	speedSchema["exclusiveMinimum"] = 0
 	schema := objectArgsSchema(map[string]any{
@@ -321,7 +323,15 @@ func (t *TouchGestureTool) ArgsSchema() map[string]any {
 				"button":      stringEnumArgSchema("Pointer button held during the contact.", "left", "right", "middle"),
 			}, "action"),
 		},
-		"type":           stringEnumArgSchema(typeDescription, "tap", "double_tap", "long_press", "drag_start", "drag_release", "swipe"),
+		"type": stringEnumArgSchema(typeDescription, "tap", "double_tap", "long_press", "drag_start", "drag_release", "swipe", "tap_sequence"),
+		"points": map[string]any{
+			"type":        "array",
+			"minItems":    mnk.MinTapSequencePoints,
+			"maxItems":    mnk.MaxTapSequencePoints,
+			"description": "Required for tap_sequence: the targets to tap, in order, all taken from the latest screenshot. Repeat a point to tap the same target again.",
+			"items":       pointSchema(`One tap target. Must be a JSON object containing both named keys "x" and "y".`),
+		},
+		"interval_ms":    rangedIntegerArgSchema("Optional tap_sequence delay between taps in milliseconds. Defaults to 250.", mnk.MinTapSequenceIntervalMs, mnk.MaxTapSequenceIntervalMs),
 		"point":          pointSchema(`Required for tap, double_tap, long_press, drag_start, and drag_release. drag_start uses the target's current point; drag_release uses the destination confirmed from the screen_stable=true screenshot returned by drag_start after its internal stability wait. Must be a JSON object containing both named keys "x" and "y"; do not use an array, bare value, or positional shorthand.`),
 		"start":          pointSchema(`Required start point for swipe. For scrolling and pickers, choose each swipe's start inside the intended visible region from the latest screenshot. Use its upper inner edge for finger-down or lower inner edge for finger-up, with a margin from the current screenshot. Must be a JSON object containing both named keys "x" and "y"; do not use an array, bare value, or positional shorthand.`),
 		"end":            pointSchema(`End point for swipe. After starting inside the intended scrollable region, the end may extend beyond that region along the scroll direction while staying inside the screen with a small margin from physical edges. Many controls continue receiving the gesture after the initial press. Use longer travel when far from the target and shorter travel for fine adjustment; verify movement in the returned screenshot. Swipe may provide direction instead of end.`),
@@ -334,13 +344,14 @@ func (t *TouchGestureTool) ArgsSchema() map[string]any {
 		"hold_after_ms":  rangedIntegerArgSchema("Optional swipe dwell at the end before release.", 0, mnk.MaxSwipeHoldMs),
 		"steps":          rangedIntegerArgSchema("Optional HID interpolation step count; larger values produce smoother motion. Defaults to the provider default (24).", 1, mnk.MaxSwipeSteps),
 	})
-	schema["description"] = `JSON object for one standard gesture or, rarely, an advanced atomic touch program. Provide either type or actions; a call with neither is rejected. Use type for normal interaction. Reserve actions for uninterrupted custom contact timing that tap, double_tap, long_press, swipe, drag_start, or drag_release cannot express. Never use actions to move a draggable target: call drag_start at its current point, let its internal stability wait finish, determine the destination from its returned screen_stable=true screenshot, then call drag_release at the confirmed point. A screen_stable=false drag_start automatically returns to its original point and releases; inspect its screenshot and retry drag_start rather than calling drag_release. Do not call wait_for_stable_screen separately in the normal drag flow. Unknown fields are ignored. Coordinate fields point, start, and end use named objects containing both x and y. For scrolling, start inside the intended scrollable region near its appropriate edge. Many controls continue receiving the gesture after the initial press, so the explicit end may extend beyond that region while staying inside the screen with a margin from physical edges. Use the available travel for larger movements and shorten it near the target; verify the result after every swipe and leave timing at defaults. Swipe accepts either start+end or start+direction; speed defaults to 2500 normalized coordinate units per second and duration_ms overrides calculated timing. For HID swipes starting outside the outer 1% screen border with hold_after_ms=0, duration_ms controls main motion with a 180ms minimum and excludes an additional 100ms low-speed release tail, in both absolute-mouse and touchscreen modes. hold_before_ms, hold_after_ms, and steps are optional swipe timing controls.`
+	schema["description"] = `JSON object for one standard gesture or, rarely, an advanced atomic touch program. Provide either type or actions; a call with neither is rejected. Use type for normal interaction. Reserve actions for uninterrupted custom contact timing that tap, double_tap, long_press, swipe, drag_start, or drag_release cannot express. Never use actions to move a draggable target: call drag_start at its current point, let its internal stability wait finish, determine the destination from its returned screen_stable=true screenshot, then call drag_release at the confirmed point. A screen_stable=false drag_start automatically returns to its original point and releases; inspect its screenshot and retry drag_start rather than calling drag_release. Do not call wait_for_stable_screen separately in the normal drag flow. Unknown fields are ignored. Coordinate fields point, start, and end, and each item of points, use named objects containing both x and y. tap_sequence taps points in order in one call for targets that are all visible and do not change the layout; it stops early when the layout changes. For scrolling, start inside the intended scrollable region near its appropriate edge. Many controls continue receiving the gesture after the initial press, so the explicit end may extend beyond that region while staying inside the screen with a margin from physical edges. Use the available travel for larger movements and shorten it near the target; verify the result after every swipe and leave timing at defaults. Swipe accepts either start+end or start+direction; speed defaults to 2500 normalized coordinate units per second and duration_ms overrides calculated timing. For HID swipes starting outside the outer 1% screen border with hold_after_ms=0, duration_ms controls main motion with a 180ms minimum and excludes an additional 100ms low-speed release tail, in both absolute-mouse and touchscreen modes. hold_before_ms, hold_after_ms, and steps are optional swipe timing controls.`
 	schema["examples"] = []map[string]any{
 		{"type": "tap", "point": map[string]any{"x": 500, "y": 500}},
 		{"type": "swipe", "start": map[string]any{"x": 500, "y": 900}, "direction": "up"},
 		{"type": "swipe", "start": map[string]any{"x": 500, "y": 900}, "end": map[string]any{"x": 500, "y": 300}},
 		{"type": "drag_start", "point": map[string]any{"x": 400, "y": 500}},
 		{"type": "drag_release", "point": map[string]any{"x": 750, "y": 500}},
+		{"type": "tap_sequence", "points": []map[string]any{{"x": 250, "y": 320}, {"x": 750, "y": 320}, {"x": 750, "y": 320}}},
 	}
 	return schema
 }
@@ -359,6 +370,25 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 		return toolErrorResultf(ctx, CodeToolExecutionFailed, "touchscreen mapping unavailable: %v", err), nil
 	}
 	adapter := mnk.NewTouchGestureToolAdapter(t.mnkProvider)
+	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
+		if err := mnk.ValidateTapSequenceInput(input); err != nil {
+			return mapMNKAdapterResult(ctx, "", err)
+		}
+		// Park the absolute-mode pointer on the first target so its hover
+		// state is part of the baseline instead of a change at its old spot.
+		if !t.touchscreen && t.mnkProvider != nil {
+			if err := t.mnkProvider.Move(ctx, points[0].X, points[0].Y); err == nil {
+				if err := sleepWithContext(ctx, tapSequencePointerParkDelay); err != nil {
+					return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence canceled before any tap: %v", err), nil
+				}
+			}
+		}
+		baseline, err := t.captureFrame(ctx)
+		if err != nil {
+			return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence screen check unavailable, so no tap was sent: %v. Retry, or send the taps individually.", err), nil
+		}
+		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline, points))
+	}
 	output, err := adapter.Call(ctx, input)
 	return mapMNKAdapterResult(ctx, output, err)
 }

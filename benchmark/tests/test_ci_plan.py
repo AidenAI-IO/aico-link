@@ -21,6 +21,25 @@ def _write_generated_reports(run_dir: Path) -> None:
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
 
 
+def _workflow_job(name: str) -> str:
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow
+    )
+    assert match is not None, f"missing workflow job: {name}"
+    return match.group(1)
+
+
+def _workflow_step(job: str, marker: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - {re.escape(marker)}\n(.*?)(?=^      - |\Z)", job
+    )
+    assert match is not None, f"missing workflow step: {marker}"
+    return match.group(1)
+
+
 def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
     suites_dir = tmp_path / "suites"
     suites_dir.mkdir()
@@ -39,7 +58,7 @@ def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
         load_catalog(catalog_path=catalog_path, suites_dir=suites_dir)
 
 
-def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
+def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> None:
     catalog = load_catalog()
 
     runnable = select_cases(catalog, profile="runnable")
@@ -49,15 +68,17 @@ def test_runnable_profile_excludes_hardware_and_all_keeps_every_case() -> None:
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 13
-    assert len(hardware) == 13
-    assert len(all_cases) == 29
-    assert not any(case.environment in {"adb", "external"} for case in runnable)
-    assert {case.environment for case in runnable} <= {"isolated", "mobilegym"}
+    assert len(runnable) == 19
+    assert len(hardware) == 17
+    assert len(all_cases) == 34
+    assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
-    assert {case.environment for case in runnable}.isdisjoint(
-        {case.environment for case in hardware}
-    )
+    assert {case.id for case in runnable if case.environment == "adb"} == {
+        "adb_android_basic", "adb_android_basic-aidenbridge",
+        "adb_android_text_editing", "adb_android_text_editing-aidenbridge",
+        "adb_android_builtin_apps",
+    }
+    assert len({case.id for case in all_cases}) == len(all_cases)
     assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
         {case.suite for case in catalog.cases}
         - {"suites/mobilegym_scroll_sweep.json", "suites/tool_recovery_v1.json"}
@@ -89,7 +110,7 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     selected = select_cases(
         catalog,
         profile="all",
-        suite="suites/aiden_app/connection_capabilities_v1.json",
+        suite="suites/aico_app/connection_capabilities_v1.json",
     )
 
     assert {case.target_platform for case in selected} == {"ios", "android"}
@@ -111,7 +132,76 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
     assert {case.id for case in hardware} == {"phone-control-ios"}
     with pytest.raises(CatalogError, match="outside the adb profile"):
         select_cases(catalog, profile="adb", suite=suite)
-    assert {case.id for case in both} == {"phone-control-mobilegym", "phone-control-ios"}
+    assert {case.id for case in both} == {
+        "phone-control-mobilegym", "phone-control-ios"
+    }
+
+
+@pytest.mark.parametrize("suite", ["adb_android_basic", "adb_android_text_editing"])
+@pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
+def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite, profile):
+    catalog = load_catalog()
+    selected = select_cases(catalog, profile=profile, suite=f"suites/{suite}.json")
+
+    assert len(selected) == 2
+    baseline, connected = selected
+    assert baseline.android_phone_bridge is False
+    assert connected.android_phone_bridge is True
+    assert baseline.suite == connected.suite
+    assert baseline.environment == connected.environment == "adb"
+    assert baseline.target_platform == connected.target_platform == "android"
+    assert baseline.max_concurrency == connected.max_concurrency == 1
+    assert baseline.timeout_minutes == connected.timeout_minutes
+
+
+@pytest.mark.parametrize("bridge_enabled", [False, True])
+@pytest.mark.parametrize("app_installed", [False, True])
+def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, app_installed):
+    case = next(case for case in load_catalog().cases
+                if case.suite == "suites/adb_android_basic.json"
+                and case.android_phone_bridge == bridge_enabled)
+    commands = []
+    def run(command, **kwargs):
+        commands.append((command, kwargs))
+        return run_case_module.subprocess.CompletedProcess(
+            command, 0, stdout="package:com.aidenbridge\n" if app_installed else "",
+        )
+    monkeypatch.setattr(run_case_module.subprocess, "run", run)
+    monkeypatch.setattr(run_case_module, "_run_json", lambda *args, **kwargs: {
+        "environment_url": "http://bridge.test",
+    })
+
+    url, _ = _environment_url(case, run_id="paired", environment={"ANDROID_SERIAL": "emulator-5554"})
+
+    assert url == "http://bridge.test"
+    if bridge_enabled:
+        assert commands == []
+    elif app_installed:
+        assert [command[0][-3:] for command in commands] == [
+            ["list", "packages", "com.aidenbridge"],
+            ["am", "force-stop", "com.aidenbridge"],
+        ]
+    else:
+        assert len(commands) == 1
+        assert commands[0][0][-3:] == ["list", "packages", "com.aidenbridge"]
+        assert commands[0][1]["check"] is True
+
+
+def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
+    catalog = load_catalog()
+    selected = select_cases(
+        catalog,
+        profile="hardware",
+        suite="suites/aico_app/android_bridge_capabilities_v1.json",
+    )
+
+    assert len(selected) == 1
+    assert selected[0].android_phone_bridge is True
+    assert selected[0].environment == "adb"
+    assert selected[0].target_platform == "android"
+    assert selected[0].max_concurrency == 1
+    assert selected[0] not in select_cases(catalog, profile="runnable")
+    assert not any(case.id in {"aidenbridge-data-android", "aidenbridge-input-android"} for case in catalog.cases)
 
 
 def test_suite_selection_must_match_profile_unless_all() -> None:
@@ -129,7 +219,7 @@ def test_external_case_reads_its_named_environment_variable() -> None:
     case = next(
         item
         for item in load_catalog().cases
-        if item.id == "aiden-app-ios"
+        if item.id == "aico-app-ios"
     )
 
     url, service = _environment_url(
@@ -154,14 +244,14 @@ def test_ci_maps_unprefixed_action_variables_to_benchmark_runtime() -> None:
         }
     )
 
-    assert runtime["AIDEN_BENCHMARK_AGENT_MODEL"] == "agent-model"
-    assert runtime["AIDEN_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
-    assert runtime["AIDEN_DAEMON_IMAGE"] == "agent-daemon:test"
+    assert runtime["AICO_BENCHMARK_AGENT_MODEL"] == "agent-model"
+    assert runtime["AICO_BENCHMARK_JUDGE_API_KEY"] == "judge-key"
+    assert runtime["AICO_DAEMON_IMAGE"] == "agent-daemon:test"
     assert runtime["LANGFUSE_PUBLIC_KEY"] == "langfuse-key"
-    assert runtime["AIDEN_BENCHMARK_TELEMETRY"] == "1"
-    assert runtime["AIDEN_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
-    assert "AIDEN_BENCHMARK_TELEMETRY" not in _runtime_environment({})
-    assert "AIDEN_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
+    assert runtime["AICO_BENCHMARK_TELEMETRY"] == "1"
+    assert runtime["AICO_LANGFUSE_HTTPS_PROXY"] == "http://proxy.test:8080"
+    assert "AICO_BENCHMARK_TELEMETRY" not in _runtime_environment({})
+    assert "AICO_LANGFUSE_HTTPS_PROXY" not in _runtime_environment({})
 
 
 def test_ci_uses_prepared_images_only_when_explicitly_enabled() -> None:
@@ -280,6 +370,40 @@ def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None
     _write_generated_reports(tmp_path)
 
     assert _effective_exit_code(0, manifest) == 0
+
+
+@pytest.mark.parametrize("case_id", ["adb_android_basic", "adb_android_basic-aidenbridge", "aidenbridge-capabilities-android"])
+@pytest.mark.parametrize("complete", [True, False])
+def test_android_cases_use_run_completeness_not_task_pass_rate(
+    monkeypatch, tmp_path: Path, case_id: str, complete: bool,
+) -> None:
+    case = next(item for item in load_catalog().cases if item.id == case_id)
+    run_dir = tmp_path / "runs" / "ci-test"
+    run_dir.mkdir(parents=True)
+    (run_dir / "manifest.json").write_text(
+        '{"totals":{"tasks":2,"passed":1,"failed":1,"skipped":0}}',
+        encoding="utf-8",
+    )
+    (run_dir / "results.jsonl").write_text(
+        '{"task_id":"passed","attempt":1,"status":"passed"}\n'
+        + ('{"task_id":"failed","attempt":1,"status":"failed"}\n' if complete else ''),
+        encoding="utf-8",
+    )
+    _write_generated_reports(run_dir)
+    monkeypatch.setattr(run_case_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("http://bridge.test", None))
+    monkeypatch.setattr(run_case_module, "_stop_daemon_projects_by_run_id", lambda run_id: None)
+    monkeypatch.setattr(run_case_module, "_stop_service", lambda service: None)
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        return run_case_module.subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(run_case_module.subprocess, "run", run)
+
+    assert run_case_module.run_case(
+        case, run_id="ci-test", environment={"ANDROID_SERIAL": "emulator-5554"},
+    ) == (0 if complete else 1)
+    assert ("--android-phone-bridge-serial" in commands[0]) == case.android_phone_bridge
 
 
 @pytest.mark.parametrize(
@@ -426,12 +550,12 @@ def test_ci_rejects_duplicate_result_identities(tmp_path: Path) -> None:
 
 
 def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
+    run_job = _workflow_job("run")
+    primary = _workflow_step(run_job, "name: Upload benchmark artifacts")
+    retry = _workflow_step(run_job, "name: Retry benchmark artifact upload")
     artifact_paths = "\n".join(
-        section.split("if-no-files-found:", 1)[0]
-        for section in workflow.split("path:")[1:]
+        step.split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0]
+        for step in (primary, retry)
     )
 
     assert "cli-services" not in artifact_paths
@@ -450,21 +574,20 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     assert all(path.endswith(allowed_task_artifacts) for path in task_paths)
     for artifact in allowed_task_artifacts:
         assert sum(path.endswith(artifact) for path in task_paths) == 2  # primary and retry upload
-    assert "id: upload_benchmark_artifacts" in workflow
-    assert "steps.upload_benchmark_artifacts.outcome == 'failure'" in workflow
-    assert "overwrite: true" in workflow
+    assert "        id: upload_benchmark_artifacts" in primary.splitlines()
+    assert "        if: ${{ always() && steps.upload_benchmark_artifacts.outcome == 'failure' }}" in retry.splitlines()
+    assert "          overwrite: true" in retry.splitlines()
 
 
 def test_workflow_links_exact_interactive_reports_from_static_host_or_artifact() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
+    step = _workflow_step(_workflow_job("run"), "name: Link benchmark reports")
+    lines = step.splitlines()
 
-    assert "BENCHMARK_REPORT_PUBLISH_DIR: ${{ vars.BENCHMARK_REPORT_PUBLISH_DIR }}" in workflow
-    assert "BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}" in workflow
-    assert "steps.upload_benchmark_artifacts.outputs.artifact-url" in workflow
-    assert "steps.retry_benchmark_artifacts.outputs.artifact-url" in workflow
-    assert "python -m ci.publish_reports" in workflow
+    assert "          BENCHMARK_REPORT_PUBLISH_DIR: ${{ vars.BENCHMARK_REPORT_PUBLISH_DIR }}" in lines
+    assert "          BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}" in lines
+    assert "          PRIMARY_ARTIFACT_URL: ${{ steps.upload_benchmark_artifacts.outputs.artifact-url }}" in lines
+    assert "          RETRY_ARTIFACT_URL: ${{ steps.retry_benchmark_artifacts.outputs.artifact-url }}" in lines
+    assert '          uv run python -m ci.publish_reports "${args[@]}"' in lines
 
 
 def test_workflow_checks_docker_and_surfaces_setup_failures() -> None:
@@ -497,16 +620,22 @@ def test_workflow_schedules_all_runnable_cases_daily() -> None:
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
-    assert "  push:" not in workflow
-    assert "- cron: '7 18 * * *'" in workflow
+    triggers = workflow.split("\njobs:\n", 1)[0]
+    assert "  push:" not in triggers
+    assert re.search(
+        r"(?m)^on:\n  schedule:\n(?:    #.*\n)*    - cron: '7 18 \* \* \*'$",
+        triggers,
+    )
     self_hosted_guard = (
         "if: ${{ startsWith(github.ref, 'refs/heads/') "
         "&& github.event_name != 'pull_request' "
         "&& github.event_name != 'pull_request_target' }}"
     )
-    assert workflow.count(self_hosted_guard) == 1
-    assert "github.ref == 'refs/heads/main'" not in workflow
-    assert 'elif [[ "$EVENT_NAME" == "schedule" ]]; then\n            profile="runnable"' in workflow
+    run_job = _workflow_job("run")
+    assert f"    {self_hosted_guard}" in run_job.splitlines()
+    assert "github.ref == 'refs/heads/main'" not in run_job
+    profile_step = _workflow_step(_workflow_job("plan"), "id: profile")
+    assert 'elif [[ "$EVENT_NAME" == "schedule" ]]; then\n            profile="runnable"' in profile_step
 
 
 def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -> None:
@@ -514,7 +643,7 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
-    assert re.search(r"(?m)^\s+AIDEN_[A-Z0-9_]+:", workflow) is None
+    assert re.search(r"(?m)^\s+AICO_[A-Z0-9_]+:", workflow) is None
     assert "BENCHMARK_TELEMETRY: '1'" in workflow
     expected_mappings = {
         "BENCHMARK_AGENT_PROVIDER": "vars.BENCHMARK_AGENT_PROVIDER",
@@ -530,11 +659,11 @@ def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -
         "BENCHMARK_IOS_ENVIRONMENT_URL": "vars.BENCHMARK_IOS_ENVIRONMENT_URL",
         "BENCHMARK_MAC_ENVIRONMENT_URL": "vars.BENCHMARK_MAC_ENVIRONMENT_URL",
         "BENCHMARK_VPHONE_ENVIRONMENT_URL": "vars.BENCHMARK_VPHONE_ENVIRONMENT_URL",
-        "BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL"
         ),
-        "BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL"
+        "BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL": (
+            "vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL"
         ),
     }
     for environment_name, github_expression in expected_mappings.items():

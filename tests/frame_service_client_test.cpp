@@ -8,10 +8,10 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::FrameResult;
-using aiden::FrameServiceClient;
-using aiden::FrameServiceStatus;
-using aiden::HealthResult;
+using aico::FrameResult;
+using aico::FrameServiceClient;
+using aico::FrameServiceStatus;
+using aico::HealthResult;
 
 namespace {
 
@@ -19,7 +19,7 @@ struct TempSocketPath {
     std::string path;
 
     TempSocketPath() {
-        char tmpl[] = "/tmp/aiden_frame_client_XXXXXX";
+        char tmpl[] = "/tmp/aico_frame_client_XXXXXX";
         int fd = ::mkstemp(tmpl);
         REQUIRE(fd >= 0);
         ::close(fd);
@@ -55,10 +55,10 @@ struct SingleReplyServer {
         thread = std::thread([this]() {
             int client_fd = ::accept(server_fd, nullptr, nullptr);
             if (client_fd < 0) return;
-            aiden::FrameIpcMessage request;
-            if (aiden::read_frame_message(client_fd, &request) == FrameServiceStatus::OK) {
+            aico::FrameIpcMessage request;
+            if (aico::read_frame_message(client_fd, &request) == FrameServiceStatus::OK) {
                 request_header = request.header_json;
-                aiden::write_frame_message(client_fd, reply_header, reply_payload);
+                aico::write_frame_message(client_fd, reply_header, reply_payload);
             }
             ::close(client_fd);
         });
@@ -149,7 +149,7 @@ TEST_CASE("FrameServiceClient list_frames preserves large uint64 metadata withou
         R"({"type":"response","method":"list_frames","status":"OK","frames":[{"seq":"9007199254740993","capture_ts_ns":"1844674407370955161","width":1,"height":1,"pixel_format":"uyvy","stride":2,"bytes":"9007199254740995"}]})",
         std::vector<uint8_t>());
     FrameServiceClient client(server.path.path.c_str());
-    aiden::FrameListResult result;
+    aico::FrameListResult result;
 
     REQUIRE(client.list_frames(1, &result) == FrameServiceStatus::OK);
     REQUIRE(result.frames.size() == 1);
@@ -163,7 +163,7 @@ TEST_CASE("FrameServiceClient list_frames skips malformed frame entries") {
         R"({"type":"response","method":"list_frames","status":"OK","frames":[null,{"seq":"7","capture_ts_ns":"8","width":1,"height":1,"pixel_format":"uyvy","stride":2,"bytes":"2"}]})",
         std::vector<uint8_t>());
     FrameServiceClient client(server.path.path.c_str());
-    aiden::FrameListResult result;
+    aico::FrameListResult result;
 
     REQUIRE(client.list_frames(2, &result) == FrameServiceStatus::OK);
     REQUIRE(result.frames.size() == 1);

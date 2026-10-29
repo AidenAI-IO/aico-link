@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 func TestLoggerFiltersBelowConfiguredLevel(t *testing.T) {

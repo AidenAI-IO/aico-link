@@ -24,8 +24,8 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 | Component | Files | Description |
 | --- | --- | --- |
 | Audio client | `audio_client.go` | Connects to `audio_service`, starts recording/playback sessions, reads/writes PCM chunks |
-| VAD | `vad.go` + `/usr/lib/aiden/rknn_vad` or `/usr/lib/aiden/cpu_vad` | Silero VAD speech activity; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
-| Smart Turn | `turn_detect.go` + `/usr/lib/aiden/smart_turn_helper` | On-device turn-complete probability over the current utterance; Classic endpointing uses short silence + Smart Turn, with a long-silence fallback |
+| VAD | `vad.go` + `/usr/lib/aico/rknn_vad` or `/usr/lib/aico/cpu_vad` | Silero VAD speech activity; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
+| Smart Turn | `turn_detect.go` + `/usr/lib/aico/smart_turn_helper` | On-device turn-complete probability over the current utterance; Classic endpointing uses short silence + Smart Turn, with a long-silence fallback |
 | STT | `stt.go`, provider-specific clients | OpenAI Whisper, OpenRouter, Tencent Cloud ASR, Qwen ASR, and Google Cloud STT; `tencent` / `tencent_asr` remain compatibility aliases for `tencent-asr` |
 | TTS | `tts/`, `tts_helpers.go` | Pluggable TTS provider, outputs PCM for the configured playback backend; automatically resamples to the target playback sample rate when necessary |
 | Dialog manager | `audio_dialog.go` | Orchestrates continuous-mic session recording, VAD/Smart Turn, STT rotate, LLM/TTS, and barge-in |
@@ -52,15 +52,18 @@ Before final non-streaming TTS, the runtime passes the spoken reply through the 
 Runs the realtime voice session selected by `[voice_settings.realtime].provider` from the
 named `[voice_settings.realtime.providers]` records. Realtime activation is selected
 explicitly by `input_mode = "realtime"`; it is not controlled by API key
-presence. The realtime session also supports `/api/chat` activation when GPIO
-is unavailable.
+presence. The realtime session also supports `/api/chat` activation when the
+hardware wakeup button is unavailable.
 
 See [Realtime Voice Module](realtime-voice.md) for the adapter layers,
 provider capability differences, and event lifecycle.
 
 ## Wakeup Trigger
 
-Waits for the hardware tap button to open a Classic voice session. On current boards that button is wired to GPIO 33/GPIO 32 (falling edge); both pins enter the same wakeup flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a continuous session (`voice_followup_enabled` defaults to `true`); set it to `false` only when you need the legacy one-utterance-per-wakeup path. After wakeup, the mic stays open for follow-up turns within `voice_followup_timeout_ms`; `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Silero detects barge-in speech during thinking and TTS; `voice_interrupt_on_wakeup` still controls whether a second tap cancels the active turn. Repeated wakeup triggers during listening are merged or ignored. On current boards this path requires Linux GPIO sysfs and completed button wiring.
+Waits for the hardware tap button to open a Classic voice session. On current boards the MCU reports a `touch_key` wakeup event to the Agent; the MCU's ASR wakeup event uses the same voice flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable ASR or other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, wakeup opens a continuous voice session (`voice_followup_enabled` defaults to `true`); set it to `false` only when you need the legacy one-utterance-per-wakeup path. After wakeup, the mic stays open for follow-up turns within `voice_followup_timeout_ms`; `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Silero detects barge-in speech during thinking and TTS playback so near-field talk can force-stop output; `voice_interrupt_on_wakeup` still controls whether another wakeup cancels the active turn. Repeated wakeup triggers during listening are merged or ignored. This path requires the MCU event service to be running.
+
+Classic STT Agent turns share the main model's `max_response_tokens` output limit (8192 by default), including any reasoning tokens counted toward that limit by the provider. They do not apply a separate voice-specific token cap.
+
 
 ## Configuration Snippet
 
@@ -70,12 +73,12 @@ input_mode = "stt"
 
 [voice_settings.classic.runtime]
 vad_backend = "rknn"
-vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-vad_helper_path = "/usr/lib/aiden/rknn_vad"
+vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 min_speech_ms = 300
-turn_detection_model_path = "/usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
-turn_detection_helper_path = "/usr/lib/aiden/smart_turn_helper"
+turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
 turn_detection_threshold = 0.5
 turn_detection_analyze_silence_ms = 200
 turn_detection_silence_fallback_ms = 3000
@@ -87,7 +90,6 @@ voice_max_turns = 0
 voice_interrupt_on_wakeup = true
 voice_streaming_tts_enabled = true
 voice_tool_call_speech = true
-voice_max_response_tokens = 300
 
 [voice_settings.classic.audio]
 socket = "/run/audio_service/audio_service.sock"
@@ -193,7 +195,7 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - `audio.backend` selects both recording and playback. `auto` uses `audio_service` on the board and the local backend in desktop/PC Agent mode through the ADB input backend or environment bridge;
 - `audio_service` must be running when `audio.backend = "audio_service"`;
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
-- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aiden/cpu_vad`;
+- `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aico/cpu_vad`;
 - `smart_turn_helper` must be executable and `turn_detection_model_path` must point to the bundled Smart Turn RKNN;
 - STT/TTS require external API keys;
 - STT mode normally uses the hardware tap button to start a continuous voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
@@ -201,9 +203,9 @@ voice_id = "zh_female_vv_uranus_bigtts"
 VAD and Smart Turn helpers can be verified directly on the board:
 
 ```bash
-/usr/lib/aiden/rknn_vad --model /usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
-/usr/lib/aiden/cpu_vad --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
-/usr/lib/aiden/smart_turn_helper --model /usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn --self-test
+/usr/lib/aico/rknn_vad --model /usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/cpu_vad --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/smart_turn_helper --model /usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn --self-test
 ```
 
 On success, helpers output a line `P <probability>`; if there are still RKNN input configuration issues, they output `ERR ...`.

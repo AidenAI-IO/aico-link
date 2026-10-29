@@ -1,0 +1,19 @@
+[Unit]
+Description=Load the Luckfox AIC8800 Wi-Fi driver and firmware
+Requires=aico-userdata-migrate.service
+After=systemd-udevd.service aico-userdata-migrate.service
+Before=wpa_supplicant@wlan0.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/aico_boot.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_WIFIDRV
+ExecStartPre=/usr/lib/aico/aico-wifi-log-retention
+ExecStart=/usr/lib/aico/aico-wifi-driver
+StandardOutput=append:/var/log/wifi_driver/wifi_driver.log
+StandardError=append:/var/log/wifi_driver/wifi_driver.log
+RemainAfterExit=yes
+TimeoutStartSec=35s
+
+[Install]
+WantedBy=multi-user.target

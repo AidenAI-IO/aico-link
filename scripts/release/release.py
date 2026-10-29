@@ -43,8 +43,7 @@ def file_hash(path):
 
 
 def notes(plan):
-    text = (f"# Aiden {plan['tag']}\n\n"
-            f"Channel: `{plan['channel']}`; kind: `{plan['kind']}`.\n\n"
+    text = (f"Channel: `{plan['channel']}`; kind: `{plan['kind']}`.\n\n"
             f"Source: `{plan['source_commit']}`. Previous release: `{plan['previous_tag'] or 'none'}`.\n\n"
             f"Platform contract: `{plan['platform']['contract']}`; base OTA: `{plan['platform']['base_release']}`.\n\n")
     if plan["previous_tag"]:
@@ -69,7 +68,7 @@ def check_checkout(plan, allow_dirty_sdk=False):
         raise ValueError("Checkout differs from the release plan")
     args = ["git", "status", "--porcelain"]
     if allow_dirty_sdk:
-        args.append("--ignore-submodules=all")
+        args.extend(["--", ".", ":(exclude)pico-sdk"])
     if command(*args, cwd=ROOT):
         raise ValueError("Release builds require committed, clean source and SDK")
 
@@ -125,7 +124,7 @@ def verify(directory):
     validate_record(record)
     if record["kind"] == "none":
         raise ValueError("A no-change plan cannot be published")
-    package = f"aiden-business_{record['version']}-1_armhf.deb"
+    package = f"aico-business_{record['version']}-1_armhf.deb"
     expected = {package, "release-manifest.json", "platform-contract.json", "RELEASE-NOTES.md"}
     if record["kind"] == "ota":
         expected |= IMAGE_ASSETS
@@ -143,7 +142,7 @@ def verify(directory):
     if (directory / "SHA256SUMS").read_text() != expected_sums:
         raise ValueError("SHA256SUMS mismatch")
     package_path = directory / package
-    for field, value in (("Package", "aiden-business"), ("Architecture", "armhf"), ("Version", record["version"] + "-1")):
+    for field, value in (("Package", "aico-business"), ("Architecture", "armhf"), ("Version", record["version"] + "-1")):
         if command("dpkg-deb", "--field", str(package_path), field) != value:
             raise ValueError(f"Package {field} mismatch")
     embedded = business.package_manifest(package_path)
@@ -186,15 +185,15 @@ def stage(plan, destination):
     for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
         if (metadata / name).read_text().strip():
             raise ValueError("Applications were built from dirty source")
-    sdk = command("git", "rev-parse", f"{plan['source_commit']}:pico-sdk", cwd=ROOT)
-    if (metadata / "pico-sdk-commit.txt").read_text().strip() != sdk:
+    # Vendored SDK provenance is the firmware commit, not the SDK subtree ID.
+    if (metadata / "pico-sdk-commit.txt").read_text().strip() != plan["source_commit"]:
         raise ValueError("Applications were built with a different SDK commit")
     if "status=pass" not in (ROOT / "output/debian-apps/apps-audit/summary.txt").read_text().splitlines():
         raise ValueError("Application audit has not passed")
     destination.mkdir(parents=True, exist_ok=True)
     if any(destination.iterdir()):
         raise ValueError("Use an empty release staging directory")
-    package = f"aiden-business_{plan['version']}-1_armhf.deb"
+    package = f"aico-business_{plan['version']}-1_armhf.deb"
     source = ROOT / ("output/debian-system" if plan["kind"] == "ota" else "output/debian-package")
     shutil.copyfile(source / package, destination / package)
     manifest = business.package_manifest(destination / package)
@@ -264,7 +263,7 @@ def publish(directory):
                 raise ValueError("Draft has different build assets; resume with the original artifacts")
     else:
         command("gh", "release", "create", tag, "--repo", repo, "--target", commit,
-                "--title", "Aiden " + tag, "--notes-file", str(directory / "RELEASE-NOTES.md"),
+                "--title", "Aico Link " + tag, "--notes-file", str(directory / "RELEASE-NOTES.md"),
                 "--draft", "--latest=false")
     gh_retry("release", "upload", tag, str(directory / "release.json"), "--repo", repo, "--clobber")
     for asset in sorted(directory.iterdir()):

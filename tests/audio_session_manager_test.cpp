@@ -9,12 +9,12 @@
 #include <thread>
 
 TEST_CASE("AudioRecordSession captures at 16 kHz for a 24 kHz target") {
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 24000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
-    aiden::AudioRecordSession session(1, fmt);
+    aico::AudioRecordSession session(1, fmt);
     REQUIRE(session.start());
     CHECK(session.hw_sample_rate_ == 16000);
     session.stop();
@@ -22,15 +22,15 @@ TEST_CASE("AudioRecordSession captures at 16 kHz for a 24 kHz target") {
 }
 
 TEST_CASE("AudioSessionManager keeps a stopped record session readable until EOF") {
-    aiden::AudioSessionManager manager;
+    aico::AudioSessionManager manager;
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
     const uint64_t session_id = 42;
-    auto session = std::make_shared<aiden::AudioRecordSession>(session_id, fmt);
+    auto session = std::make_shared<aico::AudioRecordSession>(session_id, fmt);
     {
         std::lock_guard<std::mutex> lock(session->mutex_);
         session->queue_.push(std::vector<uint8_t>{1, 2, 3, 4});
@@ -40,77 +40,77 @@ TEST_CASE("AudioSessionManager keeps a stopped record session readable until EOF
     {
         std::lock_guard<std::mutex> lock(manager.mutex_);
         manager.record_sessions_[session_id] = session;
-        manager.record_last_active_[session_id] = aiden::AudioSessionManager::Clock::now();
+        manager.record_last_active_[session_id] = aico::AudioSessionManager::Clock::now();
     }
 
-    CHECK(manager.stop_recording(session_id) == aiden::AidenServiceStatus::OK);
+    CHECK(manager.stop_recording(session_id) == aico::AicoServiceStatus::OK);
 
-    aiden::AudioChunkResult chunk;
-    CHECK(manager.read_record_chunk(session_id, 1, &chunk) == aiden::AidenServiceStatus::OK);
+    aico::AudioChunkResult chunk;
+    CHECK(manager.read_record_chunk(session_id, 1, &chunk) == aico::AicoServiceStatus::OK);
     CHECK(chunk.end_of_stream == false);
     CHECK(chunk.pcm == std::vector<uint8_t>{1, 2, 3, 4});
 
-    aiden::AudioChunkResult end;
-    CHECK(manager.read_record_chunk(session_id, 1, &end) == aiden::AidenServiceStatus::OK);
+    aico::AudioChunkResult end;
+    CHECK(manager.read_record_chunk(session_id, 1, &end) == aico::AicoServiceStatus::OK);
     CHECK(end.end_of_stream == true);
     CHECK(end.pcm.empty());
 
-    aiden::AudioChunkResult missing;
+    aico::AudioChunkResult missing;
     CHECK(manager.read_record_chunk(session_id, 1, &missing) ==
-          aiden::AidenServiceStatus::SESSION_NOT_FOUND);
+          aico::AicoServiceStatus::SESSION_NOT_FOUND);
 }
 
 TEST_CASE("AudioSessionManager rejects new playback while another session is draining") {
-    aiden::AudioSessionManager manager;
+    aico::AudioSessionManager manager;
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
     manager.draining_playback_state_->count.store(1, std::memory_order_relaxed);
 
-    aiden::PlaybackStartResult out;
-    CHECK(manager.start_playback(fmt, &out) == aiden::AidenServiceStatus::SERVICE_RECOVERING);
+    aico::PlaybackStartResult out;
+    CHECK(manager.start_playback(fmt, &out) == aico::AicoServiceStatus::SERVICE_RECOVERING);
 }
 
 TEST_CASE("AudioSessionManager stops draining playback sessions") {
-    aiden::AudioSessionManager manager;
+    aico::AudioSessionManager manager;
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
     const uint64_t session_id = 99;
-    auto session = std::make_shared<aiden::AudioPlaybackSession>(session_id, fmt);
+    auto session = std::make_shared<aico::AudioPlaybackSession>(session_id, fmt);
 
     {
         std::lock_guard<std::mutex> lock(manager.draining_playback_state_->mutex);
         manager.draining_playback_state_->sessions[session_id] = session;
     }
 
-    CHECK(manager.stop_playback(session_id) == aiden::AidenServiceStatus::OK);
+    CHECK(manager.stop_playback(session_id) == aico::AicoServiceStatus::OK);
     CHECK(session->is_stopped());
-    CHECK(manager.stop_playback(session_id) == aiden::AidenServiceStatus::SESSION_NOT_FOUND);
+    CHECK(manager.stop_playback(session_id) == aico::AicoServiceStatus::SESSION_NOT_FOUND);
 }
 
 TEST_CASE("AudioSessionManager publishes draining before manager operations resume") {
-    aiden::AudioSessionManager manager;
+    aico::AudioSessionManager manager;
 
-    aiden::AudioFormat fmt;
+    aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
     fmt.channels = 1;
     fmt.bit_width = 16;
 
     const uint64_t session_id = 100;
-    auto session = std::make_shared<aiden::AudioPlaybackSession>(session_id, fmt);
+    auto session = std::make_shared<aico::AudioPlaybackSession>(session_id, fmt);
     REQUIRE(session->start());
     {
         std::lock_guard<std::mutex> lock(manager.mutex_);
         manager.playback_sessions_[session_id] = session;
         manager.playback_last_active_[session_id] =
-            aiden::AudioSessionManager::Clock::now();
+            aico::AudioSessionManager::Clock::now();
     }
 
     // Hold the draining lock so the migration must wait at its publication
@@ -171,7 +171,7 @@ TEST_CASE("AudioSessionManager publishes draining before manager operations resu
 
     SUBCASE("start observes the draining session") {
         auto start_future = std::async(std::launch::async, [&manager, &fmt]() {
-            aiden::PlaybackStartResult out;
+            aico::PlaybackStartResult out;
             return manager.start_playback(fmt, &out);
         });
         CHECK(start_future.wait_for(std::chrono::milliseconds(50)) ==
@@ -179,10 +179,10 @@ TEST_CASE("AudioSessionManager publishes draining before manager operations resu
 
         draining_lock.unlock();
         REQUIRE(final_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
-        CHECK(final_future.get() == aiden::AidenServiceStatus::OK);
+        CHECK(final_future.get() == aico::AicoServiceStatus::OK);
         REQUIRE(start_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
-        CHECK(start_future.get() == aiden::AidenServiceStatus::SERVICE_RECOVERING);
-        CHECK(manager.stop_playback(session_id) == aiden::AidenServiceStatus::OK);
+        CHECK(start_future.get() == aico::AicoServiceStatus::SERVICE_RECOVERING);
+        CHECK(manager.stop_playback(session_id) == aico::AicoServiceStatus::OK);
     }
 
     SUBCASE("stop finds the draining session") {
@@ -194,8 +194,8 @@ TEST_CASE("AudioSessionManager publishes draining before manager operations resu
 
         draining_lock.unlock();
         REQUIRE(final_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
-        CHECK(final_future.get() == aiden::AidenServiceStatus::OK);
+        CHECK(final_future.get() == aico::AicoServiceStatus::OK);
         REQUIRE(stop_future.wait_for(std::chrono::seconds(2)) == std::future_status::ready);
-        CHECK(stop_future.get() == aiden::AidenServiceStatus::OK);
+        CHECK(stop_future.get() == aico::AicoServiceStatus::OK);
     }
 }

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "audio_service_protocol.h"
 #include <atomic>
 #include <condition_variable>
@@ -10,7 +10,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 // Manages a single microphone recording session.
 // The session captures PCM from AudioCapture and buffers it in a bounded
@@ -32,7 +32,7 @@ public:
     // Block until a PCM chunk is available or timeout_ms elapses.
     // Returns OK with data, TIMEOUT if no data arrived, or OK with
     // end_of_stream=true after stop once the queue has drained.
-    AidenServiceStatus pop_chunk(uint32_t timeout_ms, AudioChunkResult* out);
+    AicoServiceStatus pop_chunk(uint32_t timeout_ms, AudioChunkResult* out);
 
     // Signal the session to stop. Unblocks any pending pop_chunk().
     void stop();
@@ -60,4 +60,4 @@ private:
     std::atomic<bool> stopped_;
 };
 
-}  // namespace aiden
+}  // namespace aico

@@ -1,7 +1,7 @@
 [project]
-name = "aiden-skillopt"
+name = "aico-skillopt"
 version = "0.1.0"
-description = "Independent SkillOpt workflow for optimizing Aiden skills"
+description = "Independent SkillOpt workflow for optimizing Aico skills"
 requires-python = ">=3.10"
 dependencies = [
     # SkillOpt imports the benchmark runner as its execution backend. Keep the

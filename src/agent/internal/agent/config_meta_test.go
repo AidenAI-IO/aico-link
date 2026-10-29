@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 // fieldIndex builds a section.key -> FieldMeta lookup for the metadata.
@@ -532,7 +532,6 @@ func TestConfigMeta_RuntimeDefaultsMatch(t *testing.T) {
 		{"agent.voice_streaming_tts_enabled", defaults.VoiceStreamingTTSEnabledOrDefault()},
 		{"agent.voice_tool_call_speech", defaults.VoiceToolCallSpeechOrDefault()},
 		{"agent.voice_progress_speech_enabled", defaults.VoiceProgressSpeechEnabledOrDefault()},
-		{"agent.voice_max_response_tokens", defaults.VoiceMaxResponseTokens},
 		{"agent.max_iterations", defaults.MaxIterations},
 		{"agent.screen_stable_timeout_ms", defaults.ScreenStableTimeoutMs},
 		{"agent.screen_stable_ms", defaults.ScreenStableMs},

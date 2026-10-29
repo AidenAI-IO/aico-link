@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/logging"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/callbacks"
@@ -732,14 +732,16 @@ func (l *AgentLoop) persistSteer(ctx context.Context, executor *executor.LLMExec
 	// the model as an empty message while being recorded as the placeholder.
 	steer.Content = steerHumanMessageContent(steer)
 
-	// Persist the interrupt notice and new instruction together.
+	// Persist the interrupt notice and new instruction together. The
+	// instruction keeps its send time, which can be earlier than when the loop
+	// picks it up, so a summary resolves its relative dates correctly.
 	manager := l.contextManager
 	if executor != nil {
 		manager = executor.ContextManager()
 	}
 	if err := manager.AppendMessages([]messages.Message{
 		interruptNotice("steer", "A new instruction interrupted the current execution plan. Continue this run using the following user instruction; the previous plan is not confirmed complete."),
-		{Role: messages.MessageRoleUser, Content: steer.Content},
+		{Role: messages.MessageRoleUser, Content: steer.Content, Timestamp: steer.Timestamp},
 	}); err != nil {
 		return err
 	}
@@ -905,7 +907,7 @@ func selectToolCall(choice llms.ContentChoice, call llms.ToolCall) llms.ContentC
 // responsesGenerationInfoForToolCall removes unexecuted parallel function-call
 // items from stateless Responses replay. Some compatible providers, including
 // DeepSeek, always allow parallel tool calls even when the request asks them
-// not to. Aiden executes one call per iteration, so replaying the other calls
+// not to. Aico executes one call per iteration, so replaying the other calls
 // without matching function_call_output items would make the next request
 // invalid.
 func responsesGenerationInfoForToolCall(info map[string]any, toolID string) map[string]any {
@@ -974,7 +976,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 const unexecutedInteractionToolResult = "Not executed: this runtime runs one tool call per turn. Call it again if it is still needed."
 
 // unexecutedInteractionToolResults answers the native Interactions function calls
-// the iteration did not execute. Aiden runs one tool call per iteration so that
+// the iteration did not execute. Aico runs one tool call per iteration so that
 // every action is gated and observed on its own, while the Interactions API
 // returns all the calls the model decided on and requires a function_result for
 // each call_id. The remaining calls are reported as unexecuted instead of being

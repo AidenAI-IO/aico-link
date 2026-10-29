@@ -18,7 +18,7 @@
 
 #include "smart_turn.h"
 
-#if defined(AIDEN_RKNN_GLIBC_COMPAT)
+#if defined(AICO_RKNN_GLIBC_COMPAT)
 extern int aiden_rknn_glibc_compat_init(void);
 #endif
 
@@ -38,7 +38,7 @@ int main(int argc, char **argv) {
         return 2;
     }
 
-#if defined(AIDEN_RKNN_GLIBC_COMPAT)
+#if defined(AICO_RKNN_GLIBC_COMPAT)
     if (aiden_rknn_glibc_compat_init() != 0) {
         printf("ERR RKNN glibc compatibility initialization failed\n");
         return 1;

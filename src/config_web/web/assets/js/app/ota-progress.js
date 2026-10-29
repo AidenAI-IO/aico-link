@@ -2,7 +2,7 @@
  * OTA progress, read from the updater's log.
  *
  * `GET /api/ota/status` returns the running flag and the tail of
- * `config_web_ota_update.log`; the updater (`/usr/lib/aiden/ota update`)
+ * `config_web_ota_update.log`; the updater (`/usr/lib/aico/ota update`)
  * writes one `message="..."` line per step. This module turns the newest run
  * in that log into a stage and a percentage, so the page can show progress
  * rather than raw log text. Lines look like:

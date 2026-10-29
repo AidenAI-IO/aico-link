@@ -3,7 +3,7 @@
 
 This script launches MobileGym environment and Bridge HTTP server WITHOUT
 using MobileGym's test framework (SerialRunner, agent registration, etc.).
-The Bridge exposes device operations via HTTP endpoints that Aiden daemon
+The Bridge exposes device operations via HTTP endpoints that Aico daemon
 can call through the device-operator skill.
 
 Usage:
@@ -71,7 +71,7 @@ def install_resilient_mobilegym_reset(mobilegym_env_cls: type[Any]) -> None:
     `Page crashed`/`Target crashed`, that page cannot be repaired with another
     goto, so recreate the env's owned page/context before one final reset.
     """
-    if getattr(mobilegym_env_cls, "_aiden_resilient_reset_installed", False):
+    if getattr(mobilegym_env_cls, "_aico_resilient_reset_installed", False):
         return
     original_reset = mobilegym_env_cls.reset
     original_supports_app_ids = _supports_app_ids(original_reset)
@@ -101,9 +101,9 @@ def install_resilient_mobilegym_reset(mobilegym_env_cls: type[Any]) -> None:
             await _restart_mobilegym_env(self)
             await call_original_reset(self, app_ids, reset_kwargs)
 
-    mobilegym_env_cls._aiden_original_reset = original_reset
+    mobilegym_env_cls._aico_original_reset = original_reset
     mobilegym_env_cls.reset = resilient_reset
-    mobilegym_env_cls._aiden_resilient_reset_installed = True
+    mobilegym_env_cls._aico_resilient_reset_installed = True
 
 
 def _is_recoverable_page_crash(exc: Exception) -> bool:
@@ -436,18 +436,18 @@ def build_parser() -> argparse.ArgumentParser:
     bridge = parser.add_argument_group("Bridge server")
     bridge.add_argument(
         "--bridge-host",
-        default=os.getenv("AIDEN_BRIDGE_BIND_HOST", "127.0.0.1"),
+        default=os.getenv("AICO_BRIDGE_BIND_HOST", "127.0.0.1"),
         help="Bridge server bind host (default: 127.0.0.1)",
     )
     bridge.add_argument(
         "--bridge-port",
         type=int,
-        default=int(os.getenv("AIDEN_BRIDGE_PORT", "0")),
+        default=int(os.getenv("AICO_BRIDGE_PORT", "0")),
         help="Bridge server port (default: auto-assign)",
     )
     bridge.add_argument(
         "--bridge-public-host",
-        default=os.getenv("AIDEN_BRIDGE_PUBLIC_HOST"),
+        default=os.getenv("AICO_BRIDGE_PUBLIC_HOST"),
         help="Bridge server public hostname (for Docker networking)",
     )
     bridge.add_argument(

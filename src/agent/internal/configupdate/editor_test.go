@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // selfConfigFixture configures classic voice providers, as a provisioned

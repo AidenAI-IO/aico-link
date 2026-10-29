@@ -5,39 +5,46 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/mcu"
 )
 
-// inputLifecycle owns the GPIO listeners and voice loop, independently of the
+// inputLifecycle owns the input listeners and voice loop, independently of the
 // HTTP server. A reload drains the current session before replacing the loop.
 type inputLifecycle struct {
-	mu             sync.Mutex
-	dialogMu       sync.Mutex
-	dialog         *agent.AudioDialog
-	runtime        *agent.Runtime
-	server         *agent.Server
-	cfg            agent.Config
-	stop           chan struct{}
-	shutdown       chan os.Signal
-	done           chan struct{}
-	quick          wakeupWatcher
-	closed         bool
-	shutdownClosed bool
-	quiescing      atomic.Bool
-	newDialog      func(agent.Config) (*agent.AudioDialog, error)
-	runVoice       func(agent.Config, *agent.AudioDialog, chan os.Signal, <-chan struct{})
-	newWatcher     wakeupWatcherFactory
+	mu              sync.Mutex
+	dialogMu        sync.Mutex
+	dialog          *agent.AudioDialog
+	runtime         *agent.Runtime
+	server          *agent.Server
+	cfg             agent.Config
+	stop            chan struct{}
+	shutdown        chan os.Signal
+	done            chan struct{}
+	quick           wakeupWatcher
+	closed          bool
+	shutdownClosed  bool
+	quiescing       atomic.Bool
+	newDialog       func(agent.Config) (*agent.AudioDialog, error)
+	runVoice        func(agent.Config, *agent.AudioDialog, chan os.Signal, <-chan struct{})
+	newWatcher      wakeupWatcherFactory
+	newVoiceWatcher voiceWakeupWatcherFactory
 }
 
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
+	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
 	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
 	// Classic Mode B keeps the mic open for the whole voice session. Runtime.Run
 	// preempts on every turn start, so this hook must only stop TTS — never the
 	// session recording. Listen/session code owns StartRecording/StopRecording.
+	c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
+		return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+	}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
 		defer c.dialogMu.Unlock()
@@ -67,7 +74,6 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
 		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
 		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
-		VoiceMaxResponseTokens: cfg.VoiceMaxResponseTokens,
 	}
 }
 
@@ -125,13 +131,13 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 		}
 		switch cfg.InputModeOrDefault() {
 		case "stt":
-			runWakeupMode(cfg, dialog, c.runtime, shutdown, c.newWatcher, stop)
+			runWakeupMode(cfg, dialog, c.runtime, shutdown, c.newVoiceWatcher, stop)
 		case "realtime":
 			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
 			if tasks != nil {
 				defer tasks.Close()
 			}
-			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newWatcher, stop)
+			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newVoiceWatcher, stop)
 		default:
 			select {
 			case <-stop:

@@ -6,8 +6,8 @@ import (
 	"testing"
 	"unicode"
 
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
 )
 
 type fakeScreenCaptureSource struct {

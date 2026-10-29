@@ -18,7 +18,7 @@ from skillopt.score import task_result_to_rollout
 from skillopt.types import RolloutResult
 
 
-DEFAULT_DAEMON_IMAGE = "aiden-agent-daemon:local"
+DEFAULT_DAEMON_IMAGE = "aico-agent-daemon:local"
 PROFILES_ROOT = Path(__file__).resolve().parent / "profiles"
 
 

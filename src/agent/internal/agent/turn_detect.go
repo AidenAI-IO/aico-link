@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const (
-	defaultTurnDetectionModelPath  = "/usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
-	defaultTurnDetectionHelperPath = "/usr/lib/aiden/smart_turn_helper"
+	defaultTurnDetectionModelPath  = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+	defaultTurnDetectionHelperPath = "/usr/lib/aico/smart_turn_helper"
 	defaultTurnDetectionThreshold  = 0.5
 	defaultTurnAnalyzeSilenceMs    = 600
 	defaultTurnSilenceFallbackMs   = 3000

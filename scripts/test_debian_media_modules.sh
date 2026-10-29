@@ -5,7 +5,7 @@ repo=$(cd "$(dirname "$0")/.." && pwd)
 test_root=$(mktemp -d)
 trap 'rm -rf "$test_root"' EXIT
 
-unit="$repo/overlay-debian/etc/systemd/system/aiden-media-modules.service"
+unit="$repo/overlay-debian/etc/systemd/system/aico-media-modules.service"
 grep -Fxq 'StandardOutput=journal+console' "$unit"
 grep -Fxq 'StandardError=journal+console' "$unit"
 
@@ -86,11 +86,11 @@ EOF
     chmod +x "$fixture/bin/"*
 
     sed \
-        -e "s|/usr/lib/aiden/platform/modules|$fixture/ko|g" \
+        -e "s|/usr/lib/aico/platform/modules|$fixture/ko|g" \
         -e "s|/sys/|$fixture/sys/|g" \
         -e "s|/proc/|$fixture/proc/|g" \
         -e "s|/dev/|$fixture/dev/|g" \
-        "$repo/overlay-debian/usr/lib/aiden/aiden-media-modules" >"$fixture/loader"
+        "$repo/overlay-debian/usr/lib/aico/aico-media-modules" >"$fixture/loader"
 }
 
 assert_parameters() {
@@ -104,10 +104,10 @@ run_case() {
     PATH="$fixture/bin:$PATH" sh "$fixture/loader" 2>"$fixture/stderr"
     assert_parameters "$expected"
     if [ "$expected" = not-ready ]; then
-        grep -Fq '[aiden-media-modules] WARN:' "$fixture/stderr"
+        grep -Fq '[aico-media-modules] WARN:' "$fixture/stderr"
         grep -Fq 'CIF/ISP async notifiers remain pending; skipping clr_unready_dev' "$fixture/stderr"
         grep -Fq 'continuing other media/audio modules' "$fixture/stderr"
-        grep -Fq 'After the bridge binds, stop aiden-frame.service and rerun' "$fixture/stderr"
+        grep -Fq 'After the bridge binds, stop aico-frame.service and rerun' "$fixture/stderr"
     else
         test ! -s "$fixture/stderr"
     fi
@@ -115,6 +115,7 @@ run_case() {
         test -d "$fixture/sys/module/$module"
     done
     grep -q 'isp_max_h=0' "$fixture/loaded"
+    grep -q 'en_mcu=0' "$fixture/loaded"
     test "$(grep -cx "$expected" "$fixture/rockit-state")" -eq 2
     test ! -e "$fixture/dev/v4l-subdev0"
     local before

@@ -12,11 +12,11 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
@@ -107,6 +107,35 @@ func TestGenerateSummaryIncludesToolPayloads(t *testing.T) {
 		"tool_call_name: echo",
 		`tool_call_arguments: {"input":"hello"}`,
 		`tool_call_result: {"output":"world"}`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("summary prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+// A plan the user mentions in passing is not saved to long-term memory, so the
+// summary must keep it, dated absolutely: "tomorrow" means nothing once the
+// summary outlives the day it was written.
+func TestGenerateSummaryAsksForDatedUserPlans(t *testing.T) {
+	model := &promptCapturingModel{reply: "summary"}
+	compactor := NewCompactor(DefaultProtectRule, &testModel{Model: model})
+	location := time.FixedZone("UTC+8", 8*60*60)
+	compactor.Location = location
+	sentAt := time.Date(2026, 10, 27, 2, 0, 0, 0, time.UTC)
+
+	if _, err := compactor.generateSummary(context.Background(), []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "明天上午我要去医院复查", Timestamp: sentAt},
+		{Role: messages.MessageRoleAssistant, Content: "好的"},
+	}); err != nil {
+		t.Fatalf("generateSummary() error = %v", err)
+	}
+	prompt := model.prompts[0]
+	for _, want := range []string{
+		"## User Plans and Time-Bound Information",
+		"[user 2026-10-27T10:00:00+08:00] 明天上午我要去医院复查",
+		"[assistant] 好的",
+		"+08:00. Message labels show when each message was sent.",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("summary prompt missing %q:\n%s", want, prompt)
@@ -708,6 +737,9 @@ func TestCompactSummarizesHistoricalToolResults(t *testing.T) {
 	compactedMessages := newManager.CloneMessageList()
 	if got := compactedMessages[2].Content; !strings.Contains(got, "historical work summary") {
 		t.Fatalf("compacted summary = %q", got)
+	}
+	if !compactedMessages[2].CompactionSummary {
+		t.Fatal("compacted summary is not marked as a compaction summary")
 	}
 	if got := compactedMessages[5].ToolResults[0].Content; got != "current result" {
 		t.Fatalf("current tool result = %q, want unchanged", got)

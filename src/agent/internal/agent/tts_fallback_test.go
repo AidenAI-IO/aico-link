@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	ttsmodule "aiden-agent/internal/agent/tts"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 func TestDenormalizeLocaleForFilename(t *testing.T) {

@@ -30,13 +30,14 @@ async function sendMessage() {
         timestamp: new Date().toISOString()
     });
 
+    let completed = false;
     try {
         const res = await fetch('/api/chat', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Accept': 'application/x-ndjson',
-                'X-Aiden-Stream': 'ndjson'
+                'X-Aico-Stream': 'ndjson'
             },
             signal: currentChatAbortController.signal,
             body: JSON.stringify({
@@ -52,6 +53,7 @@ async function sendMessage() {
         }
 
         await consumeChatStream(res);
+        completed = true;
     } catch (err) {
         if (currentChatCancelRequested || err.name === 'AbortError') {
             addMessage({
@@ -81,6 +83,9 @@ async function sendMessage() {
         renderPendingSteer();
         setComposerState(false);
         if (isConversationNearBottom()) scrollToBottom();
+        // Only after a completed run: an error or interruption shown locally
+        // may not be in the context yet, and a refresh would remove it.
+        if (completed) refreshHistoryFromContext();
     }
 }
 
@@ -320,10 +325,9 @@ function consumeChatStreamText(text) {
     if (!trimmed) return false;
     try {
         const payload = JSON.parse(trimmed);
-        if (payload.history || payload.response) {
-            renderHistory(payload.history || []);
-            return true;
-        }
+        // A single JSON response carries only the latest turn; the history
+        // window is refreshed from /api/history once the run ends.
+        if (payload.history || payload.response) return true;
         if (payload.type) {
             return handleChatStreamEvent(payload);
         }
@@ -502,6 +506,7 @@ async function clearSession() {
             throw new Error(await res.text() || 'Failed to clear the session.');
         }
         clearDraftAttachments();
+        resetHistoryWindow();
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session:', err);
@@ -518,6 +523,7 @@ async function clearSessionAndMemory() {
             throw new Error(await res.text() || 'Failed to clear the session and memory.');
         }
         clearDraftAttachments();
+        resetHistoryWindow();
         renderHistory([]);
     } catch (err) {
         console.error('Failed to clear the session and memory:', err);

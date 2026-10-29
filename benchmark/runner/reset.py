@@ -494,7 +494,7 @@ def _validate_consolidation_result(
         fail(f"episode memory consolidation for {episode_id!r} produced {memory_count} device memories, expected at least {min_memory_ids}")
     if max_memory_ids is not None and memory_count > max_memory_ids:
         fail(f"episode memory consolidation for {episode_id!r} produced {memory_count} device memories, expected at most {max_memory_ids}")
-    positive_contract = any(expectation.get(field) for field in ("required_memory_substrings", "required_memory_types", "required_memory_scope"))
+    positive_contract = any(expectation.get(field) for field in ("required_memory_substrings", "required_memory_types", "required_memory_scope", "required_procedure_steps"))
     if memory_count == 0 and (positive_contract or not expectation.get("allow_empty_memory", False)):
         fail(f"episode memory consolidation for {episode_id!r} produced no device memory")
 
@@ -511,12 +511,13 @@ def _validate_consolidated_memory_content(
     forbidden = expectation.get("forbidden_memory_substrings", [])
     required_substrings = expectation.get("required_memory_substrings", [])
     required_types = expectation.get("required_memory_types", [])
+    required_steps = expectation.get("required_procedure_steps", [])
     required_scope = expectation.get("required_memory_scope", {})
-    if not any((forbidden, required_substrings, required_types, required_scope)):
+    if not any((forbidden, required_substrings, required_types, required_scope, required_steps)):
         return
     memory_ids = result.get("memory_ids")
     if not isinstance(memory_ids, list) or not memory_ids:
-        if required_substrings or required_types or required_scope:
+        if required_substrings or required_types or required_scope or required_steps:
             error = SetupAssertionError(f"episode memory consolidation for {episode_id!r} produced no device memory for the required content/type/scope contract")
             error.consolidation = result
             raise error
@@ -561,6 +562,17 @@ def _validate_consolidated_memory_content(
     def matches_required(item: dict[str, Any]) -> bool:
         if required_type_set and str(item.get("type") or "").strip().casefold() not in required_type_set:
             return False
+        if required_steps:
+            steps = item.get("steps")
+            if str(item.get("type") or "").casefold() != "procedure" or not isinstance(steps, list):
+                return False
+            # Require the entire selected path, not a subsequence that could
+            # conceal failed attempts or unrelated actions between valid steps.
+            if len(steps) != len(required_steps):
+                return False
+            for step, expected in zip(steps, required_steps):
+                if not isinstance(step, dict) or expected.casefold() not in str(step.get("Description") or "").casefold():
+                    return False
         serialized_item = json.dumps(item, ensure_ascii=False).casefold()
         if any(value.casefold() not in serialized_item for value in required_substrings):
             return False
@@ -568,8 +580,8 @@ def _validate_consolidated_memory_content(
         if required_scope and (not isinstance(applicability, dict) or any(str(applicability.get(key) or "") != value for key, value in required_scope.items())):
             return False
         return True
-    if (required_substrings or required_types or required_scope) and not any(matches_required(item) for item in generated):
-        fail(f"episode memory consolidation for {episode_id!r} produced no single memory matching required type/content/scope")
+    if (required_substrings or required_types or required_scope or required_steps) and not any(matches_required(item) for item in generated):
+        fail(f"episode memory consolidation for {episode_id!r} produced no single memory matching required type/content/scope/steps")
 
 
 def _per_task_setup_seed_notification(client: AgentClient, setup: dict[str, Any]) -> None:
@@ -769,6 +781,12 @@ def assert_memory_results(results: list[dict[str, Any]], setup: dict[str, Any]) 
 def _memory_result_matches(result: dict[str, Any], spec: dict[str, Any]) -> bool:
     for field in ("id", "memory_scope", "type"):
         if field in spec and str(result.get(field) or "").strip().lower() != str(spec[field]).strip().lower():
+            return False
+    if "sensitive" in spec:
+        # The Agent omits the field for ordinary memories; any other
+        # non-boolean value is malformed and never matches.
+        sensitive = result.get("sensitive", False)
+        if not isinstance(sensitive, bool) or sensitive != spec["sensitive"]:
             return False
     if "revision" in spec:
         try:

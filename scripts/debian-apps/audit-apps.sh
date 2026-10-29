@@ -34,13 +34,13 @@ readonly MPP_SYMBOLS=(
 )
 
 readonly READELF=${READELF:-arm-linux-gnueabihf-readelf}
-readonly GO_EXECUTABLES=(abctl agent ble_service ota)
+readonly GO_EXECUTABLES=(abctl agent ble_service mcu_service ota)
 readonly STATIC_EXECUTABLES=(ttyd)
 readonly RKNN_RUNTIME_VERSION='librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T09:11:49)'
 readonly RKNN_STATIC_SYMBOLS=(
     __ctype_b
     __ctype_tolower
-    aiden_rknn_glibc_compat_init
+    aico_rknn_glibc_compat_init
     rknn_create_mem
     rknn_destroy
     rknn_destroy_mem

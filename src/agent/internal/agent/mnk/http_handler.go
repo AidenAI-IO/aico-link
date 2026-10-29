@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // HTTPHandler handles HTTP requests for MNK operations

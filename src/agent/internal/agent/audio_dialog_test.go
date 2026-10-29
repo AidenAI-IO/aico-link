@@ -16,8 +16,8 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/model"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/model"
+	ttsmodule "aico-agent/internal/agent/tts"
 )
 
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
@@ -114,7 +114,7 @@ func TestAudioDialogStartRecordingRetriesUntilAudioServiceAvailable(t *testing.T
 		recordingStartRetryInterval = oldInterval
 	})
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-audio-dialog-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-dialog-*")
 	if err != nil {
 		t.Fatalf("create temp socket dir: %v", err)
 	}
@@ -1182,6 +1182,46 @@ func (m *blockingFirstCallModel) Spec() model.ModelSpec {
 
 func (m *blockingFirstCallModel) CallOptions() []chains.ChainCallOption { return nil }
 
+func TestAudioDialogRunAgentTurnUsesModelMaxResponseTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		maxTokens int
+	}{
+		{name: "default", maxTokens: DefaultConfig().Model.MaxResponseTokens},
+		{name: "custom", maxTokens: 4096},
+		{name: "zero", maxTokens: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := withTestConfigDir(t, Config{
+				Model: ModelConfig{Provider: "fake", MaxResponseTokens: tt.maxTokens},
+			})
+			model := &scriptedModel{responses: roleDirectResponses("ok")}
+			models := NewModelManager(cfg.Model, ProxyConfig{})
+			models.model = model
+			runtime := NewRuntimeWithDeps(
+				cfg, models, NewMemoryManager(""),
+				&ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex(),
+			)
+			// The runtime owns the current model settings; a live voice dialog
+			// may still hold the configuration from before a model reload.
+			dialogConfig := cfg
+			dialogConfig.Model.MaxResponseTokens = 128
+			dialog := &AudioDialog{config: dialogConfig}
+			if _, err := dialog.RunAgentTurn(context.Background(), TurnInput{InputText: "hello"}, runtime); err != nil {
+				t.Fatalf("RunAgentTurn() error = %v", err)
+			}
+			if len(model.maxTokens) == 0 {
+				t.Fatal("voice turn did not call the model")
+			}
+			for i, got := range model.maxTokens {
+				if got != tt.maxTokens {
+					t.Fatalf("model call %d max tokens = %d, want %d", i, got, tt.maxTokens)
+				}
+			}
+		})
+	}
+}
+
 func TestAudioDialogRunAgentTurnCommitsVoicePreRunTelemetry(t *testing.T) {
 	plane := &capturingEpisodePlane{}
 	model := &scriptedModel{responses: roleDirectResponses("ok")}
@@ -1189,7 +1229,6 @@ func TestAudioDialogRunAgentTurnCommitsVoicePreRunTelemetry(t *testing.T) {
 		Model:                    ModelConfig{Provider: "fake"},
 		Audio:                    AudioConfig{SampleRate: 16000},
 		VoiceStreamingTTSEnabled: boolPtr(true),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,
@@ -1245,7 +1284,6 @@ func TestAudioDialogRunAgentTurnDoesNotWaitForAgentSendPromptDrain(t *testing.T)
 	cfg := withTestConfigDir(t, Config{
 		Model:                    ModelConfig{Provider: "fake"},
 		VoiceStreamingTTSEnabled: boolPtr(false),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,
@@ -1289,7 +1327,6 @@ func TestAudioDialogRunAgentTurnDoesNotWaitForAgentSendPromptStart(t *testing.T)
 	cfg := withTestConfigDir(t, Config{
 		Model:                    ModelConfig{Provider: "fake"},
 		VoiceStreamingTTSEnabled: boolPtr(false),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,

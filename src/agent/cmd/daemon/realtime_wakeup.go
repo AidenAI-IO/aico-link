@@ -11,14 +11,14 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/agenttask"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/agenttask"
+	"aico-agent/internal/logging"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -361,9 +361,13 @@ func abandonSleepForPendingRealtimeReengagement(sleep *realtimeSleepState, reeng
 	return sleep.abandon()
 }
 
+func runRealtimeWakeupMode(cfg agent.Config, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory) {
+	runRealtimeWakeupModeWithServer(cfg, sigChan, nil, nil, nil, newWatcher)
+}
+
 // runRealtimeWakeupModeWithServer owns the realtime voice path. The legacy wakeup
 // runners remain separate so they can be restored without changing this path.
-func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
+func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, server *agent.Server, runtime *agent.Runtime, tasks *agenttask.Manager, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
 	events := make(chan struct{}, 1)
 	bridge := newRealtimeChatBridge(func() {
 		signalWakeupEvent(events)
@@ -462,23 +466,17 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
 	}
-	if cfg.TapWakeupEnabledOrDefault() {
-		logging.Infof("agent", "ready", "Starting realtime GPIO wakeup listeners on %s...", wakeupGPIOPinsLabel())
-	}
-	watchers, err := startWakeupWatchersIfEnabled(cfg, newWatcher, func() {
+	logging.Infof("agent", "ready", "Starting realtime MCU wakeup listener...")
+	watchers, err := startWakeupWatchers(newWatcher, func() {
 		signalWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Warnf("agent", "realtime", "GPIO wakeup unavailable: %v; /api/chat activation remains enabled", err)
+		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
 	} else {
 		defer stopWakeupWatchers(watchers)
 	}
 
-	if cfg.TapWakeupEnabledOrDefault() {
-		logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or GPIO %s)... Ctrl+C to quit", wakeupGPIOPinsLabel())
-	} else {
-		logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat; tap wakeup disabled)... Ctrl+C to quit")
-	}
+	logging.Infof("agent", "ready", "Waiting for realtime activation (/api/chat or %s)... Ctrl+C to quit", wakeupReadyLabel(cfg))
 	var taskWake taskWakeState
 	for {
 		if reloadRequested(reload) {
@@ -565,7 +563,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			}
 			drainRealtimeWakeups(events, failureAnnouncementDone != nil)
 			// An API request can arrive while the previous session is tearing
-			// down. Preserve that activation after clearing stale GPIO events.
+			// down. Preserve that activation after clearing stale wake events.
 			if rotated || chatBridgeHasPending(bridge) {
 				signalWakeupEvent(events)
 			}
@@ -582,7 +580,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 func drainRealtimeWakeups(events <-chan struct{}, failureAnnouncementPending bool) {
 	// A wakeup queued while failure speech starts is a new activation. Leave
 	// it for the event loop to cancel the announcement and set pendingActivation.
-	// The channel already coalesces GPIO/API wakeups into one pending event.
+	// The channel already coalesces ASR/API wakeups into one pending event.
 	if failureAnnouncementPending {
 		return
 	}

@@ -1,4 +1,6 @@
 self-hosted-runner:
   labels:
+    - aico-hosted-01
+    - aico-hosted-02
     - aiden-hosted-01
     - aiden-hosted-02

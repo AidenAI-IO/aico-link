@@ -50,7 +50,7 @@
         "timeout_sec": 60,
         "clear_history_after": true
       },
-      "prompt": "进入朋友圈，发一条纯文字动态，内容是「Aiden Benchmark 测试动态」。",
+      "prompt": "进入朋友圈，发一条纯文字动态，内容是「Aico Benchmark 测试动态」。",
       "rubric": [
         {
           "id": "entered_moments",
@@ -62,11 +62,11 @@
         },
         {
           "id": "typed_content",
-          "check": "Trace shows agent typed Aiden Benchmark 测试动态."
+          "check": "Trace shows agent typed Aico Benchmark 测试动态."
         },
         {
           "id": "published",
-          "check": "Post-screenshot shows Aiden Benchmark 测试动态 visible in the Moments feed."
+          "check": "Post-screenshot shows Aico Benchmark 测试动态 visible in the Moments feed."
         }
       ],
       "hard_assertions": {
@@ -122,7 +122,7 @@
       "id": "notes_create_and_verify",
       "category": "multi_step",
       "description_for_judge": "Agent must open a notes/memo app, create a new note with specific content, save it, exit, then reopen and verify the content persists.",
-      "prompt": "打开备忘录（或任何记事应用），新建一篇笔记：标题「测试备忘」，内容「Aiden 自动化验证内容，时间戳 2026」。保存后退出备忘录，再重新打开确认笔记还在、内容完整。",
+      "prompt": "打开备忘录（或任何记事应用），新建一篇笔记：标题「测试备忘」，内容「Aico 自动化验证内容，时间戳 2026」。保存后退出备忘录，再重新打开确认笔记还在、内容完整。",
       "rubric": [
         {
           "id": "opened_notes",
@@ -142,7 +142,7 @@
         },
         {
           "id": "content_verified",
-          "check": "Post-screenshot shows the note with 测试备忘 and Aiden 自动化验证内容，时间戳 2026 visible."
+          "check": "Post-screenshot shows the note with 测试备忘 and Aico 自动化验证内容，时间戳 2026 visible."
         }
       ],
       "hard_assertions": {
@@ -155,7 +155,7 @@
       "id": "browser_search_and_open",
       "category": "multi_step",
       "description_for_judge": "Agent must open the browser, search for a keyword, and open the first result page.",
-      "prompt": "请打开浏览器，搜一下「Aiden AI assistant」，点开第一个搜索结果，确认页面加载出来了。",
+      "prompt": "请打开浏览器，搜一下「Aico AI assistant」，点开第一个搜索结果，确认页面加载出来了。",
       "rubric": [
         {
           "id": "opened_browser",
@@ -163,7 +163,7 @@
         },
         {
           "id": "performed_search",
-          "check": "Trace shows agent typed Aiden AI assistant and submitted a search."
+          "check": "Trace shows agent typed Aico AI assistant and submitted a search."
         },
         {
           "id": "clicked_result",

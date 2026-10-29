@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/schema"
@@ -570,7 +570,7 @@ func TestToolResultPolicyUsesMemoryAndEpisodeProjections(t *testing.T) {
 	}{
 		{
 			name: "memory recall keeps query and ids",
-			call: ToolCall{Spec: ToolSpec{Name: "recall_memory"}, Input: `{"tags":["verification"],"entities":["Aiden"],"limit":100}`},
+			call: ToolCall{Spec: ToolSpec{Name: "recall_memory"}, Input: `{"tags":["verification"],"entities":["Aico"],"limit":100}`},
 			output: mustMarshalToolResultJSON(t, map[string]any{
 				"results": []map[string]any{
 					{"id": "memory_1", "title": "First", "content": strings.Repeat("detail ", 800)},
@@ -579,7 +579,7 @@ func TestToolResultPolicyUsesMemoryAndEpisodeProjections(t *testing.T) {
 					{"id": "memory_4", "title": "Fourth", "content": strings.Repeat("detail ", 800)},
 				},
 			}),
-			wants: []string{`"query":{"entities":["Aiden"],"limit":100,"tags":["verification"]}`, `"results_total":4`, `"id":"memory_1"`},
+			wants: []string{`"query":{"entities":["Aico"],"limit":100,"tags":["verification"]}`, `"results_total":4`, `"id":"memory_1"`},
 		},
 		{
 			name: "episode keeps identity outcome and event count",

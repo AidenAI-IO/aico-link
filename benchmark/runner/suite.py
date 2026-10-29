@@ -31,7 +31,7 @@ SETUP_KEYS = {
 ASSERT_MEMORY_EXPECTED_KEYS = {
     "id", "memory_scope", "type", "revision", "content_contains",
     "title_contains", "tags_contains", "entities_contains",
-    "source_refs_contain", "evidence_refs_contain",
+    "source_refs_contain", "evidence_refs_contain", "sensitive",
 }
 ASSERT_MEMORY_REFERENCE_KEYS = {"type", "id", "event_ids_contains"}
 
@@ -82,6 +82,7 @@ class ConsolidationExpectation:
     forbidden_memory_substrings: list[str] = dc.field(default_factory=list)
     required_memory_substrings: list[str] = dc.field(default_factory=list)
     required_memory_types: list[str] = dc.field(default_factory=list)
+    required_procedure_steps: list[str] = dc.field(default_factory=list)
     required_memory_scope: dict[str, str] = dc.field(default_factory=dict)
 
 @dc.dataclass
@@ -124,6 +125,8 @@ class TaskSpec:
     app_ids: list[str] = dc.field(default_factory=list)
     foreground_app_id: str | None = None
     environment_assertions: dict[str, Any] = dc.field(default_factory=dict)
+    android_bridge_input_text: str | None = None
+    android_bridge_fixture: str | None = None
     memory_assertions: dict[str, Any] | None = None
     consolidation_expectation: ConsolidationExpectation | None = None
 
@@ -285,6 +288,14 @@ def load_suite(path: Path) -> Suite:
         environment_assertions = _parse_environment_assertions(
             raw.get("environment_assertions"), tid
         )
+        android_bridge_input_text = raw.get("android_bridge_input_text")
+        if android_bridge_input_text is not None and (
+            not isinstance(android_bridge_input_text, str) or not android_bridge_input_text
+        ):
+            raise SuiteValidationError(f"task {tid}: android_bridge_input_text must be non-empty text")
+        android_bridge_fixture = raw.get("android_bridge_fixture")
+        if android_bridge_fixture not in (None, "calendar", "contacts"):
+            raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar or contacts")
         platforms = _platform_list(raw.get("platforms", []), tid)
         task_mock_environment = _parse_mock_environment(
             raw.get("mock_environment"),
@@ -380,6 +391,8 @@ def load_suite(path: Path) -> Suite:
             app_ids=app_ids,
             foreground_app_id=foreground_app_id,
             environment_assertions=environment_assertions,
+            android_bridge_input_text=android_bridge_input_text,
+            android_bridge_fixture=android_bridge_fixture,
             memory_assertions=memory_assertions,
             consolidation_expectation=consolidation_expectation,
         ))
@@ -495,6 +508,8 @@ def validate_assert_memory_setup(
                 raise SuiteValidationError(
                     f"{spec_path} {field} must be a non-empty string"
                 )
+        if "sensitive" in spec and not isinstance(spec["sensitive"], bool):
+            raise SuiteValidationError(f"{spec_path} sensitive must be a boolean")
         revision = spec.get("revision")
         if revision is not None and (
             isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0
@@ -643,7 +658,7 @@ def _parse_consolidation_expectation(
     allowed = {
         "goal_result", "min_memory_ids", "max_memory_ids", "allow_empty_memory",
         "required_assessment_evidence", "expected_status", "forbidden_memory_substrings",
-        "required_memory_substrings", "required_memory_types", "required_memory_scope",
+        "required_memory_substrings", "required_memory_types", "required_memory_scope", "required_procedure_steps",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -701,6 +716,7 @@ def _parse_consolidation_expectation(
         "forbidden_memory_substrings": raw.get("forbidden_memory_substrings", []),
         "required_memory_substrings": raw.get("required_memory_substrings", []),
         "required_memory_types": raw.get("required_memory_types", []),
+        "required_procedure_steps": raw.get("required_procedure_steps", []),
     }
     for field, values in lists.items():
         if not isinstance(values, list) or not all(isinstance(item, str) and item.strip() for item in values):
@@ -715,7 +731,7 @@ def _parse_consolidation_expectation(
         raise SuiteValidationError(
             f"task {task_id}: consolidation_expectation.required_memory_scope must be an object of non-empty strings"
         )
-    positive_contract = bool(lists["required_memory_substrings"] or lists["required_memory_types"] or required_scope)
+    positive_contract = bool(lists["required_memory_substrings"] or lists["required_memory_types"] or lists["required_procedure_steps"] or required_scope)
     if positive_contract and allow_empty_memory:
         raise SuiteValidationError(
             f"task {task_id}: consolidation_expectation.allow_empty_memory cannot be true when required memory content, type, or scope is declared"
@@ -738,6 +754,7 @@ def _parse_consolidation_expectation(
         forbidden_memory_substrings=list(lists["forbidden_memory_substrings"]),
         required_memory_substrings=list(lists["required_memory_substrings"]),
         required_memory_types=list(lists["required_memory_types"]),
+        required_procedure_steps=list(lists["required_procedure_steps"]),
         required_memory_scope=dict(required_scope),
     )
 

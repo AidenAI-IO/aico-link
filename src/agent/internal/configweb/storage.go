@@ -14,8 +14,8 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/logging"
 	"github.com/BurntSushi/toml"
 )
 
@@ -94,11 +94,16 @@ func (s *Server) handleStorageEject(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "storage manager unavailable")
 		return
 	}
-	if err := storage.SafeEject(); err != nil {
+	err := storage.SafeEject()
+	if err != nil && !errors.Is(err, agent.ErrStorageFlush) {
 		writeJSONError(w, http.StatusConflict, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, s.storageStatusResponse(storage.Status()))
+	payload := s.storageStatusResponse(storage.Status())
+	if err != nil {
+		payload["warning_code"] = "storage_flush_failed"
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func (s *Server) handleStorageFormat(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +133,7 @@ func (s *Server) handleConfigBackupExport(w http.ResponseWriter, _ *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "application/toml; charset=utf-8")
-	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="aiden-config-%s.toml"`, time.Now().Format("20060102-150405")))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="aico-config-%s.toml"`, time.Now().Format("20060102-150405")))
 	w.Header().Set("Content-Length", fmt.Sprint(len(data)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)

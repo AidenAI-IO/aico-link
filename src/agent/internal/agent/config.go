@@ -1,10 +1,6 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/netproxy"
 	"errors"
 	"fmt"
 	"math"
@@ -15,6 +11,11 @@ import (
 	"strings"
 	"time"
 
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/netproxy"
+
 	"github.com/BurntSushi/toml"
 )
 
@@ -24,9 +25,10 @@ type SearchConfig struct {
 }
 
 type EnvironmentBridgeConfig struct {
-	Enabled         bool   `toml:"-"` // Only set via CLI, not config file
-	Endpoint        string `toml:"-"` // Only set via CLI, not config file
-	BenchmarkTaskID string `toml:"-"` // Only set via CLI, not config file
+	Enabled          bool   `toml:"-"` // Only set via CLI, not config file
+	Endpoint         string `toml:"-"` // Only set via CLI, not config file
+	BenchmarkTaskID  string `toml:"-"` // Only set via CLI, not config file
+	LocalPhoneBridge bool   `toml:"-"` // Keep the App connection on this Agent while device input uses the environment bridge.
 }
 
 type BenchmarkConfig struct {
@@ -179,7 +181,7 @@ func (c StorageConfig) MountPointOrDefault() string {
 	return path
 }
 
-// DeviceOrDefault returns Device if non-empty, else "mmcblk2".
+// DeviceOrDefault returns Device if non-empty, else "auto" (discover an SD card).
 func (c StorageConfig) DeviceOrDefault() string {
 	dev := strings.TrimSpace(c.Device)
 	if dev == "" {
@@ -339,7 +341,6 @@ type Config struct {
 	VoiceStreamingTTSEnabled       *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech            *bool                   `toml:"voice_tool_call_speech,omitempty"`
 	VoiceProgressSpeechEnabled     *bool                   `toml:"voice_progress_speech_enabled,omitempty"`
-	VoiceMaxResponseTokens         int                     `toml:"voice_max_response_tokens,omitempty"`
 	MaxIterations                  int                     `toml:"max_iterations,omitempty"`
 	TerminationPolicy              TerminationPolicyConfig `toml:"termination_policy,omitempty"`
 	ForceSimpleLoop                bool                    `toml:"-"`
@@ -830,7 +831,7 @@ type ModelConfig struct {
 	ResponsesInclude []string `toml:"responses_include,omitempty"`
 	// Temperature is a pointer so nil (unset) is distinct from an explicit 0.0.
 	// Unset means the effective value is resolved at runtime from model metadata
-	// or left to providers whose defaults Aiden does not know (see
+	// or left to providers whose defaults Aico does not know (see
 	// applyModelTemperatureDefault). An explicit value, including 0, is always
 	// honored and sent to the provider.
 	Temperature       *float64 `toml:"temperature,omitempty"`
@@ -913,7 +914,7 @@ func loadConfigFromDir(configDir string, load configFileLoader) (Config, error) 
 }
 
 func resolveBundledSkillsDir() string {
-	if v := os.Getenv("AIDEN_BUNDLED_SKILLS_DIR"); v != "" {
+	if v := os.Getenv("AICO_BUNDLED_SKILLS_DIR"); v != "" {
 		return v
 	}
 	for _, dir := range bundledSkillsDirCandidates() {
@@ -925,7 +926,7 @@ func resolveBundledSkillsDir() string {
 }
 
 func bundledSkillsDirCandidates() []string {
-	return []string{"/usr/share/aiden/skills"}
+	return []string{"/usr/share/aico/skills"}
 }
 
 func LoadConfig(path string) (Config, error) {
@@ -1046,7 +1047,7 @@ func applyModelTemperatureDefault(m *ModelConfig) {
 	}
 	// Some native providers recommend using each model's own default. If the
 	// model registry has no reliable value for one of those providers, omit
-	// temperature rather than substituting Aiden's cross-provider fallback. The
+	// temperature rather than substituting Aico's cross-provider fallback. The
 	// provider has already been resolved by applyRuntimeModelProviders, including
 	// named provider records.
 	if modelProviderUsesProviderTemperatureDefault(m.Provider) {
@@ -1901,9 +1902,6 @@ func (c Config) Validate() error {
 	if c.VoiceMaxTurns < 0 {
 		return fmt.Errorf("voice_max_turns must be >= 0, got %d", c.VoiceMaxTurns)
 	}
-	if c.VoiceMaxResponseTokens < 0 {
-		return fmt.Errorf("voice_max_response_tokens must be >= 0, got %d", c.VoiceMaxResponseTokens)
-	}
 	if err := c.QuickCapture.Validate(); err != nil {
 		return err
 	}
@@ -2315,13 +2313,6 @@ func (c Config) VoiceProgressSpeechEnabledOrDefault() bool {
 		return *c.VoiceProgressSpeechEnabled
 	}
 	return true
-}
-
-func (c Config) VoiceMaxResponseTokensOrDefault() int {
-	if c.VoiceMaxResponseTokens > 0 {
-		return c.VoiceMaxResponseTokens
-	}
-	return defaultVoiceMaxResponseTokens
 }
 
 // ContextCompactionThresholdOrDefault returns the fraction of the usable input

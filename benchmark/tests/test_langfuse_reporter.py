@@ -235,7 +235,7 @@ def test_publish_run_does_not_attach_to_unverified_execution_trace(tmp_path: Pat
     assert client.execution_observations == []
     assert client.link_calls == []
     output = client.experiment["item_results"][0].output
-    assert output["aiden_trace_id"] == _agent_trace_id("episode-a")
+    assert output["aico_trace_id"] == _agent_trace_id("episode-a")
     assert output["execution_trace_status"] == "pending_or_missing"
 
 
@@ -251,7 +251,7 @@ def test_publish_run_without_episode_keeps_failure_replay(tmp_path: Path):
     assert published.dataset_run_url == "http://langfuse.local/dataset-run-1"
     assert client.execution_observations == []
     assert client.experiment is not None
-    assert client.experiment["item_results"][0].output["aiden_trace_id"] is None
+    assert client.experiment["item_results"][0].output["aico_trace_id"] is None
     assert client.experiment["item_results"][0].output["execution_trace_status"] == "no_episode"
 
 
@@ -490,7 +490,7 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     assert published.run_name == "run-a"
     assert published.item_count == 1
     assert published.dataset_run_url == "http://langfuse.local/dataset-run-1"
-    assert published.dataset_name == "aiden-benchmark:smoke_suite"
+    assert published.dataset_name == "aico-benchmark:smoke_suite"
     assert client.experiment["metadata"]["execution_environment"] == "scripted"
     assert client.items[0].input == {
         "task_id": "task-a",
@@ -535,13 +535,13 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
     assert client.experiment["metadata"]["git_sha"] == "abc123"
     assert len(client.experiment["metadata"]["workload_sha256"]) == 64
     assert json.loads(client.experiment["metadata"]["workload_task_ids"]) == ["task-a"]
-    assert client.spans[0]["metadata"]["aiden_episode_id"] == "episode-a"
+    assert client.spans[0]["metadata"]["aico_episode_id"] == "episode-a"
     trace_id = uuid.uuid5(uuid.NAMESPACE_URL, "episode-a").hex
     expected_url = f"http://langfuse.local/project/project-1/traces/{trace_id}"
     output = client.experiment["item_results"][0].output
-    assert output["aiden_trace_id"] == trace_id
-    assert output["aiden_trace_url"] == expected_url
-    assert client.spans[0]["metadata"]["aiden_trace_url"] == expected_url
+    assert output["aico_trace_id"] == trace_id
+    assert output["aico_trace_url"] == expected_url
+    assert client.spans[0]["metadata"]["aico_trace_url"] == expected_url
     assert client.flushed is True
 
 
@@ -575,10 +575,10 @@ def test_publish_run_keeps_scores_when_trace_url_lookup_fails(tmp_path: Path, cl
     client.get_trace_url = unavailable
     published = publish_run(_write_run(tmp_path), client=client)
     if isinstance(client, ExecutionLangfuse):
-        assert client.execution_observations[0]["output"]["aiden_trace_url"] is None
+        assert client.execution_observations[0]["output"]["aico_trace_url"] is None
         assert published.dataset_run_url is None
     else:
-        assert client.experiment["item_results"][0].output["aiden_trace_url"] is None
+        assert client.experiment["item_results"][0].output["aico_trace_url"] is None
     assert client.score_calls
 
 
@@ -701,7 +701,7 @@ def test_publish_run_reports_publication_progress(tmp_path: Path):
     publish_run(_write_run(tmp_path), client=FakeLangfuse(), progress=progress.append)
 
     assert any(
-        "dataset=aiden-benchmark:smoke_suite run=run-a items=1" in message
+        "dataset=aico-benchmark:smoke_suite run=run-a items=1" in message
         for message in progress
     )
     assert any("experiment publication start" in message for message in progress)

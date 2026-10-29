@@ -1,6 +1,6 @@
 #pragma once
 
-namespace aiden {
+namespace aico {
 
 // Rockit exposes process-global media state. Keep all users in this process on
 // one reference-counted lifetime so VENC cannot tear SYS down while audio is
@@ -8,4 +8,4 @@ namespace aiden {
 bool acquire_rockit_system();
 void release_rockit_system();
 
-}  // namespace aiden
+}  // namespace aico

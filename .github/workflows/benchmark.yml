@@ -96,7 +96,7 @@ jobs:
   run:
     needs: plan
     if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    runs-on: aiden-hosted-02
+    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
     # A single job fans the cases out in-process instead, where the isolation that
@@ -116,9 +116,9 @@ jobs:
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
-      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aiden-agent-daemon:local' }}
+      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aico-agent-daemon:local' }}
       DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn
-      MOBILEGYM_IMAGE: aiden-mobilegym-simulator:py311
+      MOBILEGYM_IMAGE: aico-mobilegym-simulator:py311
       MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
       MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
       BENCHMARK_CI_IMAGES_PREPARED: '1'
@@ -140,12 +140,14 @@ jobs:
       BENCHMARK_TELEMETRY: '1'
       LANGFUSE_HTTPS_PROXY: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
       ANDROID_SERIAL: ${{ vars.BENCHMARK_ANDROID_SERIAL }}
+      AIDENBRIDGE_APK_URL: https://foxwallet.oss-cn-hongkong.aliyuncs.com/downloads/aidenbridge.apk
+      AIDENBRIDGE_PACKAGE: com.aidenbridge
       BENCHMARK_PHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_PHONE_ENVIRONMENT_URL }}
       BENCHMARK_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_IOS_ENVIRONMENT_URL }}
       BENCHMARK_MAC_ENVIRONMENT_URL: ${{ vars.BENCHMARK_MAC_ENVIRONMENT_URL }}
       BENCHMARK_VPHONE_ENVIRONMENT_URL: ${{ vars.BENCHMARK_VPHONE_ENVIRONMENT_URL }}
-      BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AIDEN_APP_IOS_ENVIRONMENT_URL }}
-      BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AIDEN_APP_ANDROID_ENVIRONMENT_URL }}
+      BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL }}
+      BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL: ${{ vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL }}
     steps:
       - name: Reclaim persistent runner workspace
         shell: bash
@@ -173,7 +175,7 @@ jobs:
         run: |
           set -uo pipefail
           cutoff=$(( $(date +%s) - REAP_AGE_HOURS * 3600 ))
-          for prefix in aiden-benchmark-agent- aiden-mobilegym-env-; do
+          for prefix in aico-benchmark-agent- aico-mobilegym-env-; do
             for id in $(docker ps -aq --filter "name=$prefix"); do
               # .Created is plain RFC3339. `docker ps --format CreatedAt` instead ends
               # in a timezone abbreviation that GNU date refuses to parse.
@@ -189,7 +191,7 @@ jobs:
           done
           for id in $(docker network ls -q --filter "label=com.docker.compose.project"); do
             project="$(docker network inspect -f '{{ index .Labels "com.docker.compose.project" }}' "$id" 2>/dev/null)" || continue
-            [[ "$project" == aiden-benchmark-agent-* ]] || continue
+            [[ "$project" == aico-benchmark-agent-* ]] || continue
             created="$(docker network inspect -f '{{.Created}}' "$id" 2>/dev/null)" || continue
             created_epoch="$(date -d "$created" +%s 2>/dev/null)" || continue
             if (( created_epoch < cutoff )); then
@@ -295,6 +297,70 @@ jobs:
           echo "$ANDROID_SERIAL did not finish booting" >&2
           adb devices >&2
           exit 1
+      - name: Install AidenBridge on Android device
+        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        run: |
+          set -euo pipefail
+          echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
+          release_name="$(curl --fail --silent --show-error --location --head --retry 3 --max-time 30 "$AIDENBRIDGE_APK_URL" |
+            tr -d '\r' | sed -n 's/^[Cc]ontent-[Dd]isposition:.*filename="\([^"]*\)".*/\1/p' | tail -n 1)"
+          [[ "$release_name" =~ -([0-9]+)\.apk$ ]] || {
+            echo "Cannot determine AidenBridge version from release filename: $release_name" >&2
+            exit 1
+          }
+          release_version="${BASH_REMATCH[1]}"
+          installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+            sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')" || true
+          installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")" || true
+          apk_sha256=""
+          if [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]]; then
+            install_status="Reused"
+            echo "Reusing $AIDENBRIDGE_PACKAGE version $installed_version"
+          else
+            install_status="Installed"
+            apk_path="$(mktemp "${RUNNER_TEMP:-/tmp}/aidenbridge.XXXXXX.apk")"
+            trap 'rm -f "$apk_path"' EXIT
+            echo "Downloading $release_name"
+            curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
+            apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
+            echo "AidenBridge APK SHA-256: $apk_sha256"
+            adb -s "$ANDROID_SERIAL" install -r "$apk_path"
+            installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
+              sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
+            installed_path="$(adb -s "$ANDROID_SERIAL" shell pm path "$AIDENBRIDGE_PACKAGE")"
+            [[ "$installed_version" == "$release_version" && "$installed_path" == package:* ]] || {
+              echo "Expected $AIDENBRIDGE_PACKAGE version $release_version, found ${installed_version:-none}" >&2
+              exit 1
+            }
+            echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
+          fi
+          {
+            echo "### AidenBridge APK"
+            echo "Source: $AIDENBRIDGE_APK_URL"
+            echo "Release: $release_name"
+            echo "Installed versionCode: $installed_version"
+            echo "Status: $install_status"
+            if [[ -n "$apk_sha256" ]]; then
+              echo "SHA-256: $apk_sha256"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Enable emulator routing for AidenBridge cases
+        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        run: |
+          set -euo pipefail
+          adb -s "$ANDROID_SERIAL" root
+          timeout 60 adb -s "$ANDROID_SERIAL" wait-for-device
+          [[ "$(adb -s "$ANDROID_SERIAL" shell id -u | tr -d '\r')" == "0" ]] || {
+            echo "AidenBridge capability benchmark requires a rooted Android emulator" >&2
+            exit 1
+          }
+          adb -s "$ANDROID_SERIAL" shell iptables -t nat -L OUTPUT -n >/dev/null
+          for permission in READ_CALENDAR WRITE_CALENDAR READ_CONTACTS WRITE_CONTACTS; do
+            adb -s "$ANDROID_SERIAL" shell pm grant "$AIDENBRIDGE_PACKAGE" "android.permission.$permission"
+          done
+          if (( $(adb -s "$ANDROID_SERIAL" shell getprop ro.build.version.sdk | tr -d '\r') >= 33 )); then
+            adb -s "$ANDROID_SERIAL" shell pm grant "$AIDENBRIDGE_PACKAGE" android.permission.POST_NOTIFICATIONS
+          fi
       - name: Prepare benchmark images
         working-directory: benchmark
         run: >-
@@ -320,12 +386,18 @@ jobs:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -uo pipefail
+          if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+            adb -s "$ANDROID_SERIAL" shell iptables -t nat -D OUTPUT \
+              -d 192.168.42.1/32 -p tcp --dport 8080 \
+              -j DNAT --to-destination 127.0.0.1:8080 >/dev/null 2>&1 || true
+            adb -s "$ANDROID_SERIAL" reverse --remove tcp:8080 >/dev/null 2>&1 || true
+          fi
           # Every run id in this job starts with the prefix, so one prefix sweep
           # covers all the cases the fan-out started.
-          for id in $(docker ps -aq --filter "name=aiden-mobilegym-env-mobilegym-${RUN_ID_PREFIX}"); do
+          for id in $(docker ps -aq --filter "name=aico-mobilegym-env-mobilegym-${RUN_ID_PREFIX}"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done
-          for id in $(docker ps -aq --filter "name=aiden-benchmark-agent-${RUN_ID_PREFIX}"); do
+          for id in $(docker ps -aq --filter "name=aico-benchmark-agent-${RUN_ID_PREFIX}"); do
             project="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.project" }}' "$id" 2>/dev/null)"
             if [[ -n "$project" ]]; then
               docker compose \

@@ -5,29 +5,29 @@
 #include <limits>
 #include <vector>
 
-using aiden::compact_nv12;
+using aico::compact_nv12;
 
 TEST_CASE("capture_payload_bounds applies V4L2 data_offset semantics") {
-    aiden::CapturePayloadBounds bounds;
+    aico::CapturePayloadBounds bounds;
 
-    REQUIRE(aiden::capture_payload_bounds(128, 100, 16, 128, &bounds));
+    REQUIRE(aico::capture_payload_bounds(128, 100, 16, 128, &bounds));
     CHECK(bounds.data_offset == 16);
     CHECK(bounds.payload_length == 84);
 
-    CHECK_FALSE(aiden::capture_payload_bounds(128, 15, 16, 128, &bounds));
-    CHECK_FALSE(aiden::capture_payload_bounds(90, 100, 16, 100, &bounds));
+    CHECK_FALSE(aico::capture_payload_bounds(128, 15, 16, 128, &bounds));
+    CHECK_FALSE(aico::capture_payload_bounds(90, 100, 16, 100, &bounds));
 }
 
 TEST_CASE("capture_payload_bounds uses safe sizeimage fallback only for zero bytesused") {
-    aiden::CapturePayloadBounds bounds;
+    aico::CapturePayloadBounds bounds;
 
-    REQUIRE(aiden::capture_payload_bounds(128, 0, 16, 100, &bounds));
+    REQUIRE(aico::capture_payload_bounds(128, 0, 16, 100, &bounds));
     CHECK(bounds.data_offset == 16);
     CHECK(bounds.payload_length == 84);
 
-    CHECK_FALSE(aiden::capture_payload_bounds(128, 0, 101, 100, &bounds));
-    CHECK_FALSE(aiden::capture_payload_bounds(90, 0, 16, 100, &bounds));
-    CHECK_FALSE(aiden::capture_payload_bounds(128, 0, 16, 0, &bounds));
+    CHECK_FALSE(aico::capture_payload_bounds(128, 0, 101, 100, &bounds));
+    CHECK_FALSE(aico::capture_payload_bounds(90, 0, 16, 100, &bounds));
+    CHECK_FALSE(aico::capture_payload_bounds(128, 0, 16, 0, &bounds));
 }
 
 TEST_CASE("compact_nv12 copies padded Y and UV rows") {

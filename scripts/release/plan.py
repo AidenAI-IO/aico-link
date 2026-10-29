@@ -13,6 +13,14 @@ CHANNELS = ("dev", "staging", "prod")
 VERSION = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
 TAG = re.compile(r"(dev|staging|prod)-v(" + VERSION + r")\Z")
 POLICY = Path(__file__).with_name("policy.json")
+# Published records are immutable, so releases made before a GitHub repository
+# rename keep the old name. Map each former name to the current one.
+RENAMED_REPOS = {"AidenAI-IO/aiden-firmware": "AidenAI-IO/aico-link"}
+# A record lists every changed path, so a first release or a commit that
+# vendors a large tree (dev-v0.0.47 added pico-sdk: ~117k paths, ~9.4 MiB)
+# yields a record far larger than an ordinary one. Published records are
+# immutable, so readers must accept every record the planner can emit.
+RELEASE_RECORD_LIMIT = 64 * 1024 * 1024
 CONFIG_BOUNDARY = json.loads((Path(__file__).resolve().parents[1] / "debian-system/config-package.json").read_text())
 
 
@@ -70,12 +78,16 @@ def validate_record(record):
     datetime.strptime(record["build_time"], "%Y-%m-%dT%H:%M:%SZ")
 
 
+def current_repo(repo):
+    return RENAMED_REPOS.get(repo, repo)
+
+
 def validate_history(records, repo):
     tags, versions, contracts = set(), set(), set()
     by_tag = {record["tag"]: record for record in records}
     for record in records:
         validate_record(record)
-        if record["repo"] != repo or record["kind"] == "none":
+        if current_repo(record["repo"]) != current_repo(repo) or record["kind"] == "none":
             raise ValueError("Invalid published release record")
         if record["tag"] in tags or record["version"] in versions:
             raise ValueError("Duplicate release tag/version")
@@ -119,7 +131,7 @@ def github_history(repo):
         if release["draft"] or not TAG.fullmatch(release["tag_name"]):
             continue
         assets = [a for a in release["assets"] if a["name"] == "release.json"]
-        if len(assets) != 1 or assets[0]["size"] > 2 * 1024 * 1024:
+        if len(assets) != 1 or assets[0]["size"] > RELEASE_RECORD_LIMIT:
             raise ValueError(f"Missing/invalid release.json: {release['tag_name']}")
         record = json.loads(command("gh", "api", "-H", "Accept: application/octet-stream",
                                     f"repos/{repo}/releases/assets/{assets[0]['id']}"))
@@ -269,11 +281,11 @@ def make_plan(root, repo, channel, records, ref="HEAD", version=None, force_ota=
 def environment(plan):
     validate_record(plan)
     return {
-        "AIDEN_BUSINESS_VERSION": plan["version"], "AIDEN_BUSINESS_REVISION": "1",
-        "AIDEN_PLATFORM_CONTRACT": str(plan["platform"]["contract"]),
-        "AIDEN_PLATFORM_BASE": plan["platform"]["base_release"],
-        "AIDEN_RELEASE_CHANNEL": plan["channel"],
-        "AIDEN_SYSTEM_FINGERPRINT": plan["fingerprints"]["system"],
+        "AICO_BUSINESS_VERSION": plan["version"], "AICO_BUSINESS_REVISION": "1",
+        "AICO_PLATFORM_CONTRACT": str(plan["platform"]["contract"]),
+        "AICO_PLATFORM_BASE": plan["platform"]["base_release"],
+        "AICO_RELEASE_CHANNEL": plan["channel"],
+        "AICO_SYSTEM_FINGERPRINT": plan["fingerprints"]["system"],
         "OTA_REPO": plan["repo"], "OTA_CHANNEL": plan["channel"],
         "OTA_BUILD_VERSION": plan["tag"], "OTA_BUILD_TIME": plan["build_time"],
         "OTA_BASE_URL": f"https://github.com/{plan['repo']}/releases/download/{plan['tag']}",

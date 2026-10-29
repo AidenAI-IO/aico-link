@@ -1,10 +1,11 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -400,6 +401,39 @@ func TestRecallSessionChunksToolReturnsNewestFirst(t *testing.T) {
 	}
 }
 
+func TestRecallDeviceMemoryTagFallbackWithoutTermsPreservesScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewDeviceMemoryStore(t.TempDir())
+	for _, fixture := range []struct{ id, app, device, kind string }{
+		{"wanted", "QA Notes", "phone", "procedure"},
+		{"other_app", "Calendar", "phone", "procedure"},
+		{"other_device", "QA Notes", "tablet", "procedure"},
+		{"other_type", "QA Notes", "phone", "fact"},
+	} {
+		_, err := store.ApplyMemoryIntent(ctx, MemoryIntent{Action: MemoryIntentActionCreate, DeviceItem: &DeviceMemoryItem{
+			ID: fixture.id, AppName: fixture.app, DeviceID: fixture.device, Type: fixture.kind,
+			Status: deviceMemoryStatusActive, Tags: []string{"save", "persistence"},
+			Title: "Edit the title", Content: "Switch to Preview, return to Edit, save and reopen to verify.",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err := NewRecallDeviceMemoryTool(store).Call(ctx, `{"tags":["edit","title","verify"],"entities":["QA Notes"],"types":["procedure"],"device_id":"phone"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryHit `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 1 || decoded.Results[0].ID != "wanted" {
+		t.Fatalf("recall = %s, want only the matching app, device and type", out)
+	}
+}
+
 func TestRecallMemoryToolReturnsMatchingLongTermMemory(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()
@@ -552,6 +586,74 @@ func TestRecallMemoryToolMergesTemporaryBeforeLongTerm(t *testing.T) {
 	}
 }
 
+// A browse by type must not let a backlog of notification conclusions push
+// out what the user saved: every result ties on type, so scope decides.
+func TestRecallMemoryToolBrowseKeepsLongTermAmongTemporaryBacklog(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	longTerm := NewLongTermMemoryStore(filepath.Join(root, "long_term"))
+	temporary := NewLongTermMemoryStore(filepath.Join(root, "temporary"))
+	expiresAt := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	for i := 0; i < 12; i++ {
+		item := MemoryItem{ID: fmt.Sprintf("tmp_notification_%02d", i), Type: "fact", Priority: 90, Confidence: 0.9, Title: fmt.Sprintf("通知 %d", i), Content: fmt.Sprintf("第 %d 条账单通知。", i), ExpiresAt: expiresAt, EvidenceExcerpts: []string{"通知"}}
+		if _, err := temporary.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := longTerm.AddMemory(ctx, MemoryItem{ID: "mem_brevity", Type: "preference", Priority: 80, Confidence: 0.9, Title: "回复长度", Content: "用户希望回复尽量简短。", EvidenceExcerpts: []string{"用户原话"}}); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewRecallMemoryToolWithTemporary(longTerm, temporary)
+	out, err := tool.Call(ctx, `{"types":["profile","preference","rule","fact"],"limit":10}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Results []MemoryResult `json:"results"`
+	}
+	if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Results) != 10 || decoded.Results[0].ID != "mem_brevity" {
+		t.Fatalf("results = %#v, want the saved preference first in 10 results", decoded.Results)
+	}
+}
+
+func TestCapTemporaryRecallResults(t *testing.T) {
+	results := func(longTerm, temporary int) []MemoryResult {
+		var out []MemoryResult
+		for i := 0; i < longTerm; i++ {
+			out = append(out, MemoryResult{ID: fmt.Sprintf("mem_%d", i), MemoryScope: "long_term"})
+		}
+		for i := 0; i < temporary; i++ {
+			out = append(out, MemoryResult{ID: fmt.Sprintf("tmp_%d", i), MemoryScope: "temporary"})
+		}
+		return out
+	}
+	count := func(items []MemoryResult, scope string) int {
+		n := 0
+		for _, item := range items {
+			if item.MemoryScope == scope {
+				n++
+			}
+		}
+		return n
+	}
+	for _, tc := range []struct {
+		longTerm, temporary, limit, wantLong, wantTemp int
+	}{
+		{longTerm: 20, temporary: 20, limit: 10, wantLong: 5, wantTemp: 5},
+		{longTerm: 2, temporary: 20, limit: 10, wantLong: 2, wantTemp: 8},
+		{longTerm: 20, temporary: 1, limit: 10, wantLong: 9, wantTemp: 1},
+		{longTerm: 3, temporary: 3, limit: 10, wantLong: 3, wantTemp: 3},
+	} {
+		got := capTemporaryRecallResults(results(tc.longTerm, tc.temporary), tc.limit)
+		if count(got, "long_term") != tc.wantLong || count(got, "temporary") != tc.wantTemp {
+			t.Errorf("%+v: got %d long-term, %d temporary", tc, count(got, "long_term"), count(got, "temporary"))
+		}
+	}
+}
+
 func TestSaveMemoryToolExcludesScreenSnapshotType(t *testing.T) {
 	props := NewSaveMemoryTool(nil).ArgsSchema()["properties"].(map[string]any)
 	typeSchema := props["type"].(map[string]any)
@@ -559,6 +661,114 @@ func TestSaveMemoryToolExcludesScreenSnapshotType(t *testing.T) {
 	want := []string{"preference", "rule", "procedure", "fact", "profile"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("save_memory type enum = %v, want %v", got, want)
+	}
+}
+
+func TestSaveMemoryReplacementRespectsAdmissionAndOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		oldSensitive  bool
+		declareSecret bool
+		authorized    bool
+	}{
+		{name: "refuse unrequested secret", declareSecret: true},
+		{name: "save requested secret", declareSecret: true, authorized: true},
+		{name: "preserve existing sensitivity", oldSensitive: true},
+		{name: "user corrects notification"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+			ctx := userRunContext("Please remember my updated safe code.")
+			oldID, err := store.AddMemory(ctx, MemoryItem{
+				ID: "old-memory", Type: "profile", Content: "Old saved value.",
+				Sensitive: tc.oldSensitive, Origin: memoryOriginNotification,
+				EvidenceExcerpts: []string{"Old saved value."},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]any{
+				"type": "profile", "content": "Updated saved value.",
+				"replaces_id": oldID, "expected_revision": 1,
+			}
+			if tc.declareSecret {
+				input["sensitive"] = "credential"
+			}
+			if tc.authorized {
+				input["user_request"] = "Please remember my updated safe code."
+			}
+			encoded, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := saveMemoryForTest(t, ctx, NewSaveMemoryTool(store), string(encoded))
+			old, err := readMemoryMarkdown(store.memoryPath(oldID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.declareSecret && !tc.authorized {
+				if result["status"] != "refused" || old.Item.Status != "active" || old.Item.Content != "Old saved value." || effectiveMemoryRevision(old.Item) != 1 {
+					t.Fatalf("refused correction changed memory: result=%v old=%+v", result, old.Item)
+				}
+				all, err := store.searchAll(ctx)
+				if err != nil || len(all) != 1 {
+					t.Fatalf("refused correction added memory: results=%+v err=%v", all, err)
+				}
+				return
+			}
+			if result["status"] != "saved" || result["operation"] != "supersede" || old.Item.Status != "replaced" {
+				t.Fatalf("correction failed: result=%v old=%+v", result, old.Item)
+			}
+			replacement, err := readMemoryMarkdown(store.memoryPath(result["id"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantSensitive := tc.oldSensitive || tc.declareSecret
+			if replacement.Item.Sensitive != wantSensitive || replacement.Item.Origin != memoryOriginUser || replacement.Item.Supersedes != oldID {
+				t.Fatalf("replacement lost metadata: %+v", replacement.Item)
+			}
+			if tc.declareSecret && result["note"] == "" {
+				t.Fatal("sensitive correction omitted the saved-secret notice")
+			}
+			profile, err := store.ProfilePrompt(ctx, 1500)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(profile, "Updated saved value.") == wantSensitive {
+				t.Fatalf("profile did not respect replacement origin/sensitivity: %q", profile)
+			}
+		})
+	}
+}
+
+func TestSaveMemoryToolReplacesRecalledMemory(t *testing.T) {
+	store := NewLongTermMemoryStore(t.TempDir())
+	ctx := context.Background()
+	old := MemoryItem{ID: "old-preference", Type: "preference", Content: "Use dark mode.", EvidenceExcerpts: []string{"Use dark mode."}}
+	if _, err := store.AddMemory(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewSaveMemoryTool(store)
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"tmp_preference","expected_revision":1}`); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("replacement target outside long-term store: %v, want target missing", err)
+	}
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference"}`); err == nil {
+		t.Fatal("replacement without a revision succeeded")
+	}
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":2}`); !errors.Is(err, errMemoryRevisionChanged) {
+		t.Fatalf("stale replacement error = %v", err)
+	}
+	output, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]string
+	if err := json.Unmarshal([]byte(output), &result); err != nil || result["operation"] != string(MemoryOperationSupersede) {
+		t.Fatalf("result = %q, err = %v", output, err)
+	}
+	active, err := store.Search(ctx, MemoryQuery{Limit: 10})
+	if err != nil || len(active) != 1 || active[0].Content != "Use light mode." {
+		t.Fatalf("active memories = %#v, err = %v", active, err)
 	}
 }
 
@@ -576,5 +786,92 @@ func TestToolSetRegistersMemoryRecallTools(t *testing.T) {
 	}
 	if _, ok := tools.Get("inspect_episode"); !ok {
 		t.Fatalf("expected inspect_episode tool to be registered")
+	}
+}
+
+func TestRecallDeviceMemoryRequiresTopicMatchWithinScope(t *testing.T) {
+	ctx := context.Background()
+	store := NewDeviceMemoryStore(t.TempDir())
+	for _, fixture := range []struct{ id, topic string }{
+		{"theme", "Change appearance to dark mode."},
+		{"export", "Export a document to PDF."},
+	} {
+		_, err := store.ApplyMemoryIntent(ctx, MemoryIntent{Action: MemoryIntentActionCreate, DeviceItem: &DeviceMemoryItem{
+			ID: fixture.id, AppName: "Notebook", DeviceID: "phone", Type: "procedure",
+			Status: deviceMemoryStatusActive, Tags: []string{"workflow"}, Content: fixture.topic,
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, tt := range []struct {
+		name, query string
+		want        []string
+	}{
+		{"tag fallback", `{"tags":["export"],"entities":["Notebook"]}`, []string{"export"}},
+		{"term fallback", `{"terms":["PDF"],"tags":["unknown"],"entities":["Notebook"]}`, []string{"export"}},
+		{"no relevant topic", `{"tags":["print"],"entities":["Notebook"]}`, nil},
+		{"direct terms", `{"terms":["export"],"entities":["Notebook"]}`, []string{"export"}},
+		{"scope only", `{"entities":["Notebook"]}`, []string{"export", "theme"}},
+		{"tags only remain exact", `{"tags":["export"]}`, nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := NewRecallDeviceMemoryTool(store).Call(ctx, tt.query)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded struct {
+				Results []MemoryHit `json:"results"`
+			}
+			if err := json.Unmarshal([]byte(out), &decoded); err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, hit := range decoded.Results {
+				ids = append(ids, hit.ID)
+			}
+			if !slices.Equal(ids, tt.want) {
+				t.Fatalf("recall ids = %v, want %v", ids, tt.want)
+			}
+		})
+	}
+}
+
+func TestLimitDeviceMemoryRecallPreservesWholeProcedure(t *testing.T) {
+	steps := []ProcedureStep{
+		{Tool: "touch_gesture", Description: "Open preferences."},
+		{Tool: "touch_gesture", Description: "Change the setting."},
+		{Tool: "touch_gesture", Description: "Reopen and verify the setting."},
+	}
+	procedure := MemoryHit{ID: "path", Type: "procedure", Steps: steps}
+	full, err := json.Marshal(map[string]any{"results": []MemoryHit{procedure}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, budget := range []int{len(full) - 1, len(full), 4800} {
+		t.Run(fmt.Sprint(budget), func(t *testing.T) {
+			hits := limitDeviceMemoryRecall([]MemoryHit{procedure, {ID: "small", Type: "fact", Content: "A short fact."}}, budget)
+			for _, hit := range hits {
+				if hit.ID == "path" && !reflect.DeepEqual(hit.Steps, steps) {
+					t.Fatalf("recall shortened a procedure: %#v", hit.Steps)
+				}
+			}
+			if len(hits) == 0 {
+				t.Fatal("budget should allow at least the short fact")
+			}
+			if budget < len(full) && hits[0].ID != "small" {
+				t.Fatal("oversized procedure should be omitted")
+			}
+			if budget >= len(full) && hits[0].ID != "path" {
+				t.Fatal("fitting procedure should be retained")
+			}
+			encoded, err := json.Marshal(map[string]any{"results": hits})
+			if err != nil || len(encoded) > budget {
+				t.Fatalf("payload exceeds budget: bytes=%d err=%v", len(encoded), err)
+			}
+		})
+	}
+	if !reflect.DeepEqual(procedure.Steps, steps) {
+		t.Fatal("recall mutated stored steps")
 	}
 }

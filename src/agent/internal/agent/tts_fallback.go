@@ -8,12 +8,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 const (
-	defaultTTSUnavailableFallbackDir = "/usr/share/aiden/audio/voice-notifications"
-	ttsUnavailableFallbackDirEnv     = "AIDEN_TTS_FALLBACK_DIR"
+	defaultTTSUnavailableFallbackDir = "/usr/share/aico/audio/voice-notifications"
+	ttsUnavailableFallbackDirEnv     = "AICO_TTS_FALLBACK_DIR"
 	ttsUnavailableFallbackEnglish    = "tts-unavailable.en-US.wav"
 	ttsUnavailableFallbackChinese    = "tts-unavailable.zh-CN.wav"
 )

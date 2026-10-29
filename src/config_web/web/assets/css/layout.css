@@ -59,12 +59,7 @@
 
 .app__brand {
   display: flex;
-  /*
-   * Baseline, not centre: the wordmark is a 26px SVG and the label is a 17px line
-   * box, so centring the two boxes leaves their baselines 5px apart. An SVG has no
-   * baseline of its own, so the browser uses its bottom edge — which is exactly
-   * where the wordmark's glyphs sit.
-   */
+  /* Keep the hardware name and settings label on the same baseline. */
   align-items: baseline;
   gap: var(--space-md);
   flex: 0 0 auto;
@@ -77,13 +72,20 @@
   padding: 0 var(--layout-page-margin) 0 calc(var(--layout-page-margin) + var(--space-sm));
 }
 
+.app__brand-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.app__wordmark {
+  display: inline-block;
+  font-weight: var(--font-weight-semibold, 600);
+  line-height: 1.2;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
 .app__brand-title {
-  /*
-   * Baseline alignment (above) lines the two up, but a CJK glyph's ink sits a
-   * little below its own baseline, while the wordmark is a graphic whose ink
-   * stops exactly at the bottom of its box. Measured against the render, that
-   * leaves the label 2px low, so it is nudged to sit optically flush.
-   */
   position: relative;
   top: -2px;
   font-size: var(--font-body);

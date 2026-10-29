@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/model"
-	speechtext "aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/model"
+	speechtext "aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -2313,6 +2313,7 @@ type scriptedModel struct {
 	tools             [][]llms.Tool
 	toolChoices       []any
 	rawHTTPLogEnabled []bool
+	maxTokens         []int
 }
 
 func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -2320,6 +2321,7 @@ func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.Mes
 	for _, option := range options {
 		option(&callOptions)
 	}
+	m.maxTokens = append(m.maxTokens, callOptions.MaxTokens)
 	m.sawStreaming = append(m.sawStreaming, callOptions.StreamingFunc != nil)
 	m.messages = append(m.messages, messages)
 	m.tools = append(m.tools, callOptions.Tools)
@@ -2462,7 +2464,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	largeSchemaTool := &structuredStubTool{
 		// Cross the summary threshold while leaving room for the protected
 		// head/tail messages under the hard input budget after summarization.
-		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 800)},
+		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 1750)},
 		schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2490,6 +2492,10 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 		&ToolSet{tools: map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}},
 		NewSkillIndex(),
 	)
+	// NewRuntimeWithDeps registers memory tools. Keep this budget fixture
+	// independent of their evolving schemas: only the synthetic tool belongs
+	// in the request whose compaction behavior this test exercises.
+	runtime.tools.tools = map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}
 	runtime.contextManager = manager
 	runtime.logger = nil
 
@@ -4108,6 +4114,25 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	case <-rt.storage.stop:
 	default:
 		t.Fatal("Close() did not stop the storage poller")
+	}
+}
+
+func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+	rt, err := NewRuntime(Config{
+		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
+		Model:     ModelConfig{Provider: "fake"},
+		EnvironmentBridge: EnvironmentBridgeConfig{
+			Enabled:          true,
+			Endpoint:         "http://127.0.0.1:18080",
+			LocalPhoneBridge: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer rt.Close()
+	if rt.phoneBridge.proxyMode {
+		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
 	}
 }
 

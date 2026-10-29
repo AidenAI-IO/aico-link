@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 )
 
 func TestNotificationContextCleanerRemovesOnlyFullyProcessedOldShards(t *testing.T) {

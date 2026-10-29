@@ -37,17 +37,17 @@ _CONTACT = r"""async ({operation, point}) => {
             await sleep(ms/10);
         }
     };
-    let contact = window.__AIDEN_CONTACT__;
+    let contact = window.__AICO_CONTACT__;
     if (operation === 'cancel') {
         if (contact) dispatch(contact, 'cancel');
-        delete window.__AIDEN_CONTACT__;
+        delete window.__AICO_CONTACT__;
         return;
     }
     if (operation === 'drag_start') {
         if (contact) throw new Error('drag contact already active; release it first');
         const start = position(point);
         contact = {target:document.elementFromPoint(start.x,start.y) || document.body, ...start};
-        window.__AIDEN_CONTACT__ = contact;
+        window.__AICO_CONTACT__ = contact;
         dispatch(contact, 'down');
         await sleep(500);
         // Same bounded 200-unit activation movement as the Go MNK provider.
@@ -64,7 +64,7 @@ _CONTACT = r"""async ({operation, point}) => {
     if (operation === 'drag_release') {
         await sleep(200);
         dispatch(contact, 'up');
-        delete window.__AIDEN_CONTACT__;
+        delete window.__AICO_CONTACT__;
     }
 }"""
 

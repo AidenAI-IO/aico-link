@@ -12,7 +12,7 @@ sidebar_position: 5
 | --- | --- |
 | Socket | `/run/audio_service/audio_service.sock` |
 | Log | `/var/log/audio_service/audio_service.log` |
-| Binary | `/usr/lib/aiden/audio_service` |
+| Binary | `/usr/lib/aico/audio_service` |
 | Volume state file | `/userdata/audio_service/playback_volume` |
 
 ## Command-line Parameters
@@ -29,16 +29,16 @@ audio_service [--socket PATH] [--volume-state PATH]
 When run directly during development, it also defaults to `/run/audio_service/audio_service.sock`, which can be overridden via a parameter or environment variable:
 
 ```bash
-AUDIO_SERVICE_SOCKET=/tmp/audio_service.sock /usr/lib/aiden/audio_service
-/usr/lib/aiden/audio_service --socket /tmp/audio_service.sock
+AUDIO_SERVICE_SOCKET=/tmp/audio_service.sock /usr/lib/aico/audio_service
+/usr/lib/aico/audio_service --socket /tmp/audio_service.sock
 ```
 
 ## Startup
 
 ```bash
-systemctl start aiden-audio.service
-systemctl status aiden-audio.service --no-pager
-systemctl restart aiden-audio.service
+systemctl start aico-audio.service
+systemctl status aico-audio.service --no-pager
+systemctl restart aico-audio.service
 ```
 
 ## CLI
@@ -90,6 +90,32 @@ In voice mode, the Agent uses the audio service to:
 2. Read PCM chunks;
 3. Detect speech boundaries with RKNN Silero VAD;
 4. Start a playback session and write PCM when playback is needed.
+
+## Capture Voice Processing (VQE)
+
+Every recording session enables the Rockchip VQE pipeline configured by
+`/usr/share/aico/audio/config_aivqe.json`
+(`overlay-debian/usr/share/aico/audio/config_aivqe.json`). AEC uses the
+digital loopback of the playback path as its reference. The other enabled
+stages are residual echo suppression (`aes`), noise reduction (`anr`),
+automatic gain control (`agc`), and dereverberation (`dereverb`).
+
+Several settings in this file are tuned for capture quality with the onboard
+microphone:
+
+- `howl` is disabled. The device never plays the microphone back through the
+  speaker in real time, and with the speaker silent this stage added stationary
+  tones (about 2.4, 4.0, 5.6, and 7.2 kHz) and raised the noise floor by about
+  25 dB.
+- `anr.fGmin` is `0.2` (about -14 dB) instead of `0.01`. The lower floor
+  gated the background to digital silence and cut weak syllables and word
+  endings.
+- `agc.max_gain` is `12` dB instead of `25` dB to avoid amplifying residual
+  noise.
+
+When retuning, compare recordings of the same speech with the speaker silent
+and while playing, and check both the background between words and quiet
+speech.
 
 ## Volume
 

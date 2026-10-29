@@ -5,7 +5,7 @@ set -euo pipefail
 # the production ARM build against the same CMake/toolchain inputs used by the
 # Debian application image, then cross-builds every shipped Go binary.
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly OUTPUT_ROOT="${REPO_ROOT}/${AIDEN_PRODUCTION_SMOKE_OUTPUT:-output/production-smoke}"
+readonly OUTPUT_ROOT="${REPO_ROOT}/${AICO_PRODUCTION_SMOKE_OUTPUT:-output/production-smoke}"
 readonly BUILD_DIR="${OUTPUT_ROOT}/cmake"
 readonly BIN_DIR="${OUTPUT_ROOT}/bin"
 readonly APPS_OUTPUT="${REPO_ROOT}/output/debian-apps"
@@ -50,9 +50,9 @@ if [ ! -f "$OPENCV_DIR/OpenCVConfig.cmake" ]; then
         mv "$OPENCV_ARCHIVE.tmp" "$OPENCV_ARCHIVE"
     fi
     echo "${OPENCV_SHA256}  $OPENCV_ARCHIVE" | sha256sum -c -
-    AIDEN_REPO_ROOT="$REPO_ROOT" \
+    AICO_REPO_ROOT="$REPO_ROOT" \
         DEBIAN_APPS_OUTPUT_DIR="$APPS_OUTPUT" \
-        RK_JOBS="${AIDEN_TEST_JOBS:-2}" \
+        RK_JOBS="${AICO_TEST_JOBS:-2}" \
         bash "$REPO_ROOT/scripts/debian-apps/container-build-opencv-mobile.sh"
 fi
 require_path "$OPENCV_DIR/OpenCVConfig.cmake"
@@ -60,10 +60,10 @@ require_path "$OPENCV_DIR/OpenCVConfig.cmake"
 cmake -S "$REPO_ROOT" -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" \
-    -DAIDEN_TARGET_PLATFORM=rv1106-debian-glibc \
-    -DAIDEN_DEBIAN_OPENCV_DIR="$OPENCV_DIR" \
-    -DAIDEN_ENABLE_LINK_MAPS=ON
-cmake --build "$BUILD_DIR" --parallel "${AIDEN_TEST_JOBS:-2}"
+    -DAICO_TARGET_PLATFORM=rv1106-debian-glibc \
+    -DAICO_DEBIAN_OPENCV_DIR="$OPENCV_DIR" \
+    -DAICO_ENABLE_LINK_MAPS=ON
+cmake --build "$BUILD_DIR" --parallel "${AICO_TEST_JOBS:-2}"
 
 # The production CMake build must emit the complete executable set. Checking
 # names here catches a target accidentally removed from the packaging graph.
@@ -71,7 +71,7 @@ expected_cpp=(
     hello trigger image_process example_wakeup example_audio_capture
     example_audio_play example_camera_capture example_usb_hid frame_service
     frame_service_cli audio_service audio_service_cli audio_stream rknn_vad
-    smart_turn_helper cpu_vad aiden-environment
+    smart_turn_helper cpu_vad aico-environment
 )
 for executable in "${expected_cpp[@]}"; do
     binary="$BUILD_DIR/bin/$executable"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 import argparse
 import concurrent.futures
+from contextlib import nullcontext
 import hashlib
 import json
 import os
@@ -11,10 +12,19 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
+from runner.android_phone_bridge import (
+    android_bridge_fixture,
+    clipboard_write_ids,
+    connected_android_phone_bridge,
+    foreground_android_phone_bridge,
+    verify_android_bridge_input,
+    wait_for_android_phone_bridge,
+)
 from runner.analysis import AnalysisConfig, _int_env, analyze_run
 from runner.config import BENCHMARK_AGENT_MODEL_ENV
 from runner.html_report import generate_report_html, upload_report
 from runner.judge import DEFAULT_JUDGE_BASE_URL, JUDGE_PROMPT_VERSION, JudgeConfig
+from runner.models import HardAssertionFailure
 from runner.platform import (
     TargetPlatform,
     read_environment_health,
@@ -105,25 +115,27 @@ def cli(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
     p_run = sub.add_parser("run")
     p_run.add_argument("--suite", required=True)
-    p_run.add_argument("--agent-url", default=os.environ.get("AIDEN_AGENT_URL", "http://localhost:8080"))
-    p_run.add_argument("--environment-url", default=os.environ.get("AIDEN_ENVIRONMENT_URL", ""),
+    p_run.add_argument("--agent-url", default=os.environ.get("AICO_AGENT_URL", "http://localhost:8080"))
+    p_run.add_argument("--environment-url", default=os.environ.get("AICO_ENVIRONMENT_URL", ""),
                        help="Optional environment bridge endpoint; when set, each task calls /api/setup, POST /api/providers/screenshot, and /api/release")
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
+    p_run.add_argument("--android-phone-bridge-serial", default="",
+                       help="Connect a rooted Android emulator's AidenBridge app to each isolated Agent")
     p_run.add_argument("--max-concurrency", type=int, default=0,
                        help="Cap auto-agent-setup worker concurrency; 0 means no explicit cap")
-    p_run.add_argument("--daemon-image", default=os.environ.get("AIDEN_DAEMON_IMAGE", "aiden-agent-daemon:local"))
+    p_run.add_argument("--daemon-image", default=os.environ.get("AICO_DAEMON_IMAGE", "aico-agent-daemon:local"))
     p_run.add_argument("--no-build-daemon-image", action="store_true")
     p_run.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
     p_run.add_argument("--agent-config", default="")
     p_run.add_argument("--benchmark-token-file", default="")
     p_run.add_argument(
         "--judge-model",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
     )
     p_run.add_argument(
         "--judge-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
         help="OpenAI-compatible base URL for judge requests",
     )
     p_run.add_argument("--agent-model", default=os.environ.get(BENCHMARK_AGENT_MODEL_ENV, ""))
@@ -141,7 +153,7 @@ def cli(argv: list[str] | None = None) -> int:
                        help="Optional run directory name under --out")
     p_run.add_argument("--benchmark-task-id", default="",
                        help="Task routing id to use for environment setup, providers/screenshot, and release")
-    p_run.add_argument("--target-platform", default=os.environ.get("AIDEN_BENCHMARK_TARGET_PLATFORM", "auto"),
+    p_run.add_argument("--target-platform", default=os.environ.get("AICO_BENCHMARK_TARGET_PLATFORM", "auto"),
                        choices=["auto", "ios", "android", "mac", "windows", "linux"],
                        help="Filter suite tasks by platform; auto resolves platform from environment bridge health")
     p_run.add_argument("--skip-clock-wait", action="store_true")
@@ -153,27 +165,27 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--llm-analysis", action="store_true", help="Run post-run LLM RCA analysis")
     p_run.add_argument(
         "--analysis-model",
-        default=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_MODEL"),
+        default=os.environ.get("AICO_BENCHMARK_ANALYSIS_MODEL"),
     )
     p_run.add_argument(
         "--analysis-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_BASE_URL"),
+        default=os.environ.get("AICO_BENCHMARK_ANALYSIS_BASE_URL"),
         help="OpenAI-compatible base URL for post-run LLM analysis; defaults to judge base URL",
     )
     p_run.add_argument(
         "--analysis-max-log-bytes",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", 64 * 1024),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", 64 * 1024),
     )
     p_run.add_argument(
         "--analysis-max-code-bytes",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", 128 * 1024),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", 128 * 1024),
     )
     p_run.add_argument(
         "--analysis-timeout-sec",
         type=int,
-        default=_int_env("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", 180),
+        default=_int_env("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", 180),
     )
     p_run.add_argument("--verbose", "-v", action="store_true",
                        help="Show detailed rubric results for each task")
@@ -181,17 +193,17 @@ def cli(argv: list[str] | None = None) -> int:
     p_rejudge.add_argument("--run-dir", required=True)
     p_rejudge.add_argument(
         "--judge-model",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_MODEL", "claude-sonnet-4-6"),
     )
     p_rejudge.add_argument(
         "--judge-base-url",
-        default=os.environ.get("AIDEN_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
+        default=os.environ.get("AICO_BENCHMARK_JUDGE_BASE_URL", DEFAULT_JUDGE_BASE_URL),
     )
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("--runs", nargs=2, required=True)
     p_publish = sub.add_parser("publish-langfuse")
     p_publish.add_argument("--run-dir", required=True)
-    p_publish.add_argument("--dataset-prefix", default="aiden-benchmark")
+    p_publish.add_argument("--dataset-prefix", default="aico-benchmark")
     p_webui = sub.add_parser("webui")
     p_webui.add_argument("--host", default="127.0.0.1")
     p_webui.add_argument("--port", type=int, default=8765)
@@ -199,8 +211,8 @@ def cli(argv: list[str] | None = None) -> int:
     p_webui.add_argument("--runs-dir", default=str(REPO_ROOT / "benchmark" / "runs" / "webui"))
     p_webui.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
     p_webui.add_argument("--agent-config", default="")
-    p_webui.add_argument("--daemon-image", default="aiden-agent-daemon:local")
-    p_webui.add_argument("--mobilegym-image", default="aiden-mobilegym-simulator:py311")
+    p_webui.add_argument("--daemon-image", default="aico-agent-daemon:local")
+    p_webui.add_argument("--mobilegym-image", default="aico-mobilegym-simulator:py311")
     p_webui.add_argument("--no-build-daemon-image", action="store_true")
     p_webui.add_argument("--no-build-mobilegym-image", action="store_true")
     from runner.services import add_service_parsers
@@ -597,6 +609,10 @@ def _cmd_run_auto_agent_setup_inner(
     if args.repeats is not None and args.repeats <= 0:
         print(f"Error: --repeats must be positive, got {args.repeats}", file=sys.stderr)
         return 2
+    bridge_serial = getattr(args, "android_phone_bridge_serial", "")
+    if bridge_serial and args.max_concurrency != 1:
+        print("Error: Android Phone Bridge requires one worker", file=sys.stderr)
+        return 2
     if args.max_concurrency < 0:
         print("Error: max-concurrency must be non-negative", file=sys.stderr)
         return 2
@@ -726,13 +742,14 @@ def _cmd_run_auto_agent_setup_inner(
             suites=[str(suite.source_path)],
             environment_endpoint=args.environment_url.rstrip("/") if args.environment_url else "",
             agent_url=agent_url,
-            container_name=f"aiden-benchmark-agent-{run_id}-{token}",
+            container_name=f"aico-benchmark-agent-{run_id}-{token}",
             config_dir=str(config_dir),
             runner_log=str(runner_log),
             daemon_log=str(daemon_log),
         )
         log_proc = None
         client = None
+        completed_result = None
         try:
             print(
                 f"[{progress}] STARTING   {unit.task.id} attempt={unit.attempt}",
@@ -760,6 +777,7 @@ def _cmd_run_auto_agent_setup_inner(
                 device_type=unit.target_platform,
                 environment_bridge_mode=bool(args.environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
+                benchmark_local_phone_bridge=bool(bridge_serial),
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")
@@ -807,21 +825,81 @@ def _cmd_run_auto_agent_setup_inner(
                 f"[{progress}] RUNNING    {unit.task.id} attempt={unit.attempt}",
                 flush=True,
             )
-            return run_one_task(
-                client,
-                suite,
-                unit.task,
-                unit.attempt,
-                art_dir,
-                judge_cfg,
-                judge_cache,
-                run_id,
-                environment_url=args.environment_url or None,
-                benchmark_task_id=route_id,
-                active_skills=active_skills,
+            bridge = (
+                connected_android_phone_bridge(
+                    bridge_serial, published_port, client
+                )
+                if bridge_serial
+                else nullcontext()
             )
+            with bridge, android_bridge_fixture(bridge_serial, unit.task.android_bridge_fixture):
+                prior_writes = (
+                    clipboard_write_ids(bridge_serial)
+                    if unit.task.android_bridge_input_text else set()
+                )
+                result = run_one_task(
+                    client,
+                    suite,
+                    unit.task,
+                    unit.attempt,
+                    art_dir,
+                    judge_cfg,
+                    judge_cache,
+                    run_id,
+                    environment_url=args.environment_url or None,
+                    benchmark_task_id=route_id,
+                    active_skills=active_skills,
+                    after_setup=(
+                        (lambda: foreground_android_phone_bridge(bridge_serial, client)
+                         if unit.task.foreground_app_id == "com.aidenbridge"
+                         else wait_for_android_phone_bridge(client))
+                        if bridge_serial else None
+                    ),
+                )
+                if unit.task.android_bridge_input_text:
+                    try:
+                        evidence = verify_android_bridge_input(
+                            bridge_serial, unit.task.android_bridge_input_text, prior_writes
+                        )
+                    except Exception as exc:
+                        evidence = {"error": str(exc)}
+                    (art_dir / "android_bridge_input.json").write_text(
+                        json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8"
+                    )
+                    result.metrics["android_bridge_input"] = evidence
+                    verified = (
+                        None if evidence.get("error") else
+                        bool(evidence.get("bridge_clipboard_write") and evidence.get("field_contains_exact_text"))
+                    )
+                    if result.hard_assertions is not None:
+                        result.hard_assertions.android_bridge_input = verified
+                    if evidence.get("error"):
+                        if result.status == "passed":
+                            result.status = "judge_error"
+                            result.metrics.update(success=None, quality_score=None, agent_eligible=False,
+                                                  failure_class="evaluation", first_failure_stage="evaluation",
+                                                  failure_event_ref="android_bridge_input.json")
+                    elif not verified:
+                        result.hard_assertion_failures.append(HardAssertionFailure(
+                            id="android_bridge_input",
+                            label="Android Bridge Input",
+                            requirement="AidenBridge clipboard write and exact text in a non-Bridge editable field",
+                            actual=json.dumps(evidence, ensure_ascii=False),
+                        ))
+                        if result.status == "passed":
+                            result.status = "failed"
+                            result.metrics.update(success=False, quality_score=0.0, failure_class="agent",
+                                              first_failure_stage="state_verification",
+                                              failure_event_ref="android_bridge_input.json")
+                # Only preserve a result once evaluation is complete; errors
+                # exiting the context managers are cleanup failures.
+                completed_result = result
+                return result
         except Exception as exc:
             append_log(runner_log, f"ERROR: {exc}")
+            if completed_result is not None:
+                completed_result.metrics["android_bridge_cleanup_error"] = str(exc)
+                return completed_result
             return skipped_task_result(
                 suite,
                 unit.task,
@@ -894,7 +972,10 @@ def _cmd_run_auto_agent_setup_inner(
         "auto_agent_setup": True,
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
-        "execution_environment": _execution_environment(suite, selected_task_ids),
+        "execution_environment": (
+            "adb_aidenbridge" if bridge_serial
+            else _execution_environment(suite, selected_task_ids)
+        ),
         "started_at": started, "finished_at": now_iso(),
         "totals": totals,
         "metrics_schema_version": "p0-v1",
@@ -940,6 +1021,16 @@ def _cmd_run(args: argparse.Namespace) -> int:
             print(f"Error: task id(s) not found in suite: {', '.join(missing)}", file=sys.stderr)
             return 2
         suite.tasks = [by_id[task_id] for task_id in selected_task_ids]
+
+    if getattr(args, "android_phone_bridge_serial", "") and not (
+        args.auto_agent_setup and args.environment_url
+    ):
+        print("Error: --android-phone-bridge-serial requires --auto-agent-setup and --environment-url", file=sys.stderr)
+        return 2
+    if any(task.android_bridge_input_text or task.android_bridge_fixture for task in suite.tasks):
+        if not args.auto_agent_setup or not getattr(args, "android_phone_bridge_serial", ""):
+            print("Error: Android Bridge assertions/fixtures require --auto-agent-setup and --android-phone-bridge-serial", file=sys.stderr)
+            return 2
 
     if _suite_has_mixed_mock_and_real_tasks(suite):
         print(
@@ -1203,7 +1294,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
             max_log_bytes=args.analysis_max_log_bytes,
             max_code_bytes=args.analysis_max_code_bytes,
             timeout_sec=args.analysis_timeout_sec,
-            api_key_env=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
+            api_key_env=os.environ.get("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
         ))
         if not analysis_result.ok:
             print(

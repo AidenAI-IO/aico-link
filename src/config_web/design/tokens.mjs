@@ -1,5 +1,5 @@
 /**
- * Aiden settings design tokens — the single source of truth.
+ * Aico Link settings design tokens — the single source of truth.
  *
  * Both consumers are generated from this file by
  * `scripts/gen_config_web_tokens.mjs`:

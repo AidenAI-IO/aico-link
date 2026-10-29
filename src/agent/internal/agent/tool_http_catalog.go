@@ -49,12 +49,12 @@ func (r *Runtime) HTTPToolSkills(baseURL string) []ToolSkillDefinition {
 	}
 
 	return []ToolSkillDefinition{{
-		Name:        "aiden-http-tool-suite",
-		Description: "Use the Aiden HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
+		Name:        "aico-http-tool-suite",
+		Description: "Use the Aico HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
 		ToolNames:   names,
 		Markdown: buildHTTPToolSkillMarkdown(
-			"aiden-http-tool-suite",
-			"Use the Aiden HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
+			"aico-http-tool-suite",
+			"Use the Aico HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
 			baseURL,
 			descriptors,
 		),
@@ -68,18 +68,18 @@ func buildHTTPToolSkillMarkdown(name, description string, baseURL string, descri
 	builder.WriteString(fmt.Sprintf("description: %s\n", description))
 	builder.WriteString("metadata:\n")
 	builder.WriteString("  transport: http\n")
-	builder.WriteString("  source: aiden-agent\n")
-	builder.WriteString("  base_url_env: AIDEN_AGENT_BASE_URL\n")
+	builder.WriteString("  source: aico-agent\n")
+	builder.WriteString("  base_url_env: AICO_AGENT_BASE_URL\n")
 	builder.WriteString(fmt.Sprintf("  base_url_default: %s\n", baseURL))
 	builder.WriteString("  tool_names:\n")
 	for _, descriptor := range descriptors {
 		builder.WriteString(fmt.Sprintf("    - %s\n", descriptor.Name))
 	}
 	builder.WriteString("---\n\n")
-	builder.WriteString("Use the Aiden HTTP tool API instead of assuming direct local access to the connected device.\n\n")
+	builder.WriteString("Use the Aico HTTP tool API instead of assuming direct local access to the connected device.\n\n")
 	builder.WriteString("Connection:\n")
-	builder.WriteString("- Prefer the base URL from `AIDEN_AGENT_BASE_URL`.\n")
-	builder.WriteString(fmt.Sprintf("- If `AIDEN_AGENT_BASE_URL` is unset, use `%s`.\n", baseURL))
+	builder.WriteString("- Prefer the base URL from `AICO_AGENT_BASE_URL`.\n")
+	builder.WriteString(fmt.Sprintf("- If `AICO_AGENT_BASE_URL` is unset, use `%s`.\n", baseURL))
 	if baseURL != defaultHTTPToolSkillBaseURL {
 		builder.WriteString(fmt.Sprintf("- Local fallback when the published host is unavailable: `%s`.\n", defaultHTTPToolSkillBaseURL))
 	}

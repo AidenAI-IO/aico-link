@@ -16,12 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/agenttask"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agenttask"
+	"aico-agent/internal/logging"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -900,6 +900,7 @@ func TestApplyDeviceTypeOverrideTakesPrecedenceOverConfig(t *testing.T) {
 }
 
 type fakeAudioDialog struct {
+	opsMu                sync.Mutex
 	chunks               []*agent.AudioChunkResult
 	chunkBatches         [][]*agent.AudioChunkResult
 	frameSamples         int
@@ -949,11 +950,17 @@ type persistedVoiceTurn struct {
 	utterance []int16
 }
 
+func (d *fakeAudioDialog) addOp(op string) {
+	d.opsMu.Lock()
+	defer d.opsMu.Unlock()
+	d.ops = append(d.ops, op)
+}
+
 func (d *fakeAudioDialog) StartRecording() error {
 	if d.recordingActive {
 		return nil
 	}
-	d.ops = append(d.ops, "start")
+	d.addOp("start")
 	d.starts++
 	d.recordingActive = true
 	if d.onStart != nil {
@@ -971,7 +978,7 @@ func (d *fakeAudioDialog) FinalizeAndRotateSTT() error {
 }
 
 func (d *fakeAudioDialog) StopRecording() error {
-	d.ops = append(d.ops, "stop")
+	d.addOp("stop")
 	d.stops++
 	d.recordingActive = false
 	return nil
@@ -1093,7 +1100,7 @@ func (d *fakeAudioDialog) QueueSteer(input agent.TurnInput) bool {
 }
 
 func (d *fakeAudioDialog) BeginSteerInterrupt() bool {
-	d.ops = append(d.ops, "begin_steer_interrupt")
+	d.addOp("begin_steer_interrupt")
 	d.steerInterrupts++
 	if d.beginSteerInterrupt != nil {
 		return d.beginSteerInterrupt()
@@ -1102,7 +1109,7 @@ func (d *fakeAudioDialog) BeginSteerInterrupt() bool {
 }
 
 func (d *fakeAudioDialog) ResumeSteerInterrupt() bool {
-	d.ops = append(d.ops, "resume_steer_interrupt")
+	d.addOp("resume_steer_interrupt")
 	d.steerResumes++
 	if d.resumeSteerInterrupt != nil {
 		return d.resumeSteerInterrupt()
@@ -1118,11 +1125,11 @@ func (d *fakeAudioDialog) WaitForVoiceRunIdle(ctx context.Context) bool {
 }
 
 func (d *fakeAudioDialog) ForceResetVoiceRun() {
-	d.ops = append(d.ops, "force_reset_voice_run")
+	d.addOp("force_reset_voice_run")
 }
 
 func (d *fakeAudioDialog) InterruptOutput() {
-	d.ops = append(d.ops, "interrupt_output")
+	d.addOp("interrupt_output")
 	if d.interruptOutput != nil {
 		d.interruptOutput()
 	}
@@ -1144,7 +1151,7 @@ func (d *fakeAudioDialog) PersistVoiceTurn(input agent.TurnInput, result agent.R
 }
 
 func (d *fakeAudioDialog) Speak(ctx context.Context, text string, interrupt <-chan struct{}) error {
-	d.ops = append(d.ops, "speak:"+text)
+	d.addOp("speak:" + text)
 	d.spoken = append(d.spoken, text)
 	if d.speak != nil {
 		return d.speak(ctx)
@@ -1192,7 +1199,7 @@ func (d *fakeAudioDialog) FinishPendingUtterance(pending []int16) []int16 {
 }
 
 func (d *fakeAudioDialog) ResetVAD() {
-	d.ops = append(d.ops, "reset")
+	d.addOp("reset")
 	d.resets++
 	if d.vad != nil {
 		_ = d.vad.Reset()
@@ -1314,98 +1321,47 @@ func (w *fakeWakeupWatcher) Stop() {
 	w.stopCount++
 }
 
-func TestStartWakeupWatchersIfEnabledSkipsWhenDisabled(t *testing.T) {
-	disabled := false
-	factoryCalls := 0
-	watchers, err := startWakeupWatchersIfEnabled(agent.Config{TapWakeupEnabled: &disabled}, func(pin int, callback func()) (wakeupWatcher, error) {
-		factoryCalls++
-		return &fakeWakeupWatcher{callback: callback}, nil
-	}, func() {})
-	if err != nil {
-		t.Fatalf("startWakeupWatchersIfEnabled() error = %v", err)
-	}
-	if watchers != nil {
-		t.Fatalf("watchers = %#v, want nil when tap wakeup disabled", watchers)
-	}
-	if factoryCalls != 0 {
-		t.Fatalf("factoryCalls = %d, want 0", factoryCalls)
-	}
-}
-
-func TestStartWakeupWatchersIfEnabledRegistersWhenEnabled(t *testing.T) {
-	enabled := true
-	watchersByPin := map[int]*fakeWakeupWatcher{}
-	watchers, err := startWakeupWatchersIfEnabled(agent.Config{TapWakeupEnabled: &enabled}, func(pin int, callback func()) (wakeupWatcher, error) {
-		watcher := &fakeWakeupWatcher{callback: callback}
-		watchersByPin[pin] = watcher
-		return watcher, nil
-	}, func() {})
-	if err != nil {
-		t.Fatalf("startWakeupWatchersIfEnabled() error = %v", err)
-	}
-	defer stopWakeupWatchers(watchers)
-	if len(watchers) != 2 || watchersByPin[32] == nil || watchersByPin[33] == nil {
-		t.Fatalf("watchers pins = %#v, want GPIO 32 and 33", watchersByPin)
-	}
-}
-
-func TestStartWakeupWatchersRegistersGPIO32And33Callbacks(t *testing.T) {
+func TestStartWakeupWatchersUsesOneASRSubscription(t *testing.T) {
 	advanceWakeup := withWakeupDebounceClock(t, time.Unix(0, 0))
-	watchersByPin := map[int]*fakeWakeupWatcher{}
-	eventCount := 0
-
-	watchers, err := startWakeupWatchers(func(pin int, callback func()) (wakeupWatcher, error) {
-		watcher := &fakeWakeupWatcher{callback: callback}
-		watchersByPin[pin] = watcher
+	watcher := &fakeWakeupWatcher{}
+	created, events := 0, 0
+	watchers, err := startWakeupWatchers(func(callback func()) (wakeupWatcher, error) {
+		created++
+		watcher.callback = callback
 		return watcher, nil
-	}, func() {
-		eventCount++
-	})
+	}, func() { events++ })
 	if err != nil {
-		t.Fatalf("startWakeupWatchers() error = %v", err)
+		t.Fatal(err)
 	}
 	defer stopWakeupWatchers(watchers)
-
-	for _, pin := range []int{33, 32} {
-		watcher := watchersByPin[pin]
-		if watcher == nil {
-			t.Fatalf("missing watcher for GPIO %d", pin)
-		}
-		if !watcher.started {
-			t.Fatalf("GPIO %d watcher was not started", pin)
-		}
-		watcher.callback()
-		advanceWakeup(wakeupDebounceInterval + time.Millisecond)
+	if created != 1 || !watcher.started {
+		t.Fatalf("subscriptions=%d started=%v", created, watcher.started)
 	}
-
-	if eventCount != 2 {
-		t.Fatalf("event count = %d, want one wakeup event per GPIO callback", eventCount)
+	watcher.callback()
+	advanceWakeup(wakeupDebounceInterval + time.Millisecond)
+	watcher.callback()
+	if events != 2 {
+		t.Fatalf("events=%d, want 2", events)
 	}
 }
 
-func TestStartWakeupWatchersDebouncesImmediateGPIOBurst(t *testing.T) {
+func TestStartWakeupWatchersDebouncesImmediateASRBurst(t *testing.T) {
 	withWakeupDebounceClock(t, time.Unix(0, 0))
-	watchersByPin := map[int]*fakeWakeupWatcher{}
-	eventCount := 0
-
-	watchers, err := startWakeupWatchers(func(pin int, callback func()) (wakeupWatcher, error) {
-		watcher := &fakeWakeupWatcher{callback: callback}
-		watchersByPin[pin] = watcher
+	watcher := &fakeWakeupWatcher{}
+	events := 0
+	watchers, err := startWakeupWatchers(func(callback func()) (wakeupWatcher, error) {
+		watcher.callback = callback
 		return watcher, nil
-	}, func() {
-		eventCount++
-	})
+	}, func() { events++ })
 	if err != nil {
-		t.Fatalf("startWakeupWatchers() error = %v", err)
+		t.Fatal(err)
 	}
 	defer stopWakeupWatchers(watchers)
-
-	watchersByPin[33].callback()
-	watchersByPin[32].callback()
-	watchersByPin[33].callback()
-
-	if eventCount != 1 {
-		t.Fatalf("event count = %d, want one wakeup event after immediate GPIO burst", eventCount)
+	watcher.callback()
+	watcher.callback()
+	watcher.callback()
+	if events != 1 {
+		t.Fatalf("events=%d, want 1", events)
 	}
 }
 
@@ -1615,12 +1571,12 @@ func TestRunWakeupModeProcessesTriggeredAudioAndStopsOnSignal(t *testing.T) {
 		},
 	}
 	watcher := &fakeWakeupWatcher{fireOnStart: true}
-	var watcherPins []int
+	watcherCount := 0
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
-			watcherPins = append(watcherPins, pin)
+		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
+			watcherCount++
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1636,8 +1592,8 @@ func TestRunWakeupModeProcessesTriggeredAudioAndStopsOnSignal(t *testing.T) {
 	if !watcher.started || !watcher.stopped {
 		t.Fatalf("watcher lifecycle started=%v stopped=%v", watcher.started, watcher.stopped)
 	}
-	if len(watcherPins) != 2 || watcherPins[0] != 33 || watcherPins[1] != 32 {
-		t.Fatalf("watcher pins = %#v, want [33 32]", watcherPins)
+	if watcherCount != 1 {
+		t.Fatalf("voice subscriptions = %d, want 1", watcherCount)
 	}
 	if dialog.starts != 1 || dialog.stops == 0 || dialog.resets != 1 {
 		t.Fatalf("dialog lifecycle starts=%d stops=%d resets=%d", dialog.starts, dialog.stops, dialog.resets)
@@ -1663,7 +1619,7 @@ func TestRunWakeupModeLegacyStartsRecordingWithoutWakeupAck(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1704,7 +1660,7 @@ func TestRunWakeupModeStopsRecordingAfterSpeechThenBiasedSilence(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1760,7 +1716,7 @@ func TestRunWakeupModeBuffersSpeechDetectedByRKNNAfterInitialNonSpeech(t *testin
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1818,7 +1774,7 @@ func TestRunWakeupModeStartsNewRecordingForNextWakeup(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{VoiceFollowupEnabled: &voiceSessionDisabled}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{VoiceFollowupEnabled: &voiceSessionDisabled}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1861,7 +1817,7 @@ func TestRunWakeupModeSTTWakeupKeepsLegacySingleTurnBehavior(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{InputMode: "stt", STT: agent.STTConfig{Provider: "openai-whisper"}}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{InputMode: "stt", STT: agent.STTConfig{Provider: "openai-whisper"}}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1908,7 +1864,7 @@ func TestRunWakeupModeVoiceSessionProcessesFollowupWithoutSecondWakeup(t *testin
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: boolPtr(true), VoiceFollowupTimeoutMs: 100}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: boolPtr(true), VoiceFollowupTimeoutMs: 100}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -1960,7 +1916,7 @@ func TestRunWakeupModeVoiceSessionStartsRecordingWithoutWakeupAck(t *testing.T) 
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: boolPtr(true), VoiceMaxTurns: 1}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: boolPtr(true), VoiceMaxTurns: 1}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})
@@ -2738,7 +2694,7 @@ func TestRunWakeupModeSTTSpeakingInterruptMarksNextTurnCorrection(t *testing.T) 
 
 	done := make(chan struct{})
 	go func() {
-		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: &voiceSessionDisabled, VoiceFollowupTimeoutMs: 50}, dialog, nil, sigChan, func(pin int, callback func()) (wakeupWatcher, error) {
+		runWakeupMode(agent.Config{InputMode: "stt", VoiceFollowupEnabled: &voiceSessionDisabled, VoiceFollowupTimeoutMs: 50}, dialog, nil, sigChan, func(callback func()) (wakeupWatcher, error) {
 			watcher.callback = callback
 			return watcher, nil
 		})

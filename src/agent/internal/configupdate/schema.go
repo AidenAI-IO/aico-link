@@ -5,7 +5,7 @@ import (
 	"errors"
 	"strings"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // Config is the single definition of the config_web <-> agent wire contract: keys
@@ -483,7 +483,6 @@ type Agent struct {
 	VoiceStreamingTTSEnabled       bool    `json:"voice_streaming_tts_enabled"`
 	VoiceToolCallSpeech            bool    `json:"voice_tool_call_speech"`
 	VoiceProgressSpeechEnabled     bool    `json:"voice_progress_speech_enabled"`
-	VoiceMaxResponseTokens         int     `json:"voice_max_response_tokens"`
 	MaxIterations                  int     `json:"max_iterations"`
 	ScreenStableTimeoutMs          int     `json:"screen_stable_timeout_ms"`
 	ScreenStableMs                 int     `json:"screen_stable_ms"`
@@ -721,7 +720,6 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceStreamingTTSEnabled:       boolPtr(d.Agent.VoiceStreamingTTSEnabled),
 		VoiceToolCallSpeech:            boolPtr(d.Agent.VoiceToolCallSpeech),
 		VoiceProgressSpeechEnabled:     boolPtr(d.Agent.VoiceProgressSpeechEnabled),
-		VoiceMaxResponseTokens:         d.Agent.VoiceMaxResponseTokens,
 		MaxIterations:                  d.Agent.MaxIterations,
 		ScreenStableTimeoutMs:          d.Agent.ScreenStableTimeoutMs,
 		ScreenStableMs:                 d.Agent.ScreenStableMs,
@@ -1130,7 +1128,6 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceStreamingTTSEnabled:       cfg.VoiceStreamingTTSEnabledOrDefault(),
 			VoiceToolCallSpeech:            cfg.VoiceToolCallSpeechOrDefault(),
 			VoiceProgressSpeechEnabled:     cfg.VoiceProgressSpeechEnabledOrDefault(),
-			VoiceMaxResponseTokens:         cfg.VoiceMaxResponseTokensOrDefault(),
 			MaxIterations:                  cfg.MaxIterations,
 			ScreenStableTimeoutMs:          cfg.ScreenStableTimeoutMs,
 			ScreenStableMs:                 cfg.ScreenStableMs,

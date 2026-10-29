@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 func TestConfigValidateAcceptsSTT(t *testing.T) {
@@ -623,7 +623,7 @@ func TestLoadResolvedConfigAcceptsSymlinkToRegularFile(t *testing.T) {
 }
 
 func TestLoadResolvedConfigRejectsSpecialFile(t *testing.T) {
-	dir, err := os.MkdirTemp("", "aiden-config-")
+	dir, err := os.MkdirTemp("", "aico-config-")
 	if err != nil {
 		t.Fatalf("create short temp directory: %v", err)
 	}
@@ -858,7 +858,7 @@ func TestConfigRejectsInvalidTerminationPolicyThresholdOrder(t *testing.T) {
 }
 
 func TestBundledSkillsDirCandidatesUseBusinessPackage(t *testing.T) {
-	want := []string{"/usr/share/aiden/skills"}
+	want := []string{"/usr/share/aico/skills"}
 	if got := bundledSkillsDirCandidates(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("bundledSkillsDirCandidates() = %#v, want %#v", got, want)
 	}
@@ -905,6 +905,28 @@ model_max_output_tokens = 4096
 	}
 	if cfg.Model.ModelMaxOutputTokens != 4_096 {
 		t.Errorf("ModelMaxOutputTokens = %d, want 4_096", cfg.Model.ModelMaxOutputTokens)
+	}
+}
+
+func TestLoadConfigIgnoresRemovedVoiceMaxResponseTokens(t *testing.T) {
+	configDir := t.TempDir()
+	config := `
+[model_settings.model]
+provider = "fake"
+max_response_tokens = 4096
+
+[voice_settings.classic.runtime]
+voice_max_response_tokens = 300
+`
+	if err := os.WriteFile(filepath.Join(configDir, "agent.toml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadConfigFromDir(configDir)
+	if err != nil {
+		t.Fatalf("LoadConfigFromDir() error = %v", err)
+	}
+	if cfg.Model.MaxResponseTokens != 4096 {
+		t.Fatalf("MaxResponseTokens = %d, want 4096", cfg.Model.MaxResponseTokens)
 	}
 }
 
@@ -1007,10 +1029,6 @@ provider = "fake"
 	}
 	if cfg.HID.FrameSocket != defaultFrameServiceSocket {
 		t.Fatalf("HID.FrameSocket = %q, want runtime default %q", cfg.HID.FrameSocket, defaultFrameServiceSocket)
-	}
-	if cfg.VoiceMaxResponseTokens != defaultVoiceMaxResponseTokens {
-		t.Fatalf("VoiceMaxResponseTokens = %d, want runtime default %d",
-			cfg.VoiceMaxResponseTokens, defaultVoiceMaxResponseTokens)
 	}
 	if !cfg.Model.LogRawHTTP {
 		t.Fatal("Model.LogRawHTTP = false, want runtime default true")
@@ -1890,10 +1908,10 @@ func TestConfigVADBackendDefaultsAndValidation(t *testing.T) {
 	if got := cfg.VADBackendOrDefault(); got != "cpu" {
 		t.Fatalf("VADBackendOrDefault() = %q, want cpu", got)
 	}
-	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aiden/cpu_vad" {
+	if got := DefaultVADHelperPathForBackend("cpu"); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("DefaultVADHelperPathForBackend(cpu) = %q", got)
 	}
-	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aiden/cpu_vad" {
+	if got := ResolveVADHelperPath("cpu", DefaultVADHelperPath()); got != "/usr/lib/aico/cpu_vad" {
 		t.Fatalf("ResolveVADHelperPath(cpu, rknn default) = %q", got)
 	}
 	if got := ResolveVADHelperPath("cpu", "/custom/vad"); got != "/custom/vad" {
@@ -2137,9 +2155,6 @@ func TestVoiceSessionConfigDefaults(t *testing.T) {
 	if !cfg.VoiceProgressSpeechEnabledOrDefault() {
 		t.Fatal("VoiceProgressSpeechEnabledOrDefault() = false, want true")
 	}
-	if cfg.VoiceMaxResponseTokensOrDefault() != 300 {
-		t.Fatalf("VoiceMaxResponseTokensOrDefault() = %d, want 300", cfg.VoiceMaxResponseTokensOrDefault())
-	}
 }
 
 func TestVoiceSessionConfigOverrides(t *testing.T) {
@@ -2158,7 +2173,6 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 		VoiceStreamingTTSEnabled:   &streamingDisabled,
 		VoiceToolCallSpeech:        &toolSpeech,
 		VoiceProgressSpeechEnabled: &progressSpeechDisabled,
-		VoiceMaxResponseTokens:     123,
 	}
 
 	if !cfg.VoiceFollowupEnabledOrDefault() {
@@ -2184,9 +2198,6 @@ func TestVoiceSessionConfigOverrides(t *testing.T) {
 	}
 	if cfg.VoiceProgressSpeechEnabledOrDefault() {
 		t.Fatal("VoiceProgressSpeechEnabledOrDefault() = true, want false")
-	}
-	if cfg.VoiceMaxResponseTokensOrDefault() != 123 {
-		t.Fatalf("VoiceMaxResponseTokensOrDefault() = %d, want 123", cfg.VoiceMaxResponseTokensOrDefault())
 	}
 }
 
@@ -2219,14 +2230,6 @@ func TestVoiceSessionConfigValidationRejectsNegativeValues(t *testing.T) {
 				VoiceMaxTurns: -1,
 			},
 			want: "voice_max_turns must be >= 0",
-		},
-		{
-			name: "negative voice max response tokens",
-			cfg: Config{
-				Model:                  ModelConfig{Provider: "fake"},
-				VoiceMaxResponseTokens: -1,
-			},
-			want: "voice_max_response_tokens must be >= 0",
 		},
 	}
 
@@ -2415,7 +2418,7 @@ enabled = false
 relay_url = "https://relay.example.com"
 relay_api_key = "relay-secret"
 board_id = "board-001"
-bundle_id = "com.example.aiden"
+bundle_id = "com.example.aico"
 environment = "sandbox"
 team_id = "TEAMID1234"
 key_id = "KEYID12345"

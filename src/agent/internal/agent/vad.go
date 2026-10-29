@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -21,10 +21,10 @@ const (
 	sileroVADFrameSamples     = 512
 	defaultVADBackend         = "rknn"
 	defaultVADSpeechThreshold = 0.5
-	defaultVADModelPath       = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
-	defaultVADWeightsPath     = "/usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin"
-	defaultVADHelperPath      = "/usr/lib/aiden/rknn_vad"
-	defaultCPUVADHelperPath   = "/usr/lib/aiden/cpu_vad"
+	defaultVADModelPath       = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
+	defaultVADWeightsPath     = "/usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin"
+	defaultVADHelperPath      = "/usr/lib/aico/rknn_vad"
+	defaultCPUVADHelperPath   = "/usr/lib/aico/cpu_vad"
 	vadHelperReadinessTimeout = 30 * time.Second
 	vadHelperProtocolTimeout  = 5 * time.Second
 	vadHelperShutdownTimeout  = 2 * time.Second

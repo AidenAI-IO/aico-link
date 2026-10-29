@@ -12,7 +12,7 @@ std::atomic<uint32_t> g_last_warmup_height(0);
 
 }  // namespace
 
-namespace aiden {
+namespace aico {
 
 bool encode_frame_to_jpeg_hw(const uint8_t*, uint32_t, uint32_t, int,
                              std::vector<uint8_t>*, uint32_t*, uint32_t*,
@@ -82,4 +82,4 @@ int jpeg_encoder_stub_cancel_count() { return g_cancel_count.load(); }
 uint32_t jpeg_encoder_stub_last_warmup_width() { return g_last_warmup_width.load(); }
 uint32_t jpeg_encoder_stub_last_warmup_height() { return g_last_warmup_height.load(); }
 
-}  // namespace aiden
+}  // namespace aico

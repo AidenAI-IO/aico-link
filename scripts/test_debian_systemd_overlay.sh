@@ -4,7 +4,7 @@ set -euo pipefail
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly OVERLAY=${REPO_ROOT}/overlay-debian
 readonly UNIT_DIR=${OVERLAY}/etc/systemd/system
-readonly TMPFILES=${OVERLAY}/etc/tmpfiles.d/aiden.conf
+readonly TMPFILES=${OVERLAY}/etc/tmpfiles.d/aico.conf
 readonly TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
@@ -15,65 +15,85 @@ fail() {
 
 [ -d "${UNIT_DIR}" ] || fail "overlay-debian systemd unit directory is missing"
 
+# The stable unit must have exactly one UART owner, and final power removal
+# must use the post-unmount hook rather than a normal service ExecStop.
+grep -Fqx 'ExecStart=/usr/lib/aico/mcu_service --port /dev/ttyS5' "${UNIT_DIR}/aico-mcu-event.service"
+grep -Fqx 'Group=aico' "${UNIT_DIR}/aico-mcu-event.service"
+grep -Fqx 'RuntimeDirectoryMode=0750' "${UNIT_DIR}/aico-mcu-event.service"
+test ! -e "${OVERLAY}/usr/lib/aico/aico-mcu-event" || fail "retired MCU logger remains installed"
+shutdown_hook=${OVERLAY}/usr/lib/systemd/system-shutdown/aico-mcu-shutdown
+test -x "${shutdown_hook}" || fail "MCU shutdown hook is not executable"
+sh -n "${shutdown_hook}"
+grep -Fqx 'exec /usr/lib/aico/mcu_service shutdown-hook "$1"' "${shutdown_hook}"
+python3 - "${REPO_ROOT}" <<'PY'
+from pathlib import Path
+import sys
+sys.path.insert(0, str(Path(sys.argv[1]) / "scripts/debian-package"))
+import system_config
+files = system_config.inventory()
+assert "usr/lib/systemd/system-shutdown/aico-mcu-shutdown" in files
+assert "usr/lib/aico/aico-mcu-event" not in files
+PY
+
 grep -qx 'JobRunningTimeoutSec=5s' \
-    "${UNIT_DIR}/dev-rtc0.device.d/20-aiden-optional.conf"
+    "${UNIT_DIR}/dev-rtc0.device.d/20-aico-optional.conf"
 grep -qx 'JobRunningTimeoutSec=30s' \
-    "${UNIT_DIR}/sys-subsystem-net-devices-wlan0.device.d/20-aiden-optional.conf"
+    "${UNIT_DIR}/sys-subsystem-net-devices-wlan0.device.d/20-aico-optional.conf"
 grep -qx 'RuntimeDirectory=sshd' \
-    "${UNIT_DIR}/aiden-ssh-identity.service"
+    "${UNIT_DIR}/aico-ssh-identity.service"
 grep -qx 'RuntimeDirectoryMode=0755' \
-    "${UNIT_DIR}/aiden-ssh-identity.service"
+    "${UNIT_DIR}/aico-ssh-identity.service"
 grep -qx 'TimeoutStartSec=180s' \
-    "${UNIT_DIR}/aiden-ssh-identity.service"
+    "${UNIT_DIR}/aico-ssh-identity.service"
 grep -qx 'for type in ed25519 ecdsa rsa; do' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ssh-identity"
+    "${OVERLAY}/usr/lib/aico/aico-ssh-identity"
 grep -q 'runtime_dir=/run/sshd' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ssh-identity"
+    "${OVERLAY}/usr/lib/aico/aico-ssh-identity"
 grep -q 'mkdir -p .*"${runtime_dir}"' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ssh-identity"
+    "${OVERLAY}/usr/lib/aico/aico-ssh-identity"
 grep -q 'chmod 0755 "${runtime_dir}"' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ssh-identity"
+    "${OVERLAY}/usr/lib/aico/aico-ssh-identity"
 grep -qx 'ConditionPathExists=/dev/rtc0' \
-    "${UNIT_DIR}/aiden-rtc.service"
+    "${UNIT_DIR}/aico-rtc.service"
 if grep -Eq '^(Wants|Requires|After)=.*dev-rtc0\.device' \
-    "${UNIT_DIR}/aiden-rtc.service"; then
+    "${UNIT_DIR}/aico-rtc.service"; then
     fail "optional RTC service still waits for dev-rtc0.device"
 fi
 
 while IFS= read -r script; do
-    [ "${script##*/}" = aiden-log.sh ] || [ -x "${script}" ] || fail "helper is not executable: ${script#${REPO_ROOT}/}"
+    [ "${script##*/}" = aico-log.sh ] || [ -x "${script}" ] || fail "helper is not executable: ${script#${REPO_ROOT}/}"
     IFS= read -r shebang <"${script}"
     case "${shebang}" in
         *python3*) python3 -c 'import pathlib, sys; p = pathlib.Path(sys.argv[1]); compile(p.read_bytes(), str(p), "exec")' "${script}" ;;
         *) sh -n "${script}" ;;
     esac
-done < <(find "${OVERLAY}/usr/lib/aiden" -maxdepth 1 -type f | LC_ALL=C sort)
+done < <(find "${OVERLAY}/usr/lib/aico" -maxdepth 1 -type f | LC_ALL=C sort)
 
 # Debian units that consume the sanitized environment. This list replaces the
 # retired Buildroot init-script map now that overlay/etc/init.d is gone.
 environment_consumers='
-aiden-ble.service
-aiden-wifi-proxy.service
-aiden-frame.service
-aiden-adb-host.service
-aiden-agent.service
-aiden-audio.service
-aiden-ota-health.service
-aiden-hybrid-update.service
-aiden-config-web.service
-aiden-ttyd.service
+aico-ble.service
+aico-wifi-proxy.service
+aico-frame.service
+aico-adb-host.service
+aico-agent.service
+aico-audio.service
+aico-ota-health.service
+aico-hybrid-update.service
+aico-config-web.service
+aico-ttyd.service
 '
-environment_file=/run/aiden/system.env
+environment_file=/run/aico/system.env
 for unit in ${environment_consumers}; do
     unit_path=${UNIT_DIR}/${unit}
     [ -f "${unit_path}" ] || fail "environment consumer unit is missing: ${unit}"
-    grep -q 'aiden-environment.service' "${unit_path}" \
-        || fail "${unit} does not depend on aiden-environment.service"
+    grep -q 'aico-environment.service' "${unit_path}" \
+        || fail "${unit} does not depend on aico-environment.service"
     grep -qx "EnvironmentFile=${environment_file}" "${unit_path}" \
         || fail "${unit} does not consume ${environment_file}"
 done
 
-if rg -n 'aiden-env-run|/etc/init\.d/' "${UNIT_DIR}"; then
+if rg -n 'aico-env-run|/etc/init\.d/' "${UNIT_DIR}"; then
     fail "Debian units must not use the Buildroot environment wrapper or SysV scripts"
 fi
 if rg -n '\b(ifconfig|dhcpcd|dhclient|udhcpc|killall)\b' \
@@ -84,11 +104,11 @@ if rg -n '(^|[[:space:]])\.[[:space:]]+/userdata|source[[:space:]]+/userdata' \
     "${OVERLAY}/usr" "${UNIT_DIR}"; then
     fail "Debian runtime directly sources untrusted userdata"
 fi
-grep -q '/run/aiden/system.env' "${OVERLAY}/etc/profile.d/aiden-env.sh"
-grep -q '/run/wifi_proxy/proxy-env' "${OVERLAY}/etc/profile.d/aiden-env.sh"
-sh -n "${OVERLAY}/etc/profile.d/aiden-env.sh"
+grep -q '/run/aico/system.env' "${OVERLAY}/etc/profile.d/aico-env.sh"
+grep -q '/run/wifi_proxy/proxy-env' "${OVERLAY}/etc/profile.d/aico-env.sh"
+sh -n "${OVERLAY}/etc/profile.d/aico-env.sh"
 
-managed_env_run=${OVERLAY}/usr/lib/aiden/aiden-managed-env-run
+managed_env_run=${OVERLAY}/usr/lib/aico/aico-managed-env-run
 proxy_environment=${TEST_ROOT}/proxy-env
 printf '%s\n' \
     'HTTP_PROXY="socks5h://127.0.0.1:18080"' \
@@ -96,7 +116,7 @@ printf '%s\n' \
     'ALL_PROXY="socks5h://127.0.0.1:18080"' \
     'NO_PROXY="localhost,127.0.0.1,::1"' \
     >"${proxy_environment}"
-managed_output=$(env -i AIDEN_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
+managed_output=$(env -i AICO_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
     HTTP_PROXY=http://upstream.example:8080 "${managed_env_run}" /usr/bin/env)
 printf '%s\n' "${managed_output}" \
     | grep -qx 'HTTP_PROXY=socks5h://127.0.0.1:18080'
@@ -105,30 +125,30 @@ for proxy_key in http_proxy https_proxy all_proxy; do
 done
 printf '%s\n' "${managed_output}" | grep -qx 'no_proxy=localhost,127.0.0.1,::1'
 login_output=$(env -i PATH="$PATH" \
-    AIDEN_SYSTEM_ENVIRONMENT="${TEST_ROOT}/missing-system-env" \
-    AIDEN_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
+    AICO_SYSTEM_ENVIRONMENT="${TEST_ROOT}/missing-system-env" \
+    AICO_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
     http_proxy=http://stale.example:8080 \
-    sh -c '. "$1"; /usr/bin/env' sh "${OVERLAY}/etc/profile.d/aiden-env.sh")
+    sh -c '. "$1"; /usr/bin/env' sh "${OVERLAY}/etc/profile.d/aico-env.sh")
 for proxy_key in HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy; do
     printf '%s\n' "${login_output}" | grep -qx "${proxy_key}=socks5h://127.0.0.1:18080"
 done
 for proxy_key in NO_PROXY no_proxy; do
     printf '%s\n' "${login_output}" | grep -qx "${proxy_key}=localhost,127.0.0.1,::1"
 done
-login_disabled_output=$(env -i PATH="$PATH" AIDEN_WIFI_PROXY_ENABLED=0 \
-    AIDEN_SYSTEM_ENVIRONMENT="${TEST_ROOT}/missing-system-env" \
-    AIDEN_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
+login_disabled_output=$(env -i PATH="$PATH" AICO_WIFI_PROXY_ENABLED=0 \
+    AICO_SYSTEM_ENVIRONMENT="${TEST_ROOT}/missing-system-env" \
+    AICO_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
     http_proxy=http://explicit.example:8080 \
-    sh -c '. "$1"; /usr/bin/env' sh "${OVERLAY}/etc/profile.d/aiden-env.sh")
+    sh -c '. "$1"; /usr/bin/env' sh "${OVERLAY}/etc/profile.d/aico-env.sh")
 printf '%s\n' "${login_disabled_output}" | grep -qx 'http_proxy=http://explicit.example:8080'
 if printf '%s\n' "${login_disabled_output}" | grep -q '^HTTP_PROXY='; then
     fail "disabled login proxy must preserve the explicit environment"
 fi
 if command -v visudo >/dev/null 2>&1; then
-    visudo -cf "${OVERLAY}/etc/sudoers.d/20-aiden-proxy"
+    visudo -cf "${OVERLAY}/etc/sudoers.d/20-aico-proxy"
 fi
-bypass_output=$(env -i AIDEN_WIFI_PROXY_ENABLED=0 \
-    AIDEN_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
+bypass_output=$(env -i AICO_WIFI_PROXY_ENABLED=0 \
+    AICO_WIFI_PROXY_ENVIRONMENT="${proxy_environment}" \
     HTTP_PROXY=http://upstream.example:8080 "${managed_env_run}" /usr/bin/env)
 printf '%s\n' "${bypass_output}" \
     | grep -qx 'HTTP_PROXY=http://upstream.example:8080'
@@ -137,64 +157,64 @@ test ! -e "${UNIT_DIR}/oem.mount"
 grep -qx 'What=/dev/mmcblk0p9' "${UNIT_DIR}/userdata.mount"
 grep -qx 'What=/dev/mmcblk0p10' "${UNIT_DIR}/userdata-ota.mount"
 for unit in userdata.mount userdata-ota.mount; do
-    grep -q '^Requires=.*aiden-rootfs-grow.service' "${UNIT_DIR}/${unit}" \
+    grep -q '^Requires=.*aico-rootfs-grow.service' "${UNIT_DIR}/${unit}" \
         || fail "${unit} can mount after failed filesystem preparation"
 done
-grep -q 'aiden.slot_suffix' "${OVERLAY}/usr/lib/aiden/aiden-slot-resolve"
-grep -q 'Root slot.*disagrees' "${OVERLAY}/usr/lib/aiden/aiden-slot-resolve"
-grep -q 'rootfs${AIDEN_SLOT_SUFFIX}' "${OVERLAY}/usr/lib/aiden/aiden-rootfs-grow"
-grep -q '^mount -o remount,rw /$' "${OVERLAY}/usr/lib/aiden/aiden-rootfs-grow"
+grep -q 'aico.slot_suffix' "${OVERLAY}/usr/lib/aico/aico-slot-resolve"
+grep -q 'Root slot.*disagrees' "${OVERLAY}/usr/lib/aico/aico-slot-resolve"
+grep -q 'rootfs${AICO_SLOT_SUFFIX}' "${OVERLAY}/usr/lib/aico/aico-rootfs-grow"
+grep -q '^mount -o remount,rw /$' "${OVERLAY}/usr/lib/aico/aico-rootfs-grow"
 grep -q 'if \[ ! -e "${marker}" \]; then' \
-    "${OVERLAY}/usr/lib/aiden/aiden-rootfs-grow"
-if grep -q '^ConditionPathExists=!/var/lib/aiden/rootfs-grown$' \
-    "${UNIT_DIR}/aiden-rootfs-grow.service"; then
+    "${OVERLAY}/usr/lib/aico/aico-rootfs-grow"
+if grep -q '^ConditionPathExists=!/var/lib/aico/rootfs-grown$' \
+    "${UNIT_DIR}/aico-rootfs-grow.service"; then
     fail "rootfs-grow must remount the root filesystem on every boot"
 fi
 grep -q 'systemd-timesyncd.service' \
-    "${UNIT_DIR}/aiden-rootfs-grow.service"
-grep -qx 'RemainAfterExit=yes' "${UNIT_DIR}/aiden-rootfs-grow.service"
-grep -qx 'RefuseManualStop=yes' "${UNIT_DIR}/aiden-rootfs-grow.service" \
+    "${UNIT_DIR}/aico-rootfs-grow.service"
+grep -qx 'RemainAfterExit=yes' "${UNIT_DIR}/aico-rootfs-grow.service"
+grep -qx 'RefuseManualStop=yes' "${UNIT_DIR}/aico-rootfs-grow.service" \
     || fail "manual growth-service restarts can stop live data mounts"
 grep -q 'mkdir -p /userdata/agent/log' \
-    "${OVERLAY}/usr/lib/aiden/aiden-userdata-migrate"
+    "${OVERLAY}/usr/lib/aico/aico-userdata-migrate"
 
 grep -qx 'DHCP=yes' "${OVERLAY}/etc/systemd/network/20-wlan0.network"
 grep -qx 'Address=192.168.42.1/24' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'ConfigureWithoutCarrier=yes' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'RequiredForOnline=no' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 if rg -n 'networkctl reconfigure (usb0|"?\$\{?interface\}?")' \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-gadget" \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-ecm-watchdog" \
-    "${OVERLAY}/usr/lib/aiden/aiden-wait-interface-ip" \
-    "${OVERLAY}/usr/lib/aiden/aiden-dynamic-keyboard"; then
+    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
+    "${OVERLAY}/usr/lib/aico/aico-usb-ecm-watchdog" \
+    "${OVERLAY}/usr/lib/aico/aico-wait-interface-ip" \
+    "${OVERLAY}/usr/lib/aico/aico-dynamic-keyboard"; then
     fail "USB helpers must not ask networkd to replace an address they just configured"
 fi
 grep -q '/userdata/debian/wifi/wpa_supplicant-wlan0.conf' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
-grep -Fqx 'EnvironmentFile=-/run/aiden/wpa_supplicant-config.env' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
-grep -Fqx 'Environment=AIDEN_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
-grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AIDEN_WPA_SUPPLICANT_CONFIG} -i %I' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
-grep -q -- '/usr/lib/aiden/agent config-web' \
-    "${UNIT_DIR}/aiden-config-web.service"
-grep -q -- '--wifi-config-environment=/run/aiden/wpa_supplicant-config.env' \
-    "${UNIT_DIR}/aiden-config-web.service"
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
+grep -Fqx 'EnvironmentFile=-/run/aico/wpa_supplicant-config.env' \
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
+grep -Fqx 'Environment=AICO_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' \
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
+grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -i %I' \
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
+grep -q -- '/usr/lib/aico/agent config-web' \
+    "${UNIT_DIR}/aico-config-web.service"
+grep -q -- '--wifi-config-environment=/run/aico/wpa_supplicant-config.env' \
+    "${UNIT_DIR}/aico-config-web.service"
 grep -Fq 'in_device = ($0 ~ /^[[:space:]]*\[basic_settings\.device\][[:space:]]*$/' \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-gadget" \
+    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
     || fail "Debian USB gadget must read device_type from the grouped config path"
 grep -Fq "Unsupported top-level [device] table" \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-gadget" \
+    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
     || fail "Debian USB gadget must reject the retired top-level device table"
 grep -Eq '^[[:space:]]*reject_legacy_device_config \|\| return 1$' \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-gadget" \
+    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" \
     || fail "Debian USB gadget must reject invalid config before setup"
 legacy_agent_config=${TEST_ROOT}/legacy-agent.toml
 printf '[device]\ndevice_type = "Android"\n' >"${legacy_agent_config}"
 set +e
 legacy_gadget_output=$(AGENT_TOML="${legacy_agent_config}" \
-    "${OVERLAY}/usr/lib/aiden/aiden-usb-gadget" start 2>&1)
+    "${OVERLAY}/usr/lib/aico/aico-usb-gadget" start 2>&1)
 legacy_gadget_status=$?
 set -e
 [ "${legacy_gadget_status}" -ne 0 ] \
@@ -202,29 +222,29 @@ set -e
 printf '%s\n' "${legacy_gadget_output}" \
     | grep -Fq "Unsupported top-level [device] table" \
     || fail "Debian USB gadget did not report the retired device table"
-if printf '%s\n' "${legacy_gadget_output}" | grep -Fq "Setting up Aiden USB composite gadget"; then
+if printf '%s\n' "${legacy_gadget_output}" | grep -Fq "Setting up Aico Link USB composite gadget"; then
     fail "Debian USB gadget began setup before rejecting invalid config"
 fi
-if grep -Eq '^Requires=.*aiden-wifi-proxy\.service' \
-    "${UNIT_DIR}/aiden-config-web.service"; then
+if grep -Eq '^Requires=.*aico-wifi-proxy\.service' \
+    "${UNIT_DIR}/aico-config-web.service"; then
     fail "Config Web must remain available when the Wi-Fi proxy fails"
 fi
-grep -Eq '^Wants=.*aiden-wifi-proxy\.service' \
-    "${UNIT_DIR}/aiden-config-web.service"
-if grep -Eq '(^Wants=|^After=).*aiden-agent\.service' \
-    "${UNIT_DIR}/aiden-config-web.service"; then
+grep -Eq '^Wants=.*aico-wifi-proxy\.service' \
+    "${UNIT_DIR}/aico-config-web.service"
+if grep -Eq '(^Wants=|^After=).*aico-agent\.service' \
+    "${UNIT_DIR}/aico-config-web.service"; then
     fail "Config Web must not wait for the Agent to start"
 fi
-if grep -Eq '^Requires=.*aiden-agent\.service' \
-    "${UNIT_DIR}/aiden-config-web.service"; then
+if grep -Eq '^Requires=.*aico-agent\.service' \
+    "${UNIT_DIR}/aico-config-web.service"; then
     fail "Config Web must not require the Agent"
 fi
-if grep -Eq '(^Wants=|^After=).*aiden-agent\.service' \
-    "${UNIT_DIR}/aiden-ota-health-marker.service"; then
+if grep -Eq '(^Wants=|^After=).*aico-agent\.service' \
+    "${UNIT_DIR}/aico-ota-health-marker.service"; then
     fail "OTA health marker must not wait for the Agent to start"
 fi
-if grep -Eq '^Requires=.*aiden-agent\.service' \
-    "${UNIT_DIR}/aiden-ota-health-marker.service"; then
+if grep -Eq '^Requires=.*aico-agent\.service' \
+    "${UNIT_DIR}/aico-ota-health-marker.service"; then
     fail "OTA health marker must not require the Agent"
 fi
 while IFS= read -r log_path; do
@@ -234,144 +254,170 @@ while IFS= read -r log_path; do
 done < <(sed -n 's|^StandardOutput=append:\(/var/log/[^[:space:]]*\)$|\1|p' \
     "${UNIT_DIR}"/*.service | LC_ALL=C sort -u)
 grep -q -- '--wifi-interface=wlan0' \
-    "${UNIT_DIR}/aiden-config-web.service"
+    "${UNIT_DIR}/aico-config-web.service"
 grep -q -- '--wifi-backend=systemd-networkd' \
-    "${UNIT_DIR}/aiden-config-web.service"
-if grep -q -- '--wifi-iface' "${UNIT_DIR}/aiden-config-web.service"; then
+    "${UNIT_DIR}/aico-config-web.service"
+if grep -q -- '--wifi-iface' "${UNIT_DIR}/aico-config-web.service"; then
     fail "Config Web still uses the retired --wifi-iface flag"
 fi
-grep -qx 'ConditionPathExists=/usr/lib/aiden/agent' \
-    "${UNIT_DIR}/aiden-config-web.service"
-grep -q '/usr/lib/aiden/agent wifi-proxy' \
-    "${UNIT_DIR}/aiden-wifi-proxy.service"
-grep -q 'aiden-wifi-proxy.service' "${UNIT_DIR}/aiden-agent.service"
-grep -q 'aiden-wifi-proxy-agent-restart.path' "${UNIT_DIR}/aiden.target"
-proxy_watch_path=${UNIT_DIR}/aiden-wifi-proxy-agent-restart.path
-for directive in DefaultDependencies=no After=aiden-wifi-proxy.service Before=shutdown.target Conflicts=shutdown.target; do
+grep -qx 'ConditionPathExists=/usr/lib/aico/agent' \
+    "${UNIT_DIR}/aico-config-web.service"
+grep -q '/usr/lib/aico/agent wifi-proxy' \
+    "${UNIT_DIR}/aico-wifi-proxy.service"
+grep -q 'aico-wifi-proxy.service' "${UNIT_DIR}/aico-agent.service"
+grep -q 'aico-wifi-proxy-agent-restart.path' "${UNIT_DIR}/aico.target"
+proxy_watch_path=${UNIT_DIR}/aico-wifi-proxy-agent-restart.path
+for directive in DefaultDependencies=no After=aico-wifi-proxy.service Before=shutdown.target Conflicts=shutdown.target; do
     grep -Fqx "${directive}" "${proxy_watch_path}" \
         || fail "Wi-Fi proxy path unit is missing safe ordering: ${directive}"
 done
-grep -Eq '^After=.*aiden-wifi-proxy\.service' \
-    "${UNIT_DIR}/aiden-wifi-proxy-agent-restart.service" \
+grep -Eq '^After=.*aico-wifi-proxy\.service' \
+    "${UNIT_DIR}/aico-wifi-proxy-agent-restart.service" \
     || fail "Wi-Fi proxy restart service must wait for the proxy"
-grep -q 'AIDEN_WIFI_PROXY_INIT_SCRIPT=/usr/lib/aiden/aiden-wifi-proxy-control' \
-    "${UNIT_DIR}/aiden-config-web.service"
-grep -q 'aiden-managed-env-run /usr/lib/aiden/agent' \
-    "${UNIT_DIR}/aiden-agent.service"
-grep -q 'AIDEN_USB_COMPOSITE_REFRESH_COMMAND=/usr/lib/aiden/aiden-usb-ecm-watchdog' \
-    "${UNIT_DIR}/aiden-agent.service"
+grep -q 'AICO_WIFI_PROXY_INIT_SCRIPT=/usr/lib/aico/aico-wifi-proxy-control' \
+    "${UNIT_DIR}/aico-config-web.service"
+grep -q 'aico-managed-env-run /usr/lib/aico/agent' \
+    "${UNIT_DIR}/aico-agent.service"
+grep -q 'AICO_USB_COMPOSITE_REFRESH_COMMAND=/usr/lib/aico/aico-usb-ecm-watchdog' \
+    "${UNIT_DIR}/aico-agent.service"
 grep -q 'watchdog=running pid=\$pid supervisor=systemd' \
-    "${OVERLAY}/usr/lib/aiden/aiden-agent-control"
-grep -q 'systemctl show aiden-agent.service -p MainPID --value' \
-    "${OVERLAY}/usr/lib/aiden/aiden-agent-control"
-grep -q 'aiden-boot-timeline-init.service' "${UNIT_DIR}/aiden-agent.service"
-grep -q 'AIDEN_FRAME_SERVICE_INIT_SCRIPT=/usr/lib/aiden/aiden-frame-control' \
-    "${UNIT_DIR}/aiden-config-web.service"
-grep -q 'aiden-userdata-migrate.service' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'StartLimitIntervalSec=0' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'Restart=on-failure' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'RestartSec=2s' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'Group=aiden' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'SupplementaryGroups=audio video' "${UNIT_DIR}/aiden-frame.service"
-grep -qx 'Group=aiden' "${UNIT_DIR}/aiden-audio.service"
-grep -qx 'SupplementaryGroups=audio video' "${UNIT_DIR}/aiden-audio.service"
-grep -Fqx 'Requires=aiden-environment.service aiden-media-modules.service aiden-audio-mixer.service' \
-    "${UNIT_DIR}/aiden-audio.service"
-grep -Fqx 'After=aiden-environment.service aiden-media-modules.service aiden-audio-mixer.service sound.target' \
-    "${UNIT_DIR}/aiden-audio.service"
-grep -Fqx 'Requires=aiden-media-modules.service' \
-    "${UNIT_DIR}/aiden-audio-mixer.service"
-grep -Fqx 'After=aiden-media-modules.service sound.target' \
-    "${UNIT_DIR}/aiden-audio-mixer.service"
-grep -Fqx 'Before=aiden-audio.service' \
-    "${UNIT_DIR}/aiden-audio-mixer.service"
-grep -Fqx 'PartOf=aiden-audio.service' \
-    "${UNIT_DIR}/aiden-audio-mixer.service"
-grep -Fqx 'ExecStart=/usr/lib/aiden/aiden-audio-mixer' \
-    "${UNIT_DIR}/aiden-audio-mixer.service"
+    "${OVERLAY}/usr/lib/aico/aico-agent-control"
+grep -q 'systemctl show aico-agent.service -p MainPID --value' \
+    "${OVERLAY}/usr/lib/aico/aico-agent-control"
+grep -q 'aico-boot-timeline-init.service' "${UNIT_DIR}/aico-agent.service"
+grep -q 'AICO_FRAME_SERVICE_INIT_SCRIPT=/usr/lib/aico/aico-frame-control' \
+    "${UNIT_DIR}/aico-config-web.service"
+grep -q 'aico-userdata-migrate.service' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'StartLimitIntervalSec=0' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'Restart=on-failure' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'RestartSec=2s' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'Group=aico' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'SupplementaryGroups=audio video' "${UNIT_DIR}/aico-frame.service"
+grep -qx 'Group=aico' "${UNIT_DIR}/aico-audio.service"
+grep -qx 'SupplementaryGroups=audio video' "${UNIT_DIR}/aico-audio.service"
+grep -Fqx 'Requires=aico-environment.service aico-media-modules.service aico-audio-mixer.service' \
+    "${UNIT_DIR}/aico-audio.service"
+grep -Fqx 'After=aico-environment.service aico-media-modules.service aico-audio-mixer.service sound.target' \
+    "${UNIT_DIR}/aico-audio.service"
+grep -Fqx 'Requires=aico-media-modules.service' \
+    "${UNIT_DIR}/aico-audio-mixer.service"
+grep -Fqx 'After=aico-media-modules.service sound.target' \
+    "${UNIT_DIR}/aico-audio-mixer.service"
+grep -Fqx 'Before=aico-audio.service' \
+    "${UNIT_DIR}/aico-audio-mixer.service"
+grep -Fqx 'PartOf=aico-audio.service' \
+    "${UNIT_DIR}/aico-audio-mixer.service"
+grep -Fqx 'ExecStart=/usr/lib/aico/aico-audio-mixer' \
+    "${UNIT_DIR}/aico-audio-mixer.service"
 bash "${REPO_ROOT}/scripts/test_debian_audio_mixer.sh"
-grep -qx 'ExecStart=/usr/lib/aiden/aiden-boot-timeline init-systemd' \
-    "${UNIT_DIR}/aiden-boot-timeline-init.service"
-grep -qx 'ExecStart=/usr/lib/aiden/aiden-boot-timeline finalize-systemd' \
-    "${UNIT_DIR}/aiden-boot-timeline.service"
-grep -q 'networkctl reconfigure' "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
-if grep -qE 'dhcpcd|dhclient' "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"; then
+grep -qx 'ExecStart=/usr/lib/aico/aico-boot-timeline init-systemd' \
+    "${UNIT_DIR}/aico-boot-timeline-init.service"
+grep -qx 'ExecStart=/usr/lib/aico/aico-boot-timeline finalize-systemd' \
+    "${UNIT_DIR}/aico-boot-timeline.service"
+grep -q 'networkctl reconfigure' "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
+if grep -qE 'dhcpcd|dhclient' "${OVERLAY}/usr/lib/aico/aico-wlan-guard"; then
     fail "Wi-Fi guard takes DHCP ownership from networkd"
 fi
-grep -Fqx 'insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
-grep -Fqx 'he_on=${AIDEN_WIFI_HE:-0}' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
-grep -Fq 'stage=begin he_on=${he_on}' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
-grep -Fq 'result=failed reason=wlan0-missing' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
-grep -Fq 'mark "begin he_on=${he_on}"' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
-grep -Fq 'invalid-he_on' "${OVERLAY}/usr/lib/aiden/aiden-wifi-driver"
+grep -Fqx 'insert_if_present aic8800_fdrv.ko he_on="${he_on}" custregd=1 lp_on="${lp_on}"' \
+    "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fqx 'he_on=${AICO_WIFI_HE:-1}' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fq 'stage=begin he_on=${he_on}' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fq 'result=failed reason=wlan0-missing' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fq 'mark "begin he_on=${he_on}"' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
+grep -Fq 'invalid-he_on' "${OVERLAY}/usr/lib/aico/aico-wifi-driver"
 grep -Fq 'StandardOutput=append:/var/log/wifi_driver/wifi_driver.log' \
-    "${UNIT_DIR}/aiden-wifi-driver.service"
+    "${UNIT_DIR}/aico-wifi-driver.service"
 grep -Fq 'StandardError=append:/var/log/wifi_driver/wifi_driver.log' \
-    "${UNIT_DIR}/aiden-wifi-driver.service"
-grep -Fqx 'ExecStartPre=/usr/lib/aiden/aiden-wifi-log-retention' \
-    "${UNIT_DIR}/aiden-wifi-driver.service"
-grep -Fqx 'ExecStartPre=/usr/lib/aiden/aiden-wifi-log-retention' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
+    "${UNIT_DIR}/aico-wifi-driver.service"
+grep -Fqx 'ExecStartPre=/usr/lib/aico/aico-wifi-log-retention' \
+    "${UNIT_DIR}/aico-wifi-driver.service"
+grep -Fqx 'ExecStartPre=/usr/lib/aico/aico-wifi-log-retention' \
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
 grep -Fq 'StandardOutput=append:/var/log/wpa_supplicant/wlan0.log' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
 grep -Fq 'StandardError=append:/var/log/wpa_supplicant/wlan0.log' \
-    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aiden.conf"
+    "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
 for log_directory in /var/log/wifi_driver /var/log/wpa_supplicant /var/log/wlan_guard; do
     grep -Fqx "d ${log_directory} 0755 root root -" "${TMPFILES}" \
         || fail "tmpfiles does not create ${log_directory}"
 done
 grep -Fq 'link-not-ready wpa_state=' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 grep -Fq 'recovery-end attempt=' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 grep -Fq 'mark "gateway-failure count=${failures}"' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 grep -Fq 'cat "${log_file}.tmp.$$" >"${log_file}"' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 # Exercise the same direct execution used by ExecStartPre without touching logs.
-AIDEN_WIFI_LOG_MAX_LINES=invalid \
-    "${OVERLAY}/usr/lib/aiden/aiden-wifi-log-retention"
-grep -Fq '/usr/lib/aiden/aiden-wifi-log-retention 2>/dev/null || true' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+AICO_WIFI_LOG_MAX_LINES=invalid \
+    "${OVERLAY}/usr/lib/aico/aico-wifi-log-retention"
+grep -Fq '/usr/lib/aico/aico-wifi-log-retention 2>/dev/null || true' \
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 grep -Fq 'log_file=${WLAN_GUARD_LOG_FILE:-/var/log/wlan_guard/wlan_guard.log}' \
-    "${OVERLAY}/usr/lib/aiden/aiden-wlan-guard"
+    "${OVERLAY}/usr/lib/aico/aico-wlan-guard"
 grep -Fq 'StandardOutput=append:/var/log/wlan_guard/wlan_guard.log' \
-    "${UNIT_DIR}/aiden-wlan-guard.service"
+    "${UNIT_DIR}/aico-wlan-guard.service"
 grep -Fq 'StandardError=append:/var/log/wlan_guard/wlan_guard.log' \
-    "${UNIT_DIR}/aiden-wlan-guard.service"
-grep -Fqx 'AIDEN_WIFI_HE=0' "${OVERLAY}/etc/aiden_boot.conf"
-grep -Fqx 'Wants=wpa_supplicant@wlan0.service' "${UNIT_DIR}/aiden-wlan-guard.service"
-if grep -Eq '^Requires=.*wpa_supplicant@wlan0' "${UNIT_DIR}/aiden-wlan-guard.service"; then
+    "${UNIT_DIR}/aico-wlan-guard.service"
+grep -Fqx 'AICO_WIFI_HE=1' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'ENABLE_WIFIDRV=1' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'ENABLE_WLAN_GUARD=0' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'ENABLE_BLUETOOTH_HCI=1' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'ENABLE_BLE_SERVICE=1' "${OVERLAY}/etc/aico_boot.conf"
+grep -Fqx 'ExecStartPre=/usr/lib/aico/aico-bluetooth-clear-adv' \
+    "${UNIT_DIR}/aico-ble.service" \
+    || fail "BLE service does not clear stale controller advertising sets"
+[ -x "${OVERLAY}/usr/lib/aico/aico-bluetooth-clear-adv" ] \
+    || fail "Bluetooth advertising cleanup helper is not executable"
+grep -Fqx 'After=aico-wifi-driver.service dev-ttyS0.device' \
+    "${UNIT_DIR}/aico-bluetooth-attach.service" \
+    || fail "Bluetooth attach service does not wait for the Aico Link UART0 device"
+grep -Fqx 'ConditionPathExists=/dev/ttyS0' \
+    "${UNIT_DIR}/aico-bluetooth-attach.service" \
+    || fail "Bluetooth attach service does not target the Aico Link UART0 device"
+grep -Fqx 'ExecStart=/usr/bin/hciattach -n -s 1500000 /dev/ttyS0 any 1500000 flow nosleep' \
+    "${UNIT_DIR}/aico-bluetooth-attach.service" \
+    || fail "Bluetooth attach command does not use the Aico Link UART0 transport"
+grep -Fq '[ -c /dev/ttyS0 ]' \
+    "${OVERLAY}/usr/lib/aico/aico-bluetooth-prepare" \
+    || fail "Bluetooth preparation does not validate the Aico Link UART0 device"
+if grep -Rq '/dev/ttyS1' \
+    "${UNIT_DIR}/aico-bluetooth-attach.service" \
+    "${OVERLAY}/usr/lib/aico/aico-bluetooth-prepare"; then
+    fail "Bluetooth runtime still targets the legacy Pico UART1 transport"
+fi
+grep -Fqx 'Wants=wpa_supplicant@wlan0.service' "${UNIT_DIR}/aico-wlan-guard.service"
+if grep -Eq '^Requires=.*wpa_supplicant@wlan0' "${UNIT_DIR}/aico-wlan-guard.service"; then
     fail "Wi-Fi guard must survive restarting supplicant during recovery"
 fi
 
 grep -Fqx 'SUBSYSTEM=="misc", KERNEL=="rknpu", GROUP="video", MODE="0660"' \
-    "${OVERLAY}/etc/udev/rules.d/70-aiden-rknpu.rules"
+    "${OVERLAY}/etc/udev/rules.d/70-aico-rknpu.rules"
 grep -Fqx 'SUBSYSTEM=="mpi", GROUP="video", MODE="0660"' \
-    "${OVERLAY}/etc/udev/rules.d/70-aiden-rknpu.rules"
+    "${OVERLAY}/etc/udev/rules.d/70-aico-rknpu.rules"
 grep -Fqx 'SUBSYSTEM=="rk_dma_heap", KERNEL=="rk-dma-heap-cma", GROUP="video", MODE="0660", SYMLINK+="dma_heap/system"' \
-    "${OVERLAY}/etc/udev/rules.d/70-aiden-rknpu.rules"
+    "${OVERLAY}/etc/udev/rules.d/70-aico-rknpu.rules"
 grep -Fq 'set_video_access /dev/rknpu' \
-    "${OVERLAY}/usr/lib/aiden/aiden-media-modules"
+    "${OVERLAY}/usr/lib/aico/aico-media-modules"
 grep -Fq 'for node in /dev/mpi/*' \
-    "${OVERLAY}/usr/lib/aiden/aiden-media-modules"
+    "${OVERLAY}/usr/lib/aico/aico-media-modules"
 grep -Fq 'rk_heap_node=/dev/rk_dma_heap/rk-dma-heap-cma' \
-    "${OVERLAY}/usr/lib/aiden/aiden-media-modules"
+    "${OVERLAY}/usr/lib/aico/aico-media-modules"
 grep -Fq 'ln -s ../rk_dma_heap/rk-dma-heap-cma /dev/dma_heap/system' \
-    "${OVERLAY}/usr/lib/aiden/aiden-media-modules"
+    "${OVERLAY}/usr/lib/aico/aico-media-modules"
 
-watchdog=${OVERLAY}/usr/lib/aiden/aiden-usb-ecm-watchdog
+watchdog=${OVERLAY}/usr/lib/aico/aico-usb-ecm-watchdog
 watchdog_root=${TEST_ROOT}/usb-watchdog
 mkdir -p "${watchdog_root}"
 printf '%s\n' ffb00000.usb >"${watchdog_root}/UDC"
 printf '%s\n' configured >"${watchdog_root}/state"
-AIDEN_USB_UDC_FILE="${watchdog_root}/UDC" \
-AIDEN_USB_UDC_STATE_FILE="${watchdog_root}/state" \
-AIDEN_USB_NET_CLASS_PATH="${watchdog_root}/no-usb0" \
-AIDEN_USB_LOCK_DIR="${watchdog_root}/lock" \
-AIDEN_USB_GRACE_FILE="${watchdog_root}/grace" \
-AIDEN_USB_REFRESH_STATE_FILE="${watchdog_root}/refresh.state" \
+AICO_USB_UDC_FILE="${watchdog_root}/UDC" \
+AICO_USB_UDC_STATE_FILE="${watchdog_root}/state" \
+AICO_USB_NET_CLASS_PATH="${watchdog_root}/no-usb0" \
+AICO_USB_LOCK_DIR="${watchdog_root}/lock" \
+AICO_USB_GRACE_FILE="${watchdog_root}/grace" \
+AICO_USB_REFRESH_STATE_FILE="${watchdog_root}/refresh.state" \
     "${watchdog}" refresh
 grep -qx 'last_refresh_reason=manual refresh' "${watchdog_root}/refresh.state"
 grep -qx 'last_refresh_result=ok' "${watchdog_root}/refresh.state"
@@ -405,15 +451,15 @@ run_ecm_watchdog() {
     printf '#!/bin/sh\nexit 0\n' >"${root}/bin/logger"
     chmod 0755 "${root}/bin/arping" "${root}/bin/logger"
     PATH="${root}/bin:${PATH}" \
-    AIDEN_USB_UDC_FILE="${root}/UDC" \
-    AIDEN_USB_UDC_STATE_FILE="${root}/state" \
-    AIDEN_USB_NET_CLASS_PATH="${root}/net" \
-    AIDEN_USB_CARRIER_FILE="${root}/net/carrier" \
-    AIDEN_USB_RX_PACKETS_FILE="${root}/net/statistics/rx_packets" \
-    AIDEN_USB_LEASE_FILE="${root}/leases" \
-    AIDEN_USB_LOCK_DIR="${root}/lock" \
-    AIDEN_USB_GRACE_FILE="${root}/grace" \
-    AIDEN_USB_REFRESH_STATE_FILE="${root}/refresh.state" \
+    AICO_USB_UDC_FILE="${root}/UDC" \
+    AICO_USB_UDC_STATE_FILE="${root}/state" \
+    AICO_USB_NET_CLASS_PATH="${root}/net" \
+    AICO_USB_CARRIER_FILE="${root}/net/carrier" \
+    AICO_USB_RX_PACKETS_FILE="${root}/net/statistics/rx_packets" \
+    AICO_USB_LEASE_FILE="${root}/leases" \
+    AICO_USB_LOCK_DIR="${root}/lock" \
+    AICO_USB_GRACE_FILE="${root}/grace" \
+    AICO_USB_REFRESH_STATE_FILE="${root}/refresh.state" \
     USB_ECM_PROBE_INTERVAL=1 USB_ECM_FAIL_THRESHOLD=2 USB_ECM_COOLDOWN=1 \
         "${watchdog}" watch >/dev/null 2>&1 &
     watchdog_pid=$!
@@ -455,38 +501,38 @@ run_ecm_watchdog "${stalled_root}" 6
 grep -qx 'last_refresh_reason=ECM stall' "${stalled_root}/refresh.state" \
     || fail "a stalled ECM session must be recovered with the ECM stall reason"
 
-grep -q '/usr/lib/aiden/aiden-environment' "${UNIT_DIR}/aiden-environment.service"
-grep -q '/run/aiden/environment.invalid' "${UNIT_DIR}/aiden-environment.service"
-grep -q 'schema_version' "${OVERLAY}/usr/lib/aiden/aiden-userdata-migrate"
+grep -q '/usr/lib/aico/aico-environment' "${UNIT_DIR}/aico-environment.service"
+grep -q '/run/aico/environment.invalid' "${UNIT_DIR}/aico-environment.service"
+grep -q 'schema_version' "${OVERLAY}/usr/lib/aico/aico-userdata-migrate"
 grep -q 'backup_root=${state_dir}/backups' \
-    "${OVERLAY}/usr/lib/aiden/aiden-userdata-migrate"
-grep -q 'mark-health' "${OVERLAY}/usr/lib/aiden/aiden-ota-health-aggregate"
-grep -q 'provision-identity' "${OVERLAY}/usr/lib/aiden/aiden-machine-id-provision"
-grep -q 'Requires=.*aiden-machine-id.service' \
-    "${UNIT_DIR}/aiden-environment.service"
-grep -q 'Requires=aiden-ota-health-marker.service' \
-    "${UNIT_DIR}/aiden-ota-health.service"
+    "${OVERLAY}/usr/lib/aico/aico-userdata-migrate"
+grep -q 'mark-health' "${OVERLAY}/usr/lib/aico/aico-ota-health-aggregate"
+grep -q 'provision-identity' "${OVERLAY}/usr/lib/aico/aico-machine-id-provision"
+grep -q 'Requires=.*aico-machine-id.service' \
+    "${UNIT_DIR}/aico-environment.service"
+grep -q 'Requires=aico-ota-health-marker.service' \
+    "${UNIT_DIR}/aico-ota-health.service"
 grep -q '/userdata/debian/ota/config.json' \
-    "${UNIT_DIR}/aiden-ota-health.service"
+    "${UNIT_DIR}/aico-ota-health.service"
 grep -qx 'TimeoutStartSec=10min' \
-    "${UNIT_DIR}/aiden-ota-health.service"
+    "${UNIT_DIR}/aico-ota-health.service"
 if rg -n 'WriteHealthMarkerIfPending' "${REPO_ROOT}/src/agent/cmd/daemon"; then
     fail "Agent daemon still writes an early OTA health marker"
 fi
 
-grep -Fq 'Wants=aiden-ttyd.service' "${UNIT_DIR}/aiden.target"
-grep -Fq 'ExecStart=/usr/lib/aiden/aiden-ttyd-start' \
-    "${UNIT_DIR}/aiden-ttyd.service"
-grep -qx 'User=aiden' "${UNIT_DIR}/aiden-ttyd.service"
-grep -qx 'Group=aiden' "${UNIT_DIR}/aiden-ttyd.service"
+grep -Fq 'Wants=aico-ttyd.service' "${UNIT_DIR}/aico.target"
+grep -Fq 'ExecStart=/usr/lib/aico/aico-ttyd-start' \
+    "${UNIT_DIR}/aico-ttyd.service"
+grep -qx 'User=aico' "${UNIT_DIR}/aico-ttyd.service"
+grep -qx 'Group=aico' "${UNIT_DIR}/aico-ttyd.service"
 grep -Fxq "IFS= read -r login_user" \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login"
-grep -Fxq 'SU_BIN=${AIDEN_TTYD_SU_BIN:-/bin/su}' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login"
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login"
+grep -Fxq 'SU_BIN=${AICO_TTYD_SU_BIN:-/bin/su}' \
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login"
 grep -Fxq 'if [ -z "${login_user}" ] || ! getent passwd "${login_user}" >/dev/null; then' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login"
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login"
 grep -Fxq 'exec "${SU_BIN}" --login -- "${login_user}"' \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login"
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login"
 getent_mock=${TEST_ROOT}/getent
 getent_args=${TEST_ROOT}/getent-args
 cat >"${getent_mock}" <<'EOF'
@@ -497,7 +543,7 @@ EOF
 chmod +x "${getent_mock}"
 if login_output=$(printf '%s\n' 'missing$' | \
     PATH="${TEST_ROOT}:${PATH}" GETENT_ARGS_OUTPUT="${getent_args}" \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login" 2>&1); then
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login" 2>&1); then
     fail "unknown ttyd login account unexpectedly succeeded"
 else
     login_status=$?
@@ -515,13 +561,13 @@ printf '%s\n' "$@" >"${SU_ARGS_OUTPUT}"
 EOF
 chmod +x "${su_mock}"
 printf '%s\n' 'build$' | \
-    GETENT_RESULT=0 AIDEN_TTYD_SU_BIN="${su_mock}" \
+    GETENT_RESULT=0 AICO_TTYD_SU_BIN="${su_mock}" \
     SU_ARGS_OUTPUT="${su_args}" PATH="${TEST_ROOT}:${PATH}" \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-login" >/dev/null
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-login" >/dev/null
 grep -Fxq -- '--login' "${su_args}"
 grep -Fxq -- '--' "${su_args}"
 grep -Fxq -- 'build$' "${su_args}"
-grep -Fq 'ENABLE_TTYD=1' "${OVERLAY}/etc/aiden_boot.conf"
+grep -Fq 'ENABLE_TTYD=1' "${OVERLAY}/etc/aico_boot.conf"
 ttyd_mock=${TEST_ROOT}/ttyd-mock
 ttyd_args=${TEST_ROOT}/ttyd-args
 cat >"${ttyd_mock}" <<'EOF'
@@ -531,20 +577,20 @@ EOF
 chmod +x "${ttyd_mock}"
 TTYD_BIN="${ttyd_mock}" TTYD_ARGS_OUTPUT="${ttyd_args}" \
 WETTY_PORT=4000 WETTY_FONT_SIZE=20 \
-    "${OVERLAY}/usr/lib/aiden/aiden-ttyd-start"
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-start"
 grep -Fxq -- '--base-path' "${ttyd_args}"
 grep -Fxq -- '/webtty/' "${ttyd_args}"
 grep -Fxq -- '4000' "${ttyd_args}"
 grep -Fxq -- 'fontSize=20' "${ttyd_args}"
-grep -Fxq -- '/usr/lib/aiden/aiden-ttyd-login' "${ttyd_args}"
+grep -Fxq -- '/usr/lib/aico/aico-ttyd-login' "${ttyd_args}"
 grep -qx 'disable dnsmasq.service' \
-    "${OVERLAY}/etc/systemd/system-preset/90-aiden.preset"
+    "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
 grep -qx 'disable wpa_supplicant.service' \
-    "${OVERLAY}/etc/systemd/system-preset/90-aiden.preset"
-grep -qx 'enable aiden-boot-timeline.service' \
-    "${OVERLAY}/etc/systemd/system-preset/90-aiden.preset"
+    "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
+grep -qx 'enable aico-boot-timeline.service' \
+    "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
 
-timeline_helper=${OVERLAY}/usr/lib/aiden/aiden-boot-timeline
+timeline_helper=${OVERLAY}/usr/lib/aico/aico-boot-timeline
 timeline_root=${TEST_ROOT}/boot-timeline
 mkdir -p "${timeline_root}/archive"
 printf '%s\n' '12.34 8.00' >"${timeline_root}/uptime"
@@ -552,7 +598,7 @@ cat >"${timeline_root}/systemctl" <<'EOF'
 #!/bin/sh
 [ "${1:-}" = show ] || exit 2
 case "${2:-}" in
-    aiden-agent.service)
+    aico-agent.service)
         cat <<'PROPS'
 InactiveExitTimestampMonotonic=1000000
 ActiveEnterTimestampMonotonic=3500000
@@ -593,18 +639,18 @@ timeline_env=(
     "BOOT_TIMELINE_LOCK_FILE=${timeline_root}/timeline.lock"
     "BOOT_TIMELINE_UPTIME_PATH=${timeline_root}/uptime"
     "BOOT_TIMELINE_SYSTEMCTL_BIN=${timeline_root}/systemctl"
-    "BOOT_TIMELINE_SYSTEMD_UNITS=aiden-agent.service failed.service"
+    "BOOT_TIMELINE_SYSTEMD_UNITS=aico-agent.service failed.service"
 )
 env "${timeline_env[@]}" "${timeline_helper}" init-systemd
 env "${timeline_env[@]}" "${timeline_helper}" mark agent:listening
 env "${timeline_env[@]}" "${timeline_helper}" finalize-systemd
 grep -q 'systemd:begin$' "${timeline_root}/timeline.log"
-grep -q '3.50 2.50 unit:active aiden-agent.service sub=running result=success code=exited status=0 condition=yes assert=yes$' \
+grep -q '3.50 2.50 unit:active aico-agent.service sub=running result=success code=exited status=0 condition=yes assert=yes$' \
     "${timeline_root}/timeline.log"
 grep -q '2.80 0.80 unit:failed failed.service sub=failed result=exit-code code=exited status=1 condition=yes assert=yes$' \
     "${timeline_root}/timeline.log"
 grep -q 'mark agent:listening$' "${timeline_root}/timeline.log"
-grep -q 'mark systemd:aiden-target$' "${timeline_root}/timeline.log"
+grep -q 'mark systemd:aico-target$' "${timeline_root}/timeline.log"
 archive_path=$(cat "${timeline_root}/archive.state")
 [ -f "${archive_path}" ] || fail "boot timeline archive state is dangling"
 cmp "${timeline_root}/timeline.log" "${archive_path}"
@@ -617,7 +663,7 @@ awk '{ if ($1 + 0 < previous) exit 1; previous = $1 + 0 }' \
 
 verify_output=${TEST_ROOT}/systemd-verify.txt
 systemd-analyze verify \
-    "${UNIT_DIR}"/*.service "${UNIT_DIR}"/*.timer "${UNIT_DIR}"/*.mount "${UNIT_DIR}/aiden.target" \
+    "${UNIT_DIR}"/*.service "${UNIT_DIR}"/*.timer "${UNIT_DIR}"/*.mount "${UNIT_DIR}/aico.target" \
     >"${verify_output}" 2>&1 || true
 if grep -E "${UNIT_DIR}/.*(Unknown key name|Failed to parse|Missing '=')" \
     "${verify_output}"; then

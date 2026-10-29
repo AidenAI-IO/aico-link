@@ -22,8 +22,8 @@ const (
 	// from being sent.
 	defaultHIDWriteTimeout = 750 * time.Millisecond
 
-	defaultHIDRefreshStatePath        = "/run/aiden_usb_ecm_watchdog.state"
-	defaultUSBCompositeRefreshCommand = "/usr/lib/aiden/aiden-usb-ecm-watchdog"
+	defaultHIDRefreshStatePath        = "/run/aico_usb_ecm_watchdog.state"
+	defaultUSBCompositeRefreshCommand = "/usr/lib/aico/aico-usb-ecm-watchdog"
 	usbCompositeRefreshTimeout        = 10 * time.Second
 	// usbCompositeRefreshWaitDelay bounds the wait for the refresh command's
 	// output after it exits or times out. The watchdog resets the gadget in a
@@ -254,7 +254,7 @@ func (d *HIDDevice) reopenStaleFileLocked() error {
 }
 
 func usbCompositeRefreshCommand() string {
-	if command := strings.TrimSpace(os.Getenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
+	if command := strings.TrimSpace(os.Getenv("AICO_USB_COMPOSITE_REFRESH_COMMAND")); command != "" {
 		return command
 	}
 	return defaultUSBCompositeRefreshCommand

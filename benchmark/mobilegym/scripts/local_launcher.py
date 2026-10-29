@@ -106,13 +106,13 @@ def scan_suites(benchmark_root: str | Path = BENCHMARK_ROOT) -> list[dict[str, A
                     "name": suite_path.stem,
                     "path": str(rel),
                     "custom": rel.parts[:1] == ("custom",),
-                    "type": "aiden",
-                    "task_count": count_aiden_tasks(suite_path),
+                    "type": "aico",
+                    "task_count": count_aico_tasks(suite_path),
                     "concurrent": True,
                 }
             )
 
-    return sorted(items, key=lambda item: (item["type"] != "aiden", item["name"]))
+    return sorted(items, key=lambda item: (item["type"] != "aico", item["name"]))
 
 
 def scan_mobilegym_builtins(root: Path) -> list[dict[str, Any]]:
@@ -141,7 +141,7 @@ def scan_mobilegym_builtins(root: Path) -> list[dict[str, Any]]:
     ]
 
 
-def count_aiden_tasks(suite_path: Path) -> int:
+def count_aico_tasks(suite_path: Path) -> int:
     try:
         raw = json.loads(suite_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -531,7 +531,7 @@ def summary_suite(summary: dict[str, Any]) -> str:
 
 def current_model_label(env: dict[str, str] | None = None) -> str:
     env = env or os.environ
-    return env.get("AIDEN_BENCHMARK_AGENT_MODEL") or "aiden-go"
+    return env.get("AICO_BENCHMARK_AGENT_MODEL") or "aico-go"
 
 
 def model_config_from_payload(payload: dict[str, Any]) -> dict[str, str]:
@@ -549,18 +549,18 @@ def benchmark_config_from_payload(payload: dict[str, Any]) -> dict[str, str]:
 
 
 def apply_analysis_env_from_payload(env: dict[str, str], payload: dict[str, Any]) -> None:
-    env["AIDEN_BENCHMARK_LLM_ANALYSIS"] = "1"
+    env["AICO_BENCHMARK_LLM_ANALYSIS"] = "1"
     for payload_key, env_key in {
-        "analysis_model": "AIDEN_BENCHMARK_ANALYSIS_MODEL",
-        "analysis_max_log_bytes": "AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES",
-        "analysis_max_code_bytes": "AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES",
-        "analysis_timeout_sec": "AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC",
+        "analysis_model": "AICO_BENCHMARK_ANALYSIS_MODEL",
+        "analysis_max_log_bytes": "AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES",
+        "analysis_max_code_bytes": "AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES",
+        "analysis_timeout_sec": "AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC",
     }.items():
         value = payload.get(payload_key)
         if value not in (None, ""):
             env[env_key] = str(value)
-    if "AIDEN_BENCHMARK_ANALYSIS_MODEL" not in env and env.get("AIDEN_BENCHMARK_JUDGE_MODEL"):
-        env["AIDEN_BENCHMARK_ANALYSIS_MODEL"] = env["AIDEN_BENCHMARK_JUDGE_MODEL"]
+    if "AICO_BENCHMARK_ANALYSIS_MODEL" not in env and env.get("AICO_BENCHMARK_JUDGE_MODEL"):
+        env["AICO_BENCHMARK_ANALYSIS_MODEL"] = env["AICO_BENCHMARK_JUDGE_MODEL"]
 
 
 def fetch_board_model_config(board_url: str) -> dict[str, str]:
@@ -654,13 +654,13 @@ def agent_model_environment(
     api_key = model_values.get("api_key") or provider_values.get("api_key")
     env: dict[str, str] = {}
     if provider:
-        env["AIDEN_BENCHMARK_AGENT_PROVIDER"] = provider
+        env["AICO_BENCHMARK_AGENT_PROVIDER"] = provider
     if model := model_values.get("model"):
-        env["AIDEN_BENCHMARK_AGENT_MODEL"] = model
+        env["AICO_BENCHMARK_AGENT_MODEL"] = model
     if base_url := provider_values.get("base_url"):
-        env["AIDEN_BENCHMARK_AGENT_BASE_URL"] = base_url
+        env["AICO_BENCHMARK_AGENT_BASE_URL"] = base_url
     if api_key:
-        env["AIDEN_BENCHMARK_AGENT_API_KEY"] = api_key
+        env["AICO_BENCHMARK_AGENT_API_KEY"] = api_key
     return env
 
 
@@ -672,11 +672,11 @@ def parse_agent_benchmark_assignments(text: str) -> dict[str, str]:
     values = parse_toml_assignments(text, {"api_key", "judge_model", "base_url"})
     env: dict[str, str] = {}
     if values.get("api_key"):
-        env["AIDEN_BENCHMARK_JUDGE_API_KEY"] = values["api_key"]
+        env["AICO_BENCHMARK_JUDGE_API_KEY"] = values["api_key"]
     if values.get("judge_model"):
-        env["AIDEN_BENCHMARK_JUDGE_MODEL"] = values["judge_model"]
+        env["AICO_BENCHMARK_JUDGE_MODEL"] = values["judge_model"]
     if values.get("base_url"):
-        env["AIDEN_BENCHMARK_JUDGE_BASE_URL"] = values["base_url"]
+        env["AICO_BENCHMARK_JUDGE_BASE_URL"] = values["base_url"]
     return env
 
 
@@ -718,17 +718,17 @@ def toml_section(text: str, section: str) -> str:
 
 def validate_model_environment(env: dict[str, str] | None = None) -> None:
     env = env or os.environ
-    provider = env.get("AIDEN_BENCHMARK_AGENT_PROVIDER") or "openrouter"
-    api_key = env.get("AIDEN_BENCHMARK_AGENT_API_KEY")
+    provider = env.get("AICO_BENCHMARK_AGENT_PROVIDER") or "openrouter"
+    api_key = env.get("AICO_BENCHMARK_AGENT_API_KEY")
     if provider == "openrouter" and not api_key:
-        if any(env.get(name) for name in ("MODEL_API_KEY", "OPENROUTER_API_KEY", "AIDEN_MODEL_API_KEY")):
+        if any(env.get(name) for name in ("MODEL_API_KEY", "OPENROUTER_API_KEY", "AICO_MODEL_API_KEY")):
             raise LauncherError(
-                "MobileGym model config missing: set AIDEN_BENCHMARK_AGENT_API_KEY "
+                "MobileGym model config missing: set AICO_BENCHMARK_AGENT_API_KEY "
                 "before starting the Mac MobileGym launcher"
             )
         raise LauncherError(
             "MobileGym model config missing: set MODEL_API_KEY or OPENROUTER_API_KEY "
-            "(or AIDEN_BENCHMARK_AGENT_API_KEY) before starting the Mac MobileGym launcher"
+            "(or AICO_BENCHMARK_AGENT_API_KEY) before starting the Mac MobileGym launcher"
         )
 
 

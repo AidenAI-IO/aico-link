@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/agent/realtimevoice"
-	"aiden-agent/internal/agenttask"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agenttask"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )

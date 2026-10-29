@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
 	"context"
 	"encoding/base64"
 	"encoding/json"

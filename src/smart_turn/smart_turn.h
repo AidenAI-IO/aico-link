@@ -20,7 +20,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#if defined(AIDEN_RKNN_MICRO_RUNTIME) || defined(AIDEN_RKNN_FULL_RUNTIME)
+#if defined(AICO_RKNN_MICRO_RUNTIME) || defined(AICO_RKNN_FULL_RUNTIME)
 #include "rknn_api_minimal.h"
 #else
 #include "rknn_api.h"

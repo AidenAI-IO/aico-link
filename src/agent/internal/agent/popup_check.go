@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // Dialog kinds the popup check reports.

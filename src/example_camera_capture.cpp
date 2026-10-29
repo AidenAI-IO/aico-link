@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "camera_frame_utils.h"
 
 #include <errno.h>
@@ -14,7 +14,7 @@
 static volatile sig_atomic_t g_quit = 0;
 
 struct Options {
-    aiden::CameraConfig camera;
+    aico::CameraConfig camera;
     const char* output_path = "/mnt/tmp/frame.ppm";
     int frame_limit = 1;
 };
@@ -106,11 +106,11 @@ static bool has_suffix(const char* text, const char* suffix) {
 }
 
 static int write_ppm_file(const char* path,
-                          const aiden::VideoFrame& frame,
+                          const aico::VideoFrame& frame,
                           const char* pixel_format,
                           const std::vector<uint8_t>& buffer) {
     std::vector<uint8_t> rgb;
-    if (!aiden_demo::convert_frame_to_rgb(frame, pixel_format, buffer, &rgb)) {
+    if (!aico_demo::convert_frame_to_rgb(frame, pixel_format, buffer, &rgb)) {
         fprintf(stderr, "PPM export does not support pixel format %s or buffer is incomplete\n",
                 pixel_format ? pixel_format : "(null)");
         errno = EINVAL;
@@ -144,7 +144,7 @@ static int write_ppm_file(const char* path,
 }
 
 static int save_frame(const Options& opts,
-                      const aiden::VideoFrame& frame,
+                      const aico::VideoFrame& frame,
                       const std::vector<uint8_t>& buffer) {
     if (!opts.output_path) {
         return 0;
@@ -160,7 +160,7 @@ static int save_frame(const Options& opts,
 static int parse_options(int argc, char* argv[], Options* opts) {
     int positional = 0;
 
-    aiden_demo::set_default_camera_config(&opts->camera);
+    aico_demo::set_default_camera_config(&opts->camera);
     opts->output_path = "/mnt/tmp/frame.ppm";
 
     for (int i = 1; i < argc; ++i) {
@@ -281,7 +281,7 @@ static int parse_options(int argc, char* argv[], Options* opts) {
 
 int main(int argc, char* argv[]) {
     Options opts;
-    aiden::CameraCapture camera;
+    aico::CameraCapture camera;
     std::vector<uint8_t> frame_buffer;
     int captured = 0;
 
@@ -315,7 +315,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (opts.frame_limit == 1) {
-        aiden::VideoFrame frame{};
+        aico::VideoFrame frame{};
         if (!camera.capture_once(opts.camera, frame, frame_buffer)) {
             fprintf(stderr, "Failed to capture frame\n");
             return 1;
@@ -347,7 +347,7 @@ int main(int argc, char* argv[]) {
     }
 
     while (!g_quit && (opts.frame_limit == 0 || captured < opts.frame_limit)) {
-        aiden::VideoFrame frame{};
+        aico::VideoFrame frame{};
         if (!camera.capture_frame(frame, frame_buffer)) {
             fprintf(stderr, "Failed to capture frame\n");
             camera.stop();

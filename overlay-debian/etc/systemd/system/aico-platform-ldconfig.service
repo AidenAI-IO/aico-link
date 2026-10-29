@@ -1,0 +1,14 @@
+[Unit]
+Description=Register Aico Link platform glibc libraries
+Requires=aico-rootfs-grow.service
+After=aico-rootfs-grow.service
+Before=aico-environment.service aico-media-modules.service aico-wifi-driver.service
+ConditionDirectoryNotEmpty=/usr/lib/aico/platform/lib
+
+[Service]
+Type=oneshot
+ExecStart=/sbin/ldconfig
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

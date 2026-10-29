@@ -9,7 +9,7 @@ package tts
 import (
 	"context"
 
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/netproxy"
 )
 
 // TTSProvider is the unified abstraction for all TTS backends.
