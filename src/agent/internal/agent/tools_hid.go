@@ -372,6 +372,9 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 	}
 	adapter := mnk.NewTouchGestureToolAdapter(t.mnkProvider)
 	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
+		if err := mnk.ValidateTapSequenceInput(input); err != nil {
+			return mapMNKAdapterResult(ctx, "", err)
+		}
 		// Park the absolute-mode pointer on the first target so its hover
 		// state is part of the baseline instead of a change at its old spot.
 		if !t.touchscreen && t.mnkProvider != nil {

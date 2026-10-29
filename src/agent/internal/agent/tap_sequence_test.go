@@ -192,6 +192,31 @@ func TestTouchGestureToolTapSequenceStopsWhenATargetIsCovered(t *testing.T) {
 	}
 }
 
+func TestTouchGestureToolTapSequenceRejectsInvalidInputBeforeTouchingTheDevice(t *testing.T) {
+	for _, input := range []string{
+		`{"type":"tap_sequence","points":[{"x":100,"y":100}]}`,
+		`{"type":"tap_sequence","points":[{"x":100,"y":100},{"x":200,"y":200}],"interval_ms":10}`,
+		`{"type":"tap_sequence","points":[{"x":100,"y":100},{"x":2000,"y":200}]}`,
+	} {
+		provider := mnk.NewMockProvider()
+		captures := 0
+		tool := &TouchGestureTool{mnkProvider: provider, captureFrame: func(context.Context) (lumaFrame, error) {
+			captures++
+			return tapSequenceTestFrame(tapSequenceTestBase, image.Rectangle{}), nil
+		}}
+		ctx, _ := WithToolError(context.Background())
+		if _, err := tool.Call(ctx, input); err != nil {
+			t.Fatal(err)
+		}
+		if te := ToolErrorFromContext(ctx); te == nil || te.Code != CodeInvalidArguments {
+			t.Fatalf("%s: tool error = %#v, want invalid_arguments", input, te)
+		}
+		if moves, clicks := provider.MoveCalls(), provider.ClickCalls(); len(moves) != 0 || len(clicks) != 0 || captures != 0 {
+			t.Fatalf("%s: moves=%d clicks=%d captures=%d, want no device operation", input, len(moves), len(clicks), captures)
+		}
+	}
+}
+
 func TestTouchGestureToolTapSequenceSendsNothingWithoutBaseline(t *testing.T) {
 	provider := mnk.NewMockProvider()
 	tool := &TouchGestureTool{mnkProvider: provider, touchscreen: true, captureFrame: func(context.Context) (lumaFrame, error) {

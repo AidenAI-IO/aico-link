@@ -221,6 +221,24 @@ func (t *TouchGestureToolAdapter) Call(ctx context.Context, input string) (strin
 	}
 }
 
+// ValidateTapSequenceInput checks a tap_sequence request's points and
+// interval without touching the device, so callers can reject it before any
+// preparatory input such as parking the pointer.
+func ValidateTapSequenceInput(input string) error {
+	var args struct {
+		Points     []*pointerPoint `json:"points"`
+		IntervalMs *int            `json:"interval_ms"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return InvalidArgumentsf("invalid tap_sequence input: %v", err)
+	}
+	intervalMs := DefaultTapSequenceIntervalMs
+	if args.IntervalMs != nil {
+		intervalMs = *args.IntervalMs
+	}
+	return validateTapSequence(args.Points, intervalMs)
+}
+
 func validateTapSequence(points []*pointerPoint, intervalMs int) error {
 	if len(points) < MinTapSequencePoints || len(points) > MaxTapSequencePoints {
 		return InvalidArgumentsf("tap_sequence requires %d to %d points, got %d", MinTapSequencePoints, MaxTapSequencePoints, len(points))
