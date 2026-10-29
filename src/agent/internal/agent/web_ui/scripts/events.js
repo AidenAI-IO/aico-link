@@ -175,7 +175,8 @@ function connectSSE() {
 }
 
 function isSemanticEvent(data) {
-    return !!data && Number(data.schema_version) >= 2 && typeof data.kind === 'string';
+    return !!data && Number(data.schema_version) >= 2 &&
+        (typeof data.kind === 'string' || data.type === 'resync_required');
 }
 
 function semanticField(value, ...names) {
