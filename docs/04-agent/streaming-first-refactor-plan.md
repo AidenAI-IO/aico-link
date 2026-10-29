@@ -987,6 +987,11 @@ already adopted those frameworks or reproduced their performance.
   sequences, and gaps that require a snapshot/resync. TTS capability metadata
   now reports effective text granularity and incremental-audio support, and
   board playback bounds its queue by both chunk count and PCM duration.
+- Added an opt-in semantic v2 SSE path at `/api/events?version=2`. Runtime
+  stream events are assigned a process-wide replay cursor, delivered through
+  the bounded replay broadcaster, and slow observers are disconnected so they
+  can resynchronize instead of receiving an undetected partial stream. Legacy
+  SSE remains unchanged.
 - Added focused regression coverage for stale STT sessions, readiness overflow,
   transcript revision ordering, provider cancellation, observer shutdown,
   replay cursors, TTS capability declarations, and playback queue saturation.
