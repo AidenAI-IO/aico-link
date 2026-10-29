@@ -3,7 +3,9 @@ package stream
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
+	"time"
 )
 
 // ReplayCursor identifies the last event observed by one projection.
@@ -27,15 +29,23 @@ type ReplayLog struct {
 	mu             sync.RWMutex
 	capacity       int
 	events         []Event
+	eventIDs       map[string]uint64
 	conversationID string
 	sessionEpoch   uint64
 }
 
 func NewReplayLog(capacity int) *ReplayLog {
+	return NewReplayLogWithEpoch(capacity, 0)
+}
+
+// NewReplayLogWithEpoch creates a bounded replay log with a known current
+// session epoch before its first event arrives. This lets an empty window
+// answer cursor requests without advertising an unknown epoch.
+func NewReplayLogWithEpoch(capacity int, sessionEpoch uint64) *ReplayLog {
 	if capacity < 1 {
 		capacity = 1
 	}
-	return &ReplayLog{capacity: capacity}
+	return &ReplayLog{capacity: capacity, eventIDs: make(map[string]uint64), sessionEpoch: sessionEpoch}
 }
 
 // Append records one event. A new session epoch starts a fresh replay window;
@@ -52,6 +62,9 @@ func (l *ReplayLog) Append(event Event) error {
 	if l.conversationID == "" {
 		l.conversationID = event.ConversationID
 		l.sessionEpoch = event.SessionEpoch
+		if l.eventIDs == nil {
+			l.eventIDs = make(map[string]uint64)
+		}
 	} else if event.ConversationID != l.conversationID {
 		return fmt.Errorf("stream replay log: conversation_id changed from %q to %q", l.conversationID, event.ConversationID)
 	} else if event.SessionEpoch < l.sessionEpoch {
@@ -59,6 +72,10 @@ func (l *ReplayLog) Append(event Event) error {
 	} else if event.SessionEpoch > l.sessionEpoch {
 		l.sessionEpoch = event.SessionEpoch
 		l.events = nil
+		l.eventIDs = make(map[string]uint64)
+	}
+	if previous, ok := l.eventIDs[event.EventID]; ok && previous != event.Sequence {
+		return fmt.Errorf("stream replay log: event_id %q changed sequence from %d to %d", event.EventID, previous, event.Sequence)
 	}
 	if n := len(l.events); n > 0 {
 		last := l.events[n-1]
@@ -66,17 +83,36 @@ func (l *ReplayLog) Append(event Event) error {
 			return fmt.Errorf("stream replay log: sequence %d is older than %d", event.Sequence, last.Sequence)
 		}
 		if event.Sequence == last.Sequence {
-			if event.EventID == last.EventID {
+			if event.EventID == last.EventID && sameReplayEvent(event, last) {
 				return nil
 			}
 			return fmt.Errorf("stream replay log: conflicting duplicate sequence %d", event.Sequence)
 		}
+		if event.Sequence != last.Sequence+1 {
+			return fmt.Errorf("stream replay log: sequence gap after %d before %d", last.Sequence, event.Sequence)
+		}
 	}
 	l.events = append(l.events, event)
+	l.eventIDs[event.EventID] = event.Sequence
 	if len(l.events) > l.capacity {
-		l.events = append([]Event(nil), l.events[len(l.events)-l.capacity:]...)
+		removeCount := len(l.events) - l.capacity
+		for _, removed := range l.events[:removeCount] {
+			delete(l.eventIDs, removed.EventID)
+		}
+		l.events = append([]Event(nil), l.events[removeCount:]...)
 	}
 	return nil
+}
+
+func sameReplayEvent(left, right Event) bool {
+	// Receipt/provider timestamps are metadata from each delivery attempt. A
+	// replayed event may legitimately receive a new timestamp, while identity,
+	// kind, and payload must remain stable for an idempotent duplicate.
+	left.ReceivedAt = time.Time{}
+	right.ReceivedAt = time.Time{}
+	left.OccurredAt = time.Time{}
+	right.OccurredAt = time.Time{}
+	return reflect.DeepEqual(left, right)
 }
 
 // Snapshot returns events after cursor. A nil cursor asks for the retained

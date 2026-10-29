@@ -87,8 +87,46 @@ func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
 	if !strings.Contains(body, `"schema_version":2`) || !strings.Contains(body, `"kind":"text.delta"`) {
 		t.Fatalf("v2 SSE body = %s", body)
 	}
+	if strings.Contains(body, `"type":"resync_required"`) {
+		t.Fatalf("empty replay window incorrectly required resync: %s", body)
+	}
 	if !strings.Contains(body, "id: 1") {
 		t.Fatalf("v2 SSE body missing event id: %s", body)
+	}
+}
+
+func TestParseSemanticEventCursorSupportsLastEventIDAndEpochQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		since     string
+		epoch     string
+		want      *streamcontract.ReplayCursor
+		wantError string
+	}{
+		{name: "empty", want: nil},
+		{name: "sequence", since: "7", want: &streamcontract.ReplayCursor{SessionEpoch: 1, Sequence: 7}},
+		{name: "explicit epoch", since: "7", epoch: "3", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
+		{name: "compound last event id", since: "3:7", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
+		{name: "epoch without cursor", epoch: "3", wantError: "invalid epoch cursor"},
+		{name: "zero epoch", since: "7", epoch: "0", wantError: "invalid epoch cursor"},
+		{name: "invalid sequence", since: "bad", wantError: "invalid since cursor"},
+		{name: "ambiguous epoch", since: "3:7", epoch: "3", wantError: "invalid since cursor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseSemanticEventCursor(tc.since, tc.epoch)
+			if tc.wantError != "" {
+				if err == nil || err.Error() != tc.wantError {
+					t.Fatalf("error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cursor = %#v, want %#v", got, tc.want)
+			}
+		})
 	}
 }
 

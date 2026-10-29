@@ -1,6 +1,9 @@
 package stream
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func replayEvent(epoch, sequence uint64) Event {
 	return NewEvent(EventIdentity{
@@ -56,6 +59,20 @@ func TestReplayLogStartsFreshWindowOnNewEpoch(t *testing.T) {
 	}
 }
 
+func TestReplayLogKnownEpochAllowsEmptyCursorWindow(t *testing.T) {
+	log := NewReplayLogWithEpoch(4, 7)
+	if got := log.Cursor(); got != (ReplayCursor{SessionEpoch: 7}) {
+		t.Fatalf("empty cursor = %#v", got)
+	}
+	result := log.Snapshot(&ReplayCursor{SessionEpoch: 7})
+	if result.ResyncRequired || len(result.Events) != 0 || result.Current != (ReplayCursor{SessionEpoch: 7}) {
+		t.Fatalf("empty replay result = %#v", result)
+	}
+	if result := log.Snapshot(&ReplayCursor{SessionEpoch: 6}); !result.ResyncRequired {
+		t.Fatal("stale empty cursor did not require resync")
+	}
+}
+
 func TestReplayLogRejectsConflictingOrdering(t *testing.T) {
 	log := NewReplayLog(2)
 	if err := log.Append(replayEvent(1, 2)); err != nil {
@@ -71,5 +88,47 @@ func TestReplayLogRejectsConflictingOrdering(t *testing.T) {
 	}
 	if err := log.Append(replayEvent(1, 1)); err == nil {
 		t.Fatal("out-of-order event was accepted")
+	}
+}
+
+func TestReplayLogRejectsSequenceGaps(t *testing.T) {
+	log := NewReplayLog(4)
+	if err := log.Append(replayEvent(1, 1)); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(replayEvent(1, 3)); err == nil {
+		t.Fatal("sequence gap was accepted")
+	}
+}
+
+func TestReplayLogRejectsEventIDReuseAndConflictingDuplicates(t *testing.T) {
+	log := NewReplayLog(4)
+	first := replayEvent(1, 1)
+	if err := log.Append(first); err != nil {
+		t.Fatal(err)
+	}
+	reused := replayEvent(1, 2)
+	reused.EventID = first.EventID
+	if err := log.Append(reused); err == nil {
+		t.Fatal("event ID reuse was accepted")
+	}
+	conflict := replayEvent(1, 1)
+	conflict.Payload = map[string]string{"text": "different"}
+	if err := log.Append(conflict); err == nil {
+		t.Fatal("conflicting duplicate payload was accepted")
+	}
+}
+
+func TestReplayLogAcceptsSameEventWithReplayTimestamps(t *testing.T) {
+	log := NewReplayLog(4)
+	first := replayEvent(1, 1)
+	if err := log.Append(first); err != nil {
+		t.Fatal(err)
+	}
+	replayed := first
+	replayed.ReceivedAt = first.ReceivedAt.Add(time.Second)
+	replayed.OccurredAt = first.ReceivedAt.Add(2 * time.Second)
+	if err := log.Append(replayed); err != nil {
+		t.Fatalf("same event with replay timestamps was rejected: %v", err)
 	}
 }

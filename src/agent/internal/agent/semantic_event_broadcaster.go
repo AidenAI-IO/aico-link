@@ -23,11 +23,12 @@ type semanticEventBroadcaster struct {
 }
 
 func newSemanticEventBroadcaster(replayCapacity int) *semanticEventBroadcaster {
+	const initialSessionEpoch = 1
 	return &semanticEventBroadcaster{
-		replay:         stream.NewReplayLog(replayCapacity),
+		replay:         stream.NewReplayLogWithEpoch(replayCapacity, initialSessionEpoch),
 		subscribers:    make(map[chan stream.Event]struct{}),
 		conversationID: "agent",
-		sessionEpoch:   1,
+		sessionEpoch:   initialSessionEpoch,
 	}
 }
 
