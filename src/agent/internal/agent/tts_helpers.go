@@ -486,6 +486,10 @@ func (w *streamSessionWriter) closeAndWait() error {
 	textWritten := w.textWritten
 	w.mu.Unlock()
 
+	var finishErr error
+	if textWritten {
+		finishErr = tts.FinishInput(w.session)
+	}
 	closeErr := w.terminateSession(!textWritten)
 
 	w.mu.Lock()
@@ -496,6 +500,9 @@ func (w *streamSessionWriter) closeAndWait() error {
 	}
 	if w.lastErr != nil {
 		return w.lastErr
+	}
+	if finishErr != nil {
+		return finishErr
 	}
 	if closeErr != nil {
 		return closeErr
@@ -509,10 +516,8 @@ func (w *streamSessionWriter) closeAndWait() error {
 func (w *streamSessionWriter) terminateSession(abort bool) error {
 	w.terminalOnce.Do(func() {
 		if abort {
-			if aborter, ok := w.session.(interface{ Abort() error }); ok {
-				w.terminalErr = aborter.Abort()
-				return
-			}
+			w.terminalErr = tts.CancelAndClose(w.session)
+			return
 		}
 		w.terminalErr = w.session.Close()
 	})
