@@ -42,6 +42,8 @@ type AudioDialog struct {
 	recordReader        *AudioRecordChunkReader
 	recordSTTMu         sync.Mutex
 	recordSTT           *streamingSTTSession
+	recordSTTSessionID  uint64
+	recordSTTPreReady   *sttPCMPreReadyBuffer
 	recordText          string
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
@@ -340,6 +342,19 @@ func (d *AudioDialog) StartRecording() error {
 		}
 	}
 	d.recordText = ""
+	d.recordSTTMu.Lock()
+	d.recordSTT = nil
+	d.recordSTTSessionID = result.SessionID
+	if d.sttClient != nil && d.sttClient.Capabilities().SupportsStreamingUpload {
+		d.recordSTTPreReady = newSTTPCMPreReadyBuffer(
+			d.config.Audio.SampleRateOrDefault(),
+			d.config.Audio.ChannelsOrDefault(),
+			d.config.Audio.BitWidthOrDefault(),
+		)
+	} else {
+		d.recordSTTPreReady = nil
+	}
+	d.recordSTTMu.Unlock()
 	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, recordStartedAt)
 	d.recordActive = true
 
@@ -361,7 +376,7 @@ func (d *AudioDialog) StartRecording() error {
 	// Start STT streaming session asynchronously — the network handshake
 	// (WebSocket dial + session setup) can take 1-3s and should not delay
 	// the audible cue. Chunks are buffered by uploadRecordChunkToStreamingSTT
-	// which checks currentRecordSTT() and silently drops if not yet ready.
+	// which buffers a bounded prefix until the provider is ready.
 	sttSessionID := result.SessionID
 	go func() {
 		recordSTT, err := beginStreamingSTTSession(context.Background(), d.sttClient, STTStreamConfig{
@@ -393,7 +408,29 @@ func (d *AudioDialog) StartRecording() error {
 			meta.streamingReady = true
 			meta.streamingReadyMS = streamReadyAt.Sub(meta.startedAt).Milliseconds()
 		})
-		d.setRecordSTT(recordSTT)
+		queued, overflow, installed := d.installRecordSTT(sttSessionID, recordSTT)
+		if !installed {
+			_ = recordSTT.Close()
+			return
+		}
+		if overflow {
+			d.updateRecordSTTTelemetry(sttSessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+				meta.streamingUnavailableError = "streaming STT readiness exceeded the 2s pre-ready buffer"
+			})
+			d.clearRecordSTT(recordSTT)
+			_ = recordSTT.Close()
+			return
+		}
+		for _, pcm := range queued {
+			if err := recordSTT.UploadPCM(pcm); err != nil {
+				d.markRecordSTTUploadError(sttSessionID, err)
+				if d.clearRecordSTT(recordSTT) {
+					_ = recordSTT.Close()
+				}
+				return
+			}
+		}
 	}()
 
 	return nil
@@ -416,7 +453,6 @@ func (d *AudioDialog) StopRecording() error {
 	d.sessionID = 0
 	d.recordReader = nil
 	d.recordMu.Unlock()
-
 	if recordSTT != nil {
 		defer func() {
 			_ = recordSTT.Close()
@@ -497,10 +533,21 @@ func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *A
 	if d == nil || chunk == nil || len(chunk.PCM) == 0 {
 		return
 	}
-	recordSTT := d.currentRecordSTT()
+	d.recordSTTMu.Lock()
+	recordSTT := d.recordSTT
 	if recordSTT == nil {
+		preReady := d.recordSTTPreReady
+		isCurrent := d.recordSTTSessionID == sessionID
+		overflow := isCurrent && preReady != nil && !preReady.append(chunk.PCM)
+		d.recordSTTMu.Unlock()
+		if overflow {
+			d.updateRecordSTTTelemetry(sessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+			})
+		}
 		return
 	}
+	d.recordSTTMu.Unlock()
 	if err := recordSTT.UploadPCM(chunk.PCM); err != nil {
 		d.markRecordSTTUploadError(sessionID, err)
 		logging.Warnf("agent", "stt", "streaming upload failed, falling back to one-shot STT: %v", err)
@@ -512,11 +559,22 @@ func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *A
 	}
 }
 
-// setRecordSTT installs the active streaming STT session.
-func (d *AudioDialog) setRecordSTT(session *streamingSTTSession) {
+// installRecordSTT installs a ready session and atomically takes the bounded
+// pre-ready queue. A false installed result means recording stopped or a
+// newer session replaced this one while setup was in flight.
+func (d *AudioDialog) installRecordSTT(sessionID uint64, session *streamingSTTSession) (queued [][]byte, overflow, installed bool) {
 	d.recordSTTMu.Lock()
+	defer d.recordSTTMu.Unlock()
+	if d.recordSTTSessionID != sessionID || d.recordSTT != nil {
+		return nil, false, false
+	}
+	if d.recordSTTPreReady != nil {
+		queued, overflow = d.recordSTTPreReady.drain()
+	}
+	d.recordSTTPreReady = nil
+	d.recordSTTSessionID = 0
 	d.recordSTT = session
-	d.recordSTTMu.Unlock()
+	return queued, overflow, true
 }
 
 // currentRecordSTT returns the active streaming STT session, if any.
@@ -533,6 +591,8 @@ func (d *AudioDialog) takeRecordSTT() *streamingSTTSession {
 	defer d.recordSTTMu.Unlock()
 	session := d.recordSTT
 	d.recordSTT = nil
+	d.recordSTTSessionID = 0
+	d.recordSTTPreReady = nil
 	return session
 }
 
@@ -546,6 +606,8 @@ func (d *AudioDialog) clearRecordSTT(session *streamingSTTSession) bool {
 		return false
 	}
 	d.recordSTT = nil
+	d.recordSTTSessionID = 0
+	d.recordSTTPreReady = nil
 	return true
 }
 
