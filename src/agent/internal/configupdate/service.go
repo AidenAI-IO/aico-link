@@ -146,7 +146,6 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 			return Result{}, internalConfigUpdate(fmt.Errorf("load config: %w", err))
 		}
 	}
-	currentDTO := FromAgentConfig(current)
 	for _, section := range []string{"model", "tts", "stt", "voice_model"} {
 		var fields map[string]json.RawMessage
 		if raw, ok := patch[section]; ok && json.Unmarshal(raw, &fields) == nil {
@@ -158,20 +157,24 @@ func (s *Service) update(path string, patchJSON []byte, commit bool) (Result, er
 		}
 	}
 	explicitCredentials := explicitProviderCredentialEdits(patch, renames, current)
-	if err := stripReadOnlyStatusFields(patch, currentDTO); err != nil {
+	// Share one read-only JSON snapshot across the patch preparation stages.
+	encoded, err := json.Marshal(FromAgentConfig(current))
+	if err != nil {
 		return Result{}, internalConfigUpdate(err)
 	}
+	var currentValues map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &currentValues); err != nil {
+		return Result{}, internalConfigUpdate(err)
+	}
+	stripReadOnlyStatusFields(patch, currentValues)
 	if err := restoreRenamedProviderCredentials(patch, renames, current); err != nil {
 		return Result{}, invalidConfigUpdate(err)
 	}
 	if err := preserveProviderCredentials(patch, current); err != nil {
 		return Result{}, invalidConfigUpdate(err)
 	}
-	patch, err = filterNoopWebConfigPatch(patch, currentDTO)
-	if err != nil {
-		return Result{}, internalConfigUpdate(err)
-	}
-	if err := persistImplicitProviderTypes(patch, currentDTO, original); err != nil {
+	patch = filterNoopObject(patch, currentValues)
+	if err := persistImplicitProviderTypes(patch, currentValues, original); err != nil {
 		return Result{}, internalConfigUpdate(err)
 	}
 	if len(patch) > 0 {
@@ -305,20 +308,7 @@ func prepareConfigUpdateFile(path string) (string, []byte, os.FileMode, error) {
 // /api/config. They describe write-only credentials and are not writable TOML
 // fields, but a complete GET response must still be safe to submit as a patch.
 // Changed or malformed markers remain in the patch and are rejected normally.
-func stripReadOnlyStatusFields(values map[string]json.RawMessage, current Config) error {
-	encoded, err := json.Marshal(current)
-	if err != nil {
-		return err
-	}
-	var currentValues map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &currentValues); err != nil {
-		return err
-	}
-	stripMatchingReadOnlyStatusFields(values, currentValues)
-	return nil
-}
-
-func stripMatchingReadOnlyStatusFields(values, current map[string]json.RawMessage) {
+func stripReadOnlyStatusFields(values, current map[string]json.RawMessage) {
 	for key, raw := range values {
 		if strings.HasPrefix(key, "has_") {
 			if existing, ok := current[key]; ok && jsonValuesEqual(raw, existing) {
@@ -337,7 +327,7 @@ func stripMatchingReadOnlyStatusFields(values, current map[string]json.RawMessag
 		if currentRaw, ok := current[key]; !ok || json.Unmarshal(currentRaw, &currentChild) != nil {
 			continue
 		}
-		stripMatchingReadOnlyStatusFields(child, currentChild)
+		stripReadOnlyStatusFields(child, currentChild)
 		if encoded, err := json.Marshal(child); err == nil {
 			values[key] = encoded
 		}
@@ -826,18 +816,10 @@ func isProviderRecordSection(section string) bool {
 // A resolved default provider may not exist in the file yet. Once an edit
 // creates its table, its type must be explicit even if it matched the default
 // and was removed by no-op filtering.
-func persistImplicitProviderTypes(patch map[string]json.RawMessage, current Config, original []byte) error {
+func persistImplicitProviderTypes(patch, current map[string]json.RawMessage, original []byte) error {
 	var document map[string]any
 	metadata, err := toml.Decode(string(original), &document)
 	if err != nil {
-		return err
-	}
-	encoded, err := json.Marshal(current)
-	if err != nil {
-		return err
-	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &values); err != nil {
 		return err
 	}
 	for _, section := range []string{"model_providers", "tts_providers", "stt_providers", "voice_model_providers"} {
@@ -846,7 +828,7 @@ func persistImplicitProviderTypes(patch map[string]json.RawMessage, current Conf
 			continue
 		}
 		var defaults map[string]map[string]json.RawMessage
-		if json.Unmarshal(values[section], &defaults) != nil {
+		if json.Unmarshal(current[section], &defaults) != nil {
 			continue
 		}
 		for name, raw := range records {
@@ -874,18 +856,6 @@ func persistImplicitProviderTypes(patch map[string]json.RawMessage, current Conf
 		}
 	}
 	return nil
-}
-
-func filterNoopWebConfigPatch(patch map[string]json.RawMessage, current Config) (map[string]json.RawMessage, error) {
-	encoded, err := json.Marshal(current)
-	if err != nil {
-		return nil, err
-	}
-	var values map[string]json.RawMessage
-	if err := json.Unmarshal(encoded, &values); err != nil {
-		return nil, err
-	}
-	return filterNoopObject(patch, values), nil
 }
 
 func filterNoopObject(patch, current map[string]json.RawMessage) map[string]json.RawMessage {

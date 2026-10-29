@@ -5,6 +5,7 @@ import (
 	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -660,6 +661,114 @@ func TestSaveMemoryToolExcludesScreenSnapshotType(t *testing.T) {
 	want := []string{"preference", "rule", "procedure", "fact", "profile"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("save_memory type enum = %v, want %v", got, want)
+	}
+}
+
+func TestSaveMemoryReplacementRespectsAdmissionAndOrigin(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		oldSensitive  bool
+		declareSecret bool
+		authorized    bool
+	}{
+		{name: "refuse unrequested secret", declareSecret: true},
+		{name: "save requested secret", declareSecret: true, authorized: true},
+		{name: "preserve existing sensitivity", oldSensitive: true},
+		{name: "user corrects notification"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+			ctx := userRunContext("Please remember my updated safe code.")
+			oldID, err := store.AddMemory(ctx, MemoryItem{
+				ID: "old-memory", Type: "profile", Content: "Old saved value.",
+				Sensitive: tc.oldSensitive, Origin: memoryOriginNotification,
+				EvidenceExcerpts: []string{"Old saved value."},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := map[string]any{
+				"type": "profile", "content": "Updated saved value.",
+				"replaces_id": oldID, "expected_revision": 1,
+			}
+			if tc.declareSecret {
+				input["sensitive"] = "credential"
+			}
+			if tc.authorized {
+				input["user_request"] = "Please remember my updated safe code."
+			}
+			encoded, err := json.Marshal(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := saveMemoryForTest(t, ctx, NewSaveMemoryTool(store), string(encoded))
+			old, err := readMemoryMarkdown(store.memoryPath(oldID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.declareSecret && !tc.authorized {
+				if result["status"] != "refused" || old.Item.Status != "active" || old.Item.Content != "Old saved value." || effectiveMemoryRevision(old.Item) != 1 {
+					t.Fatalf("refused correction changed memory: result=%v old=%+v", result, old.Item)
+				}
+				all, err := store.searchAll(ctx)
+				if err != nil || len(all) != 1 {
+					t.Fatalf("refused correction added memory: results=%+v err=%v", all, err)
+				}
+				return
+			}
+			if result["status"] != "saved" || result["operation"] != "supersede" || old.Item.Status != "replaced" {
+				t.Fatalf("correction failed: result=%v old=%+v", result, old.Item)
+			}
+			replacement, err := readMemoryMarkdown(store.memoryPath(result["id"]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantSensitive := tc.oldSensitive || tc.declareSecret
+			if replacement.Item.Sensitive != wantSensitive || replacement.Item.Origin != memoryOriginUser || replacement.Item.Supersedes != oldID {
+				t.Fatalf("replacement lost metadata: %+v", replacement.Item)
+			}
+			if tc.declareSecret && result["note"] == "" {
+				t.Fatal("sensitive correction omitted the saved-secret notice")
+			}
+			profile, err := store.ProfilePrompt(ctx, 1500)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(profile, "Updated saved value.") == wantSensitive {
+				t.Fatalf("profile did not respect replacement origin/sensitivity: %q", profile)
+			}
+		})
+	}
+}
+
+func TestSaveMemoryToolReplacesRecalledMemory(t *testing.T) {
+	store := NewLongTermMemoryStore(t.TempDir())
+	ctx := context.Background()
+	old := MemoryItem{ID: "old-preference", Type: "preference", Content: "Use dark mode.", EvidenceExcerpts: []string{"Use dark mode."}}
+	if _, err := store.AddMemory(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	tool := NewSaveMemoryTool(store)
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"tmp_preference","expected_revision":1}`); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("replacement target outside long-term store: %v, want target missing", err)
+	}
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference"}`); err == nil {
+		t.Fatal("replacement without a revision succeeded")
+	}
+	if _, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":2}`); !errors.Is(err, errMemoryRevisionChanged) {
+		t.Fatalf("stale replacement error = %v", err)
+	}
+	output, err := tool.Call(ctx, `{"type":"preference","content":"Use light mode.","replaces_id":"old-preference","expected_revision":1}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result map[string]string
+	if err := json.Unmarshal([]byte(output), &result); err != nil || result["operation"] != string(MemoryOperationSupersede) {
+		t.Fatalf("result = %q, err = %v", output, err)
+	}
+	active, err := store.Search(ctx, MemoryQuery{Limit: 10})
+	if err != nil || len(active) != 1 || active[0].Content != "Use light mode." {
+		t.Fatalf("active memories = %#v, err = %v", active, err)
 	}
 }
 
