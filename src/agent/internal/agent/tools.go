@@ -205,9 +205,10 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardText := &KeyboardTextTool{dev: kbDev, adb: adbInput, keyboardLayout: hidCfg.KeyboardLayoutOrDefault(), iosKeyboardIsolation: iosKeyboardIsolation}
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	touchGesture := &TouchGestureTool{
-		mnkProvider: mnkProvider,
-		screen:      screen,
-		touchscreen: hidCfg.PointerTouchscreen(),
+		mnkProvider:  mnkProvider,
+		screen:       screen,
+		touchscreen:  hidCfg.PointerTouchscreen(),
+		captureFrame: newFrameCapturer(provider),
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation}
 	textInputHW := &textInputHardwareDeps{

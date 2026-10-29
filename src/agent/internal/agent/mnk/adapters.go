@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -16,7 +17,28 @@ const (
 	MaxSwipeDurationMs = 10_000
 	MaxSwipeHoldMs     = 10_000
 	MaxSwipeSteps      = 1_000
+
+	// A tap_sequence covers one static layout such as a keypad; longer runs
+	// should be split so the model re-checks the screen.
+	MinTapSequencePoints         = 2
+	MaxTapSequencePoints         = 32
+	DefaultTapSequenceIntervalMs = 250
+	MinTapSequenceIntervalMs     = 80
+	MaxTapSequenceIntervalMs     = 2000
 )
+
+// TapSequenceGuard runs after tap number executed (1-based) of a tap_sequence,
+// before the next tap. Returning stop=true ends the sequence early with
+// reason; an error ends it and is reported as the stop reason.
+type TapSequenceGuard func(ctx context.Context, executed int) (stop bool, reason string, err error)
+
+// TapSequenceResult is the action output of a tap_sequence.
+type TapSequenceResult struct {
+	Requested    int    `json:"requested"`
+	Executed     int    `json:"executed"`
+	StoppedEarly bool   `json:"stopped_early"`
+	StopReason   string `json:"stop_reason,omitempty"`
+}
 
 // timedSwipeProvider is implemented by providers that can honor a caller's
 // requested swipe duration. Provider keeps the historical Swipe method for
@@ -35,6 +57,16 @@ type swipeOptionsProvider interface {
 // TouchGestureToolAdapter 使用 MNK Provider 的 touch_gesture 工具适配器
 type TouchGestureToolAdapter struct {
 	provider Provider
+	// tapSequenceGuard is consulted between taps of a tap_sequence whose
+	// stop_on_screen_change is enabled.
+	tapSequenceGuard TapSequenceGuard
+	sleep            func(context.Context, int) error
+}
+
+// WithTapSequenceGuard sets the between-tap check used by tap_sequence.
+func (t *TouchGestureToolAdapter) WithTapSequenceGuard(guard TapSequenceGuard) *TouchGestureToolAdapter {
+	t.tapSequenceGuard = guard
+	return t
 }
 
 // NewTouchGestureToolAdapter 创建适配器
@@ -74,6 +106,10 @@ func (t *TouchGestureToolAdapter) Call(ctx context.Context, input string) (strin
 		HoldBeforeMs *int          `json:"hold_before_ms"`
 		HoldAfterMs  *int          `json:"hold_after_ms"`
 		Steps        *int          `json:"steps"`
+		// tap_sequence fields.
+		Points             []*pointerPoint `json:"points"`
+		IntervalMs         *int            `json:"interval_ms"`
+		StopOnScreenChange *bool           `json:"stop_on_screen_change"`
 	}
 
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
@@ -163,8 +199,111 @@ func (t *TouchGestureToolAdapter) Call(ctx context.Context, input string) (strin
 		}
 		return t.handleDragRelease(ctx, args.Point)
 
+	case "tap_sequence":
+		intervalMs := DefaultTapSequenceIntervalMs
+		if args.IntervalMs != nil {
+			intervalMs = *args.IntervalMs
+		}
+		if err := validateTapSequence(args.Points, intervalMs); err != nil {
+			return "", err
+		}
+		if err := t.requireProvider(); err != nil {
+			return "", err
+		}
+		guard := t.tapSequenceGuard
+		if args.StopOnScreenChange != nil && !*args.StopOnScreenChange {
+			guard = nil
+		}
+		return t.handleTapSequence(ctx, args.Points, button, intervalMs, guard)
+
 	default:
 		return "", InvalidArgumentsf("unsupported gesture type: %q", args.Type)
+	}
+}
+
+// ValidateTapSequenceInput checks a tap_sequence request's points and
+// interval without touching the device, so callers can reject it before any
+// preparatory input such as parking the pointer.
+func ValidateTapSequenceInput(input string) error {
+	var args struct {
+		Points     []*pointerPoint `json:"points"`
+		IntervalMs *int            `json:"interval_ms"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return InvalidArgumentsf("invalid tap_sequence input: %v", err)
+	}
+	intervalMs := DefaultTapSequenceIntervalMs
+	if args.IntervalMs != nil {
+		intervalMs = *args.IntervalMs
+	}
+	return validateTapSequence(args.Points, intervalMs)
+}
+
+func validateTapSequence(points []*pointerPoint, intervalMs int) error {
+	if len(points) < MinTapSequencePoints || len(points) > MaxTapSequencePoints {
+		return InvalidArgumentsf("tap_sequence requires %d to %d points, got %d", MinTapSequencePoints, MaxTapSequencePoints, len(points))
+	}
+	for i, point := range points {
+		if point == nil {
+			return InvalidArgumentsf("tap_sequence points[%d] must be an object containing x and y", i)
+		}
+		x, y := point.X.Float64(), point.Y.Float64()
+		if math.IsNaN(x) || math.IsNaN(y) || x < 0 || x > 1000 || y < 0 || y > 1000 {
+			return InvalidArgumentsf("tap_sequence points[%d] must use the normalized 0-1000 scale, got x=%.2f y=%.2f", i, x, y)
+		}
+	}
+	if intervalMs < MinTapSequenceIntervalMs || intervalMs > MaxTapSequenceIntervalMs {
+		return InvalidArgumentsf("tap_sequence interval_ms must be between %d and %d, got %d", MinTapSequenceIntervalMs, MaxTapSequenceIntervalMs, intervalMs)
+	}
+	return nil
+}
+
+// handleTapSequence taps points in order. Each tap after the first waits
+// intervalMs and, when a guard is set, runs it first so a layout change
+// (navigation, dialog) stops the remaining taps instead of landing on new UI.
+func (t *TouchGestureToolAdapter) handleTapSequence(ctx context.Context, points []*pointerPoint, button string, intervalMs int, guard TapSequenceGuard) (string, error) {
+	result := TapSequenceResult{Requested: len(points)}
+	sleep := t.sleep
+	if sleep == nil {
+		sleep = sleepContextMs
+	}
+	for i, point := range points {
+		if i > 0 {
+			if err := sleep(ctx, intervalMs); err != nil {
+				return "", WrapExecutionFailed(err)
+			}
+			if guard != nil {
+				stop, reason, err := guard(ctx, result.Executed)
+				if err != nil {
+					stop, reason = true, fmt.Sprintf("screen check failed: %v", err)
+				}
+				if stop {
+					result.StoppedEarly = true
+					result.StopReason = reason
+					break
+				}
+			}
+		}
+		if err := t.provider.Click(ctx, point.X.Float64(), point.Y.Float64(), button, 0); err != nil {
+			return "", WrapExecutionFailed(fmt.Errorf("tap %d of %d failed after %d taps: %w", i+1, len(points), result.Executed, err))
+		}
+		result.Executed++
+	}
+	out, err := json.Marshal(result)
+	if err != nil {
+		return "", WrapExecutionFailed(err)
+	}
+	return string(out), nil
+}
+
+func sleepContextMs(ctx context.Context, ms int) error {
+	timer := time.NewTimer(time.Duration(ms) * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
 	}
 }
 

@@ -529,6 +529,7 @@ func validateTouchGestureFields(input string) error {
 		Start     json.RawMessage `json:"start"`
 		End       json.RawMessage `json:"end"`
 		Direction string          `json:"direction"`
+		Points    json.RawMessage `json:"points"`
 	}
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return fmt.Errorf("touch_gesture requires a JSON object: %w", err)
@@ -550,6 +551,20 @@ func validateTouchGestureFields(input string) error {
 			missing = "start is required for swipe"
 		} else if !present(args.End) && strings.TrimSpace(args.Direction) == "" {
 			missing = "end or direction is required for swipe"
+		}
+	case "tap_sequence":
+		var points []json.RawMessage
+		if !present(args.Points) {
+			missing = "points is required for tap_sequence"
+		} else if json.Unmarshal(args.Points, &points) != nil {
+			missing = "points must be an array of JSON objects containing both numeric x and y coordinates"
+		} else {
+			for i, point := range points {
+				if !validTouchGestureCoordinate(point) {
+					missing = fmt.Sprintf("points[%d] must be a JSON object containing both numeric x and y coordinates", i)
+					break
+				}
+			}
 		}
 	}
 	if missing == "" {

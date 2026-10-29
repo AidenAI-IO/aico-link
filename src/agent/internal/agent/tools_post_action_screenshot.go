@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aico-agent/internal/agent/mnk"
 	"aico-agent/internal/logging"
 	"bytes"
 	"context"
@@ -250,7 +251,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 	}
 	if t.inner.Name() == "touch_gesture" {
 		if marker, ok := parseTouchGesturePostMarker(input); ok {
-			applyTouchGesturePostMarker(&payload.screenshotResult, marker)
+			applyTouchGesturePostMarkers(&payload.screenshotResult, []touchGesturePostMarkerInfo{marker})
+		} else if markers := parseTapSequencePostMarkers(input, actionOutput); len(markers) > 0 {
+			applyTouchGesturePostMarkers(&payload.screenshotResult, markers)
 		}
 	}
 
@@ -305,6 +308,31 @@ func parseTouchGesturePostMarker(input string) (touchGesturePostMarkerInfo, bool
 	return marker, true
 }
 
+// parseTapSequencePostMarkers marks the taps a tap_sequence actually sent, as
+// reported by its action output, so stopped-early points are not drawn.
+func parseTapSequencePostMarkers(input, actionOutput string) []touchGesturePostMarkerInfo {
+	var args struct {
+		Type   string         `json:"type"`
+		Points []pointerPoint `json:"points"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil || !strings.EqualFold(strings.TrimSpace(args.Type), "tap_sequence") {
+		return nil
+	}
+	var result mnk.TapSequenceResult
+	if err := json.Unmarshal([]byte(actionOutput), &result); err != nil {
+		return nil
+	}
+	executed := min(result.Executed, len(args.Points))
+	markers := make([]touchGesturePostMarkerInfo, 0, executed)
+	for _, point := range args.Points[:executed] {
+		marker := touchGesturePostMarkerInfo{Type: "tap", X: point.X.Float64(), Y: point.Y.Float64()}
+		if validTouchGesturePostMarker(marker) {
+			markers = append(markers, marker)
+		}
+	}
+	return markers
+}
+
 func validTouchMarkerCoordinateJSON(value json.RawMessage) bool {
 	trimmed := strings.TrimSpace(string(value))
 	return trimmed != "" && trimmed != "null"
@@ -323,7 +351,7 @@ func finiteNormalizedCoordinate(value float64) bool {
 	return !math.IsNaN(value) && !math.IsInf(value, 0) && value >= 0 && value <= 1000
 }
 
-func applyTouchGesturePostMarker(result *screenshotResult, marker touchGesturePostMarkerInfo) {
+func applyTouchGesturePostMarkers(result *screenshotResult, markers []touchGesturePostMarkerInfo) {
 	if result == nil || strings.TrimSpace(result.Data) == "" {
 		return
 	}
@@ -335,7 +363,7 @@ func applyTouchGesturePostMarker(result *screenshotResult, marker touchGesturePo
 	if err != nil {
 		return
 	}
-	marked, err := drawTouchGesturePostMarker(raw, marker)
+	marked, err := drawTouchGesturePostMarkers(raw, markers)
 	if err != nil {
 		return
 	}
@@ -343,7 +371,7 @@ func applyTouchGesturePostMarker(result *screenshotResult, marker touchGesturePo
 	result.Size = len(marked)
 }
 
-func drawTouchGesturePostMarker(jpegData []byte, marker touchGesturePostMarkerInfo) ([]byte, error) {
+func drawTouchGesturePostMarkers(jpegData []byte, markers []touchGesturePostMarkerInfo) ([]byte, error) {
 	img, err := jpeg.Decode(bytes.NewReader(jpegData))
 	if err != nil {
 		return nil, fmt.Errorf("decode screenshot image: %w", err)
@@ -357,9 +385,11 @@ func drawTouchGesturePostMarker(jpegData []byte, marker touchGesturePostMarkerIn
 
 	marked := image.NewRGBA(image.Rect(0, 0, width, height))
 	draw.Draw(marked, marked.Bounds(), img, bounds.Min, draw.Src)
-	x := int(math.Round(marker.X / 1000 * float64(max(width-1, 0))))
-	y := int(math.Round(marker.Y / 1000 * float64(max(height-1, 0))))
-	drawTouchMarker(marked, x, y)
+	for _, marker := range markers {
+		x := int(math.Round(marker.X / 1000 * float64(max(width-1, 0))))
+		y := int(math.Round(marker.Y / 1000 * float64(max(height-1, 0))))
+		drawTouchMarker(marked, x, y)
+	}
 
 	var output bytes.Buffer
 	if err := jpeg.Encode(&output, marked, &jpeg.Options{Quality: 90}); err != nil {
