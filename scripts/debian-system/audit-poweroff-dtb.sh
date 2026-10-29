@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Match the kernel's of_compat_cmp(), which compares with strcasecmp().
+shopt -s nocasematch
+
 dtb=${1:?usage: audit-poweroff-dtb.sh FILE.dtb}
 fail() { echo "Poweroff DTB audit failure: $*" >&2; exit 1; }
 
