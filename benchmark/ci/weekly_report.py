@@ -94,13 +94,14 @@ def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]
 # Primary test objectives, in report order. Tool calls are a mechanism shared
 # across areas, while execution environments are separate run metadata.
 CAPABILITY_SUITES = {
-    "Memory": ("memory_v1", "episode_memory_v1", "notification_memory_v1",
+    "Memory": ("memory_v1", "memory_admission_v1", "episode_memory_v1", "notification_memory_v1",
                "personamem_lt_recall_v1", "quick_capture_v1", "episode_memory_before_v1",
                "episode_memory_after_v1", "episode_memory_legacy_v1"),
     "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),
     "Visual grounding": ("perception_v1",),
     "UI operation": ("mobilegym_basic", "mobilegym_scroll_regression", "mobilegym_scroll_sweep",
-                     "phone_control_v1", "adb_android_basic", "adb_android_text_editing", "vphone_ios_basic",
+                     "phone_control_v1", "adb_android_basic", "adb_android_text_editing",
+                     "adb_android_builtin_apps", "vphone_ios_basic",
                      "app_workflow_v1", "quick_action_v1"),
     "Device integration": ("aico_app_connection_capabilities_v1",
                            "aico_app_android_bridge_capabilities_v1",

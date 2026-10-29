@@ -738,6 +738,9 @@ func TestCompactSummarizesHistoricalToolResults(t *testing.T) {
 	if got := compactedMessages[2].Content; !strings.Contains(got, "historical work summary") {
 		t.Fatalf("compacted summary = %q", got)
 	}
+	if !compactedMessages[2].CompactionSummary {
+		t.Fatal("compacted summary is not marked as a compaction summary")
+	}
 	if got := compactedMessages[5].ToolResults[0].Content; got != "current result" {
 		t.Fatalf("current tool result = %q, want unchanged", got)
 	}

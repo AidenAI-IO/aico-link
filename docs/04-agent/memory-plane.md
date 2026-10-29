@@ -64,7 +64,9 @@ user's own words asking to remember it. Code checks that those words appear in
 the run's user input or steer messages, or in the user's two messages before
 the run, comparing letters and digits without case. The earlier messages cover
 a request made one turn before the secret, such as "remember my door code"
-followed by the code after the Agent asks for it. The quote must contain at least two letters, so citing the secret value
+followed by the code after the Agent asks for it. A context compaction summary
+is stored as a user message but is written by the model, so it never counts as
+one of them, and the window never reaches past it into older messages. The quote must contain at least two letters, so citing the secret value
 alone does not count. Otherwise the tool returns `status=refused`, nothing is
 written, and the Agent tells the user it was not remembered. The quote check
 stops the model from inventing a request; whether the quoted words ask to
