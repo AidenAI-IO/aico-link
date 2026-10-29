@@ -51,6 +51,16 @@ The HTTP server and Web UI start in every input mode. `input_mode` controls whet
 
 In `stt` mode, Web UI requests and device voice interactions share the same Agent runtime and run in the same daemon process.
 
+## Proposed Architecture Work
+
+The [Streaming-First Agent Refactor Plan](streaming-first-refactor-plan.md)
+compares current voice-agent frameworks with Aico's existing implementation and
+proposes a staged migration for LLM, STT, TTS, realtime, playback, and client
+streaming within the existing Go/C++ runtime. The proposed voice-input source is
+exclusively the board microphone; browser and phone live voice are excluded.
+It is a research/design proposal, not a description of shipped behavior.
+A [Chinese translation](streaming-first-refactor-plan.zh-CN.md) is also available.
+
 ## Startup
 
 Local development:
