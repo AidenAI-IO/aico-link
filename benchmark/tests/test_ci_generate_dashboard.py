@@ -408,6 +408,28 @@ def test_data_snapshot_can_be_reused_by_cli(tmp_path):
     assert "Scores unavailable." in (tmp_path / "week.md").read_text()
 
 
+def test_cli_excludes_retired_suite_names_from_all_report_views(tmp_path):
+    from ci.generate_dashboard import cli
+
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps({
+        "generated_at": REPORT_END.isoformat(),
+        "history": [_record(), _record(suite="retired_suite_v1", passed=4, pass_at_1=1.0)],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    weekly = tmp_path / "weekly.md"
+    html = tmp_path / "dashboard.html"
+
+    assert cli(["--history-json", str(source), "--output", str(html),
+                "--data-output", str(data), "--weekly-output", str(weekly)]) == 0
+    report = json.loads(data.read_text(encoding="utf-8"))
+    assert [record["suite"] for record in report["history"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["weekly"]["suites"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["suites"]] == ["memory_v1"]
+    assert "retired_suite_v1" not in weekly.read_text(encoding="utf-8")
+    assert "retired_suite_v1" not in html.read_text(encoding="utf-8")
+
+
 def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     import shutil
     import subprocess

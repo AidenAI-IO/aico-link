@@ -16,6 +16,16 @@ from ci.dashboard_metrics import METRIC_CHARTS
 
 # Plain HTML (no Python format braces); the JSON payload replaces one marker.
 _TEMPLATE_PATH = Path(__file__).with_name("dashboard_template.html")
+_CATALOG_PATH = Path(__file__).with_name("suites.json")
+
+
+def _current_suite_names() -> set[str]:
+    root = _CATALOG_PATH.parent.parent
+    cases = json.loads(_CATALOG_PATH.read_text(encoding="utf-8"))["cases"]
+    return {
+        json.loads((root / case["suite"]).read_text(encoding="utf-8"))["name"]
+        for case in cases
+    }
 
 
 def generate_dashboard(
@@ -397,6 +407,8 @@ def cli(argv: list[str] | None = None) -> int:
             include_failure_details=True,
         )
         history, warnings = result.records, result.warnings
+    current_suites = _current_suite_names()
+    history = [record for record in history if record.get("suite") in current_suites]
     for warning in warnings:
         print(f"Warning: {warning}")
 

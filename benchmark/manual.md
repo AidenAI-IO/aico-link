@@ -1233,8 +1233,9 @@ pass@1, and change. The card notes that changes describe different task mixes
 and counts datasets with configuration changes. Run counts and the distinct
 configuration values in each window are available in the detailed reports.
 Historical data comes
-from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
-downloaded.
+from Langfuse v4 experiments and scores. Only suites present in the current
+CI catalog are included, so retired or renamed suite names do not appear as
+separate results. GitHub Actions artifacts are not downloaded.
 
 For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
 bucket, or serve the report through an existing HTTPS reverse proxy. Set the
