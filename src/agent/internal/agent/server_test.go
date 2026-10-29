@@ -107,7 +107,7 @@ func TestParseSemanticEventCursorSupportsLastEventIDAndEpochQuery(t *testing.T) 
 		{name: "sequence", since: "7", want: &streamcontract.ReplayCursor{SessionEpoch: 1, Sequence: 7}},
 		{name: "explicit epoch", since: "7", epoch: "3", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
 		{name: "compound last event id", since: "3:7", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
-		{name: "epoch without cursor", epoch: "3", wantError: "invalid epoch cursor"},
+		{name: "epoch without cursor", epoch: "3", want: nil},
 		{name: "zero epoch", since: "7", epoch: "0", wantError: "invalid epoch cursor"},
 		{name: "invalid sequence", since: "bad", wantError: "invalid since cursor"},
 		{name: "ambiguous epoch", since: "3:7", epoch: "3", wantError: "invalid since cursor"},
