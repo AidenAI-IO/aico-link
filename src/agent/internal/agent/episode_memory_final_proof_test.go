@@ -112,3 +112,44 @@ func TestRetentionAuditPromptNamesTheFinalProof(t *testing.T) {
 		t.Fatal("prompt names a final verification result when the assessment cites none")
 	}
 }
+
+func TestCanonicalEpisodeMemoryStepRefsNameEachStepByItsResult(t *testing.T) {
+	episode := finalProofTestEpisode()
+	episode.Events = append(episode.Events, TaskEpisodeEvent{EventID: "unanswered_call", Type: runEventToolCall, ToolName: "touch_gesture", Content: "Tap again"})
+	for _, tt := range []struct {
+		name string
+		refs []string
+		want []string
+	}{
+		{"results unchanged", []string{"prepare_result", "verify_result"}, []string{"prepare_result", "verify_result"}},
+		{"calls resolved", []string{"prepare_call", "commit_call"}, []string{"prepare_result", "commit_result"}},
+		{"call and result collapsed", []string{"prepare_call", "prepare_result", "commit_call", "commit_result"}, []string{"prepare_result", "commit_result"}},
+		{"unpaired call kept for validation to reject", []string{"commit_result", "unanswered_call"}, []string{"commit_result", "unanswered_call"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := canonicalEpisodeMemoryStepRefs(episode, tt.refs); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("canonical step_refs = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRetainedEpisodeMemoryCandidateIgnoresRewrittenStepRefsForNonProcedures(t *testing.T) {
+	original := []episodeMemoryCandidate{{
+		LessonKey: "verify_after_save", Type: episodeMemoryTypeFailure, Action: episodeMemoryActionCreate,
+		Retention: episodeMemoryRetentionDurable, Situation: "Saving", Guidance: "Reopen to verify", ExpectedEffect: "Persistence is confirmed",
+		Scope: map[string]string{"app_name": "Editor"}, EvidenceRefs: []string{"commit_result", "verify_result"},
+	}}
+	audit := episodeMemoryRetentionAudit{Reviews: []episodeMemoryRetentionReview{{
+		LessonKey: "verify_after_save", Decision: episodeMemoryRetentionDecisionRetain, Retention: episodeMemoryRetentionDurable,
+		Reason: "app-specific guard", Rewrite: &episodeMemoryRetentionRewrite{
+			Situation: "Saving", Guidance: "Reopen to verify", ExpectedEffect: "Persistence is confirmed",
+			Scope: map[string]string{"app_name": "Editor"}, EvidenceRefs: []string{"commit_result", "verify_result"},
+			StepRefs: []string{"commit_call", "commit_result"},
+		},
+	}}}
+	retained := retainedEpisodeMemoryCandidates(original, audit)
+	if len(retained) != 1 || len(retained[0].StepRefs) != 0 {
+		t.Fatalf("retained = %#v, want the failure candidate without step_refs", retained)
+	}
+}

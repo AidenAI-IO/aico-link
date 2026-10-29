@@ -1100,7 +1100,7 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		// Rewrite evidence only identifies what the reviewer checked; persisted
 		// evidence stays the candidate's full set, including failed alternatives.
 		base.EvidenceRefs = append([]string(nil), base.EvidenceRefs...)
-		if len(review.Rewrite.StepRefs) > 0 {
+		if episodeMemoryType(strings.ToLower(strings.TrimSpace(string(base.Type)))) == episodeMemoryTypeProcedure && len(review.Rewrite.StepRefs) > 0 {
 			base.StepRefs = append([]string(nil), review.Rewrite.StepRefs...)
 		}
 		base.SensitiveValues = uniqueNonEmpty(review.SensitiveValues)
@@ -1181,7 +1181,7 @@ Return exactly one JSON object matching this schema:
       "scope": {"all evidenced applicability boundaries": "..."},
       "tags": ["retrieval terms"],
       "evidence_refs": ["real Episode event ids from the candidate's evidence_refs that support the rewrite"],
-      "step_refs": ["procedure only: the complete ordered tool_result ids of the executable path; omit to keep the candidate's step_refs"]
+      "step_refs": ["procedure only, omit for other types: the complete ordered tool_result ids of the executable path, ending with its final verification; omit to keep the candidate's step_refs"]
     }
   }]
 }
@@ -1484,6 +1484,7 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 	}
 	candidate.EvidenceRefs = expandEpisodeMemoryEvidenceRefs(episode, candidate.EvidenceRefs)
 	if candidate.Type == episodeMemoryTypeProcedure {
+		candidate.StepRefs = canonicalEpisodeMemoryStepRefs(episode, candidate.StepRefs)
 		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
 			return episodeMemoryCandidate{}, false
 		}
@@ -1537,6 +1538,27 @@ func validEpisodeMemoryStepRefs(episode TaskEpisode, stepRefs, evidenceRefs []st
 		}
 	}
 	return false
+}
+
+// canonicalEpisodeMemoryStepRefs names each step by its tool result. Models
+// cite a step by its call, its result, or both; all name the same step. A call
+// without a result stays as cited so step validation rejects it.
+func canonicalEpisodeMemoryStepRefs(episode TaskEpisode, refs []string) []string {
+	resultByCall := make(map[string]string)
+	for resultID, call := range episodeMemoryPairedToolCalls(episode) {
+		resultByCall[call.EventID] = resultID
+	}
+	canonical := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if resultID, ok := resultByCall[ref]; ok {
+			ref = resultID
+		}
+		if len(canonical) > 0 && canonical[len(canonical)-1] == ref {
+			continue
+		}
+		canonical = append(canonical, ref)
+	}
+	return canonical
 }
 
 // episodeMemoryFinalProofRef returns the last device tool result, in Episode
@@ -2152,7 +2174,7 @@ Device Memory holds what the Agent cannot know without this device: routes, coor
 Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Use unknown when final proof is missing and say what is missing. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
 
 Type rules:
-- procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and final verification. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
+- procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and the final verification step, such as reopening to confirm a change persisted; that verification is an executable step, not only supporting evidence. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
 - navigation: independently reusable page entry or transition, supported by an action and comparable before/after observations. Keep a navigation step inside a procedure when it has no independent recall value.
 - calibration: coordinate, screen, control, or coordinate-space relationship supported by coordinate input and post-action evidence.
 - failure: reusable guard, check, stop condition, or recovery action. A failed Episode is not automatically a failure memory; omit one-off failures with no actionable future guard.

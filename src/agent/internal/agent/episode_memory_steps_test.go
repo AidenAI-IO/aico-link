@@ -27,7 +27,9 @@ func TestEpisodeMemoryProcedureSeparatesSupportingEvidence(t *testing.T) {
 		{"selected path", []string{"prepare_result", "commit_result", "verify_result"}, true},
 		{"missing path", nil, false},
 		{"unknown reference", []string{"prepare_result", "missing"}, false},
-		{"call instead of result", []string{"prepare_call", "commit_result"}, false},
+		// Models cite a step by its call or by its result; both name the same step.
+		{"call resolves to its result", []string{"prepare_call", "commit_result", "verify_result"}, true},
+		{"call and result of one step", []string{"prepare_call", "prepare_result", "commit_result", "verify_result"}, true},
 		{"out of order", []string{"commit_result", "prepare_result"}, false},
 		{"duplicate", []string{"prepare_result", "prepare_result"}, false},
 	} {
