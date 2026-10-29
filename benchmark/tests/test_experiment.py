@@ -6,7 +6,7 @@ import threading
 import pytest
 
 from runner.experiment import (ExperimentManager, atomic_json, comparison, comparison_suite,
-                               run_experiment, validate_agents)
+                               retry_experiment_judging, run_experiment, validate_agents)
 from runner.harness import Execution
 from runner.models import TaskResult, RubricVerdict
 from runner.judge import JudgeConfig, JudgeOutput
@@ -71,6 +71,45 @@ def test_interleaved_runs_have_identical_inputs_independent_artifacts_and_paired
         assert all(Path(row["artifact_dir"]).is_relative_to(root) for row in rows)
         assert (root / "report.html").exists()
         assert json.loads((root / "manifest.json").read_text())["suite_sha256"] == suite.sha256
+
+
+def test_judge_retry_updates_original_reports_without_reexecuting_agents(tmp_path, monkeypatch):
+    from runner import rejudge
+    suite = comparison_suite(SUITE_PATH)
+    agents = [{"id": "aiden", "kind": "aiden"}, {"id": "pi", "kind": "pi"}]
+    calls = []
+    (tmp_path / "suite.json").write_bytes(suite.source_bytes)
+    record = {**manifest(), "agents": agents, "repeats": 1,
+              "judge_config": dc.asdict(JudgeConfig())}
+    def unavailable(**kwargs):
+        raise RuntimeError("Judge transport unavailable")
+    monkeypatch.setattr(runtask, "judge_task", unavailable)
+    run_experiment(suite, tmp_path, agents,
+                   {agent["id"]: FakeAgent(calls, agent["id"]) for agent in agents},
+                   1, 0, threading.Event(), record, JudgeConfig())
+    assert len(calls) == len(suite.tasks) * len(agents)
+    assert all(agent["eligible"] == 0 for agent in json.loads((tmp_path / "comparison.json").read_text())["agents"])
+    judged = []
+    def recovered(**kwargs):
+        judged.append(kwargs["task_prompt"])
+        return JudgeOutput(verdicts=[RubricVerdict(item.id, "yes", "Recorded evidence")
+                                     for item in kwargs["rubric"]], overall_notes="", cache_key="", raw_response="")
+    monkeypatch.setattr(rejudge, "judge_task", recovered)
+    refreshed = retry_experiment_judging(tmp_path, JudgeConfig())
+    assert refreshed["judge_retry"]["recovered"] == 4
+    assert refreshed["judge_retry"]["remaining"] == 0
+    assert len(judged) == 4
+    assert len(calls) == len(suite.tasks) * len(agents)
+    paired = json.loads((tmp_path / "comparison.json").read_text())
+    assert paired["pairwise"][0]["eligible_pairs"] == 2
+    assert all(agent["passed"] == 2 for agent in paired["agents"])
+    for agent in agents:
+        run_dir = tmp_path / "runs" / agent["id"]
+        assert [json.loads(line)["status"] for line in
+                (run_dir / "results.original.jsonl").read_text().splitlines()] == ["judge_error", "judge_error", "judge_error"]
+        assert [json.loads(line)["status"] for line in
+                (run_dir / "results.jsonl").read_text().splitlines()] == ["passed", "passed", "judge_error"]
+        assert '"status": "passed"' in (run_dir / "report.html").read_text()
 
 
 def test_adapter_failure_does_not_abort_other_agents_or_inflate_coverage(tmp_path):

@@ -257,6 +257,16 @@ server lists interrupted experiments after restart, preserving their artifacts.
 Automatic resume and merging independently launched experiments are not yet
 implemented; start a new experiment to rerun, retaining the original evidence.
 
+Transient Judge failures are retried once after all agent attempts finish,
+using their saved screenshots and tool traces without repeating device actions.
+If the Judge is still unavailable, the experiment keeps `judge_error` attempts
+out of paired coverage. Once the Judge recovers, use **Retry Judge** on the
+experiment list to score only those attempts and refresh the run and comparison
+reports. The first scoring results remain in each run's
+`results.original.jsonl`; the main `results.jsonl` and reports show the latest
+score. Retrying uses the frozen Judge model and endpoint from the experiment,
+with the current WebUI Judge credential.
+
 ## OpenClaw model setup
 
 Select OpenClaw in the experiment form and set an explicit custom API endpoint,

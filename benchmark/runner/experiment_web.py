@@ -62,7 +62,18 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         return True
     if path.startswith("/api/experiments/") and post:
         parts = path.strip("/").split("/")
-        if len(parts) == 4 and parts[3] == "stop" and manager.stop(parts[2]):
+        if len(parts) == 4 and parts[3] == "rejudge":
+            remote = ipaddress.ip_address(str(handler.client_address[0]).split("%", 1)[0])
+            mapped = getattr(remote, "ipv4_mapped", None)
+            if not (remote.is_loopback or (mapped is not None and mapped.is_loopback)):
+                handler._send_json({"error": "Judge retry can only be started from a local connection"},
+                                   status=HTTPStatus.FORBIDDEN)
+                return True
+            try:
+                handler._send_json(manager.retry_judge(parts[2]), status=HTTPStatus.ACCEPTED)
+            except (ValueError, OSError) as exc:
+                handler._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+        elif len(parts) == 4 and parts[3] == "stop" and manager.stop(parts[2]):
             handler._send_json({"stopping": True})
         else:
             handler.send_error(HTTPStatus.NOT_FOUND)
@@ -75,7 +86,7 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         root = (manager.root / parts[1]).resolve()
         target = root.joinpath(*parts[2:]).resolve()
         # Serve reports and evidence only; runtime configuration is never here.
-        allowed = {"report.html", "manifest.json", "comparison.json", "results.jsonl", "metrics.json",
+        allowed = {"report.html", "manifest.json", "comparison.json", "results.jsonl", "results.original.jsonl", "metrics.json",
                    "suite.json", "history.json", "trace.json", "episode.json", "native-history.json",
                    "native-events.jsonl", "native-output.json", "native-transcript.jsonl", "mcp-audit.jsonl", "stderr.log", "daemon-setup.log", "setup.log", "summary.md",
                    "business-tools.json", "judge.json", "environment_state.json", "initial_environment_state.json", "setup.json", "release-error.txt", "pre.jpg", "post.jpg"}
@@ -201,7 +212,7 @@ async function refresh() {
     $('runStatus').textContent = `${latest.suite} — ${latest.status} (${latest.completed}/${latest.total} attempts)`;
     const current = latest.current_attempt;
     const elapsed = current ? Math.max(0,Math.floor((Date.now()-Date.parse(current.started_at))/1000)) : 0;
-    $('runDetail').textContent = latest.error || [latest.stage || latest.status,
+    $('runDetail').textContent = latest.error || latest.judge_retry_error || [latest.stage || latest.status,
       current ? `${current.agent_id} / ${current.task_id} / repeat ${current.attempt} (${elapsed}s)` : ''].filter(Boolean).join(' · ');
     $('runProgress').max = Math.max(1,latest.total);
     if (['queued','preparing'].includes(latest.status)) $('runProgress').removeAttribute('value');
@@ -239,12 +250,17 @@ async function refresh() {
   $('experiments').replaceChildren();
   for (const item of data.experiments) {
     const row = document.createElement('tr');
-    for (const text of [`${item.id} / ${item.suite}`, item.error ? `${item.status}: ${item.error}` : item.status, `${item.completed}/${item.total}`]) {
+    for (const text of [`${item.id} / ${item.suite}`, item.error || item.judge_retry_error ? `${item.status}: ${item.error || item.judge_retry_error}` : item.status, `${item.completed}/${item.total}`]) {
       const cell = document.createElement('td'); cell.textContent = text; row.append(cell);
     }
     const actions = document.createElement('td');
     if (item.setup_log_url) { const log = document.createElement('a'); log.href = item.setup_log_url; log.textContent = 'Setup log'; log.target = '_blank'; log.rel = 'noopener'; actions.append(log, ' '); }
     if (item.report_url) { const link = document.createElement('a'); link.href = item.report_url; link.textContent = 'Report'; actions.append(link); }
+    if (['completed','canceled'].includes(item.status) && item.judge_errors > 0 && item.stage !== 'Retrying Judge errors') {
+      const retry = document.createElement('button'); retry.type = 'button'; retry.className = 'secondary'; retry.textContent = 'Retry Judge';
+      retry.addEventListener('click', async () => { try { await api(`/api/experiments/${encodeURIComponent(item.id)}/rejudge`, {method:'POST'}); await refresh(); } catch (error) { $('error').textContent = error.message; } });
+      actions.append(' ', retry);
+    }
     if (['queued','preparing','running'].includes(item.status)) {
       const button = document.createElement('button'); button.type = 'button'; button.className = 'secondary'; button.textContent = 'Stop';
       button.addEventListener('click', async () => { try { await api(`/api/experiments/${encodeURIComponent(item.id)}/stop`, {method:'POST'}); await refresh(); } catch (error) { $('error').textContent = error.message; } });

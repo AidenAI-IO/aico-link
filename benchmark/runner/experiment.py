@@ -22,7 +22,7 @@ import uuid
 from runner.harness import AidenAdapter, HarnessAdapter, OpenClawAdapter, PiAdapter
 from runner.html_report import generate_report_html
 from runner.judge import JudgeConfig, DEFAULT_JUDGE_API_KEY_ENV
-from runner.models import TaskResult
+from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerdict, TaskResult
 from runner.report import git_sha, now_iso, write_jsonl, write_manifest, write_metrics, write_summary
 from runner.runtask import evaluate_task_history, skipped_task_result, _apply_environment_assertions
 from runner.suite import Suite, load_suite
@@ -255,6 +255,118 @@ def comparison_html(manifest: dict, data: dict) -> str:
 <details><summary>Frozen experiment configuration</summary><pre>{escape(json.dumps(manifest, indent=2))}</pre></details></html>"""
 
 
+def write_experiment_results(suite: Suite, root: Path, agents: list[dict],
+                             rows: dict[str, list[TaskResult]], repeats: int, manifest: dict) -> None:
+    for agent in agents:
+        run_id = agent["id"]
+        directory = root / "runs" / run_id
+        directory.mkdir(parents=True, exist_ok=True)
+        if not (directory / "suite.json").exists():
+            (directory / "suite.json").write_bytes(suite.source_bytes)
+        run_manifest = {
+            "experiment_id": manifest["id"], "run_id": run_id, "suite": suite.name,
+            "suite_sha256": suite.sha256, "agent_model": agent.get("model", agent["kind"]),
+            "agent": agent, "repeats": repeats, "metrics_k": repeats,
+            "judge_config": manifest.get("judge_config"), "started_at": manifest["created_at"],
+            "experiment_track": manifest.get("track", "native"), "status": manifest["status"],
+            "suite_path": str(suite.source_path), "finished_at": manifest.get("finished_at", ""),
+            "totals": {"tasks": len(rows[run_id]), **{
+                status: sum(row.status == status for row in rows[run_id])
+                for status in ("passed", "failed", "skipped", "timeout", "judge_error")
+            }},
+        }
+        write_manifest(directory / "manifest.tmp", run_manifest)
+        (directory / "manifest.tmp").replace(directory / "manifest.json")
+        write_jsonl(directory / "results.tmp", rows[run_id])
+        (directory / "results.tmp").replace(directory / "results.jsonl")
+        write_metrics(directory / "metrics.tmp", suite.name, run_manifest, rows[run_id])
+        (directory / "metrics.tmp").replace(directory / "metrics.json")
+        write_summary(directory / "summary.tmp", suite.name, run_manifest, rows[run_id])
+        (directory / "summary.tmp").replace(directory / "summary.md")
+        run_report = directory / "report.tmp"
+        run_report.write_text(generate_report_html(directory), encoding="utf-8")
+        run_report.replace(directory / "report.html")
+    data = comparison(suite, agents, rows, repeats)
+    manifest["completed"] = sum(len(items) for items in rows.values())
+    atomic_json(root / "manifest.json", manifest)
+    atomic_json(root / "comparison.json", data)
+    report = root / "report.tmp"
+    report.write_text(comparison_html(manifest, data), encoding="utf-8")
+    report.replace(root / "report.html")
+
+
+def _result_from_record(record: dict) -> TaskResult:
+    row = dict(record)
+    row["rubric"] = [RubricVerdict(**item) for item in row.get("rubric", [])]
+    if isinstance(row.get("hard_assertions"), dict):
+        row["hard_assertions"] = HardAssertionResults(**row["hard_assertions"])
+    row["hard_assertion_failures"] = [HardAssertionFailure(**item)
+                                      for item in row.get("hard_assertion_failures", [])]
+    return TaskResult(**row)
+
+
+def _retryable_judge_error(row: dict) -> bool:
+    metrics = row.get("metrics") or {}
+    return (row.get("status") == "judge_error" and row.get("rubric_total", 0) > 0
+            and not row.get("hard_assertion_failures")
+            and not any(value is False for value in (row.get("hard_assertions") or {}).values())
+            and not metrics.get("agent_error") and metrics.get("first_failure_stage") != "setup")
+
+
+def _has_judge_errors(root: Path, agents: list[dict]) -> bool:
+    return any(
+        any(_retryable_judge_error(json.loads(line)) for line in
+            (root / "runs" / agent["id"] / "results.jsonl").read_text(encoding="utf-8").splitlines())
+        for agent in agents
+    )
+
+
+def retry_experiment_judging(root: Path, judge_cfg: JudgeConfig, *,
+                             api_key_env: str = DEFAULT_JUDGE_API_KEY_ENV) -> dict:
+    """Re-score recorded judge errors and refresh both run and paired reports."""
+    from runner.rejudge import rejudge_run
+
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("status") not in {"completed", "canceled"}:
+        raise ValueError("Only finished experiments can retry Judge scoring")
+    if not manifest.get("judge_config"):
+        raise ValueError("This experiment does not use Judge scoring")
+    suite = load_suite(root / "suite.json")
+    agents = manifest["agents"]
+    rows: dict[str, list[TaskResult]] = {}
+    original_errors = 0
+    remaining_errors = 0
+    for agent in agents:
+        run_dir = root / "runs" / agent["id"]
+        source = run_dir / "results.jsonl"
+        if not source.exists():
+            raise ValueError(f"Missing run results for {agent['id']}")
+        recorded = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()]
+        original_errors += sum(_retryable_judge_error(row) for row in recorded)
+        rows[agent["id"]] = [_result_from_record(row) for row in recorded]
+    if not original_errors:
+        return manifest
+    for agent in agents:
+        run_dir = root / "runs" / agent["id"]
+        if not any(_retryable_judge_error(dc.asdict(row)) for row in rows[agent["id"]]):
+            continue
+        rejudge_run(run_dir, judge_cfg.model, judge_cfg.base_url,
+                    judge_api_key_env=api_key_env, only_judge_errors=True)
+        path = run_dir / "results.rejudged.jsonl"
+        rows[agent["id"]] = [_result_from_record(json.loads(line))
+                             for line in path.read_text(encoding="utf-8").splitlines()]
+        remaining_errors += sum(_retryable_judge_error(dc.asdict(row)) for row in rows[agent["id"]])
+    manifest["judge_retry"] = {"attempted_at": now_iso(), "recovered": original_errors - remaining_errors,
+                               "remaining": remaining_errors}
+    for agent in agents:
+        run_dir = root / "runs" / agent["id"]
+        original = run_dir / "results.original.jsonl"
+        if not original.exists():
+            original.write_bytes((run_dir / "results.jsonl").read_bytes())
+    write_experiment_results(suite, root, agents, rows, manifest["repeats"], manifest)
+    return manifest
+
+
 def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[str, HarnessAdapter],
                    repeats: int, seed: int, stop: threading.Event, manifest: dict,
                    judge_cfg: JudgeConfig | None = None) -> dict:
@@ -273,42 +385,7 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
                     schedule=[{"task_id": t.id, "attempt": n, "agent_id": a} for t, n, a in schedule])
 
     def save() -> None:
-        for agent in agents:
-            run_id = agent["id"]
-            directory = root / "runs" / run_id
-            directory.mkdir(parents=True, exist_ok=True)
-            if not (directory / "suite.json").exists():
-                (directory / "suite.json").write_bytes(suite.source_bytes)
-            run_manifest = {
-                "experiment_id": manifest["id"], "run_id": run_id, "suite": suite.name,
-                "suite_sha256": suite.sha256, "agent_model": agent.get("model", agent["kind"]),
-                "agent": agent, "repeats": repeats, "metrics_k": repeats,
-                "judge_config": manifest.get("judge_config"), "started_at": manifest["created_at"],
-                "experiment_track": manifest.get("track", "native"), "status": manifest["status"],
-                "suite_path": str(suite.source_path), "finished_at": manifest.get("finished_at", ""),
-                "totals": {"tasks": len(rows[run_id]), **{
-                    status: sum(row.status == status for row in rows[run_id])
-                    for status in ("passed", "failed", "skipped", "timeout", "judge_error")
-                }},
-            }
-            write_manifest(directory / "manifest.tmp", run_manifest)
-            (directory / "manifest.tmp").replace(directory / "manifest.json")
-            write_jsonl(directory / "results.tmp", rows[run_id])
-            (directory / "results.tmp").replace(directory / "results.jsonl")
-            write_metrics(directory / "metrics.tmp", suite.name, run_manifest, rows[run_id])
-            (directory / "metrics.tmp").replace(directory / "metrics.json")
-            write_summary(directory / "summary.tmp", suite.name, run_manifest, rows[run_id])
-            (directory / "summary.tmp").replace(directory / "summary.md")
-            run_report = directory / "report.tmp"
-            run_report.write_text(generate_report_html(directory), encoding="utf-8")
-            run_report.replace(directory / "report.html")
-        data = comparison(suite, agents, rows, repeats)
-        manifest["completed"] = sum(len(items) for items in rows.values())
-        atomic_json(root / "manifest.json", manifest)
-        atomic_json(root / "comparison.json", data)
-        report = root / "report.tmp"
-        report.write_text(comparison_html(manifest, data), encoding="utf-8")
-        report.replace(root / "report.html")
+        write_experiment_results(suite, root, agents, rows, repeats, manifest)
 
     save()
     for task, attempt, agent_id in schedule:
@@ -419,6 +496,11 @@ class ExperimentManager:
             item = json.loads(path.read_text(encoding="utf-8"))
             if item["status"] in {"queued", "preparing", "running"} and item["id"] != active:
                 item["status"] = "interrupted"
+            item["judge_errors"] = sum(
+                sum(_retryable_judge_error(json.loads(line)) for line in results.read_text(encoding="utf-8").splitlines())
+                for agent in item.get("agents", [])
+                if (results := path.parent / "runs" / agent["id"] / "results.jsonl").is_file()
+            )
             item["report_url"] = f"/experiments/{item['id']}/report.html" if (path.parent / "report.html").exists() else ""
             item["setup_log_url"] = f"/experiments/{item['id']}/setup.log" if (path.parent / "setup.log").exists() else ""
             result.append(item)
@@ -563,6 +645,18 @@ class ExperimentManager:
                     atomic_json(root / "manifest.json", manifest)
                     return
                 run_experiment(suite, root, manifest["agents"], adapters, manifest["repeats"], manifest["seed"], stop, manifest, judge_cfg)
+                if judge_cfg is not None and not stop.is_set() and _has_judge_errors(root, manifest["agents"]):
+                    manifest["stage"] = "Retrying Judge errors"
+                    atomic_json(root / "manifest.json", manifest)
+                    try:
+                        manifest = retry_experiment_judging(root, judge_cfg, api_key_env=credential_env)
+                        manifest["stage"] = "Finished"
+                        atomic_json(root / "manifest.json", manifest)
+                    except Exception as exc:
+                        manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+                        manifest["stage"] = "Judge retry failed"
+                        manifest["judge_retry_error"] = str(exc)
+                        atomic_json(root / "manifest.json", manifest)
         except Exception as exc:
             manifest.update(status="canceled" if stop.is_set() else "failed", error=str(exc), finished_at=now_iso())
             atomic_json(root / "manifest.json", manifest)
@@ -575,6 +669,51 @@ class ExperimentManager:
                 self._active[1].set()
                 return True
         return False
+
+    def retry_judge(self, experiment_id: str) -> dict:
+        if not SAFE_ID.fullmatch(experiment_id):
+            raise ValueError("Invalid experiment ID")
+        root = self.root / experiment_id
+        path = root / "manifest.json"
+        if not path.is_file():
+            raise ValueError("Experiment not found")
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        if manifest.get("status") not in {"completed", "canceled"} or not manifest.get("judge_config"):
+            raise ValueError("Only finished Judge experiments can retry scoring")
+        if not _has_judge_errors(root, manifest["agents"]):
+            raise ValueError("This experiment has no Judge errors to retry")
+        settings = dict(self.judge_loader())
+        key = str(settings.get("api_key") or os.environ.get(DEFAULT_JUDGE_API_KEY_ENV, "")).strip()
+        if not key:
+            raise ValueError("Configure Judge credentials before retrying scoring")
+        judge_cfg = JudgeConfig(**manifest["judge_config"])
+        with self._lock:
+            if self._active and self._active[2].is_alive():
+                raise ValueError("An experiment is already running")
+            stop = threading.Event()
+            thread = threading.Thread(target=self._retry_judge, args=(root, judge_cfg, key), daemon=True)
+            self._active = (experiment_id, stop, thread)
+            thread.start()
+        return {"retrying": True, "id": experiment_id}
+
+    def _retry_judge(self, root: Path, judge_cfg: JudgeConfig, key: str) -> None:
+        credential_env = "AIDEN_EXPERIMENT_JUDGE_" + uuid.uuid4().hex
+        os.environ[credential_env] = key
+        try:
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            manifest["stage"] = "Retrying Judge errors"
+            atomic_json(root / "manifest.json", manifest)
+            manifest = retry_experiment_judging(root, judge_cfg, api_key_env=credential_env)
+            manifest["stage"] = "Finished"
+            manifest.pop("judge_retry_error", None)
+            atomic_json(root / "manifest.json", manifest)
+        except Exception as exc:
+            manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
+            manifest["stage"] = "Judge retry failed"
+            manifest["judge_retry_error"] = str(exc)
+            atomic_json(root / "manifest.json", manifest)
+        finally:
+            os.environ.pop(credential_env, None)
 
     def shutdown(self) -> None:
         with self._lock:

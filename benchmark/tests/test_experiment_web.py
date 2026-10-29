@@ -87,6 +87,45 @@ def test_external_agent_experiment_can_only_be_started_over_loopback(experiment_
     assert handler.status == 403
 
 
+def test_judge_retry_route_requires_loopback(experiment_server):
+    app, _ = experiment_server
+    class Handler:
+        client_address = ("192.0.2.5", 1234)
+        server = type("Server", (), {"app": app})()
+        def _send_json(self, payload, status):
+            self.payload, self.status = payload, status
+    handler = Handler()
+    from runner.experiment_web import handle_experiment_request
+    assert handle_experiment_request(handler, "/api/experiments/exp-old/rejudge", post=True)
+    assert handler.status == 403
+
+
+def test_judge_retry_route_refreshes_finished_experiment(experiment_server, monkeypatch):
+    from runner import rejudge, runtask
+    from runner.judge import JudgeOutput
+    from runner.models import RubricVerdict
+
+    app, base = experiment_server
+    monkeypatch.setattr(runtask, "judge_task", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("Judge offline")))
+    _, body = request(base, "/api/experiments", {
+        "suite": SUITE_PATH.name, "environment_url": "http://env",
+        "agents": [{"kind": "aiden"}], "repeats": 1,
+    })
+    experiment_id = json.loads(body)["experiment"]["id"]
+    app.experiments._active[2].join(timeout=10)
+    assert json.loads(request(base, "/api/experiments")[1])["experiments"][0]["judge_errors"] == 2
+    monkeypatch.setattr(rejudge, "judge_task", lambda **kwargs: JudgeOutput(
+        verdicts=[RubricVerdict(item.id, "yes", "Recorded evidence") for item in kwargs["rubric"]],
+        overall_notes="", cache_key="", raw_response=""))
+    status, _ = request(base, f"/api/experiments/{experiment_id}/rejudge", {})
+    assert status == 202
+    app.experiments._active[2].join(timeout=10)
+    experiment = json.loads(request(base, "/api/experiments")[1])["experiments"][0]
+    assert experiment["judge_errors"] == 0
+    assert experiment["judge_retry"]["recovered"] == 2
+    assert "passed" in request(base, experiment["report_url"])[1]
+
+
 def test_openclaw_experiment_serves_native_evidence(experiment_server, monkeypatch):
     app, base = experiment_server
     page = request(base, "/experiments")[1]
