@@ -78,6 +78,10 @@ type Message struct {
 	// next assistant turn when a tool result follows, so storing only the
 	// human-readable reasoning text is insufficient.
 	AnthropicThinkingBlocks []json.RawMessage `json:"anthropic_thinking_blocks,omitempty"`
+	// CompactionSummary marks the user-role message that holds a context
+	// compaction summary. It is written by the model, not the user, so code
+	// that needs the user's own words skips it.
+	CompactionSummary bool `json:"compaction_summary,omitempty"`
 }
 
 // Usage is the provider-neutral token usage recorded for an LLM response.

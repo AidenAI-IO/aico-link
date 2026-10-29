@@ -372,6 +372,44 @@ def test_assert_memory_matches_source_reference_evidence():
     )
 
 
+def test_assert_memory_matches_sensitive_flag():
+    class SensitiveClient(RecordingSetupClient):
+        def invoke_tool(self, name, args, timeout=90):
+            from runner.agent_client import ToolInvokeResult
+
+            return ToolInvokeResult(
+                output='{"results":[{"id":"m-1","content":"PIN 4821","sensitive":true},{"id":"m-2","content":"city"}]}',
+                is_error=False,
+                duration_ms=0,
+            )
+
+    per_task_setup(
+        SensitiveClient(),
+        {"type": "assert_memory", "expected": [{"id": "m-1", "sensitive": True}, {"id": "m-2", "sensitive": False}]},
+    )
+    with pytest.raises(SetupAssertionError, match="did not match"):
+        per_task_setup(
+            SensitiveClient(),
+            {"type": "assert_memory", "expected": [{"id": "m-2", "sensitive": True}]},
+        )
+
+
+def test_assert_memory_rejects_non_boolean_sensitive_result():
+    class MalformedClient(RecordingSetupClient):
+        def invoke_tool(self, name, args, timeout=90):
+            from runner.agent_client import ToolInvokeResult
+
+            return ToolInvokeResult(
+                output='{"results":[{"id":"m-1","content":"PIN 4821","sensitive":"true"},{"id":"m-2","content":"city","sensitive":0}]}',
+                is_error=False,
+                duration_ms=0,
+            )
+
+    for expected in ({"id": "m-1", "sensitive": True}, {"id": "m-2", "sensitive": False}):
+        with pytest.raises(SetupAssertionError, match="did not match"):
+            per_task_setup(MalformedClient(), {"type": "assert_memory", "expected": [expected]})
+
+
 def test_setup_sequence_preserves_setup_assertion_failure_type():
     class MismatchClient(RecordingSetupClient):
         def invoke_tool(self, name, args, timeout=90):
