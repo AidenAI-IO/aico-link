@@ -21,6 +21,25 @@ def _write_generated_reports(run_dir: Path) -> None:
     (run_dir / "report.html").write_text("<html></html>", encoding="utf-8")
 
 
+def _workflow_job(name: str) -> str:
+    workflow = (
+        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
+    ).read_text(encoding="utf-8")
+    match = re.search(
+        rf"(?ms)^  {re.escape(name)}:\n(.*?)(?=^  [\w-]+:\n|\Z)", workflow
+    )
+    assert match is not None, f"missing workflow job: {name}"
+    return match.group(1)
+
+
+def _workflow_step(job: str, marker: str) -> str:
+    match = re.search(
+        rf"(?ms)^      - {re.escape(marker)}\n(.*?)(?=^      - |\Z)", job
+    )
+    assert match is not None, f"missing workflow step: {marker}"
+    return match.group(1)
+
+
 def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
     suites_dir = tmp_path / "suites"
     suites_dir.mkdir()
@@ -531,12 +550,12 @@ def test_ci_rejects_duplicate_result_identities(tmp_path: Path) -> None:
 
 
 def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
+    run_job = _workflow_job("run")
+    primary = _workflow_step(run_job, "name: Upload benchmark artifacts")
+    retry = _workflow_step(run_job, "name: Retry benchmark artifact upload")
     artifact_paths = "\n".join(
-        section.split("if-no-files-found:", 1)[0]
-        for section in re.split(r"(?m)^\s+path:\s*\|", workflow)[1:]
+        step.split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0]
+        for step in (primary, retry)
     )
 
     assert "cli-services" not in artifact_paths
@@ -555,21 +574,20 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     assert all(path.endswith(allowed_task_artifacts) for path in task_paths)
     for artifact in allowed_task_artifacts:
         assert sum(path.endswith(artifact) for path in task_paths) == 2  # primary and retry upload
-    assert "id: upload_benchmark_artifacts" in workflow
-    assert "steps.upload_benchmark_artifacts.outcome == 'failure'" in workflow
-    assert "overwrite: true" in workflow
+    assert "        id: upload_benchmark_artifacts" in primary.splitlines()
+    assert "        if: ${{ always() && steps.upload_benchmark_artifacts.outcome == 'failure' }}" in retry.splitlines()
+    assert "          overwrite: true" in retry.splitlines()
 
 
 def test_workflow_links_exact_interactive_reports_from_static_host_or_artifact() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
+    step = _workflow_step(_workflow_job("run"), "name: Link benchmark reports")
+    lines = step.splitlines()
 
-    assert "BENCHMARK_REPORT_PUBLISH_DIR: ${{ vars.BENCHMARK_REPORT_PUBLISH_DIR }}" in workflow
-    assert "BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}" in workflow
-    assert "steps.upload_benchmark_artifacts.outputs.artifact-url" in workflow
-    assert "steps.retry_benchmark_artifacts.outputs.artifact-url" in workflow
-    assert "python -m ci.publish_reports" in workflow
+    assert "          BENCHMARK_REPORT_PUBLISH_DIR: ${{ vars.BENCHMARK_REPORT_PUBLISH_DIR }}" in lines
+    assert "          BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}" in lines
+    assert "          PRIMARY_ARTIFACT_URL: ${{ steps.upload_benchmark_artifacts.outputs.artifact-url }}" in lines
+    assert "          RETRY_ARTIFACT_URL: ${{ steps.retry_benchmark_artifacts.outputs.artifact-url }}" in lines
+    assert '          uv run python -m ci.publish_reports "${args[@]}"' in lines
 
 
 def test_workflow_checks_docker_and_surfaces_setup_failures() -> None:
@@ -602,16 +620,22 @@ def test_workflow_schedules_all_runnable_cases_daily() -> None:
         Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
     ).read_text(encoding="utf-8")
 
-    assert "  push:" not in workflow
-    assert "- cron: '7 18 * * *'" in workflow
+    triggers = workflow.split("\njobs:\n", 1)[0]
+    assert "  push:" not in triggers
+    assert re.search(
+        r"(?m)^on:\n  schedule:\n(?:    #.*\n)*    - cron: '7 18 \* \* \*'$",
+        triggers,
+    )
     self_hosted_guard = (
         "if: ${{ startsWith(github.ref, 'refs/heads/') "
         "&& github.event_name != 'pull_request' "
         "&& github.event_name != 'pull_request_target' }}"
     )
-    assert workflow.count(self_hosted_guard) == 1
-    assert "github.ref == 'refs/heads/main'" not in workflow
-    assert 'elif [[ "$EVENT_NAME" == "schedule" ]]; then\n            profile="runnable"' in workflow
+    run_job = _workflow_job("run")
+    assert f"    {self_hosted_guard}" in run_job.splitlines()
+    assert "github.ref == 'refs/heads/main'" not in run_job
+    profile_step = _workflow_step(_workflow_job("plan"), "id: profile")
+    assert 'elif [[ "$EVENT_NAME" == "schedule" ]]; then\n            profile="runnable"' in profile_step
 
 
 def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -> None:
