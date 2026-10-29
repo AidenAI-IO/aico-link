@@ -294,6 +294,10 @@ there.
 
 - Below -70 dBm, the supplicant scans every 30 seconds while connected and
   moves to another AP of the same SSID when that AP is sufficiently stronger.
+  After 121 consecutive short scans (about an hour of continuous weak
+  signal), `bgscan simple` backs off to the long interval. A later
+  below-threshold event still triggers an immediate scan, and each long-interval
+  scan earns back one short scan.
 - At or above -70 dBm, it scans once an hour.
 - The AIC8800 driver reports signal threshold crossings (`NL80211_CMD_NOTIFY_CQM`),
   so the scan interval follows the live signal.

@@ -181,11 +181,9 @@ grep -q 'mkdir -p /userdata/agent/log' \
 grep -qx 'DHCP=yes' "${OVERLAY}/etc/systemd/network/20-wlan0.network"
 grep -qx 'IgnoreCarrierLoss=3s' "${OVERLAY}/etc/systemd/network/20-wlan0.network" \
     || fail "wlan0 must keep its DHCP address across a roaming carrier gap"
-grep -Fqx 'bgscan="simple:30:-70:3600"' "${OVERLAY}/etc/aico/wifi-roaming.conf" \
-    || fail "wpa_supplicant roaming policy must enable signal-based background scans"
-if grep -Ev '^[[:space:]]*(#|$)' "${OVERLAY}/etc/aico/wifi-roaming.conf" | grep -Ev '^bgscan='; then
-    fail "wifi-roaming.conf must hold only the global roaming policy"
-fi
+roaming_settings=$(grep -Ev '^[[:space:]]*(#|$)' "${OVERLAY}/etc/aico/wifi-roaming.conf" || true)
+[ "${roaming_settings}" = 'bgscan="simple:30:-70:3600"' ] \
+    || fail "wifi-roaming.conf must hold exactly the signal-based background scan policy"
 grep -qx 'Address=192.168.42.1/24' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'ConfigureWithoutCarrier=yes' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'RequiredForOnline=no' "${OVERLAY}/etc/systemd/network/30-usb0.network"
