@@ -1574,28 +1574,6 @@ def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():
     assert expectation.max_memory_ids == 0
     assert expectation.allow_empty_memory is True
 
-
-def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed():
-    # Device Memory keeps only app-specific knowledge. Without a failed direct
-    # Save, the Preview round trip is an ordinary save flow and is discarded.
-    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json")
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    for task_id in (
-        "verified_success_procedure_applies",
-        "duplicate_attempts_are_compacted",
-        "version_scoped_lesson_requires_fresh_check",
-        "successful_lesson_has_assessment_evidence",
-    ):
-        events = task_by_id[task_id].setup["episode"]["events"]
-        results = [event for event in events if event["type"] == "tool_result"]
-        first_preview = next(i for i, event in enumerate(results) if "Preview" in event["observation"])
-        assert any(
-            "did not persist" in event["observation"] for event in results[:first_preview]
-        ), task_id
-        calls = [event for event in events if event["type"] == "tool_call"]
-        assert len(calls) == len(results), task_id
-
     ip_expectation = task_by_id["transient_ip_is_not_memorized"].consolidation_expectation
     assert ip_expectation.allow_empty_memory is True
     assert ip_expectation.forbidden_memory_substrings == [
@@ -1622,6 +1600,37 @@ def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed
         assert task_by_id[task_id].consolidation_expectation.required_assessment_evidence is True
 
     assert task_by_id["duplicate_attempts_are_compacted"].consolidation_expectation.max_memory_ids == 1
+
+
+def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed():
+    # Device Memory keeps only app-specific knowledge. Without a failed direct
+    # Save, the Preview round trip is an ordinary save flow and is discarded.
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json")
+    task_by_id = {task.id: task for task in suite.tasks}
+
+    for task_id in (
+        "verified_success_procedure_applies",
+        "duplicate_attempts_are_compacted",
+        "version_scoped_lesson_requires_fresh_check",
+        "successful_lesson_has_assessment_evidence",
+    ):
+        events = task_by_id[task_id].setup["episode"]["events"]
+        results = [event for event in events if event["type"] == "tool_result"]
+        first_preview = next(i for i, event in enumerate(results) if "Preview" in event["observation"])
+        assert any(
+            "did not persist" in event["observation"] for event in results[:first_preview]
+        ), task_id
+        calls = [event for event in events if event["type"] == "tool_call"]
+        assert len(calls) == len(results), task_id
+
+
+def test_episode_reflection_v2_option_tasks_request_a_tagged_answer():
+    # Agents often restate every option before choosing. Without the tag, the
+    # restated options make the choice ambiguous to the answer parser.
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json")
+    for task in suite.tasks:
+        if task.answer_format == "option_letter":
+            assert "<final_answer>(x)</final_answer>" in task.prompt, task.id
 
 
 def test_episode_memory_conditions_share_natural_and_iphone_tasks():
