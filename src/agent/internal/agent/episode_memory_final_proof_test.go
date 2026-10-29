@@ -193,3 +193,21 @@ func TestOnlyAchievedProceduresRequireTheFinalProof(t *testing.T) {
 		}
 	}
 }
+
+func TestEpisodeMemoryFinalProofResolvesCitedCallsToTheirResults(t *testing.T) {
+	// An assessment citing the verification by its call must still name the
+	// verification result, or a path stopping at commit_result would pass.
+	if got := episodeMemoryFinalProofRef(finalProofTestEpisode(), []string{"commit_result", "verify_call"}); got != "verify_result" {
+		t.Fatalf("final proof = %q, want verify_result", got)
+	}
+}
+
+func TestRetentionAuditPromptLetsTheRewriteCiteAddedSteps(t *testing.T) {
+	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_final_proof"}`, "verify_result", []episodeMemoryCandidate{finalProofTestCandidate(nil)})
+	if strings.Contains(prompt, "from the candidate's evidence_refs") {
+		t.Fatalf("prompt limits rewrite evidence to the candidate's, which drops steps the audit adds:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "including the result and call of every step in step_refs") {
+		t.Fatalf("prompt does not ask the rewrite to cite added steps:\n%s", prompt)
+	}
+}

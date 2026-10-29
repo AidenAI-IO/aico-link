@@ -1165,7 +1165,7 @@ Return exactly one JSON object matching this schema:
       "expected_effect": "directly observable result",
       "scope": {"all evidenced applicability boundaries": "..."},
       "tags": ["retrieval terms"],
-      "evidence_refs": ["real Episode event ids from the candidate's evidence_refs that support the rewrite"],
+      "evidence_refs": ["real Episode event ids that support the rewrite, including the result and call of every step in step_refs"],
       "step_refs": ["procedure only, omit for other types: the complete ordered tool_result ids of the executable path, ending with its final verification; omit to keep the candidate's step_refs"]
     }
   }]
@@ -1543,8 +1543,10 @@ func canonicalEpisodeMemoryStepRefs(episode TaskEpisode, refs []string) []string
 }
 
 // episodeMemoryFinalProofRef returns the last device tool result, in Episode
-// order, that the assessment cites, or "" when it cites none.
+// order, that the assessment cites by its result or its call, or "" when it
+// cites none.
 func episodeMemoryFinalProofRef(episode TaskEpisode, assessmentRefs []string) string {
+	assessmentRefs = canonicalEpisodeMemoryStepRefs(episode, assessmentRefs)
 	pairedCalls := episodeMemoryPairedToolCalls(episode)
 	proof := ""
 	for _, event := range episode.Events {

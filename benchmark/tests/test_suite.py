@@ -1622,6 +1622,10 @@ def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed
         ), task_id
         calls = [event for event in events if event["type"] == "tool_call"]
         assert len(calls) == len(results), task_id
+        # The failed Save reverted the title, so the next step must re-enter it
+        # before Preview can show the change.
+        failure = next(i for i, event in enumerate(events) if "did not persist" in event.get("observation", ""))
+        assert "re-enter the changed title" in events[failure + 1]["content"].lower(), task_id
 
 
 def test_episode_reflection_v2_option_tasks_request_a_tagged_answer():
