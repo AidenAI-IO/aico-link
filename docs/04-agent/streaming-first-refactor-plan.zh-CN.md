@@ -636,6 +636,7 @@ bash scripts/run_tests_in_docker.sh --suite web
 - 已新增 Provider 无关的转写折叠器和有界重放窗口契约。重放窗口能识别过期 epoch、过期 cursor、重复 sequence 以及需要快照／resync 的间隙。TTS 能力元数据现在报告有效文本粒度和增量音频支持，板端播放队列同时按 chunk 数量和 PCM 时长设置硬上限。
 - 已新增可选的语义 v2 SSE 路径 `/api/events?version=2`。运行时 stream 事件会获得进程级 replay cursor，通过有界重放广播器发送；慢观察者会被断开并要求重新同步，不再静默收到不完整流。旧版 SSE 行为保持不变。
 - 已新增 normalized realtime 事件桥接：把响应、转写、工具、取消、错误和会话生命周期事件映射到共享契约，过滤过期 output epoch，并让 PCM 继续走独立的音频帧通道。
+- 已将原生 realtime daemon 循环接入 semantic event sink：已接受的服务商会话生命周期、转写、响应、工具、用量、打断和错误事件现在进入 v2 观察路径，并在输出失效时过滤过期事件；PCM 仍由 realtime 播放路径独立负责。Web UI 现在消费 v2 事件并保留旧消息回退，累计语义文本／推理增量，处理 resync 标记，并使用 `epoch:sequence` replay ID 重连。
 - 已补充过期 STT 会话、就绪缓冲溢出、转写修订顺序、Provider 取消、观察器关闭、重放 cursor、TTS 能力声明及播放队列饱和等聚焦回归测试。
 - 已通过已实现阶段的聚焦 Go 测试（包括 `-race`）、Go vet 及独立 C++ 播放测试。Docker 驱动的固件套件、完整主机套件和付费在线／硬件 Provider 冒烟测试未运行：当前 Docker daemon 及部分主机监听能力不可用。环境变量中的凭据已加载，但未用于付费 Provider 调用。
 

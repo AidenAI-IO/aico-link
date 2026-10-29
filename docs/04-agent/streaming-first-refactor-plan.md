@@ -996,6 +996,13 @@ already adopted those frameworks or reproduced their performance.
   tool, cancellation, error, and session lifecycle events into the shared
   contract, filters stale output epochs, and keeps PCM on the separate audio
   frame path.
+- Connected the native realtime daemon loop to the semantic event sink. Accepted
+  provider lifecycle, transcript, response, tool, usage, interruption, and
+  error events now reach the v2 observer path with stale output invalidation;
+  PCM remains owned by the realtime playback path. The Web UI consumes the v2
+  stream with legacy-message fallback, accumulates semantic text/reasoning
+  deltas, recovers from resync markers, and reconnects with `epoch:sequence`
+  replay IDs.
 - Added focused regression coverage for stale STT sessions, readiness overflow,
   transcript revision ordering, provider cancellation, observer shutdown,
   replay cursors, TTS capability declarations, and playback queue saturation.
