@@ -27,8 +27,7 @@ func BridgeEvent(identity stream.EventIdentity, currentOutputEpoch uint64, sourc
 	if source.CallID != "" {
 		identity.CallID = source.CallID
 	}
-	payload := source
-	payload.PCM = append([]byte(nil), source.PCM...)
+	payload := bridgePayload(source)
 	event := stream.NewEvent(identity, kind, payload)
 	event.Origin = "realtimevoice"
 	event.Visibility = visibility
@@ -36,6 +35,25 @@ func BridgeEvent(identity stream.EventIdentity, currentOutputEpoch uint64, sourc
 		return stream.Event{}, false
 	}
 	return event, true
+}
+
+// bridgePayload keeps transport errors useful to JSON observers. The native
+// Event type stores errors behind the error interface, which encoding/json
+// otherwise serializes as an empty object and loses the message.
+func bridgePayload(source Event) any {
+	if source.Error == nil {
+		payload := source
+		payload.PCM = append([]byte(nil), source.PCM...)
+		return payload
+	}
+	return map[string]any{
+		"error":       source.Error.Error(),
+		"status":      source.Status,
+		"response_id": source.ResponseID,
+		"item_id":     source.ItemID,
+		"call_id":     source.CallID,
+		"text":        source.Text,
+	}
 }
 
 func bridgeEventKind(kind EventKind, role string) (stream.EventKind, stream.Visibility, bool) {

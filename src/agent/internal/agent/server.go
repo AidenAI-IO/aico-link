@@ -2726,26 +2726,14 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	var cursor *streamcontract.ReplayCursor
 	rawSince := strings.TrimSpace(r.URL.Query().Get("since"))
 	if rawSince == "" {
 		rawSince = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 	}
-	if rawSince != "" {
-		sequence, err := strconv.ParseUint(rawSince, 10, 64)
-		if err != nil {
-			http.Error(w, "invalid since cursor", http.StatusBadRequest)
-			return
-		}
-		epoch := uint64(1)
-		if rawEpoch := strings.TrimSpace(r.URL.Query().Get("epoch")); rawEpoch != "" {
-			epoch, err = strconv.ParseUint(rawEpoch, 10, 64)
-			if err != nil || epoch == 0 {
-				http.Error(w, "invalid epoch cursor", http.StatusBadRequest)
-				return
-			}
-		}
-		cursor = &streamcontract.ReplayCursor{SessionEpoch: epoch, Sequence: sequence}
+	cursor, err := parseSemanticEventCursor(rawSince, r.URL.Query().Get("epoch"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	replay, ch, unsubscribe := s.semanticEvents.Subscribe(cursor)
@@ -2806,6 +2794,48 @@ func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+// parseSemanticEventCursor accepts the decimal sequence used by the original
+// v2 SSE endpoint and an optional epoch query parameter. Last-Event-ID may
+// also carry the complete "epoch:sequence" form so reconnects can preserve a
+// cursor across a session rotation; the query parameter remains the preferred
+// explicit form for clients that store the two fields separately.
+func parseSemanticEventCursor(rawSince, rawEpoch string) (*streamcontract.ReplayCursor, error) {
+	rawSince = strings.TrimSpace(rawSince)
+	rawEpoch = strings.TrimSpace(rawEpoch)
+	if rawSince == "" {
+		if rawEpoch != "" {
+			return nil, fmt.Errorf("invalid epoch cursor")
+		}
+		return nil, nil
+	}
+
+	epoch := uint64(1)
+	sequenceText := rawSince
+	if strings.Contains(rawSince, ":") {
+		parts := strings.Split(rawSince, ":")
+		if len(parts) != 2 || rawEpoch != "" {
+			return nil, fmt.Errorf("invalid since cursor")
+		}
+		var err error
+		epoch, err = strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
+		if err != nil || epoch == 0 {
+			return nil, fmt.Errorf("invalid epoch cursor")
+		}
+		sequenceText = strings.TrimSpace(parts[1])
+	} else if rawEpoch != "" {
+		var err error
+		epoch, err = strconv.ParseUint(rawEpoch, 10, 64)
+		if err != nil || epoch == 0 {
+			return nil, fmt.Errorf("invalid epoch cursor")
+		}
+	}
+	sequence, err := strconv.ParseUint(sequenceText, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid since cursor")
+	}
+	return &streamcontract.ReplayCursor{SessionEpoch: epoch, Sequence: sequence}, nil
+}
+
 	store := s.episodeStore
 	if store == nil && s.runtime != nil {
 		if configDir := s.runtime.ConfigSnapshot().ConfigDir; configDir != "" {

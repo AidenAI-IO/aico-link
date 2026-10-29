@@ -1,7 +1,9 @@
 package realtimevoice
 
 import (
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"aico-agent/internal/stream"
@@ -47,6 +49,10 @@ func TestBridgeEventMapsTerminalAndErrors(t *testing.T) {
 	diagnostic, ok := BridgeErrorEvent(bridgeIdentity(), 4, errors.New("socket closed"))
 	if !ok || diagnostic.Kind != stream.EventStreamError || diagnostic.Visibility != stream.VisibilityDiagnostic {
 		t.Fatalf("diagnostic = %#v ok=%v", diagnostic, ok)
+	}
+	encoded, err := json.Marshal(diagnostic.Payload)
+	if err != nil || !strings.Contains(string(encoded), "realtimevoice: socket closed") {
+		t.Fatalf("diagnostic payload = %s, marshal error = %v", encoded, err)
 	}
 }
 
