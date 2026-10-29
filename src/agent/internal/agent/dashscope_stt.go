@@ -61,12 +61,24 @@ func (s *DashScopeRealtimeSTT) Capabilities() STTCapabilities {
 // TranscribeWAV performs one-shot transcription by opening a WebSocket session,
 // sending all audio at once, and waiting for the final result.
 func (s *DashScopeRealtimeSTT) TranscribeWAV(wavData []byte) (string, error) {
+	return s.TranscribeWAVWithContext(context.Background(), wavData)
+}
+
+// TranscribeWAVWithContext performs one-shot transcription under the caller's
+// cancellation scope. The provider-specific timeout is layered on top of it.
+func (s *DashScopeRealtimeSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	pcm, sampleRate, err := extractPCMFromWAV(wavData)
 	if err != nil {
 		return "", fmt.Errorf("dashscope stt: %w", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), dashScopeOneShotReadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, dashScopeOneShotReadTimeout)
 	defer cancel()
 
 	uploader, err := s.newUploader(ctx, STTStreamConfig{
@@ -84,6 +96,7 @@ func (s *DashScopeRealtimeSTT) TranscribeWAV(wavData []byte) (string, error) {
 	}
 
 	transcript, err := uploader.Finalize()
+	_ = uploader.Close()
 	if err != nil {
 		return "", fmt.Errorf("dashscope stt one-shot finalize: %w", err)
 	}
@@ -110,6 +123,9 @@ func (s *DashScopeRealtimeSTT) buildEndpointURL() string {
 }
 
 func (s *DashScopeRealtimeSTT) newUploader(ctx context.Context, cfg STTStreamConfig) (*dashScopeUploader, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if s.apiKey == "" {
 		return nil, fmt.Errorf("dashscope STT: api_key is required")
 	}

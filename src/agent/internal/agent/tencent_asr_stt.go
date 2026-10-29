@@ -103,6 +103,18 @@ func (s *TencentASRSTT) Capabilities() STTCapabilities {
 }
 
 func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
+	return s.TranscribeWAVWithContext(context.Background(), wavData)
+}
+
+// TranscribeWAVWithContext transcribes WAV audio while honoring cancellation
+// from the caller through the Tencent HTTP request.
+func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len(wavData) == 0 {
 		return "", fmt.Errorf("empty wav data")
 	}
@@ -131,7 +143,7 @@ func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
 	if apiURL == "" {
 		apiURL = "https://" + tencentASRHost
 	}
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -176,6 +188,9 @@ func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
 }
 
 func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !s.Capabilities().SupportsStreamingUpload {
 		return nil, fmt.Errorf("tencent ASR realtime upload requires stt.app_id")
 	}
