@@ -147,6 +147,19 @@ TEST_CASE("playback session rejects chunks after final is received") {
     session.stop();
 }
 
+TEST_CASE("playback session rejects chunks after it is stopped") {
+    aico::AudioFormat fmt;
+    fmt.sample_rate = 16000;
+    fmt.channels = 1;
+    fmt.bit_width = 16;
+
+    aico::AudioPlaybackSession session(4, fmt);
+    const uint8_t chunk[] = {1, 2, 3, 4};
+    session.stop();
+    CHECK(session.push_chunk(chunk, sizeof(chunk), false) ==
+          aico::AicoServiceStatus::SESSION_NOT_FOUND);
+}
+
 TEST_CASE("backpressure writers fail when final state is published") {
     aico::AudioFormat fmt;
     fmt.sample_rate = 16000;
@@ -212,4 +225,29 @@ TEST_CASE("backpressure writers fail when final state is published") {
     for (size_t i = 0; i < writer_count; ++i) {
         CHECK(statuses[i] == aico::AicoServiceStatus::SESSION_NOT_FOUND);
     }
+}
+
+TEST_CASE("backpressure timeout preserves the hard queue bound") {
+    aico::AudioFormat fmt;
+    fmt.sample_rate = 16000;
+    fmt.channels = 1;
+    fmt.bit_width = 16;
+
+    aico::AudioPlaybackSession session(3, fmt);
+    const uint8_t chunk[] = {1, 2, 3, 4};
+    {
+        std::lock_guard<std::mutex> lock(session.mutex_);
+        for (size_t i = 0; i < aico::AudioPlaybackSession::kMaxQueueChunks; ++i) {
+            session.queue_.push(std::vector<uint8_t>(chunk, chunk + sizeof(chunk)));
+        }
+    }
+
+    const auto started = std::chrono::steady_clock::now();
+    CHECK(session.push_chunk(chunk, sizeof(chunk), false) ==
+          aico::AicoServiceStatus::TIMEOUT);
+    const auto elapsed = std::chrono::steady_clock::now() - started;
+    CHECK(elapsed >= std::chrono::milliseconds(150));
+
+    std::lock_guard<std::mutex> lock(session.mutex_);
+    CHECK(session.queue_.size() == aico::AudioPlaybackSession::kMaxQueueChunks);
 }

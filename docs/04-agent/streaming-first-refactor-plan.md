@@ -6,8 +6,9 @@ sidebar_position: 18
 
 Chinese translation: [中文版](streaming-first-refactor-plan.zh-CN.md).
 
-**Status:** Scope fixed by product feedback; implementation and remaining product
-policies are not yet approved.
+**Status:** Scope fixed by product feedback; the compatibility-preserving Phase 1
+foundation and playback queue hardening are implemented in this branch. Remaining
+product policies and later migration phases are not yet approved.
 
 **Research date:** 2026-10-29.
 
@@ -965,11 +966,19 @@ already adopted those frameworks or reproduced their performance.
   telemetry boundaries and their existing test contracts.
 - Researched the official sources above and separated observed behavior from
   recommendations and unmeasured targets.
-- Added this proposal and a link from the Agent overview; no runtime, provider,
-  protocol, prompt, configuration, dependency, firmware, or deployment behavior
-  was changed.
+- Added this proposal and a link from the Agent overview. Provider protocols,
+  prompts, configuration keys, dependencies, firmware, and deployment interfaces
+  remain unchanged by this initial slice.
+- Implemented the first compatibility-preserving slice: the provider-independent
+  `src/agent/internal/stream` package now defines v2 event identity, terminal
+  outcomes, negotiated audio-frame metadata, and context-aware bounded queues,
+  with deterministic unit tests. `AudioPlaybackSession` now rechecks its hard
+  queue limit after backpressure waits, returns `TIMEOUT` when saturation
+  persists, and rejects writes after stop.
 - Checked relative links/source-line anchors, Markdown heading fragments, code
   fences, and whitespace; a separate design review identified a broken local
   heading link, which was corrected. These are document checks, not a docs build.
-- Firmware/agent suites and live/hardware tests were **not run** for this
-  documentation-only research task. Implementation validation remains future work.
+- Focused Go tests (including `-race`), Go vet, and C++ syntax checks passed.
+  The Docker-backed firmware suites and live/hardware provider tests were not run:
+  the Docker daemon is unavailable, and this slice has no provider-specific
+  behavior to validate with the configured credentials.

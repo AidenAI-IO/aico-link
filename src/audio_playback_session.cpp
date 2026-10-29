@@ -6,6 +6,8 @@
 
 namespace aico {
 
+const size_t AudioPlaybackSession::kMaxQueueChunks;
+
 AudioPlaybackSession::AudioPlaybackSession(uint64_t session_id, const AudioFormat& fmt)
     : session_id_(session_id), fmt_(fmt), stopped_(false), final_received_(false), joined_(false) {}
 
@@ -68,17 +70,24 @@ AicoServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t l
     if (stopped_.load()) return AicoServiceStatus::SESSION_NOT_FOUND;
 
     std::unique_lock<std::mutex> lock(mutex_);
-    if (final_received_) return AicoServiceStatus::SESSION_NOT_FOUND;
+    if (stopped_.load() || final_received_) return AicoServiceStatus::SESSION_NOT_FOUND;
 
-    if (queue_.size() >= kMaxQueueChunks) {
-        // Apply back-pressure: wait for the queue to drain a bit.
-        cv_.wait_for(lock, std::chrono::milliseconds(200),
-                     [this] {
-                         return queue_.size() < kMaxQueueChunks / 2 ||
-                                final_received_ || stopped_.load();
-                     });
+    while (queue_.size() >= kMaxQueueChunks) {
+        // Apply back-pressure without ever allowing a producer to cross the
+        // hard queue bound. A timeout is reported explicitly so callers can
+        // account for a saturated playback path instead of silently growing
+        // the queue.
+        const bool woke = cv_.wait_for(
+            lock, std::chrono::milliseconds(200),
+            [this] {
+                return queue_.size() < kMaxQueueChunks || final_received_ ||
+                       stopped_.load();
+            });
         if (final_received_ || stopped_.load()) {
             return AicoServiceStatus::SESSION_NOT_FOUND;
+        }
+        if (!woke && queue_.size() >= kMaxQueueChunks) {
+            return AicoServiceStatus::TIMEOUT;
         }
     }
 
