@@ -9,7 +9,7 @@ readonly PACKAGE_VERSION=${VERSION}-${REVISION}
 readonly PACKAGE_NAME=aiden-business
 readonly BINARIES=(
   agent audio_service audio_service_cli ble_service cpu_vad frame_service
-  frame_service_cli rknn_vad ota abctl aiden-environment ttyd
+  frame_service_cli rknn_vad smart_turn_helper ota abctl aiden-environment ttyd
 )
 rm -rf "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_"*.deb
 install -d -m 0755 "${PKG_ROOT}/DEBIAN" "${PKG_ROOT}/usr/lib/aiden" "${PKG_ROOT}/usr/share/aiden/config-web" "${PKG_ROOT}/usr/share/aiden/skills" "${PKG_ROOT}/usr/share/aiden/audio" "${PKG_ROOT}/usr/lib/aiden/models" "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"

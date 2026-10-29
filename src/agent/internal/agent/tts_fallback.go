@@ -133,16 +133,16 @@ func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBa
 	if ttsErr == nil || speechStarted || !canPlayTTSUnavailableFallback(cfg, failureCode) {
 		return false, ttsErr
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return false, ttsErr
-	}
+	// Pure user cancel: stay silent. Provider/no-audio failures should still
+	// notify even if the speak context was canceled (e.g. GPIO while TTS 429'd).
 	if errors.Is(ttsErr, context.Canceled) {
 		return false, ttsErr
 	}
-	if err := playTTSUnavailableFallback(ctx, audio, cfg, failureCode); err != nil {
+	playCtx := ctx
+	if playCtx == nil || playCtx.Err() != nil {
+		playCtx = context.Background()
+	}
+	if err := playTTSUnavailableFallback(playCtx, audio, cfg, failureCode); err != nil {
 		return false, errors.Join(ttsErr, err)
 	}
 	return true, ttsErr

@@ -966,6 +966,10 @@ func (d *fakeAudioDialog) StartRecording() error {
 	return nil
 }
 
+func (d *fakeAudioDialog) FinalizeAndRotateSTT() error {
+	return nil
+}
+
 func (d *fakeAudioDialog) StopRecording() error {
 	d.ops = append(d.ops, "stop")
 	d.stops++
@@ -975,6 +979,10 @@ func (d *fakeAudioDialog) StopRecording() error {
 
 func (d *fakeAudioDialog) RecordingActive() bool {
 	return d.recordingActive
+}
+
+func (d *fakeAudioDialog) ReadRecordChunkMonitor(timeoutMs uint32) (*agent.AudioChunkResult, error) {
+	return d.ReadRecordChunk(timeoutMs)
 }
 
 func (d *fakeAudioDialog) ReadRecordChunk(timeoutMs uint32) (*agent.AudioChunkResult, error) {
@@ -1148,6 +1156,14 @@ func (d *fakeAudioDialog) SpeakFinal(ctx context.Context, text string, interrupt
 	return d.Speak(ctx, text, interrupt)
 }
 
+func (d *fakeAudioDialog) TTSOutputActive() bool {
+	return false
+}
+
+func (d *fakeAudioDialog) PlayListenReadyCue() {
+	d.addOp("listen_ready_cue")
+}
+
 func (d *fakeAudioDialog) FlushVAD() []int16 {
 	if d.vad != nil {
 		return d.vad.Flush()
@@ -1181,6 +1197,10 @@ func (d *fakeAudioDialog) ResetVAD() {
 	if d.vad != nil {
 		_ = d.vad.Reset()
 	}
+}
+
+func (d *fakeAudioDialog) VADSpeaking() bool {
+	return false
 }
 
 func (d *fakeAudioDialog) VADFrameSamples() int {

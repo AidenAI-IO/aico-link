@@ -338,7 +338,7 @@ grep -Fq 'stage_platform' "${SYSTEM_DIR}/container-build-rootfs.sh"
 test -x "${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-dynamic-keyboard" \
     || fail "production platform overlay is missing the dynamic keyboard helper"
 for binary in abctl agent aiden-environment audio_service ble_service cpu_vad \
-    frame_service ota rknn_vad ttyd; do
+    frame_service ota rknn_vad smart_turn_helper ttyd; do
     if grep -Eq "/apps[^\n]*${binary}|usr/bin[^\n]*${binary}" \
         "${SYSTEM_DIR}/container-assemble-images.sh"; then
         fail "business executable is still staged directly into platform: ${binary}"

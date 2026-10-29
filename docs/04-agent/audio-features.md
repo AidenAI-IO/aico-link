@@ -14,14 +14,9 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 └──────┬──────┘
        ├─────────────────────────► HTTP Server / Web UI (all input modes)
        │
-       ├─ input_mode=stt ────────► Legacy Audio Dialog Loop
+       ├─ input_mode=stt ────────► Classic continuous voice session
+       │                            (Silero VAD + Smart Turn + STT/LLM/TTS)
        └─ input_mode=realtime ───► Realtime Voice Session
-                                   │
-                                   ├─ AudioServiceClient
-                                   ├─ VAD
-                                   ├─ STT
-                                   ├─ LLM
-                                   └─ TTS
 ```
 
 ## Components
@@ -29,23 +24,26 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 | Component | Files | Description |
 | --- | --- | --- |
 | Audio client | `audio_client.go` | Connects to `audio_service`, starts recording/playback sessions, reads/writes PCM chunks |
-| VAD | `vad.go` + `/usr/lib/aiden/rknn_vad` or `/usr/lib/aiden/cpu_vad` | Silero VAD inference; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
+| VAD | `vad.go` + `/usr/lib/aiden/rknn_vad` or `/usr/lib/aiden/cpu_vad` | Silero VAD speech activity; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
+| Smart Turn | `turn_detect.go` + `/usr/lib/aiden/smart_turn_helper` | On-device turn-complete probability over the current utterance; Classic endpointing uses short silence + Smart Turn, with a long-silence fallback |
 | STT | `stt.go`, provider-specific clients | OpenAI Whisper, OpenRouter, Tencent Cloud ASR, Qwen ASR, and Google Cloud STT; `tencent` / `tencent_asr` remain compatibility aliases for `tencent-asr` |
 | TTS | `tts/`, `tts_helpers.go` | Pluggable TTS provider, outputs PCM for the configured playback backend; automatically resamples to the target playback sample rate when necessary |
-| Dialog manager | `audio_dialog.go` | Orchestrates recording, VAD, STT/LLM/TTS flow |
+| Dialog manager | `audio_dialog.go` | Orchestrates continuous-mic session recording, VAD/Smart Turn, STT rotate, LLM/TTS, and barge-in |
 | Voice notifications | `voice_notification.go`, `tts_fallback.go` | Adds a persistent response tail or final-turn failure replacement before TTS, with bundled local WAV fallback when final TTS is unavailable |
 
 ## Input Modes
 
 ### `input_mode = "stt"`
 
-Runs the device-side audio loop alongside the HTTP server and Web UI:
+Runs the Classic continuous voice session alongside the HTTP server and Web UI
+(Realtime-like shell, local STT/LLM/TTS pipeline):
 
-1. Records PCM via `audio_service`;
-2. VAD determines sentence boundaries;
-3. Sends WAV to STT;
+1. Wakeup opens a session and keeps the microphone open for the whole session;
+2. Silero VAD detects speech; after short silence, Smart Turn decides whether the user turn is complete (long silence force-commits);
+3. Streaming STT is finalized and rotated at each turn boundary without closing the mic;
 4. STT text goes to Agent runtime;
-5. TTS synthesizes the reply and plays it through the configured playback backend.
+5. TTS synthesizes the reply while the mic stays open for barge-in;
+6. Session ends on listen timeout, max turns, goodbye/tool wait-for-wakeup, or process stop.
 
 Before final non-streaming TTS, the runtime passes the spoken reply through the shared [Voice Notification manager](voice-notifications.md). A successful turn may receive one short persistent tail. A final LLM failure may use a fixed replacement. These changes affect spoken text only, not assistant history or UI response text.
 
@@ -62,7 +60,7 @@ provider capability differences, and event lifecycle.
 
 ## Wakeup Trigger
 
-Waits for the hardware tap button to start recording. On current boards that button is wired to GPIO 33/GPIO 32 (falling edge); both pins enter the same wakeup flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a voice session, so disabling it leaves the voice loop waiting until the setting is turned back on. When `input_mode = "stt"` and `voice_followup_enabled = true`, wakeup opens a continuous voice session: the first turn still requires the tap button (when tap wakeup is enabled), but after the Agent replies it will continue listening for follow-up questions within the `voice_followup_timeout_ms` window. `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Repeated wakeup triggers during listening or recording are merged or ignored and will not restart recording or discard already-recorded audio; whether triggering wakeup again during thinking cancels the current LLM request is controlled by `voice_interrupt_on_wakeup`; the microphone is not open by default during TTS playback, and recording continues only after playback ends; triggering wakeup again during playback will interrupt the current turn and immediately start recording. On current boards this path requires Linux GPIO sysfs and completed button wiring.
+Waits for the hardware tap button to open a Classic voice session. On current boards that button is wired to GPIO 33/GPIO 32 (falling edge); both pins enter the same wakeup flow. `tap_wakeup_enabled` defaults to `true`; set it to `false` to ignore the tap button only—this does not disable other activation paths. In Realtime mode, `/api/chat` can still activate a session when tap wakeup is off. In Classic STT mode, the tap button is the normal way to open a continuous session (`voice_followup_enabled` defaults to `true`); set it to `false` only when you need the legacy one-utterance-per-wakeup path. After wakeup, the mic stays open for follow-up turns within `voice_followup_timeout_ms`; `voice_first_turn_timeout_ms` controls the first-turn waiting window, and `voice_max_turns` controls the maximum number of turns per session. Silero detects barge-in speech during thinking and TTS; `voice_interrupt_on_wakeup` still controls whether a second tap cancels the active turn. Repeated wakeup triggers during listening are merged or ignored. On current boards this path requires Linux GPIO sysfs and completed button wiring.
 
 ## Configuration Snippet
 
@@ -75,10 +73,14 @@ vad_backend = "rknn"
 vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
 vad_helper_path = "/usr/lib/aiden/rknn_vad"
 vad_speech_threshold = 0.5
-silence_ms = 550
 min_speech_ms = 300
+turn_detection_model_path = "/usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+turn_detection_helper_path = "/usr/lib/aiden/smart_turn_helper"
+turn_detection_threshold = 0.5
+turn_detection_analyze_silence_ms = 200
+turn_detection_silence_fallback_ms = 3000
 tap_wakeup_enabled = true
-voice_followup_enabled = false
+voice_followup_enabled = true
 voice_followup_timeout_ms = 5000
 voice_first_turn_timeout_ms = 10000
 voice_max_turns = 0
@@ -192,17 +194,19 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - `audio_service` must be running when `audio.backend = "audio_service"`;
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
 - `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aiden/cpu_vad`;
+- `smart_turn_helper` must be executable and `turn_detection_model_path` must point to the bundled Smart Turn RKNN;
 - STT/TTS require external API keys;
-- STT mode normally uses the hardware tap button to start a voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
+- STT mode normally uses the hardware tap button to start a continuous voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
 
-VAD helper can be verified directly on the board:
+VAD and Smart Turn helpers can be verified directly on the board:
 
 ```bash
 /usr/lib/aiden/rknn_vad --model /usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
 /usr/lib/aiden/cpu_vad --weights /usr/lib/aiden/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aiden/smart_turn_helper --model /usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn --self-test
 ```
 
-On success, it will output a line `P <probability>`; if there are still RKNN input configuration issues, it will directly output `ERR ...`.
+On success, helpers output a line `P <probability>`; if there are still RKNN input configuration issues, they output `ERR ...`.
 
 ## Known Limitations
 

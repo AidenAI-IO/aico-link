@@ -2113,8 +2113,8 @@ turn_detection_silence_ms = 900
 func TestVoiceSessionConfigDefaults(t *testing.T) {
 	cfg := Config{}
 
-	if cfg.VoiceFollowupEnabledOrDefault() {
-		t.Fatal("VoiceFollowupEnabledOrDefault() = true, want false")
+	if !cfg.VoiceFollowupEnabledOrDefault() {
+		t.Fatal("VoiceFollowupEnabledOrDefault() = false, want true")
 	}
 	if cfg.VoiceFirstTurnTimeoutOrDefault() != 10*time.Second {
 		t.Fatalf("VoiceFirstTurnTimeoutOrDefault() = %s, want 10s", cfg.VoiceFirstTurnTimeoutOrDefault())

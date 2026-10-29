@@ -198,11 +198,28 @@ if(AIDEN_RKNN_COMPAT_SOURCES)
     target_compile_definitions(rknn_vad PRIVATE AIDEN_RKNN_GLIBC_COMPAT=1)
 endif()
 
+add_executable(smart_turn_helper
+    src/smart_turn/smart_turn_helper.c
+    src/smart_turn/smart_turn.c
+    src/smart_turn/whisper_mel.c
+    ${AIDEN_RKNN_COMPAT_SOURCES}
+)
+target_include_directories(smart_turn_helper PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/smart_turn
+    ${AIDEN_RKNN_INCLUDE_DIR}
+)
+target_compile_definitions(smart_turn_helper PRIVATE ${AIDEN_RKNN_COMPILE_DEFINITIONS})
+target_link_libraries(smart_turn_helper PRIVATE ${AIDEN_RKNN_TARGET} pthread dl m)
+if(AIDEN_RKNN_COMPAT_SOURCES)
+    target_compile_definitions(smart_turn_helper PRIVATE AIDEN_RKNN_GLIBC_COMPAT=1)
+endif()
+
 add_executable(cpu_vad src/cpu_vad.cpp src/aiden_log.cpp)
 target_include_directories(cpu_vad PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cpu_vad PRIVATE pthread m)
 
-foreach(_vad_target rknn_vad cpu_vad)
+foreach(_vad_target rknn_vad cpu_vad smart_turn_helper)
     target_compile_options(${_vad_target} PRIVATE -O3)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|ARM)")
         target_compile_options(${_vad_target} PRIVATE
@@ -239,6 +256,7 @@ if(AIDEN_ENABLE_LINK_MAPS)
             audio_stream
             rknn_vad
             cpu_vad
+            smart_turn_helper
             aiden_environment)
         target_link_options(${_aiden_executable} PRIVATE
             "LINKER:-Map,${CMAKE_BINARY_DIR}/maps/${_aiden_executable}.map")

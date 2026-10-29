@@ -40,7 +40,7 @@ func TestSelfConfigSettingsAreWritableAndLive(t *testing.T) {
 		"agent.locale":                    "zh-CN",
 		"agent.timezone":                  "Asia/Tokyo",
 		"agent.silence_ms":                1500,
-		"agent.voice_followup_enabled":    true,
+		"agent.voice_followup_enabled":    false,
 		"agent.voice_followup_timeout_ms": 9000,
 		"agent.voice_max_turns":           3,
 		"agent.voice_interrupt_on_wakeup": false,

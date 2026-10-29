@@ -286,57 +286,63 @@ type ModelProvider struct {
 }
 
 type Config struct {
-	DeviceTypeOverride         string                        `toml:"-" json:"-"`                // Process-local CLI override retained across reloads.
-	ModelProviders             map[string]ModelProvider      `toml:"model_providers,omitempty"` // Named model provider configurations
-	TTSProviders               map[string]TTSProvider        `toml:"tts_providers,omitempty"`   // Named TTS provider configurations
-	STTProviders               map[string]STTProvider        `toml:"stt_providers,omitempty"`   // Named STT provider configurations
-	VoiceModelProviders        map[string]VoiceModelProvider `toml:"voice_model_providers,omitempty"`
-	Model                      ModelConfig                   `toml:"model"`
-	Decision                   DecisionModelConfig           `toml:"decision,omitempty"`
-	TTS                        TTSConfig                     `toml:"tts,omitempty"`
-	STT                        STTConfig                     `toml:"stt,omitempty"`
-	HID                        HIDConfig                     `toml:"hid"`
-	Device                     DeviceConfig                  `toml:"device,omitempty"`
-	Audio                      AudioConfig                   `toml:"audio,omitempty"`
-	VoiceModel                 VoiceModelConfig              `toml:"voice_model,omitempty"`
-	AudioArchive               AudioArchiveConfig            `toml:"audio_archive,omitempty"`
-	FrameService               FrameServiceConfig            `toml:"frame_service,omitempty"`
-	Storage                    StorageConfig                 `toml:"storage,omitempty"`
-	VoiceNotifications         VoiceNotificationsConfig      `toml:"voice_notifications,omitempty"`
-	QuickCapture               QuickCaptureConfig            `toml:"quick_capture,omitempty"`
-	Log                        LogConfig                     `toml:"log,omitempty"`
-	OTA                        OTAConfig                     `toml:"ota,omitempty"`
-	Search                     SearchConfig                  `toml:"search,omitempty"`
-	EnvironmentBridge          EnvironmentBridgeConfig       `toml:"-"` // Only set via CLI flags, never from config file
-	Benchmark                  BenchmarkConfig               `toml:"-"` // Only set via CLI flags, never from config file
-	LiveActivity               LiveActivityConfig            `toml:"live_activity,omitempty"`
-	Locale                     string                        `toml:"locale,omitempty"`
-	Timezone                   string                        `toml:"timezone,omitempty"`
-	Instruction                string                        `toml:"-"` // Built-in runtime instruction; the legacy custom_instruction key is read but ignored (see applyRuntimeInstructionDefault).
-	Prompt                     string                        `toml:"prompt,omitempty"`
-	InputMode                  string                        `toml:"input_mode,omitempty"`  // "stt" or "realtime"
-	VADBackend                 string                        `toml:"vad_backend,omitempty"` // "rknn", "cpu"
-	VADModelPath               string                        `toml:"vad_model_path,omitempty"`
-	VADHelperPath              string                        `toml:"vad_helper_path,omitempty"`
-	VADSpeechThreshold         float64                       `toml:"vad_speech_threshold,omitempty"`
-	SilenceMs                  int                           `toml:"silence_ms,omitempty"`
-	MinSpeechMs                int                           `toml:"min_speech_ms,omitempty"`
-	VoiceFollowupEnabled       *bool                         `toml:"voice_followup_enabled,omitempty"`
-	VoiceFollowupTimeoutMs     int                           `toml:"voice_followup_timeout_ms,omitempty"`
-	VoiceFirstTurnTimeoutMs    int                           `toml:"voice_first_turn_timeout_ms,omitempty"`
-	VoiceMaxTurns              int                           `toml:"voice_max_turns,omitempty"`
-	VoiceInterruptOnWakeup     *bool                         `toml:"voice_interrupt_on_wakeup,omitempty"`
-	TapWakeupEnabled           *bool                         `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
-	MCPEnabled                 *bool                         `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
-	MCPShellEnabled            *bool                         `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
-	MCPConfigWebBaseURL        string                        `toml:"mcp_config_web_base_url,omitempty"`
-	VoiceStreamingTTSEnabled   *bool                         `toml:"voice_streaming_tts_enabled,omitempty"`
-	VoiceToolCallSpeech        *bool                         `toml:"voice_tool_call_speech,omitempty"`
-	VoiceProgressSpeechEnabled *bool                         `toml:"voice_progress_speech_enabled,omitempty"`
-	VoiceMaxResponseTokens     int                           `toml:"voice_max_response_tokens,omitempty"`
-	MaxIterations              int                           `toml:"max_iterations,omitempty"`
-	TerminationPolicy          TerminationPolicyConfig       `toml:"termination_policy,omitempty"`
-	ForceSimpleLoop            bool                          `toml:"-"`
+	DeviceTypeOverride  string                        `toml:"-" json:"-"`                // Process-local CLI override retained across reloads.
+	ModelProviders      map[string]ModelProvider      `toml:"model_providers,omitempty"` // Named model provider configurations
+	TTSProviders        map[string]TTSProvider        `toml:"tts_providers,omitempty"`   // Named TTS provider configurations
+	STTProviders        map[string]STTProvider        `toml:"stt_providers,omitempty"`   // Named STT provider configurations
+	VoiceModelProviders map[string]VoiceModelProvider `toml:"voice_model_providers,omitempty"`
+	Model               ModelConfig                   `toml:"model"`
+	Decision            DecisionModelConfig           `toml:"decision,omitempty"`
+	TTS                 TTSConfig                     `toml:"tts,omitempty"`
+	STT                 STTConfig                     `toml:"stt,omitempty"`
+	HID                 HIDConfig                     `toml:"hid"`
+	Device              DeviceConfig                  `toml:"device,omitempty"`
+	Audio               AudioConfig                   `toml:"audio,omitempty"`
+	VoiceModel          VoiceModelConfig              `toml:"voice_model,omitempty"`
+	AudioArchive        AudioArchiveConfig            `toml:"audio_archive,omitempty"`
+	FrameService        FrameServiceConfig            `toml:"frame_service,omitempty"`
+	Storage             StorageConfig                 `toml:"storage,omitempty"`
+	VoiceNotifications  VoiceNotificationsConfig      `toml:"voice_notifications,omitempty"`
+	QuickCapture        QuickCaptureConfig            `toml:"quick_capture,omitempty"`
+	Log                 LogConfig                     `toml:"log,omitempty"`
+	OTA                 OTAConfig                     `toml:"ota,omitempty"`
+	Search              SearchConfig                  `toml:"search,omitempty"`
+	EnvironmentBridge   EnvironmentBridgeConfig       `toml:"-"` // Only set via CLI flags, never from config file
+	Benchmark           BenchmarkConfig               `toml:"-"` // Only set via CLI flags, never from config file
+	LiveActivity        LiveActivityConfig            `toml:"live_activity,omitempty"`
+	Locale              string                        `toml:"locale,omitempty"`
+	Timezone            string                        `toml:"timezone,omitempty"`
+	Instruction         string                        `toml:"-"` // Built-in runtime instruction; the legacy custom_instruction key is read but ignored (see applyRuntimeInstructionDefault).
+	Prompt              string                        `toml:"prompt,omitempty"`
+	InputMode           string                        `toml:"input_mode,omitempty"`  // "stt" or "realtime"
+	VADBackend          string                        `toml:"vad_backend,omitempty"` // "rknn", "cpu"
+	VADModelPath        string                        `toml:"vad_model_path,omitempty"`
+	VADHelperPath       string                        `toml:"vad_helper_path,omitempty"`
+	VADSpeechThreshold  float64                       `toml:"vad_speech_threshold,omitempty"`
+	SilenceMs           int                           `toml:"silence_ms,omitempty"`
+	MinSpeechMs         int                           `toml:"min_speech_ms,omitempty"`
+	// Classic Smart Turn endpointing (replaces silence-only commit).
+	TurnDetectionModelPath         string                  `toml:"turn_detection_model_path,omitempty"`
+	TurnDetectionHelperPath        string                  `toml:"turn_detection_helper_path,omitempty"`
+	TurnDetectionThreshold         float64                 `toml:"turn_detection_threshold,omitempty"`
+	TurnDetectionAnalyzeSilenceMs  int                     `toml:"turn_detection_analyze_silence_ms,omitempty"`
+	TurnDetectionSilenceFallbackMs int                     `toml:"turn_detection_silence_fallback_ms,omitempty"`
+	VoiceFollowupEnabled           *bool                   `toml:"voice_followup_enabled,omitempty"`
+	VoiceFollowupTimeoutMs         int                     `toml:"voice_followup_timeout_ms,omitempty"`
+	VoiceFirstTurnTimeoutMs        int                     `toml:"voice_first_turn_timeout_ms,omitempty"`
+	VoiceMaxTurns                  int                     `toml:"voice_max_turns,omitempty"`
+	VoiceInterruptOnWakeup         *bool                   `toml:"voice_interrupt_on_wakeup,omitempty"`
+	TapWakeupEnabled               *bool                   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled                     *bool                   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	MCPShellEnabled                *bool                   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	MCPConfigWebBaseURL            string                  `toml:"mcp_config_web_base_url,omitempty"`
+	VoiceStreamingTTSEnabled       *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
+	VoiceToolCallSpeech            *bool                   `toml:"voice_tool_call_speech,omitempty"`
+	VoiceProgressSpeechEnabled     *bool                   `toml:"voice_progress_speech_enabled,omitempty"`
+	VoiceMaxResponseTokens         int                     `toml:"voice_max_response_tokens,omitempty"`
+	MaxIterations                  int                     `toml:"max_iterations,omitempty"`
+	TerminationPolicy              TerminationPolicyConfig `toml:"termination_policy,omitempty"`
+	ForceSimpleLoop                bool                    `toml:"-"`
 	// ContextPruneThreshold is the fraction of the usable model input budget at
 	// which deterministic cleanup of stale state and older tool exchanges runs,
 	// including during a long-running tool loop. Zero uses
@@ -1876,6 +1882,15 @@ func (c Config) Validate() error {
 	if c.VADSpeechThreshold != 0 && (c.VADSpeechThreshold < 0 || c.VADSpeechThreshold > 1) {
 		return fmt.Errorf("vad_speech_threshold must be in [0,1] when set, got %v", c.VADSpeechThreshold)
 	}
+	if c.TurnDetectionThreshold != 0 && (c.TurnDetectionThreshold < 0 || c.TurnDetectionThreshold >= 1) {
+		return fmt.Errorf("turn_detection_threshold must be in (0,1) when set, got %v", c.TurnDetectionThreshold)
+	}
+	if c.TurnDetectionAnalyzeSilenceMs < 0 {
+		return fmt.Errorf("turn_detection_analyze_silence_ms must be >= 0, got %d", c.TurnDetectionAnalyzeSilenceMs)
+	}
+	if c.TurnDetectionSilenceFallbackMs < 0 {
+		return fmt.Errorf("turn_detection_silence_fallback_ms must be >= 0, got %d", c.TurnDetectionSilenceFallbackMs)
+	}
 
 	if c.VoiceFollowupTimeoutMs < 0 {
 		return fmt.Errorf("voice_followup_timeout_ms must be >= 0, got %d", c.VoiceFollowupTimeoutMs)
@@ -2211,11 +2226,32 @@ func (c Config) VADBackendOrDefault() string {
 	return backend
 }
 
+func (c Config) TurnDetectionThresholdOrDefault() float64 {
+	if c.TurnDetectionThreshold > 0 && c.TurnDetectionThreshold < 1 {
+		return c.TurnDetectionThreshold
+	}
+	return defaultTurnDetectionThreshold
+}
+
+func (c Config) TurnDetectionAnalyzeSilenceMsOrDefault() int {
+	if c.TurnDetectionAnalyzeSilenceMs > 0 {
+		return c.TurnDetectionAnalyzeSilenceMs
+	}
+	return defaultTurnAnalyzeSilenceMs
+}
+
+func (c Config) TurnDetectionSilenceFallbackMsOrDefault() int {
+	if c.TurnDetectionSilenceFallbackMs > 0 {
+		return c.TurnDetectionSilenceFallbackMs
+	}
+	return defaultTurnSilenceFallbackMs
+}
+
 func (c Config) VoiceFollowupEnabledOrDefault() bool {
 	if c.VoiceFollowupEnabled != nil {
 		return *c.VoiceFollowupEnabled
 	}
-	return false
+	return true
 }
 
 func (c Config) VoiceFollowupTimeoutOrDefault() time.Duration {

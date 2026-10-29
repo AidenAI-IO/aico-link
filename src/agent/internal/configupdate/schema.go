@@ -455,34 +455,39 @@ type LiveActivity struct {
 // legacy custom_instruction key is not accepted by config updates (the shared
 // unknown-field validation rejects it) and is never emitted here.
 type Agent struct {
-	Locale                     string  `json:"locale"`
-	Timezone                   string  `json:"timezone"`
-	Prompt                     string  `json:"prompt"`
-	ContextPruneThreshold      float64 `json:"context_prune_threshold,omitempty"`
-	ContextPruneStateLimit     int     `json:"context_prune_state_limit,omitempty"`
-	ContextCompactionThreshold float64 `json:"context_compaction_threshold,omitempty"`
-	InputMode                  string  `json:"input_mode"`
-	VADBackend                 string  `json:"vad_backend"`
-	VADModelPath               string  `json:"vad_model_path"`
-	VADHelperPath              string  `json:"vad_helper_path"`
-	VADSpeechThreshold         float64 `json:"vad_speech_threshold"`
-	SilenceMs                  int     `json:"silence_ms"`
-	MinSpeechMs                int     `json:"min_speech_ms"`
-	VoiceFollowupEnabled       bool    `json:"voice_followup_enabled"`
-	VoiceFollowupTimeoutMs     int     `json:"voice_followup_timeout_ms"`
-	VoiceFirstTurnTimeoutMs    int     `json:"voice_first_turn_timeout_ms"`
-	VoiceMaxTurns              int     `json:"voice_max_turns"`
-	VoiceInterruptOnWakeup     bool    `json:"voice_interrupt_on_wakeup"`
-	TapWakeupEnabled           bool    `json:"tap_wakeup_enabled"`
-	MCPEnabled                 bool    `json:"mcp_enabled"`
-	VoiceStreamingTTSEnabled   bool    `json:"voice_streaming_tts_enabled"`
-	VoiceToolCallSpeech        bool    `json:"voice_tool_call_speech"`
-	VoiceProgressSpeechEnabled bool    `json:"voice_progress_speech_enabled"`
-	VoiceMaxResponseTokens     int     `json:"voice_max_response_tokens"`
-	MaxIterations              int     `json:"max_iterations"`
-	ScreenStableTimeoutMs      int     `json:"screen_stable_timeout_ms"`
-	ScreenStableMs             int     `json:"screen_stable_ms"`
-	ScreenStableDiffThreshold  float64 `json:"screen_stable_diff_threshold"`
+	Locale                         string  `json:"locale"`
+	Timezone                       string  `json:"timezone"`
+	Prompt                         string  `json:"prompt"`
+	ContextPruneThreshold          float64 `json:"context_prune_threshold,omitempty"`
+	ContextPruneStateLimit         int     `json:"context_prune_state_limit,omitempty"`
+	ContextCompactionThreshold     float64 `json:"context_compaction_threshold,omitempty"`
+	InputMode                      string  `json:"input_mode"`
+	VADBackend                     string  `json:"vad_backend"`
+	VADModelPath                   string  `json:"vad_model_path"`
+	VADHelperPath                  string  `json:"vad_helper_path"`
+	VADSpeechThreshold             float64 `json:"vad_speech_threshold"`
+	SilenceMs                      int     `json:"silence_ms"`
+	MinSpeechMs                    int     `json:"min_speech_ms"`
+	TurnDetectionModelPath         string  `json:"turn_detection_model_path"`
+	TurnDetectionHelperPath        string  `json:"turn_detection_helper_path"`
+	TurnDetectionThreshold         float64 `json:"turn_detection_threshold"`
+	TurnDetectionAnalyzeSilenceMs  int     `json:"turn_detection_analyze_silence_ms"`
+	TurnDetectionSilenceFallbackMs int     `json:"turn_detection_silence_fallback_ms"`
+	VoiceFollowupEnabled           bool    `json:"voice_followup_enabled"`
+	VoiceFollowupTimeoutMs         int     `json:"voice_followup_timeout_ms"`
+	VoiceFirstTurnTimeoutMs        int     `json:"voice_first_turn_timeout_ms"`
+	VoiceMaxTurns                  int     `json:"voice_max_turns"`
+	VoiceInterruptOnWakeup         bool    `json:"voice_interrupt_on_wakeup"`
+	TapWakeupEnabled               bool    `json:"tap_wakeup_enabled"`
+	MCPEnabled                     bool    `json:"mcp_enabled"`
+	VoiceStreamingTTSEnabled       bool    `json:"voice_streaming_tts_enabled"`
+	VoiceToolCallSpeech            bool    `json:"voice_tool_call_speech"`
+	VoiceProgressSpeechEnabled     bool    `json:"voice_progress_speech_enabled"`
+	VoiceMaxResponseTokens         int     `json:"voice_max_response_tokens"`
+	MaxIterations                  int     `json:"max_iterations"`
+	ScreenStableTimeoutMs          int     `json:"screen_stable_timeout_ms"`
+	ScreenStableMs                 int     `json:"screen_stable_ms"`
+	ScreenStableDiffThreshold      float64 `json:"screen_stable_diff_threshold"`
 }
 
 // hasAPIKeyPlaceholder is substituted for a real key when the wire payload
@@ -687,35 +692,40 @@ func (d Config) ToAgentConfig() agent.Config {
 		LiveActivity: agent.LiveActivityConfig{
 			Enabled: d.LiveActivity.Enabled,
 		},
-		TerminationPolicy:          d.TerminationPolicy,
-		Locale:                     d.Agent.Locale,
-		Timezone:                   d.Agent.Timezone,
-		Prompt:                     d.Agent.Prompt,
-		ContextPruneThreshold:      d.Agent.ContextPruneThreshold,
-		ContextPruneStateLimit:     d.Agent.ContextPruneStateLimit,
-		ContextCompactionThreshold: d.Agent.ContextCompactionThreshold,
-		InputMode:                  d.Agent.InputMode,
-		VADBackend:                 d.Agent.VADBackend,
-		VADModelPath:               d.Agent.VADModelPath,
-		VADHelperPath:              d.Agent.VADHelperPath,
-		VADSpeechThreshold:         d.Agent.VADSpeechThreshold,
-		SilenceMs:                  d.Agent.SilenceMs,
-		MinSpeechMs:                d.Agent.MinSpeechMs,
-		VoiceFollowupEnabled:       boolPtr(d.Agent.VoiceFollowupEnabled),
-		VoiceFollowupTimeoutMs:     d.Agent.VoiceFollowupTimeoutMs,
-		VoiceFirstTurnTimeoutMs:    d.Agent.VoiceFirstTurnTimeoutMs,
-		VoiceMaxTurns:              d.Agent.VoiceMaxTurns,
-		VoiceInterruptOnWakeup:     boolPtr(d.Agent.VoiceInterruptOnWakeup),
-		TapWakeupEnabled:           boolPtr(d.Agent.TapWakeupEnabled),
-		MCPEnabled:                 boolPtr(d.Agent.MCPEnabled),
-		VoiceStreamingTTSEnabled:   boolPtr(d.Agent.VoiceStreamingTTSEnabled),
-		VoiceToolCallSpeech:        boolPtr(d.Agent.VoiceToolCallSpeech),
-		VoiceProgressSpeechEnabled: boolPtr(d.Agent.VoiceProgressSpeechEnabled),
-		VoiceMaxResponseTokens:     d.Agent.VoiceMaxResponseTokens,
-		MaxIterations:              d.Agent.MaxIterations,
-		ScreenStableTimeoutMs:      d.Agent.ScreenStableTimeoutMs,
-		ScreenStableMs:             d.Agent.ScreenStableMs,
-		ScreenStableDiffThreshold:  d.Agent.ScreenStableDiffThreshold,
+		TerminationPolicy:              d.TerminationPolicy,
+		Locale:                         d.Agent.Locale,
+		Timezone:                       d.Agent.Timezone,
+		Prompt:                         d.Agent.Prompt,
+		ContextPruneThreshold:          d.Agent.ContextPruneThreshold,
+		ContextPruneStateLimit:         d.Agent.ContextPruneStateLimit,
+		ContextCompactionThreshold:     d.Agent.ContextCompactionThreshold,
+		InputMode:                      d.Agent.InputMode,
+		VADBackend:                     d.Agent.VADBackend,
+		VADModelPath:                   d.Agent.VADModelPath,
+		VADHelperPath:                  d.Agent.VADHelperPath,
+		VADSpeechThreshold:             d.Agent.VADSpeechThreshold,
+		SilenceMs:                      d.Agent.SilenceMs,
+		MinSpeechMs:                    d.Agent.MinSpeechMs,
+		TurnDetectionModelPath:         d.Agent.TurnDetectionModelPath,
+		TurnDetectionHelperPath:        d.Agent.TurnDetectionHelperPath,
+		TurnDetectionThreshold:         d.Agent.TurnDetectionThreshold,
+		TurnDetectionAnalyzeSilenceMs:  d.Agent.TurnDetectionAnalyzeSilenceMs,
+		TurnDetectionSilenceFallbackMs: d.Agent.TurnDetectionSilenceFallbackMs,
+		VoiceFollowupEnabled:           boolPtr(d.Agent.VoiceFollowupEnabled),
+		VoiceFollowupTimeoutMs:         d.Agent.VoiceFollowupTimeoutMs,
+		VoiceFirstTurnTimeoutMs:        d.Agent.VoiceFirstTurnTimeoutMs,
+		VoiceMaxTurns:                  d.Agent.VoiceMaxTurns,
+		VoiceInterruptOnWakeup:         boolPtr(d.Agent.VoiceInterruptOnWakeup),
+		TapWakeupEnabled:               boolPtr(d.Agent.TapWakeupEnabled),
+		MCPEnabled:                     boolPtr(d.Agent.MCPEnabled),
+		VoiceStreamingTTSEnabled:       boolPtr(d.Agent.VoiceStreamingTTSEnabled),
+		VoiceToolCallSpeech:            boolPtr(d.Agent.VoiceToolCallSpeech),
+		VoiceProgressSpeechEnabled:     boolPtr(d.Agent.VoiceProgressSpeechEnabled),
+		VoiceMaxResponseTokens:         d.Agent.VoiceMaxResponseTokens,
+		MaxIterations:                  d.Agent.MaxIterations,
+		ScreenStableTimeoutMs:          d.Agent.ScreenStableTimeoutMs,
+		ScreenStableMs:                 d.Agent.ScreenStableMs,
+		ScreenStableDiffThreshold:      d.Agent.ScreenStableDiffThreshold,
 	}
 }
 
@@ -1092,34 +1102,39 @@ func FromAgentConfig(cfg agent.Config) Config {
 		},
 		TerminationPolicy: cfg.TerminationPolicyOrDefault(),
 		Agent: Agent{
-			Locale:                     cfg.LocaleOrDefault(),
-			Timezone:                   cfg.TimezoneOrDefault(),
-			Prompt:                     cfg.Prompt,
-			ContextPruneThreshold:      cfg.ContextPruneThreshold,
-			ContextPruneStateLimit:     cfg.ContextPruneStateLimit,
-			ContextCompactionThreshold: cfg.ContextCompactionThreshold,
-			InputMode:                  cfg.InputModeOrDefault(),
-			VADBackend:                 cfg.VADBackendOrDefault(),
-			VADModelPath:               cfg.VADModelPath,
-			VADHelperPath:              cfg.VADHelperPath,
-			VADSpeechThreshold:         cfg.VADSpeechThreshold,
-			SilenceMs:                  cfg.SilenceMs,
-			MinSpeechMs:                cfg.MinSpeechMs,
-			VoiceFollowupEnabled:       cfg.VoiceFollowupEnabledOrDefault(),
-			VoiceFollowupTimeoutMs:     int(cfg.VoiceFollowupTimeoutOrDefault().Milliseconds()),
-			VoiceFirstTurnTimeoutMs:    int(cfg.VoiceFirstTurnTimeoutOrDefault().Milliseconds()),
-			VoiceMaxTurns:              cfg.VoiceMaxTurns,
-			VoiceInterruptOnWakeup:     cfg.VoiceInterruptOnWakeupOrDefault(),
-			TapWakeupEnabled:           cfg.TapWakeupEnabledOrDefault(),
-			MCPEnabled:                 cfg.MCPEnabledOrDefault(),
-			VoiceStreamingTTSEnabled:   cfg.VoiceStreamingTTSEnabledOrDefault(),
-			VoiceToolCallSpeech:        cfg.VoiceToolCallSpeechOrDefault(),
-			VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabledOrDefault(),
-			VoiceMaxResponseTokens:     cfg.VoiceMaxResponseTokensOrDefault(),
-			MaxIterations:              cfg.MaxIterations,
-			ScreenStableTimeoutMs:      cfg.ScreenStableTimeoutMs,
-			ScreenStableMs:             cfg.ScreenStableMs,
-			ScreenStableDiffThreshold:  cfg.ScreenStableDiffThreshold,
+			Locale:                         cfg.LocaleOrDefault(),
+			Timezone:                       cfg.TimezoneOrDefault(),
+			Prompt:                         cfg.Prompt,
+			ContextPruneThreshold:          cfg.ContextPruneThreshold,
+			ContextPruneStateLimit:         cfg.ContextPruneStateLimit,
+			ContextCompactionThreshold:     cfg.ContextCompactionThreshold,
+			InputMode:                      cfg.InputModeOrDefault(),
+			VADBackend:                     cfg.VADBackendOrDefault(),
+			VADModelPath:                   cfg.VADModelPath,
+			VADHelperPath:                  cfg.VADHelperPath,
+			VADSpeechThreshold:             cfg.VADSpeechThreshold,
+			SilenceMs:                      cfg.SilenceMs,
+			MinSpeechMs:                    cfg.MinSpeechMs,
+			TurnDetectionModelPath:         cfg.TurnDetectionModelPath,
+			TurnDetectionHelperPath:        cfg.TurnDetectionHelperPath,
+			TurnDetectionThreshold:         cfg.TurnDetectionThresholdOrDefault(),
+			TurnDetectionAnalyzeSilenceMs:  cfg.TurnDetectionAnalyzeSilenceMsOrDefault(),
+			TurnDetectionSilenceFallbackMs: cfg.TurnDetectionSilenceFallbackMsOrDefault(),
+			VoiceFollowupEnabled:           cfg.VoiceFollowupEnabledOrDefault(),
+			VoiceFollowupTimeoutMs:         int(cfg.VoiceFollowupTimeoutOrDefault().Milliseconds()),
+			VoiceFirstTurnTimeoutMs:        int(cfg.VoiceFirstTurnTimeoutOrDefault().Milliseconds()),
+			VoiceMaxTurns:                  cfg.VoiceMaxTurns,
+			VoiceInterruptOnWakeup:         cfg.VoiceInterruptOnWakeupOrDefault(),
+			TapWakeupEnabled:               cfg.TapWakeupEnabledOrDefault(),
+			MCPEnabled:                     cfg.MCPEnabledOrDefault(),
+			VoiceStreamingTTSEnabled:       cfg.VoiceStreamingTTSEnabledOrDefault(),
+			VoiceToolCallSpeech:            cfg.VoiceToolCallSpeechOrDefault(),
+			VoiceProgressSpeechEnabled:     cfg.VoiceProgressSpeechEnabledOrDefault(),
+			VoiceMaxResponseTokens:         cfg.VoiceMaxResponseTokensOrDefault(),
+			MaxIterations:                  cfg.MaxIterations,
+			ScreenStableTimeoutMs:          cfg.ScreenStableTimeoutMs,
+			ScreenStableMs:                 cfg.ScreenStableMs,
+			ScreenStableDiffThreshold:      cfg.ScreenStableDiffThreshold,
 		},
 	}
 }

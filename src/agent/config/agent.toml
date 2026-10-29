@@ -248,17 +248,22 @@ input_mode = "stt"
 # vad_model_path = "/usr/lib/aiden/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn"
 # vad_helper_path = "/usr/lib/aiden/rknn_vad"
 # vad_speech_threshold = 0.5
-# silence_ms = 550          # Silence duration to end utterance (ms)
 # min_speech_ms = 300       # Minimum speech duration to accept (ms)
+# silence_ms = 550          # Legacy silence-only endpointing; unused with Smart Turn
+# turn_detection_model_path = "/usr/lib/aiden/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+# turn_detection_helper_path = "/usr/lib/aiden/smart_turn_helper"
+# turn_detection_threshold = 0.5
+# turn_detection_analyze_silence_ms = 200
+# turn_detection_silence_fallback_ms = 3000
 
 # Tap-button wakeup (Classic and Realtime). Default true.
 # Disabling this ignores the hardware tap button only; other activation
 # paths such as Realtime /api/chat still work.
 # tap_wakeup_enabled = true
 
-# Wakeup voice session parameters (for Classic Mode)
+# Classic continuous voice session (Realtime-like shell). Default true.
 # Only used when input_mode = "stt"
-# voice_followup_enabled = false
+# voice_followup_enabled = true
 # voice_followup_timeout_ms = 5000
 # voice_first_turn_timeout_ms = 10000
 # voice_max_turns = 0

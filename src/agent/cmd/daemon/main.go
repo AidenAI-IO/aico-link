@@ -23,9 +23,13 @@ import (
 )
 
 const (
-	wakeupListenTimeout                     = 10 * time.Second
-	wakeupDebounceInterval                  = 500 * time.Millisecond
-	defaultVoiceSteerListenTimeout          = 45 * time.Second
+	wakeupListenTimeout            = 10 * time.Second
+	wakeupDebounceInterval         = 500 * time.Millisecond
+	defaultVoiceSteerListenTimeout = 45 * time.Second
+	// While dialog TTS is actually playing, require only a short sustained
+	// speech window so near-field talk can force-stop playback quickly.
+	ttsBargeInNeedFrames                    = 5  // ~160ms @ 32ms Silero frames
+	thinkBargeInNeed                        = 10 // ~320ms without active TTS
 	voiceWakeupInterruptedCorrectionContext = "Voice interruption: the user pressed the physical wakeup button " +
 		"while the previous voice turn was still running. The previous task was interrupted and did NOT complete. " +
 		"Based on the user's new input, judge the relationship to the interrupted task:\n" +
@@ -274,8 +278,10 @@ func applyDeviceTypeOverride(cfg *agent.Config, value string) error {
 type audioDialogRunner interface {
 	StartRecording() error
 	StopRecording() error
+	FinalizeAndRotateSTT() error
 	RecordingActive() bool
 	ReadRecordChunk(timeoutMs uint32) (*agent.AudioChunkResult, error)
+	ReadRecordChunkMonitor(timeoutMs uint32) (*agent.AudioChunkResult, error)
 	ProcessVADFrame(samples []int16) ([]int16, error)
 	ProcessUtterance(ctx context.Context, utterance []int16, runtime *agent.Runtime) error
 	PrepareTurnInput(utterance []int16) (agent.TurnInput, error)
@@ -290,10 +296,13 @@ type audioDialogRunner interface {
 	CanSpeakFinalText() bool
 	Speak(ctx context.Context, text string, interrupt <-chan struct{}) error
 	SpeakFinal(ctx context.Context, text string, interrupt <-chan struct{}) error
+	TTSOutputActive() bool
+	PlayListenReadyCue()
 	FlushVAD() []int16
 	FinishPendingUtterance(pending []int16) []int16
 	ResetVAD()
 	VADFrameSamples() int
+	VADSpeaking() bool
 }
 
 type wakeupWatcher interface {
@@ -457,17 +466,23 @@ type pendingVoiceTurn struct {
 type voiceTurnResult struct {
 	interrupted            bool
 	waitForWakeupRequested bool
-	exit                   bool
-	nextTurn               *pendingVoiceTurn
-	followUpContext        agent.VoiceTurnContext
+	// requeueWakeup is set when a GPIO tap closed a wait_for_wakeup turn. The
+	// tap already meant "start again"; re-signal so the outer loop opens the
+	// next session without requiring a second press.
+	requeueWakeup   bool
+	exit            bool
+	nextTurn        *pendingVoiceTurn
+	followUpContext agent.VoiceTurnContext
 }
 
 func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher wakeupWatcherFactory, reload ...<-chan struct{}) {
+	// Classic final UX is a Realtime-like continuous session. Single-turn STT
+	// remains available only when voice_followup_enabled is explicitly false.
 	if cfg.InputModeOrDefault() == "stt" && !cfg.VoiceFollowupEnabledOrDefault() {
 		runSingleTurnSTTWakeupMode(cfg, dialog, runtime, sigChan, newWatcher, reload...)
 		return
 	}
-	if cfg.InputModeOrDefault() != "stt" || !cfg.VoiceFollowupEnabledOrDefault() {
+	if cfg.InputModeOrDefault() != "stt" {
 		runLegacyWakeupMode(cfg, dialog, runtime, sigChan, newWatcher, reload...)
 		return
 	}
@@ -703,12 +718,27 @@ func signalWakeupEvent(wakeupEvents chan<- struct{}) {
 	}
 }
 
-func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, events <-chan voiceEvent) bool {
+func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, events chan voiceEvent) bool {
 	maxTurns := cfg.VoiceMaxTurns
 	turns := 0
 	firstTurn := true
+	// Follow-up listen tip: instant fire-and-forget only after a normal reply.
+	// Never after barge-in (user is already talking) and never on first turn
+	// (StartRecording already cued). Do not wait for TTS idle before listening.
+	playReadyCue := false
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext
+
+	// Classic final UX: keep the mic open for the whole session (Realtime-like shell).
+	if err := dialog.StartRecording(); err != nil {
+		logging.Errorf("agent", "daemon", "Failed to start session recording: %v", err)
+		return false
+	}
+	defer func() {
+		if err := dialog.StopRecording(); err != nil {
+			logging.Warnf("agent", "session", "stop session recording: %v", err)
+		}
+	}()
 
 	for {
 		var input agent.TurnInput
@@ -720,9 +750,10 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			utterance = nextTurn.utterance
 			turnContext = nextTurn.turnContext
 			nextTurn = nil
+			playReadyCue = false
 		} else {
 			if maxTurns > 0 && turns >= maxTurns {
-				logging.Infof("agent", "session", "max turns reached (%d), closing voice session", maxTurns)
+				logging.Infof("agent", "session", "max turns reached (%d), closing voice session")
 				return false
 			}
 
@@ -732,7 +763,8 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			}
 
 			var exit bool
-			utterance, exit = listenOneUtterance(dialog, sigChan, events, timeout)
+			utterance, exit = listenOneUtteranceInSession(dialog, sigChan, events, timeout, playReadyCue)
+			playReadyCue = false
 			if exit {
 				return true
 			}
@@ -741,24 +773,44 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 				return false
 			}
 
+			if err := dialog.FinalizeAndRotateSTT(); err != nil {
+				logging.Warnf("agent", "stt", "finalize/rotate streaming STT: %v", err)
+			}
+
 			var err error
 			input, err = dialog.PrepareTurnInput(utterance)
 			if err != nil {
 				logging.Errorf("agent", "daemon", "prepare turn input failed: %v", err)
 				firstTurn = false
+				dialog.ResetVAD()
 				continue
 			}
 			turnContext = pendingTurnContext
 			pendingTurnContext = agent.VoiceTurnContext{}
+			// Clear Silero LSTM/state and drain any mic backlog queued while
+			// STT finalize/rotate ran, so agent-send prompt echo cannot look
+			// like a barge-in continuation.
+			dialog.ResetVAD()
+			for i := 0; i < 8; i++ {
+				chunk, err := dialog.ReadRecordChunkMonitor(20)
+				if err != nil || chunk == nil || len(chunk.PCM) == 0 {
+					break
+				}
+			}
 		}
 
-		result := runVoiceTurnWithInputContext(cfg, dialog, runtime, input, utterance, sigChan, events, turnContext, cfg.VoiceInterruptOnWakeupOrDefault())
+		interruptOnWakeup := cfg.VoiceInterruptOnWakeupOrDefault()
+		result := runVoiceTurnWithInputContext(cfg, dialog, runtime, input, utterance, sigChan, events, turnContext, interruptOnWakeup)
 		if result.exit {
 			return true
 		}
 		firstTurn = false
 		if result.waitForWakeupRequested {
 			logging.Infof("agent", "session", "agent requested wakeup wait, closing voice session")
+			if result.requeueWakeup {
+				logging.Infof("agent", "session", "GPIO tap during goodbye; requeueing wakeup for next session")
+				signalVoiceWakeupEvent(events)
+			}
 			return false
 		}
 		if result.nextTurn != nil {
@@ -768,9 +820,21 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 		}
 		if result.interrupted {
 			pendingTurnContext = interruptedFollowUpContext(result)
+			// Keep Silero buffers when barge-in already marked speaking so the
+			// follow-up listen can finish the same utterance. No ready cue:
+			// interrupt already stopped playback; user is mid-utterance.
+			if !dialog.VADSpeaking() {
+				dialog.ResetVAD()
+			}
+			playReadyCue = false
 			logging.Infof("agent", "session", "turn interrupted, listening for follow-up")
 			continue
 		}
+		// Do not wait for leftover TTS and do not play a follow-up ready cue:
+		// barge-in covers mid-playback speech; a post-TTS drip made users wait
+		// for the agent to finish before they felt allowed to talk.
+		dialog.ResetVAD()
+		playReadyCue = false
 		turns++
 	}
 }
@@ -805,6 +869,18 @@ func runVoiceTurnWithInputContext(cfg agent.Config, dialog audioDialogRunner, ru
 
 	var result agent.RunResult
 	var turnErr error
+	thinkFrameSamples := dialog.VADFrameSamples()
+	thinkPending := make([]int16, 0, thinkFrameSamples*4)
+	var thinkPendingByte bool
+	var thinkOddByte byte
+	thinkSpeechFrames := 0
+	// Mode B: user speech must barge-in during thinking too. Arm after the
+	// agent-send prompt (~1.1s) and require sustained speech so tip-tone echo
+	// cannot cancel the turn in ~96ms. During TTS, require louder+longer
+	// speech so speaker echo does not count but near-field talk still can.
+	thinkBargeInArmedAt := time.Now().Add(1200 * time.Millisecond)
+	ttsWasActive := dialog.TTSOutputActive()
+
 thinking:
 	for {
 		select {
@@ -818,10 +894,7 @@ thinking:
 				dialog.InterruptOutput()
 				cancel()
 				canceledInfo := waitForTurnCancellation(dialog, resultCh)
-				return voiceTurnResult{
-					interrupted:     true,
-					followUpContext: buildInterruptedContext(input, canceledInfo),
-				}
+				return voiceTurnResultAfterCancel(input, canceledInfo, true)
 			}
 			logging.Warnf("agent", "interrupt", "wakeup received during thinking, ignoring because wakeup interrupt is disabled")
 		case turnResult := <-resultCh:
@@ -834,6 +907,47 @@ thinking:
 			}
 			result = turnResult.result
 			break thinking
+		default:
+			if !dialog.RecordingActive() || thinkFrameSamples <= 0 {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			chunk, err := dialog.ReadRecordChunkMonitor(50)
+			if err != nil || chunk == nil || len(chunk.PCM) == 0 {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			ttsActive := dialog.TTSOutputActive()
+			if ttsActive != ttsWasActive {
+				dialog.ResetVAD()
+				thinkPending = thinkPending[:0]
+				thinkPendingByte = false
+				thinkSpeechFrames = 0
+				if ttsActive {
+					// Brief ignore for TTS start transient; keep short so the
+					// user can force-stop playback almost immediately.
+					thinkBargeInArmedAt = time.Now().Add(250 * time.Millisecond)
+				} else {
+					// Hold briefly after TTS ends so trailing echo cannot cancel.
+					thinkBargeInArmedAt = time.Now().Add(500 * time.Millisecond)
+				}
+				ttsWasActive = ttsActive
+			}
+			if time.Now().Before(thinkBargeInArmedAt) {
+				continue
+			}
+			agent.AppendPCM16Samples(chunk.PCM, &thinkPending, &thinkPendingByte, &thinkOddByte)
+			for len(thinkPending) >= thinkFrameSamples {
+				frame := append([]int16(nil), thinkPending[:thinkFrameSamples]...)
+				thinkPending = thinkPending[thinkFrameSamples:]
+				if countVoiceBargeInFrame(dialog, frame, ttsActive, &thinkSpeechFrames) {
+					logging.Infof("agent", "interrupt", "voice barge-in during thinking, canceling turn")
+					dialog.InterruptOutput()
+					cancel()
+					canceledInfo := waitForTurnCancellation(dialog, resultCh)
+					return voiceTurnResultAfterCancel(input, canceledInfo, false)
+				}
+			}
 		}
 	}
 
@@ -854,17 +968,20 @@ thinking:
 		return voiceTurnResult{}
 	}
 
-	if dialog.RecordingActive() {
-		if err := dialog.StopRecording(); err != nil {
-			logging.Warnf("agent", "listen", "stop recording before TTS playback: %v", err)
-		}
-	}
-
+	// Keep the session mic open during TTS so Silero can barge-in (Realtime-like).
+	dialog.ResetVAD()
 	speakCtx, cancelSpeak := context.WithCancel(context.Background())
 	speakCh := make(chan error, 1)
 	go func() {
 		speakCh <- dialog.SpeakFinal(speakCtx, prepared.Text, nil)
 	}()
+
+	frameSamples := dialog.VADFrameSamples()
+	vadPending := make([]int16, 0, frameSamples*4)
+	var speakPendingByte bool
+	var speakOddByte byte
+	bargeInSpeechFrames := 0
+	bargeInArmedAt := time.Now().Add(250 * time.Millisecond)
 
 speaking:
 	for {
@@ -879,7 +996,6 @@ speaking:
 				dialog.InterruptOutput()
 				cancelSpeak()
 				runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
-				// During speaking phase, the turn has already completed, so we have the full result
 				return voiceTurnResult{
 					interrupted:     true,
 					followUpContext: buildInterruptedContextWithResult(input, result),
@@ -892,6 +1008,36 @@ speaking:
 				logging.Errorf("agent", "daemon", "speak failed: %v", err)
 			}
 			break speaking
+		default:
+			if !dialog.RecordingActive() || frameSamples <= 0 {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			chunk, err := dialog.ReadRecordChunkMonitor(50)
+			if err != nil || chunk == nil || len(chunk.PCM) == 0 {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			// Drain during the grace window so the record queue stays healthy,
+			// but ignore Silero until TTS has been playing briefly.
+			if time.Now().Before(bargeInArmedAt) {
+				continue
+			}
+			agent.AppendPCM16Samples(chunk.PCM, &vadPending, &speakPendingByte, &speakOddByte)
+			for len(vadPending) >= frameSamples {
+				frame := append([]int16(nil), vadPending[:frameSamples]...)
+				vadPending = vadPending[frameSamples:]
+				if countVoiceBargeInFrame(dialog, frame, true, &bargeInSpeechFrames) {
+					logging.Infof("agent", "interrupt", "voice barge-in during speaking, stopping playback")
+					dialog.InterruptOutput()
+					cancelSpeak()
+					runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, waitForSpeakCancel(speakCh))
+					return voiceTurnResult{
+						interrupted:     true,
+						followUpContext: buildInterruptedContextWithResult(input, result),
+					}
+				}
+			}
 		}
 	}
 
@@ -1009,6 +1155,45 @@ type canceledTurnInfo struct {
 	episodeID string
 }
 
+// voiceTurnResultAfterCancel prefers an already-requested wait_for_wakeup over
+// treating the cancel as a follow-up interrupt, except voice barge-in after
+// goodbye should keep the session open for the new utterance. A GPIO tap during
+// goodbye both closes and requeues wakeup so one press starts the next session.
+func voiceTurnResultAfterCancel(input agent.TurnInput, canceledInfo canceledTurnInfo, fromGPIO bool) voiceTurnResult {
+	if canceledInfo.err == nil && canceledInfo.result.WaitForWakeupRequested {
+		if fromGPIO {
+			logging.Infof("agent", "session", "GPIO tap during wait_for_wakeup goodbye, closing and requeueing wakeup")
+			return voiceTurnResult{waitForWakeupRequested: true, requeueWakeup: true}
+		}
+		logging.Infof("agent", "session", "voice barge-in during wait_for_wakeup goodbye, staying in session for follow-up")
+		return voiceTurnResult{
+			interrupted:     true,
+			followUpContext: buildInterruptedContext(input, canceledInfo),
+		}
+	}
+	return voiceTurnResult{
+		interrupted:     true,
+		followUpContext: buildInterruptedContext(input, canceledInfo),
+	}
+}
+
+// countVoiceBargeInFrame updates consecutive speech frames and reports whether
+// barge-in should fire. During TTS playback use a slightly longer sustain so
+// tip/echo blips are ignored; still interrupt on real near-field talk.
+func countVoiceBargeInFrame(dialog audioDialogRunner, frame []int16, ttsActive bool, speechFrames *int) bool {
+	_, _ = dialog.ProcessVADFrame(frame)
+	need := thinkBargeInNeed
+	if ttsActive {
+		need = ttsBargeInNeedFrames
+	}
+	if dialog.VADSpeaking() {
+		*speechFrames++
+	} else {
+		*speechFrames = 0
+	}
+	return *speechFrames >= need
+}
+
 func waitForTurnCancellation(dialog audioDialogRunner, resultCh <-chan struct {
 	result agent.RunResult
 	err    error
@@ -1058,6 +1243,104 @@ func listenOneUtterance(dialog audioDialogRunner, sigChan chan os.Signal, events
 		}
 	}()
 	dialog.ResetVAD()
+	utterance, exit := captureUtteranceWithTimeout(dialog, sigChan, events, listenTimeout)
+	if !exit {
+		drainWakeupsWhileListening(events)
+	}
+	return utterance, exit
+}
+
+// waitForDialogTTSIdle drains the mic until Speak/SpeakFinal outputs finish.
+// GPIO and loud near-field speech can barge-in; soft speaker echo should not.
+func waitForDialogTTSIdle(dialog audioDialogRunner, sigChan chan os.Signal, events <-chan voiceEvent, interruptOnWakeup bool) voiceTurnResult {
+	if dialog == nil || !dialog.TTSOutputActive() {
+		return voiceTurnResult{}
+	}
+	logging.Infof("agent", "session", "waiting for streaming TTS to finish before follow-up listen")
+	frameSamples := dialog.VADFrameSamples()
+	pending := make([]int16, 0, frameSamples*4)
+	var pendingByte bool
+	var oddByte byte
+	speechFrames := 0
+	armedAt := time.Now().Add(500 * time.Millisecond)
+	for dialog.TTSOutputActive() {
+		select {
+		case <-sigChan:
+			dialog.InterruptOutput()
+			return voiceTurnResult{exit: true}
+		case <-events:
+			if interruptOnWakeup {
+				logging.Infof("agent", "interrupt", "GPIO wakeup while waiting for TTS idle, interrupting playback")
+				dialog.InterruptOutput()
+				return voiceTurnResult{interrupted: true}
+			}
+		default:
+			if !dialog.RecordingActive() || frameSamples <= 0 {
+				time.Sleep(20 * time.Millisecond)
+				continue
+			}
+			chunk, err := dialog.ReadRecordChunkMonitor(50)
+			if err != nil || chunk == nil || len(chunk.PCM) == 0 {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			if time.Now().Before(armedAt) {
+				continue
+			}
+			agent.AppendPCM16Samples(chunk.PCM, &pending, &pendingByte, &oddByte)
+			for len(pending) >= frameSamples {
+				frame := append([]int16(nil), pending[:frameSamples]...)
+				pending = pending[frameSamples:]
+				if countVoiceBargeInFrame(dialog, frame, true, &speechFrames) {
+					logging.Infof("agent", "interrupt", "voice barge-in while waiting for TTS idle, interrupting playback")
+					dialog.InterruptOutput()
+					return voiceTurnResult{interrupted: true}
+				}
+			}
+		}
+	}
+	// Brief settle so room echo does not look like the start of follow-up speech.
+	settleUntil := time.Now().Add(400 * time.Millisecond)
+	for time.Now().Before(settleUntil) {
+		select {
+		case <-sigChan:
+			return voiceTurnResult{exit: true}
+		case <-events:
+			if interruptOnWakeup {
+				return voiceTurnResult{interrupted: true}
+			}
+		default:
+			if dialog.RecordingActive() {
+				_, _ = dialog.ReadRecordChunkMonitor(50)
+			} else {
+				time.Sleep(20 * time.Millisecond)
+			}
+		}
+	}
+	return voiceTurnResult{}
+}
+
+// listenOneUtteranceInSession captures one utterance while the session mic stays open.
+// playReadyCue should be true only for follow-up turns; the first turn already
+// gets StartRecording's tip and must not double-beep on wakeup.
+func listenOneUtteranceInSession(dialog audioDialogRunner, sigChan chan os.Signal, events <-chan voiceEvent, listenTimeout time.Duration, playReadyCue bool) ([]int16, bool) {
+	logging.Infof("agent", "listen", "Recording audio...")
+	if !dialog.RecordingActive() {
+		if err := dialog.StartRecording(); err != nil {
+			logging.Errorf("agent", "daemon", "Failed to start recording: %v", err)
+			return nil, false
+		}
+	}
+	// Barge-in may already have Silero in the speaking state with buffered audio.
+	if !dialog.VADSpeaking() {
+		dialog.ResetVAD()
+		// Follow-up turns keep the mic open, so StartRecording's tip never
+		// replays. Cue "you can speak" here once TTS is idle; skip when
+		// barge-in already has speech in progress so we do not beep over the user.
+		if playReadyCue && !dialog.TTSOutputActive() {
+			dialog.PlayListenReadyCue()
+		}
+	}
 	utterance, exit := captureUtteranceWithTimeout(dialog, sigChan, events, listenTimeout)
 	if !exit {
 		drainWakeupsWhileListening(events)
@@ -1117,6 +1400,16 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		if listenTimeout > 0 && time.Since(startedAt) >= listenTimeout {
 			logging.Infof("agent", "listen", "No complete utterance within %s", listenTimeout)
 			if len(captured) > 0 && (!hasVADState || speechDetected) {
+				// Prefer a VAD-flushed utterance over dumping the entire
+				// listen window into STT (15s blobs time out / hang the turn).
+				if utterance := dialog.FinishPendingUtterance(vadPending); len(utterance) > 0 {
+					logging.Infof("agent", "listen", "Flushing %d samples after VAD timeout", len(utterance))
+					return utterance, false
+				}
+				const maxTimeoutSamples = 16000 * 6 // 6s @ 16kHz
+				if len(captured) > maxTimeoutSamples {
+					captured = captured[len(captured)-maxTimeoutSamples:]
+				}
 				logging.Infof("agent", "listen", "Returning %d buffered samples after VAD timeout", len(captured))
 				return captured, false
 			}
@@ -1172,8 +1465,13 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 			utterance, err := dialog.ProcessVADFrame(vadPending[consumed : consumed+frameSamples])
 			consumed += frameSamples
 			if err != nil {
-				logging.Errorf("agent", "vad", "RKNN processing failed: %v", err)
-				return nil, false
+				// Recover: Silero helper blips must not close the whole session.
+				logging.Errorf("agent", "vad", "RKNN processing failed, resetting VAD and continuing: %v", err)
+				dialog.ResetVAD()
+				vadPending = vadPending[:0]
+				hasPendingByte = false
+				pendingByte = 0
+				break
 			}
 			if reporter, ok := dialog.(vadDebugReporter); ok {
 				state := reporter.VADDebugState()

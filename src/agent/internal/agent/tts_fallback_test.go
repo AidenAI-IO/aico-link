@@ -136,11 +136,15 @@ func TestAttemptTTSUnavailableFallbackSkipsPartialSpeechAndCancellation(t *testi
 	}
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{}, "", false, original); played || !errors.Is(err, original) {
-		t.Fatalf("canceled fallback = (%v, %v), want (false, original error)", played, err)
+	// Provider failure with a canceled speak context still notifies the user.
+	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original); !played || !errors.Is(err, original) {
+		t.Fatalf("canceled-ctx provider failure = (%v, %v), want (true, original error)", played, err)
 	}
-	if got := ops.countOp("start_playback"); got != 0 {
-		t.Fatalf("start_playback count = %d, want 0", got)
+	if got := ops.countOp("start_playback"); got != 1 {
+		t.Fatalf("start_playback count = %d, want 1 after provider-failure fallback", got)
+	}
+	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, context.Canceled); played || !errors.Is(err, context.Canceled) {
+		t.Fatalf("pure cancel fallback = (%v, %v), want (false, context.Canceled)", played, err)
 	}
 }
 
