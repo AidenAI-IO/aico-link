@@ -38,7 +38,7 @@ def _format_change(change: float | None) -> str:
     return f" <font color='{'green' if points > 0 else 'red'}'>{points:+.1f}pp</font>"
 
 
-def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
+def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str | None = None) -> dict[str, Any]:
     """Build a Lark card summarizing the last seven days and their change; details live in the dashboard."""
     weekly = data["weekly"]
     suites = weekly["suites"]
@@ -78,7 +78,9 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
         if changed:
             noun = "comparison" if changed == 1 else "comparisons"
             verb = "has" if changed == 1 else "have"
-            note += f" {changed} dataset {noun} {verb} configuration changes; see the dashboard."
+            note += f" {changed} dataset {noun} {verb} configuration changes."
+            if weekly_report_url:
+                note += f" [View weekly comparisons]({weekly_report_url})."
         elements.append({"tag": "markdown", "content": note})
 
     if data.get("warnings"):
@@ -134,6 +136,7 @@ def cli(argv: list[str] | None = None) -> int:
                         help="dashboard-data.json with the weekly summary")
     parser.add_argument("--dashboard-url", required=True,
                         help="Public URL of the dashboard.html")
+    parser.add_argument("--weekly-report-url", help="URL of the weekly report with window configuration comparisons")
     args = parser.parse_args(argv)
 
     webhook_url = os.environ.get("BENCHMARK_REPORT_LARK_WEBHOOK_URL")
@@ -149,7 +152,7 @@ def cli(argv: list[str] | None = None) -> int:
         print("No weekly summary in data; skipping notification")
         return 0
 
-    card = _build_card(data, args.dashboard_url)
+    card = _build_card(data, args.dashboard_url, args.weekly_report_url)
 
     try:
         send_lark(card, webhook_url=webhook_url, webhook_secret=webhook_secret)

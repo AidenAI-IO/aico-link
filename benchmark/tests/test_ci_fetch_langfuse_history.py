@@ -65,6 +65,39 @@ def _response(data, cursor=None):
     return httpx.Response(200, json={"data": data, "meta": {"cursor": cursor, "limit": 100}})
 
 
+@pytest.mark.parametrize("suite_filter", [{"memory_v1"}, set()])
+def test_suite_filter_precedes_scores_details_and_warnings(suite_filter, monkeypatch):
+    from ci import failure_details
+
+    fetched = []
+    def details(client, experiment):
+        fetched.append(experiment.id)
+        return {"failure_details": [], "failure_details_status": "available"}
+    monkeypatch.setattr(failure_details, "fetch_failure_details", details)
+
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([_experiment(), _experiment("retired", benchmark_suite="retired_v1",
+                                                       benchmark_run_id="retired")])
+        assert request.url.path.endswith("/v3/scores")
+        assert request.url.params["experimentId"] == "exp-1"
+        return _response(_metrics())
+
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW,
+                                            suite_filter=suite_filter, include_failure_details=True)
+    assert [record["suite"] for record in result.records] == list(suite_filter)
+    assert fetched == (["exp-1"] if suite_filter else [])
+    assert result.warnings == []
+
+
+def test_suite_filter_preserves_api_wide_warnings():
+    def handler(request):
+        return httpx.Response(403, json={"message": "unavailable"})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, suite_filter={"memory_v1"})
+    assert not result.records
+    assert any("Langfuse experiment history is incomplete" in warning for warning in result.warnings)
+
+
 def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
     requests = []
     padding = [_score(f"efficiency.extra.{i}", i) for i in range(100)]

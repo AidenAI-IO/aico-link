@@ -1231,8 +1231,10 @@ their test areas. Each area retains its pass@1 and change from the previous
 seven days, and each dataset occupies one line with its name, pass@1, and
 change (green up, red down), ordered by pass@1 within each area. The card links
 to the dashboard, notes that changes describe different task mixes, and counts
-datasets with configuration changes. Run counts and the distinct
-configuration values in each window are available in the detailed reports.
+datasets with configuration changes. When configurations differ, the card links
+directly to the workflow summary's weekly comparisons. The dashboard button
+continues to open the per-run results. Run counts and the distinct configuration
+values in each window are available in the weekly report.
 Historical data comes
 from Langfuse v4 experiments and scores. Only suites present in the current
 CI catalog are included, so retired or renamed suite names do not appear as
@@ -1388,7 +1390,8 @@ uv run python -m ci.generate_dashboard \
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
-  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html"
+  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html" \
+  --weekly-report-url "https://github.com/owner/repo/actions/runs/123#summary"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are

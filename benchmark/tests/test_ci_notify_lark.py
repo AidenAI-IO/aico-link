@@ -101,6 +101,17 @@ def test_card_labels_window_comparisons_without_configuration_changes():
     assert "Changes describe each window's task mix, not matched runs." in text
 
 
+def test_configuration_note_links_to_weekly_summary_and_preserves_dashboard():
+    data = _data()
+    data["weekly"]["suites"][0].update(change=0.1, config_changes=[{"field": "judge prompt"}])
+    url = "https://github.com/owner/repo/actions/runs/123#summary"
+    card = _build_card(data, "https://example.com/dashboard.html", url)
+    assert f"[View weekly comparisons]({url})" in _text(card)
+    action = next(element for element in card["elements"] if element["tag"] == "action")
+    assert action["actions"][0]["url"] == "https://example.com/dashboard.html"
+    assert "see the dashboard" not in _text(card)
+
+
 def test_unknown_dataset_rate_shows_a_dash_without_counts():
     data = _data()
     data["weekly"]["suites"] = [_suite("new", None)]

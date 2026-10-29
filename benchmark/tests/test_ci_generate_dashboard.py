@@ -414,7 +414,12 @@ def test_cli_excludes_retired_suite_names_from_all_report_views(tmp_path):
     source = tmp_path / "source.json"
     source.write_text(json.dumps({
         "generated_at": REPORT_END.isoformat(),
-        "history": [_record(), _record(suite="retired_suite_v1", passed=4, pass_at_1=1.0)],
+        "history": [_record(run_id="current"),
+                    _record(suite="retired_suite_v1", run_id="retired", passed=4, pass_at_1=1.0)],
+        "warnings": ["retired: missing or invalid metrics: tasks.",
+                     "retired: failure details unavailable: 0 / 4 attempt outputs inspected.",
+                     "current: missing or invalid metrics: tasks.",
+                     "Langfuse experiment history is incomplete: APIError."],
     }), encoding="utf-8")
     data = tmp_path / "data.json"
     weekly = tmp_path / "weekly.md"
@@ -428,6 +433,21 @@ def test_cli_excludes_retired_suite_names_from_all_report_views(tmp_path):
     assert [suite["suite"] for suite in report["suites"]] == ["memory_v1"]
     assert "retired_suite_v1" not in weekly.read_text(encoding="utf-8")
     assert "retired_suite_v1" not in html.read_text(encoding="utf-8")
+    assert report["warnings"] == ["current: missing or invalid metrics: tasks.",
+                                  "Langfuse experiment history is incomplete: APIError."]
+    assert "retired:" not in weekly.read_text(encoding="utf-8")
+
+
+def test_catalog_suite_names_match_loader_fallback(tmp_path, monkeypatch):
+    from ci import generate_dashboard as dashboard
+
+    (tmp_path / "ci").mkdir()
+    catalog = tmp_path / "ci" / "suites.json"
+    catalog.write_text(json.dumps({"cases": [{"suite": "unnamed.json"}, {"suite": "named.json"}]}))
+    (tmp_path / "unnamed.json").write_text('{}')
+    (tmp_path / "named.json").write_text('{"name": "declared"}')
+    monkeypatch.setattr(dashboard, "_CATALOG_PATH", catalog)
+    assert dashboard._current_suite_names() == {"unnamed", "declared"}
 
 
 def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
