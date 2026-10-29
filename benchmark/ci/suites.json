@@ -3,6 +3,7 @@
   "cases": [
     {"id": "episode-memory", "suite": "suites/episode_memory_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "memory", "suite": "suites/memory_v1.json", "environment": "isolated", "max_concurrency": 2},
+    {"id": "memory-admission", "suite": "suites/memory_admission_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "shell-utility", "suite": "suites/shell_utility_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "mobilegym-scroll", "suite": "suites/mobilegym_scroll_regression.json", "environment": "mobilegym", "target_platform": "android", "max_concurrency": 2, "timeout_minutes": 240},
     {"id": "phone-bridge-policy", "suite": "suites/aico_app/phone_bridge_data_policy_v1.json", "environment": "isolated"},
@@ -22,6 +23,7 @@
     {"id": "adb_android_basic", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
     {"id": "adb_android_basic-aidenbridge", "suite": "suites/adb_android_basic.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240, "android_phone_bridge": true},
     {"id": "adb_android_text_editing", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
+    {"id": "adb_android_builtin_apps", "suite": "suites/adb_android_builtin_apps.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240},
     {"id": "adb_android_text_editing-aidenbridge", "suite": "suites/adb_android_text_editing.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 240, "android_phone_bridge": true},
     {"id": "aidenbridge-capabilities-android", "suite": "suites/aico_app/android_bridge_capabilities_v1.json", "environment": "adb", "target_platform": "android", "timeout_minutes": 120, "android_phone_bridge": true, "runnable": false},
     {"id": "app-workflow", "suite": "suites/app_workflow_v1.json", "environment": "external", "environment_variable": "AICO_BENCHMARK_PHONE_ENVIRONMENT_URL", "timeout_minutes": 360},

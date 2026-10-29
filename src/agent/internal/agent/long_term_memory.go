@@ -302,7 +302,7 @@ func (s *LongTermMemoryStore) searchLocked(ctx context.Context, query MemoryQuer
 			ID:            entry.ID,
 			Type:          entry.Type,
 			Status:        entry.Status,
-			Revision:      parsed.Item.Revision,
+			Revision:      effectiveMemoryRevision(parsed.Item),
 			Title:         parsed.Title,
 			Summary:       entry.Summary,
 			Content:       parsed.Content,
@@ -401,6 +401,33 @@ func (s *LongTermMemoryStore) forgetLocked(ctx context.Context, id string, reaso
 func (s *LongTermMemoryStore) SupersedeMemory(ctx context.Context, oldID string, newItem MemoryItem) (string, error) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	return s.supersedeMemoryLocked(ctx, oldID, newItem)
+}
+
+// ReplaceMemory requires the identity and revision observed by the caller.
+// A correction must not silently replace a different or concurrently edited memory.
+func (s *LongTermMemoryStore) ReplaceMemory(ctx context.Context, oldID string, expectedRevision int, newItem MemoryItem) (string, error) {
+	if strings.TrimSpace(oldID) == "" || expectedRevision <= 0 {
+		return "", fmt.Errorf("replacement requires a memory id and expected revision")
+	}
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
+	old, err := readMemoryMarkdown(s.memoryPath(oldID))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errMemoryTargetMissing
+		}
+		return "", err
+	}
+	if old.Item.ID != oldID {
+		return "", errMemoryTargetMissing
+	}
+	if old.Item.Status != "active" || effectiveMemoryRevision(old.Item) != expectedRevision {
+		return "", errMemoryRevisionChanged
+	}
+	if old.Item.Type != newItem.Type {
+		return "", fmt.Errorf("replacement memory type %q does not match %q", newItem.Type, old.Item.Type)
+	}
 	return s.supersedeMemoryLocked(ctx, oldID, newItem)
 }
 

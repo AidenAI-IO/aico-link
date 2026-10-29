@@ -160,8 +160,9 @@ func (c *Compactor) Compact(ctx context.Context, session *contextmanager.Context
 	// assemble
 	formattedSummary := c.formatSummary(summary)
 	newMessageList := append(append([]messages.Message(nil), heads...), messages.Message{
-		Role:    messages.MessageRoleUser,
-		Content: formattedSummary,
+		Role:              messages.MessageRoleUser,
+		Content:           formattedSummary,
+		CompactionSummary: true,
 	})
 	newMessageList = append(newMessageList, tails...)
 	c.lastCompactionStats.TokensAfter = estimateMessageListTokenUsage(newMessageList)

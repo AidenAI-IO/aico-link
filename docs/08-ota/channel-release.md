@@ -45,7 +45,8 @@ not differences from their common ancestor. Thus an identical-content squash doe
 trigger a release, while system-content changes still require a new OTA contract.
 The Full comparison link in release notes also uses the two-endpoint comparison; commit
 summaries retain messages from the new history.
-GitHub release notes no longer list individual files. OTA releases add a notice in the form
+GitHub release descriptions begin with channel and kind metadata rather than repeating the
+release title, and no longer list individual files. OTA releases add a notice in the form
 `Commit <sha> (and more) requires OTA update.`, with the SHA linked to the first system-change
 commit found from oldest to newest in the release range; `(and more)` appears only when further
 relevant commits exist. The search is not limited by the 100-commit summary, skips reverted paths

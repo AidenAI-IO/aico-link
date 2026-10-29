@@ -31,7 +31,7 @@ SETUP_KEYS = {
 ASSERT_MEMORY_EXPECTED_KEYS = {
     "id", "memory_scope", "type", "revision", "content_contains",
     "title_contains", "tags_contains", "entities_contains",
-    "source_refs_contain", "evidence_refs_contain",
+    "source_refs_contain", "evidence_refs_contain", "sensitive",
 }
 ASSERT_MEMORY_REFERENCE_KEYS = {"type", "id", "event_ids_contains"}
 
@@ -508,6 +508,8 @@ def validate_assert_memory_setup(
                 raise SuiteValidationError(
                     f"{spec_path} {field} must be a non-empty string"
                 )
+        if "sensitive" in spec and not isinstance(spec["sensitive"], bool):
+            raise SuiteValidationError(f"{spec_path} sensitive must be a boolean")
         revision = spec.get("revision")
         if revision is not None and (
             isinstance(revision, bool) or not isinstance(revision, int) or revision <= 0

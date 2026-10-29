@@ -5,7 +5,7 @@ services and SDK, the Aico AI Agent runtime, Debian and OTA tooling, web
 applications, benchmarks, and their tests. Keep changes focused on the
 component being modified and preserve the interfaces between these parts.
 
-## Required workflow
+## Development and testing workflow
 
 The test commands in this section apply when the current task changes this
 repository's source, tests, scripts, configuration, or documentation, or when
@@ -16,17 +16,17 @@ require a firmware test run.
 
 1. Work from the repository root unless a component's documentation says
    otherwise.
-2. After changes within this repository, run the local test suite:
+2. After changes within this repository, optionally run the local test suite:
 
    ```bash
    make check
    ```
 
-   This is the default and only required check for local development, including
-   cross-component, release, and packaging changes. It covers the shared
-   contracts, host C++ tests, focused Go and web checks, and a small benchmark
-   sample. Do not replace it with an unscoped local test command; the test
-   image supplies the pinned toolchains and dependencies.
+   This is the recommended local check, but it is not required unless the user
+   explicitly requests testing. It covers the shared contracts, host C++ tests,
+   focused Go and web checks, and a small benchmark sample. Do not replace it
+   with an unscoped local test command; the test image supplies the pinned
+   toolchains and dependencies.
 3. CI runs the full validation profile before merging. Run it locally only when
    explicitly requested or when investigating a full-suite failure:
 
@@ -38,8 +38,9 @@ require a firmware test run.
    Run `make check-docker` only when a test explicitly needs access to the host
    Docker socket.
 
-If the required Docker environment is unavailable, report that limitation
-instead of silently treating the change as tested.
+State whether tests were run or skipped. If testing is requested but the required
+Docker environment is unavailable, report that limitation instead of silently
+treating the change as tested.
 
 ## Setup and repository map
 

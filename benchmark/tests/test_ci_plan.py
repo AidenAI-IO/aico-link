@@ -49,14 +49,15 @@ def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> 
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 17
-    assert len(hardware) == 16
-    assert len(all_cases) == 32
+    assert len(runnable) == 19
+    assert len(hardware) == 17
+    assert len(all_cases) == 34
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.id for case in runnable if case.environment == "adb"} == {
         "adb_android_basic", "adb_android_basic-aidenbridge",
         "adb_android_text_editing", "adb_android_text_editing-aidenbridge",
+        "adb_android_builtin_apps",
     }
     assert len({case.id for case in all_cases}) == len(all_cases)
     assert {case.suite for case in runnable} | {case.suite for case in hardware} == (

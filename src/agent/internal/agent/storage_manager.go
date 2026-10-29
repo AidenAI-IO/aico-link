@@ -214,8 +214,10 @@ type StorageManager struct {
 	snapshotLease    *storageSnapshotLease
 	snapshotSequence uint64
 
-	stopOnce sync.Once
-	stop     chan struct{}
+	startOnce sync.Once
+	pollDone  chan struct{}
+	stopOnce  sync.Once
+	stop      chan struct{}
 }
 
 // storageEMMCRootEnv overrides the eMMC data root. This is a test hook used
@@ -273,27 +275,37 @@ func (m *StorageManager) Start() {
 	if m == nil || m.mirrorOnly || m.ops == nil {
 		return
 	}
-	go func() {
-		m.tick()
-		ticker := time.NewTicker(m.pollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-m.stop:
-				return
-			case <-ticker.C:
-				m.tick()
+	m.startOnce.Do(func() {
+		m.pollDone = make(chan struct{})
+		go func() {
+			defer close(m.pollDone)
+			m.tick()
+			ticker := time.NewTicker(m.pollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-m.stop:
+					return
+				case <-ticker.C:
+					m.tick()
+				}
 			}
-		}
-	}()
+		}()
+	})
 }
 
-// Stop terminates the polling loop.
+// Stop terminates the polling loop and waits for any in-flight tick to finish.
 func (m *StorageManager) Stop() {
 	if m == nil {
 		return
 	}
 	m.stopOnce.Do(func() { close(m.stop) })
+	// Synchronize with a concurrent Start before inspecting pollDone. If Stop
+	// came first, this also prevents a later Start from launching a poller.
+	m.startOnce.Do(func() {})
+	if m.pollDone != nil {
+		<-m.pollDone
+	}
 }
 
 // Reconfigure applies persisted storage settings without replacing the

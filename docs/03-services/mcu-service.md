@@ -120,12 +120,15 @@ SEQ. This API is replayable within retained history, not durable/exactly-once.
 ### Agent voice activation
 
 In STT (single-turn and follow-up) and realtime modes, the Agent consumes this
-stream directly over the local UDS. Only `wakeup` events with `source: "asr"`
-and `source_code: 6` replace the former GPIO32/GPIO33 voice trigger. They enter
-the existing recording, output interruption and conversation logic, with the
-existing 500 ms debounce and pending-event coalescing. Touch, timer, plug and
-unknown events advance the cursor without activating voice. Quick Capture's
-configured GPIO3 input is independent. Text mode does not start this consumer.
+stream directly over the local UDS. `wakeup` events with `source: "asr"` and
+`source_code: 6`, or `source: "touch_key"` and `source_code: 3`, replace the former
+GPIO32/GPIO33 voice trigger. They enter the existing recording, output
+interruption and conversation logic, with the existing 500 ms debounce and
+pending-event coalescing. `tap_wakeup_enabled` defaults to `true`; disabling it
+suppresses touch-triggered voice only and preserves MCU sleep wake-up. Timer,
+plug and unknown events advance the cursor without activating voice. Quick
+Capture's configured GPIO3 input is independent. Text mode does not start this
+consumer.
 
 The consumer uses `AICO_MCU_SERVICE_SOCKET`, or the default service socket.
 It long-polls with a 25-second wait, retries service failures every second,
@@ -136,13 +139,18 @@ Applications retain independent event cursors.
 The Agent atomically checkpoints `(generation,id)` before each action in
 `/run/aico/agent-mcu-wakeup.json` (mode `0600`), preserving its cursor across
 configuration reloads and Agent process restarts within the same boot. A fresh
-boot or MCU-service generation starts from retained history, so an ASR wake
-that started RV can reach voice after Agent initialization. Events received
-more than 30 seconds ago, or with no valid receipt timestamp, are skipped to
-avoid starting a delayed conversation from old history. This age check uses
-the RV wall clock; a forward clock correction can also cause an event to be
-skipped. A crash between checkpoint and callback can lose an action. This
-consumer does not provide durable delivery or recover evicted history.
+boot or MCU-service generation starts from retained history, so a touch or ASR
+wake can reach voice after Agent initialization. When no saved cursor exists,
+events received before the first successful subscription, including connection
+retries, get a two-minute freshness window while retained startup history is
+drained. After catching up, restarting
+with a saved cursor, or resetting the MCU generation, the normal 30-second
+limit applies. Invalid timestamps and events older than the applicable limit
+are skipped to avoid starting a delayed conversation from old history. This
+age check uses the RV wall clock; a forward clock correction can also cause
+an event to be skipped. A crash between checkpoint and callback can lose an
+action. This consumer does not provide durable delivery or recover evicted
+history.
 
 On the device, validate the full voice path in STT or realtime mode:
 
@@ -150,15 +158,18 @@ On the device, validate the full voice path in STT or realtime mode:
 tail -F /userdata/agent/log/agent.log
 ```
 
-Say the ASR wake word and correlate `MCU ASR wakeup event generation=... id=...`
-with the service event and the ensuing voice recording/session. Repeat during
-an active answer to verify the configured interruption behavior. Touch and
-timer events must remain visible through `/api/mcu/events` without activating
-voice. Restart the Agent and reload its voice configuration to verify that an
-already handled event is not repeated. The post-flash runner's
-`--expect-source asr` checks event forwarding only; it does not prove that
-recording, cloud recognition or speech output succeeded. Audible ASR-module
-feedback is not an acceptance criterion while RV is powered off.
+Press the touch switch or say the ASR wake word and correlate the matching
+`MCU touch_key wakeup event` or `MCU asr wakeup event` log with the service event
+and ensuing voice recording/session. Repeat after `aico-power sleep` to confirm
+that one press resumes Linux and starts voice, with the maintained switch ON
+and the [required suspend firmware](../01-getting-started/firmware.md#system-suspend)
+installed. Repeat during an active answer to verify the configured interruption
+behavior. Timer events must remain visible through `/api/mcu/events` without
+activating voice. Restart the Agent and reload its voice configuration to verify
+that an already handled event is not repeated. The post-flash runner's
+`--expect-source touch_key` and `--expect-source asr` check event forwarding only;
+they do not prove that recording, cloud recognition or speech output succeeded.
+Audible ASR-module feedback is not an acceptance criterion while RV is powered off.
 
 ## LED extension
 
