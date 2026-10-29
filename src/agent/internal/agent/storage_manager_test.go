@@ -233,6 +233,77 @@ func newTestStorageManagerWithWatermarks(t *testing.T, ops *fakeStorageOps, star
 	return m
 }
 
+func TestStorageManagerStopWaitsForPendingStateWrite(t *testing.T) {
+	ops := &fakeStorageOps{
+		present:        true,
+		prepareErr:     errors.New("test mount failure"),
+		prepareBlock:   make(chan struct{}),
+		prepareEntered: make(chan struct{}),
+	}
+	m := newTestStorageManager(t, ops)
+	m.pollInterval = time.Hour
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(ops.prepareBlock) }) }
+	t.Cleanup(func() {
+		release()
+		m.Stop()
+	})
+	m.card = StorageCardStatus{Present: true, Device: "/dev/mmcblk2p1"}
+	m.Start()
+	select {
+	case <-ops.prepareEntered:
+	case <-time.After(time.Second):
+		t.Fatal("poller did not enter Prepare")
+	}
+
+	// Every Stop caller must wait, including callers after stopOnce has fired.
+	stopped := make(chan struct{}, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			m.Stop()
+			stopped <- struct{}{}
+		}()
+	}
+	select {
+	case <-stopped:
+		t.Fatal("Stop returned while the poller still had a pending state write")
+	case <-time.After(50 * time.Millisecond):
+	}
+	release()
+	for i := 0; i < 2; i++ {
+		select {
+		case <-stopped:
+		case <-time.After(time.Second):
+			t.Fatal("Stop did not return after the poller finished")
+		}
+	}
+	if _, err := os.Stat(m.statePath); err != nil {
+		t.Fatalf("Stop returned before the final state write completed: %v", err)
+	}
+}
+
+func TestStorageManagerStopBeforeStart(t *testing.T) {
+	m := newTestStorageManager(t, &fakeStorageOps{})
+	done := make(chan struct{})
+	go func() {
+		m.Stop()
+		m.Stop()
+		m.Start()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Stop blocked without a running poller")
+	}
+	if m.pollDone != nil {
+		t.Fatal("Start launched a poller after Stop")
+	}
+	if _, err := os.Stat(m.statePath); !os.IsNotExist(err) {
+		t.Fatalf("stopped manager wrote a state file: %v", err)
+	}
+}
+
 // tickN runs n poll cycles (debounce needs two to accept a presence change).
 func tickN(m *StorageManager, n int) {
 	for i := 0; i < n; i++ {
