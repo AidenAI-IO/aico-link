@@ -2003,6 +2003,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			if err := responseInterrupter.Interrupt(ctx, playback.responseInterruption(outputFormat)); err != nil {
 				return fmt.Errorf("cancel realtime response; session closed: %w", err)
 			}
+			if semanticEmitter != nil {
+				semanticEmitter.invalidateOutput()
+			}
 			if err := playback.interrupt(playbackAudio, outputFormat); err != nil {
 				return fmt.Errorf("stop canceled realtime playback: %w", err)
 			}
