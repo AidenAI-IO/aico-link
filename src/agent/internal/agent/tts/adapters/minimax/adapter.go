@@ -108,5 +108,8 @@ func capabilities() tts.Capabilities {
 		SupportsContextContinuation: false,
 		SupportedSampleRates:        []int{8000, 16000, 22050, 24000, 32000, 44100},
 		RegionRestricted:            false,
+		TextGranularity:             tts.TextGranularitySentence,
+		SupportsIncrementalAudio:    true,
+		SupportsFlush:               true,
 	}
 }

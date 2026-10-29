@@ -48,6 +48,18 @@ type StreamSession interface {
 	Err() error
 }
 
+// TextGranularity describes the smallest useful text unit an adapter sends to
+// its provider before synthesis begins. It is an effective capability of the
+// selected provider and model, rather than a promise that every audio frame
+// starts at the same boundary.
+type TextGranularity string
+
+const (
+	TextGranularityIncremental TextGranularity = "incremental"
+	TextGranularitySentence    TextGranularity = "sentence"
+	TextGranularityBatch       TextGranularity = "batch"
+)
+
 // Capabilities describes provider features.
 type Capabilities struct {
 	// SupportsContextContinuation is true if the provider can keep prosody
@@ -63,6 +75,22 @@ type Capabilities struct {
 	// RegionRestricted is true if the endpoint requires a proxy from
 	// mainland China (Fish Audio, Cartesia, ElevenLabs, etc.).
 	RegionRestricted bool
+
+	// TextGranularity reports when the adapter starts synthesis from streamed
+	// input. Sentence and batch adapters remain valid streaming sessions, but
+	// they must not be presented as token-level synthesis.
+	TextGranularity TextGranularity
+
+	// SupportsIncrementalAudio reports whether audio can arrive before the
+	// complete input response has finished. This is independent of text input
+	// granularity because a sentence adapter can still stream PCM.
+	SupportsIncrementalAudio bool
+
+	// SupportsFlush reports whether Flush has provider-visible semantics beyond
+	// the legacy compatibility fallback. SupportsCancellation reports whether
+	// the adapter has an explicit prompt cancellation operation.
+	SupportsFlush        bool
+	SupportsCancellation bool
 }
 
 // AudioSink is the destination for PCM audio produced by a TTS provider.
