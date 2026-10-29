@@ -147,7 +147,10 @@ function connectSSE() {
         eventSource.close();
     }
 
-    eventSource = new EventSource('/api/events');
+    // The v2 endpoint keeps the legacy projection as a fallback. Older
+    // daemons ignore the query parameter and still send the public message
+    // envelope, which is handled below by handleServerEvent.
+    eventSource = new EventSource('/api/events?version=2');
 
     eventSource.onopen = function() {
         console.log('[SSE] Connected');
@@ -155,7 +158,12 @@ function connectSSE() {
 
     eventSource.onmessage = function(e) {
         try {
-            handleServerEvent(JSON.parse(e.data));
+            const data = JSON.parse(e.data);
+            if (isSemanticEvent(data)) {
+                handleSemanticEvent(data);
+            } else {
+                handleServerEvent(data);
+            }
         } catch (err) {
             console.error('[SSE] Parse error:', err);
         }
@@ -164,6 +172,83 @@ function connectSSE() {
     eventSource.onerror = function(e) {
         console.error('[SSE] Connection error, will retry...');
     };
+}
+
+function isSemanticEvent(data) {
+    return !!data && Number(data.schema_version) >= 2 && typeof data.kind === 'string';
+}
+
+function semanticField(value, ...names) {
+    if (!value || typeof value !== 'object') return '';
+    for (const name of names) {
+        if (value[name] !== undefined && value[name] !== null) return value[name];
+    }
+    return '';
+}
+
+function semanticRequestID(event, payload) {
+    return semanticField(event, 'turn_id', 'run_id', 'request_id') ||
+        semanticField(payload, 'request_id', 'RequestID', 'run_id', 'RunID', 'episode_id', 'EpisodeID');
+}
+
+function semanticEpisodeID(event, payload) {
+    return semanticField(payload, 'episode_id', 'EpisodeID') ||
+        semanticField(event, 'turn_id', 'run_id');
+}
+
+function semanticTimestamp(event) {
+    return semanticField(event, 'occurred_at', 'received_at') || new Date().toISOString();
+}
+
+function semanticText(payload) {
+    return String(semanticField(payload, 'text', 'Text', 'content', 'Content', 'reasoning_content', 'ReasoningContent') || '');
+}
+
+// Convert the small subset of v2 events that can be rendered immediately to
+// the existing live-message helpers. Other semantic events still trigger a
+// history refresh, preserving the legacy public projection and ordering.
+function handleSemanticEvent(event) {
+    if (!event || event.type === 'connected') return;
+    if (event.type === 'resync_required') {
+        loadHistory();
+        return;
+    }
+
+    const payload = event.payload || {};
+    const requestId = semanticRequestID(event, payload);
+    const episodeId = semanticEpisodeID(event, payload);
+    const timestamp = semanticTimestamp(event);
+    switch (event.kind) {
+        case 'text.delta':
+            appendAssistantDelta({
+                request_id: requestId,
+                episode_id: episodeId,
+                delta: semanticText(payload)
+            });
+            return;
+        case 'reasoning.delta':
+            appendAssistantReasoningDelta({
+                request_id: requestId,
+                episode_id: episodeId,
+                reasoning_content: semanticText(payload)
+            });
+            return;
+        case 'reasoning.reset':
+            resetAssistantReasoning({request_id: requestId, episode_id: episodeId});
+            return;
+        case 'text.final':
+            finalizeAssistantMessage({
+                type: 'assistant',
+                request_id: requestId,
+                episode_id: episodeId,
+                content: semanticText(payload),
+                reasoning_content: String(semanticField(payload, 'reasoning_content', 'ReasoningContent') || ''),
+                timestamp
+            });
+            return;
+        default:
+            if (event.kind) refreshHistoryFromContext();
+    }
 }
 
 function handleServerEvent(data) {

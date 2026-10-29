@@ -413,6 +413,7 @@ function appendAssistantDelta(event) {
         };
         streamingAssistantDrafts[key] = msg;
     }
+    if (typeof msg.content !== 'string') msg.content = '';
     msg.content += event.delta || '';
     addMessage(msg);
 }
@@ -432,6 +433,7 @@ function appendAssistantReasoningDelta(event) {
         };
         streamingAssistantDrafts[key] = msg;
     }
+    if (typeof msg.reasoning_content !== 'string') msg.reasoning_content = '';
     msg.reasoning_content += event.reasoning_content || '';
     addMessage(msg);
 }

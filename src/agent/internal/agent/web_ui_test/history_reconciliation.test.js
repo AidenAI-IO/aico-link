@@ -188,6 +188,44 @@ const updatedVoiceReasoningNode = Array.from(messagesDiv.children)[3];
 assert.notStrictEqual(updatedVoiceReasoningNode, firstVoiceReasoningNode);
 assert.equal(updatedVoiceReasoningNode._message.reasoning_content, 'first thought, then another');
 assert.equal(messagesDiv.children.length, 4, 'reasoning deltas should update one draft');
+
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'text.delta',
+    turn_id: 'semantic-1',
+    payload: {text: 'hello'}
+});
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'text.delta',
+    turn_id: 'semantic-1',
+    payload: {text: ' world'}
+});
+const semanticDraft = Array.from(messagesDiv.children)[4];
+assert.equal(semanticDraft._message.content, 'hello world', 'semantic text deltas should accumulate');
+
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'reasoning.delta',
+    turn_id: 'semantic-1',
+    payload: {reasoning_content: 'first'}
+});
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'reasoning.delta',
+    turn_id: 'semantic-1',
+    payload: {reasoning_content: ' thought'}
+});
+assert.equal(Array.from(messagesDiv.children)[4]._message.reasoning_content, 'first thought');
+
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'text.final',
+    turn_id: 'semantic-1',
+    payload: {content: 'hello world', reasoning_content: 'first thought'}
+});
+assert.equal(Array.from(messagesDiv.children)[4]._message.content, 'hello world');
+assert.equal(streamingAssistantDrafts['semantic-1'], undefined, 'semantic final should clear the draft');
 `
 ].join('\n');
 
