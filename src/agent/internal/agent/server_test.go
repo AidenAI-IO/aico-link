@@ -36,6 +36,7 @@ import (
 	"aico-agent/internal/agent/screenprovider"
 	speechtext "aico-agent/internal/agent/speech"
 	ttsmodule "aico-agent/internal/agent/tts"
+	streamcontract "aico-agent/internal/stream"
 )
 
 type stubSTTClient struct {
@@ -56,6 +57,39 @@ type stubSTTStreamUploader struct {
 	writes      [][]byte
 	finalized   bool
 	closed      bool
+}
+
+func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
+	server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/api/events?version=2&since=0&epoch=1", nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.handleEvents(rec, req)
+		close(done)
+	}()
+	if err := server.semanticEvents.Publish(streamcontract.NewEvent(streamcontract.EventIdentity{
+		EventID:        "v2-event",
+		ConversationID: "run-conversation",
+		SessionEpoch:   1,
+		Sequence:       1,
+	}, streamcontract.EventTextDelta, map[string]string{"text": "hello"})); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("semantic SSE handler did not stop after cancellation")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"schema_version":2`) || !strings.Contains(body, `"kind":"text.delta"`) {
+		t.Fatalf("v2 SSE body = %s", body)
+	}
+	if !strings.Contains(body, "id: 1") {
+		t.Fatalf("v2 SSE body missing event id: %s", body)
+	}
 }
 
 type mappingStateMutatingTool struct {

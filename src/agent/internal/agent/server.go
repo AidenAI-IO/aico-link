@@ -40,6 +40,7 @@ import (
 	_ "aico-agent/internal/agent/tts/adapters/volcengine"
 	"aico-agent/internal/ble"
 	"aico-agent/internal/mcu"
+	streamcontract "aico-agent/internal/stream"
 )
 
 const (
@@ -101,6 +102,7 @@ type Server struct {
 	steerSignals            map[string]chan struct{}
 	steersMu                sync.Mutex
 	eventBroadcaster        *EventBroadcaster
+	semanticEvents          *semanticEventBroadcaster
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
@@ -457,6 +459,7 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		pendingSteers:           make(map[string]pendingSteerMessage),
 		steerSignals:            make(map[string]chan struct{}),
 		eventBroadcaster:        NewEventBroadcaster(),
+		semanticEvents:          newSemanticEventBroadcaster(512),
 		storageMonitor:          runtime.storageMonitor,
 	}
 	if s.bridge != nil {
@@ -1578,6 +1581,8 @@ func (s *Server) handleChatAsync(
 			RequestID:               requestID,
 			DeviceEnvironment:       s.bridgeEnvironment(),
 			EventHandler:            eventHandler,
+			StreamSink:              s.semanticEvents,
+			StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
 			AsyncEpisodeMaintenance: true,
 			SteerProvider:           steerProvider,
 			SteerInterrupt:          steerInterrupt,
@@ -1956,6 +1961,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		EpisodeID:               episodeID,
 		RequestID:               req.RequestID,
 		DeviceEnvironment:       s.bridgeEnvironment(),
+		StreamSink:              s.semanticEvents,
+		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: req.RequestID, RunID: req.RequestID},
 		AsyncEpisodeMaintenance: true,
 		SteerProvider:           steerProvider,
 		SteerInterrupt:          steerInterrupt,
@@ -2660,6 +2667,10 @@ func (s *Server) handleContextAttachment(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("version") == "2" || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Aico-Events")), "v2") {
+		s.handleSemanticEvents(w, r)
+		return
+	}
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2706,6 +2717,77 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 			fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
+		}
+	}
+}
+
+func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
+	if s == nil || s.semanticEvents == nil {
+		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var cursor *streamcontract.ReplayCursor
+	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
+		sequence, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			http.Error(w, "invalid since cursor", http.StatusBadRequest)
+			return
+		}
+		epoch := uint64(1)
+		if rawEpoch := strings.TrimSpace(r.URL.Query().Get("epoch")); rawEpoch != "" {
+			epoch, err = strconv.ParseUint(rawEpoch, 10, 64)
+			if err != nil || epoch == 0 {
+				http.Error(w, "invalid epoch cursor", http.StatusBadRequest)
+				return
+			}
+		}
+		cursor = &streamcontract.ReplayCursor{SessionEpoch: epoch, Sequence: sequence}
+	}
+
+	replay, ch, unsubscribe := s.semanticEvents.Subscribe(cursor)
+	defer unsubscribe()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	writeEvent := func(event streamcontract.Event) bool {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return false
+		}
+		_, _ = fmt.Fprintf(w, "id: %d\ndata: %s\n\n", event.Sequence, data)
+		flusher.Flush()
+		return true
+	}
+	_, _ = fmt.Fprintf(w, "data: {\"type\":\"connected\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+	flusher.Flush()
+	if replay.ResyncRequired {
+		_, _ = fmt.Fprintf(w, "data: {\"type\":\"resync_required\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+		flusher.Flush()
+	}
+	for _, event := range replay.Events {
+		if !writeEvent(event) {
+			return
+		}
+	}
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if !writeEvent(event) {
+				return
+			}
 		}
 	}
 }

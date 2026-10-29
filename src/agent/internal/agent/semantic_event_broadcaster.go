@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"aico-agent/internal/stream"
@@ -13,15 +14,20 @@ const semanticEventSubscriberBufferSize = 64
 // replay window and disconnects a subscriber whose queue is saturated so the
 // producer never silently loses an event for that subscriber.
 type semanticEventBroadcaster struct {
-	mu          sync.Mutex
-	replay      *stream.ReplayLog
-	subscribers map[chan stream.Event]struct{}
+	mu             sync.Mutex
+	replay         *stream.ReplayLog
+	subscribers    map[chan stream.Event]struct{}
+	conversationID string
+	sessionEpoch   uint64
+	sequence       uint64
 }
 
 func newSemanticEventBroadcaster(replayCapacity int) *semanticEventBroadcaster {
 	return &semanticEventBroadcaster{
-		replay:      stream.NewReplayLog(replayCapacity),
-		subscribers: make(map[chan stream.Event]struct{}),
+		replay:         stream.NewReplayLog(replayCapacity),
+		subscribers:    make(map[chan stream.Event]struct{}),
+		conversationID: "agent",
+		sessionEpoch:   1,
 	}
 }
 
@@ -40,7 +46,18 @@ func (b *semanticEventBroadcaster) Publish(event stream.Event) error {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	// Runtime emitters sequence independently per run. The observer window
+	// needs one process-wide order, so the broadcaster assigns its own cursor
+	// while preserving the run/turn correlation fields.
+	b.sequence++
+	event.ConversationID = b.conversationID
+	event.SessionEpoch = b.sessionEpoch
+	event.Sequence = b.sequence
+	if event.EventID == "" {
+		event.EventID = "semantic-event-" + fmt.Sprint(b.sequence)
+	}
 	if err := b.replay.Append(event); err != nil {
+		b.sequence--
 		return err
 	}
 	for ch := range b.subscribers {
