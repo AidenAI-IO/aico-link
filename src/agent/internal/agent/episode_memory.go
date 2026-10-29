@@ -962,7 +962,7 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryRetentionAudit(ctx context
 	if err != nil {
 		return episodeMemoryRetentionAudit{}, err
 	}
-	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), episodeMemoryFinalProofRef(episode, proposal.EpisodeAssessment.EvidenceRefs), proposal.Candidates))}
+	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), requiredEpisodeMemoryFinalProof(episode, proposal.EpisodeAssessment), proposal.Candidates))}
 	for _, screenshot := range loadEpisodeMemoryScreenshots(p.plane.episodes.rootDir, episode) {
 		parts = append(parts, llms.TextPart("Attached screenshot evidence for Episode event id: "+screenshot.EventID))
 		parts = append(parts, llms.BinaryContent{MIMEType: screenshot.MIMEType, Data: screenshot.Data})
@@ -1473,12 +1473,8 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
 			return episodeMemoryCandidate{}, false
 		}
-		// A stored path that stops before the result proving the goal teaches
-		// the Agent to skip verification, so an achieved procedure must reach it.
-		if assessment.GoalResult == episodeGoalAchieved {
-			if proof := episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs); proof != "" && !episodeMemoryPathReachesFinalProof(episode, candidate.StepRefs, proof) {
-				return episodeMemoryCandidate{}, false
-			}
+		if proof := requiredEpisodeMemoryFinalProof(episode, assessment); proof != "" && !episodeMemoryPathReachesFinalProof(episode, candidate.StepRefs, proof) {
+			return episodeMemoryCandidate{}, false
 		}
 	} else if len(candidate.StepRefs) != 0 {
 		return episodeMemoryCandidate{}, false
@@ -1557,6 +1553,17 @@ func episodeMemoryFinalProofRef(episode TaskEpisode, assessmentRefs []string) st
 		}
 	}
 	return proof
+}
+
+// requiredEpisodeMemoryFinalProof returns the result an achieved procedure
+// must reach, or "" when none is required. A stored path that stops before the
+// result proving the goal teaches the Agent to skip verification. Other
+// outcomes yield guards rather than a path to the goal.
+func requiredEpisodeMemoryFinalProof(episode TaskEpisode, assessment episodeMemoryAssessment) string {
+	if assessment.GoalResult != episodeGoalAchieved {
+		return ""
+	}
+	return episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs)
 }
 
 // episodeMemoryPathReachesFinalProof reports whether a procedure path includes

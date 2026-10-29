@@ -178,3 +178,18 @@ func TestRetainedEpisodeMemoryCandidateIgnoresRewrittenStepRefsForNonProcedures(
 		t.Fatalf("retained = %#v, want the failure candidate without step_refs", retained)
 	}
 }
+
+func TestOnlyAchievedProceduresRequireTheFinalProof(t *testing.T) {
+	episode := finalProofTestEpisode()
+	refs := []string{"commit_result", "verify_result"}
+	if got := requiredEpisodeMemoryFinalProof(episode, episodeMemoryAssessment{GoalResult: episodeGoalAchieved, EvidenceRefs: refs}); got != "verify_result" {
+		t.Fatalf("achieved final proof = %q, want verify_result", got)
+	}
+	// A failed Episode yields guards, not a path to the goal; naming its last
+	// result as required verification would push the audit to discard them.
+	for _, result := range []episodeGoalResult{episodeGoalNotAchieved, episodeGoalUnknown} {
+		if got := requiredEpisodeMemoryFinalProof(episode, episodeMemoryAssessment{GoalResult: result, EvidenceRefs: refs}); got != "" {
+			t.Fatalf("%s final proof = %q, want none", result, got)
+		}
+	}
+}
