@@ -992,6 +992,10 @@ already adopted those frameworks or reproduced their performance.
   the bounded replay broadcaster, and slow observers are disconnected so they
   can resynchronize instead of receiving an undetected partial stream. Legacy
   SSE remains unchanged.
+- Added a normalized realtime-event bridge that maps response, transcript,
+  tool, cancellation, error, and session lifecycle events into the shared
+  contract, filters stale output epochs, and keeps PCM on the separate audio
+  frame path.
 - Added focused regression coverage for stale STT sessions, readiness overflow,
   transcript revision ordering, provider cancellation, observer shutdown,
   replay cursors, TTS capability declarations, and playback queue saturation.

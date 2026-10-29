@@ -635,6 +635,7 @@ bash scripts/run_tests_in_docker.sh --suite web
 - 已继续完成兼容性保持的流式输入阶段：运行时回调现在会发出类型化 stream 事件；TTS 会话区分输入结束、取消、合成完成和播放排空；STT Provider 支持带 context 的批量调用、有界就绪前 PCM 缓冲、修订版 hypothesis、片段 final、turn commit 和可选的实时观察器。DashScope 与 Tencent 实时适配器现在提供有界转写事件通道，批处理 Provider 仍明确保持批处理能力。
 - 已新增 Provider 无关的转写折叠器和有界重放窗口契约。重放窗口能识别过期 epoch、过期 cursor、重复 sequence 以及需要快照／resync 的间隙。TTS 能力元数据现在报告有效文本粒度和增量音频支持，板端播放队列同时按 chunk 数量和 PCM 时长设置硬上限。
 - 已新增可选的语义 v2 SSE 路径 `/api/events?version=2`。运行时 stream 事件会获得进程级 replay cursor，通过有界重放广播器发送；慢观察者会被断开并要求重新同步，不再静默收到不完整流。旧版 SSE 行为保持不变。
+- 已新增 normalized realtime 事件桥接：把响应、转写、工具、取消、错误和会话生命周期事件映射到共享契约，过滤过期 output epoch，并让 PCM 继续走独立的音频帧通道。
 - 已补充过期 STT 会话、就绪缓冲溢出、转写修订顺序、Provider 取消、观察器关闭、重放 cursor、TTS 能力声明及播放队列饱和等聚焦回归测试。
 - 已通过已实现阶段的聚焦 Go 测试（包括 `-race`）、Go vet 及独立 C++ 播放测试。Docker 驱动的固件套件、完整主机套件和付费在线／硬件 Provider 冒烟测试未运行：当前 Docker daemon 及部分主机监听能力不可用。环境变量中的凭据已加载，但未用于付费 Provider 调用。
 
