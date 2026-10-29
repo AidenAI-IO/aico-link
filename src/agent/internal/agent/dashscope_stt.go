@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"aico-agent/internal/stream"
 )
 
 const (
@@ -47,7 +49,13 @@ func NewDashScopeRealtimeSTT(apiKey, model, endpoint, language string) *DashScop
 
 // Capabilities reports that this provider supports streaming upload.
 func (s *DashScopeRealtimeSTT) Capabilities() STTCapabilities {
-	return STTCapabilities{SupportsStreamingUpload: true}
+	return STTCapabilities{
+		SupportsStreamingUpload:       true,
+		SupportsInterimResults:        true,
+		SupportsSegmentFinals:         true,
+		SupportsProviderEndpointing:   true,
+		SupportsStreamingCancellation: true,
+	}
 }
 
 // TranscribeWAV performs one-shot transcription by opening a WebSocket session,
@@ -140,6 +148,7 @@ func (s *DashScopeRealtimeSTT) newUploader(ctx context.Context, cfg STTStreamCon
 		done:        make(chan struct{}),
 		ready:       make(chan struct{}),
 		ctx:         ctx,
+		events:      make(chan stream.TranscriptEvent, 32),
 	}
 
 	go uploader.readLoop()
@@ -262,6 +271,7 @@ type dashScopeSession struct {
 type dashScopeServerEvent struct {
 	EventID    string                 `json:"event_id"`
 	Type       string                 `json:"type"`
+	ItemID     string                 `json:"item_id,omitempty"`
 	Transcript string                 `json:"transcript,omitempty"`
 	Text       string                 `json:"text,omitempty"`
 	Error      *dashScopeErrorPayload `json:"error,omitempty"`
