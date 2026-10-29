@@ -201,6 +201,15 @@ suites:
     required: true
     timeout_seconds: 30
 
+  - name: poweroff-dtb
+    class: deterministic
+    paths: [pico-sdk, scripts/test_poweroff_dtb.sh, scripts/debian-system/audit-poweroff-dtb.sh, scripts/debian-system/audit-bsp.sh]
+    command: bash scripts/test_poweroff_dtb.sh
+    quick: true
+    dependencies: [bash, gcc, dtc, fdtget, fdtput]
+    required: true
+    timeout_seconds: 60
+
   - name: tf-card-dtb
     class: deterministic
     paths: [pico-sdk, tests/test_tf_pinctrl.py, scripts/test_tf_dtb.sh, scripts/debian-system/audit-tf-dtb.sh, scripts/debian-system/packages.list]

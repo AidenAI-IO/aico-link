@@ -20,6 +20,9 @@
 	compatible = "rockchip,rv1103g-38x38-ipc-v10", "rockchip,rv1106g3",
 		     "rockchip,rv1106";
 
+	/* The MCU removes power; the EVB fallback would reboot on poweroff. */
+	/delete-node/ restart-poweroff;
+
 	chosen {
 		bootargs = "root=/dev/mmcblk0p7 rootwait snd_soc_core.prealloc_buffer_size_kbytes=16 coherent_pool=0";
 	};
