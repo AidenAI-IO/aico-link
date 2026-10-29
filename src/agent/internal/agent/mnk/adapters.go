@@ -57,8 +57,7 @@ type swipeOptionsProvider interface {
 // TouchGestureToolAdapter 使用 MNK Provider 的 touch_gesture 工具适配器
 type TouchGestureToolAdapter struct {
 	provider Provider
-	// tapSequenceGuard is consulted between taps of a tap_sequence whose
-	// stop_on_screen_change is enabled.
+	// tapSequenceGuard is consulted between taps of every tap_sequence.
 	tapSequenceGuard TapSequenceGuard
 	sleep            func(context.Context, int) error
 }
@@ -107,9 +106,8 @@ func (t *TouchGestureToolAdapter) Call(ctx context.Context, input string) (strin
 		HoldAfterMs  *int          `json:"hold_after_ms"`
 		Steps        *int          `json:"steps"`
 		// tap_sequence fields.
-		Points             []*pointerPoint `json:"points"`
-		IntervalMs         *int            `json:"interval_ms"`
-		StopOnScreenChange *bool           `json:"stop_on_screen_change"`
+		Points     []*pointerPoint `json:"points"`
+		IntervalMs *int            `json:"interval_ms"`
 	}
 
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
@@ -210,11 +208,7 @@ func (t *TouchGestureToolAdapter) Call(ctx context.Context, input string) (strin
 		if err := t.requireProvider(); err != nil {
 			return "", err
 		}
-		guard := t.tapSequenceGuard
-		if args.StopOnScreenChange != nil && !*args.StopOnScreenChange {
-			guard = nil
-		}
-		return t.handleTapSequence(ctx, args.Points, button, intervalMs, guard)
+		return t.handleTapSequence(ctx, args.Points, button, intervalMs, t.tapSequenceGuard)
 
 	default:
 		return "", InvalidArgumentsf("unsupported gesture type: %q", args.Type)

@@ -19,9 +19,11 @@ import (
 // A tap_sequence is planned from one screenshot, so it stays valid only while
 // the targets it has not tapped yet look as they did then. Between taps the
 // guard compares a patch around each remaining target with the baseline frame.
-// On the board, untouched keypad keys differ by at most 1.6 (mean absolute luma
-// difference on 0-255), and by up to 21 when the keypad dims slightly as a
-// suggestion row appears; keys covered by a new screen differ by 31 to 190.
+// On the board's raw frames, untouched keys differ by at most 1 (mean absolute
+// luma difference on 0-255) and the key just tapped, with the pointer and
+// press highlight on it, by at most 16; on screenshots, keys stay within 21
+// when the keypad dims slightly as a suggestion row appears, and keys covered
+// by a new screen differ by 31 to 190.
 const tapSequenceTargetChangeThreshold = 30
 
 // tapSequenceTargetPatchFraction sizes the compared patch as a share of the
@@ -137,18 +139,18 @@ func imageLuma(img image.Image) lumaFrame {
 	return lumaFrame{width: b.Dx(), height: b.Dy(), stride: b.Dx(), y: y}
 }
 
-// tapSequenceInput parses a tap_sequence request whose default screen check
-// is enabled; ok is false for any other input.
+// tapSequenceInput parses a tap_sequence request; ok is false for any other
+// input. The screen check is not optional: a model saving time must not be
+// able to send the remaining taps onto a screen that changed.
 func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 	var args struct {
-		Type               string         `json:"type"`
-		Points             []pointerPoint `json:"points"`
-		StopOnScreenChange *bool          `json:"stop_on_screen_change"`
+		Type   string         `json:"type"`
+		Points []pointerPoint `json:"points"`
 	}
 	if json.Unmarshal([]byte(input), &args) != nil || !strings.EqualFold(strings.TrimSpace(args.Type), "tap_sequence") {
 		return nil, false
 	}
-	if args.StopOnScreenChange != nil && !*args.StopOnScreenChange || len(args.Points) == 0 {
+	if len(args.Points) == 0 {
 		return nil, false
 	}
 	points = make([]normalizedPoint, len(args.Points))
@@ -159,11 +161,10 @@ func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 }
 
 // newTapSequenceGuard checks, after each tap, that the targets not tapped yet
-// still look as they did in the baseline. The first target and the one just
-// tapped are skipped: the pointer rests on the latter (the caller parks it on
-// the first target before the baseline), and a pressed key may still be
-// highlighted. A whole-screen comparison backs this up for layouts whose
-// remaining targets all happen to sit outside the changed area.
+// still look as they did in the baseline, including a target the sequence
+// taps again: the pointer and press highlight stay well below the threshold.
+// A whole-screen comparison backs this up for layouts whose remaining targets
+// all happen to sit outside the changed area.
 func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint) mnk.TapSequenceGuard {
 	return func(ctx context.Context, executed int) (bool, string, error) {
 		started := time.Now()
@@ -199,20 +200,9 @@ func tapSequenceChangedTarget(baseline, current lumaFrame, region image.Rectangl
 			Y: region.Min.Y + int(point.Y/1000*float64(region.Dy()-1)+0.5),
 		}
 	}
-	skipped := []image.Point{locate(points[0]), locate(points[executed-1])}
 	maxDiff := 0.0
 	for i := executed; i < len(points); i++ {
 		center := locate(points[i])
-		near := false
-		for _, s := range skipped {
-			if absInt(center.X-s.X) <= 2*radius && absInt(center.Y-s.Y) <= 2*radius {
-				near = true
-				break
-			}
-		}
-		if near {
-			continue
-		}
 		diff := lumaPatchDiff(baseline, current, center, radius, tapSequenceTargetShiftPixels)
 		maxDiff = max(maxDiff, diff)
 		if diff > tapSequenceTargetChangeThreshold {

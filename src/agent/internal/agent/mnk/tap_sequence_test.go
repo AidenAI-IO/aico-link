@@ -116,18 +116,21 @@ func TestTapSequenceGuardStopsRemainingTaps(t *testing.T) {
 	}
 }
 
-func TestTapSequenceCanDisableGuard(t *testing.T) {
+// The screen check cannot be switched off from the request; an unknown
+// field asking for that is ignored like any other.
+func TestTapSequenceGuardIsNotOptional(t *testing.T) {
 	mock := NewMockProvider()
 	adapter, _ := newTapSequenceTestAdapter(mock)
+	checks := 0
 	adapter.WithTapSequenceGuard(func(context.Context, int) (bool, string, error) {
-		t.Fatal("guard ran with stop_on_screen_change=false")
-		return true, "", nil
+		checks++
+		return false, "", nil
 	})
 	if _, err := adapter.Call(context.Background(), `{"type":"tap_sequence","points":[{"x":1,"y":1},{"x":2,"y":2}],"stop_on_screen_change":false}`); err != nil {
 		t.Fatal(err)
 	}
-	if len(mock.ClickCalls()) != 2 {
-		t.Fatalf("clicks = %#v", mock.ClickCalls())
+	if len(mock.ClickCalls()) != 2 || checks != 1 {
+		t.Fatalf("clicks = %#v checks=%d, want the guard to run", mock.ClickCalls(), checks)
 	}
 }
 
