@@ -8,10 +8,17 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+
+	"aico-agent/internal/stream"
 )
 
 type STTCapabilities struct {
-	SupportsStreamingUpload bool
+	SupportsStreamingUpload       bool
+	SupportsInterimResults        bool
+	SupportsSegmentFinals         bool
+	SupportsProviderEndpointing   bool
+	SupportsWordTiming            bool
+	SupportsStreamingCancellation bool
 }
 
 type STTStreamConfig struct {
@@ -24,6 +31,13 @@ type STTStreamUploader interface {
 	UploadPCM(pcm []byte) error
 	Finalize() (string, error)
 	Close() error
+}
+
+// STTTranscriptEventSource is an optional streaming uploader capability. It
+// exposes revisioned hypotheses and segment/turn boundaries while the legacy
+// Finalize method remains available for collectors.
+type STTTranscriptEventSource interface {
+	TranscriptEvents() <-chan stream.TranscriptEvent
 }
 
 // STTClient is the interface for speech-to-text providers

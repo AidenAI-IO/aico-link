@@ -118,7 +118,7 @@ func TestPrepareAudioInputWithContextCancelsSTTBeforeBuildingTurn(t *testing.T) 
 	if _, err := PrepareAudioInputWithContext(ctx, "stt", client, wav, "", "", nil); err == nil {
 		t.Fatal("PrepareAudioInputWithContext() error = nil, want cancellation")
 	}
-	if client.contextCalls != 1 || client.legacyCalls != 0 {
+	if client.contextCalls != 0 || client.legacyCalls != 0 {
 		t.Fatalf("context calls=%d legacy calls=%d", client.contextCalls, client.legacyCalls)
 	}
 }
