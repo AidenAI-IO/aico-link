@@ -10,6 +10,7 @@ import pytest
 from langfuse.api.client import LangfuseAPI
 
 from ci import fetch_langfuse_history as history
+from ci.weekly_report import summarize_weekly
 
 NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 STAMP = "2026-10-12T08:04:20Z"
@@ -126,6 +127,35 @@ def test_batched_scores_are_assigned_to_their_experiment():
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
 
 
+def test_weekly_comparison_includes_experiments_from_before_benchmark_rename():
+    legacy = _experiment("legacy", aico_benchmark=None, aiden_benchmark="true",
+                         benchmark_run_id="ci-122-1-memory")
+    legacy["startTime"] = "2026-10-04T08:04:20Z"
+    current = _experiment("current", benchmark_run_id="ci-123-1-memory")
+
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([legacy, current])
+        assert request.url.params["experimentId"] == "legacy,current"
+        return _response([
+            _score(name, value, experiment_id)
+            for experiment_id, passed in (("legacy", 8), ("current", 15))
+            for name, value in {
+                "capability.pass_at_1.total_tasks": 16,
+                "capability.pass_at_1.eligible_tasks": 16,
+                "capability.pass_at_1.successes": passed,
+                "capability.pass_at_1": passed / 16,
+            }.items()
+        ])
+
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, branch_filter="main")
+    assert not result.warnings
+    report = summarize_weekly(result.records, end=NOW)
+    assert report["previous_totals"]["pass_at_1"] == 0.5
+    assert report["totals"]["pass_at_1"] == 0.9375
+    assert report["change"] == 0.4375
+
+
 def test_environment_and_diagnostic_observations_survive_history_fetch():
     def handler(request):
         if request.url.path.endswith("/experiments"):
@@ -140,7 +170,11 @@ def test_environment_and_diagnostic_observations_survive_history_fetch():
     assert record["skill_discovery"] == {"read": 0, "observed": 4}
 
 
-@pytest.mark.parametrize("metadata", [{"aico_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
+@pytest.mark.parametrize("metadata", [
+    {"aico_benchmark": "false", "aiden_benchmark": "false"},
+    {"git_branch": "feature"},
+    {"git_branch": None},
+])
 def test_filter_does_not_include_nonbenchmark_or_unknown_branches(metadata):
     def handler(request):
         assert request.url.path.endswith("/experiments")
