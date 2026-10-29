@@ -108,6 +108,16 @@ type Server struct {
 	realtimeChatHandler     RealtimeChatHandler
 }
 
+// RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
+// path. The realtime daemon uses this narrow interface to publish provider
+// events without reaching into Server's broadcaster implementation.
+func (s *Server) RealtimeEventSink() streamcontract.EventSink {
+	if s == nil {
+		return nil
+	}
+	return s.semanticEvents
+}
+
 const maxChatImageAttachments = 4
 
 type MessageAttachment struct {
@@ -2784,16 +2794,6 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func shouldStreamEventMessage(msg Message) bool {
-	_, ok := normalizePublicMessage(msg)
-	return ok
-}
-
-func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
 // parseSemanticEventCursor accepts the decimal sequence used by the original
 // v2 SSE endpoint and an optional epoch query parameter. Last-Event-ID may
 // also carry the complete "epoch:sequence" form so reconnects can preserve a
@@ -2803,9 +2803,8 @@ func parseSemanticEventCursor(rawSince, rawEpoch string) (*streamcontract.Replay
 	rawSince = strings.TrimSpace(rawSince)
 	rawEpoch = strings.TrimSpace(rawEpoch)
 	if rawSince == "" {
-		if rawEpoch != "" {
-			return nil, fmt.Errorf("invalid epoch cursor")
-		}
+		// Preserve the original endpoint's behavior: an epoch without a
+		// sequence does not identify a replay position and is ignored.
 		return nil, nil
 	}
 
@@ -2836,6 +2835,16 @@ func parseSemanticEventCursor(rawSince, rawEpoch string) (*streamcontract.Replay
 	return &streamcontract.ReplayCursor{SessionEpoch: epoch, Sequence: sequence}, nil
 }
 
+func shouldStreamEventMessage(msg Message) bool {
+	_, ok := normalizePublicMessage(msg)
+	return ok
+}
+
+func (s *Server) handleEpisodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	store := s.episodeStore
 	if store == nil && s.runtime != nil {
 		if configDir := s.runtime.ConfigSnapshot().ConfigDir; configDir != "" {
