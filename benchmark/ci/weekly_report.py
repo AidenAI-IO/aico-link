@@ -94,7 +94,7 @@ def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]
 # Primary test objectives, in report order. Tool calls are a mechanism shared
 # across areas, while execution environments are separate run metadata.
 CAPABILITY_SUITES = {
-    "Memory": ("memory_v1", "memory_admission_v1", "episode_memory_v1", "notification_memory_v1",
+    "Memory": ("memory_v1", "memory_admission_v1", "notification_memory_v1",
                "personamem_lt_recall_v1", "quick_capture_v1", "episode_memory_before_v1",
                "episode_memory_after_v1", "episode_memory_legacy_v1"),
     "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),

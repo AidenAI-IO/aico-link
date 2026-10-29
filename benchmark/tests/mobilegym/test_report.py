@@ -544,29 +544,29 @@ def test_report_omits_empty_aico_suite_shards_from_task_records(tmp_path):
     from mobilegym import report
 
     batch = tmp_path / "batch-aico-empty-shard"
-    shard = batch / "episode_memory_v1" / "shard-0"
+    shard = batch / "mobilegym_basic" / "shard-0"
     write_json(
         shard / "shard.json",
         {
             "batch_id": "batch-aico-empty-shard",
-            "suite": "episode_memory_v1",
+            "suite": "mobilegym_basic",
             "shard_index": 0,
             "shard_count": 2,
             "selected_task_count": 1,
-            "selected_task_ids": ["episode_memory_v1.case_one"],
+            "selected_task_ids": ["mobilegym_basic.case_one"],
             "exit_code": 0,
         },
     )
     write_jsonl(
         shard / "raw" / "run" / "results.jsonl",
-        [{"id": "episode_memory_v1.case_one", "suite": "episode_memory_v1", "is_success": True}],
+        [{"id": "mobilegym_basic.case_one", "suite": "mobilegym_basic", "is_success": True}],
     )
-    empty = batch / "episode_memory_v1" / "shard-1"
+    empty = batch / "mobilegym_basic" / "shard-1"
     write_json(
         empty / "shard.json",
         {
             "batch_id": "batch-aico-empty-shard",
-            "suite": "episode_memory_v1",
+            "suite": "mobilegym_basic",
             "shard_index": 1,
             "shard_count": 2,
             "selected_task_count": 0,
@@ -578,9 +578,9 @@ def test_report_omits_empty_aico_suite_shards_from_task_records(tmp_path):
     summary = report.generate_reports(batch)
 
     assert summary["empty"] == 1
-    tasks = read_report_tasks(batch / "episode_memory_v1" / "index.html")
-    assert [task["id"] for task in tasks] == ["episode_memory_v1.case_one"]
-    assert "episode_memory_v1.shard" not in (batch / "episode_memory_v1" / "index.html").read_text()
+    tasks = read_report_tasks(batch / "mobilegym_basic" / "index.html")
+    assert [task["id"] for task in tasks] == ["mobilegym_basic.case_one"]
+    assert "mobilegym_basic.shard" not in (batch / "mobilegym_basic" / "index.html").read_text()
 
 
 def test_report_maps_aico_suite_rubric_and_hard_assertions_into_drawer_payload(tmp_path):
