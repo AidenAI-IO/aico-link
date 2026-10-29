@@ -187,3 +187,12 @@ func (m *MockProvider) ClickCalls() []MockClick {
 	copy(out, m.clicks)
 	return out
 }
+
+func (m *MockProvider) MoveCalls() []MockMove {
+	if m == nil {
+		return nil
+	}
+	out := make([]MockMove, len(m.moves))
+	copy(out, m.moves)
+	return out
+}

@@ -16,12 +16,30 @@ import (
 	"aico-agent/internal/logging"
 )
 
-// tapSequenceLayoutChangeRatio is the share of grid blocks inside the phone
-// screen that must change between two consecutive taps before a tap_sequence
-// stops. Entering a digit or toggling a checkbox changes a few percent of the
-// phone screen and a suggestion row about a quarter of that; navigation,
-// sheets, and dimmed dialogs change far more.
-const tapSequenceLayoutChangeRatio = 0.25
+// A tap_sequence is planned from one screenshot, so it stays valid only while
+// the targets it has not tapped yet look as they did then. Between taps the
+// guard compares a patch around each remaining target with the baseline frame.
+// On the board, untouched keypad keys differ by at most 1.6 (mean absolute luma
+// difference on 0-255), and by up to 21 when the keypad dims slightly as a
+// suggestion row appears; keys covered by a new screen differ by 31 to 190.
+const tapSequenceTargetChangeThreshold = 30
+
+// tapSequenceTargetPatchFraction sizes the compared patch as a share of the
+// phone screen width, about the inside of a keypad key on a phone.
+const tapSequenceTargetPatchFraction = 0.035
+
+// tapSequenceTargetShiftPixels tolerates a target moving by a pixel or two,
+// which still leaves the planned point on it.
+const tapSequenceTargetShiftPixels = 2
+
+// tapSequenceLayoutChangeRatio is a backstop for changes the target patches
+// can miss: when more than half of the phone screen's grid blocks differ from
+// the baseline, the screen is a different one.
+const tapSequenceLayoutChangeRatio = 0.5
+
+// tapSequencePointerParkDelay lets the iOS pointer finish moving onto the
+// first target, and its hover effect settle, before the baseline is captured.
+const tapSequencePointerParkDelay = 150 * time.Millisecond
 
 // Layout detection averages blocks, so sampling every other pixel per axis
 // keeps the result while cutting the per-tap cost on the board CPU.
@@ -119,26 +137,34 @@ func imageLuma(img image.Image) lumaFrame {
 	return lumaFrame{width: b.Dx(), height: b.Dy(), stride: b.Dx(), y: y}
 }
 
-// isTapSequenceInput reports whether input requests a tap_sequence that keeps
-// the default screen-change check enabled.
-func isTapSequenceInput(input string) (sequence, guarded bool) {
+// tapSequenceInput parses a tap_sequence request whose default screen check
+// is enabled; ok is false for any other input.
+func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 	var args struct {
-		Type               string `json:"type"`
-		StopOnScreenChange *bool  `json:"stop_on_screen_change"`
+		Type               string         `json:"type"`
+		Points             []pointerPoint `json:"points"`
+		StopOnScreenChange *bool          `json:"stop_on_screen_change"`
 	}
 	if json.Unmarshal([]byte(input), &args) != nil || !strings.EqualFold(strings.TrimSpace(args.Type), "tap_sequence") {
-		return false, false
+		return nil, false
 	}
-	return true, args.StopOnScreenChange == nil || *args.StopOnScreenChange
+	if args.StopOnScreenChange != nil && !*args.StopOnScreenChange || len(args.Points) == 0 {
+		return nil, false
+	}
+	points = make([]normalizedPoint, len(args.Points))
+	for i, point := range args.Points {
+		points[i] = normalizedPoint{X: point.X.Float64(), Y: point.Y.Float64()}
+	}
+	return points, true
 }
 
-// newTapSequenceGuard compares each frame with the one before the previous
-// tap, so the check measures what that single tap did rather than the
-// accumulated sequence. screenState supplies the phone screen's active area
-// inside the captured frame; black bars around it never change and would
-// otherwise dilute the ratio.
-func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame) mnk.TapSequenceGuard {
-	previous := baseline
+// newTapSequenceGuard checks, after each tap, that the targets not tapped yet
+// still look as they did in the baseline. The first target and the one just
+// tapped are skipped: the pointer rests on the latter (the caller parks it on
+// the first target before the baseline), and a pressed key may still be
+// highlighted. A whole-screen comparison backs this up for layouts whose
+// remaining targets all happen to sit outside the changed area.
+func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint) mnk.TapSequenceGuard {
 	return func(ctx context.Context, executed int) (bool, string, error) {
 		started := time.Now()
 		current, err := capture(ctx)
@@ -146,14 +172,94 @@ func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState,
 			return false, "", err
 		}
 		region := tapSequenceCompareRegion(screenState, current)
-		ratio, comparable := tapSequenceFrameChange(previous, current, region)
-		previous = current
-		logging.Infof("agent", "tap_sequence", "screen check after tap %d: changed_ratio=%.4f comparable=%v region=%v check_ms=%d", executed, ratio, comparable, region, time.Since(started).Milliseconds())
-		if comparable && ratio <= tapSequenceLayoutChangeRatio {
-			return false, "", nil
+		ratio, comparable := tapSequenceFrameChange(baseline, current, region)
+		target, diff := tapSequenceChangedTarget(baseline, current, region, points, executed)
+		logging.Infof("agent", "tap_sequence", "screen check after tap %d: max_target_diff=%.1f changed_ratio=%.4f comparable=%v region=%v check_ms=%d", executed, diff, ratio, comparable, region, time.Since(started).Milliseconds())
+		switch {
+		case !comparable || ratio > tapSequenceLayoutChangeRatio:
+			return true, fmt.Sprintf("screen layout changed after tap %d (%.0f%% of the screen changed); remaining taps were not sent", executed, ratio*100), nil
+		case target >= 0:
+			return true, fmt.Sprintf("target %d changed after tap %d, so the planned layout no longer matches; remaining taps were not sent", target+1, executed), nil
 		}
-		return true, fmt.Sprintf("screen layout changed after tap %d (%.0f%% of the screen changed); remaining taps were not sent", executed, ratio*100), nil
+		return false, "", nil
 	}
+}
+
+// tapSequenceChangedTarget returns the index of the first remaining target
+// whose patch differs from the baseline beyond the threshold, or -1, and the
+// largest difference seen.
+func tapSequenceChangedTarget(baseline, current lumaFrame, region image.Rectangle, points []normalizedPoint, executed int) (int, float64) {
+	if region.Empty() || executed < 1 || executed > len(points) {
+		return -1, 0
+	}
+	radius := max(4, int(float64(region.Dx())*tapSequenceTargetPatchFraction+0.5))
+	locate := func(point normalizedPoint) image.Point {
+		return image.Point{
+			X: region.Min.X + int(point.X/1000*float64(region.Dx()-1)+0.5),
+			Y: region.Min.Y + int(point.Y/1000*float64(region.Dy()-1)+0.5),
+		}
+	}
+	skipped := []image.Point{locate(points[0]), locate(points[executed-1])}
+	maxDiff := 0.0
+	for i := executed; i < len(points); i++ {
+		center := locate(points[i])
+		near := false
+		for _, s := range skipped {
+			if absInt(center.X-s.X) <= 2*radius && absInt(center.Y-s.Y) <= 2*radius {
+				near = true
+				break
+			}
+		}
+		if near {
+			continue
+		}
+		diff := lumaPatchDiff(baseline, current, center, radius, tapSequenceTargetShiftPixels)
+		maxDiff = max(maxDiff, diff)
+		if diff > tapSequenceTargetChangeThreshold {
+			return i, maxDiff
+		}
+	}
+	return -1, maxDiff
+}
+
+// lumaPatchDiff returns the smallest mean absolute luminance difference
+// between the baseline patch at center and the current frame shifted by up to
+// shift pixels, sampling every other pixel.
+func lumaPatchDiff(baseline, current lumaFrame, center image.Point, radius, shift int) float64 {
+	best := -1.0
+	for dy := -shift; dy <= shift; dy++ {
+		for dx := -shift; dx <= shift; dx++ {
+			sum, count := 0, 0
+			for y := center.Y - radius; y <= center.Y+radius; y += tapSequenceSampleStep {
+				cy := y + dy
+				if y < 0 || y >= baseline.height || cy < 0 || cy >= current.height {
+					continue
+				}
+				for x := center.X - radius; x <= center.X+radius; x += tapSequenceSampleStep {
+					cx := x + dx
+					if x < 0 || x >= baseline.width || cx < 0 || cx >= current.width {
+						continue
+					}
+					sum += absInt(int(baseline.y[y*baseline.stride+x]) - int(current.y[cy*current.stride+cx]))
+					count++
+				}
+			}
+			if count == 0 {
+				continue
+			}
+			if diff := float64(sum) / float64(count); best < 0 || diff < best {
+				best = diff
+			}
+		}
+	}
+	return max(best, 0)
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // tapSequenceCompareRegion returns the phone screen's active area when it is

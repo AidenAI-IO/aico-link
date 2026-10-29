@@ -371,12 +371,21 @@ func (t *TouchGestureTool) Call(ctx context.Context, input string) (string, erro
 		return toolErrorResultf(ctx, CodeToolExecutionFailed, "touchscreen mapping unavailable: %v", err), nil
 	}
 	adapter := mnk.NewTouchGestureToolAdapter(t.mnkProvider)
-	if sequence, guarded := isTapSequenceInput(input); sequence && guarded && t.captureFrame != nil {
+	if points, guarded := tapSequenceInput(input); guarded && t.captureFrame != nil {
+		// Park the absolute-mode pointer on the first target so its hover
+		// state is part of the baseline instead of a change at its old spot.
+		if !t.touchscreen && t.mnkProvider != nil {
+			if err := t.mnkProvider.Move(ctx, points[0].X, points[0].Y); err == nil {
+				if err := sleepWithContext(ctx, tapSequencePointerParkDelay); err != nil {
+					return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence canceled before any tap: %v", err), nil
+				}
+			}
+		}
 		baseline, err := t.captureFrame(ctx)
 		if err != nil {
 			return toolErrorResultf(ctx, CodeToolExecutionFailed, "tap_sequence screen check unavailable, so no tap was sent: %v. Retry, or send the taps individually.", err), nil
 		}
-		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline))
+		adapter.WithTapSequenceGuard(newTapSequenceGuard(t.captureFrame, t.screen, baseline, points))
 	}
 	output, err := adapter.Call(ctx, input)
 	return mapMNKAdapterResult(ctx, output, err)
