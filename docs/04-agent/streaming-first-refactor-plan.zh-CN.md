@@ -632,6 +632,9 @@ bash scripts/run_tests_in_docker.sh --suite web
 - 英文方案已检查相对链接／源码行号、Markdown 标题锚点、代码围栏及空白；独立评审发现的一处本地标题链接错误已修复。这些只是文档检查，不是文档站点构建。
 - 已实现第一阶段的兼容性保持切片：新增与 Provider／Agent 无关的
   `src/agent/internal/stream` 包，定义 v2 事件身份、终态结果、协商音频帧元数据和支持 context 的有界队列，并添加确定性单元测试。`AudioPlaybackSession` 现在会在背压等待后重新检查硬上限，持续饱和时返回 `TIMEOUT`，停止后拒绝写入。
-- 已通过聚焦 Go 测试（包括 `-race`）、Go vet 及 C++ 语法检查。Docker 驱动的固件套件和在线／硬件 Provider 测试未运行：当前 Docker daemon 不可用，且本切片不包含需要使用已配置凭据验证的 Provider 行为。
+- 已继续完成兼容性保持的流式输入阶段：运行时回调现在会发出类型化 stream 事件；TTS 会话区分输入结束、取消、合成完成和播放排空；STT Provider 支持带 context 的批量调用、有界就绪前 PCM 缓冲、修订版 hypothesis、片段 final、turn commit 和可选的实时观察器。DashScope 与 Tencent 实时适配器现在提供有界转写事件通道，批处理 Provider 仍明确保持批处理能力。
+- 已新增 Provider 无关的转写折叠器和有界重放窗口契约。重放窗口能识别过期 epoch、过期 cursor、重复 sequence 以及需要快照／resync 的间隙。TTS 能力元数据现在报告有效文本粒度和增量音频支持，板端播放队列同时按 chunk 数量和 PCM 时长设置硬上限。
+- 已补充过期 STT 会话、就绪缓冲溢出、转写修订顺序、Provider 取消、观察器关闭、重放 cursor、TTS 能力声明及播放队列饱和等聚焦回归测试。
+- 已通过已实现阶段的聚焦 Go 测试（包括 `-race`）、Go vet 及独立 C++ 播放测试。Docker 驱动的固件套件、完整主机套件和付费在线／硬件 Provider 冒烟测试未运行：当前 Docker daemon 及部分主机监听能力不可用。环境变量中的凭据已加载，但未用于付费 Provider 调用。
 
 本中文版仅翻译并保留上述方案的范围与结论，不改变实施状态，也不新增性能或兼容性承诺。

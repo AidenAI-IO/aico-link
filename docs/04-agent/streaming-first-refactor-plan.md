@@ -975,10 +975,27 @@ already adopted those frameworks or reproduced their performance.
   with deterministic unit tests. `AudioPlaybackSession` now rechecks its hard
   queue limit after backpressure waits, returns `TIMEOUT` when saturation
   persists, and rejects writes after stop.
+- Continued the compatibility-preserving implementation through the streaming
+  input boundary: runtime callbacks now emit typed stream events; TTS sessions
+  distinguish input finish, cancellation, synthesis completion, and playback
+  drain; STT providers expose context-aware batch calls, bounded pre-ready PCM
+  buffering, revisioned hypotheses, segment finals, turn commits, and optional
+  live observers. DashScope and Tencent realtime adapters now publish bounded
+  transcript event channels, while batch-only providers remain explicit.
+- Added provider-independent transcript folding and bounded replay-window
+  contracts. The replay window detects stale epochs, expired cursors, duplicate
+  sequences, and gaps that require a snapshot/resync. TTS capability metadata
+  now reports effective text granularity and incremental-audio support, and
+  board playback bounds its queue by both chunk count and PCM duration.
+- Added focused regression coverage for stale STT sessions, readiness overflow,
+  transcript revision ordering, provider cancellation, observer shutdown,
+  replay cursors, TTS capability declarations, and playback queue saturation.
 - Checked relative links/source-line anchors, Markdown heading fragments, code
   fences, and whitespace; a separate design review identified a broken local
   heading link, which was corrected. These are document checks, not a docs build.
-- Focused Go tests (including `-race`), Go vet, and C++ syntax checks passed.
-  The Docker-backed firmware suites and live/hardware provider tests were not run:
-  the Docker daemon is unavailable, and this slice has no provider-specific
-  behavior to validate with the configured credentials.
+- Focused Go tests (including `-race`), Go vet, and the standalone C++ playback
+  suite passed for the implemented stages. The Docker-backed firmware suites,
+  full host suite, and paid live/hardware provider smoke tests were not run:
+  the Docker daemon and some host listener facilities are unavailable in the
+  current environment. Credentials are loaded but were not used for paid
+  provider calls.
