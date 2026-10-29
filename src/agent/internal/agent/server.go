@@ -2727,8 +2727,12 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var cursor *streamcontract.ReplayCursor
-	if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
-		sequence, err := strconv.ParseUint(raw, 10, 64)
+	rawSince := strings.TrimSpace(r.URL.Query().Get("since"))
+	if rawSince == "" {
+		rawSince = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	}
+	if rawSince != "" {
+		sequence, err := strconv.ParseUint(rawSince, 10, 64)
 		if err != nil {
 			http.Error(w, "invalid since cursor", http.StatusBadRequest)
 			return

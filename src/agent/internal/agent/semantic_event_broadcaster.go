@@ -34,6 +34,9 @@ func newSemanticEventBroadcaster(replayCapacity int) *semanticEventBroadcaster {
 // Emit implements stream.EventSink. The context bounds only the append
 // admission check; subscriber delivery is nonblocking and bounded.
 func (b *semanticEventBroadcaster) Emit(ctx context.Context, event stream.Event) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
