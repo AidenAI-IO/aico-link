@@ -189,12 +189,15 @@ function semanticField(value, ...names) {
 
 function semanticRequestID(event, payload) {
     return semanticField(event, 'turn_id', 'run_id', 'request_id') ||
-        semanticField(payload, 'request_id', 'RequestID', 'run_id', 'RunID', 'episode_id', 'EpisodeID');
+        semanticField(payload, 'request_id', 'RequestID', 'run_id', 'RunID') ||
+        semanticField(event, 'response_id', 'item_id', 'stream_id') ||
+        semanticField(payload, 'response_id', 'ResponseID', 'item_id', 'ItemID', 'session_id', 'SessionID');
 }
 
 function semanticEpisodeID(event, payload) {
     return semanticField(payload, 'episode_id', 'EpisodeID') ||
-        semanticField(event, 'turn_id', 'run_id');
+        semanticField(event, 'turn_id', 'run_id', 'response_id', 'item_id') ||
+        semanticField(payload, 'response_id', 'ResponseID', 'item_id', 'ItemID', 'session_id', 'SessionID');
 }
 
 function semanticTimestamp(event) {
@@ -248,8 +251,21 @@ function handleSemanticEvent(event) {
             });
             return;
         default:
-            if (event.kind) refreshHistoryFromContext();
+            if (semanticEventNeedsHistoryRefresh(event.kind)) refreshHistoryFromContext();
     }
+}
+
+function semanticEventNeedsHistoryRefresh(kind) {
+    return kind === 'text.final' ||
+        kind === 'transcript.segment_final' ||
+        kind === 'turn.committed' ||
+        kind === 'response.terminal' ||
+        kind === 'tool.call_ready' ||
+        kind === 'tool.completed' ||
+        kind === 'tool.failed' ||
+        kind === 'task.updated' ||
+        kind === 'stream.error' ||
+        kind === 'session.closed';
 }
 
 function handleServerEvent(data) {

@@ -226,6 +226,21 @@ handleSemanticEvent({
 });
 assert.equal(Array.from(messagesDiv.children)[4]._message.content, 'hello world');
 assert.equal(streamingAssistantDrafts['semantic-1'], undefined, 'semantic final should clear the draft');
+
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'text.delta',
+    response_id: 'response-a',
+    payload: {Text: 'a'}
+});
+handleSemanticEvent({
+    schema_version: 2,
+    kind: 'text.delta',
+    response_id: 'response-b',
+    payload: {Text: 'b'}
+});
+assert.equal(streamingAssistantDrafts['response-a'].content, 'a');
+assert.equal(streamingAssistantDrafts['response-b'].content, 'b');
 `
 ].join('\n');
 
