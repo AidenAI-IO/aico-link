@@ -460,7 +460,17 @@ func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamin
 	if events == nil {
 		return
 	}
-	for event := range events {
+	for {
+		var event stream.TranscriptEvent
+		select {
+		case <-session.eventsDone:
+			return
+		case next, ok := <-events:
+			if !ok {
+				return
+			}
+			event = next
+		}
 		d.recordSTTMu.Lock()
 		current := d.recordSTT == session
 		observer := d.transcriptObserver

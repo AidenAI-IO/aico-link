@@ -14,8 +14,10 @@ import (
 var errStreamingSTTFinalizeTimeout = errors.New("streaming STT finalize timed out")
 
 type streamingSTTSession struct {
-	uploader STTStreamUploader
-	events   <-chan stream.TranscriptEvent
+	uploader       STTStreamUploader
+	events         <-chan stream.TranscriptEvent
+	eventsDone     chan struct{}
+	eventsDoneOnce sync.Once
 
 	mu           sync.Mutex
 	transcript   string
@@ -37,7 +39,7 @@ func beginStreamingSTTSession(ctx context.Context, client STTClient, cfg STTStre
 	if source, ok := uploader.(STTTranscriptEventSource); ok {
 		events = source.TranscriptEvents()
 	}
-	return &streamingSTTSession{uploader: uploader, events: events}, nil
+	return &streamingSTTSession{uploader: uploader, events: events, eventsDone: make(chan struct{})}, nil
 }
 
 // TranscriptEvents returns optional revisioned transcript updates. A nil
@@ -132,7 +134,15 @@ func (s *streamingSTTSession) FinalizeWithTimeout(timeout time.Duration) (string
 }
 
 func (s *streamingSTTSession) Close() error {
-	if s == nil || s.uploader == nil {
+	if s == nil {
+		return nil
+	}
+	s.eventsDoneOnce.Do(func() {
+		if s.eventsDone != nil {
+			close(s.eventsDone)
+		}
+	})
+	if s.uploader == nil {
 		return nil
 	}
 	if err := s.uploader.Close(); err != nil {
