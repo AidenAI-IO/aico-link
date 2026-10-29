@@ -480,8 +480,8 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         _k_record(suite="memory_v1"),
         _k_record(suite="memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
                   judge_prompt_version="v3", git_branch='<img src=x>', suite_sha256="memory-v2"),
-        _k_record(suite="episode_memory_v1"),
-        _k_record(suite="episode_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+        _k_record(suite="notification_memory_v1"),
+        _k_record(suite="notification_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
                   judge_prompt_version="v3", git_branch='<img src=x>'),
         _k_record(suite="shell_utility_v1", execution_environment="isolated"),
         _k_record(suite="skill_discovery_v1", execution_environment="external",
@@ -601,7 +601,7 @@ assert.deepEqual(DATA.capabilities, ['Memory', 'Shell utilities', 'Diagnostics',
 assert(!overviewHTML.includes('skill_discovery_v1'));
 assert(el('diagnostic-results').innerHTML.includes('Skill read: 25.0%'));
 assert(datasets.find(s => s.suite === 'skill_discovery_v1').latest.environment_label === 'External device');
-assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
+assert.deepEqual(namesForFilter('Memory').sort(), ['memory_v1', 'notification_memory_v1']);
 assert.deepEqual(namesForFilter('Shell utilities'), ['shell_utility_v1']);
 assert(namesForFilter('Other').includes('other'));
 assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);

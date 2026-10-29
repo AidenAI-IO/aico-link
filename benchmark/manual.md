@@ -1290,7 +1290,7 @@ were called or which environment executed the task:
 
 | Test area | Suites | Primary objective |
 | --- | --- | --- |
-| Memory | `memory_v1`, `memory_admission_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
+| Memory | `memory_v1`, `memory_admission_v1`, `notification_memory_v1`, `personamem_lt_recall_v1`, `quick_capture_v1`, `episode_memory_before_v1`, `episode_memory_after_v1`, `episode_memory_legacy_v1` | Save, retrieve, and apply information |
 | Experience reflection | `episode_reflection_v1`, `episode_reflection_v2` | Extract evidence-backed lessons |
 | Visual grounding | `perception_v1` | Identify and locate visual targets |
 | UI operation | `mobilegym_basic`, `mobilegym_scroll_regression`, `mobilegym_scroll_sweep`, `phone_control_v1`, `adb_android_basic`, `adb_android_text_editing`, `adb_android_builtin_apps`, `vphone_ios_basic`, `app_workflow_v1`, `quick_action_v1` | Complete interface and application tasks |

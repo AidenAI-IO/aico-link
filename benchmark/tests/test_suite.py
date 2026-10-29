@@ -1511,24 +1511,6 @@ def test_personamem_lt_recall_suite_uses_deterministic_answers():
     assert all(task.answer_format == "option_letter" for task in suite.tasks)
 
 
-def test_episode_memory_suite_guards_against_setup_context_leakage():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_memory_v1.json"
-    assert suite_path.read_text(encoding="utf-8").isascii()
-    suite = load_suite(suite_path)
-    assert suite.status == "legacy"
-    task_by_id = {task.id: task for task in suite.tasks}
-    task = task_by_id["reuse_success_episode_for_planning"]
-
-    assert task.setup["type"] == "agent_prompt"
-    assert task.setup["clear_history_after"] is True
-    assert "shell" not in task.setup["prompt"].lower()
-    assert "current_time" not in task.setup["prompt"]
-    task_text = " ".join(
-        [task.prompt, task.description_for_judge, *(item.check for item in task.rubric)]
-    )
-    assert "recall_device_memory" not in task_text
-
-
 def test_episode_reflection_suite_covers_assessment_contracts():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v1.json"
     suite = load_suite(suite_path)
