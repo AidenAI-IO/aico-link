@@ -431,6 +431,8 @@ class ReleaseNotesTests(GitFixture):
         for record in (business, ota, self.make()):
             with self.subTest(kind=record["kind"]):
                 text = release.notes(record)
+                self.assertNotIn(f"# Aico Link {record['tag']}", text)
+                self.assertTrue(text.startswith(f"Channel: `{record['channel']}`; kind: `{record['kind']}`."))
                 for paths in record["changes"].values():
                     for path in paths:
                         self.assertNotIn(path, text)

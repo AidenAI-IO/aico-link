@@ -119,6 +119,8 @@ audit_boot() {
         cmp "${kernel}" "${KERNEL_IMAGE}"
         bootargs=$(fdtget -t s "${fdt}" /chosen bootargs)
         model=$(fdtget -t s "${fdt}" / model)
+        bash "${SCRIPT_DIR}/audit-poweroff-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
         bash "${SCRIPT_DIR}/audit-tf-dtb.sh" "${fdt}" \
             >>"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
         fiq_status=$(fdtget -t s "${fdt}" /fiq-debugger status)

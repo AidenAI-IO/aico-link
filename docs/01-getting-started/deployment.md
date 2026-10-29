@@ -57,11 +57,20 @@ The image installs these main runtime trees:
 /userdata/debian/ota/config.json               # Debian OTA factory configuration
 ```
 
-The Pico Zero Debian device tree does not enable the vendor
-`restart-poweroff` node. A kernel poweroff therefore follows the board's
-native power-management path instead of deliberately rebooting through U-Boot.
-This applies after rebuilding and flashing the BSP boot images; an existing
-board keeps the device tree from its currently installed image.
+The Aico Link Debian device tree deletes the vendor `restart-poweroff` node
+inherited from `rv1106-evb.dtsi`. The compiled production DTB and both packaged
+boot images are audited for this node, so Linux poweroff cannot deliberately
+restart through the vendor fallback. This requires rebuilding and installing
+the BSP boot images; updating only the business package leaves the installed
+device tree unchanged.
+
+Normal `sudo shutdown now`, `sudo poweroff` and `sudo systemctl poweroff` use
+the final MCU shutdown hook. After services stop, swap is disabled and
+persistent filesystems are unmounted or read-only, the helper answers the MCU's
+state probe with SHUTTING_DOWN and sends SHUTDOWN_READY. The MCU then removes
+power. Reboot, halt and service/package restarts do not run this handshake.
+If the MCU is unavailable, the hook times out after ten seconds and Linux
+continues to its poweroff halt; physical power removal is unconfirmed.
 
 `overlay-debian/` owns the Debian platform additions. The rootfs stage installs
 `aico-business`, BSP libraries and modules, and the OTA trust key. Business models

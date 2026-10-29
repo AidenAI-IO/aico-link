@@ -423,16 +423,16 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (17 cases) |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (19 cases) |
 | Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select a suite |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
-| Manual dispatch | `adb` | Native Android comparisons and Bridge capabilities on the configured emulator |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (17 cases) |
+| Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
 case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
 `runnable` flag is true. This includes both ADB comparison pairs (four cases)
-on the runner's configured Android emulator. ADB cases remain available through
+and the built-in app case on the runner's configured Android emulator. ADB cases remain available through
 the manual `hardware` profile and use the same exclusive device lock in every
 profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
@@ -456,11 +456,14 @@ from Agent capability failures. The same suite with profile `hardware` selects
 the external iOS case; profile `all` selects both environments.
 
 For native Android, dispatch profile `adb` with
-`suites/adb_android_basic.json` for general operations or
-`suites/adb_android_text_editing.json` for text editing. Leave the suite input
-blank to run both comparison pairs and the dedicated Bridge capability suite.
-See [Android suites](../../benchmark/adbandroid/README.md#test-suite)
-for coverage and device prerequisites.
+`suites/adb_android_basic.json` for general operations,
+`suites/adb_android_text_editing.json` for text editing, or
+`suites/adb_android_builtin_apps.json` for Chrome, Maps, Camera, Photos,
+Files, Messages, Clock, and Contacts workflows.
+Leave the suite input blank to run both comparison pairs, the built-in app
+suite, and the dedicated Bridge capability suite (six cases). See
+[Android suites](../../benchmark/adbandroid/README.md#test-suite) for coverage
+and device prerequisites.
 
 Cases may declare `task_ids` to reuse a subset of an existing suite. IDs must
 exist, be unique, and support the case's target platform. An empty list selects

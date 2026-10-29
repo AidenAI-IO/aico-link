@@ -1,10 +1,12 @@
 package mcu
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -175,12 +177,15 @@ func ShutdownHook(action, port, directory string) error {
 	if action != "poweroff" {
 		return nil
 	}
+	if os.Geteuid() != 0 {
+		return errors.New("MCU shutdown hook requires root")
+	}
 	boot, err := os.ReadFile("/proc/sys/kernel/random/boot_id")
 	if err != nil {
 		return err
 	}
 	pending, err := loadShutdownIntent(directory, strings.TrimSpace(string(boot)))
-	if err != nil || !pending {
+	if err != nil {
 		return err
 	}
 	mounts, err := os.ReadFile("/proc/self/mountinfo")
@@ -199,11 +204,65 @@ func ShutdownHook(action, port, directory string) error {
 		return err
 	}
 	defer uart.Close()
-	wire, _ := Encode(Frame{EVENT, 0, ShutdownReady, []byte{1, 0, 0, 0}})
-	if n, err := uart.Write(wire); err != nil {
-		return err
-	} else if n != len(wire) {
-		return errors.New("incomplete SHUTDOWN_READY transmission")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return finishShutdown(ctx, uart, pending, func() error { return DrainSerial(uart) })
+}
+
+// Called only at systemd's final poweroff stage, after checking storage safety.
+// A normal Linux poweroff has no daemon intent: answer the MCU's GET_STATE
+// before sending SHUTDOWN_READY so it enters shutdown and clears its ON target.
+// Read must be bounded (OpenSerial polls for 10 ms), and drain must finish TX.
+func finishShutdown(ctx context.Context, uart io.ReadWriter, pending bool, drain func() error) error {
+	write := func(frame Frame) error {
+		wire, err := Encode(frame)
+		if err != nil {
+			return err
+		}
+		if n, err := uart.Write(wire); err != nil {
+			return err
+		} else if n != len(wire) {
+			return io.ErrShortWrite
+		}
+		return drain()
 	}
-	return DrainSerial(uart)
+	ready := Frame{EVENT, 0, ShutdownReady, []byte{1, 0, 0, 0}}
+	var parser Parser
+	var lastReady time.Time
+	var buffer [256]byte
+	for ctx.Err() == nil {
+		if pending && (lastReady.IsZero() || time.Since(lastReady) >= 100*time.Millisecond) {
+			if err := write(ready); err != nil {
+				return err
+			}
+			lastReady = time.Now()
+		}
+		n, err := uart.Read(buffer[:])
+		if err != nil {
+			return err
+		}
+		for _, frame := range parser.Feed(buffer[:n], time.Now()) {
+			if frame.Type != REQ {
+				continue
+			}
+			var payload []byte
+			switch {
+			case frame.Command == GetState && len(frame.Payload) == 0:
+				payload = []byte{Success, 1, 1, 0, 0, ShuttingDown}
+			case frame.Command == ShutdownRequest && bytes.Equal(frame.Payload, []byte{1, 0, 0, 0}):
+				payload = []byte{Success}
+			default:
+				continue
+			}
+			if err := write(Frame{RESP, frame.Seq, frame.Command, payload}); err != nil {
+				return err
+			}
+			pending = true
+			lastReady = time.Time{}
+		}
+	}
+	// Successful MCU power removal terminates this process. Keep answering
+	// probes and retrying READY until then: a buffered stale probe may no longer
+	// match the MCU's pending request, and V1 events have no acknowledgement.
+	return fmt.Errorf("MCU power removal did not complete: %w", ctx.Err())
 }

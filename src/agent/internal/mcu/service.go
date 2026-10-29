@@ -191,14 +191,15 @@ func (s *Service) HandleFrame(f Frame) Frame {
 				status = InternalError
 			} else if err := s.shutdown.Begin(); err != nil {
 				status = InternalError
-				log.Printf("MCU shutdown intent failed: %v; proceeding with Linux cleanup without SHUTDOWN_READY", err)
+				log.Printf("MCU shutdown intent failed: %v; proceeding with Linux cleanup; final hook requires storage safety and a fresh handshake", err)
 			}
 			s.mu.Lock()
 			s.shutdownStatus = status
 			s.mu.Unlock()
 			if s.shutdown != nil {
 				// MCU's forced cutoff is already running. Stop Linux even if
-				// intent persistence failed; the final hook then withholds READY.
+				// intent persistence failed; the final hook must verify storage
+				// and establish its own handshake without a valid intent.
 				time.AfterFunc(100*time.Millisecond, s.shutdown.Commit)
 			}
 		}

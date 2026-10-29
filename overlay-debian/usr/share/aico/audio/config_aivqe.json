@@ -73,7 +73,7 @@
       "attack_time"  : "float:200.0",
       "release_time" : "float:200.0",
       "attenuate_time" : "float:1000",
-      "max_gain": "float:25.0",
+      "max_gain": "float:12.0",
       "max_peak": "float:-1.0",
       "fRth0": "float:-55",
       "fRth1": "float:-45",
@@ -92,7 +92,7 @@
       "swU": 1,
       "psiMin": "float:0.02",
       "psiMax": "float:0.516",
-      "fGmin": "float:0.01",
+      "fGmin": "float:0.2",
       "Sup_Freq1": -3588,
       "Sup_Freq2": -3588,
       "Sup_Energy1" : "float:10000.0",
@@ -142,7 +142,7 @@
       "ksiThd_low": "float:0.5"
     },
     "howl": {
-      "status" : "enable",
+      "status" : "disable",
       "mode" : 4
     },
     "doa": {

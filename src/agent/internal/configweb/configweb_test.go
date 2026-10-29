@@ -504,10 +504,6 @@ provider = ""
 // formatting, or cleaning up according to settings that failed validation.
 func TestStorageManagerIgnoresRejectedStorageSettings(t *testing.T) {
 	options := testOptions(t)
-	// The manager publishes its state mirror from a background goroutine, so keep
-	// that file out of the test's TempDir: cleanup would otherwise race the write.
-	options.StorageStatePath = filepath.Join(os.TempDir(), "aico-storage-"+strconv.FormatInt(time.Now().UnixNano(), 10)+".state")
-	defer os.Remove(options.StorageStatePath)
 	config := `[model_settings.model]
 provider = "fake"
 

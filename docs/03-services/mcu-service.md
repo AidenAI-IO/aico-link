@@ -7,7 +7,8 @@ sidebar_position: 7
 `mcu_service` replaces the diagnostic Python logger under the existing
 `aico-mcu-event.service` unit. It exclusively owns `/dev/ttyS5` at 115200 8N1,
 answers MCU state probes, forwards hardware events, and coordinates Linux
-poweroff requested by the MCU or by the local root-only CLI. Local applications use
+poweroff requested by the MCU, the local root-only CLI or standard Linux shutdown
+commands. Local applications use
 `/run/mcu_service/mcu_service.sock` (`0660 root:aico`); the Agent exposes the
 same operations over USB ECM or loopback HTTP.
 
@@ -215,7 +216,14 @@ the MCU has already cut power.
 If the state response cannot be transmitted, a ten-second fallback still stops
 Linux safely. As with recovery of a persisted intent after a daemon restart,
 MCU power removal is then unconfirmed and must be checked before a wake test.
-Bare `systemctl poweroff` does not provide the coordinated handshake.
+Normal `sudo shutdown now`, `sudo poweroff` and `sudo systemctl poweroff` also
+coordinate MCU power removal through the final shutdown hook. They need no
+daemon intent: after storage teardown, the hook answers the MCU's next valid
+GET_STATE with SHUTTING_DOWN before sending SHUTDOWN_READY. A valid MCU
+SHUTDOWN_REQUEST arriving at this stage is acknowledged before READY as well.
+The MCU's cutoff timer therefore starts only after storage is safe for this
+path. Commands that force shutdown and bypass systemd's final hooks are not
+supported for MCU power removal.
 Existing board reports for OFF-switch touch/timer wake describe
 older firmware behavior and are not acceptance evidence for the corrected policy.
 
@@ -223,14 +231,21 @@ The daemon persists current-boot intent on tmpfs before ACK, then schedules
 systemd poweroff after writing the response (with a bounded fallback if UART
 cannot deliver it). `/usr/lib/systemd/system-shutdown/aico-mcu-shutdown`
 invokes the statically linked service binary at the final shutdown stage.
-It sends SHUTDOWN_READY only for `poweroff` with a valid root-owned intent,
-inactive swap and no writable persistent filesystems. Service restarts,
-package upgrades and Linux reboots do not authorize MCU power removal.
+It runs as root and sends SHUTDOWN_READY only for `poweroff`, with inactive
+swap and no writable persistent filesystems. A valid root-owned current-boot
+intent allows immediate READY; without an intent the hook establishes the
+handshake described above. Malformed, unsafe or stale intent files fail closed.
+The helper continues answering probes and retrying READY every 100 ms until
+the MCU removes power, for at most ten seconds. This handles buffered stale
+probes and lost completion events. If it is still running at the deadline, it
+reports unconfirmed power removal and lets Linux finish halting. Service
+restarts, package upgrades, halt and Linux reboots never authorize this handshake.
 
 If intent persistence fails for an MCU-requested shutdown, RV replies
 INTERNAL_ERROR but still schedules Linux cleanup: the MCU's forced cutoff has
 already started and cannot be canceled by that error. The final hook withholds
-SHUTDOWN_READY without a valid intent. A local software-poweroff request has no
+SHUTDOWN_READY without either a valid intent or a fresh final-stage handshake
+after storage is safe. A local software-poweroff request has no
 preexisting MCU cutoff, so persistence failure instead leaves it unstarted.
 
 The MCU's 30-second deadline starts at its shutdown state transition, even if
@@ -241,6 +256,12 @@ load. The final helper withholds READY on an unsafe filesystem state; it
 cannot cancel the MCU's forced cutoff. Audit other final shutdown hooks and
 measure the last write and rail cutoff. Do not claim this physical timing
 from passing host tests or a network reconnect alone.
+
+The Aico production device tree removes the EVB's inherited `restart-poweroff`
+node. Install rebuilt BSP boot images as well as the updated `mcu_service`;
+updating userspace alone leaves the kernel's restart fallback active if MCU
+power removal fails. The `poweroff-dtb` suite checks the compiled custom tree,
+and the BSP audit checks the DTBs extracted from both boot images.
 
 ```sh
 systemctl status aico-mcu-event.service

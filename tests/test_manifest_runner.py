@@ -36,7 +36,7 @@ class ManifestRunnerTest(unittest.TestCase):
             "manifest-runner", "contracts", "cpp-host", "go-static", "go-unit",
             "web", "benchmark-python", "skillopt-python", "mcu-event-service",
             "debian-rootfs-grow", "tf-card-dtb", "media-page-compat", "rk628-recovery",
-            "aico-power",
+            "aico-power", "poweroff-dtb",
         })
         self.assertEqual(full, {suite["name"] for suite in suites if suite["required"]})
         self.assertIn("script-contracts", full)

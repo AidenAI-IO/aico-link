@@ -218,7 +218,8 @@ func TestPoweroffIntentResumeAndFailure(t *testing.T) {
 		t.Fatal("failed persistence acknowledged")
 	}
 	// Even without a marker, schedule ordinary Linux poweroff to reduce writes
-	// before MCU's forced deadline. The final hook will withhold READY.
+	// before MCU's forced deadline. The final hook must establish its own
+	// handshake after storage is safe if no intent was persisted.
 	p.Commit()
 	select {
 	case <-executed:

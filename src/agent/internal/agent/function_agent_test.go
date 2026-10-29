@@ -868,9 +868,9 @@ func TestFunctionAgentWaitStableScreenDoesNotTreatMotionAsActionResult(t *testin
 
 func TestFunctionAgentUsesMarkedTouchGestureScreenshotForModel(t *testing.T) {
 	raw := solidJPEG(t, 120, 80, color.RGBA{R: 24, G: 48, B: 72, A: 255})
-	marked, err := drawTouchGesturePostMarker(raw, touchGesturePostMarkerInfo{Type: "tap", X: 500, Y: 500})
+	marked, err := drawTouchGesturePostMarkers(raw, []touchGesturePostMarkerInfo{{Type: "tap", X: 500, Y: 500}})
 	if err != nil {
-		t.Fatalf("drawTouchGesturePostMarker() error = %v", err)
+		t.Fatalf("drawTouchGesturePostMarkers() error = %v", err)
 	}
 	agent := &FunctionAgent{Tools: []langtools.Tool{&stubTool{name: "touch_gesture", visual: true}}}
 	observation := fmt.Sprintf(`{"action_output":"ok","width":120,"height":80,"format":"jpeg","size":%d,"data":"%s"}`, len(marked), base64.StdEncoding.EncodeToString(marked))
