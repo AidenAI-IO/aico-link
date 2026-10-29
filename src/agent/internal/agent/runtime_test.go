@@ -2464,7 +2464,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	largeSchemaTool := &structuredStubTool{
 		// Cross the summary threshold while leaving room for the protected
 		// head/tail messages under the hard input budget after summarization.
-		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 740)},
+		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 1750)},
 		schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2492,6 +2492,10 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 		&ToolSet{tools: map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}},
 		NewSkillIndex(),
 	)
+	// NewRuntimeWithDeps registers memory tools. Keep this budget fixture
+	// independent of their evolving schemas: only the synthetic tool belongs
+	// in the request whose compaction behavior this test exercises.
+	runtime.tools.tools = map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}
 	runtime.contextManager = manager
 	runtime.logger = nil
 
