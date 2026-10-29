@@ -78,6 +78,13 @@ def _build_card(data: dict[str, Any], dashboard_url: str) -> dict[str, Any]:
                  for s in suites]
         elements += [{"tag": "hr"},
                      {"tag": "markdown", "content": "**pass@1 by dataset** (change vs previous 7 days)\n" + "\n".join(lines)}]
+        changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
+        note = "Changes describe each window's task mix, not matched runs."
+        if changed:
+            noun = "comparison" if changed == 1 else "comparisons"
+            verb = "has" if changed == 1 else "have"
+            note += f" {changed} dataset {noun} {verb} configuration changes; see the dashboard."
+        elements.append({"tag": "markdown", "content": note})
 
     if data.get("warnings"):
         elements.append({"tag": "markdown", "content": "⚠️ Some data is incomplete; see the dashboard."})

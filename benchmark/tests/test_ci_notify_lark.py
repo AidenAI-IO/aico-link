@@ -82,6 +82,12 @@ def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
     assert "Config changed" not in text
     assert "google/a" not in text and "anthropic/b" not in text
     assert "9/12" not in text and "1 run" not in text
+    assert "1 dataset comparison has configuration changes" in text
+
+
+def test_card_labels_window_comparisons_without_configuration_changes():
+    text = _text(_build_card(_data(), "https://example.com/d.html"))
+    assert "Changes describe each window's task mix, not matched runs." in text
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():

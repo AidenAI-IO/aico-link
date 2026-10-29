@@ -1229,8 +1229,10 @@ Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
 over the week with its change from the previous seven days (green up, red down),
 and links to the dashboard. Each dataset occupies one line with only its name,
-pass@1, and change. Run counts and configuration differences are available in
-the detailed reports. Historical data comes
+pass@1, and change. The card notes that changes describe different task mixes
+and counts datasets with configuration changes. Run counts and the distinct
+configuration values in each window are available in the detailed reports.
+Historical data comes
 from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
 downloaded.
 
@@ -1361,6 +1363,8 @@ set `send_notification` to `false` when dispatching manually.
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
 previous seven days in percentage points. Rates describe each window's task mix;
+configuration differences include every recorded value in each window, not
+just the final run's settings. These comparisons are not matched-run estimates;
 a change is unknown when either window has no measured rate. Cost and token totals are reported only
 when every included suite run supplies them with sample counts covering every
 eligible attempt. The report is included in the Actions job
