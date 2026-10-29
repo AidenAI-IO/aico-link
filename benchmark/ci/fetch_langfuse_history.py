@@ -119,9 +119,8 @@ def fetch_benchmark_history(
                                  from_start_time=cutoff, to_start_time=now,
                                  fields="core,metadata"):
             metadata = experiment.metadata or {}
-            # Experiments published before the Aico rename use aiden_benchmark.
-            if not any(str(metadata.get(marker, "")).lower() == "true"
-                       for marker in ("aico_benchmark", "aiden_benchmark")):
+            if not all(isinstance(metadata.get(key), str) and metadata[key].strip()
+                       for key in ("benchmark_run_id", "benchmark_suite")):
                 continue
             if branch_filter and metadata.get("git_branch") != branch_filter:
                 if not metadata.get("git_branch"):
