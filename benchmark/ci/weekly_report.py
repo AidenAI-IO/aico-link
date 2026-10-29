@@ -80,15 +80,18 @@ def _config_value(record: dict[str, Any], field: str) -> str:
 
 
 def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """List settings whose latest value differs between the two windows."""
+    """List settings with different values across the two windows."""
     if not current or not previous:
         return []
-    def latest(records: list[dict[str, Any]]) -> dict[str, Any]:
-        return max(records, key=lambda record: parse_timestamp(record["timestamp"]))
-    now, before = latest(current), latest(previous)
-    return [{"field": label, "previous": _config_value(before, field), "current": _config_value(now, field)}
-            for field, label in CONFIG_LABELS.items()
-            if _config_value(before, field) != _config_value(now, field)]
+    def values(records: list[dict[str, Any]], field: str) -> list[str]:
+        return sorted({_config_value(record, field) for record in records})
+
+    changes = []
+    for field, label in CONFIG_LABELS.items():
+        before, now = values(previous, field), values(current, field)
+        if before != now:
+            changes.append({"field": label, "previous": ", ".join(before), "current": ", ".join(now)})
+    return changes
 
 
 # Primary test objectives, in report order. Tool calls are a mechanism shared
@@ -235,8 +238,8 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
-        "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
-        "Configuration changes list settings that differ between the two windows' latest runs.", "",
+        "", "Rates are descriptive totals over each window's task mix, not matched-run comparisons.",
+        "Configuration changes compare all recorded values in the two windows.", "",
         "### By test area", "",
         "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",

@@ -1241,7 +1241,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "selected_task_ids": manifest.get("selected_task_ids"),
         "active_skills": manifest.get("active_skills"),
     }
-    metadata = {"aico_benchmark": "true"}
+    metadata = {}
     for key, value in values.items():
         if value is None or value == "":
             continue

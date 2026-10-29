@@ -408,6 +408,48 @@ def test_data_snapshot_can_be_reused_by_cli(tmp_path):
     assert "Scores unavailable." in (tmp_path / "week.md").read_text()
 
 
+def test_cli_excludes_retired_suite_names_from_all_report_views(tmp_path):
+    from ci.generate_dashboard import cli
+
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps({
+        "generated_at": REPORT_END.isoformat(),
+        "history": [_record(run_id="current"),
+                    _record(suite="retired_suite_v1", run_id="retired", passed=4, pass_at_1=1.0)],
+        "warnings": ["retired: missing or invalid metrics: tasks.",
+                     "retired: failure details unavailable: 0 / 4 attempt outputs inspected.",
+                     "current: missing or invalid metrics: tasks.",
+                     "Langfuse experiment history is incomplete: APIError."],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    weekly = tmp_path / "weekly.md"
+    html = tmp_path / "dashboard.html"
+
+    assert cli(["--history-json", str(source), "--output", str(html),
+                "--data-output", str(data), "--weekly-output", str(weekly)]) == 0
+    report = json.loads(data.read_text(encoding="utf-8"))
+    assert [record["suite"] for record in report["history"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["weekly"]["suites"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["suites"]] == ["memory_v1"]
+    assert "retired_suite_v1" not in weekly.read_text(encoding="utf-8")
+    assert "retired_suite_v1" not in html.read_text(encoding="utf-8")
+    assert report["warnings"] == ["current: missing or invalid metrics: tasks.",
+                                  "Langfuse experiment history is incomplete: APIError."]
+    assert "retired:" not in weekly.read_text(encoding="utf-8")
+
+
+def test_catalog_suite_names_match_loader_fallback(tmp_path, monkeypatch):
+    from ci import generate_dashboard as dashboard
+
+    (tmp_path / "ci").mkdir()
+    catalog = tmp_path / "ci" / "suites.json"
+    catalog.write_text(json.dumps({"cases": [{"suite": "unnamed.json"}, {"suite": "named.json"}]}))
+    (tmp_path / "unnamed.json").write_text('{}')
+    (tmp_path / "named.json").write_text('{"name": "declared"}')
+    monkeypatch.setattr(dashboard, "_CATALOG_PATH", catalog)
+    assert dashboard._current_suite_names() == {"unnamed", "declared"}
+
+
 def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     import shutil
     import subprocess

@@ -1226,13 +1226,19 @@ history from the workflow's branch in Langfuse by default, writes `weekly-report
 to the step summary, keeps the HTML and JSON artifacts for 90 days, and sends a
 Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 `BENCHMARK_REPORT_LARK_WEBHOOK_SECRET` are configured. The card summarizes the
-last seven days (runs, overall pass@1, known cost), lists each dataset's pass@1
-over the week with its change from the previous seven days (green up, red down),
-and links to the dashboard. Each dataset occupies one line with only its name,
-pass@1, and change. Run counts and configuration differences are available in
-the detailed reports. Historical data comes
-from Langfuse v4 experiments and scores. GitHub Actions artifacts are not
-downloaded.
+last seven days (runs, overall pass@1, known cost), then groups datasets under
+their test areas. Each area retains its pass@1 and change from the previous
+seven days, and each dataset occupies one line with its name, pass@1, and
+change (green up, red down), ordered by pass@1 within each area. The card links
+to the dashboard, notes that changes describe different task mixes, and counts
+datasets with configuration changes. When configurations differ, the card links
+directly to the workflow summary's weekly comparisons. The dashboard button
+continues to open the per-run results. Run counts and the distinct configuration
+values in each window are available in the weekly report.
+Historical data comes
+from Langfuse v4 experiments and scores. Only suites present in the current
+CI catalog are included, so retired or renamed suite names do not appear as
+separate results. GitHub Actions artifacts are not downloaded.
 
 For browser preview, bind an HTTPS custom domain to the `firmware-agent` OSS
 bucket, or serve the report through an existing HTTPS reverse proxy. Set the
@@ -1361,6 +1367,8 @@ set `send_notification` to `false` when dispatching manually.
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
 previous seven days in percentage points. Rates describe each window's task mix;
+configuration differences include every recorded value in each window, not
+just the final run's settings. These comparisons are not matched-run estimates;
 a change is unknown when either window has no measured rate. Cost and token totals are reported only
 when every included suite run supplies them with sample counts covering every
 eligible attempt. The report is included in the Actions job
@@ -1382,7 +1390,8 @@ uv run python -m ci.generate_dashboard \
 # Send Lark notification (requires BENCHMARK_REPORT_LARK_WEBHOOK_URL and BENCHMARK_REPORT_LARK_WEBHOOK_SECRET)
 uv run python -m ci.notify_lark \
   --data-json dashboard-data.json \
-  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html"
+  --dashboard-url "https://reports.example.com/benchmark/weekly/123-1/dashboard.html" \
+  --weekly-report-url "https://github.com/owner/repo/actions/runs/123#summary"
 ```
 
 Use `--branch-filter main` for one branch (records with unknown branches are

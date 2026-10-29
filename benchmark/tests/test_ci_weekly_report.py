@@ -92,6 +92,18 @@ def test_changes_name_settings_that_differ_between_the_windows():
     assert "agent model: model → anthropic/new; judge prompt: v2 → v3" in render_weekly(report, [])
 
 
+def test_config_changes_include_all_values_even_when_latest_runs_match():
+    report = summarize_weekly([
+        _record("2026-10-12T00:00:00+00:00", judge_prompt_version="v3"),
+        _record("2026-10-11T00:00:00+00:00", judge_prompt_version="v2"),
+        _record("2026-10-05T00:00:00+00:00", judge_prompt_version="v3"),
+        _record("2026-10-04T00:00:00+00:00", judge_prompt_version="v1"),
+    ], end=END)
+    assert report["suites"][0]["config_changes"] == [
+        {"field": "judge prompt", "previous": "v1, v3", "current": "v2, v3"},
+    ]
+
+
 def test_empty_window_is_reported_explicitly():
     assert "No benchmark runs in this window" in render_weekly(summarize_weekly([], end=END), [])
 
