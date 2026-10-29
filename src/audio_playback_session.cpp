@@ -149,7 +149,14 @@ void AudioPlaybackSession::playback_loop() {
             if (!queue_.empty()) {
                 chunk = std::move(queue_.front());
                 queue_.pop();
-                queue_bytes_ -= chunk.size();
+                // Keep accounting defensive for test fixtures or older
+                // callers that may have populated the legacy chunk queue
+                // without updating the byte counter.
+                if (queue_bytes_ >= chunk.size()) {
+                    queue_bytes_ -= chunk.size();
+                } else {
+                    queue_bytes_ = 0;
+                }
                 cv_.notify_one();  // wake push_chunk back-pressure waiter
             } else if (final_received_) {
                 // Queue drained and final chunk received — no more PCM writes are
