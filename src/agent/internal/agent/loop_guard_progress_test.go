@@ -87,7 +87,9 @@ func TestPointerFinalPointFollowsPointerActions(t *testing.T) {
 	}{
 		{"touch_gesture", `{"type":"long_press","point":{"x":10,"y":20}}`, "", &normalizedPoint{X: 10, Y: 20}},
 		{"touch_gesture", `{"type":"swipe","start":{"x":500,"y":900},"end":{"x":500,"y":300}}`, "", &normalizedPoint{X: 500, Y: 300}},
-		{"touch_gesture", `{"type":"swipe","start":{"x":500,"y":900},"direction":"up"}`, "", nil},
+		{"touch_gesture", `{"type":"swipe","start":{"x":500,"y":900},"direction":"up"}`, "", &normalizedPoint{X: 500, Y: 0}},
+		{"touch_gesture", `{"type":"swipe","start":{"x":500,"y":900},"direction":"left","duration_ms":200}`, "", &normalizedPoint{X: 0, Y: 900}},
+		{"touch_gesture", `{"type":"drag_start","point":{"x":400,"y":300}}`, "", &normalizedPoint{X: 400, Y: 500}},
 		{"mouse_move", `{"x":30,"y":40}`, "", &normalizedPoint{X: 30, Y: 40}},
 		{"touch_gesture", `{"actions":[{"action":"touch_down","point":{"x":1,"y":1}},{"action":"touch_up"}]}`, "", nil},
 		{"touch_gesture", `{"type":"tap_sequence","points":[{"x":1,"y":2},{"x":3,"y":4},{"x":5,"y":6}]}`, `{"requested":3,"executed":2,"stopped_early":true}`, &normalizedPoint{X: 3, Y: 4}},
@@ -203,5 +205,23 @@ func TestTerminationPolicyIgnoresScreenChangedFromObservationTools(t *testing.T)
 	policy.AfterToolCall("wait_for_stable_screen", `{}`, string(waitResult), false)
 	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":8,"y":8}}`); allowed {
 		t.Fatal("a second wait_for_stable_screen lifted the restriction")
+	}
+}
+
+// Repeated screenshots reach the restriction on their own; the observation
+// that earns the allowance repeats the previous call too, and its repeat
+// score must not take the allowance back.
+func TestTerminationPolicyRepeatedObservationKeepsItsAllowance(t *testing.T) {
+	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
+	screen := progressTestObservation(t)
+	for i := 0; i < 10 && policy.tier < TierRestrictTools; i++ {
+		policy.AfterToolCall("screenshot", `{}`, screen, false)
+	}
+	if policy.tier != TierRestrictTools {
+		t.Fatalf("tier = %d score=%d, want repeated screenshots to restrict", policy.tier, policy.stallScore)
+	}
+	policy.AfterToolCall("screenshot", `{}`, screen, false)
+	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); !allowed {
+		t.Fatalf("tier=%d score=%d: the observation did not allow one action", policy.tier, policy.stallScore)
 	}
 }

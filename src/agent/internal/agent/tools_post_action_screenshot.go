@@ -205,6 +205,10 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 				if err := recoverer.recoverAfterUnstableScreen(ctx, input); err != nil {
 					return postActionErrorResultf(ctx, postActionErrorCode(err), "%s completed with output %q, but unstable-screen recovery failed: %v", t.inner.Name(), actionOutput, err), nil
 				}
+				if recovered := dragStartRecoveredPoint(input); recovered != nil {
+					pointerAfter = recovered
+					t.pointer.set(recovered)
+				}
 			}
 		}
 		touchscreenRCALogf(

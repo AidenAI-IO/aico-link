@@ -47,8 +47,9 @@ func (p *pointerTracker) set(point *normalizedPoint) {
 }
 
 // pointerFinalPoint returns where a pointer action leaves the pointer, or nil
-// when the input does not say (for example a swipe given only a direction).
-// actionOutput tells how many points of a tap_sequence were tapped.
+// when it cannot be told from the input. Swipes and drag_start resolve their
+// end the same way execution does; actionOutput tells how many points of a
+// tap_sequence were tapped.
 func pointerFinalPoint(toolName, input, actionOutput string) *normalizedPoint {
 	switch strings.ToLower(strings.TrimSpace(toolName)) {
 	case "mouse_move":
@@ -71,13 +72,20 @@ func pointerFinalPoint(toolName, input, actionOutput string) *normalizedPoint {
 			return nil
 		}
 		switch strings.ToLower(strings.TrimSpace(args.Type)) {
-		case "tap", "double_tap", "long_press", "drag_start", "drag_release":
+		case "tap", "double_tap", "long_press", "drag_release":
 			if args.Point != nil {
 				return finiteNormalizedPoint(args.Point.X.Float64(), args.Point.Y.Float64())
 			}
+		case "drag_start":
+			// drag_start keeps the contact down after moving it away from
+			// the pressed point to activate dragging.
+			if args.Point != nil {
+				end := mnk.DragActivationPoint(args.Point.X.Float64(), args.Point.Y.Float64())
+				return finiteNormalizedPoint(end.X, end.Y)
+			}
 		case "swipe":
-			if args.End != nil {
-				return finiteNormalizedPoint(args.End.X.Float64(), args.End.Y.Float64())
+			if end, ok := mnk.SwipeEndPoint(input); ok {
+				return finiteNormalizedPoint(end.X, end.Y)
 			}
 		case "tap_sequence":
 			var result mnk.TapSequenceResult
@@ -88,6 +96,19 @@ func pointerFinalPoint(toolName, input, actionOutput string) *normalizedPoint {
 		}
 	}
 	return nil
+}
+
+// dragStartRecoveredPoint is where an unstable drag_start leaves the pointer
+// after it is moved back to its pressed point and released.
+func dragStartRecoveredPoint(input string) *normalizedPoint {
+	var args struct {
+		Type  string        `json:"type"`
+		Point *pointerPoint `json:"point"`
+	}
+	if json.Unmarshal([]byte(input), &args) != nil || !strings.EqualFold(strings.TrimSpace(args.Type), "drag_start") || args.Point == nil {
+		return nil
+	}
+	return finiteNormalizedPoint(args.Point.X.Float64(), args.Point.Y.Float64())
 }
 
 func finiteNormalizedPoint(x, y float64) *normalizedPoint {

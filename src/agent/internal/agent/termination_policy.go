@@ -275,6 +275,9 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		return TerminationDecision{}
 	}
 	p.lastToolName = strings.TrimSpace(toolName)
+	// An observation earns the restriction allowance only when the
+	// restriction was already in effect, not by causing it.
+	restrictedBefore := p.tier == TierRestrictTools
 	signature := toolCallSignature(toolName, input)
 	resultHash := observationProgressHash(toolName, observation)
 	// Artifact recovery often alternates a query with reading its saved output.
@@ -350,20 +353,23 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 
 	if madeProgress {
 		p.recordProgress()
-	} else if p.tier == TierRestrictTools && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
-		// The restriction asks the model to diagnose with a fresh observation.
-		// Once it has, allow one more action instead of blocking every action
-		// until the screen changes on its own; another stall restricts again.
-		p.probationUsed = true
-		p.stallScore = p.cfg.RestrictToolsStallScore - 1
-		p.refreshTier()
-		p.lastNoticeTier = p.tier
 	}
 	if !madeProgress && p.sameSigStreak >= 2 {
 		p.bumpStall(1)
 	}
 	if !madeProgress && p.sameResultStreak >= 2 {
 		p.bumpStall(2)
+	}
+	// The restriction asks the model to diagnose with a fresh observation.
+	// Once it has, allow one more action instead of blocking every action
+	// until the screen changes on its own; another stall restricts again.
+	// This runs after the repeat scoring so a repeated observation cannot
+	// take the allowance back.
+	if !madeProgress && restrictedBefore && p.tier == TierRestrictTools && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
+		p.probationUsed = true
+		p.stallScore = p.cfg.RestrictToolsStallScore - 1
+		p.refreshTier()
+		p.lastNoticeTier = p.tier
 	}
 
 	if p.sameSigStreak >= p.cfg.RepeatActionLimit && p.sameResultStreak >= p.cfg.SameResultLimit {
