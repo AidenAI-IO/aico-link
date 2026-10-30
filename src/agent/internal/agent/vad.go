@@ -38,6 +38,14 @@ type AudioVADConfig struct {
 	ModelPath       string
 	HelperPath      string
 	SpeechThreshold float64
+	// Smart Turn endpointing (Classic final UX). When TurnDetector is set,
+	// SilenceMs is unused for commit; AnalyzeSilenceMs / FallbackSilenceMs apply.
+	TurnDetector      TurnDetector
+	TurnModelPath     string // equality/reload only; detector owns the live path
+	TurnHelperPath    string
+	TurnThreshold     float64
+	AnalyzeSilenceMs  int
+	FallbackSilenceMs int
 }
 
 type VADScorer interface {
@@ -47,19 +55,26 @@ type VADScorer interface {
 }
 
 // AudioVAD segments utterances using Silero VAD probabilities produced by the helper.
+// With TurnDetector set, short silence asks Smart Turn whether the turn is complete;
+// long silence forces commit.
 type AudioVAD struct {
-	scorer          VADScorer
-	silenceCount    int
-	speechFrames    int
-	speaking        bool
-	frameSamples    int
-	silenceLimit    int
-	minSpeechFrames int
-	speechBuf       []int16
-	utterance       []int16
-	threshold       float64
-	lastProbability float64
-	lastErr         error
+	scorer           VADScorer
+	turnDetector     TurnDetector
+	silenceCount     int
+	speechFrames     int
+	speaking         bool
+	frameSamples     int
+	silenceLimit     int
+	analyzeLimit     int
+	fallbackLimit    int
+	minSpeechFrames  int
+	speechBuf        []int16
+	utterance        []int16
+	threshold        float64
+	turnThreshold    float64
+	lastProbability  float64
+	lastErr          error
+	turnPredictFails int
 }
 
 type VADDebugState struct {
@@ -158,14 +173,34 @@ func newAudioVAD(cfg AudioVADConfig, scorer VADScorer) (*AudioVAD, error) {
 	silenceLimit := framesForDuration(silenceMs, frameMs)
 	minSpeechFrames := framesForDuration(minSpeechMs, frameMs)
 
+	analyzeMs := cfg.AnalyzeSilenceMs
+	if analyzeMs <= 0 {
+		analyzeMs = defaultTurnAnalyzeSilenceMs
+	}
+	fallbackMs := cfg.FallbackSilenceMs
+	if fallbackMs <= 0 {
+		fallbackMs = defaultTurnSilenceFallbackMs
+	}
+	turnThreshold := cfg.TurnThreshold
+	if turnThreshold <= 0 {
+		turnThreshold = defaultTurnDetectionThreshold
+	}
+	if turnThreshold >= 1 {
+		return nil, fmt.Errorf("turn_detection_threshold must be between 0 and 1, got %.3f", turnThreshold)
+	}
+
 	return &AudioVAD{
 		scorer:          scorer,
+		turnDetector:    cfg.TurnDetector,
 		frameSamples:    sileroVADFrameSamples,
 		silenceLimit:    silenceLimit,
+		analyzeLimit:    framesForDuration(analyzeMs, frameMs),
+		fallbackLimit:   framesForDuration(fallbackMs, frameMs),
 		minSpeechFrames: minSpeechFrames,
 		speechBuf:       make([]int16, 0, sileroVADFrameSamples*100),
 		utterance:       make([]int16, 0, sileroVADFrameSamples*100),
 		threshold:       threshold,
+		turnThreshold:   turnThreshold,
 	}, nil
 }
 
@@ -235,11 +270,45 @@ func (v *AudioVAD) Process(samples []int16) ([]int16, error) {
 	} else if v.speaking {
 		v.speechBuf = append(v.speechBuf, samples...)
 		v.silenceCount++
-		if v.silenceCount >= v.silenceLimit {
-			if v.speechFrames >= v.minSpeechFrames {
+		if v.speechFrames < v.minSpeechFrames {
+			// Drop short blips (cough/echo) once silence is long enough;
+			// otherwise speaking stays latched and speechBuf grows forever.
+			if v.silenceCount >= v.silenceLimit {
+				v.resetBuffers()
+			}
+			return nil, nil
+		}
+		if v.turnDetector != nil {
+			// silenceCount is continuous from end-of-speech so the fallback
+			// deadline cannot be postponed by incomplete Smart Turn answers.
+			if v.silenceCount >= v.fallbackLimit {
 				return v.finishUtterance(), nil
 			}
-			v.resetBuffers()
+			if v.silenceCount >= v.analyzeLimit && v.silenceCount%v.analyzeLimit == 0 {
+				prob, err := v.turnDetector.Predict(append([]int16(nil), v.speechBuf...))
+				if err != nil {
+					// Fail open on a single blip, but after repeated NPU/helper
+					// failures commit on silence rather than waiting out the
+					// full fallback window (or session timeout).
+					v.lastErr = err
+					v.turnPredictFails++
+					logging.Warnf("agent", "vad", "smart turn predict failed (%d): %v", v.turnPredictFails, err)
+					if v.turnPredictFails >= smartTurnFailCommitAfter {
+						logging.Warnf("agent", "vad", "smart turn unavailable, committing on silence")
+						return v.finishUtterance(), nil
+					}
+					return nil, nil
+				}
+				v.lastErr = nil
+				v.turnPredictFails = 0
+				if prob > v.turnThreshold {
+					return v.finishUtterance(), nil
+				}
+			}
+			return nil, nil
+		}
+		if v.silenceCount >= v.silenceLimit {
+			return v.finishUtterance(), nil
 		}
 	}
 
@@ -279,7 +348,15 @@ func (v *AudioVAD) Reset() error {
 }
 
 func (v *AudioVAD) Close() error {
-	return v.scorer.Close()
+	var turnErr error
+	if v.turnDetector != nil {
+		turnErr = v.turnDetector.Close()
+	}
+	scorerErr := v.scorer.Close()
+	if turnErr != nil {
+		return turnErr
+	}
+	return scorerErr
 }
 
 func (v *AudioVAD) resetBuffers() {
@@ -287,6 +364,18 @@ func (v *AudioVAD) resetBuffers() {
 	v.silenceCount = 0
 	v.speechFrames = 0
 	v.speaking = false
+	v.turnPredictFails = 0
+}
+
+// Speaking reports whether the VAD currently believes the user is in speech.
+func (v *AudioVAD) Speaking() bool {
+	return v.speaking
+}
+
+// LastFrameSpeech reports whether the most recently scored frame was above the
+// speech threshold. Unlike Speaking(), this is not latched across silence.
+func (v *AudioVAD) LastFrameSpeech() bool {
+	return v.lastProbability > v.threshold
 }
 
 type helperVADScorer struct {
@@ -383,6 +472,9 @@ func (s *helperVADScorer) Reset() error {
 		return nil
 	}
 	if strings.HasPrefix(line, "ERR ") {
+		// Helper exits after a failed encoder reinit; clear local state so the
+		// next StartRecording/ensureStarted can spawn a fresh process.
+		s.stopAfterProtocolError()
 		return errors.New(strings.TrimPrefix(line, "ERR "))
 	}
 	s.stopAfterProtocolError()

@@ -15,8 +15,10 @@ readonly MODEL_DIR=${REPO_ROOT}/assets/business/models
 readonly MODULE_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-media-modules
 readonly MODEL_RKNN=silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn
 readonly MODEL_WEIGHTS=silero_vad_6_2_lstm_decoder_weights.bin
+readonly MODEL_SMART_TURN=smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn
 readonly MODEL_RKNN_SHA256=81515d04c665ac8c1370d376c07987cf7f368a72ab9e3083dd68ad26c7ae1509
 readonly MODEL_WEIGHTS_SHA256=f4c25e3669172b75b928e4c4a855657fd747f24fd2d8af599e0852e713fbc183
+readonly MODEL_SMART_TURN_SHA256=160347b0f11db81b786fbd637d74089a8f51103adae0bfd3a01f206a0308afb2
 readonly REMOTE_RUNNER=${SCRIPT_DIR}/board-g0-remote.sh
 
 readonly -a APP_PAYLOAD=(
@@ -36,6 +38,7 @@ readonly -a APP_PAYLOAD=(
     bin/hello
     bin/image_process
     bin/rknn_vad
+    bin/smart_turn_helper
     bin/ttyd
     bin/trigger
     lib/librga.so.2.1.0
@@ -120,6 +123,7 @@ write_bundle_metadata() {
         printf 'board_g0_remote_runner_sha256=%s\n' "${remote_runner_sha}"
         printf 'rknn_model_sha256=%s\n' "${MODEL_RKNN_SHA256}"
         printf 'decoder_weights_sha256=%s\n' "${MODEL_WEIGHTS_SHA256}"
+        printf 'smart_turn_model_sha256=%s\n' "${MODEL_SMART_TURN_SHA256}"
     } >"${root}/bundle-metadata.txt"
 }
 
@@ -145,6 +149,7 @@ run_bundle() {
     verify_apps
     verify_model "${MODEL_DIR}/${MODEL_RKNN}" "${MODEL_RKNN_SHA256}"
     verify_model "${MODEL_DIR}/${MODEL_WEIGHTS}" "${MODEL_WEIGHTS_SHA256}"
+    verify_model "${MODEL_DIR}/${MODEL_SMART_TURN}" "${MODEL_SMART_TURN_SHA256}"
     [ -x "${MODULE_HELPER}" ] || fail "missing executable media-module helper"
     [ -x "${REMOTE_RUNNER}" ] || fail "missing executable board G0 remote runner"
 
@@ -162,6 +167,7 @@ run_bundle() {
     cp -a "${APPS_DIR}/lib/librga.so.2" "${payload_root}/lib/librga.so.2"
     cp -a "${MODEL_DIR}/${MODEL_RKNN}" "${payload_root}/model/"
     cp -a "${MODEL_DIR}/${MODEL_WEIGHTS}" "${payload_root}/model/"
+    cp -a "${MODEL_DIR}/${MODEL_SMART_TURN}" "${payload_root}/model/"
     cp -a "${MODULE_HELPER}" "${payload_root}/aico-media-modules"
     cp -a "${REMOTE_RUNNER}" "${payload_root}/board-g0-remote.sh"
     cp -a "${AUDIT_DIR}/summary.txt" "${payload_root}/audit/"
