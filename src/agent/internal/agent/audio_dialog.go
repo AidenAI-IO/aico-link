@@ -49,6 +49,7 @@ type AudioDialog struct {
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
 	speechMu            sync.Mutex
+	latestSpeech        latestTTSOutput
 	outputMu            sync.Mutex
 	activeOutputs       map[*activeTTSOutput]struct{}
 	runControl          voiceRunControl
@@ -62,8 +63,10 @@ type activeTTSOutput struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu     sync.Mutex
-	stream *streamSessionWriter
+	mu          sync.Mutex
+	stream      interface{ interrupt() }
+	interrupted bool
+	superseded  bool
 }
 
 func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
@@ -73,13 +76,17 @@ func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
 	}
 }
 
-func (o *activeTTSOutput) setStream(stream *streamSessionWriter) {
+func (o *activeTTSOutput) setStream(stream interface{ interrupt() }) {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	o.stream = stream
+	interrupted := o.interrupted
+	o.mu.Unlock()
+	if interrupted && stream != nil {
+		stream.interrupt()
+	}
 }
 
 func (o *activeTTSOutput) clearStream(stream *streamSessionWriter) {
@@ -98,6 +105,7 @@ func (o *activeTTSOutput) interrupt() {
 		return
 	}
 	o.mu.Lock()
+	o.interrupted = true
 	stream := o.stream
 	o.mu.Unlock()
 	if stream != nil {
@@ -106,6 +114,25 @@ func (o *activeTTSOutput) interrupt() {
 	if o.cancel != nil {
 		o.cancel()
 	}
+}
+
+func (o *activeTTSOutput) supersede() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.superseded = true
+	o.mu.Unlock()
+	o.interrupt()
+}
+
+func (o *activeTTSOutput) wasSuperseded() bool {
+	if o == nil {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.superseded
 }
 
 func (o *activeTTSOutput) finish() {
@@ -748,7 +775,7 @@ func (d *AudioDialog) snapshotActiveOutputs() []*activeTTSOutput {
 	return outputs
 }
 
-func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*streamSessionWriter, func(), func(), error) {
+func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*ttsBlockStream, func(), func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -758,12 +785,11 @@ func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*streamS
 		streamCancel()
 		return nil, nil, nil, errTTSNotConfigured
 	}
-	stream, err := beginManagedTTSStream(streamCtx, manager, d.currentTTSPlaybackBackend(), d.config)
+	stream, err := beginManagedTTSBlockStream(streamCtx, manager, d.currentTTSPlaybackBackend(), d.config, &d.latestSpeech)
 	if err != nil {
 		streamCancel()
 		return nil, nil, nil, err
 	}
-	stream.setCancel(streamCancel)
 	output := newActiveTTSOutput(streamCancel)
 	output.setStream(stream)
 
@@ -1080,7 +1106,7 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 	}
 	req.EpisodeID = strings.TrimSpace(episodeID)
 
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	if manager := d.currentTTSManager(); d.config.VoiceStreamingTTSEnabledOrDefault() && manager != nil {
 		preopenStartedAt := time.Now().UTC()
 		stream, activate, cleanup, err := d.beginManagedTTSStreamForRun(ctx)
@@ -1117,7 +1143,7 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 		if closeErr != nil {
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
 	}
 	if err != nil {
 		return result, fmt.Errorf("LLM request failed: %w", err)
@@ -1240,7 +1266,13 @@ func (d *AudioDialog) HandleRunEvent(ctx context.Context, event RunEvent) {
 		return
 	}
 	if text := speech.BuildText(event.Content); text != "" {
-		go d.SpeakToolContent(text)
+		speechCtx, _, cleanup := d.latestSpeech.begin(ctx)
+		go func() {
+			defer cleanup()
+			if err := d.speak(speechCtx, text, nil, toolContentSpeechTimeout, false); err != nil {
+				logging.Errorf("agent", "audio_dialog", "Tool content TTS failed: %v", err)
+			}
+		}()
 	}
 }
 
@@ -1328,6 +1360,8 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 	if err := baseCtx.Err(); err != nil {
 		return err
 	}
+	baseCtx, latestOutput, releaseLatest := d.latestSpeech.acquire(baseCtx)
+	defer releaseLatest()
 	outputCtx, cancelOutput := context.WithCancel(baseCtx)
 	output := newActiveTTSOutput(cancelOutput)
 	unregisterOutput := d.registerActiveOutput(output)
@@ -1357,8 +1391,10 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 		speechStarted, ttsErr = speakWithTTSManagerObserved(speakCtx, manager, d.currentTTSPlaybackBackend(), d.config, text, func(stream *streamSessionWriter) func() {
 			stream.setCancel(cancelOutput)
 			output.setStream(stream)
+			latestOutput.setStream(stream)
 			return func() {
 				output.clearStream(stream)
+				latestOutput.clearStream(stream)
 			}
 		})
 		if ttsErr == nil && !speechStarted && allowFallback {
@@ -1448,7 +1484,7 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 			}
 		},
 	}
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	if d.config.VoiceStreamingTTSEnabledOrDefault() && d.currentTTSManager() != nil {
 		stream, activate, cleanup, err := d.beginManagedTTSStreamForRun(ctx)
 		if err != nil {
@@ -1471,7 +1507,7 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 		if closeErr != nil {
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
 	}
 	if err != nil {
 		if d.CanSpeakFinalText() && !result.SpeechStreamed {

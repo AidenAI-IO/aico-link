@@ -126,6 +126,14 @@ speed = 1.0
 
 When `voice_tool_call_speech = true`, the runtime will asynchronously TTS and play the `content` of tool call events when they arrive. This `content` comes only from the assistant content in the same LLM tool-call response, not from tool parameters.
 
+The speech parser streams leading `<tts>...</tts>` blocks before the tool call
+finishes. Tool-event speech is a fallback for tagged content that was not
+streamed. The next spoken block takes over immediately: the runtime cancels the
+previous synthesis session and stops its queued playback before starting the
+new block. A tool response ending does not itself cut off speech; replacement
+occurs when the next spoken block begins. Pending asynchronous tool speech
+cannot start late and replace a newer answer.
+
 If the LLM does not generate assistant content in the same response as the tool call, that tool call remains silent. The runtime does not derive short speech announcements from `speech`, `description`, or other context fields in tool parameters.
 
 ## TTS Provider Usage

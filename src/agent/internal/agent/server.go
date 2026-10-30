@@ -98,6 +98,7 @@ type Server struct {
 	terminatedRequestsMu    sync.RWMutex
 	activeOutputs           map[string]map[*activeTTSOutput]struct{}
 	activeOutputsMu         sync.Mutex
+	latestSpeech            latestTTSOutput
 	pendingSteers           map[string]pendingSteerMessage
 	steerSignals            map[string]chan struct{}
 	steersMu                sync.Mutex
@@ -1543,7 +1544,11 @@ func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episode
 		s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
 	}
 	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-		go s.speakToolContent(ctx, text)
+		speechCtx, _, cleanup := s.latestSpeech.begin(ctx)
+		go func() {
+			defer cleanup()
+			s.speakToolContent(speechCtx, text)
+		}()
 	}
 }
 
@@ -1632,14 +1637,14 @@ func (s *Server) handleChatAsync(
 
 		runReq := s.newChatRunRequest(run, turnInput, userMsg.EpisodeID, requestID, eventHandler)
 
-		var newStream *streamSessionWriter
+		var newStream *ttsBlockStream
 		unregisterStreamOutput := func() {}
 		ttsManager := s.currentTTSManager()
 		cfg := s.runtime.ConfigSnapshot()
 
 		if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 			if ttsManager != nil {
-				stream, err := beginManagedTTSStream(run.ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
+				stream, err := beginManagedTTSBlockStream(run.ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
 				if err != nil {
 					if s.logger != nil {
 						s.logger.Warn("TTS BeginStream failed: %v", err)
@@ -1673,7 +1678,7 @@ func (s *Server) handleChatAsync(
 			if closeErr != nil && s.logger != nil {
 				s.logger.Error("new TTS stream failed: %v", closeErr)
 			}
-			result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+			result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
 		}
 
 		pending.mu.Lock()
@@ -1997,7 +2002,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	unregisterStreamOutput := func() {}
 	ttsManager := s.currentTTSManager()
 	cfg := s.runtime.ConfigSnapshot()
@@ -2007,7 +2012,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 		s.logger.Info("Starting TTS stream")
 		if ttsManager != nil {
-			streamSession, err := beginManagedTTSStream(ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
+			streamSession, err := beginManagedTTSBlockStream(ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
 			if err != nil {
 				if s.logger != nil {
 					s.logger.Warn("TTS BeginStream failed: %v", err)
@@ -2044,7 +2049,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		if closeErr != nil && s.logger != nil {
 			s.logger.Error("new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
 	}
 	if err != nil {
 		canceled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
@@ -2095,11 +2100,12 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
 		// Let request-scoped final TTS outlive the streaming handler while
 		// /api/chat/cancel can still interrupt it via the active run/output.
-		finalTTSCtx := context.Background()
+		finalTTSCtx, _, releaseFinalTTS := s.latestSpeech.begin(context.Background())
 		finishRun := run.cleanup
 		cleanupRunAtReturn = false
 		go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
 			defer finish()
+			defer releaseFinalTTS()
 			s.speakFinalText(ttsCtx, req.RequestID, prepared)
 		}(prepared, finalTTSCtx, finishRun)
 	}
@@ -2519,6 +2525,8 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 	if s.runtime != nil {
 		cfg = s.runtime.ConfigSnapshot()
 	}
+	ctx, latestOutput, releaseLatest := s.latestSpeech.acquire(ctx)
+	defer releaseLatest()
 	outputCtx, cancelOutput := context.WithCancel(ctx)
 	output := newActiveTTSOutput(cancelOutput)
 	unregisterOutput := func() {}
@@ -2555,8 +2563,10 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 		speechStarted, ttsErr = speakWithTTSManagerObserved(speakCtx, manager, s.currentTTSPlaybackBackend(), cfg, text, func(stream *streamSessionWriter) func() {
 			stream.setCancel(cancelOutput)
 			output.setStream(stream)
+			latestOutput.setStream(stream)
 			return func() {
 				output.clearStream(stream)
+				latestOutput.clearStream(stream)
 			}
 		})
 		if ttsErr == nil && !speechStarted && allowFallback {
