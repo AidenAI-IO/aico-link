@@ -301,6 +301,69 @@ func TestToolResultPolicyRefusesCompleteRequiredResultThatCannotFit(t *testing.T
 	}
 }
 
+func TestToolResultPolicyCountsCompleteResultsAlreadyLoadedThisTurn(t *testing.T) {
+	skillOutput := "# Device Operator\n" + strings.Repeat("follow this step exactly\n", 1_200)
+	skillTokens := tokencounter.EstimateTextTokens(skillOutput)
+	spec := model.ModelSpec{ContextWindow: 16_000, MaxOutput: 2_000}
+	softLimit := toolResultSoftInputLimit(spec.ContextWindow, spec.MaxOutput)
+	if skillTokens > softLimit || 2*skillTokens <= softLimit {
+		t.Fatalf("test setup: skill=%d tokens must fit the %d-token limit once but not twice", skillTokens, softLimit)
+	}
+	prepare := func(manager *contextmanager.ContextManager) PreparedToolResult {
+		t.Helper()
+		prepared, err := NewToolResultPolicy().Prepare(context.Background(), ToolResultPrepareInput{
+			Call:           ToolCall{Spec: NewToolSpec(NewSkillReadTool(t.TempDir())), Input: `{"name":"aico"}`},
+			Result:         ToolResult{Output: skillOutput},
+			ContextManager: manager,
+			ModelSpec:      spec,
+		})
+		if err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+		return prepared
+	}
+	loadedSkill := messages.Message{
+		Role: messages.MessageRoleToolResult,
+		ToolResults: []messages.ToolResult{{
+			ToolCallID: "call_device_operator",
+			Name:       "skill_read",
+			Content:    skillOutput,
+			Meta:       &messages.ToolResultMeta{Complete: true, RequiresComplete: true},
+		}},
+	}
+	newManager := func(t *testing.T, messageList []messages.Message) *contextmanager.ContextManager {
+		t.Helper()
+		manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), messageList)
+		if err != nil {
+			t.Fatalf("NewContextManagerFromMessageList() error = %v", err)
+		}
+		return manager
+	}
+
+	// A skill loaded in an earlier turn is reducible history, so it does not
+	// count against a new skill.
+	previousTurn := newManager(t, []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "earlier task"},
+		loadedSkill,
+		{Role: messages.MessageRoleUser, Content: "operate the device"},
+	})
+	if prepared := prepare(previousTurn); prepared.Content != skillOutput || !prepared.RequiresComplete {
+		t.Fatalf("skill after a previous-turn skill = reason:%q requires_complete:%t, want delivered in full", prepared.Reason, prepared.RequiresComplete)
+	}
+
+	// A skill loaded in this turn cannot be pruned or compacted away, so a
+	// second one that would not fit beside it is refused rather than leaving
+	// the next request over budget.
+	currentTurn := newManager(t, []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "operate the device"},
+		loadedSkill,
+	})
+	prepared := prepare(currentTurn)
+	if prepared.Reason != ToolResultReasonCompleteTooLarge || prepared.RequiresComplete || strings.Contains(prepared.Content, "follow this step") {
+		t.Fatalf("second skill in one turn = reason:%q requires_complete:%t content:\n%s", prepared.Reason, prepared.RequiresComplete, prepared.Content)
+	}
+}
+
 func TestToolResultPolicyBoundsIntrinsicallyLargeResult(t *testing.T) {
 	output := "HEAD_MARKER\n" + strings.Repeat("0123456789", 1_200) + "\nTAIL_MARKER"
 	policy := NewToolResultPolicy()

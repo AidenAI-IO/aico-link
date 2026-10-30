@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/model"
 	"aico-agent/internal/agent/tokencounter"
 
@@ -224,9 +225,9 @@ func availableToolResultTokens(input ToolResultPrepareInput) int {
 // prepareCompleteToolResult handles tools whose output is only useful in full.
 // Such a result is never summarized to fit the space currently left: it is
 // appended whole, and ContextBudgetGuard prunes or compacts older context
-// before the next model call. Only a result that could not fit even in an
-// otherwise empty context is refused, with an explicit observation instead of
-// a misleading partial preview.
+// before the next model call. Only a result that could not fit even after
+// that reduction is refused, with an explicit observation instead of a
+// misleading partial preview.
 func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedToolResult) PreparedToolResult {
 	limit := completeToolResultTokenLimit(input)
 	if limit < 0 || prepared.EstimatedTokens <= limit {
@@ -242,7 +243,7 @@ func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedTo
 		"observation_complete": false,
 		"result_tokens":        prepared.EstimatedTokens,
 		"context_limit_tokens": limit,
-		"message":              "This result must be read in full but exceeds the model context even after compaction, so it was not loaded. Do not retry the same call; request a smaller unit (for a skill, one of its linked files) or ask the user to split it.",
+		"message":              "This result must be read in full but does not fit the model context even after compaction, together with complete results already loaded this turn, so it was not loaded. Do not retry the same call; continue with what is already loaded, request a smaller unit (for a skill, one of its linked files), or ask the user to split it.",
 	})
 	prepared.Content = string(content)
 	prepared.Complete = false
@@ -253,10 +254,14 @@ func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedTo
 }
 
 // completeToolResultTokenLimit is the largest complete result that could fit
-// after compaction: the soft input limit minus tool schemas. The soft limit's
-// headroom below the usable budget covers the system prompt and the turn that
-// compaction retains. It returns -1 when the context window is unknown, in
-// which case the tool's own output bound is the only limit.
+// after pruning and compaction: the soft input limit minus tool schemas and
+// the complete results already loaded in the current turn. Those results
+// cannot be pruned, and compaction retains the whole current turn, so they
+// stay in the next request. Everything else is reducible and is deliberately
+// not subtracted; the soft limit's headroom below the usable budget covers the
+// system prompt, the compaction summary, and the current user message. It
+// returns -1 when the context window is unknown, in which case the tool's own
+// output bound is the only limit.
 func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
 	softLimit := toolResultSoftLimit(input)
 	if softLimit < 0 {
@@ -268,7 +273,31 @@ func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
 			option(&options)
 		}
 	}
-	return max(0, softLimit-tokencounter.EstimateToolSchemaTokens(options))
+	pinned := currentTurnCompleteResultTokens(input.ContextManager)
+	return max(0, softLimit-tokencounter.EstimateToolSchemaTokens(options)-pinned)
+}
+
+// currentTurnCompleteResultTokens estimates the complete-required results
+// already loaded since the latest user message, matching the current turn that
+// pruning and compaction use.
+func currentTurnCompleteResultTokens(manager *contextmanager.ContextManager) int {
+	if manager == nil {
+		return 0
+	}
+	messageList, _ := manager.MessageSnapshot()
+	total := 0
+	for i := len(messageList) - 1; i >= 0; i-- {
+		message := messageList[i]
+		if message.Role == messages.MessageRoleUser {
+			break
+		}
+		for _, result := range message.ToolResults {
+			if result.Meta != nil && result.Meta.RequiresComplete {
+				total += tokencounter.EstimateTextTokens(result.Content)
+			}
+		}
+	}
+	return total
 }
 
 // toolResultSoftLimit returns the soft input limit for the next model request,
