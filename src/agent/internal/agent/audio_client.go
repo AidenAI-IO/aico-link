@@ -112,20 +112,25 @@ func (c *AudioServiceClient) OpenRecordChunkReader(sessionID uint64) (*AudioReco
 }
 
 func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, error) {
+	return r.readUntil(timeoutMs, time.Time{})
+}
+
+func (r *AudioRecordChunkReader) readUntil(timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
 	if r == nil || r.conn == nil {
 		return nil, fmt.Errorf("record chunk reader is closed")
 	}
-	req := audioRequest{
-		Op:        "read_record_chunk",
-		SessionID: r.sessionID,
-		TimeoutMs: timeoutMs,
-	}
-
+	req := audioRequest{Op: "read_record_chunk", SessionID: r.sessionID, TimeoutMs: timeoutMs}
 	timeout := time.Duration(timeoutMs)*time.Millisecond + 5*time.Second
-	if timeout > 0 {
-		_ = r.conn.SetDeadline(time.Now().Add(timeout))
+	if !deadline.IsZero() {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("record chunk read deadline exceeded")
+		}
+		if timeout > remaining {
+			timeout = remaining
+		}
 	}
-
+	_ = r.conn.SetDeadline(time.Now().Add(timeout))
 	headerJSON, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("marshal request: %w", err)
@@ -133,7 +138,6 @@ func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, erro
 	if err := writeUdsMessage(r.conn, udsMessage{HeaderJSON: string(headerJSON)}); err != nil {
 		return nil, fmt.Errorf("write request: %w", err)
 	}
-
 	respMsg, err := readUdsMessage(r.conn)
 	if err != nil {
 		return nil, fmt.Errorf("read response: %w", err)
@@ -148,10 +152,7 @@ func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, erro
 	if resp.Status != "OK" {
 		return nil, fmt.Errorf("read_record_chunk failed: %s", resp.Status)
 	}
-	return &AudioChunkResult{
-		PCM:         respMsg.Payload,
-		EndOfStream: resp.EndOfStream,
-	}, nil
+	return &AudioChunkResult{PCM: respMsg.Payload, EndOfStream: resp.EndOfStream}, nil
 }
 
 func (r *AudioRecordChunkReader) Close() error {
@@ -355,30 +356,32 @@ func (c *AudioServiceClient) StartRecording(format AudioFormat) (*RecordStartRes
 
 // ReadRecordChunk reads a PCM chunk from a recording session (long-poll)
 func (c *AudioServiceClient) ReadRecordChunk(sessionID uint64, timeoutMs uint32) (*AudioChunkResult, error) {
-	req := audioRequest{
-		Op:        "read_record_chunk",
-		SessionID: sessionID,
-		TimeoutMs: timeoutMs,
-	}
+	return c.readRecordChunkUntil(sessionID, timeoutMs, time.Time{})
+}
 
+func (c *AudioServiceClient) readRecordChunkUntil(sessionID uint64, timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
+	req := audioRequest{Op: "read_record_chunk", SessionID: sessionID, TimeoutMs: timeoutMs}
 	timeout := time.Duration(timeoutMs+5000) * time.Millisecond
+	if !deadline.IsZero() {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, fmt.Errorf("record chunk read deadline exceeded")
+		}
+		if timeout > remaining {
+			timeout = remaining
+		}
+	}
 	resp, payload, err := c.sendRequest(req, timeout)
 	if err != nil {
 		return nil, err
 	}
-
 	if resp.Status == "TIMEOUT" {
 		return &AudioChunkResult{}, nil
 	}
-
 	if resp.Status != "OK" {
 		return nil, fmt.Errorf("read_record_chunk failed: %s", resp.Status)
 	}
-
-	return &AudioChunkResult{
-		PCM:         payload,
-		EndOfStream: resp.EndOfStream,
-	}, nil
+	return &AudioChunkResult{PCM: payload, EndOfStream: resp.EndOfStream}, nil
 }
 
 // StopRecording stops a recording session

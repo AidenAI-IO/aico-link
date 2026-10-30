@@ -735,7 +735,9 @@ func (d *AudioDialog) StopRecording() error {
 		}
 		if recordSTT != nil && len(tail) > 0 {
 			if err := recordSTT.UploadPCM(tail); err != nil {
-				d.markRecordSTTUploadError(sessionID, err)
+				if sttTelemetry != nil {
+					sttTelemetry.streamingUploadError = err.Error()
+				}
 				logging.Warnf("agent", "stt", "streaming tail upload failed, falling back to one-shot STT: %v", err)
 				if d.clearRecordSTT(recordSTT) {
 					_ = recordSTT.Close()
@@ -779,14 +781,21 @@ func drainRecordChunks(backend audioRecordingBackend, reader *AudioRecordChunkRe
 		var chunk *AudioChunkResult
 		var err error
 		if reader != nil {
-			chunk, err = reader.Read(100)
+			chunk, err = reader.readUntil(100, deadline)
 			if err != nil {
 				_ = reader.Close()
 				reader = nil
 			}
 		}
 		if reader == nil {
-			chunk, err = backend.ReadRecordChunk(sessionID, 100)
+			if !time.Now().Before(deadline) {
+				return pcm, fmt.Errorf("timed out waiting for recording EOF")
+			}
+			if service, ok := backend.(*AudioServiceClient); ok {
+				chunk, err = service.readRecordChunkUntil(sessionID, 100, deadline)
+			} else {
+				chunk, err = backend.ReadRecordChunk(sessionID, 100)
+			}
 		}
 		if err != nil {
 			return pcm, err
