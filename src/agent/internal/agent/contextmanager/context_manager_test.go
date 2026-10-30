@@ -403,8 +403,9 @@ func TestAppendMessageRepairsToolCallBeforeHookExpandedUserBatch(t *testing.T) {
 			Message: &message,
 		}
 	}})
-	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "continue"}); err != nil {
-		t.Fatalf("AppendMessage(user) error = %v", err)
+	appended, err := manager.AppendMessagesWithResult([]messages.Message{{Role: messages.MessageRoleUser, Content: "continue"}})
+	if err != nil {
+		t.Fatalf("AppendMessagesWithResult(user) error = %v", err)
 	}
 
 	dump := manager.MessageListDump()
@@ -416,6 +417,18 @@ func TestAppendMessageRepairsToolCallBeforeHookExpandedUserBatch(t *testing.T) {
 	}
 	if dump.Messages[2].Role != messages.MessageRoleState || dump.Messages[3].Role != messages.MessageRoleUser {
 		t.Fatalf("tail messages = %#v, want state then user", dump.Messages[2:])
+	}
+	if appended.SessionID != dump.SessionID || appended.Start != 1 || len(appended.Messages) != 3 {
+		t.Fatalf("append result = %#v, want repair, state, user from index 1", appended)
+	}
+	for i, message := range appended.Messages {
+		if message.Role != dump.Messages[appended.Start+i].Role || message.Timestamp.IsZero() {
+			t.Fatalf("append result message %d = %#v, persisted = %#v", i, message, dump.Messages[appended.Start+i])
+		}
+	}
+	appended.Messages[1].Content = "changed after commit"
+	if got := manager.CloneMessageList()[2].Content; got != "device state" {
+		t.Fatalf("append result aliased persisted state: %q", got)
 	}
 }
 

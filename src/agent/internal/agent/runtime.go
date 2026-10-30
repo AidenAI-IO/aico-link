@@ -1284,25 +1284,19 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	// append user message to context manager
 	userMessage := userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)
-	stateMessageStart := -1
-	if streamCallbackHandler != nil && streamCallbackHandler.streamEmitter != nil {
-		stateMessageStart = len(r.contextManager.CloneMessageList())
-	}
-	if err := r.contextManager.AppendMessage(userMessage); err != nil {
+	appended, err := r.contextManager.AppendMessagesWithResult([]messages.Message{userMessage})
+	if err != nil {
 		return RunResult{}, err
 	}
-	if stateMessageStart >= 0 {
+	if streamCallbackHandler != nil && streamCallbackHandler.streamEmitter != nil {
 		contextRole := "backend"
 		if cfg.InputModeOrDefault() == "realtime" {
 			contextRole = "user"
 		}
 		emitAppendedStateEvents(
 			ctx,
-			r.contextManager,
-			stateMessageStart,
+			appended,
 			streamCallbackHandler.streamEmitter,
-			req.RequestID,
-			runID,
 			episodeID,
 			contextRole,
 		)
@@ -1724,31 +1718,18 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 	}
 }
 
-// emitAppendedStateEvents publishes state messages inserted by the user
-// message append hook as soon as they are persisted. History refreshes are
-// intentionally paused while a run is active, so without this event the Web
-// UI cannot show the state divider until the model turn has finished.
+// emitAppendedStateEvents publishes hook-inserted state after the append commits.
 func emitAppendedStateEvents(
 	ctx context.Context,
-	manager *contextmanager.ContextManager,
-	beforeCount int,
+	appended contextmanager.AppendResult,
 	emitter *streamEventEmitter,
-	requestID string,
-	runID string,
 	episodeID string,
 	contextRole string,
 ) {
-	if manager == nil || emitter == nil || beforeCount < 0 {
+	if emitter == nil {
 		return
 	}
-	current := manager.CloneMessageList()
-	if beforeCount >= len(current) {
-		return
-	}
-	if strings.TrimSpace(requestID) == "" {
-		requestID = runID
-	}
-	for _, item := range current[beforeCount:] {
+	for i, item := range appended.Messages {
 		if item.Role != messages.MessageRoleState {
 			continue
 		}
@@ -1756,7 +1737,7 @@ func emitAppendedStateEvents(
 		if !ok {
 			continue
 		}
-		message.RequestID = requestID
+		message.RequestID = fmt.Sprintf("context-%s-%d", contextRole, appended.Start+i)
 		message.EpisodeID = episodeID
 		emitter.emit(ctx, stream.EventStateUpdated, stream.VisibilityUser, message, nil)
 	}

@@ -101,17 +101,17 @@ func TestEmitAppendedStateEventsPublishesWebMessageImmediately(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create context manager: %v", err)
 	}
-	beforeCount := len(manager.CloneMessageList())
-	if err := manager.AppendMessages([]messages.Message{
+	appended, err := manager.AppendMessagesWithResult([]messages.Message{
 		{Role: messages.MessageRoleState, Content: "device: connected"},
 		{Role: messages.MessageRoleUser, Content: "hello"},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("append messages: %v", err)
 	}
 
 	sink := &recordingStreamSink{}
 	emitter := newStreamEventEmitter(sink, stream.EventScope{}, "request-1", "run-1", "episode-1")
-	emitAppendedStateEvents(context.Background(), manager, beforeCount, emitter, "request-1", "run-1", "episode-1", "backend")
+	emitAppendedStateEvents(context.Background(), appended, emitter, "episode-1", "backend")
 
 	if len(sink.events) != 1 {
 		t.Fatalf("event count=%d, want 1", len(sink.events))
@@ -127,7 +127,7 @@ func TestEmitAppendedStateEventsPublishesWebMessageImmediately(t *testing.T) {
 	if message.Type != "state" || message.Content != "device: connected" {
 		t.Fatalf("state message=%+v", message)
 	}
-	if message.RequestID != "request-1" || message.EpisodeID != "episode-1" {
+	if message.RequestID != "context-backend-1" || message.EpisodeID != "episode-1" {
 		t.Fatalf("state identity=%+v", message)
 	}
 }
