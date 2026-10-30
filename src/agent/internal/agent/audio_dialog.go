@@ -724,7 +724,7 @@ func (d *AudioDialog) StopRecording() error {
 	if err := backend.StopRecording(sessionID); err != nil {
 		return fmt.Errorf("stop recording: %w", err)
 	}
-	if d.config.AudioBackendOrDefault() != AudioBackendLocal {
+	if d.recordBackend == nil && d.config.AudioBackendOrDefault() != AudioBackendLocal {
 		tail, err := drainRecordChunks(backend, reader, sessionID)
 		d.recordMu.Lock()
 		d.recordTail = tail
