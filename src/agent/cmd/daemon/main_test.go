@@ -937,7 +937,7 @@ type fakeAudioDialog struct {
 	starts               int
 	stops                int
 	resets               int
-	recordingActive bool
+	recordingActive      bool
 	// vadEmitArmed gates scripted utterances so continuous-mic barge-in frames
 	// during TTS cannot consume the next follow-up utterance. StartRecording /
 	// ResetVAD re-arm for the next listen.
