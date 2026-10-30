@@ -3106,13 +3106,13 @@ func TestWebUIImagePasteControlsArePresent(t *testing.T) {
 }
 
 func TestWebUIUsesContextRequestIDsForToolMessageIdentity(t *testing.T) {
-	chatScript := readWebUIResource(t, "scripts/chat.js")
+	projectionScript := readWebUIResource(t, "scripts/conversation_projection.js")
 	for _, want := range []string{
 		"type === 'tool_call' || type === 'tool_result'",
 		"'request', requestId, type",
 		"msg.tool_name || '', msg.tool_input || '', content",
 	} {
-		if !strings.Contains(chatScript, want) {
+		if !strings.Contains(projectionScript, want) {
 			t.Fatalf("web UI tool message identity missing %q", want)
 		}
 	}
