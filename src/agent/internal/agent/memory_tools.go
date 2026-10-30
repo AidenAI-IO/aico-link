@@ -340,8 +340,7 @@ func (t *ForgetMemoryTool) Name() string { return "forget_memory" }
 func (t *ForgetMemoryTool) Description() string {
 	return strings.Join([]string{
 		"Forget (delete) a long-term memory.",
-		"Use only when the user explicitly asks to remove a previously saved memory.",
-		"Checking, listing, or noticing duplicate or similar memories is not a removal request: report what exists and ask before deleting anything.",
+		"Use when the user asks to remove a previously saved memory.",
 		"First use recall_memory to find the memory ID, then call this tool.",
 		"Returns confirmation of deletion.",
 	}, " ")
