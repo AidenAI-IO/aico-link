@@ -224,6 +224,7 @@ function handleSemanticEvent(event) {
     const timestamp = semanticTimestamp(event);
     switch (event.kind) {
         case 'text.delta':
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
             appendAssistantDelta({
                 request_id: requestId,
                 episode_id: episodeId,
@@ -231,6 +232,7 @@ function handleSemanticEvent(event) {
             });
             return;
         case 'reasoning.delta':
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
             appendAssistantReasoningDelta({
                 request_id: requestId,
                 episode_id: episodeId,
@@ -238,9 +240,15 @@ function handleSemanticEvent(event) {
             });
             return;
         case 'reasoning.reset':
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
             resetAssistantReasoning({request_id: requestId, episode_id: episodeId});
             return;
         case 'text.final':
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
+            // Role output describes an intermediate model response, often just
+            // before a tool call. Only the final assistant output is durable.
+            if (semanticField(payload, 'type', 'Type') === 'role_output' ||
+                assistantDraftBlockedByTool.has(requestId)) return;
             finalizeAssistantMessage({
                 type: 'assistant',
                 request_id: requestId,
@@ -255,7 +263,22 @@ function handleSemanticEvent(event) {
             // are paused during a run to protect live assistant drafts. Render
             // the semantic state message directly so its divider appears as
             // soon as the context hook inserts it.
-            if (payload && typeof payload === 'object') addMessage(payload);
+            if (payload && typeof payload === 'object') addMessage(payload, requestId);
+            return;
+        case 'tool.call_ready':
+            semanticToolCallCounts.set(requestId, (semanticToolCallCounts.get(requestId) || 0) + 1);
+            if (semanticToolCallCounts.get(requestId) > (completedToolCallCounts.get(requestId) || 0)) {
+                retireAssistantDraft({request_id: requestId});
+            }
+            return;
+        case 'tool.completed':
+        case 'tool.failed':
+            semanticToolCompletionCounts.set(requestId, (semanticToolCompletionCounts.get(requestId) || 0) + 1);
+            if (!chatRunActive() &&
+                semanticToolCompletionCounts.get(requestId) >= (semanticToolCallCounts.get(requestId) || 0)) {
+                assistantDraftBlockedByTool.delete(requestId);
+            }
+            refreshHistoryFromContext();
             return;
         default:
             if (semanticEventNeedsHistoryRefresh(event.kind)) refreshHistoryFromContext();
@@ -283,7 +306,7 @@ function handleServerEvent(data) {
     // immediately so the state divider does not wait for the final history
     // refresh at run completion.
     if (data.type === 'state' || data.type === 'notice') {
-        addMessage(data);
+        addMessage(data, data.type === 'state' ? currentChatRequestId : '');
         return;
     }
     if (data.type === 'assistant' && data.status === 'streaming') {

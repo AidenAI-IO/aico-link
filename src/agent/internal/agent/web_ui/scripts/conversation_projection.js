@@ -69,7 +69,25 @@ function projectConversationMessages(current, action) {
     }
     if (action.type !== 'live') return current;
     const projectedMessage = normalizeType(message.type) === 'assistant' ? Object.assign({}, message) : message;
-    if (index < 0) return current.concat(projectedMessage);
+    if (index < 0) {
+        const beforeIndex = action.beforeRequestId && isContextMarkerMessage(message)
+            ? current.findIndex(item => normalizeType(item.type) === 'user' && item.request_id === action.beforeRequestId)
+            : -1;
+        if (beforeIndex < 0) return current.concat(projectedMessage);
+        const next = current.slice();
+        next.splice(beforeIndex, 0, projectedMessage);
+        return next;
+    }
+    if (action.beforeRequestId && isContextMarkerMessage(message)) {
+        const beforeIndex = current.findIndex(item => normalizeType(item.type) === 'user' &&
+            item.request_id === action.beforeRequestId);
+        if (beforeIndex >= 0 && index > beforeIndex) {
+            const next = current.slice();
+            next.splice(index, 1);
+            next.splice(beforeIndex, 0, message);
+            return next;
+        }
+    }
     if (normalizeType(message.type) !== 'assistant') return current;
     const next = current.slice();
     next[index] = projectedMessage;

@@ -15,6 +15,7 @@ async function sendMessage() {
     autoResizeInput();
     clearDraftAttachments();
     currentChatRequestId = createRequestId();
+    rememberNDJSONOwnedRequest(currentChatRequestId);
     externalActiveRequestId = '';
     currentChatAbortController = new AbortController();
     currentChatCancelRequested = false;
@@ -362,6 +363,7 @@ function consumeChatStreamLines(buffer, flush) {
 }
 
 function handleChatStreamEvent(event) {
+    rememberNDJSONOwnedRequest(event.request_id || (event.message && event.message.request_id));
     if (event.type === 'assistant_delta') {
         appendAssistantDelta(event);
         return false;
@@ -383,10 +385,20 @@ function handleChatStreamEvent(event) {
             pendingSteer = null;
             renderPendingSteer();
         }
+        if (event.message.type === 'tool_call') {
+            retireAssistantDraft(event.message);
+        }
         if (event.message.type === 'assistant') {
             finalizeAssistantMessage(event.message);
         } else {
             addMessage(event.message);
+        }
+        if (event.message.type === 'tool_result') {
+            const key = assistantStreamKey(event.message);
+            completedToolCallCounts.set(key, (completedToolCallCounts.get(key) || 0) + 1);
+            if (completedToolCallCounts.get(key) >= (semanticToolCallCounts.get(key) || 0)) {
+                assistantDraftBlockedByTool.delete(key);
+            }
         }
         return false;
     }
@@ -399,9 +411,18 @@ function handleChatStreamEvent(event) {
     return false;
 }
 
+function rememberNDJSONOwnedRequest(requestId) {
+    if (!requestId) return;
+    ndjsonOwnedRequestIds.delete(requestId);
+    ndjsonOwnedRequestIds.add(requestId);
+    if (ndjsonOwnedRequestIds.size > 32) {
+        ndjsonOwnedRequestIds.delete(ndjsonOwnedRequestIds.values().next().value);
+    }
+}
+
 function appendAssistantDelta(event) {
     const key = assistantStreamKey(event);
-    if (!key) return;
+    if (!key || assistantDraftBlockedByTool.has(key)) return;
     let msg = streamingAssistantDrafts[key];
     if (!msg) {
         msg = {
@@ -420,7 +441,7 @@ function appendAssistantDelta(event) {
 
 function appendAssistantReasoningDelta(event) {
     const key = assistantStreamKey(event);
-    if (!key) return;
+    if (!key || assistantDraftBlockedByTool.has(key)) return;
     let msg = streamingAssistantDrafts[key];
     if (!msg) {
         msg = {
@@ -458,6 +479,16 @@ function resetAssistantDelta(event) {
     delete streamingAssistantDrafts[key];
     const messageKey = messageIdentity(msg);
     removeRenderedMessage(messageKey);
+}
+
+function retireAssistantDraft(event) {
+    const key = assistantStreamKey(event);
+    if (!key) return;
+    const draft = streamingAssistantDrafts[key];
+    assistantDraftBlockedByTool.add(key);
+    if (!draft) return;
+    delete streamingAssistantDrafts[key];
+    removeRenderedMessage(messageIdentity(draft));
 }
 
 function removeRenderedMessage(messageKey) {
@@ -552,6 +583,10 @@ function renderHistory(history) {
     const nextMessageNodes = new Map();
     renderedStateMessages = new Map();
     streamingAssistantDrafts = {};
+    assistantDraftBlockedByTool.clear();
+    semanticToolCallCounts.clear();
+    semanticToolCompletionCounts.clear();
+    completedToolCallCounts.clear();
 
     const orderedNodes = [];
     history.forEach(function(msg) {
@@ -614,20 +649,28 @@ function renderHistory(history) {
     renderedHistoryFingerprint = fingerprint;
 }
 
-function addMessage(msg) {
-    const next = projectConversationMessages(projectedMessages, {type: 'live', message: msg});
-    if (next === projectedMessages) return;
+function addMessage(msg, beforeRequestId) {
+    const next = projectConversationMessages(projectedMessages, {
+        type: 'live', message: msg, beforeRequestId: beforeRequestId
+    });
+    if (next === projectedMessages && !beforeRequestId) return;
     projectedMessages = next;
-    renderLiveMessage(msg);
+    renderLiveMessage(msg, beforeRequestId);
 }
 
-function renderLiveMessage(msg) {
+function renderLiveMessage(msg, beforeRequestId) {
     if (isContextMarkerMessage(msg)) {
         const key = messageIdentity(msg);
-        if (!renderedStateMessages.has(key)) {
+        const userMessage = beforeRequestId && projectedMessages.find(function(item) {
+            return normalizeType(item.type) === 'user' && item.request_id === beforeRequestId;
+        });
+        const referenceNode = userMessage && renderedMessageNodes.get(messageIdentity(userMessage));
+        let node = renderedStateMessages.get(key);
+        if (!node || (referenceNode && node.nextSibling !== referenceNode)) {
             renderedHistoryFingerprint = null;
             const shouldStickToBottom = isConversationNearBottom();
-            messagesDiv.appendChild(createContextMarkerNode(msg, renderedStateMessages.size));
+            if (!node) node = createContextMarkerNode(msg, renderedStateMessages.size);
+            messagesDiv.insertBefore(node, referenceNode || null);
             if (shouldStickToBottom) scrollToBottom();
         }
         return;

@@ -302,6 +302,113 @@ pureMessages = projectConversationMessages(pureMessages, {type: 'remove', key: m
 assert.equal(pureMessages.length, 3, 'a reset should remove the matching live draft');
 pureMessages = projectConversationMessages(pureMessages, {type: 'history', messages: pureHistory});
 assert.equal(pureMessages.length, 2, 'durable history should replace transient live messages');
+
+function renderedTypes() {
+    return Array.from(messagesDiv.children).map(function(node) {
+        return node._stateMessage ? 'state' : node._message.type;
+    });
+}
+
+renderHistory([]);
+const runId = 'ordering-run';
+const liveUser = {type: 'user', request_id: runId, content: 'set volume to 0', timestamp: 't-order-user'};
+const liveState = {type: 'state', request_id: 'context-backend-40', content: 'device: ready', timestamp: 't-order-state'};
+addMessage(liveUser);
+handleSemanticEvent({schema_version: 2, kind: 'state.updated', turn_id: runId, payload: liveState});
+const orderedStateNode = renderedStateMessages.get(messageIdentity(liveState));
+assert.deepEqual(renderedTypes(), ['state', 'user'],
+    'live state should occupy its durable position before the current user turn');
+
+handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: 'Setting playback volume now.'});
+handleSemanticEvent({schema_version: 2, kind: 'text.final', turn_id: runId,
+    payload: {type: 'role_output', content: 'Setting playback volume now.'}});
+assert.equal(streamingAssistantDrafts[runId].content, 'Setting playback volume now.',
+    'intermediate role output must not finalize the assistant draft');
+handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: runId});
+assert.deepEqual(renderedTypes(), ['state', 'user'],
+    'semantic tool boundary should retire the draft before its NDJSON tool call arrives');
+handleChatStreamEvent({type: 'message', message: {
+    type: 'tool_call', request_id: runId, tool_name: 'audio_volume', tool_input: '{"volume":0}',
+    timestamp: 't-order-call'
+}});
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call'],
+    'tool-call boundary should retire the provisional assistant draft');
+
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: runId,
+    payload: {text: 'late tool-call text'}});
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call'],
+    'a late delta from the tool-call response should not recreate its draft');
+
+handleChatStreamEvent({type: 'message', message: {
+    type: 'tool_result', request_id: runId, tool_name: 'audio_volume', content: '{"volume":0}',
+    timestamp: 't-order-result'
+}});
+handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: 'Volume is now 0.'});
+handleChatStreamEvent({type: 'message', message: {
+    type: 'assistant', request_id: runId, content: 'Volume is now 0.', timestamp: 't-order-final'
+}});
+const stableOrder = ['state', 'user', 'tool_call', 'tool_result', 'assistant'];
+assert.deepEqual(renderedTypes(), stableOrder,
+    'live final response should follow its tool result without moving earlier messages');
+
+renderHistory([
+    liveState,
+    Object.assign({}, liveUser, {request_id: 'context-backend-41'}),
+    {type: 'tool_call', request_id: 'context-backend-42', tool_name: 'audio_volume',
+        tool_input: '{"volume":0}', timestamp: 't-order-call'},
+    {type: 'tool_result', request_id: 'context-backend-43', tool_name: 'audio_volume',
+        content: '{"volume":0}', timestamp: 't-order-result'},
+    {type: 'assistant', request_id: 'context-backend-44', content: 'Volume is now 0.',
+        timestamp: 't-order-final'}
+]);
+assert.deepEqual(renderedTypes(), stableOrder,
+    'history reconciliation should preserve the live message order');
+assert.strictEqual(messagesDiv.children[0], orderedStateNode,
+    'the live state divider should be reused at its durable position');
+
+renderHistory([]);
+const laterRunId = 'later-ordering-run';
+addMessage({type: 'user', request_id: laterRunId, content: 'another tool', timestamp: 't-later-user'});
+handleChatStreamEvent({type: 'assistant_delta', request_id: laterRunId, delta: 'Old draft'});
+handleChatStreamEvent({type: 'message', message: {
+    type: 'tool_call', request_id: laterRunId, tool_name: 'audio_volume', timestamp: 't-later-call'
+}});
+handleChatStreamEvent({type: 'message', message: {
+    type: 'tool_result', request_id: laterRunId, tool_name: 'audio_volume', timestamp: 't-later-result'
+}});
+handleChatStreamEvent({type: 'assistant_delta', request_id: laterRunId, delta: 'New draft'});
+handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: laterRunId});
+assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
+    'a delayed semantic tool event must not retire the next model response');
+assert.deepEqual(renderedTypes(), ['user', 'tool_call', 'tool_result', 'assistant']);
+
+currentChatRequestId = laterRunId;
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: laterRunId,
+    payload: {text: 'duplicate SSE delta'}});
+handleSemanticEvent({schema_version: 2, kind: 'text.final', turn_id: laterRunId,
+    payload: {type: 'assistant_output', content: 'duplicate SSE final'}});
+assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
+    'the local NDJSON stream owns assistant text during its run');
+currentChatRequestId = '';
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: laterRunId,
+    payload: {text: 'late SSE delta'}});
+handleSemanticEvent({schema_version: 2, kind: 'text.final', turn_id: laterRunId,
+    payload: {type: 'assistant_output', content: 'late SSE final'}});
+assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
+    'late SSE text should not change a local NDJSON run after its request ID clears');
+
+renderHistory([]);
+const externalRunId = 'external-ordering-run';
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: externalRunId,
+    payload: {text: 'Before tool'}});
+handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: externalRunId});
+assert.deepEqual(renderedTypes(), [], 'SSE-only tool boundary should retire its draft');
+handleSemanticEvent({schema_version: 2, kind: 'tool.completed', turn_id: externalRunId});
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: externalRunId,
+    payload: {text: 'After tool'}});
+assert.equal(streamingAssistantDrafts[externalRunId].content, 'After tool',
+    'SSE-only runs should resume streaming after tool completion');
+clearTimeout(historyRefreshTimer);
 `
 ].join('\n');
 
