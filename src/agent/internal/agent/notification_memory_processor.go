@@ -364,6 +364,12 @@ func coalesceNotificationBatchTargets(results []validatedNotificationResult) []v
 		resultIndex int
 		actionIndex int
 	}
+	// Resolve omitted scopes first so an action with an inferred scope and one
+	// with an explicit scope on the same memory share a target key.
+	results = append([]validatedNotificationResult(nil), results...)
+	for index := range results {
+		results[index].proposal.Actions = withInferredNotificationTargetScopes(results[index].proposal.Actions, results[index].refs)
+	}
 	lastTargetOwner := make(map[string]targetOwner)
 	for resultIndex, result := range results {
 		for actionIndex, action := range result.proposal.Actions {
@@ -790,7 +796,7 @@ func notificationMemoryMetadata(action notificationMemoryAction, memoryType stri
 // when exactly one active catalog entry has that id. Add and promote choose a
 // destination, so their scope is never inferred.
 func inferNotificationTargetScope(action notificationMemoryAction, refs []MemoryMergeReference) string {
-	switch action.Action {
+	switch strings.ToLower(strings.TrimSpace(action.Action)) {
 	case "update", "reinforce", "remove":
 	default:
 		return ""
@@ -810,6 +816,17 @@ func inferNotificationTargetScope(action notificationMemoryAction, refs []Memory
 		scope = ref.Scope
 	}
 	return scope
+}
+
+func withInferredNotificationTargetScopes(actions []notificationMemoryAction, refs []MemoryMergeReference) []notificationMemoryAction {
+	resolved := make([]notificationMemoryAction, len(actions))
+	for index, action := range actions {
+		if strings.TrimSpace(action.Scope) == "" {
+			action.Scope = inferNotificationTargetScope(action, refs)
+		}
+		resolved[index] = action
+	}
+	return resolved
 }
 
 func findNotificationReference(id, scope string, refs []MemoryMergeReference) (MemoryMergeReference, bool) {

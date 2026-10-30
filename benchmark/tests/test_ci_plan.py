@@ -133,6 +133,12 @@ def test_comma_separated_suites_select_each_suite_in_request_order() -> None:
     assert selected == expected
     with pytest.raises(CatalogError, match="not in the CI catalog"):
         select_cases(catalog, profile="runnable", suite=f"{first},suites/missing.json")
+    for empty_list in (",", " , ,"):
+        with pytest.raises(CatalogError, match="no suite paths"):
+            select_cases(catalog, profile="runnable", suite=empty_list)
+    assert select_cases(catalog, profile="runnable", suite="") == select_cases(
+        catalog, profile="runnable"
+    )
 
 
 def test_phone_control_selection_uses_only_the_requested_environment_profile() -> None:

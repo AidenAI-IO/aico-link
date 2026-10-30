@@ -1028,6 +1028,24 @@ func TestInferNotificationTargetScopeUsesUniqueCatalogTarget(t *testing.T) {
 	}
 }
 
+func TestCoalesceNotificationBatchTargetsMatchesInferredScope(t *testing.T) {
+	ref := MemoryMergeReference{Scope: "temporary", ID: "tmp_delivery", Status: "active", Revision: 1}
+	results := []validatedNotificationResult{
+		{record: NotificationRecord{ContextID: "earlier"}, refs: []MemoryMergeReference{ref}, proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "update", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}}}},
+		{record: NotificationRecord{ContextID: "latest"}, refs: []MemoryMergeReference{ref}, proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "Remove", MemoryID: ref.ID, MemoryRevision: 1}}}},
+	}
+	coalesced := coalesceNotificationBatchTargets(results)
+	if got := len(coalesced[0].proposal.Actions); got != 0 {
+		t.Fatalf("earlier action on the same memory kept: %#v", coalesced[0].proposal.Actions)
+	}
+	if got := coalesced[1].proposal.Actions; len(got) != 1 || got[0].Scope != "temporary" {
+		t.Fatalf("latest action = %#v, want one temporary remove", got)
+	}
+	if results[1].proposal.Actions[0].Scope != "" {
+		t.Fatalf("coalescing mutated its input: %#v", results[1].proposal.Actions[0])
+	}
+}
+
 func TestNotificationRemoveWithoutScopeTargetsCatalogStore(t *testing.T) {
 	root := t.TempDir()
 	processor := NewNotificationMemoryProcessor(nil, root, NewLongTermMemoryStore(filepath.Join(root, "long_term")), nil)
