@@ -1473,6 +1473,80 @@ func createRequestID() string {
 	return "req-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
+type chatRunSession struct {
+	ctx            context.Context
+	cleanup        func()
+	steerProvider  func(context.Context) (RunSteerMessage, bool)
+	steerInterrupt func() <-chan struct{}
+}
+
+// beginChatRun claims a request before publishing its input. Its cleanup may
+// outlive an HTTP handler while request-scoped final speech plays.
+func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Message) (*chatRunSession, bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if !s.registerActiveRun(req.RequestID, cancel) {
+		cancel()
+		return nil, false
+	}
+	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			s.unregisterActiveRun(req.RequestID)
+			s.clearSteerState(req.RequestID)
+			cancel()
+		})
+	}
+	s.publishMessage(userMessage)
+	if s.liveActivity != nil {
+		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))
+	}
+	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, steerInterrupt: steerInterrupt}, true
+}
+
+func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
+	return RunRequest{
+		Input:                   input.InputText,
+		Attachments:             input.Attachments,
+		Turn:                    input,
+		EpisodeID:               episodeID,
+		RequestID:               requestID,
+		DeviceEnvironment:       s.bridgeEnvironment(),
+		EventHandler:            handler,
+		StreamSink:              s.semanticEvents,
+		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
+		AsyncEpisodeMaintenance: true,
+		SteerProvider:           run.steerProvider,
+		SteerInterrupt:          run.steerInterrupt,
+	}
+}
+
+func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episodeID, requestID string, speechWriter *speech.StreamWriter, onReasoning func(RunEvent), onMessage func(Message)) {
+	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+		onReasoning(event)
+	} else {
+		message := messageFromRunEvent(event, episodeID, requestID)
+		if message.Type != "" {
+			if message, ok := s.publishMessage(message); ok {
+				onMessage(message)
+			}
+		}
+	}
+	if s.liveActivity != nil {
+		s.liveActivity.UpdateFromRunEvent(requestID, event)
+	}
+	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+		return
+	}
+	toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
+	if toolSpeechStreamed && s.logger != nil {
+		s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
+	}
+	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
+		go s.speakToolContent(ctx, text)
+	}
+}
+
 // handleChatAsync runs the agent in a background goroutine and returns
 // {request_id} immediately. Intermediate results are pushed into
 // chatPendingResult and served by handleChatResult.
@@ -1507,18 +1581,13 @@ func (s *Server) handleChatAsync(
 
 	s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
 
-	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(requestID, cancel) {
-		cancel()
+	run, ok := s.beginChatRun(req, turnInput, userMsg)
+	if !ok {
 		s.pendingResultsMu.Lock()
 		delete(s.pendingResults, requestID)
 		s.pendingResultsMu.Unlock()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
-	}
-	s.publishMessage(userMsg)
-	if s.liveActivity != nil {
-		s.liveActivity.StartTask(requestID, inputText, s.liveActivityPhoneID(req))
 	}
 
 	// Return {request_id} immediately
@@ -1527,11 +1596,9 @@ func (s *Server) handleChatAsync(
 	json.NewEncoder(w).Encode(map[string]string{"request_id": requestID})
 
 	// Run agent in background goroutine
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(requestID)
 	go func() {
 		defer func() {
-			s.unregisterActiveRun(requestID)
-			s.clearSteerState(requestID)
+			run.cleanup()
 			// Keep the completed result available for polling for 60s,
 			// then clean up. The client (PhoneBridge) polls /api/chat/result
 			// every ~1s; immediate deletion creates a race where the app
@@ -1548,55 +1615,22 @@ func (s *Server) handleChatAsync(
 		// Event handler pushes intermediate messages into the pending result
 		// so the client can poll them in near-realtime.
 		eventHandler := func(event RunEvent) {
-			if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+			s.handleChatRunEvent(run.ctx, event, userMsg.EpisodeID, requestID, speechWriter, func(event RunEvent) {
 				msg := pollingMessageFromReasoningEvent(event, userMsg.EpisodeID, requestID)
 				pending.mu.Lock()
-				// Reasoning events contain deltas, not accumulated prefixes. The
-				// polling client appends them to its in-memory draft.
+				// Polling clients append reasoning deltas to their draft.
 				pending.history = append(pending.history, msg)
 				pending.messages = append(pending.messages, msg)
 				pending.mu.Unlock()
-				if s.liveActivity != nil {
-					s.liveActivity.UpdateFromRunEvent(requestID, event)
-				}
-				return
-			}
-			msg := messageFromRunEvent(event, userMsg.EpisodeID, requestID)
-			if msg.Type != "" {
-				if msg, ok := s.publishMessage(msg); ok {
-					pending.mu.Lock()
-					pending.history = append(pending.history, msg)
-					pending.messages = append(pending.messages, msg)
-					pending.mu.Unlock()
-				}
-			}
-			if s.liveActivity != nil {
-				s.liveActivity.UpdateFromRunEvent(requestID, event)
-			}
-
-			toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
-			if toolSpeechStreamed && s.logger != nil {
-				s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
-			}
-			if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-				go s.speakToolContent(runCtx, text)
-			}
+			}, func(msg Message) {
+				pending.mu.Lock()
+				pending.history = append(pending.history, msg)
+				pending.messages = append(pending.messages, msg)
+				pending.mu.Unlock()
+			})
 		}
 
-		runReq := RunRequest{
-			Input:                   inputText,
-			Attachments:             turnInput.Attachments,
-			Turn:                    turnInput,
-			EpisodeID:               userMsg.EpisodeID,
-			RequestID:               requestID,
-			DeviceEnvironment:       s.bridgeEnvironment(),
-			EventHandler:            eventHandler,
-			StreamSink:              s.semanticEvents,
-			StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
-			AsyncEpisodeMaintenance: true,
-			SteerProvider:           steerProvider,
-			SteerInterrupt:          steerInterrupt,
-		}
+		runReq := s.newChatRunRequest(run, turnInput, userMsg.EpisodeID, requestID, eventHandler)
 
 		var newStream *streamSessionWriter
 		unregisterStreamOutput := func() {}
@@ -1605,7 +1639,7 @@ func (s *Server) handleChatAsync(
 
 		if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 			if ttsManager != nil {
-				stream, err := beginManagedTTSStream(runCtx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
+				stream, err := beginManagedTTSStream(run.ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
 				if err != nil {
 					if s.logger != nil {
 						s.logger.Warn("TTS BeginStream failed: %v", err)
@@ -1632,7 +1666,7 @@ func (s *Server) handleChatAsync(
 			pending.mu.Unlock()
 		}
 
-		result, err := s.runtime.Run(runCtx, runReq)
+		result, err := s.runtime.Run(run.ctx, runReq)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
 			closeErr := newStream.closeAndWait()
@@ -1644,7 +1678,7 @@ func (s *Server) handleChatAsync(
 
 		pending.mu.Lock()
 		if err != nil {
-			canceled := errors.Is(runCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
+			canceled := errors.Is(run.ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
 			if canceled {
 				if s.liveActivity != nil {
 					s.liveActivity.CancelTask(requestID)
@@ -1683,8 +1717,8 @@ func (s *Server) handleChatAsync(
 				}
 			}
 			if !canceled && !result.SpeechStreamed && s.canSpeakFinalText() {
-				prepared := s.runtime.PrepareSpokenText(runCtx, SpokenTextInput{TurnFailure: result.TurnFailure})
-				s.speakFinalText(runCtx, requestID, prepared)
+				prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
+				s.speakFinalText(run.ctx, requestID, prepared)
 			}
 			return
 		}
@@ -1703,8 +1737,8 @@ func (s *Server) handleChatAsync(
 		// still see the active run/output and interrupt it reliably.
 		speechText := result.SpokenTextForConfig(s.runtime.ConfigSnapshot())
 		if s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
-			prepared := s.runtime.PrepareSpokenText(runCtx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
-			s.speakFinalText(runCtx, requestID, prepared)
+			prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
+			s.speakFinalText(run.ctx, requestID, prepared)
 		}
 	}()
 }
@@ -1931,84 +1965,37 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// A request_id marks a resumable run. Keep it alive if the streaming
 	// HTTP client disconnects; only /api/chat/cancel should stop it.
-	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(req.RequestID, cancel) {
+	run, ok := s.beginChatRun(req, turnInput, userMessage)
+	if !ok {
 		s.logger.Error("Request ID already in use: %s", req.RequestID)
-		cancel()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
 	}
-	var cleanupOnce sync.Once
-	cleanupRun := func() {
-		cleanupOnce.Do(func() {
-			s.unregisterActiveRun(req.RequestID)
-			s.clearSteerState(req.RequestID)
-			cancel()
-		})
-	}
-	ctx := runCtx
+	ctx := run.ctx
 	cleanupRunAtReturn := true
 	defer func() {
 		if cleanupRunAtReturn {
 			s.logger.Info("Cleaning up run at return")
-			cleanupRun()
+			run.cleanup()
 		}
 	}()
 	s.logger.Info("Appending history")
-	s.publishMessage(userMessage)
-	if s.liveActivity != nil {
-		s.logger.Info("Starting live activity")
-		s.liveActivity.StartTask(req.RequestID, inputText, s.liveActivityPhoneID(req))
-	}
-
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
 	s.logger.Info("Creating run request")
 	var speechWriter *speech.StreamWriter
-	runReq := RunRequest{
-		Input:                   inputText,
-		Attachments:             turnInput.Attachments,
-		Turn:                    turnInput,
-		EpisodeID:               episodeID,
-		RequestID:               req.RequestID,
-		DeviceEnvironment:       s.bridgeEnvironment(),
-		StreamSink:              s.semanticEvents,
-		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: req.RequestID, RunID: req.RequestID},
-		AsyncEpisodeMaintenance: true,
-		SteerProvider:           steerProvider,
-		SteerInterrupt:          steerInterrupt,
-		EventHandler: func(event RunEvent) {
-			if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
-				stream.Write(ChatStreamEvent{
-					Type:      map[string]string{runEventReasoningDelta: "assistant_reasoning_delta", runEventReasoningReset: "assistant_reasoning_reset"}[event.Type],
-					RequestID: req.RequestID,
-					EpisodeID: episodeID,
-					// Reasoning delta events carry only the newly received chunk;
-					// clients append it to their streaming draft.
-					ReasoningContent: event.ReasoningContent,
-				})
-				if s.liveActivity != nil {
-					s.liveActivity.UpdateFromRunEvent(req.RequestID, event)
-				}
-				return
-			}
-			message := messageFromRunEvent(event, episodeID, req.RequestID)
-			if message.Type != "" {
-				if message, ok := s.publishMessage(message); ok {
-					stream.Write(ChatStreamEvent{Type: "message", Message: &message})
-				}
-			}
-			if s.liveActivity != nil {
-				s.liveActivity.UpdateFromRunEvent(req.RequestID, event)
-			}
-			toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
-			if toolSpeechStreamed && s.logger != nil {
-				s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
-			}
-			if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-				go s.speakToolContent(ctx, text)
-			}
-		},
-	}
+	runReq := s.newChatRunRequest(run, turnInput, episodeID, req.RequestID, func(event RunEvent) {
+		s.handleChatRunEvent(ctx, event, episodeID, req.RequestID, speechWriter, func(event RunEvent) {
+			stream.Write(ChatStreamEvent{
+				Type:      map[string]string{runEventReasoningDelta: "assistant_reasoning_delta", runEventReasoningReset: "assistant_reasoning_reset"}[event.Type],
+				RequestID: req.RequestID,
+				EpisodeID: episodeID,
+				// Reasoning delta events carry only the newly received chunk;
+				// clients append it to their streaming draft.
+				ReasoningContent: event.ReasoningContent,
+			})
+		}, func(message Message) {
+			stream.Write(ChatStreamEvent{Type: "message", Message: &message})
+		})
+	})
 
 	var newStream *streamSessionWriter
 	unregisterStreamOutput := func() {}
@@ -2109,7 +2096,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		// Let request-scoped final TTS outlive the streaming handler while
 		// /api/chat/cancel can still interrupt it via the active run/output.
 		finalTTSCtx := context.Background()
-		finishRun := cleanupRun
+		finishRun := run.cleanup
 		cleanupRunAtReturn = false
 		go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
 			defer finish()
