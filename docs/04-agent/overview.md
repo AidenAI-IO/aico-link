@@ -39,6 +39,28 @@ In the firmware, it is installed by default to:
 - iOS Live Activity / Dynamic Island task status; see [Live Activity / Dynamic Island](live-activity.md)
 - Device-side voice pipeline: VAD / STT / TTS; [Realtime Voice](realtime-voice.md)
 
+### Web UI hardware resources
+
+The sidebar refreshes hardware resources every second while the page is visible:
+Wi-Fi interface IP addresses, RX/TX rates and cumulative byte counters, battery
+percentage and voltage, CPU and NPU utilization, memory usage, and disk usage
+for the root filesystem and mounted local block devices (including userdata and
+mounted SD cards). Battery, CPU, NPU, memory, and disk usage use compact meters.
+Voltage appears alongside battery level; full network addresses, traffic totals,
+and exact storage sizes are available under **Details**. Bind mounts of the same
+block device share one disk entry. The terminal opens in a separate tab through `/webtty/`.
+
+`GET /api/resources` returns a read-only, non-cacheable snapshot. Linux procfs
+and sysfs provide CPU counters, memory and Wi-Fi statistics; Rockchip's
+`/sys/kernel/debug/rknpu/load` (or `/proc/rknpu/load`) provides NPU utilization.
+Memory usage excludes available memory, disk usage excludes free blocks, and
+NPU utilization is the mean across reported cores. Battery readings come from
+the MCU service with a bounded timeout. Missing or unreadable metrics appear as
+`Unavailable`; CPU and network rates need two samples. Requests never overlap,
+hidden pages pause polling, and failed requests clear stale readings and retry.
+The resource snapshot is available over the same connections as the Web UI;
+the existing MCU control endpoints remain restricted to USB and loopback.
+
 ## Run Modes
 
 The HTTP server and Web UI start in every input mode. `input_mode` controls whether the daemon also runs the device-side voice loop:
@@ -50,6 +72,24 @@ The HTTP server and Web UI start in every input mode. `input_mode` controls whet
 | `realtime` | HTTP server and Web UI plus the configured realtime voice model session |
 
 In `stt` mode, Web UI requests and device voice interactions share the same Agent runtime and run in the same daemon process.
+
+The Web UI reveals streamed answer and reasoning text character by character,
+with faster playback for large bursts. It keeps the complete received text in
+memory and waits for playback to finish before reconciling completed history.
+Text accompanying a tool call remains an ordinary assistant message before the
+tool details, including after history reloads. It retains its pending animation
+at the tool boundary; explicit stream resets discard the active draft.
+History loads, background tabs, and reduced-motion preferences show text without
+animation.
+
+## Proposed Architecture Work
+
+The [Streaming-First Agent Refactor Plan](streaming-first-refactor-plan.md)
+compares current voice-agent frameworks with Aico's existing implementation and
+proposes a staged migration for LLM, STT, TTS, realtime, playback, and client
+streaming within the existing Go/C++ runtime. The proposed voice-input source is
+exclusively the board microphone; browser and phone live voice are excluded.
+It is a research/design proposal, not a description of shipped behavior.
 
 ## Startup
 

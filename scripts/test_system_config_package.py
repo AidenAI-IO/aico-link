@@ -266,7 +266,7 @@ class RuntimeConfigTests(unittest.TestCase):
     def test_production_packager_builds_one_verified_package(self):
         apps = self.root / "apps"
         (apps / "bin").mkdir(parents=True)
-        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service frame_service_cli rknn_vad ota abctl aico-environment ttyd".split():
+        for name in "agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service frame_service_cli rknn_vad smart_turn_helper ota abctl aico-environment ttyd".split():
             binary = apps / "bin" / name
             binary.write_text("#!/bin/sh\nexit 0\n")
             binary.chmod(0o755)

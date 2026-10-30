@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"strings"
@@ -81,6 +82,15 @@ func NewTextTurnInput(userText string, attachments []InputAttachment) TurnInput 
 }
 
 func PrepareAudioInput(mode string, sttClient STTClient, wavData []byte, transcriptHint, userText string, attachments []InputAttachment) (AudioInputResult, error) {
+	return PrepareAudioInputWithContext(context.Background(), mode, sttClient, wavData, transcriptHint, userText, attachments)
+}
+
+// PrepareAudioInputWithContext is the cancellation-aware form used by active
+// voice turns. The legacy PrepareAudioInput wrapper remains source-compatible.
+func PrepareAudioInputWithContext(ctx context.Context, mode string, sttClient STTClient, wavData []byte, transcriptHint, userText string, attachments []InputAttachment) (AudioInputResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	resolvedMode := strings.ToLower(strings.TrimSpace(mode))
 	if resolvedMode == "" {
 		resolvedMode = TurnModalitySTT
@@ -97,7 +107,7 @@ func PrepareAudioInput(mode string, sttClient STTClient, wavData []byte, transcr
 				return AudioInputResult{}, fmt.Errorf("STT mode enabled but STT client is unavailable")
 			}
 			var err error
-			transcript, err = sttClient.TranscribeWAV(wavData)
+			transcript, err = TranscribeWAVWithContext(ctx, sttClient, wavData)
 			if err != nil {
 				return AudioInputResult{}, fmt.Errorf("STT transcription failed: %w", err)
 			}

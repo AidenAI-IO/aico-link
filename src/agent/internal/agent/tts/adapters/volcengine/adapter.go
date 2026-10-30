@@ -81,7 +81,11 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 func (a *Adapter) Name() string { return ProviderName }
 
 func (a *Adapter) Capabilities() tts.Capabilities {
-	return tts.Capabilities{SupportedSampleRates: []int{8000, 16000, 22050, 24000, 32000, 44100, 48000}}
+	return tts.Capabilities{
+		SupportedSampleRates:     []int{8000, 16000, 22050, 24000, 32000, 44100, 48000},
+		TextGranularity:          tts.TextGranularityIncremental,
+		SupportsIncrementalAudio: true,
+	}
 }
 
 func (a *Adapter) Close() error { return nil }

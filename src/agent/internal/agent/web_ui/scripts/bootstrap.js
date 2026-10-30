@@ -10,7 +10,7 @@ setInterval(refreshCurrentLiveActivity, 2000);
 loadToolCatalog();
 autoResizeInput();
 connectSSE();
-configureTerminal();
+startResourcePolling();
 
 inputEl.addEventListener('input', autoResizeInput);
 imageInputEl.addEventListener('change', handleImageSelection);
@@ -40,9 +40,3 @@ document.addEventListener('keydown', function(event) {
         closeStateDetails();
     }
 });
-
-function configureTerminal() {
-    const terminalUrl = '/webtty/';
-    terminalFrameEl.src = terminalUrl;
-    terminalOpenLinkEl.href = terminalUrl;
-}

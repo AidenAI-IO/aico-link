@@ -129,20 +129,35 @@ func playTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBacke
 // avoid acknowledging response-tail delivery for speech that was not spoken.
 //
 // failureCode is optional; pass empty string to use only the generic fallback clip.
-func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config, failureCode TurnFailureCode, speechStarted bool, ttsErr error) (bool, error) {
+// attachCancel, when non-nil, receives the cancel func for a freshly created
+// play context so InterruptOutput can stop fallback playback.
+func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBackend, cfg Config, failureCode TurnFailureCode, speechStarted bool, ttsErr error, attachCancel func(context.CancelFunc)) (bool, error) {
 	if ttsErr == nil || speechStarted || !canPlayTTSUnavailableFallback(cfg, failureCode) {
 		return false, ttsErr
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if err := ctx.Err(); err != nil {
-		return false, ttsErr
-	}
+	// Pure user cancel: stay silent. Provider/no-audio failures should still
+	// notify even if the speak context was canceled (e.g. GPIO while TTS 429'd).
 	if errors.Is(ttsErr, context.Canceled) {
 		return false, ttsErr
 	}
-	if err := playTTSUnavailableFallback(ctx, audio, cfg, failureCode); err != nil {
+	// Caller deadline already expired with the same error: do not start fallback.
+	if errors.Is(ttsErr, context.DeadlineExceeded) && ctx != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return false, ttsErr
+	}
+	playCtx := ctx
+	var cancelPlay context.CancelFunc
+	if playCtx == nil || playCtx.Err() != nil {
+		playCtx, cancelPlay = context.WithCancel(context.Background())
+		if attachCancel != nil {
+			attachCancel(cancelPlay)
+		}
+		defer cancelPlay()
+		// attachCancel may cancel immediately when InterruptOutput already ran.
+		if err := playCtx.Err(); err != nil {
+			return false, ttsErr
+		}
+	}
+	if err := playTTSUnavailableFallback(playCtx, audio, cfg, failureCode); err != nil {
 		return false, errors.Join(ttsErr, err)
 	}
 	return true, ttsErr

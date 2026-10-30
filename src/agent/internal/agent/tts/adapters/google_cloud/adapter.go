@@ -82,6 +82,9 @@ func (a *Adapter) Capabilities() tts.Capabilities {
 		SupportsContextContinuation: false,
 		SupportedSampleRates:        []int{24000},
 		RegionRestricted:            false,
+		TextGranularity:             tts.TextGranularitySentence,
+		SupportsIncrementalAudio:    true,
+		SupportsFlush:               true,
 	}
 }
 

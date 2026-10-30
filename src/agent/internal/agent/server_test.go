@@ -36,6 +36,7 @@ import (
 	"aico-agent/internal/agent/screenprovider"
 	speechtext "aico-agent/internal/agent/speech"
 	ttsmodule "aico-agent/internal/agent/tts"
+	streamcontract "aico-agent/internal/stream"
 )
 
 type stubSTTClient struct {
@@ -56,6 +57,131 @@ type stubSTTStreamUploader struct {
 	writes      [][]byte
 	finalized   bool
 	closed      bool
+}
+
+func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
+	server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/events?version=2&since=0&epoch=%d", server.semanticEvents.sessionEpoch), nil).WithContext(ctx)
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		server.handleEvents(rec, req)
+		close(done)
+	}()
+	if err := server.semanticEvents.Publish(streamcontract.NewEvent(streamcontract.EventIdentity{
+		EventID:        "v2-event",
+		ConversationID: "run-conversation",
+		SessionEpoch:   1,
+		Sequence:       1,
+	}, streamcontract.EventTextDelta, map[string]string{"text": "hello"})); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("semantic SSE handler did not stop after cancellation")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"schema_version":2`) || !strings.Contains(body, `"kind":"text.delta"`) {
+		t.Fatalf("v2 SSE body = %s", body)
+	}
+	if strings.Contains(body, `"type":"resync_required"`) {
+		t.Fatalf("empty replay window incorrectly required resync: %s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf("id: %d:1", server.semanticEvents.sessionEpoch)) {
+		t.Fatalf("v2 SSE body missing event id: %s", body)
+	}
+}
+
+func TestHandleSemanticEventsLatestAndReconnectCursor(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		reconnectCursor bool
+		wantEvent       bool
+	}{
+		{name: "fresh observer skips retained events"},
+		{name: "browser reconnect replays from Last-Event-ID", reconnectCursor: true, wantEvent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
+			if err := server.semanticEvents.Publish(streamcontract.NewEvent(streamcontract.EventIdentity{
+				EventID: "retained", ConversationID: "agent", SessionEpoch: 1,
+			}, streamcontract.EventTextDelta, map[string]string{"text": "old"})); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			req := httptest.NewRequest(http.MethodGet, "/api/events?version=2&since=latest", nil).WithContext(ctx)
+			if tc.reconnectCursor {
+				req.Header.Set("Last-Event-ID", fmt.Sprintf("%d:0", server.semanticEvents.sessionEpoch))
+			}
+			rec := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				server.handleEvents(rec, req)
+				close(done)
+			}()
+			deadline := time.Now().Add(time.Second)
+			for {
+				server.semanticEvents.mu.Lock()
+				count := len(server.semanticEvents.subscribers)
+				server.semanticEvents.mu.Unlock()
+				if count > 0 || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("semantic SSE handler did not stop")
+			}
+			body := rec.Body.String()
+			if got := strings.Contains(body, `"kind":"text.delta"`); got != tc.wantEvent {
+				t.Fatalf("retained event present = %v, want %v; body = %s", got, tc.wantEvent, body)
+			}
+			if !tc.reconnectCursor && !strings.Contains(body, fmt.Sprintf("id: %d:1\n", server.semanticEvents.sessionEpoch)) {
+				t.Fatalf("latest connection did not establish a browser replay cursor: %s", body)
+			}
+		})
+	}
+}
+
+func TestParseSemanticEventCursorSupportsLastEventIDAndEpochQuery(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		since     string
+		epoch     string
+		want      *streamcontract.ReplayCursor
+		wantError string
+	}{
+		{name: "empty", want: nil},
+		{name: "sequence", since: "7", want: &streamcontract.ReplayCursor{SessionEpoch: 1, Sequence: 7}},
+		{name: "explicit epoch", since: "7", epoch: "3", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
+		{name: "compound last event id", since: "3:7", want: &streamcontract.ReplayCursor{SessionEpoch: 3, Sequence: 7}},
+		{name: "epoch without cursor", epoch: "3", want: nil},
+		{name: "zero epoch", since: "7", epoch: "0", wantError: "invalid epoch cursor"},
+		{name: "invalid sequence", since: "bad", wantError: "invalid since cursor"},
+		{name: "ambiguous epoch", since: "3:7", epoch: "3", wantError: "invalid since cursor"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseSemanticEventCursor(tc.since, tc.epoch)
+			if tc.wantError != "" {
+				if err == nil || err.Error() != tc.wantError {
+					t.Fatalf("error = %v, want %q", err, tc.wantError)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("cursor = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
 }
 
 type mappingStateMutatingTool struct {
@@ -2901,12 +3027,14 @@ func TestWebUIIsEmbeddedFromStaticResource(t *testing.T) {
 	for _, asset := range []string{
 		"/web-ui/styles.css",
 		"/web-ui/scripts/state.js",
+		"/web-ui/scripts/streaming_text.js",
 		"/web-ui/scripts/events.js",
 		"/web-ui/scripts/tools.js",
 		"/web-ui/scripts/chat.js",
 		"/web-ui/scripts/messages.js",
 		"/web-ui/scripts/attachments.js",
 		"/web-ui/scripts/tool_messages.js",
+		"/web-ui/scripts/resources.js",
 		"/web-ui/scripts/bootstrap.js",
 	} {
 		if !strings.Contains(webUI, asset) {
@@ -2925,6 +3053,8 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 	}{
 		{path: "/web-ui/styles.css", contentType: "text/css", content: ":root {"},
 		{path: "/web-ui/scripts/bootstrap.js", contentType: "text/javascript", content: "loadHistory();"},
+		{path: "/web-ui/scripts/resources.js", contentType: "text/javascript", content: "startResourcePolling"},
+		{path: "/web-ui/scripts/streaming_text.js", contentType: "text/javascript", content: "function createStreamingTextReveal("},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))
@@ -2963,7 +3093,7 @@ func TestWebUIBootstrapDoesNotReferenceRemovedStoragePanel(t *testing.T) {
 	}
 	for _, required := range []string{
 		"connectSSE();",
-		"configureTerminal();",
+		"startResourcePolling();",
 		"toolSelectEl.addEventListener('change', syncSelectedTool);",
 	} {
 		if !strings.Contains(bootstrapScript, required) {
@@ -3034,13 +3164,13 @@ func TestWebUIImagePasteControlsArePresent(t *testing.T) {
 }
 
 func TestWebUIUsesContextRequestIDsForToolMessageIdentity(t *testing.T) {
-	chatScript := readWebUIResource(t, "scripts/chat.js")
+	projectionScript := readWebUIResource(t, "scripts/conversation_projection.js")
 	for _, want := range []string{
 		"type === 'tool_call' || type === 'tool_result'",
 		"'request', requestId, type",
 		"msg.tool_name || '', msg.tool_input || '', content",
 	} {
-		if !strings.Contains(chatScript, want) {
+		if !strings.Contains(projectionScript, want) {
 			t.Fatalf("web UI tool message identity missing %q", want)
 		}
 	}

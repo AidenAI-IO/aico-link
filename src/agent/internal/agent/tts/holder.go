@@ -152,13 +152,29 @@ func (t *trackedSession) Close() error {
 func (t *trackedSession) Abort() error {
 	t.closeOnce.Do(func() {
 		defer t.done.Done()
-		if aborter, ok := t.StreamSession.(interface{ Abort() error }); ok {
-			t.err = aborter.Abort()
-		} else {
-			t.err = t.StreamSession.Close()
-		}
+		t.err = CancelAndClose(t.StreamSession)
 	})
 	return t.err
+}
+
+// FinishInput forwards the optional half-close operation while preserving the
+// provider-generation accounting owned by trackedSession.Close.
+func (t *trackedSession) FinishInput() error {
+	if finisher, ok := t.StreamSession.(InputFinisher); ok {
+		return finisher.FinishInput()
+	}
+	// A holder must remain transparent for legacy providers. Flush is the
+	// closest safe approximation of a half-close for those sessions.
+	return t.StreamSession.Flush()
+}
+
+// Cancel forwards optional upstream cancellation without releasing the holder
+// lease; callers still call Close once resource release is complete.
+func (t *trackedSession) Cancel() error {
+	if canceller, ok := t.StreamSession.(SessionCanceller); ok {
+		return canceller.Cancel()
+	}
+	return ErrLifecycleUnsupported
 }
 
 // ResetBuffer preserves optional buffering capabilities exposed by the

@@ -9,7 +9,7 @@ for script in build.sh container-build.sh version.sh release.sh write-maintainer
   bash -n "${PACKAGE_DIR}/${script}"
 done
 grep -Fq 'Package: ${PACKAGE_NAME}' "${PACKAGE_DIR}/container-build.sh" || fail "control metadata missing"
-for binary in agent audio_service ble_service mcu_service cpu_vad frame_service rknn_vad ota abctl aico-environment ttyd; do
+for binary in agent audio_service ble_service mcu_service cpu_vad frame_service rknn_vad smart_turn_helper ota abctl aico-environment ttyd; do
   grep -Fq "${binary}" "${PACKAGE_DIR}/container-build.sh" || fail "binary is not packaged: ${binary}"
 done
 grep -Fq 'dpkg-deb --build --root-owner-group' "${PACKAGE_DIR}/container-build.sh" || fail "package is not built with dpkg-deb"
