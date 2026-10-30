@@ -626,6 +626,11 @@ func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Re
 	if width <= 0 || height <= 0 {
 		return 0, false
 	}
+	if b, ok := before.(*image.YCbCr); ok {
+		if a, ok := after.(*image.YCbCr); ok && a.SubsampleRatio == b.SubsampleRatio && a.Rect == b.Rect {
+			return screenshotProgressYCbCrBlockDiffRatio(b, a, bounds, excluded)
+		}
+	}
 	columns := screenshotProgressGridColumns
 	if width < columns {
 		columns = width
@@ -670,6 +675,46 @@ func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Re
 		}
 	}
 	return float64(changedBlocks) / float64(totalBlocks), true
+}
+
+// screenshotProgressYCbCrBlockDiffRatio is the block comparison for decoded
+// JPEG screenshots. It reads the Y, Cb and Cr planes directly and samples
+// every other pixel, which keeps each block mean while avoiding a per-pixel
+// color conversion that took most of a second per comparison on the board.
+func screenshotProgressYCbCrBlockDiffRatio(before, after *image.YCbCr, bounds image.Rectangle, excluded []image.Rectangle) (float64, bool) {
+	width, height := bounds.Dx(), bounds.Dy()
+	columns := min(screenshotProgressGridColumns, width)
+	rows := min(screenshotProgressGridRows, height)
+	changedBlocks := 0
+	for row := 0; row < rows; row++ {
+		y0 := bounds.Min.Y + height*row/rows
+		y1 := bounds.Min.Y + height*(row+1)/rows
+		for column := 0; column < columns; column++ {
+			x0 := bounds.Min.X + width*column/columns
+			x1 := bounds.Min.X + width*(column+1)/columns
+			if rectanglesOverlap(image.Rect(x0, y0, x1, y1), excluded) {
+				continue
+			}
+			var beforeY, beforeCb, beforeCr, afterY, afterCb, afterCr, count int
+			for y := y0; y < y1; y += tapSequenceSampleStep {
+				for x := x0; x < x1; x += tapSequenceSampleStep {
+					yi, ci := before.YOffset(x, y), before.COffset(x, y)
+					beforeY += int(before.Y[yi])
+					beforeCb += int(before.Cb[ci])
+					beforeCr += int(before.Cr[ci])
+					afterY += int(after.Y[yi])
+					afterCb += int(after.Cb[ci])
+					afterCr += int(after.Cr[ci])
+					count++
+				}
+			}
+			threshold := screenshotProgressBlockChannelThreshold * count
+			if absInt(beforeY-afterY) > threshold || absInt(beforeCb-afterCb) > threshold || absInt(beforeCr-afterCr) > threshold {
+				changedBlocks++
+			}
+		}
+	}
+	return float64(changedBlocks) / float64(columns*rows), true
 }
 
 func rectanglesOverlap(block image.Rectangle, rects []image.Rectangle) bool {
