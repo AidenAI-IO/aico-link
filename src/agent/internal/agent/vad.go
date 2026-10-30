@@ -472,6 +472,9 @@ func (s *helperVADScorer) Reset() error {
 		return nil
 	}
 	if strings.HasPrefix(line, "ERR ") {
+		// Helper exits after a failed encoder reinit; clear local state so the
+		// next StartRecording/ensureStarted can spawn a fresh process.
+		s.stopAfterProtocolError()
 		return errors.New(strings.TrimPrefix(line, "ERR "))
 	}
 	s.stopAfterProtocolError()

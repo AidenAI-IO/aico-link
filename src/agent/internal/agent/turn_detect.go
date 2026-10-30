@@ -33,11 +33,22 @@ type TurnDetector interface {
 	Close() error
 }
 
+var errSmartTurnStarting = errors.New("smart turn helper still starting")
+
 type helperTurnDetector struct {
 	modelPath  string
 	helperPath string
 
 	mu            sync.Mutex
+	cmd           *exec.Cmd
+	stdin         io.WriteCloser
+	stdout        *bufio.Reader
+	waitErr       chan error
+	windowSamples int
+	starting      bool
+}
+
+type startedTurnHelper struct {
 	cmd           *exec.Cmd
 	stdin         io.WriteCloser
 	stdout        *bufio.Reader
@@ -152,28 +163,101 @@ func (d *helperTurnDetector) WindowSamples() int {
 	return d.windowSamples
 }
 
+// WarmAsync starts the helper without holding the detector mutex during the
+// readiness wait. Concurrent Predict calls fail fast with errSmartTurnStarting
+// so the capture loop can keep using silence fallback.
+func (d *helperTurnDetector) WarmAsync() {
+	if d == nil {
+		return
+	}
+	go func() {
+		d.mu.Lock()
+		if d.cmd != nil || d.starting {
+			d.mu.Unlock()
+			return
+		}
+		d.starting = true
+		modelPath := d.modelPath
+		helperPath := d.helperPath
+		d.mu.Unlock()
+
+		started, err := spawnTurnHelper(helperPath, modelPath)
+
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		d.starting = false
+		if d.cmd != nil {
+			if started != nil {
+				_ = closeStartedTurnHelper(started)
+			}
+			return
+		}
+		if err != nil {
+			logging.Warnf("agent", "turn_detect", "smart turn warm failed: %v", err)
+			return
+		}
+		d.installStarted(started)
+	}()
+}
+
 func (d *helperTurnDetector) ensureStarted() error {
 	if d.cmd != nil {
 		return nil
 	}
-	cmd := exec.Command(d.helperPath, "--model", d.modelPath)
+	if d.starting {
+		return errSmartTurnStarting
+	}
+	d.starting = true
+	modelPath := d.modelPath
+	helperPath := d.helperPath
+	d.mu.Unlock()
+
+	started, err := spawnTurnHelper(helperPath, modelPath)
+
+	d.mu.Lock()
+	d.starting = false
+	if d.cmd != nil {
+		if started != nil {
+			_ = closeStartedTurnHelper(started)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	d.installStarted(started)
+	return nil
+}
+
+func (d *helperTurnDetector) installStarted(started *startedTurnHelper) {
+	d.cmd = started.cmd
+	d.stdin = started.stdin
+	d.stdout = started.stdout
+	d.waitErr = started.waitErr
+	if started.windowSamples > 0 {
+		d.windowSamples = started.windowSamples
+	}
+}
+
+func spawnTurnHelper(helperPath, modelPath string) (*startedTurnHelper, error) {
+	cmd := exec.Command(helperPath, "--model", modelPath)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("open turn helper stdin: %w", err)
+		return nil, fmt.Errorf("open turn helper stdin: %w", err)
 	}
 	stdoutPipe, err := cmd.StdoutPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("open turn helper stdout: %w", err)
+		return nil, fmt.Errorf("open turn helper stdout: %w", err)
 	}
 	stderrPipe, err := cmd.StderrPipe()
 	if err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("open turn helper stderr: %w", err)
+		return nil, fmt.Errorf("open turn helper stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		_ = stdin.Close()
-		return fmt.Errorf("start turn helper %q: %w", d.helperPath, err)
+		return nil, fmt.Errorf("start turn helper %q: %w", helperPath, err)
 	}
 	go logTurnHelperStderr(stderrPipe)
 
@@ -181,32 +265,65 @@ func (d *helperTurnDetector) ensureStarted() error {
 	line, err := readHelperLineWithTimeout(cmd, reader, "wait for turn helper readiness", turnHelperReadinessTimeout)
 	if err != nil {
 		_ = terminateCommand(cmd)
-		return fmt.Errorf("wait for turn helper readiness: %w", err)
+		return nil, fmt.Errorf("wait for turn helper readiness: %w", err)
 	}
 	line = strings.TrimSpace(line)
 	if strings.HasPrefix(line, "ERR ") {
 		_ = terminateCommand(cmd)
-		return errors.New(strings.TrimPrefix(line, "ERR "))
+		return nil, errors.New(strings.TrimPrefix(line, "ERR "))
 	}
 	fields := strings.Fields(line)
 	if len(fields) < 1 || fields[0] != "READY" {
 		_ = terminateCommand(cmd)
-		return fmt.Errorf("unexpected turn helper readiness response %q", line)
+		return nil, fmt.Errorf("unexpected turn helper readiness response %q", line)
 	}
+	windowSamples := 0
 	if len(fields) >= 2 {
 		if n, err := strconv.Atoi(fields[1]); err == nil && n > 0 {
-			d.windowSamples = n
+			windowSamples = n
 		}
 	}
 
-	d.cmd = cmd
-	d.stdin = stdin
-	d.stdout = reader
-	d.waitErr = make(chan error, 1)
+	waitErr := make(chan error, 1)
 	go func() {
-		d.waitErr <- cmd.Wait()
+		waitErr <- cmd.Wait()
 	}()
-	return nil
+	return &startedTurnHelper{
+		cmd:           cmd,
+		stdin:         stdin,
+		stdout:        reader,
+		waitErr:       waitErr,
+		windowSamples: windowSamples,
+	}, nil
+}
+
+func closeStartedTurnHelper(started *startedTurnHelper) error {
+	if started == nil || started.cmd == nil {
+		return nil
+	}
+	var writeErr error
+	if started.stdin != nil {
+		_, writeErr = started.stdin.Write([]byte{'Q'})
+		_ = started.stdin.Close()
+	}
+	timer := time.NewTimer(turnHelperShutdownTimeout)
+	defer timer.Stop()
+	select {
+	case err := <-started.waitErr:
+		if writeErr != nil {
+			return writeErr
+		}
+		return err
+	case <-timer.C:
+		_ = terminateCommand(started.cmd)
+		if started.waitErr != nil {
+			<-started.waitErr
+		}
+		if writeErr != nil {
+			return writeErr
+		}
+		return errors.New("turn helper shutdown timed out")
+	}
 }
 
 func (d *helperTurnDetector) readLineWithTimeout(operation string) (string, error) {

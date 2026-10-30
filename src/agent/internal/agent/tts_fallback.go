@@ -152,6 +152,10 @@ func attemptTTSUnavailableFallback(ctx context.Context, audio tts.AudioServiceBa
 			attachCancel(cancelPlay)
 		}
 		defer cancelPlay()
+		// attachCancel may cancel immediately when InterruptOutput already ran.
+		if err := playCtx.Err(); err != nil {
+			return false, ttsErr
+		}
 	}
 	if err := playTTSUnavailableFallback(playCtx, audio, cfg, failureCode); err != nil {
 		return false, errors.Join(ttsErr, err)

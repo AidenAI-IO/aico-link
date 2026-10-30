@@ -1168,7 +1168,11 @@ func voiceTurnResultAfterCancel(input agent.TurnInput, canceledInfo canceledTurn
 // Uses per-frame speech (not latched VADSpeaking) so one echo frame cannot
 // keep the sustain counter climbing through following silence.
 func countVoiceBargeInFrame(dialog audioDialogRunner, frame []int16, ttsActive bool, speechFrames *int) bool {
-	_, _ = dialog.ProcessVADFrame(frame)
+	if _, err := dialog.ProcessVADFrame(frame); err != nil {
+		// Failed frames leave lastProbability stale; do not treat them as speech.
+		*speechFrames = 0
+		return false
+	}
 	need := thinkBargeInNeed
 	if ttsActive {
 		need = ttsBargeInNeedFrames

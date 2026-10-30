@@ -59,8 +59,9 @@ type activeTTSOutput struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu     sync.Mutex
-	stream *streamSessionWriter
+	mu          sync.Mutex
+	stream      *streamSessionWriter
+	interrupted bool
 }
 
 func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
@@ -95,8 +96,14 @@ func (o *activeTTSOutput) setCancel(cancel context.CancelFunc) {
 		return
 	}
 	o.mu.Lock()
+	interrupted := o.interrupted
 	o.cancel = cancel
 	o.mu.Unlock()
+	// InterruptOutput already ran: cancel immediately so fallback cannot start
+	// on a fresh Background context after the earlier interruption.
+	if interrupted && cancel != nil {
+		cancel()
+	}
 }
 
 func (o *activeTTSOutput) interrupt() {
@@ -104,6 +111,7 @@ func (o *activeTTSOutput) interrupt() {
 		return
 	}
 	o.mu.Lock()
+	o.interrupted = true
 	stream := o.stream
 	cancel := o.cancel
 	o.mu.Unlock()
@@ -248,9 +256,11 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 		connWarmer:         connWarmer,
 	}
 	// Warm Smart Turn off the capture path so the first analyze window does
-	// not block on helper spawn + RKNN load (up to readiness timeout).
+	// not block on helper spawn + RKNN load. WarmAsync never holds the
+	// detector mutex during readiness wait, so Predict can fail fast and
+	// silence fallback remains available while warmup is still in flight.
 	if helper, ok := turnDetector.(*helperTurnDetector); ok {
-		go func() { _ = helper.WindowSamples() }()
+		helper.WarmAsync()
 	}
 	return dialog, nil
 }
@@ -390,6 +400,8 @@ func (d *AudioDialog) StartRecording() error {
 	}
 	d.recordText = ""
 	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, recordStartedAt)
+	d.recordSTTRotateGen++
+	rotateGen := d.recordSTTRotateGen
 	d.recordActive = true
 
 	// Play the cue tone immediately so the user gets fast feedback.
@@ -428,9 +440,9 @@ func (d *AudioDialog) StartRecording() error {
 		if recordSTT == nil {
 			return
 		}
-		// Guard: if recording was stopped before STT connected, discard.
+		// Guard: discard if recording stopped/rotated before STT connected.
 		d.recordMu.Lock()
-		stillActive := d.recordActive && d.sessionID == sttSessionID
+		stillActive := d.recordActive && d.sessionID == sttSessionID && d.recordSTTRotateGen == rotateGen
 		d.recordMu.Unlock()
 		if !stillActive {
 			_ = recordSTT.Close()
