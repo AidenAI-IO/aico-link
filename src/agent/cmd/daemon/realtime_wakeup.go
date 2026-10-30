@@ -285,7 +285,7 @@ const (
 	realtimeChatRejectBusy
 )
 
-type realtimeChatAdmissionState struct {
+type realtimeSessionAdmissionState struct {
 	activeChat           bool
 	queuedChat           bool
 	responseActive       bool
@@ -294,9 +294,14 @@ type realtimeChatAdmissionState struct {
 	notificationActive   bool
 	notificationDraining bool
 	standbyPending       bool
+	bridgePending        bool
+	supportsText         bool
+	runtimeAvailable     bool
+	taskUpdatesReady     bool
+	pendingTaskCount     int
 }
 
-func (s realtimeChatAdmissionState) admission() realtimeChatAdmission {
+func (s realtimeSessionAdmissionState) admission() realtimeChatAdmission {
 	if s.activeChat || s.queuedChat || s.notificationActive || s.notificationDraining {
 		return realtimeChatRejectBusy
 	}
@@ -315,6 +320,20 @@ func (s realtimeChatAdmissionState) admission() realtimeChatAdmission {
 		return realtimeChatRejectBusy
 	}
 	return realtimeChatStart
+}
+
+func (s realtimeSessionAdmissionState) canInjectBackgroundResponse() bool {
+	return s.supportsText && !s.turnBlocked && !s.localSpeechActive &&
+		!s.notificationActive && !s.notificationDraining && !s.activeChat &&
+		!s.standbyPending && !s.bridgePending
+}
+
+func (s realtimeSessionAdmissionState) canInjectTaskUpdates() bool {
+	return s.taskUpdatesReady && s.pendingTaskCount > 0 && s.canInjectBackgroundResponse()
+}
+
+func (s realtimeSessionAdmissionState) canInjectVoiceNotification() bool {
+	return s.runtimeAvailable && s.canInjectBackgroundResponse()
 }
 
 type realtimeChatBridge struct {
@@ -1639,6 +1658,23 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	var taskDebounceTimer *time.Timer
 	var taskDebounce <-chan time.Time
 	taskUpdatesReady := false
+	currentAdmission := func() realtimeSessionAdmissionState {
+		return realtimeSessionAdmissionState{
+			activeChat:           activeChat != nil,
+			queuedChat:           queuedChat != nil,
+			responseActive:       turnState.responseActive,
+			turnBlocked:          !turnState.canInjectResponse(),
+			localSpeechActive:    realtimeAdmissionSpeechActive(admissionTurnEndpoint),
+			notificationActive:   activeNotificationToken != "",
+			notificationDraining: notificationDrainDone != nil,
+			standbyPending:       sleep.pending(),
+			bridgePending:        chatBridgeHasPending(chatBridge),
+			supportsText:         supportsText,
+			runtimeAvailable:     runtime != nil,
+			taskUpdatesReady:     taskUpdatesReady,
+			pendingTaskCount:     len(pendingTaskUpdates),
+		}
+	}
 	defer func() {
 		if taskDebounceTimer != nil {
 			taskDebounceTimer.Stop()
@@ -1663,10 +1699,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 	}()
 	tryInjectTaskUpdates := func() error {
-		if !taskUpdatesReady || len(pendingTaskUpdates) == 0 || !turnState.canInjectResponse() || realtimeAdmissionSpeechActive(admissionTurnEndpoint) || activeNotificationToken != "" || notificationDrainDone != nil || activeChat != nil || sleep.pending() || chatBridgeHasPending(chatBridge) {
-			return nil
-		}
-		if !supportsText {
+		if !currentAdmission().canInjectTaskUpdates() {
 			return nil
 		}
 		delivering := pendingTaskUpdates
@@ -1697,7 +1730,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		return nil
 	}
 	tryInjectVoiceNotification := func() error {
-		if runtime == nil || !supportsText || activeNotificationToken != "" || notificationDrainDone != nil || !turnState.canInjectResponse() || realtimeAdmissionSpeechActive(admissionTurnEndpoint) || activeChat != nil || sleep.pending() || chatBridgeHasPending(chatBridge) {
+		if !currentAdmission().canInjectVoiceNotification() {
 			return nil
 		}
 		prepared := runtime.PrepareVoiceNotification(ctx)
@@ -1962,16 +1995,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				close(command.events)
 				continue
 			}
-			admission := (realtimeChatAdmissionState{
-				activeChat:           activeChat != nil,
-				queuedChat:           queuedChat != nil,
-				responseActive:       turnState.responseActive,
-				turnBlocked:          !turnState.canInjectResponse(),
-				localSpeechActive:    realtimeAdmissionSpeechActive(admissionTurnEndpoint),
-				notificationActive:   activeNotificationToken != "",
-				notificationDraining: notificationDrainDone != nil,
-				standbyPending:       sleep.pending(),
-			}).admission()
+			admission := currentAdmission().admission()
 			logging.Infof("agent", "realtime", "Chat admission: request_id=%s active_request_id=%s response_id=%s occupied_ms=%d active_chat=%t queued_chat=%t response_active=%t terminal_pending=%t can_inject=%t input_speech=%t input_pending=%t local_speech=%t notification=%t draining=%t standby=%t admission=%d",
 				command.request.RequestID, realtimeChatRequestID(activeChat), turnState.responseID, watchdog.age().Milliseconds(),
 				activeChat != nil, queuedChat != nil, turnState.responseActive, turnState.responseTerminalPending, turnState.canInjectResponse(),

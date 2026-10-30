@@ -529,7 +529,7 @@ func TestRealtimeChatAdmissionQueuesDuringServerAuthoritativeLocalSpeech(t *test
 	if state.inputSpeechActive || state.inputTurnPending || !state.canInjectResponse() {
 		t.Fatalf("transient speech claimed a provider-owned turn: %+v", state)
 	}
-	admission := (realtimeChatAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
+	admission := (realtimeSessionAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
 	if admission != realtimeChatQueueAfterResponse {
 		t.Fatalf("speech-time admission=%v, want queue without busy", admission)
 	}
@@ -542,7 +542,7 @@ func TestRealtimeChatAdmissionQueuesDuringServerAuthoritativeLocalSpeech(t *test
 		t.Fatalf("cleared transient speech left a pending turn: %+v", state)
 	}
 
-	admission = (realtimeChatAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
+	admission = (realtimeSessionAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
 	if admission != realtimeChatStart {
 		t.Fatalf("cleared transient speech blocked WebUI text: state=%+v admission=%v", state, admission)
 	}
@@ -888,7 +888,7 @@ func TestRealtimeToolTrackerContinuesWhenResultsPrecedeResponseDone(t *testing.T
 }
 
 func TestRealtimeChatAdmissionQueuesTextWhileFarewellResponseIsActive(t *testing.T) {
-	state := realtimeChatAdmissionState{responseActive: true, turnBlocked: true, standbyPending: true}
+	state := realtimeSessionAdmissionState{responseActive: true, turnBlocked: true, standbyPending: true}
 	if got := state.admission(); got != realtimeChatQueueAfterResponse {
 		t.Fatalf("admission() = %v, want queue after farewell response", got)
 	}
@@ -900,16 +900,62 @@ func TestRealtimeChatAdmissionQueuesTextWhileFarewellResponseIsActive(t *testing
 }
 
 func TestRealtimeChatAdmissionRejectsProviderOwnedSpeechInsteadOfQueuing(t *testing.T) {
-	state := realtimeChatAdmissionState{turnBlocked: true, localSpeechActive: true}
+	state := realtimeSessionAdmissionState{turnBlocked: true, localSpeechActive: true}
 	if got := state.admission(); got != realtimeChatRejectBusy {
 		t.Fatalf("admission() = %v, want busy for a provider-owned pending turn", got)
 	}
 }
 
 func TestRealtimeChatAdmissionStartsTextDuringFarewellDrain(t *testing.T) {
-	state := realtimeChatAdmissionState{standbyPending: true}
+	state := realtimeSessionAdmissionState{standbyPending: true}
 	if got := state.admission(); got != realtimeChatStart {
 		t.Fatalf("admission() = %v, want immediate start", got)
+	}
+}
+
+func TestRealtimeSessionAdmissionGatesBackgroundResponses(t *testing.T) {
+	ready := realtimeSessionAdmissionState{
+		supportsText:     true,
+		runtimeAvailable: true,
+		taskUpdatesReady: true,
+		pendingTaskCount: 1,
+	}
+	if !ready.canInjectTaskUpdates() || !ready.canInjectVoiceNotification() {
+		t.Fatal("idle session did not admit background responses")
+	}
+
+	blocked := []struct {
+		name  string
+		apply func(*realtimeSessionAdmissionState)
+	}{
+		{"turn", func(s *realtimeSessionAdmissionState) { s.turnBlocked = true }},
+		{"speech", func(s *realtimeSessionAdmissionState) { s.localSpeechActive = true }},
+		{"notification", func(s *realtimeSessionAdmissionState) { s.notificationActive = true }},
+		{"notification drain", func(s *realtimeSessionAdmissionState) { s.notificationDraining = true }},
+		{"chat", func(s *realtimeSessionAdmissionState) { s.activeChat = true }},
+		{"standby", func(s *realtimeSessionAdmissionState) { s.standbyPending = true }},
+		{"chat bridge", func(s *realtimeSessionAdmissionState) { s.bridgePending = true }},
+		{"text unsupported", func(s *realtimeSessionAdmissionState) { s.supportsText = false }},
+	}
+	for _, test := range blocked {
+		t.Run(test.name, func(t *testing.T) {
+			state := ready
+			test.apply(&state)
+			if state.canInjectTaskUpdates() || state.canInjectVoiceNotification() {
+				t.Fatalf("background response admitted with %s active", test.name)
+			}
+		})
+	}
+
+	withoutTasks := ready
+	withoutTasks.pendingTaskCount = 0
+	if withoutTasks.canInjectTaskUpdates() || !withoutTasks.canInjectVoiceNotification() {
+		t.Fatal("task availability affected notification admission")
+	}
+	withoutRuntime := ready
+	withoutRuntime.runtimeAvailable = false
+	if !withoutRuntime.canInjectTaskUpdates() || withoutRuntime.canInjectVoiceNotification() {
+		t.Fatal("runtime availability affected task admission")
 	}
 }
 
