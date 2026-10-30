@@ -181,10 +181,11 @@ type RunResult struct {
 	// Deprecated: use WaitForWakeupRequested.
 	SleepRequested bool `json:"sleep_requested,omitempty"`
 	// Deprecated: use WaitForWakeupReason.
-	SleepReason    string       `json:"sleep_reason,omitempty"`
-	SpeechStreamed bool         `json:"-"`
-	Preempted      bool         `json:"preempted,omitempty"`
-	TurnFailure    *TurnFailure `json:"-"`
+	SleepReason      string `json:"sleep_reason,omitempty"`
+	SpeechStreamed   bool   `json:"-"`
+	speechGeneration uint64
+	Preempted        bool         `json:"preempted,omitempty"`
+	TurnFailure      *TurnFailure `json:"-"`
 }
 
 func canonicalTurnInputFromRunRequest(req RunRequest) TurnInput {

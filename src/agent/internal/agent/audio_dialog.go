@@ -60,8 +60,9 @@ type AudioDialog struct {
 }
 
 type activeTTSOutput struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel     context.CancelFunc
+	done       chan struct{}
+	generation uint64
 
 	mu          sync.Mutex
 	stream      interface{ interrupt() }
@@ -868,7 +869,7 @@ func (d *AudioDialog) ProcessUtterance(ctx context.Context, utterance []int16, r
 		if !result.SpeechStreamed {
 			prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			if prepared.Text != "" {
-				if speakErr := d.SpeakFinal(ctx, prepared.Text, nil); speakErr != nil {
+				if _, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, result.speechGeneration); speakErr != nil {
 					logging.Errorf("agent", "audio_dialog", "failure replacement TTS failed: %v", speakErr)
 				}
 			}
@@ -882,8 +883,13 @@ func (d *AudioDialog) ProcessUtterance(ctx context.Context, utterance []int16, r
 		ResponseText:   result.SpokenTextForConfig(d.config),
 		TailAppendable: d.CanSpeakFinalText(),
 	})
-	err = d.SpeakFinal(ctx, prepared.Text, nil)
-	runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
+	started, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, result.speechGeneration)
+	if !started {
+		runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+		return nil
+	}
+	err = speakErr
+	runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, speakErr)
 	return err
 }
 
@@ -1047,7 +1053,7 @@ func (d *AudioDialog) RunVoiceTurnWithContext(ctx context.Context, input TurnInp
 	d.publishVoiceUserInput(input, utterance, episodeID, requestID)
 	result, err := d.runAgentTurnWithActiveRequest(ctx, input, runtime, episodeID, requestID, turnContext)
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	return result, nil
 }
@@ -1075,6 +1081,8 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 		nil,
 	))
 	var finalAssistantEvent *RunEvent
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(d.latestSpeech.snapshotGeneration())
 
 	var speechWriter *speech.StreamWriter
 	req := RunRequest{
@@ -1094,7 +1102,7 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 			if toolSpeechStreamed {
 				logging.Infof("agent", "tts", "Tool content already streamed: tool=%s", event.ToolName)
 			} else {
-				d.HandleRunEvent(ctx, event)
+				speechGeneration.advance(d.HandleRunEvent(ctx, event))
 			}
 		},
 		SteerProvider: func(ctx context.Context) (RunSteerMessage, bool) {
@@ -1150,7 +1158,9 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
 		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
+	result.speechGeneration = speechGeneration.current()
 	if err != nil {
 		return result, fmt.Errorf("LLM request failed: %w", err)
 	}
@@ -1267,19 +1277,21 @@ func (d *AudioDialog) waitForSteerInterrupt(ctx context.Context, requestID strin
 	return d.runControl.waitForInterrupt(ctx, requestID)
 }
 
-func (d *AudioDialog) HandleRunEvent(ctx context.Context, event RunEvent) {
+func (d *AudioDialog) HandleRunEvent(ctx context.Context, event RunEvent) uint64 {
 	if event.Type != runEventToolCall || !d.config.VoiceToolCallSpeechOrDefault() || event.ToolName == toolWaitForWakeup {
-		return
+		return 0
 	}
 	if text := speech.BuildText(event.Content); text != "" {
-		speechCtx, _, cleanup := d.latestSpeech.begin(ctx)
+		speechCtx, output, cleanup := d.latestSpeech.begin(ctx)
 		go func() {
 			defer cleanup()
 			if err := d.speak(speechCtx, text, nil, toolContentSpeechTimeout, false); err != nil {
 				logging.Errorf("agent", "audio_dialog", "Tool content TTS failed: %v", err)
 			}
 		}()
+		return output.generation
 	}
+	return 0
 }
 
 func (d *AudioDialog) SpeakToolContent(content string) {
@@ -1300,6 +1312,18 @@ func (d *AudioDialog) Speak(ctx context.Context, text string, interrupt <-chan s
 
 func (d *AudioDialog) SpeakFinal(ctx context.Context, text string, interrupt <-chan struct{}) error {
 	return d.speak(ctx, text, interrupt, 0, true)
+}
+
+func (d *AudioDialog) speakFinalIfCurrent(ctx context.Context, text string, interrupt <-chan struct{}, generation uint64) (bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return true, nil
+	}
+	speechCtx, cleanup, ok := d.latestSpeech.claim(ctx, generation)
+	if !ok {
+		return false, nil
+	}
+	defer cleanup()
+	return true, d.SpeakFinal(speechCtx, text, interrupt)
 }
 
 func (d *AudioDialog) CanSpeakFinalText() bool {
@@ -1474,6 +1498,8 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 	d.playPromptSoundAsyncWithWait(promptSoundAgentSend, "agent send", false)
 
 	var speechWriter *speech.StreamWriter
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(d.latestSpeech.snapshotGeneration())
 
 	req := RunRequest{
 		Input: text,
@@ -1486,7 +1512,7 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 			if toolSpeechStreamed {
 				logging.Infof("agent", "tts", "Tool content already streamed: tool=%s", event.ToolName)
 			} else {
-				d.HandleRunEvent(ctx, event)
+				speechGeneration.advance(d.HandleRunEvent(ctx, event))
 			}
 		},
 	}
@@ -1514,12 +1540,13 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
 		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
 	if err != nil {
 		if d.CanSpeakFinalText() && !result.SpeechStreamed {
 			prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			if prepared.Text != "" {
-				if speakErr := d.SpeakFinal(ctx, prepared.Text, nil); speakErr != nil {
+				if _, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, speechGeneration.current()); speakErr != nil {
 					logging.Errorf("agent", "audio_dialog", "failure replacement TTS failed: %v", speakErr)
 				}
 			}
@@ -1532,7 +1559,10 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 	speechText := result.SpokenTextForConfig(d.config)
 	if d.CanSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
 		prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
-		if err := d.SpeakFinal(ctx, prepared.Text, nil); err != nil {
+		started, err := d.speakFinalIfCurrent(ctx, prepared.Text, nil, speechGeneration.current())
+		if !started {
+			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+		} else if err != nil {
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			logging.Errorf("agent", "audio_dialog", "TTS streaming failed: %v", err)
 		} else {

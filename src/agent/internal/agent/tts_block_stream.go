@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"aico-agent/internal/agent/tts"
 )
@@ -11,13 +12,46 @@ import (
 // before launching asynchronous tool speech prevents an older goroutine from
 // starting after a newer response has already taken over.
 type latestTTSOutput struct {
-	mu      sync.Mutex
-	current *activeTTSOutput
+	mu         sync.Mutex
+	current    *activeTTSOutput
+	generation uint64
 }
 
 type ttsOutputContextKey struct{}
 
+type ttsRunGeneration struct {
+	value atomic.Uint64
+}
+
+func (c *ttsRunGeneration) advance(generation uint64) {
+	for current := c.value.Load(); generation > current; current = c.value.Load() {
+		if c.value.CompareAndSwap(current, generation) {
+			return
+		}
+	}
+}
+
+func (c *ttsRunGeneration) current() uint64 {
+	return c.value.Load()
+}
+
 func (s *latestTTSOutput) begin(ctx context.Context) (context.Context, *activeTTSOutput, func()) {
+	ctx, output, cleanup, _ := s.start(ctx, 0, false)
+	return ctx, output, cleanup
+}
+
+func (s *latestTTSOutput) claim(ctx context.Context, generation uint64) (context.Context, func(), bool) {
+	ctx, _, cleanup, ok := s.start(ctx, generation, true)
+	return ctx, cleanup, ok
+}
+
+func (s *latestTTSOutput) snapshotGeneration() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.generation
+}
+
+func (s *latestTTSOutput) start(ctx context.Context, generation uint64, conditional bool) (context.Context, *activeTTSOutput, func(), bool) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -25,12 +59,15 @@ func (s *latestTTSOutput) begin(ctx context.Context) (context.Context, *activeTT
 	output := newActiveTTSOutput(cancel)
 	s.mu.Lock()
 	var previous *activeTTSOutput
-	if ctx.Err() == nil {
+	ok := ctx.Err() == nil && (!conditional || s.generation == generation)
+	if ok {
 		previous = s.current
+		s.generation++
+		output.generation = s.generation
 		s.current = output
 	}
 	s.mu.Unlock()
-	if ctx.Err() != nil {
+	if !ok {
 		output.interrupt()
 	}
 	if previous != nil {
@@ -48,7 +85,14 @@ func (s *latestTTSOutput) begin(ctx context.Context) (context.Context, *activeTT
 			output.finish()
 		})
 	}
-	return context.WithValue(ctx, ttsOutputContextKey{}, output), output, cleanup
+	if !ok {
+		if !conditional {
+			return context.WithValue(ctx, ttsOutputContextKey{}, output), output, cleanup, true
+		}
+		cleanup()
+		return ctx, nil, func() {}, false
+	}
+	return context.WithValue(ctx, ttsOutputContextKey{}, output), output, cleanup, true
 }
 
 func (s *latestTTSOutput) acquire(ctx context.Context) (context.Context, *activeTTSOutput, func()) {
@@ -208,4 +252,13 @@ func (w *ttsBlockStream) wasSuperseded() bool {
 	output := w.output
 	w.mu.Unlock()
 	return output.wasSuperseded()
+}
+
+func (w *ttsBlockStream) generation() uint64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.output == nil {
+		return 0
+	}
+	return w.output.generation
 }

@@ -141,6 +141,52 @@ func TestTTSBlockStreamMarksSupersededSpeechWithoutAudio(t *testing.T) {
 	}
 }
 
+func TestOlderFallbackCannotReplaceSpeechStartedAfterStreamClosed(t *testing.T) {
+	provider := &blockRecordingProvider{noPCM: true}
+	var latest latestTTSOutput
+	stream, err := beginManagedTTSBlockStream(context.Background(), tts.NewProviderManager(provider, nil), &blockRecordingPlayback{}, Config{}, &latest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := speech.NewStreamWriter(stream)
+	if _, err := w.Write([]byte("<tts>Earlier response.</tts>")); err != nil {
+		t.Fatal(err)
+	}
+	if !w.FinalizeResponse() {
+		t.Fatal("earlier speech block was not accepted")
+	}
+	if err := stream.closeAndWait(); err != nil {
+		t.Fatal(err)
+	}
+	oldGeneration := stream.generation()
+	if oldGeneration == 0 {
+		t.Fatal("closed stream lost its speech generation")
+	}
+	newCtx, _, releaseNew := latest.begin(context.Background())
+	defer releaseNew()
+	if _, cleanup, ok := latest.claim(context.Background(), oldGeneration); ok {
+		cleanup()
+		t.Fatal("older fallback claimed output after newer speech started")
+	}
+	if newCtx.Err() != nil {
+		t.Fatal("older fallback interrupted newer speech")
+	}
+}
+
+func TestFallbackClaimsSameGenerationAfterStreamClosed(t *testing.T) {
+	var latest latestTTSOutput
+	oldCtx, oldOutput, releaseOld := latest.begin(context.Background())
+	releaseOld()
+	fallbackCtx, cleanup, ok := latest.claim(context.Background(), oldOutput.generation)
+	if !ok {
+		t.Fatal("fallback could not claim unchanged output generation")
+	}
+	defer cleanup()
+	if oldCtx.Err() == nil || fallbackCtx.Err() != nil {
+		t.Fatal("fallback did not take over after earlier output ended")
+	}
+}
+
 func TestServerFinalSpeechInterruptsPendingToolSpeech(t *testing.T) {
 	testFinalSpeechInterruptsPendingToolSpeech(t, false)
 }

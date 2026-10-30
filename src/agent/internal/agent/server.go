@@ -1522,7 +1522,7 @@ func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episode
 	}
 }
 
-func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episodeID, requestID string, speechWriter *speech.StreamWriter, onReasoning func(RunEvent), onMessage func(Message)) {
+func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episodeID, requestID string, speechWriter *speech.StreamWriter, onReasoning func(RunEvent), onMessage func(Message)) uint64 {
 	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
 		onReasoning(event)
 	} else {
@@ -1537,19 +1537,21 @@ func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episode
 		s.liveActivity.UpdateFromRunEvent(requestID, event)
 	}
 	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
-		return
+		return 0
 	}
 	toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
 	if toolSpeechStreamed && s.logger != nil {
 		s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
 	}
 	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-		speechCtx, _, cleanup := s.latestSpeech.begin(ctx)
+		speechCtx, output, cleanup := s.latestSpeech.begin(ctx)
 		go func() {
 			defer cleanup()
 			s.speakToolContent(speechCtx, text)
 		}()
+		return output.generation
 	}
+	return 0
 }
 
 // handleChatAsync runs the agent in a background goroutine and returns
@@ -1616,11 +1618,13 @@ func (s *Server) handleChatAsync(
 		}()
 
 		var speechWriter *speech.StreamWriter
+		var speechGeneration ttsRunGeneration
+		speechGeneration.advance(s.latestSpeech.snapshotGeneration())
 
 		// Event handler pushes intermediate messages into the pending result
 		// so the client can poll them in near-realtime.
 		eventHandler := func(event RunEvent) {
-			s.handleChatRunEvent(run.ctx, event, userMsg.EpisodeID, requestID, speechWriter, func(event RunEvent) {
+			generation := s.handleChatRunEvent(run.ctx, event, userMsg.EpisodeID, requestID, speechWriter, func(event RunEvent) {
 				msg := pollingMessageFromReasoningEvent(event, userMsg.EpisodeID, requestID)
 				pending.mu.Lock()
 				// Polling clients append reasoning deltas to their draft.
@@ -1633,6 +1637,7 @@ func (s *Server) handleChatAsync(
 				pending.messages = append(pending.messages, msg)
 				pending.mu.Unlock()
 			})
+			speechGeneration.advance(generation)
 		}
 
 		runReq := s.newChatRunRequest(run, turnInput, userMsg.EpisodeID, requestID, eventHandler)
@@ -1679,6 +1684,7 @@ func (s *Server) handleChatAsync(
 				s.logger.Error("new TTS stream failed: %v", closeErr)
 			}
 			result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+			speechGeneration.advance(newStream.generation())
 		}
 
 		pending.mu.Lock()
@@ -1723,7 +1729,7 @@ func (s *Server) handleChatAsync(
 			}
 			if !canceled && !result.SpeechStreamed && s.canSpeakFinalText() {
 				prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
-				s.speakFinalText(run.ctx, requestID, prepared)
+				s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 			}
 			return
 		}
@@ -1743,7 +1749,7 @@ func (s *Server) handleChatAsync(
 		speechText := result.SpokenTextForConfig(s.runtime.ConfigSnapshot())
 		if s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
 			prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
-			s.speakFinalText(run.ctx, requestID, prepared)
+			s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 		}
 	}()
 }
@@ -1987,8 +1993,10 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info("Appending history")
 	s.logger.Info("Creating run request")
 	var speechWriter *speech.StreamWriter
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(s.latestSpeech.snapshotGeneration())
 	runReq := s.newChatRunRequest(run, turnInput, episodeID, req.RequestID, func(event RunEvent) {
-		s.handleChatRunEvent(ctx, event, episodeID, req.RequestID, speechWriter, func(event RunEvent) {
+		generation := s.handleChatRunEvent(ctx, event, episodeID, req.RequestID, speechWriter, func(event RunEvent) {
 			stream.Write(ChatStreamEvent{
 				Type:      map[string]string{runEventReasoningDelta: "assistant_reasoning_delta", runEventReasoningReset: "assistant_reasoning_reset"}[event.Type],
 				RequestID: req.RequestID,
@@ -2000,6 +2008,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}, func(message Message) {
 			stream.Write(ChatStreamEvent{Type: "message", Message: &message})
 		})
+		speechGeneration.advance(generation)
 	})
 
 	var newStream *ttsBlockStream
@@ -2050,6 +2059,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 			s.logger.Error("new TTS stream failed: %v", closeErr)
 		}
 		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
 	if err != nil {
 		canceled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
@@ -2084,7 +2094,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 		if !result.SpeechStreamed && s.canSpeakFinalText() {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
-			s.speakFinalText(ctx, req.RequestID, prepared)
+			s.speakFinalTextIfCurrent(ctx, req.RequestID, prepared, speechGeneration.current())
 		}
 		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: turn})
 		return
@@ -2100,14 +2110,18 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
 		// Let request-scoped final TTS outlive the streaming handler while
 		// /api/chat/cancel can still interrupt it via the active run/output.
-		finalTTSCtx, _, releaseFinalTTS := s.latestSpeech.begin(context.Background())
-		finishRun := run.cleanup
-		cleanupRunAtReturn = false
-		go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
-			defer finish()
-			defer releaseFinalTTS()
-			s.speakFinalText(ttsCtx, req.RequestID, prepared)
-		}(prepared, finalTTSCtx, finishRun)
+		if strings.TrimSpace(prepared.Text) != "" {
+			finalTTSCtx, releaseFinalTTS, ok := s.latestSpeech.claim(context.Background(), speechGeneration.current())
+			if ok {
+				finishRun := run.cleanup
+				cleanupRunAtReturn = false
+				go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
+					defer finish()
+					defer releaseFinalTTS()
+					s.speakFinalText(ttsCtx, req.RequestID, prepared)
+				}(prepared, finalTTSCtx, finishRun)
+			}
+		}
 	}
 
 	stream.Write(ChatStreamEvent{
@@ -2502,6 +2516,18 @@ func (s *Server) speakFinalText(ctx context.Context, requestID string, prepared 
 			s.logger.Error("TTS playback failed: %v", err)
 		}
 	}
+}
+
+func (s *Server) speakFinalTextIfCurrent(ctx context.Context, requestID string, prepared SpokenTextResult, generation uint64) {
+	if strings.TrimSpace(prepared.Text) == "" {
+		return
+	}
+	speechCtx, cleanup, ok := s.latestSpeech.claim(ctx, generation)
+	if !ok {
+		return
+	}
+	defer cleanup()
+	s.speakFinalText(speechCtx, requestID, prepared)
 }
 
 func (s *Server) speakTextObserved(ctx context.Context, requestID, text string, timeoutAfterLock time.Duration, registerOutput bool) error {
