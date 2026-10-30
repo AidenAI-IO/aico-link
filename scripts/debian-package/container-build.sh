@@ -21,6 +21,7 @@ rsync -aH --chown=0:0 "${REPO_ROOT}/src/config_web/web/" "${PKG_ROOT}/usr/share/
 rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/share/aico/skills/"
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/audio/" "${PKG_ROOT}/usr/share/aico/audio/"
+(cd "${REPO_ROOT}/assets/business/models/dtln" && sha256sum --check SHA256SUMS)
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/models/" "${PKG_ROOT}/usr/lib/aico/models/"
 # Vendor libraries are supplied by the platform rootfs through ld.so.conf.d.
 cat >"${PKG_ROOT}/DEBIAN/control" <<CTL

@@ -21,6 +21,22 @@ TEST_CASE("AudioRecordSession captures at 16 kHz for a 24 kHz target") {
     session.join();
 }
 
+TEST_CASE("AudioRecordSession waits for capture tail before reporting EOF") {
+    aico::AudioFormat fmt;
+    aico::AudioRecordSession session(2, fmt);
+    session.capture_done_.store(false);
+    session.stop();
+    aico::AudioChunkResult chunk;
+    CHECK(session.pop_chunk(1, &chunk) == aico::AicoServiceStatus::TIMEOUT);
+    session.enqueue_pcm({1, 2, 3, 4});
+    session.capture_done_.store(true);
+    REQUIRE(session.pop_chunk(1, &chunk) == aico::AicoServiceStatus::OK);
+    CHECK_FALSE(chunk.end_of_stream);
+    CHECK(chunk.pcm == std::vector<uint8_t>{1, 2, 3, 4});
+    REQUIRE(session.pop_chunk(1, &chunk) == aico::AicoServiceStatus::OK);
+    CHECK(chunk.end_of_stream);
+}
+
 TEST_CASE("AudioSessionManager keeps a stopped record session readable until EOF") {
     aico::AudioSessionManager manager;
 

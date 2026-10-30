@@ -1,0 +1,17 @@
+{
+  "repository": "https://github.com/breizhn/DTLN",
+  "commit": "1de1f15a8b5b7e1c44905618ff2ef70ca8277fbc",
+  "license": "MIT",
+  "files": [
+    {
+      "path": "models/dtln/model_1.onnx",
+      "sha256": "22b91cae3855e5a0620e66a917ca6c82c58db0e842c770f58d86751c5e8d4ae3",
+      "bytes": 1458237
+    },
+    {
+      "path": "models/dtln/model_2.onnx",
+      "sha256": "e20c92f9233fccf29cddf86970d0d0161a03aebccc26d6f4d5639c4d5ec2e639",
+      "bytes": 2510010
+    }
+  ]
+}

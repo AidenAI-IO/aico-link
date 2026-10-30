@@ -14,6 +14,8 @@ set(AICO_TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/aico_log.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_playback_session.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_record_session.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio_denoiser.cpp
+    ${CMAKE_SOURCE_DIR}/src/dtln_denoiser.cpp
     ${CMAKE_SOURCE_DIR}/src/service_status.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_service_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_ring_buffer.cpp
@@ -129,6 +131,7 @@ add_executable(aico_tests
     audio_service_client_test.cpp
     audio_playback_session_test.cpp
     audio_session_manager_test.cpp
+    audio_denoiser_test.cpp
     audio_volume_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_parser.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_generator.cpp
@@ -144,7 +147,7 @@ target_compile_definitions(aico_tests PRIVATE
     AICO_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
-target_link_libraries(aico_tests PRIVATE doctest)
+target_link_libraries(aico_tests PRIVATE doctest ${CMAKE_DL_LIBS})
 if(OpenCV_FOUND)
     target_link_libraries(aico_tests PRIVATE aico_image)
 endif()
