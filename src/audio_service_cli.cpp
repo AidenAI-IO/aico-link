@@ -110,8 +110,25 @@ static int cmd_record_stream(aico::AudioServiceClient& client, int seconds) {
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::seconds(seconds);
     bool read_failed = false;
+    bool stopped = false;
 
-    while (std::chrono::steady_clock::now() < deadline) {
+    for (;;) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            if (stopped) {
+                fprintf(stderr, "timed out waiting for recording EOF\n");
+                read_failed = true;
+                break;
+            }
+            aico::AicoServiceStatus s = client.stop_recording(rs.session_id);
+            stopped = true;
+            if (s != aico::AicoServiceStatus::OK) {
+                fprintf(stderr, "stop_recording failed: %s\n", service_status_to_string(s));
+                read_failed = true;
+                break;
+            }
+            // stop is asynchronous: consume queued PCM and the denoiser tail.
+            deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        }
         aico::AudioChunkResult chunk;
         aico::AicoServiceStatus s = client.read_record_chunk(rs.session_id, 2000, &chunk);
         if (s == aico::AicoServiceStatus::TIMEOUT) continue;
@@ -120,7 +137,6 @@ static int cmd_record_stream(aico::AudioServiceClient& client, int seconds) {
             read_failed = true;
             break;
         }
-        if (chunk.end_of_stream) break;
         if (!chunk.pcm.empty()) {
             size_t written = fwrite(chunk.pcm.data(), 1, chunk.pcm.size(), stdout);
             if (written != chunk.pcm.size()) {
@@ -130,9 +146,11 @@ static int cmd_record_stream(aico::AudioServiceClient& client, int seconds) {
                 break;
             }
         }
+        if (chunk.end_of_stream) break;
     }
 
-    aico::AicoServiceStatus stop_status = client.stop_recording(rs.session_id);
+    aico::AicoServiceStatus stop_status = stopped ? aico::AicoServiceStatus::OK
+                                                : client.stop_recording(rs.session_id);
     if (stop_status != aico::AicoServiceStatus::OK &&
         stop_status != aico::AicoServiceStatus::SESSION_NOT_FOUND) {
         fprintf(stderr, "stop_recording failed: %s\n",

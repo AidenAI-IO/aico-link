@@ -110,6 +110,8 @@ add_library(aico STATIC
     src/audio_service_protocol.cpp
     src/audio_volume_state.cpp
     src/audio_record_session.cpp
+    src/audio_denoiser.cpp
+    src/dtln_denoiser.cpp
     src/audio_playback_session.cpp
     src/audio_session_manager.cpp
     src/audio_service_server.cpp
@@ -123,6 +125,13 @@ target_include_directories(aico
         ${AICO_ROCKIT_INCLUDE_DIR}
         ${OpenCV_INCLUDE_DIRS}
 )
+
+# DTLN's dense DSP stages must retain the tested ARM NEON acceleration.
+set_source_files_properties(src/dtln_denoiser.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|ARM)")
+    set_property(SOURCE src/dtln_denoiser.cpp APPEND PROPERTY COMPILE_OPTIONS
+        -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard)
+endif()
 
 target_link_libraries(aico
     PRIVATE

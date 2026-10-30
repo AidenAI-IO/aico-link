@@ -22,6 +22,7 @@ Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=20s
 TimeoutStopSec=10s
+LimitRTPRIO=10
 StandardOutput=append:/var/log/audio_service/audio_service.log
 StandardError=append:/var/log/audio_service/audio_service.log
 

@@ -25,18 +25,21 @@ var (
 	recordingStartRetryTimeout             = 5 * time.Second
 	recordingStartRetryInterval            = 250 * time.Millisecond
 	audioDialogStreamingSTTFinalizeTimeout = 2 * time.Second
+	audioDialogRecordDrainTimeout          = 2 * time.Second
 )
 
 // AudioDialog manages the audio conversation loop
 type AudioDialog struct {
-	config              Config
-	runtime             *Runtime
-	audioClient         *AudioServiceClient
-	recordBackend       audioRecordingBackend
-	sttClient           STTClient
-	ttsManager          *tts.ProviderManager
-	ttsPlaybackBackend  tts.AudioServiceBackend
-	vad                 *AudioVAD
+	config             Config
+	runtime            *Runtime
+	audioClient        *AudioServiceClient
+	recordBackend      audioRecordingBackend
+	sttClient          STTClient
+	ttsManager         *tts.ProviderManager
+	ttsPlaybackBackend tts.AudioServiceBackend
+	vad                *AudioVAD
+	// recordReadMu serializes reads with session start/stop and STT finalization.
+	recordReadMu        sync.Mutex
 	recordMu            sync.Mutex
 	recordActive        bool
 	sessionID           uint64
@@ -46,6 +49,7 @@ type AudioDialog struct {
 	recordSTTSessionID  uint64
 	recordSTTPreReady   *sttPCMPreReadyBuffer
 	recordText          string
+	recordTail          []byte
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
 	recordSTTRotateGen  uint64
@@ -398,6 +402,8 @@ func (d *AudioDialog) Close() error {
 
 // StartRecording starts an audio recording session
 func (d *AudioDialog) StartRecording() error {
+	d.recordReadMu.Lock()
+	defer d.recordReadMu.Unlock()
 	d.recordMu.Lock()
 	defer d.recordMu.Unlock()
 
@@ -435,6 +441,7 @@ func (d *AudioDialog) StartRecording() error {
 		}
 	}
 	d.recordText = ""
+	d.recordTail = nil
 	d.recordSTTRotateGen++
 	rotateGen := d.recordSTTRotateGen
 	d.recordSTTMu.Lock()
@@ -579,6 +586,8 @@ func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamin
 // the microphone, then starts a fresh streaming session for the next turn.
 // Used by the Classic continuous-mic session so ASR matches turn boundaries.
 func (d *AudioDialog) FinalizeAndRotateSTT() error {
+	d.recordReadMu.Lock()
+	defer d.recordReadMu.Unlock()
 	d.recordMu.Lock()
 	if !d.recordActive {
 		d.recordMu.Unlock()
@@ -684,6 +693,8 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 
 // StopRecording stops the current recording session
 func (d *AudioDialog) StopRecording() error {
+	d.recordReadMu.Lock()
+	defer d.recordReadMu.Unlock()
 	d.recordMu.Lock()
 	if !d.recordActive {
 		d.recordMu.Unlock()
@@ -692,25 +703,47 @@ func (d *AudioDialog) StopRecording() error {
 
 	sessionID := d.sessionID
 	reader := d.recordReader
-	recordSTT := d.takeRecordSTT()
+	takenRecordSTT := d.takeRecordSTT()
+	recordSTT := takenRecordSTT
 	sttTelemetry := d.recordSTTTelemetry
 	d.recordSTTTelemetry = nil
 	d.recordActive = false
 	d.sessionID = 0
 	d.recordReader = nil
 	d.recordMu.Unlock()
-	if recordSTT != nil {
+	if takenRecordSTT != nil {
 		defer func() {
-			_ = recordSTT.Close()
+			_ = takenRecordSTT.Close()
 		}()
 	}
 
 	if reader != nil {
-		_ = reader.Close()
+		defer reader.Close()
 	}
 
-	if err := recordingBackendOrService(d.recordBackend, d.audioClient).StopRecording(sessionID); err != nil {
+	backend := recordingBackendOrService(d.recordBackend, d.audioClient)
+	if err := backend.StopRecording(sessionID); err != nil {
 		return fmt.Errorf("stop recording: %w", err)
+	}
+	_, serviceBackend := backend.(*AudioServiceClient)
+	if serviceBackend {
+		tail, err := drainRecordChunks(backend, reader, sessionID)
+		d.recordMu.Lock()
+		d.recordTail = tail
+		d.recordMu.Unlock()
+		if err != nil {
+			d.stashPendingSTTTelemetry(sttTelemetry)
+			return fmt.Errorf("drain recording: %w", err)
+		}
+		if recordSTT != nil && len(tail) > 0 {
+			if err := recordSTT.UploadPCM(tail); err != nil {
+				if sttTelemetry != nil {
+					sttTelemetry.streamingUploadError = err.Error()
+				}
+				logging.Warnf("agent", "stt", "streaming tail upload failed, falling back to one-shot STT: %v", err)
+				recordSTT = nil
+			}
+		}
 	}
 	if recordSTT != nil {
 		finalizeStart := time.Now()
@@ -737,6 +770,45 @@ func (d *AudioDialog) StopRecording() error {
 	return nil
 }
 
+// drainRecordChunks retains all remaining PCM, including payload on the EOF
+// response. Each socket read also has a transport deadline; the overall budget
+// prevents a responsive service that never reports EOF from hanging shutdown.
+func drainRecordChunks(backend audioRecordingBackend, reader *AudioRecordChunkReader, sessionID uint64) ([]byte, error) {
+	deadline := time.Now().Add(audioDialogRecordDrainTimeout)
+	var pcm []byte
+	for time.Now().Before(deadline) {
+		var chunk *AudioChunkResult
+		var err error
+		if reader != nil {
+			chunk, err = reader.readUntil(100, deadline)
+			if err != nil {
+				_ = reader.Close()
+				reader = nil
+			}
+		}
+		if reader == nil {
+			if !time.Now().Before(deadline) {
+				return pcm, fmt.Errorf("timed out waiting for recording EOF")
+			}
+			if service, ok := backend.(*AudioServiceClient); ok {
+				chunk, err = service.readRecordChunkUntil(sessionID, 100, deadline)
+			} else {
+				chunk, err = backend.ReadRecordChunk(sessionID, 100)
+			}
+		}
+		if err != nil {
+			return pcm, err
+		}
+		if chunk != nil {
+			pcm = append(pcm, chunk.PCM...)
+			if chunk.EndOfStream {
+				return pcm, nil
+			}
+		}
+	}
+	return pcm, fmt.Errorf("timed out waiting for recording EOF")
+}
+
 func (d *AudioDialog) RecordingActive() bool {
 	d.recordMu.Lock()
 	defer d.recordMu.Unlock()
@@ -757,6 +829,8 @@ func (d *AudioDialog) ReadRecordChunkMonitor(timeoutMs uint32) (*AudioChunkResul
 }
 
 func (d *AudioDialog) readRecordChunk(timeoutMs uint32, uploadSTT bool) (*AudioChunkResult, error) {
+	d.recordReadMu.Lock()
+	defer d.recordReadMu.Unlock()
 	d.recordMu.Lock()
 	if !d.recordActive || d.sessionID == 0 {
 		d.recordMu.Unlock()
@@ -1184,6 +1258,16 @@ func (d *AudioDialog) publishVoiceMessage(message Message, requestID string) {
 }
 
 func (d *AudioDialog) PrepareTurnInput(utterance []int16) (TurnInput, error) {
+	d.recordMu.Lock()
+	tail := d.recordTail
+	d.recordTail = nil
+	d.recordMu.Unlock()
+	if len(tail) > 0 {
+		utterance = append([]int16(nil), utterance...)
+		var pending byte
+		hasPending := false
+		AppendPCM16Samples(tail, &utterance, &hasPending, &pending)
+	}
 	duration := float64(len(utterance)) / float64(d.config.Audio.SampleRateOrDefault())
 	logging.Infof("agent", "utterance", "%.1fs of speech", duration)
 

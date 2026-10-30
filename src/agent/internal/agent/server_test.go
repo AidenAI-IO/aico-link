@@ -12,6 +12,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -4620,7 +4621,7 @@ func TestWebUIRedactsScreenshotBase64Payloads(t *testing.T) {
 	}
 }
 
-func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audioResponse, []byte)) string {
+func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audioResponse, []byte), persistent ...bool) string {
 	t.Helper()
 
 	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-test-*")
@@ -4649,27 +4650,35 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 			go func() {
 				defer conn.Close()
 
-				msg, err := readUdsMessage(conn)
-				if err != nil {
-					t.Errorf("fake audio read request: %v", err)
-					return
-				}
+				for {
+					msg, err := readUdsMessage(conn)
+					if err != nil {
+						if errors.Is(err, io.EOF) {
+							return
+						}
+						t.Errorf("fake audio read request: %v", err)
+						return
+					}
 
-				var req audioRequest
-				if err := json.Unmarshal([]byte(msg.HeaderJSON), &req); err != nil {
-					t.Errorf("fake audio decode request: %v", err)
-					return
-				}
+					var req audioRequest
+					if err := json.Unmarshal([]byte(msg.HeaderJSON), &req); err != nil {
+						t.Errorf("fake audio decode request: %v", err)
+						return
+					}
 
-				resp, payload := handler(req)
-				respHeader, err := json.Marshal(resp)
-				if err != nil {
-					t.Errorf("fake audio encode response: %v", err)
-					return
-				}
-				if err := writeUdsMessage(conn, udsMessage{HeaderJSON: string(respHeader), Payload: payload}); err != nil {
-					t.Errorf("fake audio write response: %v", err)
-					return
+					resp, payload := handler(req)
+					respHeader, err := json.Marshal(resp)
+					if err != nil {
+						t.Errorf("fake audio encode response: %v", err)
+						return
+					}
+					if err := writeUdsMessage(conn, udsMessage{HeaderJSON: string(respHeader), Payload: payload}); err != nil {
+						t.Errorf("fake audio write response: %v", err)
+						return
+					}
+					if len(persistent) == 0 || !persistent[0] {
+						return
+					}
 				}
 			}()
 		}

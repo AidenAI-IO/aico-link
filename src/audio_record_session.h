@@ -2,6 +2,7 @@
 
 #include "aico_sdk.h"
 #include "audio_service_protocol.h"
+#include "audio_denoiser.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -44,6 +45,7 @@ public:
 
 private:
     void capture_loop();
+    void enqueue_pcm(std::vector<uint8_t> chunk);
     AudioConfig hardware_capture_config() const;
     void maybe_update_hw_sample_rate(uint64_t timestamp_us, size_t frame_samples_per_channel);
 
@@ -53,6 +55,9 @@ private:
     int hw_channels_    = 2;      // actual hardware channel count
     uint64_t prev_timestamp_us_ = 0;
     AudioCapture capture_;
+    std::unique_ptr<AudioDenoiser> denoiser_;
+    bool denoise_failure_logged_ = false;
+    std::atomic<bool> capture_done_{true};
     std::thread capture_thread_;
     std::mutex mutex_;
     std::condition_variable cv_;

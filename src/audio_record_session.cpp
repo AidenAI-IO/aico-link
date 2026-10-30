@@ -5,6 +5,10 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <unistd.h>
+#include <cstdlib>
+#include <cstring>
+#include <pthread.h>
+#include <sched.h>
 
 namespace aico {
 
@@ -116,6 +120,25 @@ AudioConfig AudioRecordSession::hardware_capture_config() const {
 }
 
 bool AudioRecordSession::start() {
+    const char* enabled = std::getenv("AUDIO_SERVICE_DENOISE");
+    if (!enabled || std::strcmp(enabled, "0") != 0) {
+        if (fmt_.channels == 1 && fmt_.bit_width == 16 &&
+            (fmt_.sample_rate == 16000 || fmt_.sample_rate == 24000)) {
+            const char* directory = std::getenv("AUDIO_SERVICE_DTLN_DIR");
+            std::string error;
+            auto model = create_dtln_denoiser(directory && *directory ? directory :
+                                             "/usr/lib/aico/models/dtln", &error);
+            if (model) {
+                denoiser_.reset(new AudioDenoiser(std::move(model)));
+                AICO_LOG_INFO("recording", "dtln_enabled", "rate=16000 hop=128 delay_samples=384");
+            } else {
+                AICO_LOG_WARN("recording", "dtln_unavailable", "fallback=vqe error=%s", error.c_str());
+            }
+        } else {
+            AICO_LOG_WARN("recording", "dtln_format_bypassed", "rate=%u channels=%u bits=%u",
+                          fmt_.sample_rate, fmt_.channels, fmt_.bit_width);
+        }
+    }
     AudioConfig cfg = hardware_capture_config();
     if (cfg.sample_rate != static_cast<int>(fmt_.sample_rate)) {
         AICO_LOG_INFO("recording", "capture_rate_resampled",
@@ -133,6 +156,7 @@ bool AudioRecordSession::start() {
     hw_channels_    = 2;
     prev_timestamp_us_ = 0;
 
+    capture_done_.store(false);
     capture_thread_ = std::thread(&AudioRecordSession::capture_loop, this);
     return true;
 }
@@ -150,7 +174,7 @@ AicoServiceStatus AudioRecordSession::pop_chunk(uint32_t timeout_ms, AudioChunkR
                     std::chrono::milliseconds(timeout_ms);
 
     while (queue_.empty()) {
-        if (stopped_.load()) {
+        if (stopped_.load() && capture_done_.load()) {
             out->pcm.clear();
             out->end_of_stream = true;
             return AicoServiceStatus::OK;
@@ -188,7 +212,38 @@ void AudioRecordSession::maybe_update_hw_sample_rate(uint64_t timestamp_us,
     }
 }
 
+void AudioRecordSession::enqueue_pcm(std::vector<uint8_t> chunk) {
+    if (denoiser_ && !denoiser_->active() && !denoise_failure_logged_) {
+        AICO_LOG_WARN("recording", "dtln_failed", "fallback=vqe error=%s",
+                      denoiser_->error().c_str());
+        denoise_failure_logged_ = true;
+    }
+    if (chunk.empty()) return;
+    if (denoiser_ && fmt_.sample_rate != 16000) {
+        // DTLN runs before the existing 16 -> 24 kHz provider conversion.
+        std::vector<int16_t> samples(chunk.size() / 2);
+        std::memcpy(samples.data(), chunk.data(), samples.size() * sizeof(int16_t));
+        chunk = convert_to_target_mono_pcm16(samples.data(), samples.size(), 1,
+                                             16000, static_cast<int>(fmt_.sample_rate));
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (queue_.size() < kMaxQueueChunks) {
+        queue_.push(std::move(chunk));
+        cv_.notify_one();
+    }
+}
+
 void AudioRecordSession::capture_loop() {
+    if (denoiser_) {
+        const char* setting = std::getenv("AUDIO_SERVICE_CAPTURE_RT_PRIORITY");
+        const int priority = setting ? std::atoi(setting) : 10;
+        if (priority > 0 && priority <= 99) {
+            sched_param param = {};
+            param.sched_priority = priority;
+            const int rc = pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
+            if (rc != 0) AICO_LOG_WARN("recording", "capture_rt_unavailable", "error=%d", rc);
+        }
+    }
     int consecutive_failures = 0;
 
     while (!stopped_.load()) {
@@ -201,6 +256,7 @@ void AudioRecordSession::capture_loop() {
                                static_cast<unsigned long long>(session_id_),
                                consecutive_failures);
                 capture_.stop();
+                if (denoiser_) enqueue_pcm(denoiser_->finish());
                 AudioConfig cfg = hardware_capture_config();
                 if (!capture_.init(cfg)) {
                     AICO_LOG_ERROR("recording", "capture_reinit_failed", "session_id=%llu",
@@ -239,18 +295,27 @@ void AudioRecordSession::capture_loop() {
             maybe_update_hw_sample_rate(frame.timestamp, frame_samples_per_channel);
 
             std::vector<uint8_t> chunk = convert_to_target_mono_pcm16(
-                src, total_samples, hw_channels_, hw_sample_rate_, static_cast<int>(fmt_.sample_rate));
-
-            std::unique_lock<std::mutex> lock(mutex_);
-            if (queue_.size() < kMaxQueueChunks) {
-                queue_.push(std::move(chunk));
-                cv_.notify_one();
+                src, total_samples, hw_channels_, hw_sample_rate_,
+                denoiser_ ? 16000 : static_cast<int>(fmt_.sample_rate));
+            // Release the hardware buffer before running four NPU graphs.
+            capture_.release_frame();
+            if (denoiser_) {
+                chunk = denoiser_->process(chunk);
             }
+            enqueue_pcm(std::move(chunk));
+            continue;
         }
         capture_.release_frame();
     }
 
     capture_.stop();
+    if (denoiser_) enqueue_pcm(denoiser_->finish());
+    // EOF is visible only after the delayed DTLN tail has been queued.
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        capture_done_.store(true);
+    }
+    cv_.notify_all();
 }
 
 }  // namespace aico

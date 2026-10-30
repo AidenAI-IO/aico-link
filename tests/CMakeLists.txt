@@ -14,6 +14,8 @@ set(AICO_TEST_SOURCES
     ${CMAKE_SOURCE_DIR}/src/aico_log.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_playback_session.cpp
     ${CMAKE_SOURCE_DIR}/src/audio_record_session.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio_denoiser.cpp
+    ${CMAKE_SOURCE_DIR}/src/dtln_denoiser.cpp
     ${CMAKE_SOURCE_DIR}/src/service_status.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_service_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/frame_ring_buffer.cpp
@@ -103,6 +105,20 @@ endif()
 list(APPEND AICO_IMAGE_TEST_SOURCES frame_jpeg_encoder_stub.cpp)
 list(APPEND AICO_IMAGE_TEST_SOURCES aico_sdk_audio_stub.cpp)
 
+# Exercise the real CLI against a fake socket service in host tests.
+add_executable(audio_service_cli_host
+    ${CMAKE_SOURCE_DIR}/src/aico_log.cpp
+    ${CMAKE_SOURCE_DIR}/src/frame_service_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio_service_cli.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio_service_client.cpp
+    ${CMAKE_SOURCE_DIR}/src/audio_service_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/service_status.cpp
+    ${CMAKE_SOURCE_DIR}/src/uds_client.cpp
+    ${CMAKE_SOURCE_DIR}/src/uds_message.cpp
+    ${CMAKE_SOURCE_DIR}/src/cJSON/cJSON.c
+)
+target_include_directories(audio_service_cli_host PRIVATE ${CMAKE_SOURCE_DIR}/src)
+
 add_executable(aico_tests
     test_main.cpp
     contract_fixtures_test.cpp
@@ -127,8 +143,10 @@ add_executable(aico_tests
     system_env_generator_test.cpp
     audio_service_protocol_test.cpp
     audio_service_client_test.cpp
+    audio_service_cli_test.cpp
     audio_playback_session_test.cpp
     audio_session_manager_test.cpp
+    audio_denoiser_test.cpp
     audio_volume_state_test.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_parser.cpp
     ${CMAKE_SOURCE_DIR}/src/system_env_generator.cpp
@@ -140,11 +158,14 @@ target_include_directories(aico_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
+add_dependencies(aico_tests audio_service_cli_host)
+
 target_compile_definitions(aico_tests PRIVATE
+    AICO_AUDIO_CLI_PATH="$<TARGET_FILE:audio_service_cli_host>"
     AICO_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
-target_link_libraries(aico_tests PRIVATE doctest)
+target_link_libraries(aico_tests PRIVATE doctest ${CMAKE_DL_LIBS})
 if(OpenCV_FOUND)
     target_link_libraries(aico_tests PRIVATE aico_image)
 endif()
