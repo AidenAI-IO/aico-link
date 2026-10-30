@@ -307,18 +307,7 @@ func (p *NotificationMemoryProcessor) resolveRecords(ctx context.Context, record
 			ordered = append(ordered, result)
 		}
 	}
-	ordered = coalesceNotificationBatchTargets(ordered)
-	validated := make([]validatedNotificationResult, 0, len(ordered))
-	for _, result := range ordered {
-		proposal, err := p.validateNotificationProposal(ctx, result.record, result.proposal, result.refs)
-		if err != nil {
-			p.logInvalidNotificationProposal(result.record, err)
-			continue
-		}
-		result.proposal = proposal
-		validated = append(validated, result)
-	}
-	for _, result := range validated {
+	for _, result := range p.validateNotificationBatch(ctx, ordered) {
 		if err := p.applyNotificationProposal(ctx, result.record, result.proposal, result.refs); err != nil {
 			return err
 		}
@@ -359,16 +348,28 @@ func (p *NotificationMemoryProcessor) logNotificationMemoryResponseFailure(reaso
 		reason, attempt, notificationJSONMaxAttempts, len(raw), digest, offset)
 }
 
+// validateNotificationBatch validates every proposal before coalescing, so an
+// invalid later action cannot displace a valid earlier action on the same
+// memory. Validation also fills inferred scopes, which keeps target keys equal
+// for actions that name the same memory with and without a scope.
+func (p *NotificationMemoryProcessor) validateNotificationBatch(ctx context.Context, ordered []validatedNotificationResult) []validatedNotificationResult {
+	validated := make([]validatedNotificationResult, 0, len(ordered))
+	for _, result := range ordered {
+		proposal, err := p.validateNotificationProposal(ctx, result.record, result.proposal, result.refs)
+		if err != nil {
+			p.logInvalidNotificationProposal(result.record, err)
+			continue
+		}
+		result.proposal = proposal
+		validated = append(validated, result)
+	}
+	return coalesceNotificationBatchTargets(validated)
+}
+
 func coalesceNotificationBatchTargets(results []validatedNotificationResult) []validatedNotificationResult {
 	type targetOwner struct {
 		resultIndex int
 		actionIndex int
-	}
-	// Resolve omitted scopes first so an action with an inferred scope and one
-	// with an explicit scope on the same memory share a target key.
-	results = append([]validatedNotificationResult(nil), results...)
-	for index := range results {
-		results[index].proposal.Actions = withInferredNotificationTargetScopes(results[index].proposal.Actions, results[index].refs)
 	}
 	lastTargetOwner := make(map[string]targetOwner)
 	for resultIndex, result := range results {
@@ -796,7 +797,7 @@ func notificationMemoryMetadata(action notificationMemoryAction, memoryType stri
 // when exactly one active catalog entry has that id. Add and promote choose a
 // destination, so their scope is never inferred.
 func inferNotificationTargetScope(action notificationMemoryAction, refs []MemoryMergeReference) string {
-	switch strings.ToLower(strings.TrimSpace(action.Action)) {
+	switch action.Action {
 	case "update", "reinforce", "remove":
 	default:
 		return ""
@@ -816,17 +817,6 @@ func inferNotificationTargetScope(action notificationMemoryAction, refs []Memory
 		scope = ref.Scope
 	}
 	return scope
-}
-
-func withInferredNotificationTargetScopes(actions []notificationMemoryAction, refs []MemoryMergeReference) []notificationMemoryAction {
-	resolved := make([]notificationMemoryAction, len(actions))
-	for index, action := range actions {
-		if strings.TrimSpace(action.Scope) == "" {
-			action.Scope = inferNotificationTargetScope(action, refs)
-		}
-		resolved[index] = action
-	}
-	return resolved
 }
 
 func findNotificationReference(id, scope string, refs []MemoryMergeReference) (MemoryMergeReference, bool) {

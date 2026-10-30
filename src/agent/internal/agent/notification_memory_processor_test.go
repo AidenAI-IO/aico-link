@@ -1028,22 +1028,40 @@ func TestInferNotificationTargetScopeUsesUniqueCatalogTarget(t *testing.T) {
 	}
 }
 
-func TestCoalesceNotificationBatchTargetsMatchesInferredScope(t *testing.T) {
+func TestNotificationBatchCoalescesValidatedTargets(t *testing.T) {
+	root := t.TempDir()
+	processor := NewNotificationMemoryProcessor(nil, root, NewLongTermMemoryStore(filepath.Join(root, "long_term")), nil)
 	ref := MemoryMergeReference{Scope: "temporary", ID: "tmp_delivery", Status: "active", Revision: 1}
-	results := []validatedNotificationResult{
-		{record: NotificationRecord{ContextID: "earlier"}, refs: []MemoryMergeReference{ref}, proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "update", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}}}},
-		{record: NotificationRecord{ContextID: "latest"}, refs: []MemoryMergeReference{ref}, proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "Remove", MemoryID: ref.ID, MemoryRevision: 1}}}},
+	result := func(contextID string, action notificationMemoryAction) validatedNotificationResult {
+		return validatedNotificationResult{
+			record:   NotificationRecord{ContextID: contextID, NotificationEvent: ble.NotificationEvent{ID: contextID + "-event", SourceEventID: contextID + "-event"}},
+			refs:     []MemoryMergeReference{ref},
+			proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{action}},
+		}
 	}
-	coalesced := coalesceNotificationBatchTargets(results)
-	if got := len(coalesced[0].proposal.Actions); got != 0 {
-		t.Fatalf("earlier action on the same memory kept: %#v", coalesced[0].proposal.Actions)
-	}
-	if got := coalesced[1].proposal.Actions; len(got) != 1 || got[0].Scope != "temporary" {
-		t.Fatalf("latest action = %#v, want one temporary remove", got)
-	}
-	if results[1].proposal.Actions[0].Scope != "" {
-		t.Fatalf("coalescing mutated its input: %#v", results[1].proposal.Actions[0])
-	}
+
+	t.Run("inferred and explicit scopes share a target", func(t *testing.T) {
+		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
+			result("latest", notificationMemoryAction{Action: "Remove", MemoryID: ref.ID, MemoryRevision: 1}),
+		})
+		if len(batch) != 2 || len(batch[0].proposal.Actions) != 0 {
+			t.Fatalf("earlier action on the same memory kept: %#v", batch)
+		}
+		if got := batch[1].proposal.Actions; len(got) != 1 || got[0].Scope != "temporary" {
+			t.Fatalf("latest action = %#v, want one temporary remove", got)
+		}
+	})
+
+	t.Run("an invalid later action does not displace a valid earlier one", func(t *testing.T) {
+		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
+			result("stale", notificationMemoryAction{Action: "remove", MemoryID: ref.ID, MemoryRevision: 7}),
+		})
+		if len(batch) != 1 || batch[0].record.ContextID != "earlier" || len(batch[0].proposal.Actions) != 1 {
+			t.Fatalf("valid earlier action was dropped: %#v", batch)
+		}
+	})
 }
 
 func TestNotificationRemoveWithoutScopeTargetsCatalogStore(t *testing.T) {
