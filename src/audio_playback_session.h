@@ -45,6 +45,20 @@ inline std::chrono::milliseconds playback_tail_drain_grace(const AudioFormat& fm
     return std::chrono::milliseconds(grace_ms);
 }
 
+inline size_t playback_queue_byte_limit(const AudioFormat& fmt) {
+    const uint64_t bytes_per_sample = fmt.bit_width / 8;
+    const uint64_t bytes_per_second = static_cast<uint64_t>(fmt.sample_rate) *
+                                      static_cast<uint64_t>(fmt.channels) *
+                                      bytes_per_sample;
+    // Keep at most about one second of PCM queued. This is a latency bound,
+    // rather than a chunk-count bound, so callers cannot bypass it with large
+    // provider frames.
+    if (bytes_per_second == 0) return 1;
+    return bytes_per_second > static_cast<uint64_t>(SIZE_MAX)
+               ? SIZE_MAX
+               : static_cast<size_t>(bytes_per_second);
+}
+
 // Manages a single speaker playback session.
 // Callers push PCM chunks via push_chunk(); the session drains them to
 // AudioPlayer on a dedicated thread.
@@ -72,6 +86,10 @@ public:
     bool set_volume(int volume);
     int get_volume() const;
 
+    // Approximate PCM bytes waiting in the application queue. The value is
+    // intended for diagnostics and is protected by the session mutex.
+    size_t queued_bytes() const;
+
     // Block until all queued audio has been played (or stop() is called).
     void wait_until_done();
 
@@ -85,9 +103,11 @@ private:
     // hardware operation, including playback teardown and volume updates.
     mutable std::mutex player_mutex_;
     std::thread playback_thread_;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::queue<std::vector<uint8_t>> queue_;
+    size_t queue_bytes_;
+    const size_t max_queue_bytes_;
     std::atomic<bool> stopped_;
     bool final_received_;
     std::mutex join_mutex_;

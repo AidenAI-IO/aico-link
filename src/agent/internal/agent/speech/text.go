@@ -211,6 +211,10 @@ type ttsStreamFlusher interface {
 	Flush() error
 }
 
+type ttsSpeechBlockStarter interface {
+	BeginSpeechBlock()
+}
+
 type ttsBufferResetter interface {
 	ResetBuffer()
 }
@@ -338,11 +342,15 @@ func (w *StreamWriter) Write(p []byte) (int, error) {
 			w.markOutsideContent(w.pending[:idx])
 			w.pending = w.pending[idx+len(startTag):]
 			w.inTTS = true
-			// Only the first leading TTS block in an LLM response is streamed.
-			// Tool-call completion resets this response-level state before the next
-			// iteration and suppresses duplicate playback from the tool event.
-			w.streamTTS = !w.outsideContent && !w.seenTTS
+			// A new leading block owns a fresh speech output. Tool-call completion
+			// resets response state before the next model iteration.
+			w.streamTTS = !w.outsideContent
 			w.seenTTS = true
+			if w.streamTTS {
+				if starter, ok := w.target.(ttsSpeechBlockStarter); ok {
+					starter.BeginSpeechBlock()
+				}
+			}
 			continue
 		}
 

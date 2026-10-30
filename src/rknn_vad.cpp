@@ -931,24 +931,37 @@ private:
 class SplitSileroVAD {
 public:
     ~SplitSileroVAD() {
-        if (encoder_ctx_ != 0) {
-            if (input_mem_) rknn_destroy_mem(encoder_ctx_, input_mem_);
-            if (output_mem_) rknn_destroy_mem(encoder_ctx_, output_mem_);
-            rknn_destroy(encoder_ctx_);
-        }
+        release_encoder();
     }
 
     bool init(const std::string& encoder_path, const std::string& weights_path, std::string* err) {
+        encoder_path_ = encoder_path;
         if (!weights_.load(weights_path, false, err)) return false;
         if (!decoder_.init(&weights_.recurrent, err)) return false;
-        if (!init_encoder(encoder_path, err)) return false;
-        reset();
+        if (!init_encoder(err)) return false;
+        reset_cpu_state();
         return true;
     }
 
     void reset() {
-        feature_extractor_.reset();
-        decoder_.reset();
+        reset_cpu_state();
+    }
+
+    // Workaround: soft CPU reset alone leaves the same rknn ctx wedged on the
+    // next encoder rknn_run (enter with no leave). Rebuild encoder in-process;
+    // do not restart the helper process.
+    bool reset_runtime(std::string* err) {
+        const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+        reset_cpu_state();
+        release_encoder();
+        if (!init_encoder(err)) {
+            return false;
+        }
+        const double reinit_ms = elapsed_ms(start, std::chrono::steady_clock::now());
+        AICO_LOG_INFO("protocol", "encoder_reinit_ok",
+                       "ctx=%llu reinit_ms=%.3f",
+                       static_cast<unsigned long long>(encoder_ctx_), reinit_ms);
+        return true;
     }
 
     void set_profile_stages(bool enabled) {
@@ -1011,9 +1024,37 @@ public:
     }
 
 private:
-    bool init_encoder(const std::string& path, std::string* err) {
-        int ret = rknn_init(&encoder_ctx_, const_cast<char*>(path.c_str()), 0, 0, nullptr);
+    void reset_cpu_state() {
+        feature_extractor_.reset();
+        decoder_.reset();
+    }
+
+    void release_encoder() {
+        if (encoder_ctx_ == 0) {
+            input_mem_ = nullptr;
+            output_mem_ = nullptr;
+            return;
+        }
+        if (input_mem_) {
+            rknn_destroy_mem(encoder_ctx_, input_mem_);
+            input_mem_ = nullptr;
+        }
+        if (output_mem_) {
+            rknn_destroy_mem(encoder_ctx_, output_mem_);
+            output_mem_ = nullptr;
+        }
+        rknn_destroy(encoder_ctx_);
+        encoder_ctx_ = 0;
+    }
+
+    bool init_encoder(std::string* err) {
+        if (encoder_path_.empty()) {
+            *err = "encoder model path is empty";
+            return false;
+        }
+        int ret = rknn_init(&encoder_ctx_, const_cast<char*>(encoder_path_.c_str()), 0, 0, nullptr);
         if (ret != RKNN_SUCC) {
+            encoder_ctx_ = 0;
             *err = "encoder rknn_init failed: " + std::to_string(ret);
             return false;
         }
@@ -1021,6 +1062,7 @@ private:
         std::memset(&io_num, 0, sizeof(io_num));
         rknn_query(encoder_ctx_, RKNN_QUERY_IN_OUT_NUM, &io_num, sizeof(io_num));
         if (io_num.n_input < 1 || io_num.n_output < 1) {
+            release_encoder();
             *err = "encoder model must have at least 1 input and 1 output";
             return false;
         }
@@ -1042,20 +1084,26 @@ private:
         uint32_t in_bytes = tensor_storage_bytes(input_attr_);
         input_mem_ = rknn_create_mem(encoder_ctx_, in_bytes);
         if (!input_mem_ || !input_mem_->virt_addr) {
-            *err = "encoder input mem alloc failed"; return false;
+            release_encoder();
+            *err = "encoder input mem alloc failed";
+            return false;
         }
         ret = rknn_set_io_mem(encoder_ctx_, input_mem_, &input_attr_);
         if (ret != RKNN_SUCC) {
+            release_encoder();
             *err = "encoder set input mem failed: " + std::to_string(ret);
             return false;
         }
         uint32_t out_bytes = tensor_storage_bytes(output_attr_);
         output_mem_ = rknn_create_mem(encoder_ctx_, out_bytes);
         if (!output_mem_ || !output_mem_->virt_addr) {
-            *err = "encoder output mem alloc failed"; return false;
+            release_encoder();
+            *err = "encoder output mem alloc failed";
+            return false;
         }
         ret = rknn_set_io_mem(encoder_ctx_, output_mem_, &output_attr_);
         if (ret != RKNN_SUCC) {
+            release_encoder();
             *err = "encoder set output mem failed: " + std::to_string(ret);
             return false;
         }
@@ -1100,6 +1148,7 @@ private:
         return true;
     }
 
+    std::string encoder_path_;
     rknn_context encoder_ctx_ = 0;
     rknn_tensor_attr input_attr_;
     rknn_tensor_attr output_attr_;
@@ -1235,7 +1284,15 @@ int main(int argc, char** argv) {
             char command = 0;
             if (!read_exact(std::cin, &command, 1)) return 0;
             if (command == 'Q') return 0;
-            if (command == 'R') { vad.reset(); std::cout << "OK" << std::endl; continue; }
+            if (command == 'R') {
+                if (!vad.reset_runtime(&err)) {
+                    protocol_error(err);
+                    // Encoder was released; further F frames would null-deref.
+                    return 1;
+                }
+                std::cout << "OK" << std::endl;
+                continue;
+            }
             if (command != 'F') { protocol_error("unknown command"); continue; }
             if (!read_exact(std::cin, reinterpret_cast<char*>(frame.data()), frame.size() * sizeof(int16_t)))
                 return 0;
@@ -1278,7 +1335,11 @@ int main(int argc, char** argv) {
         char command = 0;
         if (!read_exact(std::cin, &command, 1)) return 0;
         if (command == 'Q') return 0;
-        if (command == 'R') { vad.reset(); std::cout << "OK" << std::endl; continue; }
+        if (command == 'R') {
+            vad.reset();
+            std::cout << "OK" << std::endl;
+            continue;
+        }
         if (command != 'F') { protocol_error("unknown command"); continue; }
         if (!read_exact(std::cin, reinterpret_cast<char*>(frame.data()), frame.size() * sizeof(int16_t)))
             return 0;

@@ -40,6 +40,7 @@ import (
 	_ "aico-agent/internal/agent/tts/adapters/volcengine"
 	"aico-agent/internal/ble"
 	"aico-agent/internal/mcu"
+	streamcontract "aico-agent/internal/stream"
 )
 
 const (
@@ -97,13 +98,25 @@ type Server struct {
 	terminatedRequestsMu    sync.RWMutex
 	activeOutputs           map[string]map[*activeTTSOutput]struct{}
 	activeOutputsMu         sync.Mutex
+	latestSpeech            latestTTSOutput
 	pendingSteers           map[string]pendingSteerMessage
 	steerSignals            map[string]chan struct{}
 	steersMu                sync.Mutex
 	eventBroadcaster        *EventBroadcaster
+	semanticEvents          *semanticEventBroadcaster
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
+}
+
+// RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
+// path. The realtime daemon uses this narrow interface to publish provider
+// events without reaching into Server's broadcaster implementation.
+func (s *Server) RealtimeEventSink() streamcontract.EventSink {
+	if s == nil {
+		return nil
+	}
+	return s.semanticEvents
 }
 
 const maxChatImageAttachments = 4
@@ -457,6 +470,7 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		pendingSteers:           make(map[string]pendingSteerMessage),
 		steerSignals:            make(map[string]chan struct{}),
 		eventBroadcaster:        NewEventBroadcaster(),
+		semanticEvents:          newSemanticEventBroadcaster(512),
 		storageMonitor:          runtime.storageMonitor,
 	}
 	if s.bridge != nil {
@@ -1461,6 +1475,86 @@ func createRequestID() string {
 	return "req-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
+type chatRunSession struct {
+	ctx            context.Context
+	cleanup        func()
+	steerProvider  func(context.Context) (RunSteerMessage, bool)
+	steerInterrupt func() <-chan struct{}
+}
+
+// beginChatRun claims a request before publishing its input. Its cleanup may
+// outlive an HTTP handler while request-scoped final speech plays.
+func (s *Server) beginChatRun(req ChatRequest, input TurnInput, userMessage Message) (*chatRunSession, bool) {
+	ctx, cancel := context.WithCancel(context.Background())
+	if !s.registerActiveRun(req.RequestID, cancel) {
+		cancel()
+		return nil, false
+	}
+	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
+	var once sync.Once
+	cleanup := func() {
+		once.Do(func() {
+			s.unregisterActiveRun(req.RequestID)
+			s.clearSteerState(req.RequestID)
+			cancel()
+		})
+	}
+	s.publishMessage(userMessage)
+	if s.liveActivity != nil {
+		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))
+	}
+	return &chatRunSession{ctx: ctx, cleanup: cleanup, steerProvider: steerProvider, steerInterrupt: steerInterrupt}, true
+}
+
+func (s *Server) newChatRunRequest(run *chatRunSession, input TurnInput, episodeID, requestID string, handler func(RunEvent)) RunRequest {
+	return RunRequest{
+		Input:                   input.InputText,
+		Attachments:             input.Attachments,
+		Turn:                    input,
+		EpisodeID:               episodeID,
+		RequestID:               requestID,
+		DeviceEnvironment:       s.bridgeEnvironment(),
+		EventHandler:            handler,
+		StreamSink:              s.semanticEvents,
+		StreamScope:             streamcontract.EventScope{ConversationID: "agent", SessionEpoch: 1, TurnID: requestID, RunID: requestID},
+		AsyncEpisodeMaintenance: true,
+		SteerProvider:           run.steerProvider,
+		SteerInterrupt:          run.steerInterrupt,
+	}
+}
+
+func (s *Server) handleChatRunEvent(ctx context.Context, event RunEvent, episodeID, requestID string, speechWriter *speech.StreamWriter, onReasoning func(RunEvent), onMessage func(Message)) uint64 {
+	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+		onReasoning(event)
+	} else {
+		message := messageFromRunEvent(event, episodeID, requestID)
+		if message.Type != "" {
+			if message, ok := s.publishMessage(message); ok {
+				onMessage(message)
+			}
+		}
+	}
+	if s.liveActivity != nil {
+		s.liveActivity.UpdateFromRunEvent(requestID, event)
+	}
+	if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+		return 0
+	}
+	toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
+	if toolSpeechStreamed && s.logger != nil {
+		s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
+	}
+	if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
+		speechCtx, output, cleanup := s.latestSpeech.begin(ctx)
+		go func() {
+			defer cleanup()
+			s.speakToolContent(speechCtx, text)
+		}()
+		return output.generation
+	}
+	return 0
+}
+
 // handleChatAsync runs the agent in a background goroutine and returns
 // {request_id} immediately. Intermediate results are pushed into
 // chatPendingResult and served by handleChatResult.
@@ -1495,18 +1589,13 @@ func (s *Server) handleChatAsync(
 
 	s.playPromptSoundAsync(promptSoundAgentSend, "agent send")
 
-	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(requestID, cancel) {
-		cancel()
+	run, ok := s.beginChatRun(req, turnInput, userMsg)
+	if !ok {
 		s.pendingResultsMu.Lock()
 		delete(s.pendingResults, requestID)
 		s.pendingResultsMu.Unlock()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
-	}
-	s.publishMessage(userMsg)
-	if s.liveActivity != nil {
-		s.liveActivity.StartTask(requestID, inputText, s.liveActivityPhoneID(req))
 	}
 
 	// Return {request_id} immediately
@@ -1515,11 +1604,9 @@ func (s *Server) handleChatAsync(
 	json.NewEncoder(w).Encode(map[string]string{"request_id": requestID})
 
 	// Run agent in background goroutine
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(requestID)
 	go func() {
 		defer func() {
-			s.unregisterActiveRun(requestID)
-			s.clearSteerState(requestID)
+			run.cleanup()
 			// Keep the completed result available for polling for 60s,
 			// then clean up. The client (PhoneBridge) polls /api/chat/result
 			// every ~1s; immediate deletion creates a race where the app
@@ -1532,66 +1619,38 @@ func (s *Server) handleChatAsync(
 		}()
 
 		var speechWriter *speech.StreamWriter
+		var speechGeneration ttsRunGeneration
+		speechGeneration.advance(s.latestSpeech.snapshotGeneration())
 
 		// Event handler pushes intermediate messages into the pending result
 		// so the client can poll them in near-realtime.
 		eventHandler := func(event RunEvent) {
-			if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
+			generation := s.handleChatRunEvent(run.ctx, event, userMsg.EpisodeID, requestID, speechWriter, func(event RunEvent) {
 				msg := pollingMessageFromReasoningEvent(event, userMsg.EpisodeID, requestID)
 				pending.mu.Lock()
-				// Reasoning events contain deltas, not accumulated prefixes. The
-				// polling client appends them to its in-memory draft.
+				// Polling clients append reasoning deltas to their draft.
 				pending.history = append(pending.history, msg)
 				pending.messages = append(pending.messages, msg)
 				pending.mu.Unlock()
-				if s.liveActivity != nil {
-					s.liveActivity.UpdateFromRunEvent(requestID, event)
-				}
-				return
-			}
-			msg := messageFromRunEvent(event, userMsg.EpisodeID, requestID)
-			if msg.Type != "" {
-				if msg, ok := s.publishMessage(msg); ok {
-					pending.mu.Lock()
-					pending.history = append(pending.history, msg)
-					pending.messages = append(pending.messages, msg)
-					pending.mu.Unlock()
-				}
-			}
-			if s.liveActivity != nil {
-				s.liveActivity.UpdateFromRunEvent(requestID, event)
-			}
-
-			toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
-			if toolSpeechStreamed && s.logger != nil {
-				s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
-			}
-			if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-				go s.speakToolContent(runCtx, text)
-			}
+			}, func(msg Message) {
+				pending.mu.Lock()
+				pending.history = append(pending.history, msg)
+				pending.messages = append(pending.messages, msg)
+				pending.mu.Unlock()
+			})
+			speechGeneration.advance(generation)
 		}
 
-		runReq := RunRequest{
-			Input:                   inputText,
-			Attachments:             turnInput.Attachments,
-			Turn:                    turnInput,
-			EpisodeID:               userMsg.EpisodeID,
-			RequestID:               requestID,
-			DeviceEnvironment:       s.bridgeEnvironment(),
-			EventHandler:            eventHandler,
-			AsyncEpisodeMaintenance: true,
-			SteerProvider:           steerProvider,
-			SteerInterrupt:          steerInterrupt,
-		}
+		runReq := s.newChatRunRequest(run, turnInput, userMsg.EpisodeID, requestID, eventHandler)
 
-		var newStream *streamSessionWriter
+		var newStream *ttsBlockStream
 		unregisterStreamOutput := func() {}
 		ttsManager := s.currentTTSManager()
 		cfg := s.runtime.ConfigSnapshot()
 
 		if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 			if ttsManager != nil {
-				stream, err := beginManagedTTSStream(runCtx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
+				stream, err := beginManagedTTSBlockStream(run.ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
 				if err != nil {
 					if s.logger != nil {
 						s.logger.Warn("TTS BeginStream failed: %v", err)
@@ -1618,19 +1677,20 @@ func (s *Server) handleChatAsync(
 			pending.mu.Unlock()
 		}
 
-		result, err := s.runtime.Run(runCtx, runReq)
+		result, err := s.runtime.Run(run.ctx, runReq)
 		if newStream != nil {
 			finalSpeechStreamed := speechWriter.FinalizeResponse()
 			closeErr := newStream.closeAndWait()
 			if closeErr != nil && s.logger != nil {
 				s.logger.Error("new TTS stream failed: %v", closeErr)
 			}
-			result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+			result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+			speechGeneration.advance(newStream.generation())
 		}
 
 		pending.mu.Lock()
 		if err != nil {
-			canceled := errors.Is(runCtx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
+			canceled := errors.Is(run.ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
 			if canceled {
 				if s.liveActivity != nil {
 					s.liveActivity.CancelTask(requestID)
@@ -1669,8 +1729,8 @@ func (s *Server) handleChatAsync(
 				}
 			}
 			if !canceled && !result.SpeechStreamed && s.canSpeakFinalText() {
-				prepared := s.runtime.PrepareSpokenText(runCtx, SpokenTextInput{TurnFailure: result.TurnFailure})
-				s.speakFinalText(runCtx, requestID, prepared)
+				prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
+				s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 			}
 			return
 		}
@@ -1689,8 +1749,8 @@ func (s *Server) handleChatAsync(
 		// still see the active run/output and interrupt it reliably.
 		speechText := result.SpokenTextForConfig(s.runtime.ConfigSnapshot())
 		if s.canSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
-			prepared := s.runtime.PrepareSpokenText(runCtx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
-			s.speakFinalText(runCtx, requestID, prepared)
+			prepared := s.runtime.PrepareSpokenText(run.ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
+			s.speakFinalTextIfCurrent(run.ctx, requestID, prepared, speechGeneration.current())
 		}
 	}()
 }
@@ -1917,84 +1977,42 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 
 	// A request_id marks a resumable run. Keep it alive if the streaming
 	// HTTP client disconnects; only /api/chat/cancel should stop it.
-	runCtx, cancel := context.WithCancel(context.Background())
-	if !s.registerActiveRun(req.RequestID, cancel) {
+	run, ok := s.beginChatRun(req, turnInput, userMessage)
+	if !ok {
 		s.logger.Error("Request ID already in use: %s", req.RequestID)
-		cancel()
 		http.Error(w, "request_id already in use", http.StatusConflict)
 		return
 	}
-	var cleanupOnce sync.Once
-	cleanupRun := func() {
-		cleanupOnce.Do(func() {
-			s.unregisterActiveRun(req.RequestID)
-			s.clearSteerState(req.RequestID)
-			cancel()
-		})
-	}
-	ctx := runCtx
+	ctx := run.ctx
 	cleanupRunAtReturn := true
 	defer func() {
 		if cleanupRunAtReturn {
 			s.logger.Info("Cleaning up run at return")
-			cleanupRun()
+			run.cleanup()
 		}
 	}()
 	s.logger.Info("Appending history")
-	s.publishMessage(userMessage)
-	if s.liveActivity != nil {
-		s.logger.Info("Starting live activity")
-		s.liveActivity.StartTask(req.RequestID, inputText, s.liveActivityPhoneID(req))
-	}
-
-	steerProvider, steerInterrupt := s.prepareRunSteerCallbacks(req.RequestID)
 	s.logger.Info("Creating run request")
 	var speechWriter *speech.StreamWriter
-	runReq := RunRequest{
-		Input:                   inputText,
-		Attachments:             turnInput.Attachments,
-		Turn:                    turnInput,
-		EpisodeID:               episodeID,
-		RequestID:               req.RequestID,
-		DeviceEnvironment:       s.bridgeEnvironment(),
-		AsyncEpisodeMaintenance: true,
-		SteerProvider:           steerProvider,
-		SteerInterrupt:          steerInterrupt,
-		EventHandler: func(event RunEvent) {
-			if event.Type == runEventReasoningDelta || event.Type == runEventReasoningReset {
-				stream.Write(ChatStreamEvent{
-					Type:      map[string]string{runEventReasoningDelta: "assistant_reasoning_delta", runEventReasoningReset: "assistant_reasoning_reset"}[event.Type],
-					RequestID: req.RequestID,
-					EpisodeID: episodeID,
-					// Reasoning delta events carry only the newly received chunk;
-					// clients append it to their streaming draft.
-					ReasoningContent: event.ReasoningContent,
-				})
-				if s.liveActivity != nil {
-					s.liveActivity.UpdateFromRunEvent(req.RequestID, event)
-				}
-				return
-			}
-			message := messageFromRunEvent(event, episodeID, req.RequestID)
-			if message.Type != "" {
-				if message, ok := s.publishMessage(message); ok {
-					stream.Write(ChatStreamEvent{Type: "message", Message: &message})
-				}
-			}
-			if s.liveActivity != nil {
-				s.liveActivity.UpdateFromRunEvent(req.RequestID, event)
-			}
-			toolSpeechStreamed := event.Type == runEventToolCall && speechWriter.FinalizeResponse()
-			if toolSpeechStreamed && s.logger != nil {
-				s.logger.Info("Tool content TTS already streamed: tool=%s", event.ToolName)
-			}
-			if text := s.toolCallSpeechText(event); text != "" && !toolSpeechStreamed {
-				go s.speakToolContent(ctx, text)
-			}
-		},
-	}
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(s.latestSpeech.snapshotGeneration())
+	runReq := s.newChatRunRequest(run, turnInput, episodeID, req.RequestID, func(event RunEvent) {
+		generation := s.handleChatRunEvent(ctx, event, episodeID, req.RequestID, speechWriter, func(event RunEvent) {
+			stream.Write(ChatStreamEvent{
+				Type:      map[string]string{runEventReasoningDelta: "assistant_reasoning_delta", runEventReasoningReset: "assistant_reasoning_reset"}[event.Type],
+				RequestID: req.RequestID,
+				EpisodeID: episodeID,
+				// Reasoning delta events carry only the newly received chunk;
+				// clients append it to their streaming draft.
+				ReasoningContent: event.ReasoningContent,
+			})
+		}, func(message Message) {
+			stream.Write(ChatStreamEvent{Type: "message", Message: &message})
+		})
+		speechGeneration.advance(generation)
+	})
 
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	unregisterStreamOutput := func() {}
 	ttsManager := s.currentTTSManager()
 	cfg := s.runtime.ConfigSnapshot()
@@ -2004,7 +2022,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 	if cfg.VoiceStreamingTTSEnabledOrDefault() && s.currentTTSPlaybackBackend() != nil {
 		s.logger.Info("Starting TTS stream")
 		if ttsManager != nil {
-			streamSession, err := beginManagedTTSStream(ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg)
+			streamSession, err := beginManagedTTSBlockStream(ctx, ttsManager, s.currentTTSPlaybackBackend(), cfg, &s.latestSpeech)
 			if err != nil {
 				if s.logger != nil {
 					s.logger.Warn("TTS BeginStream failed: %v", err)
@@ -2041,7 +2059,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		if closeErr != nil && s.logger != nil {
 			s.logger.Error("new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
 	if err != nil {
 		canceled := errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled)
@@ -2076,7 +2095,7 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		}
 		if !result.SpeechStreamed && s.canSpeakFinalText() {
 			prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
-			s.speakFinalText(ctx, req.RequestID, prepared)
+			s.speakFinalTextIfCurrent(ctx, req.RequestID, prepared, speechGeneration.current())
 		}
 		stream.Write(ChatStreamEvent{Type: "error", Error: err.Error(), History: turn})
 		return
@@ -2092,13 +2111,20 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 		prepared := s.runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
 		// Let request-scoped final TTS outlive the streaming handler while
 		// /api/chat/cancel can still interrupt it via the active run/output.
-		finalTTSCtx := context.Background()
-		finishRun := cleanupRun
-		cleanupRunAtReturn = false
-		go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
-			defer finish()
-			s.speakFinalText(ttsCtx, req.RequestID, prepared)
-		}(prepared, finalTTSCtx, finishRun)
+		if strings.TrimSpace(prepared.Text) != "" {
+			finalTTSCtx, releaseFinalTTS, ok := s.latestSpeech.claim(context.Background(), speechGeneration.current())
+			if ok {
+				finishRun := run.cleanup
+				cleanupRunAtReturn = false
+				go func(prepared SpokenTextResult, ttsCtx context.Context, finish func()) {
+					defer finish()
+					defer releaseFinalTTS()
+					s.speakFinalText(ttsCtx, req.RequestID, prepared)
+				}(prepared, finalTTSCtx, finishRun)
+			} else {
+				s.runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+			}
+		}
 	}
 
 	stream.Write(ChatStreamEvent{
@@ -2495,6 +2521,19 @@ func (s *Server) speakFinalText(ctx context.Context, requestID string, prepared 
 	}
 }
 
+func (s *Server) speakFinalTextIfCurrent(ctx context.Context, requestID string, prepared SpokenTextResult, generation uint64) {
+	if strings.TrimSpace(prepared.Text) == "" {
+		return
+	}
+	speechCtx, cleanup, ok := s.latestSpeech.claim(ctx, generation)
+	if !ok {
+		s.runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+		return
+	}
+	defer cleanup()
+	s.speakFinalText(speechCtx, requestID, prepared)
+}
+
 func (s *Server) speakTextObserved(ctx context.Context, requestID, text string, timeoutAfterLock time.Duration, registerOutput bool) error {
 	_, err := s.speakTextObservedMode(ctx, requestID, text, timeoutAfterLock, registerOutput, false)
 	return err
@@ -2516,6 +2555,8 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 	if s.runtime != nil {
 		cfg = s.runtime.ConfigSnapshot()
 	}
+	ctx, latestOutput, releaseLatest := s.latestSpeech.acquire(ctx)
+	defer releaseLatest()
 	outputCtx, cancelOutput := context.WithCancel(ctx)
 	output := newActiveTTSOutput(cancelOutput)
 	unregisterOutput := func() {}
@@ -2552,8 +2593,10 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 		speechStarted, ttsErr = speakWithTTSManagerObserved(speakCtx, manager, s.currentTTSPlaybackBackend(), cfg, text, func(stream *streamSessionWriter) func() {
 			stream.setCancel(cancelOutput)
 			output.setStream(stream)
+			latestOutput.setStream(stream)
 			return func() {
 				output.clearStream(stream)
+				latestOutput.clearStream(stream)
 			}
 		})
 		if ttsErr == nil && !speechStarted && allowFallback {
@@ -2563,7 +2606,7 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 	if ttsErr == nil || !allowFallback {
 		return false, ttsErr
 	}
-	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, failureCode, speechStarted, ttsErr)
+	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, failureCode, speechStarted, ttsErr, output.setCancel)
 }
 
 func (s *Server) speakText(ctx context.Context, text string, timeoutAfterLock time.Duration) error {
@@ -2661,6 +2704,10 @@ func (s *Server) handleContextAttachment(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("version") == "2" || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Aico-Events")), "v2") {
+		s.handleSemanticEvents(w, r)
+		return
+	}
 	// Set SSE headers
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2709,6 +2756,123 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
+	if s == nil || s.semanticEvents == nil {
+		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	rawSince := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	rawEpoch := ""
+	if rawSince == "" {
+		rawSince = strings.TrimSpace(r.URL.Query().Get("since"))
+		rawEpoch = r.URL.Query().Get("epoch")
+	}
+	var replay streamcontract.ReplayResult
+	var ch <-chan streamcontract.Event
+	var unsubscribe func()
+	if rawSince == "latest" {
+		replay, ch, unsubscribe = s.semanticEvents.SubscribeLatest()
+	} else {
+		cursor, err := parseSemanticEventCursor(rawSince, rawEpoch)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		replay, ch, unsubscribe = s.semanticEvents.Subscribe(cursor)
+	}
+	defer unsubscribe()
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+
+	writeEvent := func(event streamcontract.Event) bool {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return false
+		}
+		// Keep the session epoch in Last-Event-ID so EventSource reconnects
+		// preserve the complete replay cursor across session rotations.
+		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data)
+		flusher.Flush()
+		return true
+	}
+	if rawSince == "latest" {
+		_, _ = fmt.Fprintf(w, "id: %d:%d\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+	}
+	_, _ = fmt.Fprintf(w, "data: {\"type\":\"connected\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+	flusher.Flush()
+	if replay.ResyncRequired {
+		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: {\"type\":\"resync_required\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence, replay.Current.SessionEpoch, replay.Current.Sequence)
+		flusher.Flush()
+	}
+	for _, event := range replay.Events {
+		if !writeEvent(event) {
+			return
+		}
+	}
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-ch:
+			if !ok {
+				return
+			}
+			if !writeEvent(event) {
+				return
+			}
+		}
+	}
+}
+
+// parseSemanticEventCursor accepts the decimal sequence used by the original
+// v2 SSE endpoint and an optional epoch query parameter. Last-Event-ID may
+// also carry the complete "epoch:sequence" form so reconnects can preserve a
+// cursor across a session rotation; the query parameter remains the preferred
+// explicit form for clients that store the two fields separately.
+func parseSemanticEventCursor(rawSince, rawEpoch string) (*streamcontract.ReplayCursor, error) {
+	rawSince = strings.TrimSpace(rawSince)
+	rawEpoch = strings.TrimSpace(rawEpoch)
+	if rawSince == "" {
+		// Preserve the original endpoint's behavior: an epoch without a
+		// sequence does not identify a replay position and is ignored.
+		return nil, nil
+	}
+
+	epoch := uint64(1)
+	sequenceText := rawSince
+	if strings.Contains(rawSince, ":") {
+		parts := strings.Split(rawSince, ":")
+		if len(parts) != 2 || rawEpoch != "" {
+			return nil, fmt.Errorf("invalid since cursor")
+		}
+		var err error
+		epoch, err = strconv.ParseUint(strings.TrimSpace(parts[0]), 10, 64)
+		if err != nil || epoch == 0 {
+			return nil, fmt.Errorf("invalid epoch cursor")
+		}
+		sequenceText = strings.TrimSpace(parts[1])
+	} else if rawEpoch != "" {
+		var err error
+		epoch, err = strconv.ParseUint(rawEpoch, 10, 64)
+		if err != nil || epoch == 0 {
+			return nil, fmt.Errorf("invalid epoch cursor")
+		}
+	}
+	sequence, err := strconv.ParseUint(sequenceText, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid since cursor")
+	}
+	return &streamcontract.ReplayCursor{SessionEpoch: epoch, Sequence: sequence}, nil
 }
 
 func shouldStreamEventMessage(msg Message) bool {

@@ -50,6 +50,7 @@ canonical form.
 - Filter custom skills by `metadata.device_types` against the global `device_type` state;
 - Provide `skill_list` / `skill_read` / `skill_manage` / `skill_mark_used` to the Agent; the HTTP Tool API exposes only the non-maintenance ones (`skill_list` / `skill_read`);
 - `skill_read` supports reading `SKILL.md` as well as UTF-8 supporting files under `references/`, `templates/`, `scripts/`, `assets/`;
+- `skill_read` loads a file in full when it fits the model context; each file is capped at 64 KiB. When context is tight, the Agent prunes or compacts older context before the next model call, and current-turn pruning does not replace a fully loaded skill with a placeholder. If the file cannot fit alongside the current request and skills already loaded this turn, its full result is saved as an artifact. The Agent receives a bounded preview marked as incomplete and can read the artifact in bounded ranges; it must not treat the preview as the complete skill instructions;
 - Record view/use/modify statistics in `usage.json`;
 - Support `active` / `stale` / `archived` lifecycle states; `skill_list` filters out archived by default;
 - For skills with `source: agent` or `created_by: agent`, `skill_list` automatically executes lifecycle based on last use time: enter `stale` after 90 days of non-use, enter `archived` after 180 days; this automatic scan runs at most once every 24 hours;

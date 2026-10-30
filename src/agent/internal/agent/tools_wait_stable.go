@@ -3,6 +3,7 @@ package agent
 import (
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/agent/screenprovider"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -16,7 +17,9 @@ const (
 	defaultStableWaitTimeoutMs = 2000
 	defaultStableDurationMs    = 250
 	defaultDiffThreshold       = 6.0
-	stableWaitPollInterval     = 200 * time.Millisecond
+	// stableWaitMinPollInterval paces frame polling for providers that
+	// return frames faster than the board's frame service.
+	stableWaitMinPollInterval = 150 * time.Millisecond
 )
 
 type ScreenStableDefaults struct {
@@ -79,23 +82,33 @@ func (t *WaitStableScreenTool) cropBlack() bool {
 }
 
 type waitStableScreenResult struct {
-	OK            bool     `json:"ok"`
-	Stable        bool     `json:"stable"`
-	ElapsedMs     int64    `json:"elapsed_ms"`
-	ScreenChanged *bool    `json:"screen_changed,omitempty"`
-	LastDiff      *float64 `json:"last_diff,omitempty"`
+	OK        bool  `json:"ok"`
+	Stable    bool  `json:"stable"`
+	ElapsedMs int64 `json:"elapsed_ms"`
+	// FramesDiffered reports any frame-to-frame change during the wait. It is
+	// not the post-action screen_changed before/after signal.
+	FramesDiffered *bool `json:"frames_differed,omitempty"`
+	// IgnoredMotionBlocks counts grid blocks of continuous motion (video,
+	// carousel, clock) left out of the final stability decision.
+	IgnoredMotionBlocks int `json:"ignored_motion_blocks,omitempty"`
+	// LastDiff is the share of grid blocks, outside ignored motion, that
+	// changed in the last frame comparison.
+	LastDiff *float64 `json:"last_diff,omitempty"`
 }
 
 type waitStableScreenObservationResult struct {
 	screenshotResult
-	ActionOutput  string   `json:"action_output"`
-	OK            bool     `json:"ok"`
-	Stable        bool     `json:"stable"`
-	ElapsedMs     int64    `json:"elapsed_ms"`
-	ScreenStable  *bool    `json:"screen_stable,omitempty"`
-	StableWaitMs  *int64   `json:"stable_wait_ms,omitempty"`
-	ScreenChanged *bool    `json:"screen_changed,omitempty"`
-	LastDiff      *float64 `json:"last_diff,omitempty"`
+	ActionOutput string `json:"action_output"`
+	OK           bool   `json:"ok"`
+	Stable       bool   `json:"stable"`
+	ElapsedMs    int64  `json:"elapsed_ms"`
+	ScreenStable *bool  `json:"screen_stable,omitempty"`
+	StableWaitMs *int64 `json:"stable_wait_ms,omitempty"`
+	// FramesDiffered and IgnoredMotionBlocks are described on
+	// waitStableScreenResult.
+	FramesDiffered      *bool    `json:"frames_differed,omitempty"`
+	IgnoredMotionBlocks int      `json:"ignored_motion_blocks,omitempty"`
+	LastDiff            *float64 `json:"last_diff,omitempty"`
 }
 
 func NewWaitStableScreenTool(provider screenprovider.Provider, defaults ScreenStableDefaults, screens ...*screen.ScreenState) *WaitStableScreenTool {
@@ -124,10 +137,10 @@ func (t *WaitStableScreenTool) Description() string {
 		`Wait until the connected display stops changing before judging UI result. `+
 			`Use only while operating a visible target UI, after a UI action or known UI transition that may animate, navigate, or load; do not call for text-only reasoning, arithmetic, comparison, or memory lookup. `+
 			`Input: {} (empty JSON object). Configured timeouts: timeout_ms=%d, stable_ms=%d, diff_threshold=%g. `+
-			`The screen is stable when consecutive frames stay below diff_threshold for stable_ms. `+
-			`Returns {"ok":true,"stable":true/false,"elapsed_ms":N,"screen_changed":true/false,...} and provides the screenshot as a visual observation. `+
-			`screen_changed reports whether any frame-to-frame motion was observed during this wait window; it is not a before/after action-success signal. Inspect the returned screenshot to judge the preceding action. `+
-			`stable=false means the wait timed out while the screen was still changing (for example video playback); that is not an error and the screenshot is still captured as a best-effort observation.`,
+			`Consecutive frames are compared on a grid of screen blocks; a block changes when its mean brightness moves more than diff_threshold. The screen is stable when no more than 1%% of blocks change for stable_ms. Small areas that keep moving in every frame (video, carousel, clock) are ignored after a few frames and reported as ignored_motion_blocks; large changes such as a page transition are always waited out. `+
+			`Returns {"ok":true,"stable":true/false,"elapsed_ms":N,"frames_differed":true/false,...} and provides the screenshot as a visual observation. `+
+			`frames_differed reports whether any frame-to-frame change was observed during this wait window; it is not a before/after action-success signal. Inspect the returned screenshot to judge the preceding action. `+
+			`stable=false means the wait timed out while the screen was still changing; that is not an error and the screenshot is still captured as a best-effort observation.`,
 		resolved.TimeoutMs,
 		resolved.StableMs,
 		resolved.DiffThreshold,
@@ -158,15 +171,16 @@ func (t *WaitStableScreenTool) Call(ctx context.Context, input string) (string, 
 		return "", fmt.Errorf("marshal stable-screen result: %w", err)
 	}
 	out, err := json.Marshal(waitStableScreenObservationResult{
-		screenshotResult: screenshot,
-		ActionOutput:     string(actionOutput),
-		OK:               result.OK,
-		Stable:           result.Stable,
-		ElapsedMs:        result.ElapsedMs,
-		ScreenStable:     &stable,
-		StableWaitMs:     &elapsed,
-		ScreenChanged:    result.ScreenChanged,
-		LastDiff:         result.LastDiff,
+		screenshotResult:    screenshot,
+		ActionOutput:        string(actionOutput),
+		OK:                  result.OK,
+		Stable:              result.Stable,
+		ElapsedMs:           result.ElapsedMs,
+		ScreenStable:        &stable,
+		StableWaitMs:        &elapsed,
+		FramesDiffered:      result.FramesDiffered,
+		IgnoredMotionBlocks: result.IgnoredMotionBlocks,
+		LastDiff:            result.LastDiff,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal stable-screen screenshot observation: %w", err)
@@ -302,126 +316,126 @@ func (t *WaitStableScreenTool) wait(ctx context.Context, input string) (waitStab
 
 	start := time.Now()
 	deadline := start.Add(timeout)
+	capture := t.newWaitFrameCapture()
 
-	prevMeta, prevFrame, prevCaptureInfo, err := t.captureWaitFrame()
+	firstCapture := time.Now()
+	prevMeta, prevMeans, err := capture()
 	if err != nil {
 		return waitStableScreenResult{}, err
 	}
-	if touchscreenRCADebugEnabledCached() {
-		touchscreenRCALogf("wait_stable.wait initial frame meta=%s capture_backend=%q", formatTouchscreenRCAMetadata(prevMeta), prevCaptureInfo.Backend)
-	}
-	prevRGB, err := convertFrameToRGB(prevMeta, prevFrame)
-	if err != nil {
-		return waitStableScreenResult{}, err
-	}
+	captureTook := time.Since(firstCapture)
 	prevSeq := prevMeta.Seq
 	stableSince := time.Now()
-	screenChanged := false
+	quietSeen := false
+	framesDiffered := false
+	tracker := stableMotionTracker{threshold: diffThreshold}
+	var last stableMotionComparison
 	var lastDiff *float64
+
+	finish := func(stable bool) waitStableScreenResult {
+		result := waitStableScreenResult{
+			OK:             true,
+			Stable:         stable,
+			ElapsedMs:      time.Since(start).Milliseconds(),
+			FramesDiffered: waitStableBoolPtr(framesDiffered),
+			LastDiff:       lastDiff,
+		}
+		if stable {
+			result.IgnoredMotionBlocks = last.ignored
+		}
+		logging.Infof("agent", "wait_stable", "wait done: stable=%v elapsed_ms=%d frames_differed=%v ignored_motion_blocks=%d last_changed_blocks=%d", result.Stable, result.ElapsedMs, framesDiffered, last.ignored, last.changed)
+		return result
+	}
 
 	for {
 		now := time.Now()
-		if now.Sub(stableSince) >= stableFor {
-			result := waitStableScreenResult{
-				OK:            true,
-				Stable:        true,
-				ElapsedMs:     now.Sub(start).Milliseconds(),
-				ScreenChanged: waitStableBoolPtr(screenChanged),
-				LastDiff:      lastDiff,
-			}
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf("wait_stable.wait completed stable=%v elapsed_ms=%d screen_changed=%v last_diff=%s mapping_after_wait={%s}", result.Stable, result.ElapsedMs, screenChanged, formatTouchscreenRCAFloatPtr(lastDiff), t.screen.Format())
-			}
-			return result, nil
+		if quietSeen && now.Sub(stableSince) >= stableFor {
+			return finish(true), nil
 		}
 		if !now.Before(deadline) {
-			stable := now.Sub(stableSince) >= stableFor
-			result := waitStableScreenResult{
-				OK:            true,
-				Stable:        stable,
-				ElapsedMs:     now.Sub(start).Milliseconds(),
-				ScreenChanged: waitStableBoolPtr(screenChanged),
-				LastDiff:      lastDiff,
-			}
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf("wait_stable.wait timeout stable=%v elapsed_ms=%d screen_changed=%v last_diff=%s mapping_after_wait={%s}", result.Stable, result.ElapsedMs, screenChanged, formatTouchscreenRCAFloatPtr(lastDiff), t.screen.Format())
-			}
-			return result, nil
+			return finish(false), nil
 		}
 
-		wait := stableWaitPollInterval
-		if remaining := time.Until(deadline); remaining < wait {
-			wait = remaining
+		// Start another capture only when at least half of it fits before
+		// the deadline, so the wait ends within about half a capture of the
+		// configured timeout instead of overrunning it by a whole capture.
+		if captureTook > 0 && time.Until(deadline) < captureTook/2 {
+			return finish(false), nil
 		}
-		if wait > 0 {
-			if err := sleepWithContext(ctx, wait); err != nil {
-				return waitStableScreenResult{}, err
-			}
-		}
-
-		meta, frame, captureInfo, err := t.captureWaitFrame()
+		// Frame capture already takes hundreds of milliseconds on the
+		// board; only pace providers that answer instantly.
+		polled := time.Now()
+		meta, means, err := capture()
 		if err != nil {
 			return waitStableScreenResult{}, err
 		}
+		captureTook = time.Since(polled)
+		if pause := stableWaitMinPollInterval - time.Since(polled); pause > 0 {
+			if err := sleepWithContext(ctx, min(pause, max(time.Until(deadline), 0))); err != nil {
+				return waitStableScreenResult{}, err
+			}
+		}
 		if meta.Stale || meta.Seq <= prevSeq {
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf("wait_stable.wait skipped frame meta=%s capture_backend=%q prev_seq=%d", formatTouchscreenRCAMetadata(meta), captureInfo.Backend, prevSeq)
-			}
 			continue
 		}
+		prevSeq = meta.Seq
 
-		rgb, err := convertFrameToRGB(meta, frame)
-		if err != nil {
-			if touchscreenRCADebugEnabledCached() {
-				touchscreenRCALogf("wait_stable.wait convert error meta=%s capture_backend=%q err=%v", formatTouchscreenRCAMetadata(meta), captureInfo.Backend, err)
-			}
-			screenChanged = true
-			prevSeq = meta.Seq
-			stableSince = time.Now()
-			continue
+		comparison := tracker.compare(prevMeans, means)
+		prevMeans = means
+		last = comparison
+		ratio := comparison.changedRatio()
+		lastDiff = &ratio
+		if comparison.anyChanged || !comparison.comparable {
+			framesDiffered = true
 		}
-
-		diff := meanRGBAbsDiff(prevMeta, prevRGB, meta, rgb)
-		lastDiff = &diff
-		if diff > 0 {
-			screenChanged = true
-		}
-		if diff > diffThreshold {
+		if comparison.quiet() {
+			quietSeen = true
+		} else {
+			quietSeen = false
 			stableSince = time.Now()
 		}
 		if touchscreenRCADebugEnabledCached() {
-			touchscreenRCALogf(
-				"wait_stable.wait frame meta=%s capture_backend=%q diff=%.3f threshold=%.3f screen_changed=%v stable_for_ms=%d",
-				formatTouchscreenRCAMetadata(meta),
-				captureInfo.Backend,
-				diff,
-				diffThreshold,
-				screenChanged,
-				time.Since(stableSince).Milliseconds(),
-			)
+			touchscreenRCALogf("wait_stable.wait frame seq=%d changed_blocks=%d ignored_blocks=%d total=%d quiet=%v stable_for_ms=%d", meta.Seq, comparison.changed, comparison.ignored, comparison.total, comparison.quiet(), time.Since(stableSince).Milliseconds())
 		}
-		prevMeta = meta
-		prevRGB = rgb
-		prevSeq = meta.Seq
+	}
+}
+
+// newWaitFrameCapture returns block means of the current frame. It asks for
+// raw frames, whose luminance plane needs no decoding on the board, and falls
+// back to JPEG for providers without raw output.
+func (t *WaitStableScreenTool) newWaitFrameCapture() func() (*frameMetadata, lumaBlockMeans, error) {
+	useJPEG := false
+	return func() (*frameMetadata, lumaBlockMeans, error) {
+		if t == nil || t.client == nil {
+			return nil, lumaBlockMeans{}, fmt.Errorf("screen capture client not configured")
+		}
+		var meta *frameMetadata
+		var data []byte
+		var err error
+		if !useJPEG {
+			meta, data, _, err = t.client.LatestFrameWithFormat("raw", 0, false, screenprovider.CropHint{})
+			if err != nil {
+				useJPEG = true
+			}
+		}
+		if useJPEG {
+			meta, data, _, err = t.captureWaitFrame()
+			if err != nil {
+				return nil, lumaBlockMeans{}, err
+			}
+		}
+		if meta == nil {
+			return nil, lumaBlockMeans{}, fmt.Errorf("frame service returned no metadata")
+		}
+		frame, err := frameLuma(meta, data)
+		if err != nil {
+			// An undecodable frame cannot be compared; it counts as change.
+			return meta, lumaBlockMeans{}, nil
+		}
+		return meta, newLumaBlockMeans(frame, tapSequenceCompareRegion(t.screen, frame)), nil
 	}
 }
 
 func waitStableBoolPtr(value bool) *bool {
 	return &value
-}
-
-func meanRGBAbsDiff(aMeta *frameMetadata, a []byte, bMeta *frameMetadata, b []byte) float64 {
-	if aMeta == nil || bMeta == nil || aMeta.Width != bMeta.Width || aMeta.Height != bMeta.Height || len(a) != len(b) || len(a) == 0 {
-		return 256.0
-	}
-
-	var sum uint64
-	for i := range a {
-		if a[i] > b[i] {
-			sum += uint64(a[i] - b[i])
-		} else {
-			sum += uint64(b[i] - a[i])
-		}
-	}
-	return float64(sum) / float64(len(a))
 }

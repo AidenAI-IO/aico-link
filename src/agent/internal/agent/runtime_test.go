@@ -1551,6 +1551,53 @@ func TestContextCompactionEventsUseDistinctTelemetryType(t *testing.T) {
 	}
 }
 
+func TestRunContextBudgetPruneDecisions(t *testing.T) {
+	budget := &runContextBudget{
+		usableInputBudget:  1_000,
+		pruneTrigger:       500,
+		pruneTarget:        425,
+		pruneEnabled:       true,
+		stateLimit:         4,
+		compactionTrigger:  800,
+		compactionEnabled:  true,
+		providerCompaction: false,
+	}
+	for _, tc := range []struct {
+		name          string
+		messageTokens int
+		states        int
+		promptTokens  int
+		schemaTokens  int
+		wantReason    string
+		wantTarget    int
+		wantHard      bool
+	}{
+		{name: "below triggers"},
+		{name: "token threshold precedes state count", messageTokens: 501, states: 5, promptTokens: 600, wantReason: "active_turn_threshold", wantTarget: 425},
+		{name: "state count alone", states: 5, promptTokens: 100, wantReason: "active_turn_state_count", wantTarget: math.MaxInt},
+		{name: "hard input budget alone", promptTokens: 1_001, schemaTokens: 100, wantReason: "active_turn_input_budget", wantTarget: 900, wantHard: true},
+		{name: "hard input budget overrides threshold target", messageTokens: 501, promptTokens: 1_001, schemaTokens: 100, wantReason: "active_turn_threshold_and_input_budget", wantTarget: 900, wantHard: true},
+		{name: "hard input budget overrides state target", states: 5, promptTokens: 1_001, schemaTokens: 1_000, wantReason: "active_turn_threshold_and_input_budget", wantTarget: 1, wantHard: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := budget.activePruneDecision(tc.messageTokens, tc.states, tc.promptTokens, tc.schemaTokens)
+			if got.reason != tc.wantReason || got.target != tc.wantTarget || got.hardBudgetExceeded != tc.wantHard {
+				t.Fatalf("activePruneDecision() = %+v, want reason=%q target=%d hard=%v", got, tc.wantReason, tc.wantTarget, tc.wantHard)
+			}
+		})
+	}
+	if got := budget.historicalPruneDecision(501, 5); got.reason != "threshold" || got.target != 425 {
+		t.Fatalf("historical threshold decision = %+v", got)
+	}
+	if got := budget.historicalPruneDecision(500, 5); got.reason != "state_count" || got.target != math.MaxInt {
+		t.Fatalf("historical state decision = %+v", got)
+	}
+	budget.providerCompaction = true
+	if budget.thresholdCompactionEnabled() {
+		t.Fatal("provider-managed compaction must disable threshold summaries")
+	}
+}
+
 func TestRuntimeRunAttachesPendingSteerToNextToolCall(t *testing.T) {
 	model := &scriptedModel{
 		responses: roleToolResponses(

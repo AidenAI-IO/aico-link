@@ -71,7 +71,7 @@ expected_cpp=(
     hello trigger image_process example_wakeup example_audio_capture
     example_audio_play example_camera_capture example_usb_hid frame_service
     frame_service_cli audio_service audio_service_cli audio_stream rknn_vad
-    cpu_vad aico-environment
+    smart_turn_helper cpu_vad aico-environment
 )
 for executable in "${expected_cpp[@]}"; do
     binary="$BUILD_DIR/bin/$executable"

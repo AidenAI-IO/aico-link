@@ -744,3 +744,88 @@ func TestRealtimeBusyToolCancellationPreservesParallelCall(t *testing.T) {
 	default:
 	}
 }
+
+func TestRealtimeBusyToolCancellationAfterResponseDone(t *testing.T) {
+	started := make(chan context.Context, 1)
+	oldStarter := realtimeToolCallStarter
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, _ realtimevoice.Event, _ chan<- realtimeToolResult) {
+		started <- ctx
+	}
+	defer func() { realtimeToolCallStarter = oldStarter }()
+
+	s, bridge, done := startBusyTestSessionConfigured(t, time.Second, false, nil, 0, true)
+	events := busyTestRequest(t, s, bridge, done, "terminal-before-tool-cancel")
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "r1", CallID: "tool", Name: "unknown_tool", Arguments: "{}"}
+	var toolCtx context.Context
+	select {
+	case toolCtx = <-started:
+	case <-time.After(time.Second):
+		t.Fatal("tool did not start")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r1", Status: "completed"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCallCancelled, ResponseID: "r1", CallID: "tool"}
+	select {
+	case <-toolCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("tool was not canceled after its response ended")
+	}
+	select {
+	case <-s.created:
+	case <-time.After(time.Second):
+		t.Fatal("tool cancellation did not continue the completed response")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r2"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r2", Status: "completed"}
+	requireBusyEvent(t, events, agent.RealtimeChatEventDone)
+}
+
+func TestRealtimeBusyLateToolCancellationDoesNotCancelReusedCallID(t *testing.T) {
+	type startedTool struct {
+		responseID string
+		ctx        context.Context
+	}
+	started := make(chan startedTool, 2)
+	oldStarter := realtimeToolCallStarter
+	realtimeToolCallStarter = func(ctx context.Context, _ realtimeVoiceToolExecutor, call realtimevoice.Event, _ chan<- realtimeToolResult) {
+		started <- startedTool{responseID: call.ResponseID, ctx: ctx}
+	}
+	defer func() { realtimeToolCallStarter = oldStarter }()
+
+	s, bridge, done := startBusyTestSession(t, time.Second)
+	first := busyTestRequest(t, s, bridge, done, "first-reused-call")
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r1"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "r1", CallID: "tool", Name: "unknown_tool", Arguments: "{}"}
+	select {
+	case tool := <-started:
+		if tool.responseID != "r1" {
+			t.Fatalf("first tool response = %q, want r1", tool.responseID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("first tool did not start")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r1", Status: "completed"}
+	requireBusyEvent(t, first, agent.RealtimeChatEventDone)
+
+	second := busyTestRequest(t, s, bridge, done, "second-reused-call")
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseStarted, ResponseID: "r2"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCall, ResponseID: "r2", CallID: "tool", Name: "unknown_tool", Arguments: "{}"}
+	var secondTool context.Context
+	select {
+	case tool := <-started:
+		if tool.responseID != "r2" {
+			t.Fatalf("second tool response = %q, want r2", tool.responseID)
+		}
+		secondTool = tool.ctx
+	case <-time.After(time.Second):
+		t.Fatal("second tool did not start")
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventToolCallCancelled, ResponseID: "r1", CallID: "tool"}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventTranscriptDelta, Role: "assistant", TextSource: "text", ResponseID: "r2", Text: "active"}
+	requireBusyEvent(t, second, agent.RealtimeChatEventDelta)
+	if err := secondTool.Err(); err != nil {
+		t.Fatalf("late r1 cancellation stopped r2 tool: %v", err)
+	}
+	s.events <- realtimevoice.Event{Kind: realtimevoice.EventResponseDone, ResponseID: "r2", Status: "completed"}
+	requireBusyEvent(t, second, agent.RealtimeChatEventDone)
+}

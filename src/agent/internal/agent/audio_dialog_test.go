@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -18,7 +19,90 @@ import (
 
 	"aico-agent/internal/agent/model"
 	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/stream"
 )
+
+func TestAudioDialogForwardsCurrentSTTTranscriptEventsOnly(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 2)
+	session := &streamingSTTSession{events: events}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan struct {
+		sessionID uint64
+		event     stream.TranscriptEvent
+	}, 1)
+	dialog.SetSTTTranscriptObserver(func(sessionID uint64, event stream.TranscriptEvent) {
+		observed <- struct {
+			sessionID uint64
+			event     stream.TranscriptEvent
+		}{sessionID: sessionID, event: event}
+	})
+
+	go dialog.forwardRecordSTTEvents(42, session)
+	want := stream.NewTranscriptHypothesis("segment-1", 1, "hello")
+	events <- want
+	select {
+	case got := <-observed:
+		if got.sessionID != 42 || !reflect.DeepEqual(got.event, want) {
+			t.Fatalf("observed = %#v, want session 42 event %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for transcript observer")
+	}
+
+	dialog.recordSTTMu.Lock()
+	dialog.recordSTT = nil
+	dialog.recordSTTMu.Unlock()
+	events <- stream.NewTranscriptHypothesis("segment-1", 2, "stale")
+	close(events)
+	select {
+	case got := <-observed:
+		t.Fatalf("stale transcript reached observer: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAudioDialogTranscriptObserverStopsWhenSessionCloses(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 1)
+	session := &streamingSTTSession{
+		events:     events,
+		eventsDone: make(chan struct{}),
+	}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan stream.TranscriptEvent, 1)
+	dialog.SetSTTTranscriptObserver(func(_ uint64, event stream.TranscriptEvent) {
+		observed <- event
+	})
+
+	go dialog.forwardRecordSTTEvents(7, session)
+	_ = session.Close()
+	events <- stream.NewTranscriptHypothesis("segment-1", 1, "late")
+	select {
+	case got := <-observed:
+		t.Fatalf("closed session forwarded transcript: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAudioDialogTranscriptObserverDropsBufferedEventFromClosedSession(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 1)
+	session := &streamingSTTSession{events: events, eventsDone: make(chan struct{})}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan stream.TranscriptEvent, 1)
+	dialog.SetSTTTranscriptObserver(func(_ uint64, event stream.TranscriptEvent) {
+		observed <- event
+	})
+
+	events <- stream.NewTranscriptHypothesis("segment-1", 1, "late")
+	if err := session.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+	dialog.forwardRecordSTTEvents(7, session)
+	select {
+	case event := <-observed:
+		t.Fatalf("closed session forwarded buffered transcript: %#v", event)
+	default:
+	}
+}
 
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
 	t.Helper()

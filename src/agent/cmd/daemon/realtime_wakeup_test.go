@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -21,6 +22,8 @@ type fakeRealtimePlaybackAudio struct {
 	starts        int
 	writes        []fakeRealtimePlaybackWrite
 	stops         []uint64
+	failWriteAt   int
+	writeErr      error
 }
 
 type fakeRealtimePlaybackWrite struct {
@@ -47,6 +50,9 @@ func (f *fakeRealtimePlaybackAudio) StartPlayback(agent.AudioFormat) (*agent.Pla
 }
 
 func (f *fakeRealtimePlaybackAudio) WritePlayChunk(sessionID uint64, data []byte, final bool) error {
+	if f.failWriteAt == len(f.writes)+1 {
+		return f.writeErr
+	}
 	f.writes = append(f.writes, fakeRealtimePlaybackWrite{
 		sessionID: sessionID,
 		data:      append([]byte(nil), data...),
@@ -58,6 +64,49 @@ func (f *fakeRealtimePlaybackAudio) WritePlayChunk(sessionID uint64, data []byte
 func (f *fakeRealtimePlaybackAudio) StopPlayback(sessionID uint64) error {
 	f.stops = append(f.stops, sessionID)
 	return nil
+}
+
+func TestRealtimePlaybackSplitsLargeAudioDelta(t *testing.T) {
+	audio := &fakeRealtimePlaybackAudio{}
+	playback := realtimePlaybackState{}
+	format := agent.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16}
+	pcm := make([]byte, 9*realtimePlaybackChunkBytes+77)
+	for i := range pcm {
+		pcm[i] = byte(i)
+	}
+	if err := playback.appendItem(audio, format, "item_1", pcm); err != nil {
+		t.Fatal(err)
+	}
+	var written []byte
+	for i, write := range audio.writes {
+		if write.sessionID != 1 || write.final || len(write.data) > realtimePlaybackChunkBytes {
+			t.Fatalf("write %d = %+v, want bounded non-final PCM for session 1", i, write)
+		}
+		written = append(written, write.data...)
+	}
+	if len(audio.writes) != 10 {
+		t.Fatalf("writes = %d, want 10", len(audio.writes))
+	}
+	if len(audio.writes[9].data) != 77 || !bytes.Equal(written, pcm) {
+		t.Fatalf("writes = %d, tail = %d, PCM preserved = %t", len(audio.writes), len(audio.writes[9].data), bytes.Equal(written, pcm))
+	}
+	if playback.submittedBytes != int64(len(pcm)) {
+		t.Fatalf("submitted bytes = %d, want %d", playback.submittedBytes, len(pcm))
+	}
+}
+
+func TestRealtimePlaybackChunkWriteFailureTracksAcceptedAudio(t *testing.T) {
+	writeErr := errors.New("audio write failed")
+	audio := &fakeRealtimePlaybackAudio{failWriteAt: 2, writeErr: writeErr}
+	playback := realtimePlaybackState{}
+	format := agent.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16}
+	err := playback.appendItem(audio, format, "item_1", make([]byte, 3*realtimePlaybackChunkBytes))
+	if !errors.Is(err, writeErr) {
+		t.Fatalf("append error = %v, want %v", err, writeErr)
+	}
+	if len(audio.writes) != 1 || playback.submittedBytes != realtimePlaybackChunkBytes || playback.itemID != "item_1" {
+		t.Fatalf("accepted writes = %d, submitted bytes = %d, item = %q", len(audio.writes), playback.submittedBytes, playback.itemID)
+	}
 }
 
 func TestRealtimePlaybackStaysOpenAcrossResponsesAndInterrupts(t *testing.T) {
@@ -529,7 +578,7 @@ func TestRealtimeChatAdmissionQueuesDuringServerAuthoritativeLocalSpeech(t *test
 	if state.inputSpeechActive || state.inputTurnPending || !state.canInjectResponse() {
 		t.Fatalf("transient speech claimed a provider-owned turn: %+v", state)
 	}
-	admission := (realtimeChatAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
+	admission := (realtimeSessionAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
 	if admission != realtimeChatQueueAfterResponse {
 		t.Fatalf("speech-time admission=%v, want queue without busy", admission)
 	}
@@ -542,7 +591,7 @@ func TestRealtimeChatAdmissionQueuesDuringServerAuthoritativeLocalSpeech(t *test
 		t.Fatalf("cleared transient speech left a pending turn: %+v", state)
 	}
 
-	admission = (realtimeChatAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
+	admission = (realtimeSessionAdmissionState{turnBlocked: !state.canInjectResponse(), localSpeechActive: endpoint.speechActive}).admission()
 	if admission != realtimeChatStart {
 		t.Fatalf("cleared transient speech blocked WebUI text: state=%+v admission=%v", state, admission)
 	}
@@ -888,7 +937,7 @@ func TestRealtimeToolTrackerContinuesWhenResultsPrecedeResponseDone(t *testing.T
 }
 
 func TestRealtimeChatAdmissionQueuesTextWhileFarewellResponseIsActive(t *testing.T) {
-	state := realtimeChatAdmissionState{responseActive: true, turnBlocked: true, standbyPending: true}
+	state := realtimeSessionAdmissionState{responseActive: true, turnBlocked: true, standbyPending: true}
 	if got := state.admission(); got != realtimeChatQueueAfterResponse {
 		t.Fatalf("admission() = %v, want queue after farewell response", got)
 	}
@@ -900,16 +949,62 @@ func TestRealtimeChatAdmissionQueuesTextWhileFarewellResponseIsActive(t *testing
 }
 
 func TestRealtimeChatAdmissionRejectsProviderOwnedSpeechInsteadOfQueuing(t *testing.T) {
-	state := realtimeChatAdmissionState{turnBlocked: true, localSpeechActive: true}
+	state := realtimeSessionAdmissionState{turnBlocked: true, localSpeechActive: true}
 	if got := state.admission(); got != realtimeChatRejectBusy {
 		t.Fatalf("admission() = %v, want busy for a provider-owned pending turn", got)
 	}
 }
 
 func TestRealtimeChatAdmissionStartsTextDuringFarewellDrain(t *testing.T) {
-	state := realtimeChatAdmissionState{standbyPending: true}
+	state := realtimeSessionAdmissionState{standbyPending: true}
 	if got := state.admission(); got != realtimeChatStart {
 		t.Fatalf("admission() = %v, want immediate start", got)
+	}
+}
+
+func TestRealtimeSessionAdmissionGatesBackgroundResponses(t *testing.T) {
+	ready := realtimeSessionAdmissionState{
+		supportsText:     true,
+		runtimeAvailable: true,
+		taskUpdatesReady: true,
+		pendingTaskCount: 1,
+	}
+	if !ready.canInjectTaskUpdates() || !ready.canInjectVoiceNotification() {
+		t.Fatal("idle session did not admit background responses")
+	}
+
+	blocked := []struct {
+		name  string
+		apply func(*realtimeSessionAdmissionState)
+	}{
+		{"turn", func(s *realtimeSessionAdmissionState) { s.turnBlocked = true }},
+		{"speech", func(s *realtimeSessionAdmissionState) { s.localSpeechActive = true }},
+		{"notification", func(s *realtimeSessionAdmissionState) { s.notificationActive = true }},
+		{"notification drain", func(s *realtimeSessionAdmissionState) { s.notificationDraining = true }},
+		{"chat", func(s *realtimeSessionAdmissionState) { s.activeChat = true }},
+		{"standby", func(s *realtimeSessionAdmissionState) { s.standbyPending = true }},
+		{"chat bridge", func(s *realtimeSessionAdmissionState) { s.bridgePending = true }},
+		{"text unsupported", func(s *realtimeSessionAdmissionState) { s.supportsText = false }},
+	}
+	for _, test := range blocked {
+		t.Run(test.name, func(t *testing.T) {
+			state := ready
+			test.apply(&state)
+			if state.canInjectTaskUpdates() || state.canInjectVoiceNotification() {
+				t.Fatalf("background response admitted with %s active", test.name)
+			}
+		})
+	}
+
+	withoutTasks := ready
+	withoutTasks.pendingTaskCount = 0
+	if withoutTasks.canInjectTaskUpdates() || !withoutTasks.canInjectVoiceNotification() {
+		t.Fatal("task availability affected notification admission")
+	}
+	withoutRuntime := ready
+	withoutRuntime.runtimeAvailable = false
+	if !withoutRuntime.canInjectTaskUpdates() || withoutRuntime.canInjectVoiceNotification() {
+		t.Fatal("runtime availability affected task admission")
 	}
 }
 
