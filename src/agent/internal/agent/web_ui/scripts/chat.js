@@ -496,10 +496,15 @@ function retireAssistantDraft(event) {
     const key = assistantStreamKey(event);
     if (!key) return;
     const draft = streamingAssistantDrafts[key];
+    const text = assistantMessageForToolCall(event);
     assistantDraftBlockedByTool.add(key);
-    if (!draft) return;
-    delete streamingAssistantDrafts[key];
-    removeRenderedMessage(messageIdentity(draft));
+    if (draft) {
+        const draftKey = messageIdentity(draft);
+        if (text) assistantTextReveal.rekey(draftKey, messageIdentity(text));
+        delete streamingAssistantDrafts[key];
+        removeRenderedMessage(draftKey);
+    }
+    if (text) addMessage(text);
 }
 
 function removeRenderedMessage(messageKey) {
@@ -663,6 +668,8 @@ function renderHistory(history) {
 }
 
 function addMessage(msg, beforeRequestId) {
+    const toolText = assistantMessageForToolCall(msg);
+    if (toolText) addMessage(toolText);
     const next = projectConversationMessages(projectedMessages, {
         type: 'live', message: msg, beforeRequestId: beforeRequestId
     });

@@ -259,8 +259,8 @@ function handleSemanticEvent(event) {
             return;
         case 'text.final':
             if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
-            // Role output describes an intermediate model response, often just
-            // before a tool call. Only the final assistant output is durable.
+            // Tool-call text is finalized from tool.call_ready, which associates
+            // it with its durable call rather than the run's final answer.
             if (semanticField(payload, 'type', 'Type') === 'role_output' ||
                 assistantDraftBlockedByTool.has(requestId)) return;
             finalizeAssistantMessage({
@@ -281,7 +281,14 @@ function handleSemanticEvent(event) {
             return;
         case 'tool.call_ready':
             if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
-            retireAssistantDraft({request_id: requestId});
+            retireAssistantDraft({
+                type: 'tool_call', request_id: requestId, episode_id: episodeId,
+                content: semanticText(payload),
+                reasoning_content: String(semanticField(payload, 'reasoning_content', 'ReasoningContent') || ''),
+                tool_name: semanticField(payload, 'tool_name', 'ToolName'),
+                tool_input: semanticField(payload, 'tool_input', 'ToolInput'),
+                timestamp: semanticField(payload, 'timestamp', 'Timestamp') || timestamp
+            });
             return;
         case 'tool.completed':
         case 'tool.failed':

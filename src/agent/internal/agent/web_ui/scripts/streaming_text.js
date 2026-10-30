@@ -135,6 +135,12 @@ function createStreamingTextReveal(options) {
         synchronize();
     }
 
+    function rekey(previousKey, nextKey) {
+        if (previousKey === nextKey || !entries.has(previousKey)) return;
+        entries.set(nextKey, entries.get(previousKey));
+        entries.delete(previousKey);
+    }
+
     function clear() {
         entries.clear();
         synchronize();
@@ -154,5 +160,5 @@ function createStreamingTextReveal(options) {
         synchronize();
     }
 
-    return {bind, has: key => entries.has(key), hasPending: () => pending, remove, clear, flush};
+    return {bind, has: key => entries.has(key), hasPending: () => pending, rekey, remove, clear, flush};
 }

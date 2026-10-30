@@ -54,7 +54,9 @@ In `stt` mode, Web UI requests and device voice interactions share the same Agen
 The Web UI reveals streamed answer and reasoning text character by character,
 with faster playback for large bursts. It keeps the complete received text in
 memory and waits for playback to finish before reconciling completed history.
-Tool calls and stream resets discard the previous draft's pending animation.
+Text accompanying a tool call remains an ordinary assistant message before the
+tool details, including after history reloads. It retains its pending animation
+at the tool boundary; explicit stream resets discard the active draft.
 History loads, background tabs, and reduced-motion preferences show text without
 animation.
 

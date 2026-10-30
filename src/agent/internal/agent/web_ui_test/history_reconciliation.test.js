@@ -494,6 +494,60 @@ advanceAnimation(1000);
 assert.deepEqual(renderedTypes(), ['tool_call', 'tool_result']);
 assert.equal(animationFrames.size, 0, 'reset should cancel queued reveal callbacks');
 
+renderHistory([]);
+const progressRun = 'tool-progress';
+const progressText = '<tts>Checking the weather.</tts> I will check the weather now.';
+const progressCall = {
+    type: 'tool_call', request_id: progressRun, tool_name: 'weather', tool_input: '{}',
+    content: progressText, reasoning_content: 'Check current conditions.', timestamp: 'progress-1'
+};
+handleChatStreamEvent({type: 'assistant_delta', request_id: progressRun, delta: progressText});
+handleChatStreamEvent({type: 'assistant_reasoning_delta', request_id: progressRun,
+    reasoning_content: progressCall.reasoning_content});
+advanceAnimation();
+const progressPrefix = messagesDiv.children[0].querySelector('.message-copy').textContent;
+assert.ok(progressPrefix.length > 0 && progressPrefix.length < progressText.length);
+handleChatStreamEvent({type: 'message', message: progressCall});
+assert.deepEqual(renderedTypes(), ['assistant', 'tool_call']);
+assert.equal(messagesDiv.children[0]._message.content, progressText);
+assert.equal(messagesDiv.children[0]._message.reasoning_content, progressCall.reasoning_content);
+assert.equal(messagesDiv.children[0].querySelector('.message-copy').textContent, progressPrefix,
+    'tool text should keep its visible prefix while the remaining characters finish');
+handleChatStreamEvent({type: 'message', message: progressCall});
+assert.deepEqual(renderedTypes(), ['assistant', 'tool_call'], 'repeated tool events must not duplicate progress text');
+const progressResult = {type: 'tool_result', request_id: progressRun, tool_name: 'weather', timestamp: 'result-1'};
+handleChatStreamEvent({type: 'message', message: progressResult});
+handleChatStreamEvent({type: 'assistant_delta', request_id: progressRun, delta: 'Checking tomorrow too.'});
+const nextProgressCall = {...progressCall, content: 'Checking tomorrow too.', timestamp: 'progress-2'};
+handleChatStreamEvent({type: 'message', message: nextProgressCall});
+handleChatStreamEvent({type: 'message', message: {...progressResult, timestamp: 'result-2'}});
+handleChatStreamEvent({type: 'assistant_delta', request_id: progressRun, delta: 'Sunny today.'});
+handleChatStreamEvent({type: 'message', message: {
+    type: 'assistant', request_id: progressRun, content: 'Sunny today.', timestamp: 'progress-final'
+}});
+const progressOrder = ['assistant', 'tool_call', 'tool_result', 'assistant', 'tool_call', 'tool_result', 'assistant'];
+assert.deepEqual(renderedTypes(), progressOrder);
+for (let i = 0; i < 200 && assistantTextReveal.hasPending(); i++) advanceAnimation();
+assert.equal(messagesDiv.children[0].querySelector('.message-copy').textContent, progressText);
+const progressHistory = [progressCall, progressResult, nextProgressCall,
+    {...progressResult, timestamp: 'result-2'},
+    {type: 'assistant', request_id: progressRun, content: 'Sunny today.', timestamp: 'progress-final'}];
+renderHistory(progressHistory);
+assert.deepEqual(renderedTypes(), progressOrder, 'history should preserve each tool response text and final answer');
+assert.equal(messagesDiv.children[0]._message.content, progressText);
+
+renderHistory([]);
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'sse-progress',
+    payload: {text: progressText}});
+handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: 'sse-progress',
+    payload: {...progressCall, request_id: 'sse-progress'}});
+assert.deepEqual(renderedTypes(), ['assistant'], 'SSE tool-call text must remain visible');
+assert.equal(messagesDiv.children[0]._message.content, progressText);
+handleSemanticEvent({schema_version: 2, kind: 'tool.completed', turn_id: 'sse-progress'});
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'sse-progress',
+    payload: {text: 'Final answer'}});
+assert.deepEqual(renderedTypes(), ['assistant', 'assistant'], 'new SSE response must not overwrite tool text');
+
 handleChatStreamEvent({type: 'assistant_delta', request_id: 'clear-reveal', delta: 'Text pending when history clears'});
 resetHistoryWindow();
 renderHistory([]);

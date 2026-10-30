@@ -2,6 +2,7 @@
 function messageIdentity(msg) {
     msg = msg || {};
     const type = isContextMarkerMessage(msg) ? contextMarkerType(msg) : normalizeType(msg.type);
+    if (type === 'assistant' && msg.tool_text_key) return ['tool-text', msg.tool_text_key].join('\u001f');
     const content = msg.content || '';
     const requestId = msg.request_id || '';
     if (requestId && (type === 'tool_call' || type === 'tool_result')) {
@@ -35,6 +36,24 @@ function isControlMessage(msg) {
     return normalizeType((msg || {}).type) === 'todo_closed';
 }
 
+// A tool response is one context item containing both assistant text and the
+// call. Present the text as an ordinary assistant message without losing its
+// association with that specific call when the same run continues generating.
+function assistantMessageForToolCall(msg) {
+    if (!msg || normalizeType(msg.type) !== 'tool_call' ||
+        (!msg.content && !msg.reasoning_content)) return null;
+    return {
+        type: 'assistant',
+        request_id: msg.request_id || '',
+        episode_id: msg.episode_id || '',
+        tool_text_key: messageIdentity(msg),
+        content: msg.content || '',
+        reasoning_content: msg.reasoning_content || '',
+        source: msg.source,
+        timestamp: msg.timestamp
+    };
+}
+
 function isContextMarkerMessage(msg) {
     msg = msg || {};
     const type = normalizeType(msg.type);
@@ -45,7 +64,10 @@ function projectConversationMessages(current, action) {
     current = Array.isArray(current) ? current : [];
     if (action.type === 'history') {
         const seen = new Set();
-        return (Array.isArray(action.messages) ? action.messages : []).filter(function(message) {
+        return (Array.isArray(action.messages) ? action.messages : []).flatMap(function(message) {
+            const text = assistantMessageForToolCall(message);
+            return text ? [text, message] : [message];
+        }).filter(function(message) {
             if (isControlMessage(message)) return false;
             const key = messageIdentity(message);
             if (seen.has(key)) return false;
