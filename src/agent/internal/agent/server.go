@@ -2120,6 +2120,8 @@ func (s *Server) handleChatStream(w http.ResponseWriter, r *http.Request) {
 					defer releaseFinalTTS()
 					s.speakFinalText(ttsCtx, req.RequestID, prepared)
 				}(prepared, finalTTSCtx, finishRun)
+			} else {
+				s.runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
 			}
 		}
 	}
@@ -2524,6 +2526,7 @@ func (s *Server) speakFinalTextIfCurrent(ctx context.Context, requestID string, 
 	}
 	speechCtx, cleanup, ok := s.latestSpeech.claim(ctx, generation)
 	if !ok {
+		s.runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
 		return
 	}
 	defer cleanup()
