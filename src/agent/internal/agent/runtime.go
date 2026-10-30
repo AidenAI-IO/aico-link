@@ -1197,7 +1197,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			}(streamCallbackHandler.streamEmitter)
 		}
 	}
-	if streamCallbackHandler != nil && req.StreamWriter != nil {
+	if streamCallbackHandler != nil && (req.StreamWriter != nil || req.StreamSink != nil) {
 		streamCallbackHandler.ResetStreaming(ctx)
 		callOptions = append(callOptions, chains.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 			streamCallbackHandler.HandleStreamingFunc(ctx, chunk)

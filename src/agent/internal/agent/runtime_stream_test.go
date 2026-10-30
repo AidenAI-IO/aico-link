@@ -82,6 +82,53 @@ func TestRuntimeCallbackEmitsTypedTextAlongsideLegacyWriter(t *testing.T) {
 	}
 }
 
+func TestRuntimeRunStreamsToSinkWithoutWriter(t *testing.T) {
+	model := &scriptedModel{responses: roleDirectResponses("completed")}
+	runtime := NewRuntimeWithDeps(
+		withTestConfigDir(t, Config{
+			Model:       ModelConfig{Provider: "fake"},
+			Instruction: "Answer directly.",
+		}),
+		&testModelResolver{model: model},
+		NewMemoryManager(""),
+		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+		NewSkillIndex(),
+	)
+	sink := &recordingStreamSink{}
+	result, err := runtime.Run(context.Background(), RunRequest{
+		Input:      "hello",
+		StreamSink: sink,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result.Output != "completed" {
+		t.Fatalf("output = %q, want completed", result.Output)
+	}
+	if len(model.sawStreaming) != 1 || !model.sawStreaming[0] {
+		t.Fatalf("model streaming = %v, want enabled", model.sawStreaming)
+	}
+	var deltaIndex, finalIndex = -1, -1
+	for i, event := range sink.events {
+		switch event.Kind {
+		case stream.EventTextDelta:
+			if deltaIndex < 0 {
+				deltaIndex = i
+			}
+		case stream.EventTextFinal:
+			if finalIndex < 0 {
+				finalIndex = i
+			}
+		}
+	}
+	if deltaIndex < 0 || finalIndex < 0 || deltaIndex >= finalIndex {
+		t.Fatalf("text delta/final order = %d/%d, events = %+v", deltaIndex, finalIndex, sink.events)
+	}
+	if payload, ok := sink.events[deltaIndex].Payload.(map[string]string); !ok || payload["text"] != "chunk:completed" {
+		t.Fatalf("text delta payload = %#v, want model chunk", sink.events[deltaIndex].Payload)
+	}
+}
+
 func TestRuntimeStreamEmitterPreservesWhitespaceDelta(t *testing.T) {
 	sink := &recordingStreamSink{}
 	emitter := newStreamEventEmitter(sink, stream.EventScope{}, "request-1", "run-1", "episode-1")
