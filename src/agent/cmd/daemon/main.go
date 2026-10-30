@@ -312,6 +312,7 @@ type audioDialogRunner interface {
 	ResetVAD()
 	VADFrameSamples() int
 	VADSpeaking() bool
+	VADLastFrameSpeech() bool
 }
 
 type wakeupWatcher interface {
@@ -736,7 +737,7 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			playReadyCue = false
 		} else {
 			if maxTurns > 0 && turns >= maxTurns {
-				logging.Infof("agent", "session", "max turns reached (%d), closing voice session")
+				logging.Infof("agent", "session", "max turns reached (%d), closing voice session", maxTurns)
 				return false
 			}
 
@@ -1164,13 +1165,15 @@ func voiceTurnResultAfterCancel(input agent.TurnInput, canceledInfo canceledTurn
 // countVoiceBargeInFrame updates consecutive speech frames and reports whether
 // barge-in should fire. During TTS playback use a slightly longer sustain so
 // tip/echo blips are ignored; still interrupt on real near-field talk.
+// Uses per-frame speech (not latched VADSpeaking) so one echo frame cannot
+// keep the sustain counter climbing through following silence.
 func countVoiceBargeInFrame(dialog audioDialogRunner, frame []int16, ttsActive bool, speechFrames *int) bool {
 	_, _ = dialog.ProcessVADFrame(frame)
 	need := thinkBargeInNeed
 	if ttsActive {
 		need = ttsBargeInNeedFrames
 	}
-	if dialog.VADSpeaking() {
+	if dialog.VADLastFrameSpeech() {
 		*speechFrames++
 	} else {
 		*speechFrames = 0

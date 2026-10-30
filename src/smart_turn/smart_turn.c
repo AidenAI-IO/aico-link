@@ -55,6 +55,11 @@ smart_turn *smart_turn_open(const char *model_path, char *err, size_t err_len) {
         return NULL;
     }
     smart_turn *st = calloc(1, sizeof *st);
+    if (!st) {
+        free(model);
+        set_err(err, err_len, "out of memory");
+        return NULL;
+    }
     int ret = rknn_init(&st->ctx, model, model_size, 0, NULL);
     free(model);
     if (ret != RKNN_SUCC) {

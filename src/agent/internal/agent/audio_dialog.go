@@ -45,6 +45,7 @@ type AudioDialog struct {
 	recordText          string
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
+	recordSTTRotateGen  uint64
 	speechMu            sync.Mutex
 	outputMu            sync.Mutex
 	activeOutputs       map[*activeTTSOutput]struct{}
@@ -89,18 +90,28 @@ func (o *activeTTSOutput) clearStream(stream *streamSessionWriter) {
 	}
 }
 
+func (o *activeTTSOutput) setCancel(cancel context.CancelFunc) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.cancel = cancel
+	o.mu.Unlock()
+}
+
 func (o *activeTTSOutput) interrupt() {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
 	stream := o.stream
+	cancel := o.cancel
 	o.mu.Unlock()
 	if stream != nil {
 		stream.interrupt()
 	}
-	if o.cancel != nil {
-		o.cancel()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -224,7 +235,7 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 	client := newProxyHTTPClient(ProxyConfigFromEnvironment())
 	connWarmer := NewConnectionWarmer(client, collectWarmupEndpoints(cfg))
 
-	return &AudioDialog{
+	dialog := &AudioDialog{
 		config:             cfg,
 		runtime:            runtime,
 		audioClient:        audioClient,
@@ -235,7 +246,13 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 		vad:                vad,
 		audioArchive:       NewAudioArchiveManager(cfg.AudioArchive),
 		connWarmer:         connWarmer,
-	}, nil
+	}
+	// Warm Smart Turn off the capture path so the first analyze window does
+	// not block on helper spawn + RKNN load (up to readiness timeout).
+	if helper, ok := turnDetector.(*helperTurnDetector); ok {
+		go func() { _ = helper.WindowSamples() }()
+	}
+	return dialog, nil
 }
 
 // SetStorageManager keeps new archived recordings on eMMC and makes older
@@ -442,6 +459,8 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 	}
 	sessionID := d.sessionID
 	sttTelemetry := d.recordSTTTelemetry
+	d.recordSTTRotateGen++
+	rotateGen := d.recordSTTRotateGen
 	d.recordMu.Unlock()
 
 	recordSTT := d.takeRecordSTT()
@@ -490,7 +509,7 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 			return
 		}
 		d.recordMu.Lock()
-		stillActive := d.recordActive && d.sessionID == sessionID
+		stillActive := d.recordActive && d.sessionID == sessionID && d.recordSTTRotateGen == rotateGen
 		d.recordMu.Unlock()
 		if !stillActive {
 			_ = nextSTT.Close()
@@ -712,6 +731,15 @@ func (d *AudioDialog) VADSpeaking() bool {
 		return false
 	}
 	return d.vad.Speaking()
+}
+
+// VADLastFrameSpeech reports whether the most recent VAD frame scored as speech.
+// Prefer this over VADSpeaking() for barge-in sustain counting; Speaking() latches.
+func (d *AudioDialog) VADLastFrameSpeech() bool {
+	if d == nil || d.vad == nil {
+		return false
+	}
+	return d.vad.LastFrameSpeech()
 }
 
 // VADFrameSamples returns the number of samples to feed into each VAD frame.
@@ -1425,7 +1453,7 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 	if !allowFallback {
 		return ttsErr
 	}
-	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, "", speechStarted, ttsErr)
+	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, "", speechStarted, ttsErr, output.setCancel)
 	if fallbackPlayed {
 		logging.Warnf("agent", "tts", "Local unavailable fallback played: %s", ttsUnavailableFallbackPath(d.config, ""))
 	}

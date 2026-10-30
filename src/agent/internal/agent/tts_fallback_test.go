@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	ttsmodule "aico-agent/internal/agent/tts"
 )
@@ -111,7 +112,7 @@ func TestAttemptTTSUnavailableFallbackPreservesOriginalError(t *testing.T) {
 	ops := &recordedAudioOps{}
 	audio := NewAudioServiceClient(startRecordedTTSPlaybackAudioSocket(t, ops))
 	original := errors.New("dial tcp: connection refused")
-	played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original)
+	played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original, nil)
 	if !played {
 		t.Fatal("fallback played = false, want true")
 	}
@@ -131,20 +132,25 @@ func TestAttemptTTSUnavailableFallbackSkipsPartialSpeechAndCancellation(t *testi
 	ops := &recordedAudioOps{}
 	audio := NewAudioServiceClient(startRecordedTTSPlaybackAudioSocket(t, ops))
 	original := errors.New("dial tcp: connection reset")
-	if played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{}, "", true, original); played || !errors.Is(err, original) {
+	if played, err := attemptTTSUnavailableFallback(context.Background(), newAudioBackend(audio), Config{}, "", true, original, nil); played || !errors.Is(err, original) {
 		t.Fatalf("partial speech fallback = (%v, %v), want (false, original error)", played, err)
 	}
 	canceledCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 	// Provider failure with a canceled speak context still notifies the user.
-	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original); !played || !errors.Is(err, original) {
+	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, original, nil); !played || !errors.Is(err, original) {
 		t.Fatalf("canceled-ctx provider failure = (%v, %v), want (true, original error)", played, err)
 	}
 	if got := ops.countOp("start_playback"); got != 1 {
 		t.Fatalf("start_playback count = %d, want 1 after provider-failure fallback", got)
 	}
-	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, context.Canceled); played || !errors.Is(err, context.Canceled) {
+	if played, err := attemptTTSUnavailableFallback(canceledCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, context.Canceled, nil); played || !errors.Is(err, context.Canceled) {
 		t.Fatalf("pure cancel fallback = (%v, %v), want (false, context.Canceled)", played, err)
+	}
+	deadlineCtx, deadlineCancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer deadlineCancel()
+	if played, err := attemptTTSUnavailableFallback(deadlineCtx, newAudioBackend(audio), Config{Locale: "zh-CN"}, "", false, context.DeadlineExceeded, nil); played || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired-deadline fallback = (%v, %v), want (false, context.DeadlineExceeded)", played, err)
 	}
 }
 

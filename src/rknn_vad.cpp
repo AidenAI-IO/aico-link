@@ -958,7 +958,7 @@ public:
             return false;
         }
         const double reinit_ms = elapsed_ms(start, std::chrono::steady_clock::now());
-        AIDEN_LOG_INFO("protocol", "encoder_reinit_ok",
+        AICO_LOG_INFO("protocol", "encoder_reinit_ok",
                        "ctx=%llu reinit_ms=%.3f",
                        static_cast<unsigned long long>(encoder_ctx_), reinit_ms);
         return true;
@@ -1287,7 +1287,8 @@ int main(int argc, char** argv) {
             if (command == 'R') {
                 if (!vad.reset_runtime(&err)) {
                     protocol_error(err);
-                    continue;
+                    // Encoder was released; further F frames would null-deref.
+                    return 1;
                 }
                 std::cout << "OK" << std::endl;
                 continue;

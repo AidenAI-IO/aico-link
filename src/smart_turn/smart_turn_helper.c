@@ -19,7 +19,7 @@
 #include "smart_turn.h"
 
 #if defined(AICO_RKNN_GLIBC_COMPAT)
-extern int aiden_rknn_glibc_compat_init(void);
+extern int aico_rknn_glibc_compat_init(void);
 #endif
 
 #define MAX_SAMPLES (16000 * 120) /* refuse turns longer than two minutes */
@@ -39,7 +39,7 @@ int main(int argc, char **argv) {
     }
 
 #if defined(AICO_RKNN_GLIBC_COMPAT)
-    if (aiden_rknn_glibc_compat_init() != 0) {
+    if (aico_rknn_glibc_compat_init() != 0) {
         printf("ERR RKNN glibc compatibility initialization failed\n");
         return 1;
     }
@@ -53,6 +53,11 @@ int main(int argc, char **argv) {
     }
     const int window = smart_turn_window_samples(st);
     int16_t *pcm = calloc(window, sizeof(int16_t));
+    if (!pcm) {
+        printf("ERR out of memory\n");
+        smart_turn_close(st);
+        return 1;
+    }
     float prob;
     smart_turn_timing t;
 
@@ -60,6 +65,7 @@ int main(int argc, char **argv) {
         int ret = smart_turn_predict(st, pcm, window, &prob, &t);
         if (ret) printf("ERR inference failed: %d\n", ret);
         else printf("P %.4f %.2f %.2f\n", prob, t.features_ms, t.run_ms);
+        free(pcm);
         smart_turn_close(st);
         return ret != 0;
     }

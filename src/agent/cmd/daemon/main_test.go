@@ -1207,6 +1207,16 @@ func (d *fakeAudioDialog) ResetVAD() {
 }
 
 func (d *fakeAudioDialog) VADSpeaking() bool {
+	if d.vad != nil {
+		return d.vad.Speaking()
+	}
+	return false
+}
+
+func (d *fakeAudioDialog) VADLastFrameSpeech() bool {
+	if d.vad != nil {
+		return d.vad.LastFrameSpeech()
+	}
 	return false
 }
 

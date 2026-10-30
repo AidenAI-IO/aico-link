@@ -271,6 +271,11 @@ func (v *AudioVAD) Process(samples []int16) ([]int16, error) {
 		v.speechBuf = append(v.speechBuf, samples...)
 		v.silenceCount++
 		if v.speechFrames < v.minSpeechFrames {
+			// Drop short blips (cough/echo) once silence is long enough;
+			// otherwise speaking stays latched and speechBuf grows forever.
+			if v.silenceCount >= v.silenceLimit {
+				v.resetBuffers()
+			}
 			return nil, nil
 		}
 		if v.turnDetector != nil {
@@ -365,6 +370,12 @@ func (v *AudioVAD) resetBuffers() {
 // Speaking reports whether the VAD currently believes the user is in speech.
 func (v *AudioVAD) Speaking() bool {
 	return v.speaking
+}
+
+// LastFrameSpeech reports whether the most recently scored frame was above the
+// speech threshold. Unlike Speaking(), this is not latched across silence.
+func (v *AudioVAD) LastFrameSpeech() bool {
+	return v.lastProbability > v.threshold
 }
 
 type helperVADScorer struct {
