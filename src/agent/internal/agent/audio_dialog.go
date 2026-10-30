@@ -703,16 +703,17 @@ func (d *AudioDialog) StopRecording() error {
 
 	sessionID := d.sessionID
 	reader := d.recordReader
-	recordSTT := d.takeRecordSTT()
+	takenRecordSTT := d.takeRecordSTT()
+	recordSTT := takenRecordSTT
 	sttTelemetry := d.recordSTTTelemetry
 	d.recordSTTTelemetry = nil
 	d.recordActive = false
 	d.sessionID = 0
 	d.recordReader = nil
 	d.recordMu.Unlock()
-	if recordSTT != nil {
+	if takenRecordSTT != nil {
 		defer func() {
-			_ = recordSTT.Close()
+			_ = takenRecordSTT.Close()
 		}()
 	}
 
@@ -724,7 +725,8 @@ func (d *AudioDialog) StopRecording() error {
 	if err := backend.StopRecording(sessionID); err != nil {
 		return fmt.Errorf("stop recording: %w", err)
 	}
-	if d.recordBackend == nil && d.config.AudioBackendOrDefault() != AudioBackendLocal {
+	_, serviceBackend := backend.(*AudioServiceClient)
+	if serviceBackend {
 		tail, err := drainRecordChunks(backend, reader, sessionID)
 		d.recordMu.Lock()
 		d.recordTail = tail
@@ -739,9 +741,6 @@ func (d *AudioDialog) StopRecording() error {
 					sttTelemetry.streamingUploadError = err.Error()
 				}
 				logging.Warnf("agent", "stt", "streaming tail upload failed, falling back to one-shot STT: %v", err)
-				if d.clearRecordSTT(recordSTT) {
-					_ = recordSTT.Close()
-				}
 				recordSTT = nil
 			}
 		}
