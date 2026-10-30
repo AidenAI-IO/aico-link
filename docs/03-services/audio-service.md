@@ -138,6 +138,12 @@ processing time. Startup padding is withheld and the delayed tail is flushed
 before EOF so short recordings and word endings are retained. State resets on
 each recording session and capture restart.
 
+`stop_recording` requests capture shutdown; clients must continue reading until
+`end_of_stream` before closing the session. The CLI writes this final PCM to
+stdout, and the Agent includes it before finalizing streaming STT and in the
+fallback WAV/audio archive. A missing EOF is reported as a drain error rather
+than silently accepting a truncated recording.
+
 The business package includes the models, float weights and tested private
 RKNN Mini Runtime 2.5.0 under `/usr/lib/aico/models/dtln/`. It checks their
 SHA256 sums when packaging. The runtime is loaded only for DTLN and does not
