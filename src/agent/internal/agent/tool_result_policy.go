@@ -23,8 +23,8 @@ const (
 	ToolResultReasonIntrinsicLarge = "intrinsic_large"
 	ToolResultReasonContextLarge   = "context_large"
 	ToolResultReasonProcessingFail = "processing_failed"
-	// ToolResultReasonCompleteTooLarge reports a result that must be seen in
-	// full but cannot fit the model context even after compaction.
+	// ToolResultReasonCompleteTooLarge reports a complete-required result that
+	// could not be delivered inline and needs bounded artifact recovery.
 	ToolResultReasonCompleteTooLarge = "complete_result_too_large"
 
 	toolResultInlineMaxBytes     = 8 * 1024
@@ -106,7 +106,7 @@ func (defaultToolResultPolicy) Prepare(_ context.Context, input ToolResultPrepar
 		Reason:              ToolResultReasonInline,
 	}
 	if input.Call.Spec.RequiresCompleteResult {
-		return prepareCompleteToolResult(input, prepared), nil
+		return prepareCompleteToolResult(input, prepared)
 	}
 	intrinsicLarge := len(output) > toolResultInlineMaxBytes || prepared.EstimatedTokens > toolResultInlineMaxTokens
 	// The minimum observation budget must also apply to inline results.
@@ -225,41 +225,53 @@ func availableToolResultTokens(input ToolResultPrepareInput) int {
 // prepareCompleteToolResult handles tools whose output is only useful in full.
 // Such a result is never summarized to fit the space currently left: it is
 // appended whole, and ContextBudgetGuard prunes or compacts older context
-// before the next model call. Only a result that could not fit even after
-// that reduction is refused, with an explicit observation instead of a
-// misleading partial preview.
-func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedToolResult) PreparedToolResult {
+// before the next model call. When the complete result cannot fit, preserve
+// it as an artifact and return an explicitly incomplete, bounded observation.
+func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedToolResult) (PreparedToolResult, error) {
 	limit := completeToolResultTokenLimit(input)
 	if limit < 0 || prepared.EstimatedTokens <= limit {
 		prepared.RequiresComplete = true
 		prepared.Summary = projectToolResult(input.Call, input.Result.Output, 256)
-		return prepared
+		return prepared, nil
 	}
-
-	content, _ := json.Marshal(map[string]any{
-		"status":               "observation_incomplete",
-		"code":                 ToolResultReasonCompleteTooLarge,
-		"action_completed":     prepared.ActionCompleted,
-		"observation_complete": false,
-		"result_tokens":        prepared.EstimatedTokens,
-		"context_limit_tokens": limit,
-		"message":              "This result must be read in full but does not fit the model context even after compaction, together with complete results already loaded this turn, so it was not loaded. Do not retry the same call; continue with what is already loaded, request a smaller unit (for a skill, one of its linked files), or ask the user to split it.",
-	})
-	prepared.Content = string(content)
 	prepared.Complete = false
 	prepared.ObservationComplete = false
 	prepared.Reason = ToolResultReasonCompleteTooLarge
-	prepared.Summary = fmt.Sprintf("result not loaded: %d tokens exceed the %d-token context limit", prepared.EstimatedTokens, limit)
-	return prepared
+	contentBudget := min(toolResultInlineMaxTokens, max(256, limit))
+	preview, _ := projectToolResultWithKind(input.Call, input.Result.Output, min(256, contentBudget))
+	prepared.Summary = boundTextToTokens(preview, 256)
+	if input.ContextManager != nil && !toolResultIsSensitive(toolCallName(input.Call)) {
+		stored, err := input.ContextManager.StoreArtifact("text/plain", []byte(input.Result.Output), contextmanager.ArtifactMetadata{
+			ToolName:   input.Call.Spec.Name,
+			ToolCallID: input.Call.Action.ToolID,
+		})
+		if err == nil {
+			prepared.ArtifactPath = stored.Path
+			prepared.ArtifactComplete = stored.Complete
+		} else {
+			prepared.ProcessingErrorCode = "tool_result_persistence_failed"
+			prepared.ArtifactStoreError = classifyArtifactStoreError(err)
+		}
+	}
+	mandatory := "observation_complete=false. Skill instructions incomplete; this preview is not the full skill."
+	if prepared.ArtifactComplete {
+		mandatory += " Full result file: " + prepared.ArtifactPath + ". Read bounded byte ranges with shell (dd bs=1 skip=0 count=4096); never print the whole file."
+	} else {
+		mandatory += " Full result unavailable; request a smaller linked file with skill_read or ask to split the skill."
+	}
+	prepared.Content = combineMandatoryToolResultText(mandatory, preview, contentBudget)
+	if tokencounter.EstimateTextTokens(prepared.Content) > contentBudget {
+		prepared.Content = ""
+		return prepared, fmt.Errorf("%w: budget=%d", ErrToolResultRecoveryTextTooLarge, contentBudget)
+	}
+	return prepared, nil
 }
 
 // completeToolResultTokenLimit is the largest complete result that could fit
 // after pruning and compaction: the soft input limit minus tool schemas and
-// the complete results already loaded in the current turn. Those results
-// cannot be pruned, and compaction retains the whole current turn, so they
-// stay in the next request. Everything else is reducible and is deliberately
-// not subtracted; the soft limit's headroom below the usable budget covers the
-// system prompt, the compaction summary, and the current user message. It
+// the current user message and complete exchanges already loaded this turn.
+// Compaction retains these messages; the remaining headroom covers the system
+// prompt and summary while older history remains reducible. It
 // returns -1 when the context window is unknown, in which case the tool's own
 // output bound is the only limit.
 func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
@@ -273,28 +285,47 @@ func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
 			option(&options)
 		}
 	}
-	pinned := currentTurnCompleteResultTokens(input.ContextManager)
+	pinned := currentTurnPinnedTokens(input.ContextManager)
 	return max(0, softLimit-tokencounter.EstimateToolSchemaTokens(options)-pinned)
 }
 
-// currentTurnCompleteResultTokens estimates the complete-required results
-// already loaded since the latest user message, matching the current turn that
-// pruning and compaction use.
-func currentTurnCompleteResultTokens(manager *contextmanager.ContextManager) int {
+// currentTurnPinnedTokens includes the current user message and complete tool
+// exchanges, which neither pruning nor compaction can remove.
+func currentTurnPinnedTokens(manager *contextmanager.ContextManager) int {
 	if manager == nil {
 		return 0
 	}
 	messageList, _ := manager.MessageSnapshot()
 	total := 0
+	latestUser := -1
 	for i := len(messageList) - 1; i >= 0; i-- {
-		message := messageList[i]
-		if message.Role == messages.MessageRoleUser {
+		if messageList[i].Role == messages.MessageRoleUser {
+			latestUser = i
 			break
 		}
+	}
+	if latestUser < 0 {
+		return 0
+	}
+	total += tokencounter.EstimateMessageTokens(messageList[latestUser])
+	for i := latestUser + 1; i < len(messageList); i++ {
+		message := messageList[i]
+		if message.Role != messages.MessageRoleToolResult {
+			continue
+		}
+		requiresComplete := false
 		for _, result := range message.ToolResults {
 			if result.Meta != nil && result.Meta.RequiresComplete {
-				total += tokencounter.EstimateTextTokens(result.Content)
+				requiresComplete = true
+				break
 			}
+		}
+		if !requiresComplete {
+			continue
+		}
+		total += tokencounter.EstimateMessageTokens(message)
+		if i > latestUser+1 && messageList[i-1].Role == messages.MessageRoleToolCall {
+			total += tokencounter.EstimateMessageTokens(messageList[i-1])
 		}
 	}
 	return total
