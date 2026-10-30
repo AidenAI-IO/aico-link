@@ -70,6 +70,11 @@ func FinishInputContext(ctx context.Context, session StreamSession) (bool, error
 	if finisher, ok := session.(ContextFinishInputter); ok {
 		return true, finisher.FinishInput(ctx)
 	}
+	if tracked, ok := session.(*trackedSession); ok {
+		if finisher, ok := tracked.StreamSession.(ContextFinishInputter); ok {
+			return true, finisher.FinishInput(ctx)
+		}
+	}
 	return true, FinishInput(session)
 }
 
@@ -84,6 +89,14 @@ func CancelContext(ctx context.Context, session StreamSession) error {
 	}
 	if canceller, ok := session.(ContextCanceller); ok {
 		return canceller.Cancel(ctx)
+	}
+	if tracked, ok := session.(*trackedSession); ok {
+		if canceller, ok := tracked.StreamSession.(ContextCanceller); ok {
+			return canceller.Cancel(ctx)
+		}
+		if _, ok := tracked.StreamSession.(SessionCanceller); ok {
+			return tracked.Cancel()
+		}
 	}
 	return Cancel(session)
 }

@@ -23,7 +23,7 @@ func TestSemanticEventBroadcasterReplaysBeforeLiveEvents(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	replay, ch, unsubscribe := b.Subscribe(&stream.ReplayCursor{SessionEpoch: 1, Sequence: 1})
+	replay, ch, unsubscribe := b.Subscribe(&stream.ReplayCursor{SessionEpoch: b.sessionEpoch, Sequence: 1})
 	defer unsubscribe()
 	if replay.ResyncRequired || len(replay.Events) != 1 || replay.Events[0].Sequence != 2 {
 		t.Fatalf("replay = %#v", replay)
@@ -88,9 +88,37 @@ func TestSemanticEventBroadcasterReportsReplayResync(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	replay, _, unsubscribe := b.Subscribe(&stream.ReplayCursor{SessionEpoch: 1, Sequence: 0})
+	replay, _, unsubscribe := b.Subscribe(&stream.ReplayCursor{SessionEpoch: b.sessionEpoch, Sequence: 0})
 	defer unsubscribe()
 	if !replay.ResyncRequired {
 		t.Fatal("expired cursor did not require resync")
+	}
+}
+
+func TestSemanticEventBroadcasterRejectsCursorFromPreviousInstance(t *testing.T) {
+	previous := newSemanticEventBroadcaster(16)
+	if previous.sessionEpoch == 0 || previous.sessionEpoch > (1<<53)-1 {
+		t.Fatalf("session epoch %d cannot round-trip through the Web UI", previous.sessionEpoch)
+	}
+	for i := uint64(1); i <= 5; i++ {
+		if err := previous.Publish(semanticTestEvent(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	staleCursor := previous.replay.Cursor()
+
+	current := newSemanticEventBroadcaster(16)
+	for i := uint64(1); i <= 10; i++ {
+		if err := current.Publish(semanticTestEvent(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replay, _, unsubscribe := current.Subscribe(&staleCursor)
+	defer unsubscribe()
+	if staleCursor.SessionEpoch == replay.Current.SessionEpoch {
+		t.Fatal("new broadcaster reused the previous session epoch")
+	}
+	if !replay.ResyncRequired || len(replay.Events) != 0 || replay.Current.Sequence != 10 {
+		t.Fatalf("stale cursor replay = %#v", replay)
 	}
 }

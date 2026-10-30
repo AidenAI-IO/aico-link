@@ -152,11 +152,7 @@ func (t *trackedSession) Close() error {
 func (t *trackedSession) Abort() error {
 	t.closeOnce.Do(func() {
 		defer t.done.Done()
-		if aborter, ok := t.StreamSession.(interface{ Abort() error }); ok {
-			t.err = aborter.Abort()
-		} else {
-			t.err = t.StreamSession.Close()
-		}
+		t.err = CancelAndClose(t.StreamSession)
 	})
 	return t.err
 }

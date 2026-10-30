@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
 	"sync"
 
@@ -23,12 +25,20 @@ type semanticEventBroadcaster struct {
 }
 
 func newSemanticEventBroadcaster(replayCapacity int) *semanticEventBroadcaster {
-	const initialSessionEpoch = 1
+	const maxJSONSafeInteger = (1 << 53) - 1
+	var epochBytes [8]byte
+	var sessionEpoch uint64
+	for sessionEpoch == 0 {
+		if _, err := rand.Read(epochBytes[:]); err != nil {
+			panic(fmt.Errorf("generate semantic event session epoch: %w", err))
+		}
+		sessionEpoch = binary.BigEndian.Uint64(epochBytes[:]) & maxJSONSafeInteger
+	}
 	return &semanticEventBroadcaster{
-		replay:         stream.NewReplayLogWithEpoch(replayCapacity, initialSessionEpoch),
+		replay:         stream.NewReplayLogWithEpoch(replayCapacity, sessionEpoch),
 		subscribers:    make(map[chan stream.Event]struct{}),
 		conversationID: "agent",
-		sessionEpoch:   initialSessionEpoch,
+		sessionEpoch:   sessionEpoch,
 	}
 }
 

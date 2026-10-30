@@ -2283,14 +2283,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					semanticEmitter.emit(event)
 				}
 			case realtimevoice.EventToolCallCancelled:
-				if !turnState.acceptsResponseEvent(event.ResponseID) {
-					continue
-				}
-				if semanticEmitter != nil {
+				if semanticEmitter != nil && turnState.acceptsResponseEvent(event.ResponseID) {
 					semanticEmitter.emit(event)
 				}
 				tool, pending := foregroundTools[event.CallID]
 				if !pending {
+					continue
+				}
+				if event.ResponseID != "" && tool.responseID != "" && event.ResponseID != tool.responseID {
 					continue
 				}
 				tool.cancel()
@@ -3147,6 +3147,8 @@ type realtimePlaybackState struct {
 	finalizeResponses bool
 }
 
+const realtimePlaybackChunkBytes = 4096
+
 func (p *realtimePlaybackState) open(audio realtimePlaybackAudio, format agent.AudioFormat) error {
 	if p.session != nil {
 		return nil
@@ -3170,17 +3172,23 @@ func (p *realtimePlaybackState) appendItem(audio realtimePlaybackAudio, format a
 	if err := p.open(audio, format); err != nil {
 		return err
 	}
-	if err := audio.WritePlayChunk(p.session.SessionID, pcm, false); err != nil {
-		return err
+	for offset := 0; offset < len(pcm); offset += realtimePlaybackChunkBytes {
+		end := offset + realtimePlaybackChunkBytes
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if err := audio.WritePlayChunk(p.session.SessionID, pcm[offset:end], false); err != nil {
+			return err
+		}
+		if itemID != "" && p.itemID != itemID {
+			p.itemID = itemID
+			p.submittedBytes = 0
+			p.itemStartedAt = p.currentTime()
+		} else if itemID != "" && p.itemStartedAt.IsZero() {
+			p.itemStartedAt = p.currentTime()
+		}
+		p.submittedBytes += int64(end - offset)
 	}
-	if itemID != "" && p.itemID != itemID {
-		p.itemID = itemID
-		p.submittedBytes = 0
-		p.itemStartedAt = p.currentTime()
-	} else if itemID != "" && p.itemStartedAt.IsZero() {
-		p.itemStartedAt = p.currentTime()
-	}
-	p.submittedBytes += int64(len(pcm))
 	return nil
 }
 

@@ -613,11 +613,51 @@ globalThis.verifyHistoryLoadDoesNotEraseLiveDraft = async function() {
     assistantTextReveal.flush();
     clearTimeout(historyRefreshTimer);
 };
+
+globalThis.verifySemanticResyncReleasesExternalDrafts = async function() {
+    resetHistoryWindow();
+    renderHistory([]);
+    currentChatRequestId = '';
+    ndjsonOwnedRequestIds.clear();
+    globalThis.fetch = async () => ({ok: true, json: async () => ({
+        session_id: 'resynced', start: 0, end: 1,
+        messages: [{type: 'assistant', request_id: 'persisted', content: 'Durable answer'}]
+    })});
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'lost-terminal',
+        payload: {text: 'Stale external draft'}});
+    assistantDraftBlockedByTool.add('lost-terminal');
+    assert.equal(streamingAssistantDrafts['lost-terminal'].content, 'Stale external draft');
+    handleSemanticEvent({schema_version: 2, type: 'resync_required', session_epoch: 2, sequence: 10});
+    await new Promise(setImmediate);
+    assert.equal(streamingAssistantDrafts['lost-terminal'], undefined);
+    assert.equal(assistantDraftBlockedByTool.has('lost-terminal'), false);
+    assert.deepEqual(renderedTypes(), ['assistant']);
+    assert.equal(messagesDiv.children[0]._message.content, 'Durable answer',
+        'resync should replace a draft whose terminal event was lost');
+
+    renderHistory([]);
+    currentChatRequestId = 'local-resync';
+    handleChatStreamEvent({type: 'assistant_delta', request_id: currentChatRequestId, delta: 'Local stream'});
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'external-resync',
+        payload: {text: 'External stream'}});
+    assistantDraftBlockedByTool.add('local-resync');
+    assistantDraftBlockedByTool.add('external-resync');
+    handleSemanticEvent({schema_version: 2, type: 'resync_required', session_epoch: 2, sequence: 11});
+    assert.equal(streamingAssistantDrafts['external-resync'], undefined);
+    assert.equal(assistantDraftBlockedByTool.has('external-resync'), false);
+    assert.equal(streamingAssistantDrafts['local-resync'].content, 'Local stream');
+    assert.equal(assistantDraftBlockedByTool.has('local-resync'), true);
+    assert.deepEqual(renderedTypes(), ['assistant'], 'local NDJSON output should survive SSE resync');
+    currentChatRequestId = '';
+    ndjsonOwnedRequestIds.clear();
+    resetHistoryWindow();
+    renderHistory([]);
+};
 `
 ].join('\n');
 
 vm.runInThisContext(source, {filename: path.join(sourceDir, 'scripts', 'chat.js')});
-verifyHistoryLoadDoesNotEraseLiveDraft().catch(err => {
+verifyHistoryLoadDoesNotEraseLiveDraft().then(verifySemanticResyncReleasesExternalDrafts).catch(err => {
     console.error(err);
     process.exitCode = 1;
 });

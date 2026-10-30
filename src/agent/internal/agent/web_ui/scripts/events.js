@@ -240,6 +240,16 @@ function semanticText(payload) {
 function handleSemanticEvent(event) {
     if (!event || event.type === 'connected') return;
     if (event.type === 'resync_required') {
+        Object.keys(streamingAssistantDrafts).forEach(function(key) {
+            if (key === currentChatRequestId || ndjsonOwnedRequestIds.has(key)) return;
+            removeRenderedMessage(messageIdentity(streamingAssistantDrafts[key]));
+            delete streamingAssistantDrafts[key];
+        });
+        for (const key of assistantDraftBlockedByTool) {
+            if (key !== currentChatRequestId && !ndjsonOwnedRequestIds.has(key)) {
+                assistantDraftBlockedByTool.delete(key);
+            }
+        }
         loadHistory();
         return;
     }

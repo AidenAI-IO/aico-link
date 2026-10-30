@@ -62,7 +62,7 @@ type stubSTTStreamUploader struct {
 func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
 	server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
 	ctx, cancel := context.WithCancel(context.Background())
-	req := httptest.NewRequest(http.MethodGet, "/api/events?version=2&since=0&epoch=1", nil).WithContext(ctx)
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/events?version=2&since=0&epoch=%d", server.semanticEvents.sessionEpoch), nil).WithContext(ctx)
 	rec := httptest.NewRecorder()
 	done := make(chan struct{})
 	go func() {
@@ -90,19 +90,19 @@ func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
 	if strings.Contains(body, `"type":"resync_required"`) {
 		t.Fatalf("empty replay window incorrectly required resync: %s", body)
 	}
-	if !strings.Contains(body, "id: 1:1") {
+	if !strings.Contains(body, fmt.Sprintf("id: %d:1", server.semanticEvents.sessionEpoch)) {
 		t.Fatalf("v2 SSE body missing event id: %s", body)
 	}
 }
 
 func TestHandleSemanticEventsLatestAndReconnectCursor(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		lastID    string
-		wantEvent bool
+		name            string
+		reconnectCursor bool
+		wantEvent       bool
 	}{
 		{name: "fresh observer skips retained events"},
-		{name: "browser reconnect replays from Last-Event-ID", lastID: "1:0", wantEvent: true},
+		{name: "browser reconnect replays from Last-Event-ID", reconnectCursor: true, wantEvent: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
@@ -113,8 +113,8 @@ func TestHandleSemanticEventsLatestAndReconnectCursor(t *testing.T) {
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			req := httptest.NewRequest(http.MethodGet, "/api/events?version=2&since=latest", nil).WithContext(ctx)
-			if tc.lastID != "" {
-				req.Header.Set("Last-Event-ID", tc.lastID)
+			if tc.reconnectCursor {
+				req.Header.Set("Last-Event-ID", fmt.Sprintf("%d:0", server.semanticEvents.sessionEpoch))
 			}
 			rec := httptest.NewRecorder()
 			done := make(chan struct{})
@@ -142,7 +142,7 @@ func TestHandleSemanticEventsLatestAndReconnectCursor(t *testing.T) {
 			if got := strings.Contains(body, `"kind":"text.delta"`); got != tc.wantEvent {
 				t.Fatalf("retained event present = %v, want %v; body = %s", got, tc.wantEvent, body)
 			}
-			if tc.lastID == "" && !strings.Contains(body, "id: 1:1\n") {
+			if !tc.reconnectCursor && !strings.Contains(body, fmt.Sprintf("id: %d:1\n", server.semanticEvents.sessionEpoch)) {
 				t.Fatalf("latest connection did not establish a browser replay cursor: %s", body)
 			}
 		})
