@@ -478,6 +478,13 @@ func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamin
 		if !current || observer == nil {
 			continue
 		}
+		// A buffered event and the close signal can both be ready in the
+		// select above. Do not deliver the buffered event after closure.
+		select {
+		case <-session.eventsDone:
+			return
+		default:
+		}
 		observer(sessionID, event)
 	}
 }

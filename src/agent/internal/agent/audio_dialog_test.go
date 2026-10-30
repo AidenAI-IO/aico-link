@@ -83,6 +83,27 @@ func TestAudioDialogTranscriptObserverStopsWhenSessionCloses(t *testing.T) {
 	}
 }
 
+func TestAudioDialogTranscriptObserverDropsBufferedEventFromClosedSession(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 1)
+	session := &streamingSTTSession{events: events, eventsDone: make(chan struct{})}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan stream.TranscriptEvent, 1)
+	dialog.SetSTTTranscriptObserver(func(_ uint64, event stream.TranscriptEvent) {
+		observed <- event
+	})
+
+	events <- stream.NewTranscriptHypothesis("segment-1", 1, "late")
+	if err := session.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+	dialog.forwardRecordSTTEvents(7, session)
+	select {
+	case event := <-observed:
+		t.Fatalf("closed session forwarded buffered transcript: %#v", event)
+	default:
+	}
+}
+
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
 	t.Helper()
 	deadline := time.After(time.Second)
