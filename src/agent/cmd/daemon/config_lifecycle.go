@@ -39,6 +39,9 @@ type inputLifecycle struct {
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
 	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
 	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
+	// Classic Mode B keeps the mic open for the whole voice session. Runtime.Run
+	// preempts on every turn start, so this hook must only stop TTS — never the
+	// session recording. Listen/session code owns StartRecording/StopRecording.
 	c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
 		return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
 	}
@@ -47,9 +50,6 @@ func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifec
 		defer c.dialogMu.Unlock()
 		if c.dialog != nil {
 			c.dialog.InterruptOutput()
-			if c.dialog.RecordingActive() {
-				_ = c.dialog.StopRecording()
-			}
 		}
 	})
 	return c
@@ -66,7 +66,10 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		Locale: cfg.Locale, Timezone: cfg.Timezone, Instruction: cfg.Instruction, Prompt: cfg.Prompt,
 		AudioArchive: cfg.AudioArchive, VADBackend: cfg.VADBackend, VADModelPath: cfg.VADModelPath, VADHelperPath: cfg.VADHelperPath,
 		VADSpeechThreshold: cfg.VADSpeechThreshold, SilenceMs: cfg.SilenceMs, MinSpeechMs: cfg.MinSpeechMs,
-		VoiceFollowupEnabled: cfg.VoiceFollowupEnabled, VoiceFollowupTimeoutMs: cfg.VoiceFollowupTimeoutMs,
+		TurnDetectionModelPath: cfg.TurnDetectionModelPath, TurnDetectionHelperPath: cfg.TurnDetectionHelperPath,
+		TurnDetectionThreshold: cfg.TurnDetectionThreshold, TurnDetectionAnalyzeSilenceMs: cfg.TurnDetectionAnalyzeSilenceMs,
+		TurnDetectionSilenceFallbackMs: cfg.TurnDetectionSilenceFallbackMs,
+		VoiceFollowupEnabled:           cfg.VoiceFollowupEnabled, VoiceFollowupTimeoutMs: cfg.VoiceFollowupTimeoutMs,
 		VoiceFirstTurnTimeoutMs: cfg.VoiceFirstTurnTimeoutMs, VoiceMaxTurns: cfg.VoiceMaxTurns,
 		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
 		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,

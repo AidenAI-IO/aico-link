@@ -48,6 +48,7 @@ type AudioDialog struct {
 	recordText          string
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
+	recordSTTRotateGen  uint64
 	speechMu            sync.Mutex
 	latestSpeech        latestTTSOutput
 	outputMu            sync.Mutex
@@ -64,8 +65,11 @@ type activeTTSOutput struct {
 	done       chan struct{}
 	generation uint64
 
-	mu          sync.Mutex
-	stream      interface{ interrupt() }
+	mu     sync.Mutex
+	stream interface {
+		interrupt()
+		startedPlayback() bool
+	}
 	interrupted bool
 	superseded  bool
 }
@@ -77,7 +81,10 @@ func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
 	}
 }
 
-func (o *activeTTSOutput) setStream(stream interface{ interrupt() }) {
+func (o *activeTTSOutput) setStream(stream interface {
+	interrupt()
+	startedPlayback() bool
+}) {
 	if o == nil {
 		return
 	}
@@ -101,6 +108,21 @@ func (o *activeTTSOutput) clearStream(stream *streamSessionWriter) {
 	}
 }
 
+func (o *activeTTSOutput) setCancel(cancel context.CancelFunc) {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	interrupted := o.interrupted
+	o.cancel = cancel
+	o.mu.Unlock()
+	// InterruptOutput already ran: cancel immediately so fallback cannot start
+	// on a fresh Background context after the earlier interruption.
+	if interrupted && cancel != nil {
+		cancel()
+	}
+}
+
 func (o *activeTTSOutput) interrupt() {
 	if o == nil {
 		return
@@ -108,12 +130,13 @@ func (o *activeTTSOutput) interrupt() {
 	o.mu.Lock()
 	o.interrupted = true
 	stream := o.stream
+	cancel := o.cancel
 	o.mu.Unlock()
 	if stream != nil {
 		stream.interrupt()
 	}
-	if o.cancel != nil {
-		o.cancel()
+	if cancel != nil {
+		cancel()
 	}
 }
 
@@ -213,16 +236,41 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 		minSpeechMs = defaultMinSpeechMs
 	}
 
+	// Smart Turn is opt-in: empty classic turn_detection_* paths keep
+	// silence-based Silero endpointing. Auto-starting the NPU helper by
+	// default contended with rknn_vad and broke basic listen/follow-up.
+	var turnDetector TurnDetector
+	turnModelPath := strings.TrimSpace(cfg.TurnDetectionModelPath)
+	turnHelperPath := strings.TrimSpace(cfg.TurnDetectionHelperPath)
+	if cfg.InputModeOrDefault() == "stt" && (turnModelPath != "" || turnHelperPath != "") {
+		turnDetector = NewHelperTurnDetector(turnModelPath, turnHelperPath)
+		if turnModelPath == "" {
+			turnModelPath = DefaultTurnDetectionModelPath()
+		}
+		if turnHelperPath == "" {
+			turnHelperPath = DefaultTurnDetectionHelperPath()
+		}
+	}
+
 	vad, err := NewAudioVAD(AudioVADConfig{
-		SampleRate:      cfg.Audio.SampleRateOrDefault(),
-		SilenceMs:       silenceMs,
-		MinSpeechMs:     minSpeechMs,
-		Backend:         cfg.VADBackend,
-		ModelPath:       cfg.VADModelPath,
-		HelperPath:      cfg.VADHelperPath,
-		SpeechThreshold: cfg.VADSpeechThreshold,
+		SampleRate:        cfg.Audio.SampleRateOrDefault(),
+		SilenceMs:         silenceMs,
+		MinSpeechMs:       minSpeechMs,
+		Backend:           cfg.VADBackend,
+		ModelPath:         cfg.VADModelPath,
+		HelperPath:        cfg.VADHelperPath,
+		SpeechThreshold:   cfg.VADSpeechThreshold,
+		TurnDetector:      turnDetector,
+		TurnModelPath:     turnModelPath,
+		TurnHelperPath:    turnHelperPath,
+		TurnThreshold:     cfg.TurnDetectionThresholdOrDefault(),
+		AnalyzeSilenceMs:  cfg.TurnDetectionAnalyzeSilenceMsOrDefault(),
+		FallbackSilenceMs: cfg.TurnDetectionSilenceFallbackMsOrDefault(),
 	})
 	if err != nil {
+		if turnDetector != nil {
+			_ = turnDetector.Close()
+		}
 		return nil, err
 	}
 
@@ -231,7 +279,7 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 	client := newProxyHTTPClient(ProxyConfigFromEnvironment())
 	connWarmer := NewConnectionWarmer(client, collectWarmupEndpoints(cfg))
 
-	return &AudioDialog{
+	dialog := &AudioDialog{
 		config:             cfg,
 		runtime:            runtime,
 		audioClient:        audioClient,
@@ -242,7 +290,15 @@ func NewAudioDialogWithConfig(runtime *Runtime, cfg Config) (*AudioDialog, error
 		vad:                vad,
 		audioArchive:       NewAudioArchiveManager(cfg.AudioArchive),
 		connWarmer:         connWarmer,
-	}, nil
+	}
+	// Warm Smart Turn off the capture path so the first analyze window does
+	// not block on helper spawn + RKNN load. WarmAsync never holds the
+	// detector mutex during readiness wait, so Predict can fail fast and
+	// silence fallback remains available while warmup is still in flight.
+	if helper, ok := turnDetector.(*helperTurnDetector); ok {
+		helper.WarmAsync()
+	}
+	return dialog, nil
 }
 
 // SetStorageManager keeps new archived recordings on eMMC and makes older
@@ -306,14 +362,21 @@ func (d *AudioDialog) vadConfig() AudioVADConfig {
 	if threshold <= 0 {
 		threshold = defaultVADSpeechThreshold
 	}
+	turnModelPath := strings.TrimSpace(d.config.TurnDetectionModelPath)
+	turnHelperPath := strings.TrimSpace(d.config.TurnDetectionHelperPath)
 	return AudioVADConfig{
-		SampleRate:      d.config.Audio.SampleRateOrDefault(),
-		SilenceMs:       silenceMs,
-		MinSpeechMs:     minSpeechMs,
-		Backend:         backend,
-		ModelPath:       modelPath,
-		HelperPath:      helperPath,
-		SpeechThreshold: threshold,
+		SampleRate:        d.config.Audio.SampleRateOrDefault(),
+		SilenceMs:         silenceMs,
+		MinSpeechMs:       minSpeechMs,
+		Backend:           backend,
+		ModelPath:         modelPath,
+		HelperPath:        helperPath,
+		SpeechThreshold:   threshold,
+		TurnModelPath:     turnModelPath,
+		TurnHelperPath:    turnHelperPath,
+		TurnThreshold:     d.config.TurnDetectionThresholdOrDefault(),
+		AnalyzeSilenceMs:  d.config.TurnDetectionAnalyzeSilenceMsOrDefault(),
+		FallbackSilenceMs: d.config.TurnDetectionSilenceFallbackMsOrDefault(),
 	}
 }
 
@@ -372,6 +435,8 @@ func (d *AudioDialog) StartRecording() error {
 		}
 	}
 	d.recordText = ""
+	d.recordSTTRotateGen++
+	rotateGen := d.recordSTTRotateGen
 	d.recordSTTMu.Lock()
 	d.recordSTT = nil
 	d.recordSTTSessionID = result.SessionID
@@ -384,6 +449,7 @@ func (d *AudioDialog) StartRecording() error {
 	} else {
 		d.recordSTTPreReady = nil
 	}
+	preReady := d.recordSTTPreReady
 	d.recordSTTMu.Unlock()
 	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, recordStartedAt)
 	d.recordActive = true
@@ -424,9 +490,9 @@ func (d *AudioDialog) StartRecording() error {
 		if recordSTT == nil {
 			return
 		}
-		// Guard: if recording was stopped before STT connected, discard.
+		// Guard: discard if recording stopped/rotated before STT connected.
 		d.recordMu.Lock()
-		stillActive := d.recordActive && d.sessionID == sttSessionID
+		stillActive := d.recordActive && d.sessionID == sttSessionID && d.recordSTTRotateGen == rotateGen
 		d.recordMu.Unlock()
 		if !stillActive {
 			_ = recordSTT.Close()
@@ -438,7 +504,7 @@ func (d *AudioDialog) StartRecording() error {
 			meta.streamingReady = true
 			meta.streamingReadyMS = streamReadyAt.Sub(meta.startedAt).Milliseconds()
 		})
-		overflow, installed, err := d.installRecordSTT(sttSessionID, recordSTT)
+		overflow, installed, err := d.installRecordSTT(sttSessionID, recordSTT, preReady)
 		if overflow {
 			d.updateRecordSTTTelemetry(sttSessionID, func(meta *sttTurnTelemetry) {
 				meta.streamingPreReadyOverflow = true
@@ -509,6 +575,113 @@ func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamin
 	}
 }
 
+// FinalizeAndRotateSTT finalizes the current streaming STT turn without closing
+// the microphone, then starts a fresh streaming session for the next turn.
+// Used by the Classic continuous-mic session so ASR matches turn boundaries.
+func (d *AudioDialog) FinalizeAndRotateSTT() error {
+	d.recordMu.Lock()
+	if !d.recordActive {
+		d.recordMu.Unlock()
+		return fmt.Errorf("recording is not active")
+	}
+	sessionID := d.sessionID
+	sttTelemetry := d.recordSTTTelemetry
+	d.recordSTTRotateGen++
+	rotateGen := d.recordSTTRotateGen
+	d.recordSTTMu.Lock()
+	recordSTT := d.recordSTT
+	d.recordSTT = nil
+	d.recordSTTSessionID = sessionID
+	var preReady *sttPCMPreReadyBuffer
+	if d.sttClient != nil && d.sttClient.Capabilities().SupportsStreamingUpload {
+		preReady = newSTTPCMPreReadyBuffer(
+			d.config.Audio.SampleRateOrDefault(),
+			d.config.Audio.ChannelsOrDefault(),
+			d.config.Audio.BitWidthOrDefault(),
+		)
+	}
+	d.recordSTTPreReady = preReady
+	d.recordSTTMu.Unlock()
+	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, time.Now().UTC())
+	d.recordMu.Unlock()
+
+	if recordSTT != nil {
+		finalizeStart := time.Now()
+		transcript, err := recordSTT.FinalizeWithTimeout(audioDialogStreamingSTTFinalizeTimeout)
+		_ = recordSTT.Close()
+		finalizeDurationMs := time.Since(finalizeStart).Milliseconds()
+		if sttTelemetry == nil {
+			sttTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, finalizeStart)
+		}
+		sttTelemetry.streamingFinalizeMS = finalizeDurationMs
+		if err != nil {
+			sttTelemetry.streamingFinalizeError = err.Error()
+			logging.Warnf("agent", "stt", "finalize streaming transcript failed, falling back to one-shot STT: %v", err)
+		} else {
+			sttTelemetry.transcript = transcript
+			sttTelemetry.usedStreamingTranscript = strings.TrimSpace(transcript) != ""
+		}
+	}
+
+	d.recordMu.Lock()
+	stillActive := d.recordActive && d.sessionID == sessionID && d.recordSTTRotateGen == rotateGen
+	if stillActive {
+		if sttTelemetry != nil {
+			d.pendingSTTTelemetry = sttTelemetry
+			if sttTelemetry.streamingFinalizeError == "" {
+				d.recordText = sttTelemetry.transcript
+			}
+		}
+	}
+	d.recordMu.Unlock()
+	if !stillActive || preReady == nil {
+		return nil
+	}
+
+	go func() {
+		nextSTT, err := beginStreamingSTTSession(context.Background(), d.sttClient, STTStreamConfig{
+			SampleRate: d.config.Audio.SampleRateOrDefault(),
+			Channels:   d.config.Audio.ChannelsOrDefault(),
+			BitWidth:   d.config.Audio.BitWidthOrDefault(),
+		})
+		if err != nil {
+			d.updateRecordSTTTelemetry(sessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingUnavailableError = err.Error()
+			})
+			logging.Warnf("agent", "stt", "streaming upload unavailable for next turn, falling back to one-shot STT: %v", err)
+			return
+		}
+		if nextSTT == nil {
+			return
+		}
+		d.recordMu.Lock()
+		stillActive := d.recordActive && d.sessionID == sessionID && d.recordSTTRotateGen == rotateGen
+		d.recordMu.Unlock()
+		if !stillActive {
+			_ = nextSTT.Close()
+			return
+		}
+		logging.Infof("agent", "stt", "streaming upload rotated for next turn")
+		overflow, installed, err := d.installRecordSTT(sessionID, nextSTT, preReady)
+		if overflow {
+			d.updateRecordSTTTelemetry(sessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+				meta.streamingUnavailableError = "streaming STT readiness exceeded the 2s pre-ready buffer"
+			})
+		}
+		if err != nil {
+			d.markRecordSTTUploadError(sessionID, err)
+			logging.Warnf("agent", "stt", "streaming upload failed, falling back to one-shot STT: %v", err)
+		}
+		if !installed {
+			_ = nextSTT.Close()
+			return
+		}
+		go d.forwardRecordSTTEvents(sessionID, nextSTT)
+	}()
+	return nil
+}
+
 // StopRecording stops the current recording session
 func (d *AudioDialog) StopRecording() error {
 	d.recordMu.Lock()
@@ -570,8 +743,20 @@ func (d *AudioDialog) RecordingActive() bool {
 	return d.recordActive
 }
 
-// ReadRecordChunk reads a PCM chunk from the recording session
+// ReadRecordChunk reads a PCM chunk from the recording session and uploads it
+// to the active streaming STT session when one is open.
 func (d *AudioDialog) ReadRecordChunk(timeoutMs uint32) (*AudioChunkResult, error) {
+	return d.readRecordChunk(timeoutMs, true)
+}
+
+// ReadRecordChunkMonitor reads mic PCM for barge-in / VAD monitoring without
+// uploading to streaming STT. Used while TTS is playing so playback echo does
+// not pollute the next turn's transcript.
+func (d *AudioDialog) ReadRecordChunkMonitor(timeoutMs uint32) (*AudioChunkResult, error) {
+	return d.readRecordChunk(timeoutMs, false)
+}
+
+func (d *AudioDialog) readRecordChunk(timeoutMs uint32, uploadSTT bool) (*AudioChunkResult, error) {
 	d.recordMu.Lock()
 	if !d.recordActive || d.sessionID == 0 {
 		d.recordMu.Unlock()
@@ -584,7 +769,9 @@ func (d *AudioDialog) ReadRecordChunk(timeoutMs uint32) (*AudioChunkResult, erro
 	if reader != nil {
 		chunk, err := reader.Read(timeoutMs)
 		if err == nil {
-			d.uploadRecordChunkToStreamingSTT(sessionID, chunk)
+			if uploadSTT {
+				d.uploadRecordChunkToStreamingSTT(sessionID, chunk)
+			}
 			return chunk, nil
 		}
 		logging.Warnf("agent", "audio", "Persistent record reader failed, falling back to per-request reads: %v", err)
@@ -596,7 +783,7 @@ func (d *AudioDialog) ReadRecordChunk(timeoutMs uint32) (*AudioChunkResult, erro
 		d.recordMu.Unlock()
 	}
 	chunk, err := recordingBackendOrService(d.recordBackend, d.audioClient).ReadRecordChunk(sessionID, timeoutMs)
-	if err == nil {
+	if err == nil && uploadSTT {
 		d.uploadRecordChunkToStreamingSTT(sessionID, chunk)
 	}
 	return chunk, err
@@ -635,14 +822,14 @@ func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *A
 // installRecordSTT replays buffered PCM before publishing the session. Live
 // chunks continue to enter the buffer during replay, so they cannot overtake
 // earlier chunks or be omitted by StopRecording's finalization.
-func (d *AudioDialog) installRecordSTT(sessionID uint64, session *streamingSTTSession) (overflow, installed bool, err error) {
+func (d *AudioDialog) installRecordSTT(sessionID uint64, session *streamingSTTSession, preReady *sttPCMPreReadyBuffer) (overflow, installed bool, err error) {
 	for {
 		d.recordSTTMu.Lock()
-		if d.recordSTTSessionID != sessionID || d.recordSTT != nil {
+		if preReady == nil || d.recordSTTSessionID != sessionID || d.recordSTTPreReady != preReady || d.recordSTT != nil {
 			d.recordSTTMu.Unlock()
 			return false, false, nil
 		}
-		queued, overflow := d.recordSTTPreReady.drain()
+		queued, overflow := preReady.drain()
 		if overflow {
 			d.recordSTTMu.Unlock()
 			return true, false, nil
@@ -738,6 +925,23 @@ func (d *AudioDialog) ResetVAD() {
 	}
 }
 
+// VADSpeaking reports whether Silero currently marks the user as speaking.
+func (d *AudioDialog) VADSpeaking() bool {
+	if d == nil || d.vad == nil {
+		return false
+	}
+	return d.vad.Speaking()
+}
+
+// VADLastFrameSpeech reports whether the most recent VAD frame scored as speech.
+// Prefer this over VADSpeaking() for barge-in sustain counting; Speaking() latches.
+func (d *AudioDialog) VADLastFrameSpeech() bool {
+	if d == nil || d.vad == nil {
+		return false
+	}
+	return d.vad.LastFrameSpeech()
+}
+
 // VADFrameSamples returns the number of samples to feed into each VAD frame.
 func (d *AudioDialog) VADFrameSamples() int {
 	return d.vad.FrameSamples()
@@ -780,6 +984,40 @@ func (d *AudioDialog) snapshotActiveOutputs() []*activeTTSOutput {
 		outputs = append(outputs, output)
 	}
 	return outputs
+}
+
+// TTSOutputActive reports whether dialog TTS audio is actually reaching the
+// speaker. Registration alone (OnRunActive) is not enough: that becomes true
+// before any PCM plays and would wrongly apply TTS barge-in gates during the
+// silent LLM wait, then fail to interrupt once real speech starts.
+func (d *AudioDialog) TTSOutputActive() bool {
+	if d == nil {
+		return false
+	}
+	d.outputMu.Lock()
+	outputs := make([]*activeTTSOutput, 0, len(d.activeOutputs))
+	for output := range d.activeOutputs {
+		outputs = append(outputs, output)
+	}
+	d.outputMu.Unlock()
+	for _, output := range outputs {
+		if output == nil {
+			continue
+		}
+		output.mu.Lock()
+		stream := output.stream
+		output.mu.Unlock()
+		if stream != nil && stream.startedPlayback() {
+			return true
+		}
+	}
+	return false
+}
+
+// PlayListenReadyCue is a no-op for continuous follow-up turns. The mic is
+// already open; a post-TTS tip forced users to wait for the agent to finish
+// speaking before they felt allowed to talk.
+func (d *AudioDialog) PlayListenReadyCue() {
 }
 
 func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*ttsBlockStream, func(), func(), error) {
@@ -1063,23 +1301,31 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 
 	promptStartedAt := time.Now().UTC()
 	promptDispatchStartedAt := time.Now()
-	d.playPromptSoundAsyncWithWait(promptSoundAgentSend, "agent send", false)
+	// Continuous Classic sessions keep the mic open across turns and already
+	// play a listen-ready cue before the user speaks. The agent-send tip after
+	// VAD end-of-speech then sounds like a late "start recording" beep.
+	playAgentSendPrompt := !d.RecordingActive()
+	if playAgentSendPrompt {
+		d.playPromptSoundAsyncWithWait(promptSoundAgentSend, "agent send", false)
+	}
 	promptDispatchDuration := time.Since(promptDispatchStartedAt)
 	promptCueDuration := time.Duration(promptSoundDurationMS(promptSoundAgentSend)) * time.Millisecond
-	input.TelemetryEvents = append(input.TelemetryEvents, voicePreRunTelemetryEvent(
-		runEventVoicePromptSound,
-		"agent send",
-		promptStartedAt,
-		promptCueDuration,
-		map[string]interface{}{
-			"prompt":                "agent_send",
-			"wait":                  false,
-			"async":                 true,
-			"cue_audio_duration_ms": int64(promptCueDuration / time.Millisecond),
-			"dispatch_duration_ms":  promptDispatchDuration.Milliseconds(),
-		},
-		nil,
-	))
+	if playAgentSendPrompt {
+		input.TelemetryEvents = append(input.TelemetryEvents, voicePreRunTelemetryEvent(
+			runEventVoicePromptSound,
+			"agent send",
+			promptStartedAt,
+			promptCueDuration,
+			map[string]interface{}{
+				"prompt":                "agent_send",
+				"wait":                  false,
+				"async":                 true,
+				"cue_audio_duration_ms": int64(promptCueDuration / time.Millisecond),
+				"dispatch_duration_ms":  promptDispatchDuration.Milliseconds(),
+			},
+			nil,
+		))
+	}
 	var finalAssistantEvent *RunEvent
 	var speechGeneration ttsRunGeneration
 	speechGeneration.advance(d.latestSpeech.snapshotGeneration())
@@ -1439,7 +1685,7 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 	if !allowFallback {
 		return ttsErr
 	}
-	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, "", speechStarted, ttsErr)
+	fallbackPlayed, resultErr := attemptTTSUnavailableFallback(speakCtx, d.currentTTSPlaybackBackend(), d.config, "", speechStarted, ttsErr, output.setCancel)
 	if fallbackPlayed {
 		logging.Warnf("agent", "tts", "Local unavailable fallback played: %s", ttsUnavailableFallbackPath(d.config, ""))
 	}

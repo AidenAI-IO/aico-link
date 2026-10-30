@@ -626,6 +626,75 @@ func TestPruneForBudgetBoundsCurrentTurnToolExchangesAndStates(t *testing.T) {
 	}
 }
 
+func TestPruneForHardBudgetKeepsCompleteRequiredToolResults(t *testing.T) {
+	skillContent := "# Skill\n" + strings.Repeat("follow this instruction\n", 400)
+	messageList := []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleUser, Content: "operate the device"},
+		{
+			Role:      messages.MessageRoleToolCall,
+			ToolCalls: []messages.ToolCall{{ID: "skill", Name: "skill_read", Arguments: `{"name":"device-operator"}`}},
+		},
+		{
+			Role: messages.MessageRoleToolResult,
+			ToolResults: []messages.ToolResult{{
+				ToolCallID: "skill",
+				Name:       "skill_read",
+				Content:    skillContent,
+				Meta:       &messages.ToolResultMeta{Complete: true, ObservationComplete: true, RequiresComplete: true},
+			}},
+		},
+	}
+	for i := 1; i <= 4; i++ {
+		id := fmt.Sprintf("call_%d", i)
+		messageList = append(messageList,
+			messages.Message{
+				Role:      messages.MessageRoleToolCall,
+				ToolCalls: []messages.ToolCall{{ID: id, Name: "shell", Arguments: fmt.Sprintf(`{"command":"step-%d"}`, i)}},
+			},
+			messages.Message{
+				Role:        messages.MessageRoleToolResult,
+				ToolResults: []messages.ToolResult{{ToolCallID: id, Name: "shell", Content: strings.Repeat("y", 1_000)}},
+			},
+		)
+	}
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), messageList)
+	if err != nil {
+		t.Fatalf("NewContextManagerFromMessageList() error = %v", err)
+	}
+	compactor := NewCompactor(DefaultProtectRule, &testModel{Model: &promptCapturingModel{reply: "unused"}})
+
+	// The oldest exchange is the skill; with no recent-exchange protection the
+	// hard-budget pass would otherwise replace it first.
+	newManager, pruned, err := compactor.PruneForHardBudget(manager, 1)
+	if err != nil {
+		t.Fatalf("PruneForHardBudget() error = %v", err)
+	}
+	if !pruned || newManager == nil {
+		t.Fatal("PruneForHardBudget() did not prune the ordinary exchanges")
+	}
+	var skillResult *messages.ToolResult
+	skillCallRetained := false
+	for _, message := range newManager.CloneMessageList() {
+		for _, call := range message.ToolCalls {
+			if call.ID == "skill" {
+				skillCallRetained = call.Arguments == `{"name":"device-operator"}`
+			} else {
+				t.Fatalf("ordinary exchange %s survived a 1-token hard budget", call.ID)
+			}
+		}
+		for i := range message.ToolResults {
+			if message.ToolResults[i].ToolCallID == "skill" {
+				skillResult = &message.ToolResults[i]
+			}
+		}
+	}
+	if !skillCallRetained || skillResult == nil || skillResult.Content != skillContent ||
+		skillResult.Meta == nil || !skillResult.Meta.Complete || !skillResult.Meta.RequiresComplete {
+		t.Fatalf("complete-required skill exchange changed: call retained=%t result=%#v", skillCallRetained, skillResult)
+	}
+}
+
 func TestCompactHistoricalToolResultsPrunesOldestUntilTarget(t *testing.T) {
 	first := messages.ToolResult{ToolCallID: "first", Name: "shell", Content: strings.Repeat("first output ", 500)}
 	second := messages.ToolResult{ToolCallID: "second", Name: "shell", Content: strings.Repeat("second output ", 500)}

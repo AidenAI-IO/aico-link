@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/model"
 	"aico-agent/internal/agent/tokencounter"
 
@@ -22,6 +23,9 @@ const (
 	ToolResultReasonIntrinsicLarge = "intrinsic_large"
 	ToolResultReasonContextLarge   = "context_large"
 	ToolResultReasonProcessingFail = "processing_failed"
+	// ToolResultReasonCompleteTooLarge reports a complete-required result that
+	// could not be delivered inline and needs bounded artifact recovery.
+	ToolResultReasonCompleteTooLarge = "complete_result_too_large"
 
 	toolResultInlineMaxBytes     = 8 * 1024
 	toolResultInlineMaxTokens    = 2_000
@@ -67,6 +71,7 @@ type PreparedToolResult struct {
 	ObservationComplete  bool
 	ProcessingErrorCode  string
 	ArtifactStoreError   string
+	RequiresComplete     bool
 	ContextBytes         int
 	ContextTokens        int
 	ProcessingDurationMs int64
@@ -99,6 +104,9 @@ func (defaultToolResultPolicy) Prepare(_ context.Context, input ToolResultPrepar
 		ActionCompleted:     input.ActionCompleted || input.Result.Error == nil,
 		ObservationComplete: true,
 		Reason:              ToolResultReasonInline,
+	}
+	if input.Call.Spec.RequiresCompleteResult {
+		return prepareCompleteToolResult(input, prepared)
 	}
 	intrinsicLarge := len(output) > toolResultInlineMaxBytes || prepared.EstimatedTokens > toolResultInlineMaxTokens
 	// The minimum observation budget must also apply to inline results.
@@ -203,6 +211,129 @@ func toolCallName(call ToolCall) string {
 }
 
 func availableToolResultTokens(input ToolResultPrepareInput) int {
+	softLimit := toolResultSoftLimit(input)
+	if softLimit < 0 {
+		return -1
+	}
+	if softLimit == 0 {
+		return 0
+	}
+	currentTokens := estimateActivePromptTokens(input.ContextManager, input.CallOptions)
+	return max(0, softLimit-currentTokens)
+}
+
+// prepareCompleteToolResult handles tools whose output is only useful in full.
+// Such a result is never summarized to fit the space currently left: it is
+// appended whole, and ContextBudgetGuard prunes or compacts older context
+// before the next model call. When the complete result cannot fit, preserve
+// it as an artifact and return an explicitly incomplete, bounded observation.
+func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedToolResult) (PreparedToolResult, error) {
+	limit := completeToolResultTokenLimit(input)
+	if limit < 0 || prepared.EstimatedTokens <= limit {
+		prepared.RequiresComplete = true
+		prepared.Summary = projectToolResult(input.Call, input.Result.Output, 256)
+		return prepared, nil
+	}
+	prepared.Complete = false
+	prepared.ObservationComplete = false
+	prepared.Reason = ToolResultReasonCompleteTooLarge
+	contentBudget := min(toolResultInlineMaxTokens, max(256, limit))
+	preview, _ := projectToolResultWithKind(input.Call, input.Result.Output, min(256, contentBudget))
+	prepared.Summary = boundTextToTokens(preview, 256)
+	if input.ContextManager != nil && !toolResultIsSensitive(toolCallName(input.Call)) {
+		stored, err := input.ContextManager.StoreArtifact("text/plain", []byte(input.Result.Output), contextmanager.ArtifactMetadata{
+			ToolName:   input.Call.Spec.Name,
+			ToolCallID: input.Call.Action.ToolID,
+		})
+		if err == nil {
+			prepared.ArtifactPath = stored.Path
+			prepared.ArtifactComplete = stored.Complete
+		} else {
+			prepared.ProcessingErrorCode = "tool_result_persistence_failed"
+			prepared.ArtifactStoreError = classifyArtifactStoreError(err)
+		}
+	}
+	mandatory := "observation_complete=false. Skill instructions incomplete; this preview is not the full skill."
+	if prepared.ArtifactComplete {
+		mandatory += " Full result file: " + prepared.ArtifactPath + ". Read bounded byte ranges with shell (dd bs=1 skip=0 count=4096); never print the whole file."
+	} else {
+		mandatory += " Full result unavailable; request a smaller linked file with skill_read or ask to split the skill."
+	}
+	prepared.Content = combineMandatoryToolResultText(mandatory, preview, contentBudget)
+	if tokencounter.EstimateTextTokens(prepared.Content) > contentBudget {
+		prepared.Content = ""
+		return prepared, fmt.Errorf("%w: budget=%d", ErrToolResultRecoveryTextTooLarge, contentBudget)
+	}
+	return prepared, nil
+}
+
+// completeToolResultTokenLimit is the largest complete result that could fit
+// after pruning and compaction: the soft input limit minus tool schemas and
+// the current user message and complete exchanges already loaded this turn.
+// Compaction retains these messages; the remaining headroom covers the system
+// prompt and summary while older history remains reducible. It
+// returns -1 when the context window is unknown, in which case the tool's own
+// output bound is the only limit.
+func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
+	softLimit := toolResultSoftLimit(input)
+	if softLimit < 0 {
+		return -1
+	}
+	var options llms.CallOptions
+	for _, option := range input.CallOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
+	pinned := currentTurnPinnedTokens(input.ContextManager)
+	return max(0, softLimit-tokencounter.EstimateToolSchemaTokens(options)-pinned)
+}
+
+// currentTurnPinnedTokens includes the current user message and complete tool
+// exchanges, which neither pruning nor compaction can remove.
+func currentTurnPinnedTokens(manager *contextmanager.ContextManager) int {
+	if manager == nil {
+		return 0
+	}
+	messageList, _ := manager.MessageSnapshot()
+	total := 0
+	latestUser := -1
+	for i := len(messageList) - 1; i >= 0; i-- {
+		if messageList[i].Role == messages.MessageRoleUser {
+			latestUser = i
+			break
+		}
+	}
+	if latestUser < 0 {
+		return 0
+	}
+	total += tokencounter.EstimateMessageTokens(messageList[latestUser])
+	for i := latestUser + 1; i < len(messageList); i++ {
+		message := messageList[i]
+		if message.Role != messages.MessageRoleToolResult {
+			continue
+		}
+		requiresComplete := false
+		for _, result := range message.ToolResults {
+			if result.Meta != nil && result.Meta.RequiresComplete {
+				requiresComplete = true
+				break
+			}
+		}
+		if !requiresComplete {
+			continue
+		}
+		total += tokencounter.EstimateMessageTokens(message)
+		if i > latestUser+1 && messageList[i-1].Role == messages.MessageRoleToolCall {
+			total += tokencounter.EstimateMessageTokens(messageList[i-1])
+		}
+	}
+	return total
+}
+
+// toolResultSoftLimit returns the soft input limit for the next model request,
+// or -1 when the model's context window is unknown.
+func toolResultSoftLimit(input ToolResultPrepareInput) int {
 	contextWindow := input.ModelSpec.ContextWindow
 	if contextWindow <= 0 {
 		return -1
@@ -217,12 +348,7 @@ func availableToolResultTokens(input ToolResultPrepareInput) int {
 	if options.MaxTokens > 0 {
 		maxResponseTokens = options.MaxTokens
 	}
-	softLimit := toolResultSoftInputLimit(contextWindow, maxResponseTokens)
-	if softLimit <= 0 {
-		return 0
-	}
-	currentTokens := estimateActivePromptTokens(input.ContextManager, input.CallOptions)
-	return max(0, softLimit-currentTokens)
+	return max(0, toolResultSoftInputLimit(contextWindow, maxResponseTokens))
 }
 
 func estimateActivePromptTokens(manager *contextmanager.ContextManager, options []llms.CallOption) int {

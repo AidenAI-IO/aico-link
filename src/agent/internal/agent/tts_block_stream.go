@@ -188,6 +188,13 @@ func (w *ttsBlockStream) snapshot() *streamSessionWriter {
 	return w.current
 }
 
+func (w *ttsBlockStream) startedPlayback() bool {
+	if current := w.snapshot(); current != nil {
+		return current.startedPlayback()
+	}
+	return false
+}
+
 func (w *ttsBlockStream) Write(p []byte) (int, error) {
 	if current := w.snapshot(); current != nil {
 		return current.Write(p)

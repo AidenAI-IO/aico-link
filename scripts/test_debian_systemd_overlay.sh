@@ -179,6 +179,11 @@ grep -q 'mkdir -p /userdata/agent/log' \
     "${OVERLAY}/usr/lib/aico/aico-userdata-migrate"
 
 grep -qx 'DHCP=yes' "${OVERLAY}/etc/systemd/network/20-wlan0.network"
+grep -qx 'IgnoreCarrierLoss=3s' "${OVERLAY}/etc/systemd/network/20-wlan0.network" \
+    || fail "wlan0 must keep its DHCP address across a roaming carrier gap"
+roaming_settings=$(grep -Ev '^[[:space:]]*(#|$)' "${OVERLAY}/etc/aico/wifi-roaming.conf" || true)
+[ "${roaming_settings}" = 'bgscan="simple:30:-70:3600"' ] \
+    || fail "wifi-roaming.conf must hold exactly the signal-based background scan policy"
 grep -qx 'Address=192.168.42.1/24' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'ConfigureWithoutCarrier=yes' "${OVERLAY}/etc/systemd/network/30-usb0.network"
 grep -qx 'RequiredForOnline=no' "${OVERLAY}/etc/systemd/network/30-usb0.network"
@@ -195,7 +200,7 @@ grep -Fqx 'EnvironmentFile=-/run/aico/wpa_supplicant-config.env' \
     "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
 grep -Fqx 'Environment=AICO_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' \
     "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
-grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -i %I' \
+grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -I /etc/aico/wifi-roaming.conf -i %I' \
     "${UNIT_DIR}/wpa_supplicant@wlan0.service.d/20-aico.conf"
 grep -q -- '/usr/lib/aico/agent config-web' \
     "${UNIT_DIR}/aico-config-web.service"

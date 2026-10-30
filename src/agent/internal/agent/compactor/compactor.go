@@ -387,6 +387,14 @@ func compactCurrentTurnToolExchanges(messageList []messages.Message, targetToken
 		if !isCompletedToolExchange(messageList[i], messageList[i+1]) {
 			continue
 		}
+		// Results that are only useful in full (such as loaded skill
+		// instructions) are never replaced by placeholders here, including on
+		// the hard-budget path. If the budget still cannot be met, the guard
+		// falls back to conversation compaction, which summarizes them instead.
+		if toolExchangeRequiresComplete(messageList[i+1]) {
+			i++
+			continue
+		}
 		exchanges = append(exchanges, completedToolExchange{callIndex: i, resultIndex: i + 1})
 		i++
 	}
@@ -445,6 +453,15 @@ func compactCurrentTurnToolExchanges(messageList []messages.Message, targetToken
 		prunedMessages = append(prunedMessages, message)
 	}
 	return prunedMessages, len(changedExchanges)
+}
+
+func toolExchangeRequiresComplete(resultMessage messages.Message) bool {
+	for _, result := range resultMessage.ToolResults {
+		if result.Meta != nil && result.Meta.RequiresComplete {
+			return true
+		}
+	}
+	return false
 }
 
 func isCompletedToolExchange(callMessage, resultMessage messages.Message) bool {

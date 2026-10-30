@@ -691,37 +691,6 @@ func TestFunctionAgentCompactsInvalidVisualObservation(t *testing.T) {
 	}
 }
 
-func TestFunctionAgentPreservesFullSkillReadObservation(t *testing.T) {
-	agent := &FunctionAgent{Tools: []langtools.Tool{&stubTool{name: "skill_read"}}}
-	observation := strings.Repeat("x", maxToolObservationRunes+10)
-
-	toolContent, followups := agent.observationMessagesForStep(schema.AgentStep{
-		Action:      schema.AgentAction{Tool: "skill_read"},
-		Observation: observation,
-	})
-
-	if followups != nil {
-		t.Fatalf("expected no followup messages, got %#v", followups)
-	}
-	if toolContent != observation {
-		t.Fatalf("skill_read observation was unexpectedly compacted: got %d runes, want %d", len([]rune(toolContent)), len([]rune(observation)))
-	}
-}
-
-func TestFunctionAgentCapsOversizedSkillReadObservation(t *testing.T) {
-	agent := &FunctionAgent{Tools: []langtools.Tool{&stubTool{name: "skill_read"}}}
-	observation := strings.Repeat("x", maxSkillReadObservationRunes+10)
-
-	toolContent, _ := agent.observationMessagesForStep(schema.AgentStep{
-		Action:      schema.AgentAction{Tool: "skill_read"},
-		Observation: observation,
-	})
-
-	if !strings.Contains(toolContent, "[truncated 10 chars]") {
-		t.Fatalf("oversized skill_read observation was not capped: %q", toolContent[len(toolContent)-40:])
-	}
-}
-
 func TestFunctionAgentRejectsEmptyVisualObservationData(t *testing.T) {
 	agent := &FunctionAgent{
 		Tools: []langtools.Tool{&stubTool{name: "screenshot", visual: true}},

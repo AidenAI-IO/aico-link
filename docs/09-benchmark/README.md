@@ -424,7 +424,7 @@ The execution policy is based only on whether CI can prepare the environment:
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
 | Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (19 cases) |
-| Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select a suite |
+| Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select one or more suites |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (17 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
@@ -444,7 +444,10 @@ dispatch once `BENCHMARK_VPHONE_ENVIRONMENT_URL` points to a reachable bridge.
 The 100-task MobileGym calibration suite is excluded from the automatic sweep;
 it remains explicitly selectable for a manual calibration run. A manual
 single-suite run must use the matching `runnable`, `hardware`, or `adb` profile; use
-`all` when intentionally overriding that boundary.
+`all` when intentionally overriding that boundary. The `suite` input also
+accepts comma-separated paths, such as
+`suites/quick_capture_v1.json,suites/notification_memory_v1.json`; each path is
+selected under the same profile rule, in the order given.
 
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares

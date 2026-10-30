@@ -68,9 +68,9 @@ def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> 
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 19
+    assert len(runnable) == 18
     assert len(hardware) == 17
-    assert len(all_cases) == 34
+    assert len(all_cases) == 33
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.id for case in runnable if case.environment == "adb"} == {
@@ -114,6 +114,31 @@ def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
     )
 
     assert {case.target_platform for case in selected} == {"ios", "android"}
+
+
+def test_comma_separated_suites_select_each_suite_in_request_order() -> None:
+    catalog = load_catalog()
+    first = "suites/quick_capture_v1.json"
+    second = "suites/adb_android_basic.json"
+
+    selected = select_cases(
+        catalog,
+        profile="runnable",
+        suite=f" {first} , {second},{first},",
+    )
+
+    expected = select_cases(catalog, profile="runnable", suite=first) + select_cases(
+        catalog, profile="runnable", suite=second
+    )
+    assert selected == expected
+    with pytest.raises(CatalogError, match="not in the CI catalog"):
+        select_cases(catalog, profile="runnable", suite=f"{first},suites/missing.json")
+    for empty_list in (",", " , ,"):
+        with pytest.raises(CatalogError, match="no suite paths"):
+            select_cases(catalog, profile="runnable", suite=empty_list)
+    assert select_cases(catalog, profile="runnable", suite="") == select_cases(
+        catalog, profile="runnable"
+    )
 
 
 def test_phone_control_selection_uses_only_the_requested_environment_profile() -> None:

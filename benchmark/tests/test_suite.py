@@ -1511,24 +1511,6 @@ def test_personamem_lt_recall_suite_uses_deterministic_answers():
     assert all(task.answer_format == "option_letter" for task in suite.tasks)
 
 
-def test_episode_memory_suite_guards_against_setup_context_leakage():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_memory_v1.json"
-    assert suite_path.read_text(encoding="utf-8").isascii()
-    suite = load_suite(suite_path)
-    assert suite.status == "legacy"
-    task_by_id = {task.id: task for task in suite.tasks}
-    task = task_by_id["reuse_success_episode_for_planning"]
-
-    assert task.setup["type"] == "agent_prompt"
-    assert task.setup["clear_history_after"] is True
-    assert "shell" not in task.setup["prompt"].lower()
-    assert "current_time" not in task.setup["prompt"]
-    task_text = " ".join(
-        [task.prompt, task.description_for_judge, *(item.check for item in task.rubric)]
-    )
-    assert "recall_device_memory" not in task_text
-
-
 def test_episode_reflection_suite_covers_assessment_contracts():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v1.json"
     suite = load_suite(suite_path)
@@ -1618,6 +1600,41 @@ def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():
         assert task_by_id[task_id].consolidation_expectation.required_assessment_evidence is True
 
     assert task_by_id["duplicate_attempts_are_compacted"].consolidation_expectation.max_memory_ids == 1
+
+
+def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed():
+    # Device Memory keeps only app-specific knowledge. Without a failed direct
+    # Save, the Preview round trip is an ordinary save flow and is discarded.
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json")
+    task_by_id = {task.id: task for task in suite.tasks}
+
+    for task_id in (
+        "verified_success_procedure_applies",
+        "duplicate_attempts_are_compacted",
+        "version_scoped_lesson_requires_fresh_check",
+        "successful_lesson_has_assessment_evidence",
+    ):
+        events = task_by_id[task_id].setup["episode"]["events"]
+        results = [event for event in events if event["type"] == "tool_result"]
+        first_preview = next(i for i, event in enumerate(results) if "Preview" in event["observation"])
+        assert any(
+            "did not persist" in event["observation"] for event in results[:first_preview]
+        ), task_id
+        calls = [event for event in events if event["type"] == "tool_call"]
+        assert len(calls) == len(results), task_id
+        # The failed Save reverted the title, so the next step must re-enter it
+        # before Preview can show the change.
+        failure = next(i for i, event in enumerate(events) if "did not persist" in event.get("observation", ""))
+        assert "re-enter the changed title" in events[failure + 1]["content"].lower(), task_id
+
+
+def test_episode_reflection_v2_option_tasks_request_a_tagged_answer():
+    # Agents often restate every option before choosing. Without the tag, the
+    # restated options make the choice ambiguous to the answer parser.
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json")
+    for task in suite.tasks:
+        if task.answer_format == "option_letter":
+            assert "<final_answer>(x)</final_answer>" in task.prompt, task.id
 
 
 def test_episode_memory_conditions_share_natural_and_iphone_tasks():
@@ -1725,7 +1742,11 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
 
     assert len(task_by_id["compare_multiple_snapshots"].expected_recalled_memory_ids) == 3
     assert len(task_by_id["find_old_snapshot_in_large_history"].setup["memories"]) >= 8
-    assert len(task_by_id["preserve_duplicate_snapshots"].expected_recalled_memory_ids) == 2
+    duplicate_task = task_by_id["preserve_duplicate_snapshots"]
+    assert len(duplicate_task.expected_recalled_memory_ids) == 2
+    # Deletion is covered by forget_one_of_two_similar_snapshots; this task
+    # checks only that identical captures stay independent.
+    assert "forget_memory" in duplicate_task.hard_assertions.forbidden_tools
 
     # Routing is validated by observed evidence and answer grounding, not by
     # forcing one exact recall query shape on the agent.

@@ -91,7 +91,7 @@ func TestAudioDialogReplaysPreReadySTTChunksWhenReady(t *testing.T) {
 	first[0] = 9
 	dialog.uploadRecordChunkToStreamingSTT(7, &AudioChunkResult{PCM: []byte{8, 8}})
 
-	overflow, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader})
+	overflow, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader}, dialog.recordSTTPreReady)
 	if err != nil || !installed || overflow {
 		t.Fatalf("install result installed=%v overflow=%v err=%v", installed, overflow, err)
 	}
@@ -107,6 +107,7 @@ func TestAudioDialogReplaysBufferedSTTBeforeLiveChunks(t *testing.T) {
 	uploader := &blockingReplaySTTUploader{firstStarted: make(chan struct{}), releaseFirst: make(chan struct{})}
 	dialog := &AudioDialog{recordSTTSessionID: 42, recordSTTPreReady: newSTTPCMPreReadyBuffer(16000, 1, 16)}
 	dialog.uploadRecordChunkToStreamingSTT(42, &AudioChunkResult{PCM: []byte{1}})
+	preReady := dialog.recordSTTPreReady
 
 	type installResult struct {
 		overflow, installed bool
@@ -114,7 +115,7 @@ func TestAudioDialogReplaysBufferedSTTBeforeLiveChunks(t *testing.T) {
 	}
 	done := make(chan installResult, 1)
 	go func() {
-		overflow, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader})
+		overflow, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader}, preReady)
 		done <- installResult{overflow, installed, err}
 	}()
 	waitForReplay(t, uploader.firstStarted)
@@ -146,13 +147,14 @@ func TestAudioDialogStopDuringBufferedSTTReplaySkipsFinalize(t *testing.T) {
 		recordSTTPreReady:  newSTTPCMPreReadyBuffer(16000, 1, 16),
 	}
 	dialog.uploadRecordChunkToStreamingSTT(42, &AudioChunkResult{PCM: []byte{1}})
+	preReady := dialog.recordSTTPreReady
 	type installResult struct {
 		installed bool
 		err       error
 	}
 	done := make(chan installResult, 1)
 	go func() {
-		_, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader})
+		_, installed, err := dialog.installRecordSTT(42, &streamingSTTSession{uploader: uploader}, preReady)
 		done <- installResult{installed, err}
 	}()
 	waitForReplay(t, uploader.firstStarted)
@@ -183,11 +185,12 @@ func TestAudioDialogInstallPreReadyRejectsStoppedSession(t *testing.T) {
 	dialog.recordSTTSessionID = 42
 	dialog.recordSTTPreReady = newSTTPCMPreReadyBuffer(16000, 1, 16)
 	dialog.recordSTTMu.Unlock()
+	preReady := dialog.recordSTTPreReady
 
 	if got := dialog.takeRecordSTT(); got != nil {
 		t.Fatalf("takeRecordSTT() = %#v, want nil", got)
 	}
-	if _, installed, _ := dialog.installRecordSTT(42, &streamingSTTSession{uploader: &stubSTTStreamUploader{}}); installed {
+	if _, installed, _ := dialog.installRecordSTT(42, &streamingSTTSession{uploader: &stubSTTStreamUploader{}}, preReady); installed {
 		t.Fatal("stale provider session installed after recording stopped")
 	}
 }

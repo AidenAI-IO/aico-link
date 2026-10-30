@@ -10,6 +10,7 @@ import pytest
 from langfuse.api.client import LangfuseAPI
 
 from ci import fetch_langfuse_history as history
+from ci.weekly_report import summarize_weekly
 
 NOW = datetime(2026, 10, 13, tzinfo=timezone.utc)
 STAMP = "2026-10-12T08:04:20Z"
@@ -18,7 +19,7 @@ STAMP = "2026-10-12T08:04:20Z"
 def _experiment(id="exp-1", **metadata):
     return {"id": id, "name": "ci-123-1-memory", "startTime": STAMP,
             "endTime": STAMP, "itemCount": 16, "datasetId": "dataset-1",
-            "metadata": {"aico_benchmark": "true", "benchmark_suite": "memory_v1",
+            "metadata": {"benchmark_suite": "memory_v1",
                          "benchmark_run_id": "ci-123-1-memory", "git_branch": "main",
                          "git_sha": "abc", **metadata}}
 
@@ -62,6 +63,39 @@ def _client(handler):
 
 def _response(data, cursor=None):
     return httpx.Response(200, json={"data": data, "meta": {"cursor": cursor, "limit": 100}})
+
+
+@pytest.mark.parametrize("suite_filter", [{"memory_v1"}, set()])
+def test_suite_filter_precedes_scores_details_and_warnings(suite_filter, monkeypatch):
+    from ci import failure_details
+
+    fetched = []
+    def details(client, experiment):
+        fetched.append(experiment.id)
+        return {"failure_details": [], "failure_details_status": "available"}
+    monkeypatch.setattr(failure_details, "fetch_failure_details", details)
+
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([_experiment(), _experiment("retired", benchmark_suite="retired_v1",
+                                                       benchmark_run_id="retired")])
+        assert request.url.path.endswith("/v3/scores")
+        assert request.url.params["experimentId"] == "exp-1"
+        return _response(_metrics())
+
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW,
+                                            suite_filter=suite_filter, include_failure_details=True)
+    assert [record["suite"] for record in result.records] == list(suite_filter)
+    assert fetched == (["exp-1"] if suite_filter else [])
+    assert result.warnings == []
+
+
+def test_suite_filter_preserves_api_wide_warnings():
+    def handler(request):
+        return httpx.Response(403, json={"message": "unavailable"})
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, suite_filter={"memory_v1"})
+    assert not result.records
+    assert any("Langfuse experiment history is incomplete" in warning for warning in result.warnings)
 
 
 def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
@@ -126,6 +160,35 @@ def test_batched_scores_are_assigned_to_their_experiment():
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
 
 
+def test_weekly_comparison_includes_experiments_across_metadata_versions():
+    legacy = _experiment("legacy", benchmark_run_id="ci-122-1-memory")
+    legacy["metadata"]["legacy_marker"] = "true"
+    legacy["startTime"] = "2026-10-04T08:04:20Z"
+    current = _experiment("current", benchmark_run_id="ci-123-1-memory")
+
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            return _response([legacy, current])
+        assert request.url.params["experimentId"] == "legacy,current"
+        return _response([
+            _score(name, value, experiment_id)
+            for experiment_id, passed in (("legacy", 8), ("current", 15))
+            for name, value in {
+                "capability.pass_at_1.total_tasks": 16,
+                "capability.pass_at_1.eligible_tasks": 16,
+                "capability.pass_at_1.successes": passed,
+                "capability.pass_at_1": passed / 16,
+            }.items()
+        ])
+
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW, branch_filter="main")
+    assert not result.warnings
+    report = summarize_weekly(result.records, end=NOW)
+    assert report["previous_totals"]["pass_at_1"] == 0.5
+    assert report["totals"]["pass_at_1"] == 0.9375
+    assert report["change"] == 0.4375
+
+
 def test_environment_and_diagnostic_observations_survive_history_fetch():
     def handler(request):
         if request.url.path.endswith("/experiments"):
@@ -140,14 +203,23 @@ def test_environment_and_diagnostic_observations_survive_history_fetch():
     assert record["skill_discovery"] == {"read": 0, "observed": 4}
 
 
-@pytest.mark.parametrize("metadata", [{"aico_benchmark": "false"}, {"git_branch": "feature"}, {"git_branch": None}])
-def test_filter_does_not_include_nonbenchmark_or_unknown_branches(metadata):
+@pytest.mark.parametrize("metadata, expect_warning", [
+    ({"benchmark_run_id": None}, False),
+    ({"benchmark_run_id": "  "}, False),
+    ({"benchmark_run_id": 123}, False),
+    ({"benchmark_suite": None}, False),
+    ({"benchmark_suite": "  "}, False),
+    ({"benchmark_suite": 123}, False),
+    ({"git_branch": "feature"}, False),
+    ({"git_branch": None}, True),
+])
+def test_filter_does_not_include_nonbenchmark_or_unknown_branches(metadata, expect_warning):
     def handler(request):
         assert request.url.path.endswith("/experiments")
         return _response([_experiment(**metadata)])
     result = history.fetch_benchmark_history(client=_client(handler), now=NOW, branch_filter="main")
     assert result.records == []
-    assert bool(result.warnings) == (metadata.get("git_branch", "main") is None)
+    assert bool(result.warnings) == expect_warning
 
 
 def test_score_error_preserves_unknown_metrics_and_continues_other_batches():

@@ -2605,7 +2605,7 @@ func (s *Server) speakTextObservedModeWithFailure(ctx context.Context, requestID
 	if ttsErr == nil || !allowFallback {
 		return false, ttsErr
 	}
-	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, failureCode, speechStarted, ttsErr)
+	return attemptTTSUnavailableFallback(speakCtx, s.currentTTSPlaybackBackend(), cfg, failureCode, speechStarted, ttsErr, output.setCancel)
 }
 
 func (s *Server) speakText(ctx context.Context, text string, timeoutAfterLock time.Duration) error {
