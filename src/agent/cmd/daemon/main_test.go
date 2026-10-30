@@ -2273,10 +2273,10 @@ func TestRunVoiceTurnWakeupDuringThinkingImmediatelyCancelsRun(t *testing.T) {
 		t.Fatalf("InterruptOutput calls = %d, want 1", interruptOutputCalls)
 	}
 	if len(dialog.queuedSteers) != 0 {
-		t.Fatalf("queued steers = %#v, want none for GPIO hard interrupt during thinking", dialog.queuedSteers)
+		t.Fatalf("queued steers = %#v, want none for MCU hard interrupt during thinking", dialog.queuedSteers)
 	}
 	if dialog.steerInterrupts != 0 {
-		t.Fatalf("steer interrupts = %d, want 0 for GPIO hard interrupt during thinking", dialog.steerInterrupts)
+		t.Fatalf("steer interrupts = %d, want 0 for MCU hard interrupt during thinking", dialog.steerInterrupts)
 	}
 }
 

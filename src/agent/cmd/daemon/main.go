@@ -455,9 +455,9 @@ type pendingVoiceTurn struct {
 type voiceTurnResult struct {
 	interrupted            bool
 	waitForWakeupRequested bool
-	// requeueWakeup is set when a GPIO tap closed a wait_for_wakeup turn. The
-	// tap already meant "start again"; re-signal so the outer loop opens the
-	// next session without requiring a second press.
+	// requeueWakeup is set when an MCU wakeup closed a wait_for_wakeup turn.
+	// That wakeup already meant "start again"; re-signal so the outer loop
+	// opens the next session without requiring a second wakeup.
 	requeueWakeup   bool
 	exit            bool
 	nextTurn        *pendingVoiceTurn
@@ -791,7 +791,7 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 		if result.waitForWakeupRequested {
 			logging.Infof("agent", "session", "agent requested wakeup wait, closing voice session")
 			if result.requeueWakeup {
-				logging.Infof("agent", "session", "GPIO tap during goodbye; requeueing wakeup for next session")
+				logging.Infof("agent", "session", "MCU wakeup during goodbye; requeueing wakeup for next session")
 				signalVoiceWakeupEvent(events)
 			}
 			return false
@@ -1140,12 +1140,13 @@ type canceledTurnInfo struct {
 
 // voiceTurnResultAfterCancel prefers an already-requested wait_for_wakeup over
 // treating the cancel as a follow-up interrupt, except voice barge-in after
-// goodbye should keep the session open for the new utterance. A GPIO tap during
-// goodbye both closes and requeues wakeup so one press starts the next session.
-func voiceTurnResultAfterCancel(input agent.TurnInput, canceledInfo canceledTurnInfo, fromGPIO bool) voiceTurnResult {
+// goodbye should keep the session open for the new utterance. An MCU wakeup
+// during goodbye both closes and requeues wakeup so one event starts the next
+// session.
+func voiceTurnResultAfterCancel(input agent.TurnInput, canceledInfo canceledTurnInfo, fromMCUWakeup bool) voiceTurnResult {
 	if canceledInfo.err == nil && canceledInfo.result.WaitForWakeupRequested {
-		if fromGPIO {
-			logging.Infof("agent", "session", "GPIO tap during wait_for_wakeup goodbye, closing and requeueing wakeup")
+		if fromMCUWakeup {
+			logging.Infof("agent", "session", "MCU wakeup during wait_for_wakeup goodbye, closing and requeueing wakeup")
 			return voiceTurnResult{waitForWakeupRequested: true, requeueWakeup: true}
 		}
 		logging.Infof("agent", "session", "voice barge-in during wait_for_wakeup goodbye, staying in session for follow-up")
@@ -1234,7 +1235,7 @@ func listenOneUtterance(dialog audioDialogRunner, sigChan chan os.Signal, events
 }
 
 // waitForDialogTTSIdle drains the mic until Speak/SpeakFinal outputs finish.
-// GPIO and loud near-field speech can barge-in; soft speaker echo should not.
+// MCU wakeup and loud near-field speech can barge-in; soft speaker echo should not.
 func waitForDialogTTSIdle(dialog audioDialogRunner, sigChan chan os.Signal, events <-chan voiceEvent, interruptOnWakeup bool) voiceTurnResult {
 	if dialog == nil || !dialog.TTSOutputActive() {
 		return voiceTurnResult{}
@@ -1253,7 +1254,7 @@ func waitForDialogTTSIdle(dialog audioDialogRunner, sigChan chan os.Signal, even
 			return voiceTurnResult{exit: true}
 		case <-events:
 			if interruptOnWakeup {
-				logging.Infof("agent", "interrupt", "GPIO wakeup while waiting for TTS idle, interrupting playback")
+				logging.Infof("agent", "interrupt", "MCU wakeup while waiting for TTS idle, interrupting playback")
 				dialog.InterruptOutput()
 				return voiceTurnResult{interrupted: true}
 			}
