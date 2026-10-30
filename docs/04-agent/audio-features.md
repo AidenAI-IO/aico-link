@@ -15,7 +15,7 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
        ├─────────────────────────► HTTP Server / Web UI (all input modes)
        │
        ├─ input_mode=stt ────────► Classic continuous voice session
-       │                            (Silero VAD + Smart Turn + STT/LLM/TTS)
+       │                            (Silero VAD, optional Smart Turn, STT/LLM/TTS)
        └─ input_mode=realtime ───► Realtime Voice Session
 ```
 
@@ -25,10 +25,10 @@ The Go Agent supports device-side voice interaction, primarily consisting of `in
 | --- | --- | --- |
 | Audio client | `audio_client.go` | Connects to `audio_service`, starts recording/playback sessions, reads/writes PCM chunks |
 | VAD | `vad.go` + `/usr/lib/aico/rknn_vad` or `/usr/lib/aico/cpu_vad` | Silero VAD speech activity; input is fixed at 16 kHz, 512 samples/32 ms, with `state` maintained in helper |
-| Smart Turn | `turn_detect.go` + `/usr/lib/aico/smart_turn_helper` | On-device turn-complete probability over the current utterance; Classic endpointing uses short silence + Smart Turn, with a long-silence fallback |
+| Smart Turn | `turn_detect.go` + `/usr/lib/aico/smart_turn_helper` | Opt-in on-device turn-complete probability; enabled only when Classic `turn_detection_*` paths are set. Otherwise Silero uses silence-only endpointing |
 | STT | `stt.go`, provider-specific clients | OpenAI Whisper, OpenRouter, Tencent Cloud ASR, Qwen ASR, and Google Cloud STT; `tencent` / `tencent_asr` remain compatibility aliases for `tencent-asr` |
 | TTS | `tts/`, `tts_helpers.go` | Pluggable TTS provider, outputs PCM for the configured playback backend; automatically resamples to the target playback sample rate when necessary |
-| Dialog manager | `audio_dialog.go` | Orchestrates continuous-mic session recording, VAD/Smart Turn, STT rotate, LLM/TTS, and barge-in |
+| Dialog manager | `audio_dialog.go` | Orchestrates continuous-mic session recording, VAD (optional Smart Turn), STT rotate, LLM/TTS, and barge-in |
 | Voice notifications | `voice_notification.go`, `tts_fallback.go` | Adds a persistent response tail or final-turn failure replacement before TTS, with bundled local WAV fallback when final TTS is unavailable |
 
 ## Input Modes
@@ -39,7 +39,7 @@ Runs the Classic continuous voice session alongside the HTTP server and Web UI
 (Realtime-like shell, local STT/LLM/TTS pipeline):
 
 1. Wakeup opens a session and keeps the microphone open for the whole session;
-2. Silero VAD detects speech; after short silence, Smart Turn decides whether the user turn is complete (long silence force-commits);
+2. Silero VAD detects speech and ends the turn on silence; when Classic Smart Turn paths are configured, short silence asks Smart Turn whether the turn is complete (long silence force-commits);
 3. Streaming STT is finalized and rotated at each turn boundary without closing the mic;
 4. STT text goes to Agent runtime;
 5. TTS synthesizes the reply while the mic stays open for barge-in;
@@ -77,11 +77,12 @@ vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rkn
 vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 min_speech_ms = 300
-turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
-turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
-turn_detection_threshold = 0.5
-turn_detection_analyze_silence_ms = 200
-turn_detection_silence_fallback_ms = 3000
+# Optional Classic Smart Turn (leave unset for silence-only Silero endpointing):
+# turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+# turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
+# turn_detection_threshold = 0.5
+# turn_detection_analyze_silence_ms = 600
+# turn_detection_silence_fallback_ms = 3000
 tap_wakeup_enabled = true
 voice_followup_enabled = true
 voice_followup_timeout_ms = 5000
@@ -196,7 +197,7 @@ voice_id = "zh_female_vv_uranus_bigtts"
 - `audio_service` must be running when `audio.backend = "audio_service"`;
 - the local recording backend uses SoX `rec` or `ffmpeg` (AVFoundation) on macOS and `pw-record`, `parec`, `arecord`, SoX `rec`, or `ffmpeg` (PulseAudio) on Linux. Playback uses `afplay`/`ffplay` on macOS, `pw-play`/`paplay`/`aplay`/`ffplay` on Linux, and PowerShell on Windows. The first available command is selected. Local recording is not currently available on Windows;
 - `rknn_vad` / `cpu_vad` helper must be executable; when `vad_backend="rknn"`, `vad_model_path` points to a converted encoder RKNN; when `vad_backend="cpu"`, helper defaults to `/usr/lib/aico/cpu_vad`;
-- `smart_turn_helper` must be executable and `turn_detection_model_path` must point to the bundled Smart Turn RKNN;
+- when Classic Smart Turn is enabled, `smart_turn_helper` must be executable and `turn_detection_model_path` / `turn_detection_helper_path` must be set; leave both empty to keep silence-only Silero endpointing;
 - STT/TTS require external API keys;
 - STT mode normally uses the hardware tap button to start a continuous voice session; set `tap_wakeup_enabled = false` to ignore that button only (Realtime `/api/chat` activation is unchanged).
 

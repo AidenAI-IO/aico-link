@@ -249,11 +249,12 @@ input_mode = "stt"
 # vad_helper_path = "/usr/lib/aico/rknn_vad"
 # vad_speech_threshold = 0.5
 # min_speech_ms = 300       # Minimum speech duration to accept (ms)
-# silence_ms = 550          # Legacy silence-only endpointing; unused with Smart Turn
+# silence_ms = 550          # Silence-only endpointing when Smart Turn paths are unset
+# Opt-in Classic Smart Turn (leave unset for silence-only Silero endpointing):
 # turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
 # turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
 # turn_detection_threshold = 0.5
-# turn_detection_analyze_silence_ms = 200
+# turn_detection_analyze_silence_ms = 600
 # turn_detection_silence_fallback_ms = 3000
 
 # Tap-button wakeup (Classic and Realtime). Default true.

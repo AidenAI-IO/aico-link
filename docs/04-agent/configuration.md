@@ -171,7 +171,7 @@ change that cannot happen.
 | `stt.language` | Speech recognition language; `stt` mode only |
 | `agent.locale` | Reply locale: `zh-CN` or `en-US` |
 | `agent.timezone` | IANA time zone |
-| `agent.silence_ms` | Legacy silence-only endpointing (unused with Classic Smart Turn), 200-5000 ms; `stt` mode only |
+| `agent.silence_ms` | Silence-only endpointing when Classic Smart Turn paths are unset, 200-5000 ms; `stt` mode only |
 | `agent.voice_followup_enabled`, `agent.voice_followup_timeout_ms` | Continuous Classic session (default on) and follow-up timeout 1000-60000 ms; `stt` mode only |
 | `agent.voice_max_turns` | Spoken turns per voice conversation, 0-50; `stt` mode only |
 | `agent.voice_interrupt_on_wakeup` | Wakeup interrupts the spoken reply; `stt` mode only |
@@ -383,11 +383,12 @@ vad_model_path = "/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rkn
 vad_helper_path = "/usr/lib/aico/rknn_vad"
 vad_speech_threshold = 0.5
 min_speech_ms = 300
-turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
-turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
-turn_detection_threshold = 0.5
-turn_detection_analyze_silence_ms = 200
-turn_detection_silence_fallback_ms = 3000
+# Optional Classic Smart Turn (leave unset for silence-only Silero endpointing):
+# turn_detection_model_path = "/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn"
+# turn_detection_helper_path = "/usr/lib/aico/smart_turn_helper"
+# turn_detection_threshold = 0.5
+# turn_detection_analyze_silence_ms = 600
+# turn_detection_silence_fallback_ms = 3000
 tap_wakeup_enabled = true
 voice_followup_enabled = true
 voice_followup_timeout_ms = 5000
@@ -508,13 +509,13 @@ button in both modes.
 | `vad_model_path`                | `/usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` | Silero VAD RKNN encoder model path; not used when `vad_backend="cpu"`                                                                                                                  |
 | `vad_helper_path`               | `/usr/lib/aico/rknn_vad`                                     | VAD helper executable path; the CPU backend defaults to `/usr/lib/aico/cpu_vad`                                                                                                         |
 | `vad_speech_threshold`          | `0.5`                                                       | Silero VAD speech probability threshold                                                                                                                                                |
-| `silence_ms`                    | `550`                                                       | Legacy silence-only endpointing; unused while Classic Smart Turn endpointing is active                                                                                                   |
+| `silence_ms`                    | `550`                                                       | Silence-only endpointing when Classic Smart Turn paths are unset; unused once Smart Turn is enabled                                                                                    |
 | `min_speech_ms`                 | `300`                                                       | Minimum valid speech duration                                                                                                                                                          |
-| `turn_detection_model_path`     | `/usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn` | Classic Smart Turn RKNN model path                                                                                                                                              |
-| `turn_detection_helper_path`    | `/usr/lib/aico/smart_turn_helper`                          | Classic Smart Turn helper executable                                                                                                                                                   |
-| `turn_detection_threshold`      | `0.5`                                                       | Smart Turn probability required to commit after short silence                                                                                                                          |
-| `turn_detection_analyze_silence_ms` | `200`                                                   | Short silence before asking Smart Turn whether the turn is complete                                                                                                                    |
-| `turn_detection_silence_fallback_ms` | `3000`                                               | Force-commit after this much continuous silence even if Smart Turn is incomplete                                                                                                       |
+| `turn_detection_model_path`     | empty                                                       | Opt-in Classic Smart Turn RKNN model path; leave empty for silence-only Silero endpointing                                                                                             |
+| `turn_detection_helper_path`    | empty                                                       | Opt-in Classic Smart Turn helper executable; leave empty with the model path unset                                                                                                     |
+| `turn_detection_threshold`      | `0.5`                                                       | Smart Turn probability required to commit after short silence (used only when Smart Turn is enabled)                                                                                   |
+| `turn_detection_analyze_silence_ms` | `600`                                                   | Short silence before asking Smart Turn whether the turn is complete (used only when Smart Turn is enabled)                                                                             |
+| `turn_detection_silence_fallback_ms` | `3000`                                               | Force-commit after this much continuous silence even if Smart Turn is incomplete (used only when Smart Turn is enabled)                                                                |
 | `tap_wakeup_enabled`            | `true`                                                      | When on, the MCU touch-key event can wake Aico in Classic STT and Realtime. Turning it off disables only that button path—not ASR wakeup. Realtime `/api/chat` can still activate a session |
 | `voice_followup_enabled`        | `true`                                                      | Classic continuous voice session after wakeup (Realtime-like shell). Set `false` for one utterance per wakeup                                                                          |
 | `voice_followup_timeout_ms`     | `5000`                                                      | Window to wait for a user follow-up after the Agent replies                                                                                                                            |
