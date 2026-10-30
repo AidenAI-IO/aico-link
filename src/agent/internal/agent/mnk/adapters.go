@@ -524,6 +524,26 @@ func resolveSwipeArgsWithOptions(start, end *pointerPoint, direction string, spe
 	return resolvedStart, resolvedEnd, options, nil
 }
 
+// SwipeEndPoint returns where a touch_gesture swipe input ends, resolving a
+// direction-only swipe the same way execution does.
+func SwipeEndPoint(input string) (Point, bool) {
+	var args struct {
+		Start      *pointerPoint `json:"start"`
+		End        *pointerPoint `json:"end"`
+		Direction  string        `json:"direction"`
+		Speed      *float64      `json:"speed"`
+		DurationMs *int          `json:"duration_ms"`
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return Point{}, false
+	}
+	_, end, _, err := resolveSwipeGeometry(args.Start, args.End, args.Direction, args.Speed, args.DurationMs)
+	if err != nil || end == nil {
+		return Point{}, false
+	}
+	return Point{X: end.X.Float64(), Y: end.Y.Float64()}, true
+}
+
 func resolveSwipeGeometry(start, end *pointerPoint, direction string, speed *float64, durationMs *int) (*pointerPoint, *pointerPoint, int, error) {
 	if start == nil {
 		return nil, nil, 0, InvalidArguments("start is required for swipe")

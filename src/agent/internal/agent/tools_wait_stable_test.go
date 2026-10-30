@@ -86,8 +86,8 @@ func TestWaitStableScreenToolReturnsScreenshotObservationJSON(t *testing.T) {
 	if !result.OK || !result.Stable {
 		t.Fatalf("stable result = ok:%v stable:%v, want true/true", result.OK, result.Stable)
 	}
-	if result.ScreenChanged == nil || *result.ScreenChanged {
-		t.Fatalf("ScreenChanged = %#v, want false", result.ScreenChanged)
+	if result.FramesDiffered == nil || *result.FramesDiffered {
+		t.Fatalf("FramesDiffered = %#v, want false", result.FramesDiffered)
 	}
 	if result.ScreenStable == nil || !*result.ScreenStable {
 		t.Fatalf("ScreenStable = %#v, want true", result.ScreenStable)
@@ -151,7 +151,7 @@ func TestWaitStableScreenToolPropagatesContextCancellation(t *testing.T) {
 	}
 }
 
-func TestWaitStableScreenToolWaitReportsScreenChangedWhenFramesDiffer(t *testing.T) {
+func TestWaitStableScreenToolWaitReportsFramesDifferedWhenFramesDiffer(t *testing.T) {
 	rawFrameA := []byte{128, 128, 128, 128, 128, 128}
 	rawFrameB := []byte{140, 140, 140, 140, 128, 128}
 	client := &fakeWaitStableFrameClient{
@@ -169,8 +169,8 @@ func TestWaitStableScreenToolWaitReportsScreenChangedWhenFramesDiffer(t *testing
 	if err != nil {
 		t.Fatalf("wait() error = %v", err)
 	}
-	if result.ScreenChanged == nil || !*result.ScreenChanged {
-		t.Fatalf("ScreenChanged = %#v, want true", result.ScreenChanged)
+	if result.FramesDiffered == nil || !*result.FramesDiffered {
+		t.Fatalf("FramesDiffered = %#v, want true", result.FramesDiffered)
 	}
 	if result.LastDiff == nil || *result.LastDiff <= 0 {
 		t.Fatalf("LastDiff = %#v, want > 0", result.LastDiff)
