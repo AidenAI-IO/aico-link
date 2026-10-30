@@ -4,8 +4,6 @@ sidebar_position: 18
 
 # Streaming-First Agent Refactor: Research and Implementation Plan
 
-Chinese translation: [中文版](streaming-first-refactor-plan.zh-CN.md).
-
 **Status:** Scope fixed by product feedback; the compatibility-preserving Phase 1
 foundation and playback queue hardening are implemented in this branch. Remaining
 product policies and later migration phases are not yet approved.

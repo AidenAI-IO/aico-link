@@ -68,7 +68,6 @@ proposes a staged migration for LLM, STT, TTS, realtime, playback, and client
 streaming within the existing Go/C++ runtime. The proposed voice-input source is
 exclusively the board microphone; browser and phone live voice are excluded.
 It is a research/design proposal, not a description of shipped behavior.
-A [Chinese translation](streaming-first-refactor-plan.zh-CN.md) is also available.
 
 ## Startup
 
