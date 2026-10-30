@@ -274,15 +274,21 @@ func TestToolResultPolicyDeliversCompleteRequiredResultInFull(t *testing.T) {
 	}
 }
 
-func TestToolResultPolicyRefusesCompleteRequiredResultThatCannotFit(t *testing.T) {
+func TestToolResultPolicyPreservesOversizedCompleteResultAsArtifact(t *testing.T) {
 	skillOutput := "# Device Operator\n" + strings.Repeat("follow this step exactly\n", 1_200)
+	manager, err := contextmanager.NewContextManager(t.TempDir(), "system")
+	if err != nil {
+		t.Fatal(err)
+	}
 	prepared, err := NewToolResultPolicy().Prepare(context.Background(), ToolResultPrepareInput{
 		Call: ToolCall{
-			Spec:  NewToolSpec(NewSkillReadTool(t.TempDir())),
-			Input: `{"name":"device-operator"}`,
+			Spec:   NewToolSpec(NewSkillReadTool(t.TempDir())),
+			Input:  `{"name":"device-operator"}`,
+			Action: schema.AgentAction{ToolID: "call_skill"},
 		},
-		Result:    ToolResult{Output: skillOutput},
-		ModelSpec: model.ModelSpec{ContextWindow: 8_000, MaxOutput: 1_000},
+		Result:         ToolResult{Output: skillOutput},
+		ContextManager: manager,
+		ModelSpec:      model.ModelSpec{ContextWindow: 8_000, MaxOutput: 1_000},
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -291,13 +297,125 @@ func TestToolResultPolicyRefusesCompleteRequiredResultThatCannotFit(t *testing.T
 		t.Fatalf("Prepare() = reason:%q complete:%t observation:%t requires_complete:%t",
 			prepared.Reason, prepared.Complete, prepared.ObservationComplete, prepared.RequiresComplete)
 	}
-	if strings.Contains(prepared.Content, "follow this step") {
-		t.Fatalf("Prepare() returned a partial preview of a complete-required result:\n%s", prepared.Content)
+	if prepared.ArtifactPath == "" || !prepared.ArtifactComplete {
+		t.Fatalf("Prepare() artifact path=%q complete=%t", prepared.ArtifactPath, prepared.ArtifactComplete)
 	}
-	for _, want := range []string{`"code":"complete_result_too_large"`, `"observation_complete":false`, `"result_tokens":`, `"context_limit_tokens":`, "Do not retry the same call"} {
+	stored, err := os.ReadFile(prepared.ArtifactPath)
+	if err != nil || string(stored) != skillOutput {
+		t.Fatalf("artifact did not preserve complete skill: error=%v bytes=%d", err, len(stored))
+	}
+	for _, want := range []string{"observation_complete=false", "Skill instructions incomplete", "Full result file:", prepared.ArtifactPath, "dd bs=1", "# Device Operator"} {
 		if !strings.Contains(prepared.Content, want) {
 			t.Fatalf("Prepare() content missing %q:\n%s", want, prepared.Content)
 		}
+	}
+	if tokencounter.EstimateTextTokens(prepared.Content) > toolResultInlineMaxTokens {
+		t.Fatalf("Prepare() content exceeded inline budget: %d tokens", prepared.ContextTokens)
+	}
+	meta := toolResultMessage("call_skill", "skill_read", prepared).ToolResults[0].Meta
+	if meta == nil || meta.RequiresComplete || meta.ObservationComplete || meta.ArtifactPath != prepared.ArtifactPath {
+		t.Fatalf("tool result meta = %#v", meta)
+	}
+}
+
+func TestToolResultPolicyCountsCompleteResultsAlreadyLoadedThisTurn(t *testing.T) {
+	skillOutput := "# Device Operator\n" + strings.Repeat("follow this step exactly\n", 1_200)
+	skillTokens := tokencounter.EstimateTextTokens(skillOutput)
+	spec := model.ModelSpec{ContextWindow: 16_000, MaxOutput: 2_000}
+	softLimit := toolResultSoftInputLimit(spec.ContextWindow, spec.MaxOutput)
+	if skillTokens > softLimit || 2*skillTokens <= softLimit {
+		t.Fatalf("test setup: skill=%d tokens must fit the %d-token limit once but not twice", skillTokens, softLimit)
+	}
+	prepare := func(manager *contextmanager.ContextManager) PreparedToolResult {
+		t.Helper()
+		prepared, err := NewToolResultPolicy().Prepare(context.Background(), ToolResultPrepareInput{
+			Call:           ToolCall{Spec: NewToolSpec(NewSkillReadTool(t.TempDir())), Input: `{"name":"aico"}`},
+			Result:         ToolResult{Output: skillOutput},
+			ContextManager: manager,
+			ModelSpec:      spec,
+		})
+		if err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+		return prepared
+	}
+	loadedSkill := messages.Message{
+		Role: messages.MessageRoleToolResult,
+		ToolResults: []messages.ToolResult{{
+			ToolCallID: "call_device_operator",
+			Name:       "skill_read",
+			Content:    skillOutput,
+			Meta:       &messages.ToolResultMeta{Complete: true, RequiresComplete: true},
+		}},
+	}
+	newManager := func(t *testing.T, messageList []messages.Message) *contextmanager.ContextManager {
+		t.Helper()
+		manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), messageList)
+		if err != nil {
+			t.Fatalf("NewContextManagerFromMessageList() error = %v", err)
+		}
+		return manager
+	}
+
+	// A skill loaded in an earlier turn is reducible history, so it does not
+	// count against a new skill.
+	previousTurn := newManager(t, []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "earlier task"},
+		loadedSkill,
+		{Role: messages.MessageRoleUser, Content: "operate the device"},
+	})
+	if prepared := prepare(previousTurn); prepared.Content != skillOutput || !prepared.RequiresComplete {
+		t.Fatalf("skill after a previous-turn skill = reason:%q requires_complete:%t, want delivered in full", prepared.Reason, prepared.RequiresComplete)
+	}
+
+	// A skill loaded in this turn cannot be pruned or compacted away, so a
+	// second one that would not fit beside it is saved for bounded recovery.
+	currentTurn := newManager(t, []messages.Message{
+		{Role: messages.MessageRoleUser, Content: "operate the device"},
+		loadedSkill,
+	})
+	prepared := prepare(currentTurn)
+	if prepared.Reason != ToolResultReasonCompleteTooLarge || prepared.RequiresComplete || !prepared.ArtifactComplete {
+		t.Fatalf("second skill in one turn = reason:%q requires_complete:%t artifact:%q", prepared.Reason, prepared.RequiresComplete, prepared.ArtifactPath)
+	}
+}
+
+func TestToolResultPolicyCountsCurrentUserMessageBeforeLoadingSkill(t *testing.T) {
+	skillOutput := "# Device Operator\n" + strings.Repeat("follow this step exactly\n", 800)
+	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
+		{Role: messages.MessageRoleSystem, Content: "system"},
+		{Role: messages.MessageRoleUser, Content: strings.Repeat("long user request ", 2_000)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := model.ModelSpec{ContextWindow: 16_000, MaxOutput: 2_000}
+	if tokencounter.EstimateTextTokens(skillOutput) > completeToolResultTokenLimit(ToolResultPrepareInput{ModelSpec: spec}) {
+		t.Fatal("test setup: skill must fit without the current user message")
+	}
+	prepared, err := NewToolResultPolicy().Prepare(context.Background(), ToolResultPrepareInput{
+		Call:           ToolCall{Spec: NewToolSpec(NewSkillReadTool(t.TempDir())), Input: `{"name":"aico"}`},
+		Result:         ToolResult{Output: skillOutput},
+		ContextManager: manager,
+		ModelSpec:      spec,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Reason != ToolResultReasonCompleteTooLarge || !prepared.ArtifactComplete || prepared.RequiresComplete {
+		t.Fatalf("long user message admitted complete skill: reason=%q artifact=%t requires_complete=%t", prepared.Reason, prepared.ArtifactComplete, prepared.RequiresComplete)
+	}
+	if err := manager.AppendMessage(messages.Message{
+		Role:      messages.MessageRoleToolCall,
+		ToolCalls: []messages.ToolCall{{ID: "skill", Name: "skill_read", Arguments: `{"name":"aico"}`}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AppendMessage(toolResultMessage("skill", "skill_read", prepared)); err != nil {
+		t.Fatal(err)
+	}
+	if got, budget := estimateActivePromptTokens(manager, nil), toolResultUsableInputBudget(spec.ContextWindow, spec.MaxOutput); got > budget {
+		t.Fatalf("recoverable skill result still exceeds the next model input budget: got=%d budget=%d", got, budget)
 	}
 }
 
