@@ -555,6 +555,20 @@ parse_failure_limit = 3
 The three stall-score thresholds must satisfy
 `soft_notice_stall_score < restrict_tools_stall_score < terminate_stall_score`.
 
+For UI actions, a call whose post-action screenshot shows no change adds 2 to
+the stall score, repeating the previous call exactly without progress adds 1,
+and an action that returns no screenshot adds 1; any observed progress resets
+the score. A post-action observation's own `screen_changed` (baseline taken
+just before the action, with the absolute-mode pointer excluded) decides
+whether the screen changed; observation tools are compared with the previous
+screenshot instead. Screenshot results never count toward `same_result_limit`,
+because every screenshot shares one result identity and the screen comparison
+already decides whether they carry new information. While actions are
+restricted, one successful `screenshot` or `wait_for_stable_screen` call lowers
+the score to just below `restrict_tools_stall_score`, which allows one more
+action; another stall without progress restricts again, and further
+observations do not lift it until progress is observed.
+
 ## `[model_settings.providers.<name>]`
 
 Optional named provider configurations. Each section holds the credentials for

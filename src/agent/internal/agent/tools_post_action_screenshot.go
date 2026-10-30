@@ -84,6 +84,9 @@ type postActionScreenshotTool struct {
 	delay      time.Duration
 	waitInput  string
 	defaults   ScreenStableDefaults
+	// pointer is set for pointer tools in absolute mouse mode; the pointer's
+	// own movement is excluded from screen_changed.
+	pointer *pointerTracker
 }
 
 type stableScreenWaiter interface {
@@ -139,6 +142,7 @@ func (t *postActionScreenshotTool) ArgsSchema() map[string]any {
 func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (string, error) {
 	touchscreenRCALogf("post_action start inner=%q input_len=%d", t.inner.Name(), len(input))
 	baselineImage := t.captureBaseline(ctx)
+	pointerBefore := t.pointer.current()
 	actionOutput, err := t.inner.Call(ctx, input)
 	if err != nil {
 		touchscreenRCALogf("post_action inner error inner=%q err_type=%T", t.inner.Name(), err)
@@ -155,6 +159,9 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		SetToolError(ctx, te)
 		return toolErrorString(te), nil
 	}
+
+	pointerAfter := pointerFinalPoint(t.inner.Name(), input, actionOutput)
+	t.pointer.set(pointerAfter)
 
 	reportToolProgress(ctx, ToolProgress{
 		Status:  "verifying",
@@ -237,9 +244,16 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		ActionOutput:     actionOutput,
 	}
 	if finalImage, _ := extractScreenshotImage(screenshotOutput); baselineImage != nil && finalImage != nil {
-		if changed, comparable := screenshotProgressChanged(baselineImage, finalImage); comparable {
+		var excluded []image.Rectangle
+		if t.pointer != nil {
+			excluded = pointerExclusionRects(finalImage.Bounds(), pointerBefore, pointerAfter)
+		}
+		if ratio, comparable := screenshotProgressChangeRatio(baselineImage, finalImage, excluded); comparable {
+			changed := ratio > screenshotProgressChangedBlockThreshold
 			payload.ScreenChanged = &changed
-			touchscreenRCALogf("post_action progress_compare inner=%q screen_changed=%v", t.inner.Name(), changed)
+			// The changed-block share near the threshold is what decides
+			// whether small UI changes count; keep it for later tuning.
+			logging.Infof("agent", "tools_post_action_screenshot", "progress_compare: tool=%s screen_changed=%v changed_ratio=%.4f changed_blocks=%.0f pointer_excluded=%d", t.inner.Name(), changed, ratio, ratio*screenshotProgressGridColumns*screenshotProgressGridRows, len(excluded))
 		}
 	}
 	if t.waitStable != nil {
@@ -472,6 +486,12 @@ func postActionErrorCode(err error) string {
 	default:
 		return CodeToolExecutionFailed
 	}
+}
+
+// withPointerTracker shares an absolute-mode pointer tracker with this tool.
+func (t *postActionScreenshotTool) withPointerTracker(pointer *pointerTracker) *postActionScreenshotTool {
+	t.pointer = pointer
+	return t
 }
 
 func (t *postActionScreenshotTool) SetDeviceTypeFunc(fn func() string) {
