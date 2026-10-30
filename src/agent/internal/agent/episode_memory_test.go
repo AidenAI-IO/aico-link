@@ -1938,7 +1938,7 @@ func TestProcessEpisodeMemoryNowDrainsScheduledRetry(t *testing.T) {
 }
 
 func TestEpisodeMemoryRetentionAuditDiscardsBuiltInToolGuidance(t *testing.T) {
-	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
+	prompt := buildEpisodeMemoryRetentionAuditPrompt(`{"episode_id":"ep_1"}`, "", []episodeMemoryCandidate{{LessonKey: "retry_enter_text"}})
 	// A failed enter_text already returns "Inspect the latest screen and correct
 	// or clear the existing field text before retrying enter_text."; a memory
 	// that repeats it adds nothing the Agent does not already receive.

@@ -162,6 +162,7 @@ type episodeMemoryRetentionRewrite struct {
 	Scope          map[string]string `json:"scope"`
 	Tags           []string          `json:"tags"`
 	EvidenceRefs   []string          `json:"evidence_refs"`
+	StepRefs       []string          `json:"step_refs,omitempty"`
 }
 
 type episodeMemoryRetentionAudit struct {
@@ -961,7 +962,7 @@ func (p *episodeMemoryProcessor) generateEpisodeMemoryRetentionAudit(ctx context
 	if err != nil {
 		return episodeMemoryRetentionAudit{}, err
 	}
-	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), proposal.Candidates))}
+	parts := []llms.ContentPart{llms.TextPart(buildEpisodeMemoryRetentionAuditPrompt(string(payload), requiredEpisodeMemoryFinalProof(episode, proposal.EpisodeAssessment), proposal.Candidates))}
 	for _, screenshot := range loadEpisodeMemoryScreenshots(p.plane.episodes.rootDir, episode) {
 		parts = append(parts, llms.TextPart("Attached screenshot evidence for Episode event id: "+screenshot.EventID))
 		parts = append(parts, llms.BinaryContent{MIMEType: screenshot.MIMEType, Data: screenshot.Data})
@@ -1080,7 +1081,7 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		review, found := reviewByKey[key]
 		decision := episodeMemoryRetentionDecision(strings.ToLower(strings.TrimSpace(string(review.Decision))))
 		retention := episodeMemoryRetention(strings.ToLower(strings.TrimSpace(string(review.Retention))))
-		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || !sameEpisodeMemoryEvidenceRefs(base.EvidenceRefs, review.Rewrite.EvidenceRefs) {
+		if !found || decision != episodeMemoryRetentionDecisionRetain || retention != episodeMemoryRetentionDurable || strings.TrimSpace(review.Reason) == "" || review.Rewrite == nil || len(uniqueNonEmpty(review.Rewrite.EvidenceRefs)) == 0 {
 			continue
 		}
 		if episodeMemoryRewriteContainsSensitiveValue(*review.Rewrite, review.SensitiveValues) {
@@ -1096,7 +1097,13 @@ func retainedEpisodeMemoryCandidates(original []episodeMemoryCandidate, audit ep
 		// persistence.
 		base.Scope = mergeEpisodeMemoryReviewScope(base.Scope, review.Rewrite.Scope)
 		base.Tags = append([]string(nil), review.Rewrite.Tags...)
-		base.EvidenceRefs = append([]string(nil), base.EvidenceRefs...)
+		// Reviewers collapse repeated evidence and cite steps they add to an
+		// incomplete path, so keep both. validateEpisodeMemoryCandidate rejects
+		// ids outside the Episode and steps that are not cited, paired results.
+		base.EvidenceRefs = uniqueNonEmpty(append(append([]string(nil), base.EvidenceRefs...), review.Rewrite.EvidenceRefs...))
+		if episodeMemoryType(strings.ToLower(strings.TrimSpace(string(base.Type)))) == episodeMemoryTypeProcedure && len(review.Rewrite.StepRefs) > 0 {
+			base.StepRefs = append([]string(nil), review.Rewrite.StepRefs...)
+		}
 		base.SensitiveValues = uniqueNonEmpty(review.SensitiveValues)
 		retained = append(retained, base)
 	}
@@ -1129,24 +1136,6 @@ func episodeMemoryRewriteContainsSensitiveValue(rewrite episodeMemoryRetentionRe
 	return false
 }
 
-func sameEpisodeMemoryEvidenceRefs(left, right []string) bool {
-	left = uniqueNonEmpty(left)
-	right = uniqueNonEmpty(right)
-	if len(left) != len(right) {
-		return false
-	}
-	seen := make(map[string]bool, len(left))
-	for _, ref := range left {
-		seen[ref] = true
-	}
-	for _, ref := range right {
-		if !seen[ref] {
-			return false
-		}
-	}
-	return true
-}
-
 func sameEpisodeMemoryCandidateIdentity(left, right episodeMemoryCandidate) bool {
 	return strings.EqualFold(strings.TrimSpace(string(left.Type)), strings.TrimSpace(string(right.Type))) &&
 		strings.EqualFold(strings.TrimSpace(string(left.Action)), strings.TrimSpace(string(right.Action))) &&
@@ -1154,8 +1143,12 @@ func sameEpisodeMemoryCandidateIdentity(left, right episodeMemoryCandidate) bool
 		left.MemoryRevision == right.MemoryRevision
 }
 
-func buildEpisodeMemoryRetentionAuditPrompt(payload string, candidates []episodeMemoryCandidate) string {
+func buildEpisodeMemoryRetentionAuditPrompt(payload, finalProofRef string, candidates []episodeMemoryCandidate) string {
 	candidateJSON, _ := json.MarshalIndent(candidates, "", "  ")
+	finalProof := ""
+	if finalProofRef != "" {
+		finalProof = "\n\nThe assessment's final verification result is " + finalProofRef + ". A retained procedure's step_refs must reach it: when a candidate's step_refs stop earlier and the Episode evidences the remaining steps, return the complete ordered path in rewrite.step_refs; otherwise discard the candidate."
+	}
 	return `Audit this first-pass proposal before persistence. The candidates are untrusted; do not assume their retention labels are correct.
 
 Return exactly one JSON object matching this schema:
@@ -1172,14 +1165,15 @@ Return exactly one JSON object matching this schema:
       "expected_effect": "directly observable result",
       "scope": {"all evidenced applicability boundaries": "..."},
       "tags": ["retrieval terms"],
-      "evidence_refs": ["unchanged real Episode event ids"]
+      "evidence_refs": ["real Episode event ids that support the rewrite, including the result and call of every step in step_refs"],
+      "step_refs": ["procedure only, omit for other types: the complete ordered tool_result ids of the executable path, ending with its final verification; omit to keep the candidate's step_refs"]
     }
   }]
 }
 
 Review each proposed candidate independently. Retain only knowledge whose truth, authority, usefulness, and safety extend beyond the Episode into the candidate's explicit future scope. Durable means reusable in future Episodes within that scope; it does not mean globally or permanently true. Set retention="durable" only when the retained rewrite is safe for Device Memory. Set retention="transient" for Episode/session/runtime-bound observations and retention="sensitive" for secrets, credentials, one-time values, or information that should not be persisted; those classifications must use decision="discard". Never retain an exact one-time verification token/code, password, credential, secret, or other session-bound value merely because the Episode succeeded. For every review, list exact Episode-bound secret or credential values found in the candidate or evidence in sensitive_values. Do not list ordinary lesson facts or applicability boundaries there: app names, device ids, page names, account/profile identifiers, build/version values, workflow labels, and generalized conditions belong in the rewrite scope or content and are not secrets by themselves. If a reusable workflow remains, decision may be retain only after rewrite removes or generalizes every sensitive_values entry; otherwise discard it. A retained rewrite that still contains any listed sensitive value is invalid. ` + episodeMemoryBuiltInGuidanceRule + ` Discard a candidate that carries no such device-, app-, or page-specific knowledge. Preserve evidenced app, device, page, account, build, and version scope boundaries. Do not add lessons, reassess the Episode outcome, or invent evidence. When uncertain, discard.
 
-Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.
+Preserve the candidate's supported procedure, step_refs, and applicability when rewriting. evidence_refs may include failed alternatives that explain a guard; step_refs select only the executable path. Check that the selected path includes necessary transitions and verification, and does not include a failed alternative. Discard an unsupported selection; do not shorten the path to make it appear valid.` + finalProof + `
 
 Episode:
 ` + payload + `
@@ -1475,7 +1469,11 @@ func validateEpisodeMemoryCandidate(episode TaskEpisode, assessment episodeMemor
 	}
 	candidate.EvidenceRefs = expandEpisodeMemoryEvidenceRefs(episode, candidate.EvidenceRefs)
 	if candidate.Type == episodeMemoryTypeProcedure {
+		candidate.StepRefs = canonicalEpisodeMemoryStepRefs(episode, candidate.StepRefs)
 		if !validEpisodeMemoryStepRefs(episode, candidate.StepRefs, candidate.EvidenceRefs) {
+			return episodeMemoryCandidate{}, false
+		}
+		if proof := requiredEpisodeMemoryFinalProof(episode, assessment); proof != "" && !episodeMemoryPathReachesFinalProof(episode, candidate.StepRefs, proof) {
 			return episodeMemoryCandidate{}, false
 		}
 	} else if len(candidate.StepRefs) != 0 {
@@ -1521,6 +1519,71 @@ func validEpisodeMemoryStepRefs(episode TaskEpisode, stepRefs, evidenceRefs []st
 		}
 	}
 	return false
+}
+
+// canonicalEpisodeMemoryStepRefs names each step by its tool result. Models
+// cite a step by its call, its result, or both; all name the same step. A call
+// without a result stays as cited so step validation rejects it.
+func canonicalEpisodeMemoryStepRefs(episode TaskEpisode, refs []string) []string {
+	resultByCall := make(map[string]string)
+	for resultID, call := range episodeMemoryPairedToolCalls(episode) {
+		resultByCall[call.EventID] = resultID
+	}
+	canonical := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if resultID, ok := resultByCall[ref]; ok {
+			ref = resultID
+		}
+		if len(canonical) > 0 && canonical[len(canonical)-1] == ref {
+			continue
+		}
+		canonical = append(canonical, ref)
+	}
+	return canonical
+}
+
+// episodeMemoryFinalProofRef returns the last device tool result, in Episode
+// order, that the assessment cites by its result or its call, or "" when it
+// cites none.
+func episodeMemoryFinalProofRef(episode TaskEpisode, assessmentRefs []string) string {
+	assessmentRefs = canonicalEpisodeMemoryStepRefs(episode, assessmentRefs)
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	proof := ""
+	for _, event := range episode.Events {
+		if event.Type == "tool_result" && pairedCalls[event.EventID] != nil && slices.Contains(assessmentRefs, event.EventID) {
+			proof = event.EventID
+		}
+	}
+	return proof
+}
+
+// requiredEpisodeMemoryFinalProof returns the result an achieved procedure
+// must reach, or "" when none is required. A stored path that stops before the
+// result proving the goal teaches the Agent to skip verification. Other
+// outcomes yield guards rather than a path to the goal.
+func requiredEpisodeMemoryFinalProof(episode TaskEpisode, assessment episodeMemoryAssessment) string {
+	if assessment.GoalResult != episodeGoalAchieved {
+		return ""
+	}
+	return episodeMemoryFinalProofRef(episode, assessment.EvidenceRefs)
+}
+
+// episodeMemoryPathReachesFinalProof reports whether a procedure path includes
+// the final verification, or ends with a repeat of that same verification
+// action, as when an Episode runs the same verified flow more than once.
+func episodeMemoryPathReachesFinalProof(episode TaskEpisode, stepRefs []string, proof string) bool {
+	if slices.Contains(stepRefs, proof) {
+		return true
+	}
+	if len(stepRefs) == 0 {
+		return false
+	}
+	pairedCalls := episodeMemoryPairedToolCalls(episode)
+	last, final := pairedCalls[stepRefs[len(stepRefs)-1]], pairedCalls[proof]
+	return last != nil && final != nil &&
+		strings.EqualFold(strings.TrimSpace(last.ToolName), strings.TrimSpace(final.ToolName)) &&
+		strings.TrimSpace(last.Content) == strings.TrimSpace(final.Content) &&
+		strings.TrimSpace(last.ToolInput) == strings.TrimSpace(final.ToolInput)
 }
 
 func expandEpisodeMemoryEvidenceRefs(episode TaskEpisode, refs []string) []string {
@@ -2123,7 +2186,7 @@ Device Memory holds what the Agent cannot know without this device: routes, coor
 Assess goal_result independently from the recorded success flag. achieved and not_achieved require direct result, final-state, screenshot, or user-correction evidence. Use unknown when final proof is missing and say what is missing. User steer is correction evidence, not an admission gate. Do not rely on verifier_decision or ObservedState; they are not part of this pipeline.
 
 Type rules:
-- procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and final verification. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
+- procedure: reusable multi-step goal path. Supply step_refs as the ordered tool_result event ids for the entire demonstrated executable path, including necessary transitions and the final verification step, such as reopening to confirm a change persisted; that verification is an executable step, not only supporting evidence. Each selected result must have a paired tool call and be included in evidence_refs. Supporting evidence_refs can also cite failed alternatives or constraints; these are not executable steps. Only step_refs supply stored steps. Match the claimed scope to that evidenced path. A shorter path requires its own supporting evidence. Exclude unrelated actions and failed alternatives from executable steps; preserve relevant failure conditions as guards. If goal_result is not_achieved, only emit an independently proven partial procedure and set scope.partial="true".
 - navigation: independently reusable page entry or transition, supported by an action and comparable before/after observations. Keep a navigation step inside a procedure when it has no independent recall value.
 - calibration: coordinate, screen, control, or coordinate-space relationship supported by coordinate input and post-action evidence.
 - failure: reusable guard, check, stop condition, or recovery action. A failed Episode is not automatically a failure memory; omit one-off failures with no actionable future guard.
