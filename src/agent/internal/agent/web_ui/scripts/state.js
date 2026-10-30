@@ -28,8 +28,6 @@ const toolResultMetaEl = document.getElementById('toolResultMeta');
 const toolResultPreviewWrapEl = document.getElementById('toolResultPreviewWrap');
 const toolResultPreviewEl = document.getElementById('toolResultPreview');
 const toolResultOutputEl = document.getElementById('toolResultOutput');
-const terminalFrameEl = document.getElementById('terminalFrame');
-const terminalOpenLinkEl = document.getElementById('terminalOpenLink');
 const maxDraftImageAttachments = 4;
 const defaultComposerHint = 'Enter to send, Shift+Enter for newline';
 

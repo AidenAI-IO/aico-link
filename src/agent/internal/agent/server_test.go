@@ -3034,6 +3034,7 @@ func TestWebUIIsEmbeddedFromStaticResource(t *testing.T) {
 		"/web-ui/scripts/messages.js",
 		"/web-ui/scripts/attachments.js",
 		"/web-ui/scripts/tool_messages.js",
+		"/web-ui/scripts/resources.js",
 		"/web-ui/scripts/bootstrap.js",
 	} {
 		if !strings.Contains(webUI, asset) {
@@ -3052,6 +3053,7 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 	}{
 		{path: "/web-ui/styles.css", contentType: "text/css", content: ":root {"},
 		{path: "/web-ui/scripts/bootstrap.js", contentType: "text/javascript", content: "loadHistory();"},
+		{path: "/web-ui/scripts/resources.js", contentType: "text/javascript", content: "startResourcePolling"},
 		{path: "/web-ui/scripts/streaming_text.js", contentType: "text/javascript", content: "function createStreamingTextReveal("},
 	} {
 		recorder := httptest.NewRecorder()
@@ -3091,7 +3093,7 @@ func TestWebUIBootstrapDoesNotReferenceRemovedStoragePanel(t *testing.T) {
 	}
 	for _, required := range []string{
 		"connectSSE();",
-		"configureTerminal();",
+		"startResourcePolling();",
 		"toolSelectEl.addEventListener('change', syncSelectedTool);",
 	} {
 		if !strings.Contains(bootstrapScript, required) {

@@ -39,6 +39,28 @@ In the firmware, it is installed by default to:
 - iOS Live Activity / Dynamic Island task status; see [Live Activity / Dynamic Island](live-activity.md)
 - Device-side voice pipeline: VAD / STT / TTS; [Realtime Voice](realtime-voice.md)
 
+### Web UI hardware resources
+
+The sidebar refreshes hardware resources every second while the page is visible:
+Wi-Fi interface IP addresses, RX/TX rates and cumulative byte counters, battery
+percentage and voltage, CPU and NPU utilization, memory usage, and disk usage
+for the root filesystem and mounted local block devices (including userdata and
+mounted SD cards). Battery, CPU, NPU, memory, and disk usage use compact meters.
+Voltage appears alongside battery level; full network addresses, traffic totals,
+and exact storage sizes are available under **Details**. Bind mounts of the same
+block device share one disk entry. The terminal opens in a separate tab through `/webtty/`.
+
+`GET /api/resources` returns a read-only, non-cacheable snapshot. Linux procfs
+and sysfs provide CPU counters, memory and Wi-Fi statistics; Rockchip's
+`/sys/kernel/debug/rknpu/load` (or `/proc/rknpu/load`) provides NPU utilization.
+Memory usage excludes available memory, disk usage excludes free blocks, and
+NPU utilization is the mean across reported cores. Battery readings come from
+the MCU service with a bounded timeout. Missing or unreadable metrics appear as
+`Unavailable`; CPU and network rates need two samples. Requests never overlap,
+hidden pages pause polling, and failed requests clear stale readings and retry.
+The resource snapshot is available over the same connections as the Web UI;
+the existing MCU control endpoints remain restricted to USB and loopback.
+
 ## Run Modes
 
 The HTTP server and Web UI start in every input mode. `input_mode` controls whether the daemon also runs the device-side voice loop:
