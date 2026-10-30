@@ -34,6 +34,7 @@ public:
     const std::string& error() const { return error_; }
 
 private:
+    void filter_pending_samples(float* input, size_t count);
     void hop(const float* input, std::vector<uint8_t>* out);
     void bypass(std::vector<uint8_t>* out);
     std::unique_ptr<DenoiseHop> model_;

@@ -24,6 +24,19 @@ void AudioDenoiser::bypass(std::vector<uint8_t>* out) {
     model_.reset();
 }
 
+void AudioDenoiser::filter_pending_samples(float* input, size_t count) {
+    for (size_t i = 0; i < count; ++i) {
+        const size_t offset = (processed_ + i) * 2;
+        const int16_t sample = static_cast<int16_t>(
+            uint16_t(pending_[offset]) | (uint16_t(pending_[offset + 1]) << 8));
+        const float current = sample / 32768.f;
+        // Same DC high-pass used in the validated board recordings.
+        input[i] = current - previous_input_ + 0.995f * previous_output_;
+        previous_input_ = current;
+        previous_output_ = input[i];
+    }
+}
+
 void AudioDenoiser::hop(const float* input, std::vector<uint8_t>* out) {
     float enhanced[128];
     model_->process(input, enhanced);
@@ -52,16 +65,7 @@ std::vector<uint8_t> AudioDenoiser::process(const std::vector<uint8_t>& pcm) {
     try {
         while (pending_.size() / 2 - processed_ >= 128) {
             float input[128];
-            for (size_t i = 0; i < 128; ++i) {
-                const size_t offset = (processed_ + i) * 2;
-                const int16_t sample = static_cast<int16_t>(
-                    uint16_t(pending_[offset]) | (uint16_t(pending_[offset + 1]) << 8));
-                const float current = sample / 32768.f;
-                // Same DC high-pass used in the validated board recordings.
-                input[i] = current - previous_input_ + 0.995f * previous_output_;
-                previous_input_ = current;
-                previous_output_ = input[i];
-            }
+            filter_pending_samples(input, 128);
             processed_ += 128;
             hop(input, &out);
         }
@@ -80,15 +84,7 @@ std::vector<uint8_t> AudioDenoiser::finish() {
         while (!pending_.empty()) {
             float input[128] = {};
             const size_t remaining = pending_.size() / 2 - processed_;
-            for (size_t i = 0; i < remaining; ++i) {
-                const size_t offset = (processed_ + i) * 2;
-                const int16_t sample = static_cast<int16_t>(
-                    uint16_t(pending_[offset]) | (uint16_t(pending_[offset + 1]) << 8));
-                const float current = sample / 32768.f;
-                input[i] = current - previous_input_ + 0.995f * previous_output_;
-                previous_input_ = current;
-                previous_output_ = input[i];
-            }
+            filter_pending_samples(input, remaining);
             if (pending_.size() % 2) throw std::runtime_error("incomplete PCM16 sample");
             processed_ += remaining;
             hop(input, &out);
