@@ -33,6 +33,12 @@ type ToolSpec struct {
 	// AgentPlatforms lists device_type-derived platforms where the tool should
 	// be shown to the conversational model. Empty means all platforms.
 	AgentPlatforms []string
+	// RequiresCompleteResult marks tools whose output is only useful in full,
+	// such as instructions the model must follow. The tool must bound its own
+	// output; the result policy then delivers it whole or reports that it
+	// cannot fit, and current-turn pruning leaves it to conversation compaction
+	// instead of replacing it with a placeholder.
+	RequiresCompleteResult bool
 }
 
 type ToolSpecs struct {
@@ -69,6 +75,8 @@ type toolSpecMetadata struct {
 	AgentExposed   *bool
 	HTTPExposed    *bool
 	AgentPlatforms []string
+	// RequiresCompleteResult is copied to ToolSpec.RequiresCompleteResult.
+	RequiresCompleteResult bool
 }
 
 var builtInToolSpecMetadata = map[string]toolSpecMetadata{
@@ -178,6 +186,9 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "skills",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"name":"device-operator"}`,
+		// Skill files are instructions bounded by maxSkillReadBytes; a summary
+		// of them cannot be followed.
+		RequiresCompleteResult: true,
 	},
 	"touch_gesture": {
 		Category:     "input",
@@ -361,6 +372,8 @@ func NewToolSpec(tool langtools.Tool) ToolSpec {
 		AgentExposed:   agentExposed,
 		HTTPExposed:    httpExposed,
 		AgentPlatforms: normalizeAgentToolPlatforms(meta.AgentPlatforms),
+
+		RequiresCompleteResult: meta.RequiresCompleteResult,
 	}
 }
 

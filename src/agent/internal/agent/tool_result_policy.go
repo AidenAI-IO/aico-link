@@ -22,6 +22,9 @@ const (
 	ToolResultReasonIntrinsicLarge = "intrinsic_large"
 	ToolResultReasonContextLarge   = "context_large"
 	ToolResultReasonProcessingFail = "processing_failed"
+	// ToolResultReasonCompleteTooLarge reports a result that must be seen in
+	// full but cannot fit the model context even after compaction.
+	ToolResultReasonCompleteTooLarge = "complete_result_too_large"
 
 	toolResultInlineMaxBytes     = 8 * 1024
 	toolResultInlineMaxTokens    = 2_000
@@ -67,6 +70,7 @@ type PreparedToolResult struct {
 	ObservationComplete  bool
 	ProcessingErrorCode  string
 	ArtifactStoreError   string
+	RequiresComplete     bool
 	ContextBytes         int
 	ContextTokens        int
 	ProcessingDurationMs int64
@@ -99,6 +103,9 @@ func (defaultToolResultPolicy) Prepare(_ context.Context, input ToolResultPrepar
 		ActionCompleted:     input.ActionCompleted || input.Result.Error == nil,
 		ObservationComplete: true,
 		Reason:              ToolResultReasonInline,
+	}
+	if input.Call.Spec.RequiresCompleteResult {
+		return prepareCompleteToolResult(input, prepared), nil
 	}
 	intrinsicLarge := len(output) > toolResultInlineMaxBytes || prepared.EstimatedTokens > toolResultInlineMaxTokens
 	// The minimum observation budget must also apply to inline results.
@@ -203,6 +210,70 @@ func toolCallName(call ToolCall) string {
 }
 
 func availableToolResultTokens(input ToolResultPrepareInput) int {
+	softLimit := toolResultSoftLimit(input)
+	if softLimit < 0 {
+		return -1
+	}
+	if softLimit == 0 {
+		return 0
+	}
+	currentTokens := estimateActivePromptTokens(input.ContextManager, input.CallOptions)
+	return max(0, softLimit-currentTokens)
+}
+
+// prepareCompleteToolResult handles tools whose output is only useful in full.
+// Such a result is never summarized to fit the space currently left: it is
+// appended whole, and ContextBudgetGuard prunes or compacts older context
+// before the next model call. Only a result that could not fit even in an
+// otherwise empty context is refused, with an explicit observation instead of
+// a misleading partial preview.
+func prepareCompleteToolResult(input ToolResultPrepareInput, prepared PreparedToolResult) PreparedToolResult {
+	limit := completeToolResultTokenLimit(input)
+	if limit < 0 || prepared.EstimatedTokens <= limit {
+		prepared.RequiresComplete = true
+		prepared.Summary = projectToolResult(input.Call, input.Result.Output, 256)
+		return prepared
+	}
+
+	content, _ := json.Marshal(map[string]any{
+		"status":               "observation_incomplete",
+		"code":                 ToolResultReasonCompleteTooLarge,
+		"action_completed":     prepared.ActionCompleted,
+		"observation_complete": false,
+		"result_tokens":        prepared.EstimatedTokens,
+		"context_limit_tokens": limit,
+		"message":              "This result must be read in full but exceeds the model context even after compaction, so it was not loaded. Do not retry the same call; request a smaller unit (for a skill, one of its linked files) or ask the user to split it.",
+	})
+	prepared.Content = string(content)
+	prepared.Complete = false
+	prepared.ObservationComplete = false
+	prepared.Reason = ToolResultReasonCompleteTooLarge
+	prepared.Summary = fmt.Sprintf("result not loaded: %d tokens exceed the %d-token context limit", prepared.EstimatedTokens, limit)
+	return prepared
+}
+
+// completeToolResultTokenLimit is the largest complete result that could fit
+// after compaction: the soft input limit minus tool schemas. The soft limit's
+// headroom below the usable budget covers the system prompt and the turn that
+// compaction retains. It returns -1 when the context window is unknown, in
+// which case the tool's own output bound is the only limit.
+func completeToolResultTokenLimit(input ToolResultPrepareInput) int {
+	softLimit := toolResultSoftLimit(input)
+	if softLimit < 0 {
+		return -1
+	}
+	var options llms.CallOptions
+	for _, option := range input.CallOptions {
+		if option != nil {
+			option(&options)
+		}
+	}
+	return max(0, softLimit-tokencounter.EstimateToolSchemaTokens(options))
+}
+
+// toolResultSoftLimit returns the soft input limit for the next model request,
+// or -1 when the model's context window is unknown.
+func toolResultSoftLimit(input ToolResultPrepareInput) int {
 	contextWindow := input.ModelSpec.ContextWindow
 	if contextWindow <= 0 {
 		return -1
@@ -217,12 +288,7 @@ func availableToolResultTokens(input ToolResultPrepareInput) int {
 	if options.MaxTokens > 0 {
 		maxResponseTokens = options.MaxTokens
 	}
-	softLimit := toolResultSoftInputLimit(contextWindow, maxResponseTokens)
-	if softLimit <= 0 {
-		return 0
-	}
-	currentTokens := estimateActivePromptTokens(input.ContextManager, input.CallOptions)
-	return max(0, softLimit-currentTokens)
+	return max(0, toolResultSoftInputLimit(contextWindow, maxResponseTokens))
 }
 
 func estimateActivePromptTokens(manager *contextmanager.ContextManager, options []llms.CallOption) int {
