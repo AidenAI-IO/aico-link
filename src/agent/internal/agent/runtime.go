@@ -853,7 +853,8 @@ func (r *Runtime) Preempt() {
 }
 
 // RegisterPreemptHook adds a callback invoked when a new run preempts the
-// current one. Used to release audio resources (stop recording, stop TTS).
+// current one. Hooks should release interruptible playback (TTS); Classic
+// continuous-mic sessions own recording separately and must not stop the mic here.
 func (r *Runtime) RegisterPreemptHook(hook func()) {
 	if r == nil || hook == nil {
 		return

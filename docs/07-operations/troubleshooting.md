@@ -244,12 +244,13 @@ First run helper self-test directly on the board:
 ```bash
 /usr/lib/aico/rknn_vad --model /usr/lib/aico/models/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
 /usr/lib/aico/cpu_vad --weights /usr/lib/aico/models/silero_vad_6_2_lstm_decoder_weights.bin --self-test
+/usr/lib/aico/smart_turn_helper --model /usr/lib/aico/models/smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn --self-test
 ```
 
-On success, it will output `P <probability>`. Current RV1106 helper uses RKNN zero-copy IO; if it outputs `rknn_set_io_mem failed`, `rknn_run failed`, or old helper outputs `rknn_inputs_set failed`, check:
+On success, helpers output `P <probability>`. Current RV1106 helpers use RKNN zero-copy IO; if they output `rknn_set_io_mem failed`, `rknn_run failed`, or old helpers output `rknn_inputs_set failed`, check:
 
-- Whether the RKNN mini runtime embedded in `/usr/lib/aico/rknn_vad` matches the model;
-- Whether `silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` is the encoder model re-converted for RV1106 target;
+- Whether the RKNN mini runtime embedded in `/usr/lib/aico/rknn_vad` and `/usr/lib/aico/smart_turn_helper` matches the model;
+- Whether `silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn` / `smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn` are the models re-converted for RV1106 target;
 - Whether input/output tensor type, size, scale, zero-point in helper logs are normal.
 
 ### Why the mini runtime is embedded
