@@ -33,7 +33,6 @@ type structuredInputTool interface {
 
 const toolActionLogVersion = 1
 const maxToolObservationRunes = 4000
-const maxSkillReadObservationRunes = 20000
 
 type toolActionLog struct {
 	Version     int    `json:"aico_action_log_version"`
@@ -162,7 +161,7 @@ func ensureToolCallID(id string, index int) string {
 func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (string, []llms.MessageContent) {
 	visual, ok := a.visualScreenshotObservation(step)
 	if !ok {
-		return compactToolObservationForTool(step.Action.Tool, step.Observation), nil
+		return compactToolObservation(step.Observation), nil
 	}
 	result := visual.Result
 
@@ -291,18 +290,6 @@ func compactToolObservation(observation string) string {
 
 func compactToolObservationWithStatus(observation string) (string, bool) {
 	return compactToolObservationLimitWithStatus(observation, maxToolObservationRunes)
-}
-
-func compactToolObservationForTool(toolName, observation string) string {
-	if strings.TrimSpace(toolName) == "skill_read" {
-		return compactToolObservationLimit(observation, maxSkillReadObservationRunes)
-	}
-	return compactToolObservation(observation)
-}
-
-func compactToolObservationLimit(observation string, maxRunes int) string {
-	compacted, _ := compactToolObservationLimitWithStatus(observation, maxRunes)
-	return compacted
 }
 
 func compactToolObservationLimitWithStatus(observation string, maxRunes int) (string, bool) {
