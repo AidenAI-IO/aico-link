@@ -163,6 +163,19 @@ def select_cases(
 ) -> tuple[SuiteCase, ...]:
     if profile not in PROFILES:
         raise CatalogError(f"unsupported profile: {profile}")
+    suites = list(dict.fromkeys(item.strip() for item in suite.split(",") if item.strip()))
+    if suite.strip() and not suites:
+        # A typo such as "," must not silently widen to the whole profile.
+        raise CatalogError(f"suite input contains no suite paths: {suite!r}")
+    if len(suites) > 1:
+        # A comma-separated list selects each suite under the same rules as a
+        # single suite, so one dispatch can verify several related suites.
+        return tuple(
+            case
+            for item in suites
+            for case in select_cases(catalog, profile=profile, suite=item)
+        )
+    suite = suites[0] if suites else ""
     if suite:
         selected = tuple(case for case in catalog.cases if case.suite == suite)
         if not selected:

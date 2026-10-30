@@ -1000,6 +1000,89 @@ func TestNotificationMemoryPromoteRejectsUnrelatedDeletedTemporary(t *testing.T)
 	}
 }
 
+func TestInferNotificationTargetScopeUsesUniqueCatalogTarget(t *testing.T) {
+	temporary := MemoryMergeReference{Scope: "temporary", ID: "tmp_remove_delivery", Status: "active", Revision: 1}
+	longTerm := MemoryMergeReference{Scope: "long_term", ID: "shared_id", Status: "active", Revision: 1}
+	sameIDTemporary := MemoryMergeReference{Scope: "temporary", ID: "shared_id", Status: "active", Revision: 1}
+	deleted := MemoryMergeReference{Scope: "temporary", ID: "tmp_deleted", Status: "deleted", Revision: 2}
+	refs := []MemoryMergeReference{temporary, longTerm, sameIDTemporary, deleted}
+	for _, tc := range []struct {
+		name   string
+		action notificationMemoryAction
+		want   string
+	}{
+		{"remove infers its target store", notificationMemoryAction{Action: "remove", MemoryID: " tmp_remove_delivery "}, "temporary"},
+		{"reinforce infers its target store", notificationMemoryAction{Action: "reinforce", MemoryID: "tmp_remove_delivery"}, "temporary"},
+		{"update infers its target store", notificationMemoryAction{Action: "update", MemoryID: "tmp_remove_delivery"}, "temporary"},
+		{"ambiguous id across stores stays empty", notificationMemoryAction{Action: "remove", MemoryID: "shared_id"}, ""},
+		{"inactive target stays empty", notificationMemoryAction{Action: "remove", MemoryID: "tmp_deleted"}, ""},
+		{"unknown target stays empty", notificationMemoryAction{Action: "remove", MemoryID: "missing"}, ""},
+		{"add chooses a destination", notificationMemoryAction{Action: "add", MemoryID: "tmp_remove_delivery"}, ""},
+		{"promote chooses a destination", notificationMemoryAction{Action: "promote", MemoryID: "tmp_remove_delivery"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inferNotificationTargetScope(tc.action, refs); got != tc.want {
+				t.Fatalf("inferNotificationTargetScope(%+v) = %q, want %q", tc.action, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNotificationBatchCoalescesValidatedTargets(t *testing.T) {
+	root := t.TempDir()
+	processor := NewNotificationMemoryProcessor(nil, root, NewLongTermMemoryStore(filepath.Join(root, "long_term")), nil)
+	ref := MemoryMergeReference{Scope: "temporary", ID: "tmp_delivery", Status: "active", Revision: 1}
+	result := func(contextID string, action notificationMemoryAction) validatedNotificationResult {
+		return validatedNotificationResult{
+			record:   NotificationRecord{ContextID: contextID, NotificationEvent: ble.NotificationEvent{ID: contextID + "-event", SourceEventID: contextID + "-event"}},
+			refs:     []MemoryMergeReference{ref},
+			proposal: notificationMemoryProposal{Actions: []notificationMemoryAction{action}},
+		}
+	}
+
+	t.Run("inferred and explicit scopes share a target", func(t *testing.T) {
+		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
+			result("latest", notificationMemoryAction{Action: "Remove", MemoryID: ref.ID, MemoryRevision: 1}),
+		})
+		if len(batch) != 2 || len(batch[0].proposal.Actions) != 0 {
+			t.Fatalf("earlier action on the same memory kept: %#v", batch)
+		}
+		if got := batch[1].proposal.Actions; len(got) != 1 || got[0].Scope != "temporary" {
+			t.Fatalf("latest action = %#v, want one temporary remove", got)
+		}
+	})
+
+	t.Run("an invalid later action does not displace a valid earlier one", func(t *testing.T) {
+		batch := processor.validateNotificationBatch(context.Background(), []validatedNotificationResult{
+			result("earlier", notificationMemoryAction{Action: "remove", Scope: "temporary", MemoryID: ref.ID, MemoryRevision: 1}),
+			result("stale", notificationMemoryAction{Action: "remove", MemoryID: ref.ID, MemoryRevision: 7}),
+		})
+		if len(batch) != 1 || batch[0].record.ContextID != "earlier" || len(batch[0].proposal.Actions) != 1 {
+			t.Fatalf("valid earlier action was dropped: %#v", batch)
+		}
+	})
+}
+
+func TestNotificationRemoveWithoutScopeTargetsCatalogStore(t *testing.T) {
+	root := t.TempDir()
+	processor := NewNotificationMemoryProcessor(nil, root, NewLongTermMemoryStore(filepath.Join(root, "long_term")), nil)
+	record := NotificationRecord{ContextID: "withdrawn", NotificationEvent: ble.NotificationEvent{ID: "withdraw-event", SourceEventID: "withdraw-event", Message: "The Friday delivery notice is withdrawn."}}
+	ref := MemoryMergeReference{Scope: "temporary", ID: "tmp_remove_delivery", Status: "active", Revision: 1}
+	proposal := notificationMemoryProposal{Actions: []notificationMemoryAction{{Action: "remove", MemoryID: ref.ID, MemoryRevision: 1}}}
+	validated, err := processor.validateNotificationProposal(context.Background(), record, proposal, []MemoryMergeReference{ref})
+	if err != nil {
+		t.Fatalf("remove without scope was rejected: %v", err)
+	}
+	if got := validated.Actions[0].Scope; got != "temporary" {
+		t.Fatalf("validated scope = %q, want temporary", got)
+	}
+	proposal.Actions[0].Scope = "device"
+	if _, err := processor.validateNotificationProposal(context.Background(), record, proposal, []MemoryMergeReference{ref}); err == nil {
+		t.Fatal("explicit invalid scope was accepted")
+	}
+}
+
 func TestNotificationMemoryRelatedSearchSkipsSensitiveMemories(t *testing.T) {
 	root := t.TempDir()
 	longTerm := NewLongTermMemoryStore(filepath.Join(root, "long_term"))

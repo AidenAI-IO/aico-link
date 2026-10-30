@@ -126,7 +126,7 @@
     {
       "id": "preserve_duplicate_snapshots",
       "category": "memory",
-      "description_for_judge": "Two deliberate captures of the same screen must remain two independent screen_snapshot records. The agent must retrieve both IDs rather than treating the newer one as a replacement.",
+      "description_for_judge": "Two deliberate captures of the same screen must remain two independent screen_snapshot records. The agent must retrieve both IDs rather than treating the newer one as a replacement, and the request is read-only: deleting either record fails the task.",
       "setup": {
         "type": "seed_memory",
         "clear_history_after": true,
@@ -151,7 +151,7 @@
           }
         ]
       },
-      "prompt": "CA1735 那张登机牌我好像手滑记了两遍，你看下两份是不是都还在。顺便把座位和登机口告诉我。",
+      "prompt": "CA1735 那张登机牌我特意记了两次，你看下两份是不是都还在，别删。顺便把座位和登机口告诉我。",
       "expected_recalled_memory_ids": [
         "mem_1700000000000000400_qc_duplicate_a",
         "mem_1700000000000000401_qc_duplicate_b"
@@ -165,7 +165,7 @@
         "max_tool_calls": 6,
         "must_complete_within_sec": 90,
         "response_required": true,
-        "forbidden_tools": ["recall_session_chunks", "recall_device_memory", "inspect_episode"],
+        "forbidden_tools": ["recall_session_chunks", "recall_device_memory", "inspect_episode", "forget_memory"],
         "required_tool_calls": [
           {"tool": "recall_memory"}
         ]

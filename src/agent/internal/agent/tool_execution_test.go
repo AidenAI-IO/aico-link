@@ -340,7 +340,7 @@ func TestExecuteToolCallIncompleteGestureDoesNotCaptureOrExecute(t *testing.T) {
 			if len(inner.inputs) != 0 || len(shot.inputs) != 0 {
 				t.Fatalf("invalid gesture executed=%v captured=%v", inner.inputs, shot.inputs)
 			}
-			if !strings.Contains(result.Result.Output, `"type":"swipe","start":{"x":500,"y":900},"direction":"up"`) {
+			if !strings.Contains(result.Result.Output, `"type":"swipe","start":{"x":500,"y":800},"end":{"x":500,"y":300}`) {
 				t.Fatalf("missing complete swipe correction: %s", result.Result.Output)
 			}
 		})

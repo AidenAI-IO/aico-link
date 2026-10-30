@@ -1742,7 +1742,11 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
 
     assert len(task_by_id["compare_multiple_snapshots"].expected_recalled_memory_ids) == 3
     assert len(task_by_id["find_old_snapshot_in_large_history"].setup["memories"]) >= 8
-    assert len(task_by_id["preserve_duplicate_snapshots"].expected_recalled_memory_ids) == 2
+    duplicate_task = task_by_id["preserve_duplicate_snapshots"]
+    assert len(duplicate_task.expected_recalled_memory_ids) == 2
+    # Deletion is covered by forget_one_of_two_similar_snapshots; this task
+    # checks only that identical captures stay independent.
+    assert "forget_memory" in duplicate_task.hard_assertions.forbidden_tools
 
     # Routing is validated by observed evidence and answer grounding, not by
     # forcing one exact recall query shape on the agent.
