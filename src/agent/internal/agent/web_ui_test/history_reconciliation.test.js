@@ -139,6 +139,7 @@ Object.assign(global, {
 
 const sourceDir = path.join(__dirname, '..', 'web_ui');
 const source = [
+    fs.readFileSync(path.join(sourceDir, 'scripts', 'conversation_projection.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'state.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'chat.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'events.js'), 'utf8'),
@@ -178,6 +179,7 @@ handleServerEvent({
     request_id: 'voice-1', reasoning_content: 'first thought'
 });
 const firstVoiceReasoningNode = Array.from(messagesDiv.children)[3];
+const firstVoiceProjection = projectedMessages;
 assert.equal(firstVoiceReasoningNode._message.reasoning_content, 'first thought');
 
 handleServerEvent({
@@ -187,6 +189,8 @@ handleServerEvent({
 const updatedVoiceReasoningNode = Array.from(messagesDiv.children)[3];
 assert.notStrictEqual(updatedVoiceReasoningNode, firstVoiceReasoningNode);
 assert.equal(updatedVoiceReasoningNode._message.reasoning_content, 'first thought, then another');
+assert.equal(firstVoiceProjection[3].reasoning_content, 'first thought',
+    'a later SSE delta should not change an earlier projection');
 assert.equal(messagesDiv.children.length, 4, 'reasoning deltas should update one draft');
 
 handleSemanticEvent({
@@ -195,6 +199,7 @@ handleSemanticEvent({
     turn_id: 'semantic-1',
     payload: {text: 'hello'}
 });
+const firstSemanticProjection = projectedMessages;
 handleSemanticEvent({
     schema_version: 2,
     kind: 'text.delta',
@@ -203,6 +208,8 @@ handleSemanticEvent({
 });
 const semanticDraft = Array.from(messagesDiv.children)[4];
 assert.equal(semanticDraft._message.content, 'hello world', 'semantic text deltas should accumulate');
+assert.equal(firstSemanticProjection[4].content, 'hello',
+    'a later NDJSON delta should not change an earlier projection');
 
 handleSemanticEvent({
     schema_version: 2,
@@ -258,6 +265,43 @@ handleSemanticEvent({
 const semanticStateNode = Array.from(messagesDiv.children).find(node => node._stateMessage && node._stateMessage.request_id === 'state-live-semantic');
 assert.ok(semanticStateNode, 'semantic state should render before history refresh');
 assert.equal(semanticStateNode._stateMessage.content, 'app: Settings');
+
+const persistedState = {
+    type: 'state', request_id: 'state-live-semantic', content: 'app: Settings', timestamp: 't-live-2'
+};
+renderHistory(historyB.concat(persistedState));
+assert.strictEqual(renderedStateMessages.get(messageIdentity(persistedState)), semanticStateNode,
+    'a state event with a context ID should reuse its node when history catches up');
+
+const pureHistory = [
+    {type: 'user', request_id: 'pure-request', content: 'hello'},
+    {type: 'state', request_id: 'context-backend-99', content: 'device: ready'}
+];
+let pureMessages = projectConversationMessages([], {type: 'history', messages: pureHistory.concat(pureHistory[1])});
+assert.equal(pureMessages.length, 2, 'projection should deduplicate persisted context markers');
+assert.strictEqual(projectConversationMessages(pureMessages, {type: 'live', message: pureHistory[1]}), pureMessages,
+    'SSE and history state with the same context ID should have one identity');
+
+const pureDraft = {type: 'assistant', request_id: 'pure-request', content: 'partial'};
+pureMessages = projectConversationMessages(pureMessages, {type: 'live', message: pureDraft});
+pureMessages = projectConversationMessages(pureMessages, {
+    type: 'live', message: {type: 'tool_call', request_id: 'pure-request', tool_name: 'shell', content: 'run'}
+});
+const updatedProjection = projectConversationMessages(pureMessages, {
+    type: 'live', message: Object.assign({}, pureDraft, {content: 'more text'})
+});
+assert.equal(updatedProjection.length, pureMessages.length, 'SSE and NDJSON updates should replace one draft');
+assert.equal(updatedProjection[2].content, 'more text');
+assert.equal(pureMessages[2].content, 'partial', 'the reducer should not mutate prior state');
+
+pureMessages = projectConversationMessages(updatedProjection, {
+    type: 'final', message: Object.assign({}, pureDraft, {content: 'final'})
+});
+assert.equal(pureMessages[3].content, 'final', 'final output should follow intervening tool messages');
+pureMessages = projectConversationMessages(pureMessages, {type: 'remove', key: messageIdentity(pureMessages[3])});
+assert.equal(pureMessages.length, 3, 'a reset should remove the matching live draft');
+pureMessages = projectConversationMessages(pureMessages, {type: 'history', messages: pureHistory});
+assert.equal(pureMessages.length, 2, 'durable history should replace transient live messages');
 `
 ].join('\n');
 

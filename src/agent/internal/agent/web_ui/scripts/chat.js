@@ -461,6 +461,11 @@ function resetAssistantDelta(event) {
 }
 
 function removeRenderedMessage(messageKey) {
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'remove', key: messageKey});
+    removeRenderedMessageNode(messageKey);
+}
+
+function removeRenderedMessageNode(messageKey) {
     const existing = renderedMessageNodes.get(messageKey);
     renderedMessageKeys.delete(messageKey);
     renderedMessageNodes.delete(messageKey);
@@ -478,14 +483,15 @@ function finalizeAssistantMessage(msg) {
     if (key) {
         delete streamingAssistantDrafts[key];
     }
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'final', message: msg});
     const messageKey = messageIdentity(msg);
     if (renderedMessageKeys.has(messageKey)) {
         // A streamed draft may have been inserted before tool events.
         // Re-append the finalized assistant message so the live chat
         // order matches the persisted history and episode trace.
-        removeRenderedMessage(messageKey);
+        removeRenderedMessageNode(messageKey);
     }
-    addMessage(msg);
+    renderLiveMessage(msg);
 }
 
 function assistantStreamKey(value) {
@@ -533,7 +539,8 @@ async function clearSessionAndMemory() {
 }
 
 function renderHistory(history) {
-    history = Array.isArray(history) ? history : [];
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'history', messages: history});
+    history = projectedMessages;
     const fingerprint = JSON.stringify(history);
     if (fingerprint === renderedHistoryFingerprint) return;
 
@@ -608,7 +615,13 @@ function renderHistory(history) {
 }
 
 function addMessage(msg) {
-    if (isControlMessage(msg)) return;
+    const next = projectConversationMessages(projectedMessages, {type: 'live', message: msg});
+    if (next === projectedMessages) return;
+    projectedMessages = next;
+    renderLiveMessage(msg);
+}
+
+function renderLiveMessage(msg) {
     if (isContextMarkerMessage(msg)) {
         const key = messageIdentity(msg);
         if (!renderedStateMessages.has(key)) {
@@ -686,46 +699,4 @@ function updateContextMarkerNode(node, msg, index) {
     if (!button) return;
     button.title = contextMarkerSummary(msg, index);
     button.setAttribute('aria-expanded', node.classList.contains('open') ? 'true' : 'false');
-}
-
-function isControlMessage(msg) {
-    return normalizeType((msg || {}).type) === 'todo_closed';
-}
-
-function isContextMarkerMessage(msg) {
-    msg = msg || {};
-    const type = normalizeType(msg.type);
-    return type === 'state' || type === 'notice' || msg.role === 'state' || msg.role === 'notice';
-}
-
-function messageIdentity(msg) {
-    msg = msg || {};
-    const type = isContextMarkerMessage(msg) ? contextMarkerType(msg) : normalizeType(msg.type);
-    const content = msg.content || '';
-    const requestId = msg.request_id || '';
-    if (requestId && (type === 'tool_call' || type === 'tool_result')) {
-        return [
-            'request', requestId, type,
-            msg.tool_name || '', msg.tool_input || '', content, msg.timestamp || ''
-        ].join('\u001f');
-    }
-    if (requestId && type === 'assistant') {
-        return ['request', requestId, type].join('\u001f');
-    }
-    if (requestId && type === 'user') {
-        return ['request', requestId, type, content].join('\u001f');
-    }
-    if (requestId && (type === 'state' || type === 'notice')) {
-        return ['request', requestId, type].join('\u001f');
-    }
-
-    const episodeId = msg.episode_id || '';
-    if (episodeId && type === 'assistant') {
-        return ['episode', episodeId, type].join('\u001f');
-    }
-    if (episodeId) {
-        return ['episode', episodeId, type, msg.role || '', msg.tool_name || '', msg.tool_input || '', content, msg.timestamp || ''].join('\u001f');
-    }
-
-    return ['local', type, content, msg.timestamp || ''].join('\u001f');
 }

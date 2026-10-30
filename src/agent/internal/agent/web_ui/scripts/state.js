@@ -54,3 +54,4 @@ let streamingAssistantDrafts = {};
 let renderedStateMessages = new Map();
 let activeStateMessageKey = '';
 let renderedHistoryFingerprint = null;
+let projectedMessages = [];
