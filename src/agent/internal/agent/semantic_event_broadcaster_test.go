@@ -41,6 +41,29 @@ func TestSemanticEventBroadcasterReplaysBeforeLiveEvents(t *testing.T) {
 	}
 }
 
+func TestSemanticEventBroadcasterSubscribeLatestSkipsRetainedEvents(t *testing.T) {
+	b := newSemanticEventBroadcaster(8)
+	if err := b.Publish(semanticTestEvent(1)); err != nil {
+		t.Fatal(err)
+	}
+	replay, ch, unsubscribe := b.SubscribeLatest()
+	defer unsubscribe()
+	if replay.ResyncRequired || len(replay.Events) != 0 || replay.Current.Sequence != 1 {
+		t.Fatalf("latest replay = %#v", replay)
+	}
+	if err := b.Publish(semanticTestEvent(2)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-ch:
+		if event.Sequence != 2 {
+			t.Fatalf("live sequence = %d, want 2", event.Sequence)
+		}
+	default:
+		t.Fatal("latest subscriber missed the next event")
+	}
+}
+
 func TestSemanticEventBroadcasterDisconnectsSaturatedSubscriber(t *testing.T) {
 	b := newSemanticEventBroadcaster(4)
 	_, ch, _ := b.Subscribe(nil)

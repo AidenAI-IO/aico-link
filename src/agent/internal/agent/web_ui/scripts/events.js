@@ -13,6 +13,7 @@ let historyLoadInFlight = false;
 let historyLoadPending = false;
 let olderHistoryLoading = false;
 let historyRefreshAfterReveal = false;
+let semanticEventCursor = '';
 
 async function fetchHistoryPage(params) {
     const res = await fetch('/api/history?' + new URLSearchParams(params).toString());
@@ -36,6 +37,10 @@ function chatRunActive() {
     return typeof currentChatRequestId !== 'undefined' && !!currentChatRequestId;
 }
 
+function liveAssistantDraftActive() {
+    return Object.keys(streamingAssistantDrafts).length > 0;
+}
+
 function deferHistoryForTextReveal() {
     if (!assistantTextReveal.hasPending()) return false;
     historyRefreshAfterReveal = true;
@@ -49,7 +54,7 @@ function resumeHistoryAfterTextReveal() {
 }
 
 async function loadHistory() {
-    if (chatRunActive() || deferHistoryForTextReveal()) return;
+    if (chatRunActive() || liveAssistantDraftActive() || deferHistoryForTextReveal()) return;
     if (historyLoadInFlight) {
         historyLoadPending = true;
         return;
@@ -65,7 +70,7 @@ async function loadHistory() {
                 : {limit: historyPageLimit});
             // A run that started meanwhile renders its own live messages, and
             // this page would remove them; the refresh after the run catches up.
-            if (chatRunActive() || deferHistoryForTextReveal()) return;
+            if (chatRunActive() || liveAssistantDraftActive() || deferHistoryForTextReveal()) return;
             // An older page or a clear replaced the window meanwhile; ask again
             // from the new window instead of appending to a stale one.
             if (generation !== historyGeneration || current !== historyWindow) {
@@ -92,7 +97,7 @@ async function loadHistory() {
 }
 
 async function loadOlderHistory() {
-    if (olderHistoryLoading || chatRunActive() || deferHistoryForTextReveal()) return;
+    if (olderHistoryLoading || chatRunActive() || liveAssistantDraftActive() || deferHistoryForTextReveal()) return;
     olderHistoryLoading = true;
     let loaded = false;
     try {
@@ -103,7 +108,7 @@ async function loadOlderHistory() {
             const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
             // Like a refresh, do not re-render over a run's live messages, and
             // drop a page fetched before a clear.
-            if (chatRunActive() || generation !== historyGeneration || deferHistoryForTextReveal()) return;
+            if (chatRunActive() || liveAssistantDraftActive() || generation !== historyGeneration || deferHistoryForTextReveal()) return;
             // A refresh replaced the window meanwhile; ask again from its start,
             // since a reader already at the top will not scroll there again.
             if (current !== historyWindow) continue;
@@ -148,7 +153,7 @@ function loadOlderHistoryNearTop() {
 
 let historyRefreshTimer = null;
 function refreshHistoryFromContext() {
-    if (chatRunActive() || deferHistoryForTextReveal()) return;
+    if (chatRunActive() || liveAssistantDraftActive() || deferHistoryForTextReveal()) return;
     if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
     historyRefreshTimer = setTimeout(function() {
         historyRefreshTimer = null;
@@ -164,7 +169,8 @@ function connectSSE() {
     // The v2 endpoint keeps the legacy projection as a fallback. Older
     // daemons ignore the query parameter and still send the public message
     // envelope, which is handled below by handleServerEvent.
-    eventSource = new EventSource('/api/events?version=2');
+    const since = semanticEventCursor || 'latest';
+    eventSource = new EventSource('/api/events?version=2&since=' + encodeURIComponent(since));
 
     eventSource.onopen = function() {
         console.log('[SSE] Connected');
@@ -175,6 +181,12 @@ function connectSSE() {
             const data = JSON.parse(e.data);
             if (isSemanticEvent(data)) {
                 handleSemanticEvent(data);
+                if (e.lastEventId) {
+                    semanticEventCursor = e.lastEventId;
+                } else if (data.type === 'resync_required' ||
+                    (data.type === 'connected' && !semanticEventCursor)) {
+                    semanticEventCursor = data.session_epoch + ':' + data.sequence;
+                }
             } else {
                 handleServerEvent(data);
             }
@@ -190,7 +202,7 @@ function connectSSE() {
 
 function isSemanticEvent(data) {
     return !!data && Number(data.schema_version) >= 2 &&
-        (typeof data.kind === 'string' || data.type === 'resync_required');
+        (typeof data.kind === 'string' || data.type === 'resync_required' || data.type === 'connected');
 }
 
 function semanticField(value, ...names) {
@@ -271,6 +283,7 @@ function handleSemanticEvent(event) {
                 reasoning_content: String(semanticField(payload, 'reasoning_content', 'ReasoningContent') || ''),
                 timestamp
             });
+            refreshHistoryFromContext();
             return;
         case 'state.updated':
             // State is persisted before the model starts, but history refreshes
@@ -294,6 +307,18 @@ function handleSemanticEvent(event) {
         case 'tool.failed':
             if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
             assistantDraftBlockedByTool.delete(requestId);
+            refreshHistoryFromContext();
+            return;
+        case 'response.terminal':
+        case 'run.terminal':
+        case 'session.closed':
+            if (requestId) {
+                delete streamingAssistantDrafts[requestId];
+                assistantDraftBlockedByTool.delete(requestId);
+            } else {
+                streamingAssistantDrafts = {};
+                assistantDraftBlockedByTool.clear();
+            }
             refreshHistoryFromContext();
             return;
         default:

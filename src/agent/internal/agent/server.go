@@ -2762,17 +2762,25 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	rawSince := strings.TrimSpace(r.URL.Query().Get("since"))
+	rawSince := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	rawEpoch := ""
 	if rawSince == "" {
-		rawSince = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+		rawSince = strings.TrimSpace(r.URL.Query().Get("since"))
+		rawEpoch = r.URL.Query().Get("epoch")
 	}
-	cursor, err := parseSemanticEventCursor(rawSince, r.URL.Query().Get("epoch"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
+	var replay streamcontract.ReplayResult
+	var ch <-chan streamcontract.Event
+	var unsubscribe func()
+	if rawSince == "latest" {
+		replay, ch, unsubscribe = s.semanticEvents.SubscribeLatest()
+	} else {
+		cursor, err := parseSemanticEventCursor(rawSince, rawEpoch)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		replay, ch, unsubscribe = s.semanticEvents.Subscribe(cursor)
 	}
-
-	replay, ch, unsubscribe := s.semanticEvents.Subscribe(cursor)
 	defer unsubscribe()
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -2794,10 +2802,13 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 		return true
 	}
+	if rawSince == "latest" {
+		_, _ = fmt.Fprintf(w, "id: %d:%d\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+	}
 	_, _ = fmt.Fprintf(w, "data: {\"type\":\"connected\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence)
 	flusher.Flush()
 	if replay.ResyncRequired {
-		_, _ = fmt.Fprintf(w, "data: {\"type\":\"resync_required\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence)
+		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: {\"type\":\"resync_required\",\"schema_version\":2,\"session_epoch\":%d,\"sequence\":%d}\n\n", replay.Current.SessionEpoch, replay.Current.Sequence, replay.Current.SessionEpoch, replay.Current.Sequence)
 		flusher.Flush()
 	}
 	for _, event := range replay.Events {

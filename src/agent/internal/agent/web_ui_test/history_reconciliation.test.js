@@ -161,6 +161,17 @@ Object.assign(global, {
     updateEmptyState: () => {}
 });
 
+global.EventSource = class {
+    constructor(url) {
+        this.url = url;
+        this.closed = false;
+    }
+
+    close() {
+        this.closed = true;
+    }
+};
+
 const sourceDir = path.join(__dirname, '..', 'web_ui');
 const source = [
     fs.readFileSync(path.join(sourceDir, 'scripts', 'conversation_projection.js'), 'utf8'),
@@ -554,8 +565,59 @@ renderHistory([]);
 advanceAnimation(1000);
 assert.equal(messagesDiv.children.length, 0, 'clearing history must cancel pending presentation');
 assert.equal(animationFrames.size, 0);
+
+handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'failed-external-run',
+    payload: {text: 'partial'}});
+handleSemanticEvent({schema_version: 2, kind: 'response.terminal', turn_id: 'failed-external-run'});
+assert.equal(streamingAssistantDrafts['failed-external-run'], undefined,
+    'a failed external run must release its live draft so history can recover');
+assistantTextReveal.flush();
+if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
+historyRefreshTimer = null;
+renderHistory([]);
+
+connectSSE();
+const firstSSE = eventSource;
+assert.equal(firstSSE.url, '/api/events?version=2&since=latest',
+    'new pages should subscribe at the live watermark instead of replaying old turns');
+firstSSE.onmessage({data: JSON.stringify({type: 'connected', schema_version: 2, session_epoch: 1, sequence: 4})});
+assert.equal(semanticEventCursor, '1:4');
+firstSSE.onmessage({data: JSON.stringify({schema_version: 2, kind: 'text.delta', turn_id: 'cursor-run',
+    payload: {text: 'live'}, session_epoch: 1, sequence: 5}), lastEventId: '1:5'});
+connectSSE();
+assert.equal(firstSSE.closed, true);
+assert.equal(eventSource.url, '/api/events?version=2&since=1%3A5',
+    'manual reconnect should resume from the last received event');
 clearTimeout(historyRefreshTimer);
+
+globalThis.verifyHistoryLoadDoesNotEraseLiveDraft = async function() {
+    resetHistoryWindow();
+    renderHistory([]);
+    let releaseHistory;
+    globalThis.fetch = function() {
+        return new Promise(resolve => { releaseHistory = resolve; });
+    };
+    const pendingHistory = loadHistory();
+    handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: 'race-run',
+        payload: {text: 'Streaming while history loads'}});
+    releaseHistory({ok: true, json: async () => ({session_id: 'session-1', start: 0, end: 1,
+        messages: [{type: 'user', request_id: 'old-user', content: 'older'}]})});
+    await pendingHistory;
+    assert.equal(streamingAssistantDrafts['race-run'].content, 'Streaming while history loads');
+    assert.equal(messagesDiv.children[0]._message.content, 'Streaming while history loads',
+        'a stale history page must not remove a live SSE draft');
+    handleSemanticEvent({schema_version: 2, kind: 'text.final', turn_id: 'race-run',
+        payload: {content: 'Streaming while history loads'}});
+    assert.ok(historyRefreshTimer || historyRefreshAfterReveal,
+        'history should refresh after the live draft finishes');
+    assistantTextReveal.flush();
+    clearTimeout(historyRefreshTimer);
+};
 `
 ].join('\n');
 
 vm.runInThisContext(source, {filename: path.join(sourceDir, 'scripts', 'chat.js')});
+verifyHistoryLoadDoesNotEraseLiveDraft().catch(err => {
+    console.error(err);
+    process.exitCode = 1;
+});

@@ -95,6 +95,60 @@ func TestHandleSemanticEventsNegotiatesV2AndReplaysEvents(t *testing.T) {
 	}
 }
 
+func TestHandleSemanticEventsLatestAndReconnectCursor(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		lastID    string
+		wantEvent bool
+	}{
+		{name: "fresh observer skips retained events"},
+		{name: "browser reconnect replays from Last-Event-ID", lastID: "1:0", wantEvent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := &Server{semanticEvents: newSemanticEventBroadcaster(8)}
+			if err := server.semanticEvents.Publish(streamcontract.NewEvent(streamcontract.EventIdentity{
+				EventID: "retained", ConversationID: "agent", SessionEpoch: 1,
+			}, streamcontract.EventTextDelta, map[string]string{"text": "old"})); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			req := httptest.NewRequest(http.MethodGet, "/api/events?version=2&since=latest", nil).WithContext(ctx)
+			if tc.lastID != "" {
+				req.Header.Set("Last-Event-ID", tc.lastID)
+			}
+			rec := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				server.handleEvents(rec, req)
+				close(done)
+			}()
+			deadline := time.Now().Add(time.Second)
+			for {
+				server.semanticEvents.mu.Lock()
+				count := len(server.semanticEvents.subscribers)
+				server.semanticEvents.mu.Unlock()
+				if count > 0 || time.Now().After(deadline) {
+					break
+				}
+				time.Sleep(time.Millisecond)
+			}
+			cancel()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("semantic SSE handler did not stop")
+			}
+			body := rec.Body.String()
+			if got := strings.Contains(body, `"kind":"text.delta"`); got != tc.wantEvent {
+				t.Fatalf("retained event present = %v, want %v; body = %s", got, tc.wantEvent, body)
+			}
+			if tc.lastID == "" && !strings.Contains(body, "id: 1:1\n") {
+				t.Fatalf("latest connection did not establish a browser replay cursor: %s", body)
+			}
+		})
+	}
+}
+
 func TestParseSemanticEventCursorSupportsLastEventIDAndEpochQuery(t *testing.T) {
 	for _, tc := range []struct {
 		name      string

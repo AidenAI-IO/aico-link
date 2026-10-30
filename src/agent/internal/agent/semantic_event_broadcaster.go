@@ -79,10 +79,23 @@ func (b *semanticEventBroadcaster) Publish(event stream.Event) error {
 // broadcaster lock makes the snapshot watermark and live delivery atomic from
 // the subscriber's perspective, so no event can fall between them.
 func (b *semanticEventBroadcaster) Subscribe(cursor *stream.ReplayCursor) (stream.ReplayResult, <-chan stream.Event, func()) {
+	return b.subscribe(cursor, false)
+}
+
+// SubscribeLatest starts a live observer at the current watermark.
+func (b *semanticEventBroadcaster) SubscribeLatest() (stream.ReplayResult, <-chan stream.Event, func()) {
+	return b.subscribe(nil, true)
+}
+
+func (b *semanticEventBroadcaster) subscribe(cursor *stream.ReplayCursor, latest bool) (stream.ReplayResult, <-chan stream.Event, func()) {
 	if b == nil {
 		return stream.ReplayResult{ResyncRequired: true}, nil, func() {}
 	}
 	b.mu.Lock()
+	if latest {
+		current := b.replay.Cursor()
+		cursor = &current
+	}
 	ch := make(chan stream.Event, semanticEventSubscriberBufferSize)
 	b.subscribers[ch] = struct{}{}
 	replay := b.replay.Snapshot(cursor)
