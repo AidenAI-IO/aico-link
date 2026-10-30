@@ -162,6 +162,12 @@ type Point struct {
 	Y float64 `json:"y"` // Normalized Y coordinate (0-1000)
 }
 
+// DragActivationPoint is where drag_start moves the contact after pressing at
+// (x, y), for callers that track where a gesture leaves the pointer.
+func DragActivationPoint(x, y float64) Point {
+	return dragActivationPoint(Point{X: x, Y: y})
+}
+
 // dragActivationPoint picks the axis direction with the most room and moves
 // exactly 200 normalized units. This guarantees a real movement at every valid
 // start point without asking the caller to guess an activation coordinate.

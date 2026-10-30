@@ -184,14 +184,16 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 
 func screenshotObservationStatusSummary(toolName string, result postActionScreenshotResult) string {
 	var notes []string
-	if result.ScreenChanged != nil {
-		if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
-			if *result.ScreenChanged {
+	if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
+		if result.FramesDiffered != nil {
+			if *result.FramesDiffered {
 				notes = append(notes, "Screen motion was observed during this wait window; this does not by itself prove that the preceding action succeeded.")
 			} else {
 				notes = append(notes, "No frame-to-frame screen motion was observed during this wait window; this does not by itself prove that the preceding action had no effect.")
 			}
-		} else if *result.ScreenChanged {
+		}
+	} else if result.ScreenChanged != nil {
+		if *result.ScreenChanged {
 			notes = append(notes, "A meaningful visible UI change was detected between the pre-action baseline and the final settled screenshot.")
 		} else {
 			notes = append(notes, "No meaningful visible UI change was detected between the pre-action baseline and the final settled screenshot.")
