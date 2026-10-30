@@ -225,3 +225,23 @@ func TestTerminationPolicyRepeatedObservationKeepsItsAllowance(t *testing.T) {
 		t.Fatalf("tier=%d score=%d: the observation did not allow one action", policy.tier, policy.stallScore)
 	}
 }
+
+// Under restriction at score 5, a failed screenshot followed by an identical
+// successful retry pushes the repeat score to the termination threshold; the
+// retry is still the first observation made under restriction and must allow
+// one action instead of ending the run.
+func TestTerminationPolicyObservationRetryKeepsItsAllowance(t *testing.T) {
+	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
+	screen := progressTestObservation(t)
+	restrictWithUnchangedActions(t, policy, screen)
+	policy.stallScore = policy.cfg.TerminateStallScore - 1
+	policy.refreshTier()
+	policy.AfterToolCall("screenshot", `{}`, "frame capture failed", true)
+	decision := policy.AfterToolCall("screenshot", `{}`, screen, false)
+	if decision.Stop {
+		t.Fatalf("decision = %#v, want the retry to earn the allowance", decision)
+	}
+	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); !allowed {
+		t.Fatalf("tier=%d score=%d: the successful retry did not allow one action", policy.tier, policy.stallScore)
+	}
+}

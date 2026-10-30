@@ -365,7 +365,7 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 	// until the screen changes on its own; another stall restricts again.
 	// This runs after the repeat scoring so a repeated observation cannot
 	// take the allowance back.
-	if !madeProgress && restrictedBefore && p.tier == TierRestrictTools && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
+	if !madeProgress && restrictedBefore && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
 		p.probationUsed = true
 		p.stallScore = p.cfg.RestrictToolsStallScore - 1
 		p.refreshTier()
