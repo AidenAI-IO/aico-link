@@ -70,6 +70,7 @@ suites:
     class: deterministic
     paths: [tests, src/config_web/web, src/agent/internal/agent/web_ui_test]
     command: |
+      node src/agent/internal/agent/web_ui_test/streaming_text.test.js
       node src/agent/internal/agent/web_ui_test/history_reconciliation.test.js
       node --test --experimental-vm-modules \
         tests/*.mjs \

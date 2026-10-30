@@ -1,4 +1,16 @@
 // Chat submission, steering, streaming, and history reconciliation.
+// Canonical messages retain every received character. Only their text nodes
+// reveal incrementally, so presentation never blocks stream consumption.
+const assistantTextReveal = createStreamingTextReveal({
+    requestFrame: callback => window.requestAnimationFrame(callback),
+    cancelFrame: id => window.cancelAnimationFrame(id),
+    now: () => performance.now(),
+    immediate: () => document.hidden || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+    beforeFrame: () => isConversationNearBottom(),
+    afterFrame: shouldStickToBottom => { if (shouldStickToBottom) scrollToBottom(); },
+    onIdle: () => resumeHistoryAfterTextReveal()
+});
+
 async function sendMessage() {
     if (sendBtn.disabled) return;
     if (currentChatRequestId) {
@@ -11,6 +23,7 @@ async function sendMessage() {
 
     const pendingAttachments = cloneAttachmentsForMessage(draftAttachments);
 
+    assistantTextReveal.flush();
     inputEl.value = '';
     autoResizeInput();
     clearDraftAttachments();
@@ -75,6 +88,7 @@ async function sendMessage() {
             timestamp: new Date().toISOString()
         });
     } finally {
+        if (!completed) assistantTextReveal.flush();
         currentChatRequestId = '';
         currentChatAbortController = null;
         currentChatCancelRequested = false;
@@ -241,6 +255,7 @@ async function cancelCurrentRun(event) {
     }
     resetStopRunArm();
     currentChatCancelRequested = true;
+    assistantTextReveal.flush();
     stopRunBtn.disabled = true;
     stopRunBtn.textContent = 'Stopping...';
     pendingSteer = null;
@@ -488,6 +503,7 @@ function retireAssistantDraft(event) {
 }
 
 function removeRenderedMessage(messageKey) {
+    assistantTextReveal.remove(messageKey);
     projectedMessages = projectConversationMessages(projectedMessages, {type: 'remove', key: messageKey});
     removeRenderedMessageNode(messageKey);
 }
@@ -571,6 +587,10 @@ function renderHistory(history) {
     const fingerprint = JSON.stringify(history);
     if (fingerprint === renderedHistoryFingerprint) return;
 
+    // Explicit history replacement (including a clear) cannot leave callbacks
+    // writing to removed nodes. Unchanged nodes must also show their full text.
+    assistantTextReveal.flush();
+    assistantTextReveal.clear();
     const shouldStickToBottom = messagesDiv.children.length === 0 || isConversationNearBottom();
     const previousScrollTop = conversationEl.scrollTop;
     const previousMessageNodes = renderedMessageNodes;
@@ -678,7 +698,7 @@ function renderLiveMessage(msg, beforeRequestId) {
     renderedHistoryFingerprint = null;
     renderedMessageKeys.add(key);
     const shouldStickToBottom = isConversationNearBottom();
-    const node = createTrackedMessageNode(msg);
+    const node = createTrackedMessageNode(msg, undefined, true);
     renderedMessageNodes.set(key, node);
     messagesDiv.appendChild(node);
     updateEmptyState();
@@ -696,16 +716,24 @@ function updateMessageNode(key, msg) {
     if (existing._messageFingerprint === incomingFingerprint) return;
     renderedHistoryFingerprint = null;
     const shouldStickToBottom = isConversationNearBottom();
-    const replacement = createTrackedMessageNode(msg, incomingFingerprint);
+    const replacement = createTrackedMessageNode(msg, incomingFingerprint, true);
     renderedMessageNodes.set(key, replacement);
     existing.replaceWith(replacement);
     updateEmptyState();
     if (shouldStickToBottom) scrollToBottom();
 }
 
-function createTrackedMessageNode(msg, fingerprint) {
+function createTrackedMessageNode(msg, fingerprint, live) {
     const node = createMessageNode(msg);
     node._messageFingerprint = fingerprint || messageRenderFingerprint(msg);
+    const key = messageIdentity(msg);
+    if (live && normalizeType(msg.type) === 'assistant' &&
+        (streamingAssistantDrafts[assistantStreamKey(msg)] || assistantTextReveal.has(key))) {
+        assistantTextReveal.bind(key, {
+            content: node.querySelector('.message-copy'),
+            reasoning: node.querySelector('.reasoning-text')
+        }, {content: msg.content || '', reasoning: msg.reasoning_content || ''});
+    }
     return node;
 }
 

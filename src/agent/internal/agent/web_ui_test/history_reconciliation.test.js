@@ -101,10 +101,34 @@ class FakeDocument {
 const document = new FakeDocument();
 global.document = document;
 global.window = global;
+let animationTime = 0;
+let nextAnimationID = 1;
+const animationFrames = new Map();
+global.animationFrames = animationFrames;
+global.performance = {now: () => animationTime};
+global.requestAnimationFrame = callback => {
+    const id = nextAnimationID++;
+    animationFrames.set(id, callback);
+    return id;
+};
+global.cancelAnimationFrame = id => animationFrames.delete(id);
+global.advanceAnimation = function(milliseconds = 16) {
+    animationTime += milliseconds;
+    const pending = Array.from(animationFrames.values());
+    animationFrames.clear();
+    pending.forEach(callback => callback(animationTime));
+};
 
 function createMessageNode(msg) {
     const node = document.createElement('article');
     node._message = msg;
+    for (const [field, className] of [['content', 'message-copy'], ['reasoning_content', 'reasoning-text']]) {
+        if (!msg[field]) continue;
+        const text = document.createElement('div');
+        text.className = className;
+        text.textContent = msg[field];
+        node.appendChild(text);
+    }
     return node;
 }
 
@@ -141,6 +165,7 @@ const sourceDir = path.join(__dirname, '..', 'web_ui');
 const source = [
     fs.readFileSync(path.join(sourceDir, 'scripts', 'conversation_projection.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'state.js'), 'utf8'),
+    fs.readFileSync(path.join(sourceDir, 'scripts', 'streaming_text.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'chat.js'), 'utf8'),
     fs.readFileSync(path.join(sourceDir, 'scripts', 'events.js'), 'utf8'),
     `
@@ -415,6 +440,66 @@ handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: externalRun
     payload: {text: 'After tool'}});
 assert.equal(streamingAssistantDrafts[externalRunId].content, 'After tool',
     'SSE-only runs should resume streaming after tool completion');
+clearTimeout(historyRefreshTimer);
+historyRefreshTimer = null;
+historyRefreshAfterReveal = false;
+
+renderHistory([]);
+const revealRun = 'reveal-run';
+currentChatRequestId = revealRun;
+addMessage({type: 'user', request_id: revealRun, content: 'hello'});
+const streamedText = 'Hello, this chunk should appear gradually.';
+handleChatStreamEvent({type: 'assistant_delta', request_id: revealRun, delta: streamedText});
+const revealKey = messageIdentity({type: 'assistant', request_id: revealRun});
+const revealNode = renderedMessageNodes.get(revealKey);
+assert.equal(projectedMessages[1].content, streamedText, 'logical text must retain the complete chunk');
+assert.equal(revealNode.querySelector('.message-copy').textContent, '', 'a chunk must not appear in one burst');
+advanceAnimation();
+const visiblePrefix = revealNode.querySelector('.message-copy').textContent;
+assert.ok(visiblePrefix.length > 0 && visiblePrefix.length < streamedText.length);
+assert.strictEqual(renderedMessageNodes.get(revealKey), revealNode, 'animation should update the existing text node');
+
+handleChatStreamEvent({type: 'message', message: {
+    type: 'assistant', request_id: revealRun, content: streamedText + ' Done.', timestamp: 't-reveal-final'
+}});
+assert.equal(renderedMessageNodes.get(revealKey).querySelector('.message-copy').textContent, visiblePrefix,
+    'finalization must preserve the visible prefix and finish the queued text');
+currentChatRequestId = '';
+refreshHistoryFromContext();
+assert.equal(historyRefreshAfterReveal, true, 'completion refresh should wait for visible text');
+assert.equal(historyRefreshTimer, null, 'history must not bypass the remaining reveal');
+for (let i = 0; i < 200 && assistantTextReveal.hasPending(); i++) advanceAnimation();
+assert.equal(renderedMessageNodes.get(revealKey).querySelector('.message-copy').textContent, streamedText + ' Done.');
+assert.ok(historyRefreshTimer, 'history refresh should resume once the queue drains');
+clearTimeout(historyRefreshTimer);
+historyRefreshTimer = null;
+renderHistory([{type: 'assistant', request_id: 'context-final', content: streamedText + ' Done.'}]);
+assert.equal(messagesDiv.children[0].querySelector('.message-copy').textContent, streamedText + ' Done.',
+    'loaded history should appear immediately');
+assert.equal(animationFrames.size, 0);
+
+renderHistory([]);
+handleChatStreamEvent({type: 'assistant_delta', request_id: 'reveal-tool', delta: 'A provisional tool preamble'});
+advanceAnimation();
+handleChatStreamEvent({type: 'message', message: {type: 'tool_call', request_id: 'reveal-tool', tool_name: 'weather'}});
+advanceAnimation(1000);
+assert.deepEqual(renderedTypes(), ['tool_call'], 'a retired draft must not reappear from an animation callback');
+handleChatStreamEvent({type: 'message', message: {type: 'tool_result', request_id: 'reveal-tool', tool_name: 'weather'}});
+handleChatStreamEvent({type: 'assistant_delta', request_id: 'reveal-tool', delta: 'The weather is sunny.'});
+advanceAnimation();
+assert.ok(messagesDiv.children[2].querySelector('.message-copy').textContent.length > 0,
+    'post-tool chunks should resume character playback');
+handleChatStreamEvent({type: 'assistant_delta_reset', request_id: 'reveal-tool'});
+advanceAnimation(1000);
+assert.deepEqual(renderedTypes(), ['tool_call', 'tool_result']);
+assert.equal(animationFrames.size, 0, 'reset should cancel queued reveal callbacks');
+
+handleChatStreamEvent({type: 'assistant_delta', request_id: 'clear-reveal', delta: 'Text pending when history clears'});
+resetHistoryWindow();
+renderHistory([]);
+advanceAnimation(1000);
+assert.equal(messagesDiv.children.length, 0, 'clearing history must cancel pending presentation');
+assert.equal(animationFrames.size, 0);
 clearTimeout(historyRefreshTimer);
 `
 ].join('\n');

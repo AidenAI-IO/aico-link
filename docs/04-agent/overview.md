@@ -51,6 +51,13 @@ The HTTP server and Web UI start in every input mode. `input_mode` controls whet
 
 In `stt` mode, Web UI requests and device voice interactions share the same Agent runtime and run in the same daemon process.
 
+The Web UI reveals streamed answer and reasoning text character by character,
+with faster playback for large bursts. It keeps the complete received text in
+memory and waits for playback to finish before reconciling completed history.
+Tool calls and stream resets discard the previous draft's pending animation.
+History loads, background tabs, and reduced-motion preferences show text without
+animation.
+
 ## Proposed Architecture Work
 
 The [Streaming-First Agent Refactor Plan](streaming-first-refactor-plan.md)

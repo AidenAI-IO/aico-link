@@ -2973,6 +2973,7 @@ func TestWebUIIsEmbeddedFromStaticResource(t *testing.T) {
 	for _, asset := range []string{
 		"/web-ui/styles.css",
 		"/web-ui/scripts/state.js",
+		"/web-ui/scripts/streaming_text.js",
 		"/web-ui/scripts/events.js",
 		"/web-ui/scripts/tools.js",
 		"/web-ui/scripts/chat.js",
@@ -2997,6 +2998,7 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 	}{
 		{path: "/web-ui/styles.css", contentType: "text/css", content: ":root {"},
 		{path: "/web-ui/scripts/bootstrap.js", contentType: "text/javascript", content: "loadHistory();"},
+		{path: "/web-ui/scripts/streaming_text.js", contentType: "text/javascript", content: "function createStreamingTextReveal("},
 	} {
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, test.path, nil))

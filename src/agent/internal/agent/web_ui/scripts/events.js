@@ -12,6 +12,7 @@ let historyGeneration = 0;
 let historyLoadInFlight = false;
 let historyLoadPending = false;
 let olderHistoryLoading = false;
+let historyRefreshAfterReveal = false;
 
 async function fetchHistoryPage(params) {
     const res = await fetch('/api/history?' + new URLSearchParams(params).toString());
@@ -28,14 +29,27 @@ function historyWindowFromPage(page) {
 function resetHistoryWindow() {
     historyWindow = null;
     historyGeneration++;
+    historyRefreshAfterReveal = false;
 }
 
 function chatRunActive() {
     return typeof currentChatRequestId !== 'undefined' && !!currentChatRequestId;
 }
 
+function deferHistoryForTextReveal() {
+    if (!assistantTextReveal.hasPending()) return false;
+    historyRefreshAfterReveal = true;
+    return true;
+}
+
+function resumeHistoryAfterTextReveal() {
+    if (!historyRefreshAfterReveal) return;
+    historyRefreshAfterReveal = false;
+    refreshHistoryFromContext();
+}
+
 async function loadHistory() {
-    if (chatRunActive()) return;
+    if (chatRunActive() || deferHistoryForTextReveal()) return;
     if (historyLoadInFlight) {
         historyLoadPending = true;
         return;
@@ -51,7 +65,7 @@ async function loadHistory() {
                 : {limit: historyPageLimit});
             // A run that started meanwhile renders its own live messages, and
             // this page would remove them; the refresh after the run catches up.
-            if (chatRunActive()) return;
+            if (chatRunActive() || deferHistoryForTextReveal()) return;
             // An older page or a clear replaced the window meanwhile; ask again
             // from the new window instead of appending to a stale one.
             if (generation !== historyGeneration || current !== historyWindow) {
@@ -78,7 +92,7 @@ async function loadHistory() {
 }
 
 async function loadOlderHistory() {
-    if (olderHistoryLoading) return;
+    if (olderHistoryLoading || chatRunActive() || deferHistoryForTextReveal()) return;
     olderHistoryLoading = true;
     let loaded = false;
     try {
@@ -89,7 +103,7 @@ async function loadOlderHistory() {
             const page = await fetchHistoryPage({before: current.start, session_id: current.sessionId, limit: historyPageLimit});
             // Like a refresh, do not re-render over a run's live messages, and
             // drop a page fetched before a clear.
-            if (chatRunActive() || generation !== historyGeneration) return;
+            if (chatRunActive() || generation !== historyGeneration || deferHistoryForTextReveal()) return;
             // A refresh replaced the window meanwhile; ask again from its start,
             // since a reader already at the top will not scroll there again.
             if (current !== historyWindow) continue;
@@ -134,7 +148,7 @@ function loadOlderHistoryNearTop() {
 
 let historyRefreshTimer = null;
 function refreshHistoryFromContext() {
-    if (chatRunActive()) return;
+    if (chatRunActive() || deferHistoryForTextReveal()) return;
     if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
     historyRefreshTimer = setTimeout(function() {
         historyRefreshTimer = null;
@@ -323,6 +337,9 @@ function handleServerEvent(data) {
 }
 
 document.addEventListener('visibilitychange', function() {
+    // Animation frames pause in background tabs; finish the received text so
+    // returning to the page never waits for an old presentation backlog.
+    if (document.hidden) assistantTextReveal.flush();
     if (!document.hidden) loadHistory();
     if (!document.hidden && (!eventSource || eventSource.readyState === EventSource.CLOSED)) {
         connectSSE();
