@@ -325,8 +325,8 @@ handleSemanticEvent({schema_version: 2, kind: 'text.final', turn_id: runId,
 assert.equal(streamingAssistantDrafts[runId].content, 'Setting playback volume now.',
     'intermediate role output must not finalize the assistant draft');
 handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: runId});
-assert.deepEqual(renderedTypes(), ['state', 'user'],
-    'semantic tool boundary should retire the draft before its NDJSON tool call arrives');
+assert.deepEqual(renderedTypes(), ['state', 'user', 'assistant'],
+    'a local NDJSON run should not retire its draft from a separate SSE channel');
 handleChatStreamEvent({type: 'message', message: {
     type: 'tool_call', request_id: runId, tool_name: 'audio_volume', tool_input: '{"volume":0}',
     timestamp: 't-order-call'
@@ -344,6 +344,13 @@ handleChatStreamEvent({type: 'message', message: {
     timestamp: 't-order-result'
 }});
 handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: 'Volume is now 0.'});
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call', 'tool_result', 'assistant'],
+    'the first post-tool delta should render before the response finishes');
+assert.equal(messagesDiv.children[4]._message.content, 'Volume is now 0.');
+handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: runId});
+handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: ' Confirmed.'});
+assert.equal(messagesDiv.children[4]._message.content, 'Volume is now 0. Confirmed.',
+    'a delayed or duplicate SSE tool event must not block NDJSON deltas');
 handleChatStreamEvent({type: 'message', message: {
     type: 'assistant', request_id: runId, content: 'Volume is now 0.', timestamp: 't-order-final'
 }});

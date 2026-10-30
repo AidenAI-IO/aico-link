@@ -394,11 +394,7 @@ function handleChatStreamEvent(event) {
             addMessage(event.message);
         }
         if (event.message.type === 'tool_result') {
-            const key = assistantStreamKey(event.message);
-            completedToolCallCounts.set(key, (completedToolCallCounts.get(key) || 0) + 1);
-            if (completedToolCallCounts.get(key) >= (semanticToolCallCounts.get(key) || 0)) {
-                assistantDraftBlockedByTool.delete(key);
-            }
+            assistantDraftBlockedByTool.delete(assistantStreamKey(event.message));
         }
         return false;
     }
@@ -584,9 +580,6 @@ function renderHistory(history) {
     renderedStateMessages = new Map();
     streamingAssistantDrafts = {};
     assistantDraftBlockedByTool.clear();
-    semanticToolCallCounts.clear();
-    semanticToolCompletionCounts.clear();
-    completedToolCallCounts.clear();
 
     const orderedNodes = [];
     history.forEach(function(msg) {

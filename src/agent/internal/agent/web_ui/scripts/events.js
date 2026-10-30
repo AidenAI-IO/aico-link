@@ -266,18 +266,13 @@ function handleSemanticEvent(event) {
             if (payload && typeof payload === 'object') addMessage(payload, requestId);
             return;
         case 'tool.call_ready':
-            semanticToolCallCounts.set(requestId, (semanticToolCallCounts.get(requestId) || 0) + 1);
-            if (semanticToolCallCounts.get(requestId) > (completedToolCallCounts.get(requestId) || 0)) {
-                retireAssistantDraft({request_id: requestId});
-            }
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
+            retireAssistantDraft({request_id: requestId});
             return;
         case 'tool.completed':
         case 'tool.failed':
-            semanticToolCompletionCounts.set(requestId, (semanticToolCompletionCounts.get(requestId) || 0) + 1);
-            if (!chatRunActive() &&
-                semanticToolCompletionCounts.get(requestId) >= (semanticToolCallCounts.get(requestId) || 0)) {
-                assistantDraftBlockedByTool.delete(requestId);
-            }
+            if (currentChatRequestId === requestId || ndjsonOwnedRequestIds.has(requestId)) return;
+            assistantDraftBlockedByTool.delete(requestId);
             refreshHistoryFromContext();
             return;
         default:
