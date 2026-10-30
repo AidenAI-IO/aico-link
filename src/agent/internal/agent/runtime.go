@@ -23,7 +23,6 @@ import (
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/agent/speech"
 	"aico-agent/internal/agent/statemanager"
-	"aico-agent/internal/agent/tokencounter"
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/routines"
@@ -1328,85 +1327,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		maxResponseTokens = req.MaxTokens
 	}
 	usableInputBudget := toolResultUsableInputBudget(budgetContextWindow, maxResponseTokens)
-	compactionTrigger, compactionEnabled := conversationCompactionTrigger(usableInputBudget, cfg.ContextCompactionThresholdOrDefault())
 	contextBudgetOptions := chains.GetLLMCallOptions(callOptions...)
 	contextBudgetOptions = append(contextBudgetOptions, llms.WithTools((&FunctionAgent{Tools: profile.Tools}).toolsAsLLM()))
-	var contextBudgetCallOptions llms.CallOptions
-	for _, option := range contextBudgetOptions {
-		if option != nil {
-			option(&contextBudgetCallOptions)
-		}
-	}
-	tokenUsage := estimateActivePromptTokens(r.contextManager, contextBudgetOptions)
-	messageTokenUsage := activeMessageTokens(r.contextManager, contextBudgetCallOptions)
-
-	// Historical state and tool-result pruning is deterministic and has its own
-	// configurable trigger. It is intentionally independent from conversation
-	// summarization and provider-managed Responses compaction.
-	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
-	// A screenshot-count prune only drops stale states: its target is one no
-	// request reaches, so it never compacts tool results toward the token
-	// target. That stays with the token threshold.
-	const stateTarget = math.MaxInt
-	stateLimit := cfg.ContextPruneStateLimitOrDefault()
-	pruneReason := ""
-	if pruneEnabled && messageTokenUsage > pruneTrigger {
-		pruneReason = "threshold"
-		if r.logger != nil {
-			r.logger.Info("Historical context prune: token usage reached threshold; tokenUsage=%d trigger=%d target=%d", messageTokenUsage, pruneTrigger, pruneTarget)
-		}
-	} else if states := r.contextManager.ScreenshotStateCount(); states > stateLimit {
-		pruneReason = "state_count"
-		if r.logger != nil {
-			r.logger.Info("Historical context prune: screenshot states reached limit; states=%d limit=%d", states, stateLimit)
-		}
-	}
-	if pruneReason != "" {
-		target := pruneTarget
-		if pruneReason == "state_count" {
-			target = stateTarget
-		}
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, target)
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(historicalPruneEvent(
-				contextCompactor.LastPruneStats(),
-				pruned,
-				pruneErr,
-				pruneReason,
-			))
-		}
-		if pruneErr != nil {
-			return RunResult{}, pruneErr
-		}
-		if pruned {
-			if err = r.contextManager.Activate(newManager); err != nil {
-				return RunResult{}, err
-			}
-			tokenUsage = estimateActivePromptTokens(r.contextManager, contextBudgetOptions)
-		}
-	}
-
-	if !cfg.Model.ResponsesProviderCompactionEnabled() && compactionEnabled && tokenUsage > compactionTrigger {
-		if r.logger != nil {
-			r.logger.Info("Compaction: token usage reached the threshold, summarizing conversation... tokenUsage: %d, trigger: %d, contextWindow: %d", tokenUsage, compactionTrigger, contextWindow)
-		}
-		newManager, compacted, err := contextCompactor.Compact(withTelemetryRole(ctx, telemetryRoleCompaction), r.contextManager, r.sessionChunkWriter())
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(contextCompactionEvent(
-				contextCompactor.LastCompactionStats(),
-				compacted,
-				err,
-				"threshold",
-			))
-		}
-		if err != nil {
-			return RunResult{}, err
-		}
-		if compacted {
-			if err = r.contextManager.Activate(newManager); err != nil {
-				return RunResult{}, err
-			}
-		}
+	contextBudget := newRunContextBudget(r, cfg, contextCompactor, episodeRecorder, usableInputBudget, contextWindow)
+	if err := contextBudget.prepare(ctx, r.contextManager, contextBudgetOptions); err != nil {
+		return RunResult{}, err
 	}
 
 	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
@@ -1420,154 +1345,12 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.TerminationPolicy = NewTerminationPolicy(cfg.TerminationPolicy)
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
-	agentLoop.ContextBudgetGuard = func(guardCtx context.Context, currentManager *contextmanager.ContextManager, options llms.CallOptions) (*contextmanager.ContextManager, bool, error) {
-		if currentManager == nil {
-			return nil, false, nil
-		}
-		messageTokens := activeMessageTokens(currentManager, options)
-		toolSchemaTokens := tokencounter.EstimateToolSchemaTokens(options)
-		targetTokens := 0
-		reason := ""
-		hardBudgetExceeded := false
-		if pruneEnabled && messageTokens > pruneTrigger {
-			targetTokens = pruneTarget
-			reason = "active_turn_threshold"
-		} else if currentManager.ScreenshotStateCount() > stateLimit {
-			targetTokens = stateTarget
-			reason = "active_turn_state_count"
-		}
-		if usableInputBudget > 0 && activePromptTokens(currentManager, options) > usableInputBudget {
-			hardBudgetExceeded = true
-			hardTarget := max(1, usableInputBudget-toolSchemaTokens)
-			// The emergency pass may break recent-exchange protection, so only
-			// reduce as far as the hard request budget requires. Normal pruning
-			// will continue toward its lower hysteresis target without touching
-			// those recent exchanges once the request is safe again.
-			targetTokens = hardTarget
-			if reason == "" {
-				reason = "active_turn_input_budget"
-			} else {
-				reason = "active_turn_threshold_and_input_budget"
-			}
-		}
-		if targetTokens == 0 {
-			return currentManager, false, nil
-		}
-
-		if r.logger != nil {
-			r.logger.Info("Context prune: model request reached budget during active run; messageTokens=%d toolSchemaTokens=%d trigger=%d target=%d usableInputBudget=%d reason=%s",
-				messageTokens, toolSchemaTokens, pruneTrigger, targetTokens, usableInputBudget, reason)
-		}
-		var newManager *contextmanager.ContextManager
-		var pruned bool
-		var pruneErr error
-		if hardBudgetExceeded {
-			newManager, pruned, pruneErr = contextCompactor.PruneForHardBudget(currentManager, targetTokens)
-		} else {
-			newManager, pruned, pruneErr = contextCompactor.PruneForBudget(currentManager, targetTokens)
-		}
-		activeManager := currentManager
-		if pruned && newManager != nil {
-			activeManager = newManager
-		}
-		var budgetErr error
-		if pruneErr == nil && hardBudgetExceeded {
-			afterMessageTokens := activeMessageTokens(activeManager, options)
-			if activePromptTokens(activeManager, options) > usableInputBudget {
-				budgetErr = fmt.Errorf("context remains over usable input budget after pruning: messageTokens=%d toolSchemaTokens=%d usableInputBudget=%d",
-					afterMessageTokens, toolSchemaTokens, usableInputBudget)
-			}
-		}
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(historicalPruneEvent(
-				contextCompactor.LastPruneStats(),
-				pruned,
-				errors.Join(pruneErr, budgetErr),
-				reason,
-			))
-		}
-		if pruneErr != nil {
-			return nil, false, pruneErr
-		}
-		changed := pruned
-		var pendingChunk pendingSessionChunk
-		if budgetErr != nil {
-			// Deterministic pruning cannot shrink historical user/assistant text.
-			// Try the existing summary recovery before failing locally, including
-			// when provider-managed compaction disables threshold summaries.
-			compactedManager, compacted, compactErr := contextCompactor.Compact(withTelemetryRole(guardCtx, telemetryRoleCompaction), activeManager, &pendingChunk)
-			if episodeRecorder != nil {
-				episodeRecorder.RecordEvent(contextCompactionEvent(
-					contextCompactor.LastCompactionStats(), compacted, compactErr, "active_turn_input_budget",
-				))
-			}
-			if compactErr != nil {
-				return nil, false, fmt.Errorf("compact context for hard input budget: %w", compactErr)
-			}
-			if compacted {
-				activeManager = compactedManager
-				changed = true
-			}
-			afterMessageTokens := activeMessageTokens(activeManager, options)
-			if activePromptTokens(activeManager, options) > usableInputBudget {
-				return nil, false, fmt.Errorf("context remains over usable input budget after pruning and compaction: messageTokens=%d toolSchemaTokens=%d usableInputBudget=%d",
-					afterMessageTokens, toolSchemaTokens, usableInputBudget)
-			}
-		}
-		// Only activate a revision after all preparation and budget checks pass.
-		if changed {
-			if switchErr := currentManager.Activate(activeManager); switchErr != nil {
-				return nil, false, switchErr
-			}
-			// Rejected candidates must not become searchable history. Once the
-			// revision is active, a chunk write failure must not roll back the
-			// loop's manager; the parent transcript still retains the full span.
-			if chunkErr := pendingChunk.persist(guardCtx, r.sessionChunkWriter()); chunkErr != nil {
-				if r.logger != nil {
-					r.logger.Warn("Context budget recovery: failed to persist accepted summary chunk: %v", chunkErr)
-				}
-			}
-		}
-		return currentManager, changed, nil
+	agentLoop.ContextBudgetGuard = contextBudget.guard
+	if contextBudget.thresholdCompactionEnabled() {
+		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
+		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}
-	compactAgentContext := func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager, triggerReason string) (*contextmanager.ContextManager, bool, error) {
-		// Compaction summarises the conversation with the same model as the run;
-		// tag it so its prompt becomes a `summarize-context` generation.
-		newManager, compacted, compactErr := contextCompactor.Compact(withTelemetryRole(recoveryCtx, telemetryRoleCompaction), currentManager, r.sessionChunkWriter())
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(contextCompactionEvent(
-				contextCompactor.LastCompactionStats(),
-				compacted,
-				compactErr,
-				triggerReason,
-			))
-		}
-		if compactErr != nil {
-			return nil, false, compactErr
-		}
-		if !compacted {
-			return currentManager, false, nil
-		}
-		if switchErr := currentManager.Activate(newManager); switchErr != nil {
-			return nil, false, switchErr
-		}
-		return currentManager, true, nil
-	}
-	if !cfg.Model.ResponsesProviderCompactionEnabled() && compactionEnabled {
-		agentLoop.ContextCompactionTrigger = compactionTrigger
-		agentLoop.ContextThresholdCompaction = func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
-			if r.logger != nil {
-				r.logger.Info("Compaction: context reached the threshold inside the agent loop; compacting before the next model call")
-			}
-			return compactAgentContext(recoveryCtx, currentManager, "agent_loop_threshold")
-		}
-	}
-	agentLoop.ContextOverflowRecovery = func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
-		if r.logger != nil {
-			r.logger.Info("Compaction: provider rejected the request because the context window was exceeded; compacting and retrying")
-		}
-		return compactAgentContext(recoveryCtx, currentManager, "provider_context_exceeded")
-	}
+	agentLoop.ContextOverflowRecovery = contextBudget.recoverOverflow
 
 	output, err = agentLoop.Run(ctx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
