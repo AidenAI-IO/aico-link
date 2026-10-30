@@ -13,6 +13,7 @@ import (
 	"aico-agent/internal/agent/speech"
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/stream"
 )
 
 const (
@@ -42,26 +43,35 @@ type AudioDialog struct {
 	recordReader        *AudioRecordChunkReader
 	recordSTTMu         sync.Mutex
 	recordSTT           *streamingSTTSession
+	recordSTTSessionID  uint64
+	recordSTTPreReady   *sttPCMPreReadyBuffer
 	recordText          string
 	recordSTTTelemetry  *sttTurnTelemetry
 	pendingSTTTelemetry *sttTurnTelemetry
 	recordSTTRotateGen  uint64
 	speechMu            sync.Mutex
+	latestSpeech        latestTTSOutput
 	outputMu            sync.Mutex
 	activeOutputs       map[*activeTTSOutput]struct{}
 	runControl          voiceRunControl
 	messagePublish      func(Message)
+	transcriptObserver  func(uint64, stream.TranscriptEvent)
 	audioArchive        *AudioArchiveManager
 	connWarmer          *ConnectionWarmer
 }
 
 type activeTTSOutput struct {
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel     context.CancelFunc
+	done       chan struct{}
+	generation uint64
 
-	mu          sync.Mutex
-	stream      *streamSessionWriter
+	mu     sync.Mutex
+	stream interface {
+		interrupt()
+		startedPlayback() bool
+	}
 	interrupted bool
+	superseded  bool
 }
 
 func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
@@ -71,13 +81,20 @@ func newActiveTTSOutput(cancel context.CancelFunc) *activeTTSOutput {
 	}
 }
 
-func (o *activeTTSOutput) setStream(stream *streamSessionWriter) {
+func (o *activeTTSOutput) setStream(stream interface {
+	interrupt()
+	startedPlayback() bool
+}) {
 	if o == nil {
 		return
 	}
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	o.stream = stream
+	interrupted := o.interrupted
+	o.mu.Unlock()
+	if interrupted && stream != nil {
+		stream.interrupt()
+	}
 }
 
 func (o *activeTTSOutput) clearStream(stream *streamSessionWriter) {
@@ -121,6 +138,25 @@ func (o *activeTTSOutput) interrupt() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+func (o *activeTTSOutput) supersede() {
+	if o == nil {
+		return
+	}
+	o.mu.Lock()
+	o.superseded = true
+	o.mu.Unlock()
+	o.interrupt()
+}
+
+func (o *activeTTSOutput) wasSuperseded() bool {
+	if o == nil {
+		return false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.superseded
 }
 
 func (o *activeTTSOutput) finish() {
@@ -399,9 +435,23 @@ func (d *AudioDialog) StartRecording() error {
 		}
 	}
 	d.recordText = ""
-	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, recordStartedAt)
 	d.recordSTTRotateGen++
 	rotateGen := d.recordSTTRotateGen
+	d.recordSTTMu.Lock()
+	d.recordSTT = nil
+	d.recordSTTSessionID = result.SessionID
+	if d.sttClient != nil && d.sttClient.Capabilities().SupportsStreamingUpload {
+		d.recordSTTPreReady = newSTTPCMPreReadyBuffer(
+			d.config.Audio.SampleRateOrDefault(),
+			d.config.Audio.ChannelsOrDefault(),
+			d.config.Audio.BitWidthOrDefault(),
+		)
+	} else {
+		d.recordSTTPreReady = nil
+	}
+	preReady := d.recordSTTPreReady
+	d.recordSTTMu.Unlock()
+	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, recordStartedAt)
 	d.recordActive = true
 
 	// Play the cue tone immediately so the user gets fast feedback.
@@ -422,7 +472,7 @@ func (d *AudioDialog) StartRecording() error {
 	// Start STT streaming session asynchronously — the network handshake
 	// (WebSocket dial + session setup) can take 1-3s and should not delay
 	// the audible cue. Chunks are buffered by uploadRecordChunkToStreamingSTT
-	// which checks currentRecordSTT() and silently drops if not yet ready.
+	// which buffers a bounded prefix until the provider is ready.
 	sttSessionID := result.SessionID
 	go func() {
 		recordSTT, err := beginStreamingSTTSession(context.Background(), d.sttClient, STTStreamConfig{
@@ -454,10 +504,75 @@ func (d *AudioDialog) StartRecording() error {
 			meta.streamingReady = true
 			meta.streamingReadyMS = streamReadyAt.Sub(meta.startedAt).Milliseconds()
 		})
-		d.setRecordSTT(recordSTT)
+		overflow, installed, err := d.installRecordSTT(sttSessionID, recordSTT, preReady)
+		if overflow {
+			d.updateRecordSTTTelemetry(sttSessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+				meta.streamingUnavailableError = "streaming STT readiness exceeded the 2s pre-ready buffer"
+			})
+		}
+		if err != nil {
+			d.markRecordSTTUploadError(sttSessionID, err)
+			logging.Warnf("agent", "stt", "streaming upload failed, falling back to one-shot STT: %v", err)
+		}
+		if !installed {
+			_ = recordSTT.Close()
+			return
+		}
+		go d.forwardRecordSTTEvents(sttSessionID, recordSTT)
 	}()
 
 	return nil
+}
+
+// SetSTTTranscriptObserver installs an optional observer for revisioned
+// streaming transcript updates. The observer is presentation-only: events
+// are still folded into the final transcript by the provider/session path, and
+// updates from a stopped or superseded recording are discarded.
+func (d *AudioDialog) SetSTTTranscriptObserver(observer func(uint64, stream.TranscriptEvent)) {
+	if d == nil {
+		return
+	}
+	d.recordSTTMu.Lock()
+	d.transcriptObserver = observer
+	d.recordSTTMu.Unlock()
+}
+
+func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamingSTTSession) {
+	if d == nil || session == nil {
+		return
+	}
+	events := session.TranscriptEvents()
+	if events == nil {
+		return
+	}
+	for {
+		var event stream.TranscriptEvent
+		select {
+		case <-session.eventsDone:
+			return
+		case next, ok := <-events:
+			if !ok {
+				return
+			}
+			event = next
+		}
+		d.recordSTTMu.Lock()
+		current := d.recordSTT == session
+		observer := d.transcriptObserver
+		d.recordSTTMu.Unlock()
+		if !current || observer == nil {
+			continue
+		}
+		// A buffered event and the close signal can both be ready in the
+		// select above. Do not deliver the buffered event after closure.
+		select {
+		case <-session.eventsDone:
+			return
+		default:
+		}
+		observer(sessionID, event)
+	}
 }
 
 // FinalizeAndRotateSTT finalizes the current streaming STT turn without closing
@@ -473,9 +588,23 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 	sttTelemetry := d.recordSTTTelemetry
 	d.recordSTTRotateGen++
 	rotateGen := d.recordSTTRotateGen
+	d.recordSTTMu.Lock()
+	recordSTT := d.recordSTT
+	d.recordSTT = nil
+	d.recordSTTSessionID = sessionID
+	var preReady *sttPCMPreReadyBuffer
+	if d.sttClient != nil && d.sttClient.Capabilities().SupportsStreamingUpload {
+		preReady = newSTTPCMPreReadyBuffer(
+			d.config.Audio.SampleRateOrDefault(),
+			d.config.Audio.ChannelsOrDefault(),
+			d.config.Audio.BitWidthOrDefault(),
+		)
+	}
+	d.recordSTTPreReady = preReady
+	d.recordSTTMu.Unlock()
+	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, time.Now().UTC())
 	d.recordMu.Unlock()
 
-	recordSTT := d.takeRecordSTT()
 	if recordSTT != nil {
 		finalizeStart := time.Now()
 		transcript, err := recordSTT.FinalizeWithTimeout(audioDialogStreamingSTTFinalizeTimeout)
@@ -491,18 +620,23 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 		} else {
 			sttTelemetry.transcript = transcript
 			sttTelemetry.usedStreamingTranscript = strings.TrimSpace(transcript) != ""
-			d.recordMu.Lock()
-			d.recordText = transcript
-			d.recordMu.Unlock()
 		}
-		d.stashPendingSTTTelemetry(sttTelemetry)
-	} else {
-		d.stashPendingSTTTelemetry(sttTelemetry)
 	}
 
 	d.recordMu.Lock()
-	d.recordSTTTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, time.Now().UTC())
+	stillActive := d.recordActive && d.sessionID == sessionID && d.recordSTTRotateGen == rotateGen
+	if stillActive {
+		if sttTelemetry != nil {
+			d.pendingSTTTelemetry = sttTelemetry
+			if sttTelemetry.streamingFinalizeError == "" {
+				d.recordText = sttTelemetry.transcript
+			}
+		}
+	}
 	d.recordMu.Unlock()
+	if !stillActive || preReady == nil {
+		return nil
+	}
 
 	go func() {
 		nextSTT, err := beginStreamingSTTSession(context.Background(), d.sttClient, STTStreamConfig{
@@ -528,7 +662,22 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 			return
 		}
 		logging.Infof("agent", "stt", "streaming upload rotated for next turn")
-		d.setRecordSTT(nextSTT)
+		overflow, installed, err := d.installRecordSTT(sessionID, nextSTT, preReady)
+		if overflow {
+			d.updateRecordSTTTelemetry(sessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+				meta.streamingUnavailableError = "streaming STT readiness exceeded the 2s pre-ready buffer"
+			})
+		}
+		if err != nil {
+			d.markRecordSTTUploadError(sessionID, err)
+			logging.Warnf("agent", "stt", "streaming upload failed, falling back to one-shot STT: %v", err)
+		}
+		if !installed {
+			_ = nextSTT.Close()
+			return
+		}
+		go d.forwardRecordSTTEvents(sessionID, nextSTT)
 	}()
 	return nil
 }
@@ -550,7 +699,6 @@ func (d *AudioDialog) StopRecording() error {
 	d.sessionID = 0
 	d.recordReader = nil
 	d.recordMu.Unlock()
-
 	if recordSTT != nil {
 		defer func() {
 			_ = recordSTT.Close()
@@ -645,10 +793,21 @@ func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *A
 	if d == nil || chunk == nil || len(chunk.PCM) == 0 {
 		return
 	}
-	recordSTT := d.currentRecordSTT()
+	d.recordSTTMu.Lock()
+	recordSTT := d.recordSTT
 	if recordSTT == nil {
+		preReady := d.recordSTTPreReady
+		isCurrent := d.recordSTTSessionID == sessionID
+		overflow := isCurrent && preReady != nil && !preReady.append(chunk.PCM)
+		d.recordSTTMu.Unlock()
+		if overflow {
+			d.updateRecordSTTTelemetry(sessionID, func(meta *sttTurnTelemetry) {
+				meta.streamingPreReadyOverflow = true
+			})
+		}
 		return
 	}
+	d.recordSTTMu.Unlock()
 	if err := recordSTT.UploadPCM(chunk.PCM); err != nil {
 		d.markRecordSTTUploadError(sessionID, err)
 		logging.Warnf("agent", "stt", "streaming upload failed, falling back to one-shot STT: %v", err)
@@ -660,11 +819,36 @@ func (d *AudioDialog) uploadRecordChunkToStreamingSTT(sessionID uint64, chunk *A
 	}
 }
 
-// setRecordSTT installs the active streaming STT session.
-func (d *AudioDialog) setRecordSTT(session *streamingSTTSession) {
-	d.recordSTTMu.Lock()
-	d.recordSTT = session
-	d.recordSTTMu.Unlock()
+// installRecordSTT replays buffered PCM before publishing the session. Live
+// chunks continue to enter the buffer during replay, so they cannot overtake
+// earlier chunks or be omitted by StopRecording's finalization.
+func (d *AudioDialog) installRecordSTT(sessionID uint64, session *streamingSTTSession, preReady *sttPCMPreReadyBuffer) (overflow, installed bool, err error) {
+	for {
+		d.recordSTTMu.Lock()
+		if preReady == nil || d.recordSTTSessionID != sessionID || d.recordSTTPreReady != preReady || d.recordSTT != nil {
+			d.recordSTTMu.Unlock()
+			return false, false, nil
+		}
+		queued, overflow := preReady.drain()
+		if overflow {
+			d.recordSTTMu.Unlock()
+			return true, false, nil
+		}
+		if len(queued) == 0 {
+			d.recordSTTPreReady = nil
+			d.recordSTTSessionID = 0
+			d.recordSTT = session
+			d.recordSTTMu.Unlock()
+			return false, true, nil
+		}
+		d.recordSTTMu.Unlock()
+
+		for _, pcm := range queued {
+			if err := session.UploadPCM(pcm); err != nil {
+				return false, false, err
+			}
+		}
+	}
 }
 
 // currentRecordSTT returns the active streaming STT session, if any.
@@ -681,6 +865,8 @@ func (d *AudioDialog) takeRecordSTT() *streamingSTTSession {
 	defer d.recordSTTMu.Unlock()
 	session := d.recordSTT
 	d.recordSTT = nil
+	d.recordSTTSessionID = 0
+	d.recordSTTPreReady = nil
 	return session
 }
 
@@ -694,6 +880,8 @@ func (d *AudioDialog) clearRecordSTT(session *streamingSTTSession) bool {
 		return false
 	}
 	d.recordSTT = nil
+	d.recordSTTSessionID = 0
+	d.recordSTTPreReady = nil
 	return true
 }
 
@@ -832,7 +1020,7 @@ func (d *AudioDialog) TTSOutputActive() bool {
 func (d *AudioDialog) PlayListenReadyCue() {
 }
 
-func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*streamSessionWriter, func(), func(), error) {
+func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*ttsBlockStream, func(), func(), error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -842,12 +1030,11 @@ func (d *AudioDialog) beginManagedTTSStreamForRun(ctx context.Context) (*streamS
 		streamCancel()
 		return nil, nil, nil, errTTSNotConfigured
 	}
-	stream, err := beginManagedTTSStream(streamCtx, manager, d.currentTTSPlaybackBackend(), d.config)
+	stream, err := beginManagedTTSBlockStream(streamCtx, manager, d.currentTTSPlaybackBackend(), d.config, &d.latestSpeech)
 	if err != nil {
 		streamCancel()
 		return nil, nil, nil, err
 	}
-	stream.setCancel(streamCancel)
 	output := newActiveTTSOutput(streamCancel)
 	output.setStream(stream)
 
@@ -920,7 +1107,7 @@ func (d *AudioDialog) ProcessUtterance(ctx context.Context, utterance []int16, r
 		if !result.SpeechStreamed {
 			prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			if prepared.Text != "" {
-				if speakErr := d.SpeakFinal(ctx, prepared.Text, nil); speakErr != nil {
+				if _, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, result.speechGeneration); speakErr != nil {
 					logging.Errorf("agent", "audio_dialog", "failure replacement TTS failed: %v", speakErr)
 				}
 			}
@@ -934,8 +1121,13 @@ func (d *AudioDialog) ProcessUtterance(ctx context.Context, utterance []int16, r
 		ResponseText:   result.SpokenTextForConfig(d.config),
 		TailAppendable: d.CanSpeakFinalText(),
 	})
-	err = d.SpeakFinal(ctx, prepared.Text, nil)
-	runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
+	started, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, result.speechGeneration)
+	if !started {
+		runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+		return nil
+	}
+	err = speakErr
+	runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, speakErr)
 	return err
 }
 
@@ -1099,7 +1291,7 @@ func (d *AudioDialog) RunVoiceTurnWithContext(ctx context.Context, input TurnInp
 	d.publishVoiceUserInput(input, utterance, episodeID, requestID)
 	result, err := d.runAgentTurnWithActiveRequest(ctx, input, runtime, episodeID, requestID, turnContext)
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	return result, nil
 }
@@ -1135,6 +1327,8 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 		))
 	}
 	var finalAssistantEvent *RunEvent
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(d.latestSpeech.snapshotGeneration())
 
 	var speechWriter *speech.StreamWriter
 	req := RunRequest{
@@ -1154,7 +1348,7 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 			if toolSpeechStreamed {
 				logging.Infof("agent", "tts", "Tool content already streamed: tool=%s", event.ToolName)
 			} else {
-				d.HandleRunEvent(ctx, event)
+				speechGeneration.advance(d.HandleRunEvent(ctx, event))
 			}
 		},
 		SteerProvider: func(ctx context.Context) (RunSteerMessage, bool) {
@@ -1172,7 +1366,7 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 	}
 	req.EpisodeID = strings.TrimSpace(episodeID)
 
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	if manager := d.currentTTSManager(); d.config.VoiceStreamingTTSEnabledOrDefault() && manager != nil {
 		preopenStartedAt := time.Now().UTC()
 		stream, activate, cleanup, err := d.beginManagedTTSStreamForRun(ctx)
@@ -1209,8 +1403,10 @@ func (d *AudioDialog) runAgentTurnWithActiveRequest(ctx context.Context, input T
 		if closeErr != nil {
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
+	result.speechGeneration = speechGeneration.current()
 	if err != nil {
 		return result, fmt.Errorf("LLM request failed: %w", err)
 	}
@@ -1327,13 +1523,21 @@ func (d *AudioDialog) waitForSteerInterrupt(ctx context.Context, requestID strin
 	return d.runControl.waitForInterrupt(ctx, requestID)
 }
 
-func (d *AudioDialog) HandleRunEvent(ctx context.Context, event RunEvent) {
+func (d *AudioDialog) HandleRunEvent(ctx context.Context, event RunEvent) uint64 {
 	if event.Type != runEventToolCall || !d.config.VoiceToolCallSpeechOrDefault() || event.ToolName == toolWaitForWakeup {
-		return
+		return 0
 	}
 	if text := speech.BuildText(event.Content); text != "" {
-		go d.SpeakToolContent(text)
+		speechCtx, output, cleanup := d.latestSpeech.begin(ctx)
+		go func() {
+			defer cleanup()
+			if err := d.speak(speechCtx, text, nil, toolContentSpeechTimeout, false); err != nil {
+				logging.Errorf("agent", "audio_dialog", "Tool content TTS failed: %v", err)
+			}
+		}()
+		return output.generation
 	}
+	return 0
 }
 
 func (d *AudioDialog) SpeakToolContent(content string) {
@@ -1354,6 +1558,18 @@ func (d *AudioDialog) Speak(ctx context.Context, text string, interrupt <-chan s
 
 func (d *AudioDialog) SpeakFinal(ctx context.Context, text string, interrupt <-chan struct{}) error {
 	return d.speak(ctx, text, interrupt, 0, true)
+}
+
+func (d *AudioDialog) speakFinalIfCurrent(ctx context.Context, text string, interrupt <-chan struct{}, generation uint64) (bool, error) {
+	if strings.TrimSpace(text) == "" {
+		return true, nil
+	}
+	speechCtx, cleanup, ok := d.latestSpeech.claim(ctx, generation)
+	if !ok {
+		return false, nil
+	}
+	defer cleanup()
+	return true, d.SpeakFinal(speechCtx, text, interrupt)
 }
 
 func (d *AudioDialog) CanSpeakFinalText() bool {
@@ -1420,6 +1636,8 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 	if err := baseCtx.Err(); err != nil {
 		return err
 	}
+	baseCtx, latestOutput, releaseLatest := d.latestSpeech.acquire(baseCtx)
+	defer releaseLatest()
 	outputCtx, cancelOutput := context.WithCancel(baseCtx)
 	output := newActiveTTSOutput(cancelOutput)
 	unregisterOutput := d.registerActiveOutput(output)
@@ -1449,8 +1667,10 @@ func (d *AudioDialog) speak(ctx context.Context, text string, interrupt <-chan s
 		speechStarted, ttsErr = speakWithTTSManagerObserved(speakCtx, manager, d.currentTTSPlaybackBackend(), d.config, text, func(stream *streamSessionWriter) func() {
 			stream.setCancel(cancelOutput)
 			output.setStream(stream)
+			latestOutput.setStream(stream)
 			return func() {
 				output.clearStream(stream)
+				latestOutput.clearStream(stream)
 			}
 		})
 		if ttsErr == nil && !speechStarted && allowFallback {
@@ -1524,6 +1744,8 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 	d.playPromptSoundAsyncWithWait(promptSoundAgentSend, "agent send", false)
 
 	var speechWriter *speech.StreamWriter
+	var speechGeneration ttsRunGeneration
+	speechGeneration.advance(d.latestSpeech.snapshotGeneration())
 
 	req := RunRequest{
 		Input: text,
@@ -1536,11 +1758,11 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 			if toolSpeechStreamed {
 				logging.Infof("agent", "tts", "Tool content already streamed: tool=%s", event.ToolName)
 			} else {
-				d.HandleRunEvent(ctx, event)
+				speechGeneration.advance(d.HandleRunEvent(ctx, event))
 			}
 		},
 	}
-	var newStream *streamSessionWriter
+	var newStream *ttsBlockStream
 	if d.config.VoiceStreamingTTSEnabledOrDefault() && d.currentTTSManager() != nil {
 		stream, activate, cleanup, err := d.beginManagedTTSStreamForRun(ctx)
 		if err != nil {
@@ -1563,13 +1785,14 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 		if closeErr != nil {
 			logging.Errorf("agent", "audio_dialog", "new TTS stream failed: %v", closeErr)
 		}
-		result.SpeechStreamed = finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		result.SpeechStreamed = newStream.wasSuperseded() || finalSpeechStreamed && newStream.emittedSpeech(closeErr)
+		speechGeneration.advance(newStream.generation())
 	}
 	if err != nil {
 		if d.CanSpeakFinalText() && !result.SpeechStreamed {
 			prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{TurnFailure: result.TurnFailure})
 			if prepared.Text != "" {
-				if speakErr := d.SpeakFinal(ctx, prepared.Text, nil); speakErr != nil {
+				if _, speakErr := d.speakFinalIfCurrent(ctx, prepared.Text, nil, speechGeneration.current()); speakErr != nil {
 					logging.Errorf("agent", "audio_dialog", "failure replacement TTS failed: %v", speakErr)
 				}
 			}
@@ -1582,7 +1805,10 @@ func (d *AudioDialog) ProcessTextInput(ctx context.Context, text string, runtime
 	speechText := result.SpokenTextForConfig(d.config)
 	if d.CanSpeakFinalText() && speechText != "" && !result.SpeechStreamed {
 		prepared := runtime.PrepareSpokenText(ctx, SpokenTextInput{ResponseText: speechText, TailAppendable: true})
-		if err := d.SpeakFinal(ctx, prepared.Text, nil); err != nil {
+		started, err := d.speakFinalIfCurrent(ctx, prepared.Text, nil, speechGeneration.current())
+		if !started {
+			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, context.Canceled)
+		} else if err != nil {
 			runtime.ReportSpokenTextDelivery(prepared.DeliveryToken, err)
 			logging.Errorf("agent", "audio_dialog", "TTS streaming failed: %v", err)
 		} else {

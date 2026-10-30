@@ -53,6 +53,19 @@ func (s *GoogleCloudSTT) Capabilities() STTCapabilities {
 
 // TranscribeWAV transcribes WAV audio data to text via Google Cloud Speech-to-Text API.
 func (s *GoogleCloudSTT) TranscribeWAV(wavData []byte) (string, error) {
+	return s.TranscribeWAVWithContext(context.Background(), wavData)
+}
+
+// TranscribeWAVWithContext transcribes WAV audio while honoring cancellation
+// and the caller's deadline. The provider's 30-second limit remains an upper
+// bound when the caller supplies a longer-lived context.
+func (s *GoogleCloudSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	// Extract PCM from WAV
 	pcm, sampleRate, err := extractPCMFromWAV(wavData)
 	if err != nil {
@@ -78,7 +91,7 @@ func (s *GoogleCloudSTT) TranscribeWAV(wavData []byte) (string, error) {
 	}
 
 	// Create HTTP request with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, "POST", s.endpoint, bytes.NewReader(jsonData))

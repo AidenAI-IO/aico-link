@@ -151,8 +151,10 @@
         </section>
     </div>
 
-    <!-- These classic scripts share page state. Keep state first and bootstrap last. -->
+    <!-- These classic scripts share page state. Load projection first and bootstrap last. -->
+    <script defer src="/web-ui/scripts/conversation_projection.js"></script>
     <script defer src="/web-ui/scripts/state.js"></script>
+    <script defer src="/web-ui/scripts/streaming_text.js"></script>
     <script defer src="/web-ui/scripts/events.js"></script>
     <script defer src="/web-ui/scripts/tools.js"></script>
     <script defer src="/web-ui/scripts/chat.js"></script>

@@ -101,6 +101,10 @@ func (a *Adapter) Capabilities() tts.Capabilities {
 		SupportsContextContinuation: false,
 		SupportedSampleRates:        []int{24000}, // Qwen-TTS-Realtime fixed
 		RegionRestricted:            false,
+		TextGranularity:             tts.TextGranularityIncremental,
+		SupportsIncrementalAudio:    true,
+		SupportsFlush:               true,
+		SupportsCancellation:        true,
 	}
 }
 

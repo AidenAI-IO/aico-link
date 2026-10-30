@@ -512,17 +512,27 @@ func (c *ContextManager) ScreenshotStateCount() int {
 	return count
 }
 
-func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error {
+// AppendResult identifies the messages committed by one append after hooks and
+// protocol repair have run. Start is their index in the active session.
+type AppendResult struct {
+	SessionID string
+	Start     int
+	Messages  []messages.Message
+}
+
+func (c *ContextManager) appendToList(messagesToAppend []messages.Message) (AppendResult, error) {
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if c.currentSession == nil {
-		return fmt.Errorf("current session is unavailable")
+		return AppendResult{}, fmt.Errorf("current session is unavailable")
 	}
+	result := AppendResult{SessionID: c.currentSession.SessionID()}
 	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		result.Start = len(currentMessages)
 		messagesToAppend = repairToolCallTailBeforeAppend(currentMessages, messagesToAppend)
 	})
 	if len(messagesToAppend) == 0 {
-		return nil
+		return result, nil
 	}
 	now := time.Now().UTC()
 	for i := range messagesToAppend {
@@ -533,10 +543,11 @@ func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error
 
 	if err := c.currentSession.AppendMessages(messagesToAppend); err != nil {
 		logging.Errorf("agent", "cm", "Failed to append messages to session %v", c.currentSession.SessionID())
-		return err
+		return AppendResult{}, err
 	}
 
-	return nil
+	result.Messages = messages.CloneList(messagesToAppend)
+	return result, nil
 }
 
 func (c *ContextManager) flushFull() error {
@@ -554,8 +565,15 @@ func (c *ContextManager) AppendMessage(message messages.Message) error {
 // messages in one context-manager append operation. This keeps related
 // protocol messages, such as a tool call and its result, together.
 func (c *ContextManager) AppendMessages(messagesToAppend []messages.Message) error {
+	_, err := c.AppendMessagesWithResult(messagesToAppend)
+	return err
+}
+
+// AppendMessagesWithResult returns only the messages durably added by this
+// operation, including hook-inserted messages and their assigned timestamps.
+func (c *ContextManager) AppendMessagesWithResult(messagesToAppend []messages.Message) (AppendResult, error) {
 	if c == nil {
-		return fmt.Errorf("context manager is nil")
+		return AppendResult{}, fmt.Errorf("context manager is nil")
 	}
 	c.hooksMu.RLock()
 	hooks := append([]AppendMessageHook(nil), c.appendHooks...)
@@ -576,7 +594,7 @@ func (c *ContextManager) AppendMessages(messagesToAppend []messages.Message) err
 	}
 
 	if len(messageList) == 0 {
-		return nil
+		return AppendResult{}, nil
 	}
 	return c.appendToList(messageList)
 }

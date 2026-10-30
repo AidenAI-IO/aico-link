@@ -19,7 +19,9 @@ import (
 	"aico-agent/internal/agent/tts"
 	"aico-agent/internal/agenttask"
 	"aico-agent/internal/logging"
+	streamcontract "aico-agent/internal/stream"
 
+	"github.com/google/uuid"
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
@@ -68,6 +70,114 @@ type realtimeChatCommand struct {
 type realtimeToolResult struct {
 	call   realtimevoice.Event
 	output string
+}
+
+// realtimeSemanticEmitter is the observer-side adapter for native realtime
+// events. The daemon remains the owner of stale-response admission and output
+// invalidation; this adapter only mirrors accepted events into the shared
+// semantic contract. PCM stays on the playback/audio path.
+type realtimeSemanticEmitter struct {
+	sink           streamcontract.EventSink
+	sequence       uint64
+	outputEpoch    uint64
+	responseEpoch  map[string]uint64
+	conversationID string
+	sessionEpoch   uint64
+}
+
+func newRealtimeSemanticEmitter(sink streamcontract.EventSink) *realtimeSemanticEmitter {
+	if sink == nil {
+		return nil
+	}
+	return &realtimeSemanticEmitter{
+		sink:           sink,
+		outputEpoch:    1,
+		responseEpoch:  make(map[string]uint64),
+		conversationID: "agent",
+		sessionEpoch:   1,
+	}
+}
+
+func (e *realtimeSemanticEmitter) nextResponseEpoch() {
+	if e == nil {
+		return
+	}
+	e.outputEpoch++
+	if e.outputEpoch == 0 {
+		e.outputEpoch = 1
+	}
+}
+
+func (e *realtimeSemanticEmitter) invalidateOutput() {
+	e.nextResponseEpoch()
+}
+
+func (e *realtimeSemanticEmitter) beginResponse(responseID string) {
+	if e == nil {
+		return
+	}
+	if responseID != "" {
+		e.responseEpoch[responseID] = e.outputEpoch
+	}
+}
+
+func (e *realtimeSemanticEmitter) epochFor(source realtimevoice.Event) uint64 {
+	if e == nil {
+		return 0
+	}
+	switch source.Kind {
+	case realtimevoice.EventTranscriptDelta, realtimevoice.EventTranscriptFinal,
+		realtimevoice.EventToolCall, realtimevoice.EventToolCallCancelled,
+		realtimevoice.EventResponseStarted:
+		if source.Role != "assistant" && source.Kind != realtimevoice.EventToolCall && source.Kind != realtimevoice.EventToolCallCancelled && source.Kind != realtimevoice.EventResponseStarted {
+			return 0
+		}
+		if source.ResponseID != "" {
+			if epoch, ok := e.responseEpoch[source.ResponseID]; ok {
+				return epoch
+			}
+		}
+		return e.outputEpoch
+	default:
+		return 0
+	}
+}
+
+func (e *realtimeSemanticEmitter) emit(source realtimevoice.Event, outputEpoch ...uint64) {
+	if e == nil || e.sink == nil {
+		return
+	}
+	nextSequence := e.sequence + 1
+	if nextSequence == 0 {
+		nextSequence = 1
+	}
+	epoch := uint64(0)
+	if len(outputEpoch) > 0 {
+		epoch = outputEpoch[0]
+	} else {
+		epoch = e.epochFor(source)
+	}
+	identity := streamcontract.EventIdentity{
+		EventID:        uuid.NewString(),
+		Sequence:       nextSequence,
+		ConversationID: e.conversationID,
+		SessionEpoch:   e.sessionEpoch,
+		ResponseID:     source.ResponseID,
+		ItemID:         source.ItemID,
+		OutputEpoch:    epoch,
+		CallID:         source.CallID,
+	}
+	if bridged, ok := realtimevoice.BridgeEvent(identity, e.outputEpoch, source); ok {
+		e.sequence = nextSequence
+		_ = e.sink.Emit(context.Background(), bridged)
+	}
+}
+
+func (e *realtimeSemanticEmitter) emitError(err error) {
+	if e == nil || err == nil {
+		return
+	}
+	e.emit(realtimevoice.Event{Kind: realtimevoice.EventError, Error: err})
 }
 
 type realtimeToolTracker struct {
@@ -175,7 +285,7 @@ const (
 	realtimeChatRejectBusy
 )
 
-type realtimeChatAdmissionState struct {
+type realtimeSessionAdmissionState struct {
 	activeChat           bool
 	queuedChat           bool
 	responseActive       bool
@@ -184,9 +294,14 @@ type realtimeChatAdmissionState struct {
 	notificationActive   bool
 	notificationDraining bool
 	standbyPending       bool
+	bridgePending        bool
+	supportsText         bool
+	runtimeAvailable     bool
+	taskUpdatesReady     bool
+	pendingTaskCount     int
 }
 
-func (s realtimeChatAdmissionState) admission() realtimeChatAdmission {
+func (s realtimeSessionAdmissionState) admission() realtimeChatAdmission {
 	if s.activeChat || s.queuedChat || s.notificationActive || s.notificationDraining {
 		return realtimeChatRejectBusy
 	}
@@ -205,6 +320,20 @@ func (s realtimeChatAdmissionState) admission() realtimeChatAdmission {
 		return realtimeChatRejectBusy
 	}
 	return realtimeChatStart
+}
+
+func (s realtimeSessionAdmissionState) canInjectBackgroundResponse() bool {
+	return s.supportsText && !s.turnBlocked && !s.localSpeechActive &&
+		!s.notificationActive && !s.notificationDraining && !s.activeChat &&
+		!s.standbyPending && !s.bridgePending
+}
+
+func (s realtimeSessionAdmissionState) canInjectTaskUpdates() bool {
+	return s.taskUpdatesReady && s.pendingTaskCount > 0 && s.canInjectBackgroundResponse()
+}
+
+func (s realtimeSessionAdmissionState) canInjectVoiceNotification() bool {
+	return s.runtimeAvailable && s.canInjectBackgroundResponse()
 }
 
 type realtimeChatBridge struct {
@@ -543,7 +672,11 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			// announced by a later activation, while an update it delivered is
 			// no longer pending and cannot open an empty session.
 			taskWake.observeSession(agentTaskTerminalSequence(tasks))
-			sessionErr := runRealtimeSession(cfg, sigChan, runtime, tasks, bridge)
+			var semanticSink streamcontract.EventSink
+			if server != nil {
+				semanticSink = server.RealtimeEventSink()
+			}
+			sessionErr := runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, semanticSink, bridge)
 			if errors.Is(sessionErr, errRealtimeShutdown) {
 				return
 			} else if errors.Is(sessionErr, realtimevoice.ErrSessionRotated) {
@@ -1225,14 +1358,22 @@ func positiveRate(primary, fallback int) int {
 }
 
 func runRealtimeSession(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, chatBridges ...*realtimeChatBridge) error {
-	return runRealtimeSessionWithRegistry(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), chatBridges...)
+	return runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, nil, chatBridges...)
 }
 
 func runRealtimeSessionWithRegistry(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, chatBridges ...*realtimeChatBridge) (returnErr error) {
-	return runRealtimeSessionWithIdleTimeout(cfg, sigChan, runtime, tasks, registry, realtimeResponseIdleTimeout, chatBridges...)
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, realtimeResponseIdleTimeout, chatBridges...)
+}
+
+func runRealtimeSessionWithSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, sink streamcontract.EventSink, chatBridges ...*realtimeChatBridge) error {
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, realtimevoice.DefaultProviderRegistry(), sink, realtimeResponseIdleTimeout, chatBridges...)
 }
 
 func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, idleTimeout time.Duration, chatBridges ...*realtimeChatBridge) (returnErr error) {
+	return runRealtimeSessionWithRegistryAndSink(cfg, sigChan, runtime, tasks, registry, nil, idleTimeout, chatBridges...)
+}
+
+func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Signal, runtime *agent.Runtime, tasks *agenttask.Manager, registry *realtimevoice.ProviderRegistry, sink streamcontract.EventSink, idleTimeout time.Duration, chatBridges ...*realtimeChatBridge) (returnErr error) {
 	var chatBridge *realtimeChatBridge
 	if len(chatBridges) > 0 {
 		chatBridge = chatBridges[0]
@@ -1273,6 +1414,18 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 	}
 	defer session.Close()
 	info := session.Info()
+	semanticEmitter := newRealtimeSemanticEmitter(sink)
+	if semanticEmitter != nil {
+		// Open returns only after the managed session has negotiated its media
+		// contract, so publish readiness even for providers that do not expose a
+		// separate ready frame on their event channel.
+		semanticEmitter.emit(realtimevoice.Event{Kind: realtimevoice.EventReady, SessionID: info.ID})
+	}
+	defer func() {
+		if semanticEmitter != nil {
+			semanticEmitter.emit(realtimevoice.Event{Kind: realtimevoice.EventClosed})
+		}
+	}()
 	turnCommitter := session.TurnCommitter
 	responseInterrupter := session.ResponseInterrupter
 	canInterrupt := responseInterrupter != nil
@@ -1466,6 +1619,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 	}
 	defer cancelForegroundTools("")
 	requestResponse := func() {
+		if semanticEmitter != nil {
+			semanticEmitter.nextResponseEpoch()
+		}
 		turnState.responseRequested()
 		watchdog.progress()
 	}
@@ -1502,6 +1658,23 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 	var taskDebounceTimer *time.Timer
 	var taskDebounce <-chan time.Time
 	taskUpdatesReady := false
+	currentAdmission := func() realtimeSessionAdmissionState {
+		return realtimeSessionAdmissionState{
+			activeChat:           activeChat != nil,
+			queuedChat:           queuedChat != nil,
+			responseActive:       turnState.responseActive,
+			turnBlocked:          !turnState.canInjectResponse(),
+			localSpeechActive:    realtimeAdmissionSpeechActive(admissionTurnEndpoint),
+			notificationActive:   activeNotificationToken != "",
+			notificationDraining: notificationDrainDone != nil,
+			standbyPending:       sleep.pending(),
+			bridgePending:        chatBridgeHasPending(chatBridge),
+			supportsText:         supportsText,
+			runtimeAvailable:     runtime != nil,
+			taskUpdatesReady:     taskUpdatesReady,
+			pendingTaskCount:     len(pendingTaskUpdates),
+		}
+	}
 	defer func() {
 		if taskDebounceTimer != nil {
 			taskDebounceTimer.Stop()
@@ -1526,10 +1699,7 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 		}
 	}()
 	tryInjectTaskUpdates := func() error {
-		if !taskUpdatesReady || len(pendingTaskUpdates) == 0 || !turnState.canInjectResponse() || realtimeAdmissionSpeechActive(admissionTurnEndpoint) || activeNotificationToken != "" || notificationDrainDone != nil || activeChat != nil || sleep.pending() || chatBridgeHasPending(chatBridge) {
-			return nil
-		}
-		if !supportsText {
+		if !currentAdmission().canInjectTaskUpdates() {
 			return nil
 		}
 		delivering := pendingTaskUpdates
@@ -1560,7 +1730,7 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 		return nil
 	}
 	tryInjectVoiceNotification := func() error {
-		if runtime == nil || !supportsText || activeNotificationToken != "" || notificationDrainDone != nil || !turnState.canInjectResponse() || realtimeAdmissionSpeechActive(admissionTurnEndpoint) || activeChat != nil || sleep.pending() || chatBridgeHasPending(chatBridge) {
+		if !currentAdmission().canInjectVoiceNotification() {
 			return nil
 		}
 		prepared := runtime.PrepareVoiceNotification(ctx)
@@ -1650,10 +1820,16 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				continue
 			}
 			if err != nil {
+				if semanticEmitter != nil {
+					semanticEmitter.emitError(err)
+				}
 				return markRealtimeProviderFailure(err)
 			}
 		case err := <-readErrs:
 			if err != nil {
+				if semanticEmitter != nil {
+					semanticEmitter.emitError(err)
+				}
 				return err
 			}
 		case <-voiceNotificationTicker.C:
@@ -1819,16 +1995,7 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				close(command.events)
 				continue
 			}
-			admission := (realtimeChatAdmissionState{
-				activeChat:           activeChat != nil,
-				queuedChat:           queuedChat != nil,
-				responseActive:       turnState.responseActive,
-				turnBlocked:          !turnState.canInjectResponse(),
-				localSpeechActive:    realtimeAdmissionSpeechActive(admissionTurnEndpoint),
-				notificationActive:   activeNotificationToken != "",
-				notificationDraining: notificationDrainDone != nil,
-				standbyPending:       sleep.pending(),
-			}).admission()
+			admission := currentAdmission().admission()
 			logging.Infof("agent", "realtime", "Chat admission: request_id=%s active_request_id=%s response_id=%s occupied_ms=%d active_chat=%t queued_chat=%t response_active=%t terminal_pending=%t can_inject=%t input_speech=%t input_pending=%t local_speech=%t notification=%t draining=%t standby=%t admission=%d",
 				command.request.RequestID, realtimeChatRequestID(activeChat), turnState.responseID, watchdog.age().Milliseconds(),
 				activeChat != nil, queuedChat != nil, turnState.responseActive, turnState.responseTerminalPending, turnState.canInjectResponse(),
@@ -1860,6 +2027,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 			if err := responseInterrupter.Interrupt(ctx, playback.responseInterruption(outputFormat)); err != nil {
 				return fmt.Errorf("cancel realtime response; session closed: %w", err)
 			}
+			if semanticEmitter != nil {
+				semanticEmitter.invalidateOutput()
+			}
 			if err := playback.interrupt(playbackAudio, outputFormat); err != nil {
 				return fmt.Errorf("stop canceled realtime playback: %w", err)
 			}
@@ -1875,6 +2045,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 		case event, ok := <-sessionEvents:
 			if !ok {
 				if err := realtimeSessionEventClosureError(sessionErrors); err != nil {
+					if semanticEmitter != nil {
+						semanticEmitter.emitError(err)
+					}
 					return err
 				}
 				return nil
@@ -1888,9 +2061,14 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 			switch event.Kind {
 			case realtimevoice.EventReady:
 				// Providers may emit a ready frame after Open; negotiated rates
-				// are already available in Session.Info().
+				// are already available in Session.Info(). The synthetic ready
+				// event above keeps the lifecycle observable for providers that omit
+				// this frame, so do not publish a duplicate here.
 			case realtimevoice.EventSpeechStarted:
 				consumeRealtimeReengagement(realtimeReengagement)
+				if semanticEmitter != nil {
+					semanticEmitter.invalidateOutput()
+				}
 				turnState.speechStarted()
 				if sleep.abandon() {
 					logging.Infof("agent", "realtime", "Standby canceled by new user speech")
@@ -1922,6 +2100,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				if err := playback.interrupt(playbackAudio, outputFormat); err != nil {
 					return fmt.Errorf("interrupt realtime playback: %w", err)
 				}
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventSpeechStopped:
 				turnState.speechStopped(event.Status)
 				logging.Infof("agent", "realtime", "Input speech stopped: provider=%s session_id=%s item_id=%s audio_end_ms=%d status=%s", providerName, info.ID, event.ItemID, event.AudioEndMS, event.Status)
@@ -1941,16 +2122,25 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				if err := tryInjectTaskUpdates(); err != nil {
 					return err
 				}
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventInputCommitted:
 				// Server VAD already owns the commit. This event is diagnostic only
 				// and must not commit the buffer or change response admission again.
 				logging.Infof("agent", "realtime", "Input audio committed: provider=%s session_id=%s item_id=%s previous_item_id=%s", providerName, info.ID, event.ItemID, event.PreviousItemID)
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventTranscriptFinal:
 				if event.Role == "user" {
 					observeProviderUserTranscript()
 					logging.Infof("agent", "realtime", "User transcript: provider=%s session_id=%s item_id=%s sequence=%d status=completed transcript_len=%d", providerName, info.ID, event.ItemID, event.Sequence, len([]rune(strings.TrimSpace(event.Text))))
 					if err := appendRealtimeUserMessage(userContext, event.Text); err != nil {
 						return fmt.Errorf("persist realtime user transcript: %w", err)
+					}
+					if semanticEmitter != nil {
+						semanticEmitter.emit(event)
 					}
 				} else if event.Role == "assistant" {
 					if !turnState.acceptsResponseEvent(event.ResponseID) {
@@ -1964,11 +2154,18 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 						chatMode = "transcript"
 						sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDelta, Delta: event.Text})
 					}
+					if semanticEmitter != nil {
+						semanticEmitter.emit(event)
+					}
 				}
 			case realtimevoice.EventResponseStarted:
 				if !turnState.responseStarted(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale response.created: response_id=%s input_turn=%d request_turn=%d", event.ResponseID, turnState.inputTurnSequence, turnState.responseRequestTurn)
 					continue
+				}
+				if semanticEmitter != nil {
+					semanticEmitter.beginResponse(event.ResponseID)
+					semanticEmitter.emit(event, semanticEmitter.outputEpoch)
 				}
 				if info.Capabilities.ServerAuthoritativeTurnDetection {
 					admissionTurnEndpoint.Reset()
@@ -1991,6 +2188,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				if event.Role != "assistant" {
 					if event.Role == "user" {
 						observeProviderUserTranscript()
+						if semanticEmitter != nil {
+							semanticEmitter.emit(event)
+						}
 					}
 					continue
 				}
@@ -2030,8 +2230,14 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 						}
 					}
 				}
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventTranscriptFailed:
 				logging.Errorf("agent", "realtime", "User transcript: provider=%s session_id=%s item_id=%s status=failed error=%q", providerName, info.ID, event.ItemID, event.Error)
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventAudio:
 				if !turnState.acceptsResponseEvent(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale response audio: response_id=%s active_response_id=%s", event.ResponseID, turnState.responseID)
@@ -2073,9 +2279,18 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				} else {
 					realtimeToolCallStarter(toolCtx, toolExecutor, event, toolResults)
 				}
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventToolCallCancelled:
+				if semanticEmitter != nil && turnState.acceptsResponseEvent(event.ResponseID) {
+					semanticEmitter.emit(event)
+				}
 				tool, pending := foregroundTools[event.CallID]
 				if !pending {
+					continue
+				}
+				if event.ResponseID != "" && tool.responseID != "" && event.ResponseID != tool.responseID {
 					continue
 				}
 				tool.cancel()
@@ -2093,10 +2308,19 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				realtimeResponseUsage.InputTokens += event.Usage.InputTokens
 				realtimeResponseUsage.OutputTokens += event.Usage.OutputTokens
 				hasRealtimeResponseUsage = true
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventResponseDone, realtimevoice.EventResponseCancelled:
 				if !turnState.responseFinished(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale terminal response event: response_id=%s active_response_id=%s", event.ResponseID, turnState.responseID)
 					continue
+				}
+				if semanticEmitter != nil {
+					// Terminal events describe the response outcome even when the
+					// response was invalidated by a user interruption. They are
+					// lifecycle/control events, so do not attach the old output epoch.
+					semanticEmitter.emit(event, 0)
 				}
 				wasCanceled := cancelPending || event.Kind == realtimevoice.EventResponseCancelled
 				cancelPending = false
@@ -2231,6 +2455,9 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				consumeRealtimeReengagement(realtimeReengagement)
 				sleep.abandon()
 				turnState.responseInterrupted()
+				if semanticEmitter != nil {
+					semanticEmitter.invalidateOutput()
+				}
 				cancelForegroundTools(event.ResponseID)
 				// Use the current response ID if the event didn't provide one
 				responseIDForCleanup := event.ResponseID
@@ -2243,8 +2470,14 @@ func runRealtimeSessionWithIdleTimeout(cfg agent.Config, sigChan chan os.Signal,
 				if err := playback.interrupt(playbackAudio, outputFormat); err != nil {
 					return err
 				}
+				if semanticEmitter != nil {
+					semanticEmitter.emit(event)
+				}
 			case realtimevoice.EventError:
 				if event.Error != nil {
+					if semanticEmitter != nil {
+						semanticEmitter.emit(event)
+					}
 					return markRealtimeProviderFailure(event.Error)
 				}
 			}
@@ -2914,6 +3147,8 @@ type realtimePlaybackState struct {
 	finalizeResponses bool
 }
 
+const realtimePlaybackChunkBytes = 4096
+
 func (p *realtimePlaybackState) open(audio realtimePlaybackAudio, format agent.AudioFormat) error {
 	if p.session != nil {
 		return nil
@@ -2937,17 +3172,23 @@ func (p *realtimePlaybackState) appendItem(audio realtimePlaybackAudio, format a
 	if err := p.open(audio, format); err != nil {
 		return err
 	}
-	if err := audio.WritePlayChunk(p.session.SessionID, pcm, false); err != nil {
-		return err
+	for offset := 0; offset < len(pcm); offset += realtimePlaybackChunkBytes {
+		end := offset + realtimePlaybackChunkBytes
+		if end > len(pcm) {
+			end = len(pcm)
+		}
+		if err := audio.WritePlayChunk(p.session.SessionID, pcm[offset:end], false); err != nil {
+			return err
+		}
+		if itemID != "" && p.itemID != itemID {
+			p.itemID = itemID
+			p.submittedBytes = 0
+			p.itemStartedAt = p.currentTime()
+		} else if itemID != "" && p.itemStartedAt.IsZero() {
+			p.itemStartedAt = p.currentTime()
+		}
+		p.submittedBytes += int64(end - offset)
 	}
-	if itemID != "" && p.itemID != itemID {
-		p.itemID = itemID
-		p.submittedBytes = 0
-		p.itemStartedAt = p.currentTime()
-	} else if itemID != "" && p.itemStartedAt.IsZero() {
-		p.itemStartedAt = p.currentTime()
-	}
-	p.submittedBytes += int64(len(pcm))
 	return nil
 }
 

@@ -130,6 +130,14 @@ speed = 1.0
 
 When `voice_tool_call_speech = true`, the runtime will asynchronously TTS and play the `content` of tool call events when they arrive. This `content` comes only from the assistant content in the same LLM tool-call response, not from tool parameters.
 
+The speech parser streams leading `<tts>...</tts>` blocks before the tool call
+finishes. Tool-event speech is a fallback for tagged content that was not
+streamed. The next spoken block takes over immediately: the runtime cancels the
+previous synthesis session and stops its queued playback before starting the
+new block. A tool response ending does not itself cut off speech; replacement
+occurs when the next spoken block begins. Pending asynchronous tool speech
+cannot start late and replace a newer answer.
+
 If the LLM does not generate assistant content in the same response as the tool call, that tool call remains silent. The runtime does not derive short speech announcements from `speech`, `description`, or other context fields in tool parameters.
 
 ## TTS Provider Usage
@@ -140,7 +148,7 @@ All TTS providers are called through a unified streaming session: the Agent writ
 
 Every assistant response uses one protocol: its first bytes are exactly one leading `<tts>...</tts>` block, followed by the user-facing text. This applies both to final answers and to progress content emitted with tool calls. The spoken and visible forms do not need to be identical.
 
-Only the first leading TTS block in each LLM response is streamed. When its closing `</tts>` tag arrives, the runtime immediately flushes the provider so short MiniMax speech does not wait for the remaining visible response. At a tool-call response boundary, the streamed block is finalized before the tool event is handled, preventing the same progress speech from being played again through the tool-event path while still preserving `voice_tool_call_speech` and tool-specific suppression such as `wait_for_wakeup`. Trailing tags, extra TTS blocks, and missing closing tags remain runtime compatibility fallbacks for older or malformed model output, but they are not valid prompt output. If the model omits the closing tag, the response boundary acts as an implicit `</tts>` and flushes the remaining speech instead of dropping it.
+A leading TTS block streams as its bytes arrive. If another block starts before visible text, it replaces the earlier speech immediately; the prompt still calls for exactly one leading block per response. When a closing `</tts>` tag arrives, the runtime flushes the provider so short MiniMax speech does not wait for the remaining visible response. At a tool-call response boundary, the streamed block is finalized before the tool event is handled, preventing the same progress speech from being played again through the tool-event path while still preserving `voice_tool_call_speech` and tool-specific suppression such as `wait_for_wakeup`. Tags after visible text and missing closing tags remain runtime compatibility fallbacks for older or malformed model output, but they are not valid prompt output. If the model omits the closing tag, the response boundary acts as an implicit `</tts>` and flushes the remaining speech instead of dropping it.
 
 ```toml
 # Minimax WebSocket

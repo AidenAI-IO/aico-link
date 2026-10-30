@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"aico-agent/internal/stream"
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
@@ -92,10 +93,28 @@ func normalizeTencentASREngineModelType(language, engineModelType string) string
 }
 
 func (s *TencentASRSTT) Capabilities() STTCapabilities {
-	return STTCapabilities{SupportsStreamingUpload: s.appID != ""}
+	return STTCapabilities{
+		SupportsStreamingUpload:       s.appID != "",
+		SupportsInterimResults:        s.appID != "",
+		SupportsSegmentFinals:         s.appID != "",
+		SupportsProviderEndpointing:   s.appID != "",
+		SupportsStreamingCancellation: s.appID != "",
+	}
 }
 
 func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
+	return s.TranscribeWAVWithContext(context.Background(), wavData)
+}
+
+// TranscribeWAVWithContext transcribes WAV audio while honoring cancellation
+// from the caller through the Tencent HTTP request.
+func (s *TencentASRSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	if len(wavData) == 0 {
 		return "", fmt.Errorf("empty wav data")
 	}
@@ -124,7 +143,7 @@ func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
 	if apiURL == "" {
 		apiURL = "https://" + tencentASRHost
 	}
-	req, err := http.NewRequest(http.MethodPost, apiURL, bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, apiURL, bytes.NewReader(payload))
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}
@@ -169,6 +188,9 @@ func (s *TencentASRSTT) TranscribeWAV(wavData []byte) (string, error) {
 }
 
 func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if !s.Capabilities().SupportsStreamingUpload {
 		return nil, fmt.Errorf("tencent ASR realtime upload requires stt.app_id")
 	}
@@ -204,7 +226,10 @@ func (s *TencentASRSTT) NewStreamingUploader(ctx context.Context, cfg STTStreamC
 		conn:        conn,
 		packetBytes: packetBytesForAudioFormat(cfg),
 		done:        make(chan struct{}),
+		events:      make(chan stream.TranscriptEvent, 32),
 		segments:    make(map[int]string),
+		revisions:   make(map[int]uint64),
+		finalized:   make(map[int]bool),
 	}
 
 	initial, err := uploader.readServerMessage()
@@ -279,15 +304,68 @@ type tencentASRStreamingUploader struct {
 	conn        *websocket.Conn
 	packetBytes int
 
-	mu         sync.Mutex
-	pending    []byte
-	done       chan struct{}
-	ended      bool
-	finished   bool
-	transcript string
-	err        error
-	segments   map[int]string
-	maxIndex   int
+	mu           sync.Mutex
+	pending      []byte
+	done         chan struct{}
+	ended        bool
+	finished     bool
+	transcript   string
+	err          error
+	segments     map[int]string
+	revisions    map[int]uint64
+	finalized    map[int]bool
+	maxIndex     int
+	events       chan stream.TranscriptEvent
+	eventsMu     sync.Mutex
+	eventsClosed bool
+}
+
+// TranscriptEvents returns revisioned hypotheses, segment finals, and the
+// turn commit emitted by the realtime provider. The channel is closed when
+// the session finishes or is closed. Events are best-effort and bounded so a
+// consumer that only uses Finalize cannot stall audio/network processing.
+func (u *tencentASRStreamingUploader) TranscriptEvents() <-chan stream.TranscriptEvent {
+	if u == nil {
+		return nil
+	}
+	return u.events
+}
+
+func (u *tencentASRStreamingUploader) emitTranscript(event stream.TranscriptEvent) {
+	if u == nil || u.events == nil {
+		return
+	}
+	if err := event.Validate(); err != nil {
+		return
+	}
+	u.eventsMu.Lock()
+	defer u.eventsMu.Unlock()
+	if u.eventsClosed {
+		return
+	}
+	select {
+	case u.events <- event:
+	default:
+		// Keep the latest provider state flowing. A bounded channel prevents
+		// transcript observers from blocking the websocket reader.
+		select {
+		case <-u.events:
+		default:
+		}
+		select {
+		case u.events <- event:
+		default:
+		}
+	}
+}
+
+func (u *tencentASRStreamingUploader) closeTranscriptEvents() {
+	u.eventsMu.Lock()
+	defer u.eventsMu.Unlock()
+	if !u.eventsClosed && u.events != nil {
+		u.eventsClosed = true
+		close(u.events)
+	}
 }
 
 func (u *tencentASRStreamingUploader) UploadPCM(pcm []byte) error {
@@ -411,19 +489,52 @@ func (u *tencentASRStreamingUploader) handleMessage(msg tencentASRRealtimeServer
 		if index < 0 {
 			index = 0
 		}
-		text := strings.TrimSpace(msg.Result.VoiceTextStr)
+		text := msg.Result.VoiceTextStr
 		u.mu.Lock()
-		if text != "" {
+		if u.finalized[index] {
+			u.mu.Unlock()
+		} else {
+			u.revisions[index]++
+			revision := u.revisions[index]
 			u.segments[index] = text
 			if index > u.maxIndex {
 				u.maxIndex = index
 			}
+			segmentID := fmt.Sprintf("tencent-%d", index)
+			segmentFinal := msg.Result.SliceType >= 2
+			if segmentFinal {
+				u.finalized[index] = true
+			}
+			u.mu.Unlock()
+
+			if segmentFinal {
+				u.emitTranscript(stream.NewTranscriptSegmentFinal(segmentID, revision, text))
+			} else {
+				u.emitTranscript(stream.NewTranscriptHypothesis(segmentID, revision, text))
+			}
 		}
-		u.mu.Unlock()
 	}
 
 	if msg.Final != 0 {
-		u.finish(u.joinSegments(), nil)
+		transcript := u.joinSegments()
+		if strings.TrimSpace(transcript) != "" {
+			u.mu.Lock()
+			segments := make([]stream.TranscriptSegment, 0, len(u.segments))
+			for i := 0; i <= u.maxIndex; i++ {
+				if text, ok := u.segments[i]; ok && strings.TrimSpace(text) != "" {
+					segments = append(segments, stream.TranscriptSegment{
+						SegmentID: fmt.Sprintf("tencent-%d", i),
+						Revision:  u.revisions[i],
+						Text:      text,
+					})
+				}
+			}
+			u.mu.Unlock()
+			if len(segments) > 0 {
+				u.emitTranscript(stream.NewTurnCommit(segments, transcript))
+			}
+		}
+		u.finish(transcript, nil)
 	}
 	return nil
 }
@@ -443,8 +554,8 @@ func (u *tencentASRStreamingUploader) joinSegments() string {
 
 func (u *tencentASRStreamingUploader) finish(transcript string, err error) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	if u.finished {
+		u.mu.Unlock()
 		return
 	}
 	if strings.TrimSpace(transcript) == "" {
@@ -458,6 +569,8 @@ func (u *tencentASRStreamingUploader) finish(transcript string, err error) {
 	}
 	u.finished = true
 	close(u.done)
+	u.mu.Unlock()
+	u.closeTranscriptEvents()
 }
 
 type tencentASRRequest struct {

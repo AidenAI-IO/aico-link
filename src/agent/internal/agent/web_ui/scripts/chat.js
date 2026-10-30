@@ -1,4 +1,16 @@
 // Chat submission, steering, streaming, and history reconciliation.
+// Canonical messages retain every received character. Only their text nodes
+// reveal incrementally, so presentation never blocks stream consumption.
+const assistantTextReveal = createStreamingTextReveal({
+    requestFrame: callback => window.requestAnimationFrame(callback),
+    cancelFrame: id => window.cancelAnimationFrame(id),
+    now: () => performance.now(),
+    immediate: () => document.hidden || (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches),
+    beforeFrame: () => isConversationNearBottom(),
+    afterFrame: shouldStickToBottom => { if (shouldStickToBottom) scrollToBottom(); },
+    onIdle: () => resumeHistoryAfterTextReveal()
+});
+
 async function sendMessage() {
     if (sendBtn.disabled) return;
     if (currentChatRequestId) {
@@ -11,10 +23,12 @@ async function sendMessage() {
 
     const pendingAttachments = cloneAttachmentsForMessage(draftAttachments);
 
+    assistantTextReveal.flush();
     inputEl.value = '';
     autoResizeInput();
     clearDraftAttachments();
     currentChatRequestId = createRequestId();
+    rememberNDJSONOwnedRequest(currentChatRequestId);
     externalActiveRequestId = '';
     currentChatAbortController = new AbortController();
     currentChatCancelRequested = false;
@@ -74,6 +88,7 @@ async function sendMessage() {
             timestamp: new Date().toISOString()
         });
     } finally {
+        if (!completed) assistantTextReveal.flush();
         currentChatRequestId = '';
         currentChatAbortController = null;
         currentChatCancelRequested = false;
@@ -240,6 +255,7 @@ async function cancelCurrentRun(event) {
     }
     resetStopRunArm();
     currentChatCancelRequested = true;
+    assistantTextReveal.flush();
     stopRunBtn.disabled = true;
     stopRunBtn.textContent = 'Stopping...';
     pendingSteer = null;
@@ -362,6 +378,7 @@ function consumeChatStreamLines(buffer, flush) {
 }
 
 function handleChatStreamEvent(event) {
+    rememberNDJSONOwnedRequest(event.request_id || (event.message && event.message.request_id));
     if (event.type === 'assistant_delta') {
         appendAssistantDelta(event);
         return false;
@@ -383,10 +400,16 @@ function handleChatStreamEvent(event) {
             pendingSteer = null;
             renderPendingSteer();
         }
+        if (event.message.type === 'tool_call') {
+            retireAssistantDraft(event.message);
+        }
         if (event.message.type === 'assistant') {
             finalizeAssistantMessage(event.message);
         } else {
             addMessage(event.message);
+        }
+        if (event.message.type === 'tool_result') {
+            assistantDraftBlockedByTool.delete(assistantStreamKey(event.message));
         }
         return false;
     }
@@ -399,9 +422,18 @@ function handleChatStreamEvent(event) {
     return false;
 }
 
+function rememberNDJSONOwnedRequest(requestId) {
+    if (!requestId) return;
+    ndjsonOwnedRequestIds.delete(requestId);
+    ndjsonOwnedRequestIds.add(requestId);
+    if (ndjsonOwnedRequestIds.size > 32) {
+        ndjsonOwnedRequestIds.delete(ndjsonOwnedRequestIds.values().next().value);
+    }
+}
+
 function appendAssistantDelta(event) {
     const key = assistantStreamKey(event);
-    if (!key) return;
+    if (!key || assistantDraftBlockedByTool.has(key)) return;
     let msg = streamingAssistantDrafts[key];
     if (!msg) {
         msg = {
@@ -413,13 +445,14 @@ function appendAssistantDelta(event) {
         };
         streamingAssistantDrafts[key] = msg;
     }
+    if (typeof msg.content !== 'string') msg.content = '';
     msg.content += event.delta || '';
     addMessage(msg);
 }
 
 function appendAssistantReasoningDelta(event) {
     const key = assistantStreamKey(event);
-    if (!key) return;
+    if (!key || assistantDraftBlockedByTool.has(key)) return;
     let msg = streamingAssistantDrafts[key];
     if (!msg) {
         msg = {
@@ -432,6 +465,7 @@ function appendAssistantReasoningDelta(event) {
         };
         streamingAssistantDrafts[key] = msg;
     }
+    if (typeof msg.reasoning_content !== 'string') msg.reasoning_content = '';
     msg.reasoning_content += event.reasoning_content || '';
     addMessage(msg);
 }
@@ -458,7 +492,28 @@ function resetAssistantDelta(event) {
     removeRenderedMessage(messageKey);
 }
 
+function retireAssistantDraft(event) {
+    const key = assistantStreamKey(event);
+    if (!key) return;
+    const draft = streamingAssistantDrafts[key];
+    const text = assistantMessageForToolCall(event);
+    assistantDraftBlockedByTool.add(key);
+    if (draft) {
+        const draftKey = messageIdentity(draft);
+        if (text) assistantTextReveal.rekey(draftKey, messageIdentity(text));
+        delete streamingAssistantDrafts[key];
+        removeRenderedMessage(draftKey);
+    }
+    if (text) addMessage(text);
+}
+
 function removeRenderedMessage(messageKey) {
+    assistantTextReveal.remove(messageKey);
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'remove', key: messageKey});
+    removeRenderedMessageNode(messageKey);
+}
+
+function removeRenderedMessageNode(messageKey) {
     const existing = renderedMessageNodes.get(messageKey);
     renderedMessageKeys.delete(messageKey);
     renderedMessageNodes.delete(messageKey);
@@ -476,14 +531,15 @@ function finalizeAssistantMessage(msg) {
     if (key) {
         delete streamingAssistantDrafts[key];
     }
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'final', message: msg});
     const messageKey = messageIdentity(msg);
     if (renderedMessageKeys.has(messageKey)) {
         // A streamed draft may have been inserted before tool events.
         // Re-append the finalized assistant message so the live chat
         // order matches the persisted history and episode trace.
-        removeRenderedMessage(messageKey);
+        removeRenderedMessageNode(messageKey);
     }
-    addMessage(msg);
+    renderLiveMessage(msg);
 }
 
 function assistantStreamKey(value) {
@@ -531,10 +587,15 @@ async function clearSessionAndMemory() {
 }
 
 function renderHistory(history) {
-    history = Array.isArray(history) ? history : [];
+    projectedMessages = projectConversationMessages(projectedMessages, {type: 'history', messages: history});
+    history = projectedMessages;
     const fingerprint = JSON.stringify(history);
     if (fingerprint === renderedHistoryFingerprint) return;
 
+    // Explicit history replacement (including a clear) cannot leave callbacks
+    // writing to removed nodes. Unchanged nodes must also show their full text.
+    assistantTextReveal.flush();
+    assistantTextReveal.clear();
     const shouldStickToBottom = messagesDiv.children.length === 0 || isConversationNearBottom();
     const previousScrollTop = conversationEl.scrollTop;
     const previousMessageNodes = renderedMessageNodes;
@@ -543,6 +604,7 @@ function renderHistory(history) {
     const nextMessageNodes = new Map();
     renderedStateMessages = new Map();
     streamingAssistantDrafts = {};
+    assistantDraftBlockedByTool.clear();
 
     const orderedNodes = [];
     history.forEach(function(msg) {
@@ -605,14 +667,30 @@ function renderHistory(history) {
     renderedHistoryFingerprint = fingerprint;
 }
 
-function addMessage(msg) {
-    if (isControlMessage(msg)) return;
+function addMessage(msg, beforeRequestId) {
+    const toolText = assistantMessageForToolCall(msg);
+    if (toolText) addMessage(toolText);
+    const next = projectConversationMessages(projectedMessages, {
+        type: 'live', message: msg, beforeRequestId: beforeRequestId
+    });
+    if (next === projectedMessages && !beforeRequestId) return;
+    projectedMessages = next;
+    renderLiveMessage(msg, beforeRequestId);
+}
+
+function renderLiveMessage(msg, beforeRequestId) {
     if (isContextMarkerMessage(msg)) {
         const key = messageIdentity(msg);
-        if (!renderedStateMessages.has(key)) {
+        const userMessage = beforeRequestId && projectedMessages.find(function(item) {
+            return normalizeType(item.type) === 'user' && item.request_id === beforeRequestId;
+        });
+        const referenceNode = userMessage && renderedMessageNodes.get(messageIdentity(userMessage));
+        let node = renderedStateMessages.get(key);
+        if (!node || (referenceNode && node.nextSibling !== referenceNode)) {
             renderedHistoryFingerprint = null;
             const shouldStickToBottom = isConversationNearBottom();
-            messagesDiv.appendChild(createContextMarkerNode(msg, renderedStateMessages.size));
+            if (!node) node = createContextMarkerNode(msg, renderedStateMessages.size);
+            messagesDiv.insertBefore(node, referenceNode || null);
             if (shouldStickToBottom) scrollToBottom();
         }
         return;
@@ -627,7 +705,7 @@ function addMessage(msg) {
     renderedHistoryFingerprint = null;
     renderedMessageKeys.add(key);
     const shouldStickToBottom = isConversationNearBottom();
-    const node = createTrackedMessageNode(msg);
+    const node = createTrackedMessageNode(msg, undefined, true);
     renderedMessageNodes.set(key, node);
     messagesDiv.appendChild(node);
     updateEmptyState();
@@ -645,16 +723,24 @@ function updateMessageNode(key, msg) {
     if (existing._messageFingerprint === incomingFingerprint) return;
     renderedHistoryFingerprint = null;
     const shouldStickToBottom = isConversationNearBottom();
-    const replacement = createTrackedMessageNode(msg, incomingFingerprint);
+    const replacement = createTrackedMessageNode(msg, incomingFingerprint, true);
     renderedMessageNodes.set(key, replacement);
     existing.replaceWith(replacement);
     updateEmptyState();
     if (shouldStickToBottom) scrollToBottom();
 }
 
-function createTrackedMessageNode(msg, fingerprint) {
+function createTrackedMessageNode(msg, fingerprint, live) {
     const node = createMessageNode(msg);
     node._messageFingerprint = fingerprint || messageRenderFingerprint(msg);
+    const key = messageIdentity(msg);
+    if (live && normalizeType(msg.type) === 'assistant' &&
+        (streamingAssistantDrafts[assistantStreamKey(msg)] || assistantTextReveal.has(key))) {
+        assistantTextReveal.bind(key, {
+            content: node.querySelector('.message-copy'),
+            reasoning: node.querySelector('.reasoning-text')
+        }, {content: msg.content || '', reasoning: msg.reasoning_content || ''});
+    }
     return node;
 }
 
@@ -684,46 +770,4 @@ function updateContextMarkerNode(node, msg, index) {
     if (!button) return;
     button.title = contextMarkerSummary(msg, index);
     button.setAttribute('aria-expanded', node.classList.contains('open') ? 'true' : 'false');
-}
-
-function isControlMessage(msg) {
-    return normalizeType((msg || {}).type) === 'todo_closed';
-}
-
-function isContextMarkerMessage(msg) {
-    msg = msg || {};
-    const type = normalizeType(msg.type);
-    return type === 'state' || type === 'notice' || msg.role === 'state' || msg.role === 'notice';
-}
-
-function messageIdentity(msg) {
-    msg = msg || {};
-    const type = isContextMarkerMessage(msg) ? contextMarkerType(msg) : normalizeType(msg.type);
-    const content = msg.content || '';
-    const requestId = msg.request_id || '';
-    if (requestId && (type === 'tool_call' || type === 'tool_result')) {
-        return [
-            'request', requestId, type,
-            msg.tool_name || '', msg.tool_input || '', content, msg.timestamp || ''
-        ].join('\u001f');
-    }
-    if (requestId && type === 'assistant') {
-        return ['request', requestId, type].join('\u001f');
-    }
-    if (requestId && type === 'user') {
-        return ['request', requestId, type, content].join('\u001f');
-    }
-    if (requestId && (type === 'state' || type === 'notice')) {
-        return ['request', requestId, type].join('\u001f');
-    }
-
-    const episodeId = msg.episode_id || '';
-    if (episodeId && type === 'assistant') {
-        return ['episode', episodeId, type].join('\u001f');
-    }
-    if (episodeId) {
-        return ['episode', episodeId, type, msg.role || '', msg.tool_name || '', msg.tool_input || '', content, msg.timestamp || ''].join('\u001f');
-    }
-
-    return ['local', type, content, msg.timestamp || ''].join('\u001f');
 }
