@@ -599,6 +599,9 @@ def test_publish_run_uses_stable_dataset_and_item_ids(tmp_path: Path):
     first_result = publish_run(first_run, client=first)
     second_result = publish_run(second_run, client=second)
 
+    assert first.experiment["metadata"]["benchmark_run_id"] == "run-a"
+    assert first.experiment["metadata"]["benchmark_suite"] == "smoke_suite"
+    assert not any(key.endswith("_benchmark") for key in first.experiment["metadata"])
     assert first_result.dataset_name == second_result.dataset_name
     assert first.items[0].id == second.items[0].id
     assert first.items[0].input != second.items[0].input

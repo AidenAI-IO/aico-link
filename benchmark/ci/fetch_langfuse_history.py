@@ -96,6 +96,7 @@ def fetch_benchmark_history(
     client: Any = None,
     now: datetime | None = None,
     include_failure_details: bool = False,
+    suite_filter: set[str] | None = None,
 ) -> HistoryResult:
     """Fetch every experiment page, then every score page; overlay local runs.
 
@@ -104,6 +105,7 @@ def fetch_benchmark_history(
     Five experiment IDs share one score query to reduce request overhead.
     Optional task evidence is fetched only for each dataset's latest run in
     the dashboard's seven-day window, after applying the local overlay.
+    Suite filtering precedes score/detail reads and record-specific warnings.
     """
     if lookback_days <= 0:
         raise ValueError("lookback_days must be positive")
@@ -119,7 +121,10 @@ def fetch_benchmark_history(
                                  from_start_time=cutoff, to_start_time=now,
                                  fields="core,metadata"):
             metadata = experiment.metadata or {}
-            if str(metadata.get("aico_benchmark", "")).lower() != "true":
+            if not all(isinstance(metadata.get(key), str) and metadata[key].strip()
+                       for key in ("benchmark_run_id", "benchmark_suite")):
+                continue
+            if suite_filter is not None and metadata["benchmark_suite"] not in suite_filter:
                 continue
             if branch_filter and metadata.get("git_branch") != branch_filter:
                 if not metadata.get("git_branch"):
@@ -161,7 +166,7 @@ def fetch_benchmark_history(
 
     # The current run may not yet be visible in Langfuse, or publication may
     # have failed. Its completed local metrics replace the same suite/run once.
-    local = _read_local_runs(local_runs_dir, local_run_id_prefix, branch_filter, result.warnings)
+    local = _read_local_runs(local_runs_dir, local_run_id_prefix, branch_filter, result.warnings, suite_filter)
     by_identity: dict[tuple[str, str], dict[str, Any]] = {}
     for record in sorted(result.records, key=lambda r: r["timestamp"]):
         by_identity[(record["run_id"], record["suite"])] = record
@@ -281,7 +286,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
 
 
 def _read_local_runs(runs_dir: Path | None, prefix: str | None, branch_filter: str | None,
-                     warnings: list[str]) -> list[dict[str, Any]]:
+                     warnings: list[str], suite_filter: set[str] | None = None) -> list[dict[str, Any]]:
     if runs_dir is None:
         return []
     if not runs_dir.is_dir():
@@ -299,6 +304,8 @@ def _read_local_runs(runs_dir: Path | None, prefix: str | None, branch_filter: s
         try:
             artifacts = _load_run_artifacts(run_dir)
             metadata = _experiment_metadata(artifacts)
+            if suite_filter is not None and metadata["benchmark_suite"] not in suite_filter:
+                continue
             if branch_filter and metadata.get("git_branch") != branch_filter:
                 continue
             timestamp = parse_timestamp(artifacts.manifest.get("started_at"))

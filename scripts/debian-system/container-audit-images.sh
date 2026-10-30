@@ -291,8 +291,15 @@ audit_rootfs() {
         || fail "wpa_supplicant does not consume the runtime candidate selector"
     grep -Fqx 'Environment=AICO_WPA_SUPPLICANT_CONFIG=/userdata/debian/wifi/wpa_supplicant-wlan0.conf' "${wifi_drop_in}" \
         || fail "wpa_supplicant does not define the persistent config fallback"
-    grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -i %I' "${wifi_drop_in}" \
-        || fail "wpa_supplicant does not expand the selected config path"
+    grep -Fqx 'ExecStart=/usr/sbin/wpa_supplicant -c ${AICO_WPA_SUPPLICANT_CONFIG} -I /etc/aico/wifi-roaming.conf -i %I' "${wifi_drop_in}" \
+        || fail "wpa_supplicant does not expand the selected config path with the roaming policy"
+    # wpa_supplicant refuses to start when the -I file is missing, and a
+    # second bgscan line would silently override the policy.
+    roaming_settings=$(grep -Ev '^[[:space:]]*(#|$)' "${ROOTFS_MOUNT}/etc/aico/wifi-roaming.conf" || true)
+    [ "${roaming_settings}" = 'bgscan="simple:30:-70:3600"' ] \
+        || fail "wpa_supplicant roaming policy is missing or overridden"
+    grep -Fqx 'IgnoreCarrierLoss=3s' "${ROOTFS_MOUNT}/etc/systemd/network/20-wlan0.network" \
+        || fail "wlan0 does not keep its address across roaming"
     grep -Eq '^After=.*aico-wifi-proxy\.service' \
         "${ROOTFS_MOUNT}/etc/systemd/system/aico-wifi-proxy-agent-restart.service" \
         || fail "Wi-Fi proxy restart service is missing proxy ordering"

@@ -285,6 +285,52 @@ If unicast traffic stalls while the link stays associated, compare against
 failure in HE mode on a 2.4 GHz AP; disabling HE restored gateway traffic
 there.
 
+### Roaming
+
+`wpa_supplicant@wlan0` loads the image-owned policy
+`/etc/aico/wifi-roaming.conf` with `-I`, after the saved networks in
+`/userdata/debian/wifi/wpa_supplicant-wlan0.conf`. The policy enables
+`bgscan="simple:30:-70:3600"`:
+
+- Below -70 dBm, the supplicant scans every 30 seconds while connected and
+  moves to another AP of the same SSID when that AP is sufficiently stronger.
+  After 121 consecutive short scans (about an hour of continuous weak
+  signal), `bgscan simple` backs off to the long interval. A later
+  below-threshold event still triggers an immediate scan, and each long-interval
+  scan earns back one short scan.
+- At or above -70 dBm, it scans once an hour.
+- The AIC8800 driver reports signal threshold crossings (`NL80211_CMD_NOTIFY_CQM`),
+  so the scan interval follows the live signal.
+
+A failed or out-of-range network still triggers the normal reconnect to the
+best remaining saved network. The file overrides a global
+`bgscan` written in the user configuration; edit it and restart
+`wpa_supplicant@wlan0` to change the policy. `wpa_supplicant` does not start
+when the file is missing.
+
+On 2026-10-29, a board on a two-AP mesh (5 GHz, channel 64) ran this policy
+with a test threshold of -30 dBm. After being moved to the weaker AP (-38 to
+-46 dBm), it received the CQM low-signal event, scanned, and returned to the
+-21 dBm AP without user action.
+
+The AIC8800 firmware does not hand over seamlessly. A manual `wpa_cli roam`
+completed in about 0.7 seconds and lost two of 100 gateway pings. Other
+transitions reported a local disconnect (`reason=0`), sometimes followed by
+`ASSOC-REJECT status_code=1`, and recovered on the stronger AP after 0.5 to 14
+seconds of carrier loss. `20-wlan0.network` therefore sets
+`IgnoreCarrierLoss=3s`, so systemd-networkd keeps the DHCP address through a
+short gap instead of releasing it and repeating DHCP. A longer gap still
+releases the lease and acquires it again.
+
+To observe roaming decisions, raise the supplicant log level temporarily:
+
+```bash
+sudo wpa_cli -i wlan0 log_level DEBUG
+sudo grep -E 'RSSI (low|high)|bgscan simple|within-ESS|Trying to associate' \
+    /var/log/wpa_supplicant/wlan0.log
+sudo wpa_cli -i wlan0 log_level INFO
+```
+
 ## Wi-Fi Proxy
 
 `aico-wifi-proxy.service` starts `agent wifi-proxy` on `127.0.0.1:18080`

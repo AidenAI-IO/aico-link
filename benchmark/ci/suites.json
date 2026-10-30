@@ -1,7 +1,6 @@
 {
   "version": 1,
   "cases": [
-    {"id": "episode-memory", "suite": "suites/episode_memory_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "memory", "suite": "suites/memory_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "memory-admission", "suite": "suites/memory_admission_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "shell-utility", "suite": "suites/shell_utility_v1.json", "environment": "isolated", "max_concurrency": 2},

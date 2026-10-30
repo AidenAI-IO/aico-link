@@ -184,10 +184,12 @@ jobs:
         working-directory: benchmark
         env:
           DASHBOARD_URL: ${{ steps.preview.outputs.dashboard_url }}
+          WEEKLY_REPORT_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}#summary
         run: |
           uv run python -m ci.notify_lark \
             --data-json dashboard-data.json \
-            --dashboard-url "$DASHBOARD_URL"
+            --dashboard-url "$DASHBOARD_URL" \
+            --weekly-report-url "$WEEKLY_REPORT_URL"
       - name: Upload weekly report artifacts
         if: ${{ always() }}
         continue-on-error: true
