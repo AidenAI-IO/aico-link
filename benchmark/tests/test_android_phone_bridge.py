@@ -16,6 +16,8 @@ def test_android_bridge_routes_and_cleans_up(monkeypatch) -> None:
     with android_phone_bridge.connected_android_phone_bridge("emulator-5554", 32123, object()):
         assert commands[1][1] == ("reverse", "tcp:8080", "tcp:32123")
         assert commands[2][1][:6] == ("shell", "iptables", "-t", "nat", "-I", "OUTPUT")
+        assert commands[3][1] == ("shell", "am", "force-stop", "link.aico.app")
+        assert commands[4][1] == ("shell", "am", "start", "-n", "link.aico.app/.MainActivity")
 
     assert commands[-2][1][:6] == ("shell", "iptables", "-t", "nat", "-D", "OUTPUT")
     assert commands[-1][1] == ("reverse", "--remove", "tcp:8080")
@@ -57,22 +59,24 @@ def test_foreground_app_waits_for_active_bridge(monkeypatch) -> None:
 
     assert calls[0] == (
         "emulator-5554",
-        ("shell", "am", "start", "-n", "com.aidenbridge/.MainActivity"),
+        ("shell", "am", "start", "-n", "link.aico.app/.MainActivity"),
     )
     assert calls[1] == {"timeout_sec": 30, "require_active": True}
 
 
 def test_clipboard_write_events_ignores_other_diagnostics(monkeypatch) -> None:
+    calls = []
     lines = '\n'.join([
         '{"component":"clipboard","event":"write_completed","fields":{"text_length":18}}',
         '{"component":"clipboard","event":"read_completed"}',
         'incomplete json',
     ])
-    monkeypatch.setattr(android_phone_bridge, "_adb", lambda serial, *args: lines)
+    monkeypatch.setattr(android_phone_bridge, "_adb", lambda serial, *args: calls.append(args) or lines)
 
     assert android_phone_bridge.clipboard_write_events("emulator-5554") == [{
         "component": "clipboard", "event": "write_completed", "fields": {"text_length": 18},
     }]
+    assert "/data/user/0/link.aico.app/files/diagnostic-*.jsonl" in calls[0][-1]
 
 
 def test_bridge_input_requires_new_app_write_and_exact_other_app_field(monkeypatch) -> None:
@@ -100,7 +104,7 @@ def test_bridge_input_requires_new_app_write_and_exact_other_app_field(monkeypat
 
 
 @pytest.mark.parametrize("package,text", [
-    ("com.aidenbridge", "Aiden résumé check #42"),
+    ("link.aico.app", "Aiden résumé check #42"),
     ("com.android.settings", "Aiden résumé check #42 wrong"),
 ])
 def test_bridge_write_alone_does_not_pass_input(monkeypatch, package, text):

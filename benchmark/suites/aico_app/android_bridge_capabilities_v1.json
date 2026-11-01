@@ -7,7 +7,7 @@
   "tasks": [
     {
       "id": "clipboard_round_trip",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "multi_step",
       "description_for_judge": "Read the Android system clipboard through Phone Bridge, write a temporary marker, verify it, then restore and verify the original value, including an empty original value.",
       "prompt": "Use the connected phone's Bridge to read the current clipboard text. Temporarily write AIDEN_BRIDGE_CI_MARKER and read it back to confirm. Restore the original text, even if it was empty, and read it back again to confirm. Do not use screen controls to read or write the clipboard.",
@@ -32,7 +32,7 @@
     },
     {
       "id": "open_url_through_bridge",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
       "prompt": "Open https://example.com/ directly through the connected phone's Bridge. Do not operate the browser UI manually.",
@@ -53,7 +53,7 @@
     },
     {
       "id": "open_app_through_bridge",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Launch Android Settings through the foreground AidenBridge semantic app command.",
       "prompt": "Open Android Settings through the connected phone's Bridge. Do not tap an app icon or search for the app on screen.",
@@ -74,7 +74,7 @@
     },
     {
       "id": "calendar_query",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Query a fixed date range through the Android Phone Bridge calendar API and report the structured result, including an empty event list.",
       "prompt": "Query system calendar events from 2037-11-18T00:00:00+08:00 to 2037-11-19T00:00:00+08:00 through the connected phone's Bridge only. Report the number of returned events; explicitly say when the list is empty. Do not open Calendar or operate the screen.",
@@ -95,7 +95,7 @@
     },
     {
       "id": "contacts_query",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Query a dedicated benchmark contact name through the Android Phone Bridge contacts API; an empty list is valid, but transport and permission errors are not.",
       "prompt": "Query contacts whose names contain Aiden Benchmark Fixture through the connected phone's Bridge only, and report the number returned. If none are found, explicitly report an empty list. Do not create a contact or operate the screen.",
@@ -116,7 +116,7 @@
     },
     {
       "id": "send_local_notification",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "single_step",
       "description_for_judge": "Send an immediate local notification through Phone Bridge, report its ID, and verify its visible title and body in Android's notification shade.",
       "prompt": "Send an immediate silent local notification through the connected phone's Bridge, with title AIDEN_BRIDGE_CI_NOTIFICATION and body Android bridge notification verified. Then use quick_action with action=notification_center to open the notification shade. Confirm the title and body are visible and report the returned notification ID.",
@@ -139,7 +139,7 @@
     },
     {
       "id": "calendar_create_query_delete",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "multi_step",
       "android_bridge_fixture": "calendar",
       "description_for_judge": "Create a calendar event, read back its fields, delete that returned event ID, and confirm its absence through the real Bridge app.",
@@ -162,7 +162,7 @@
     },
     {
       "id": "contacts_create_query_update",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "multi_step",
       "android_bridge_fixture": "contacts",
       "description_for_judge": "Create a reserved test contact and verify phone/email values before and after an update through the real Bridge app. The harness removes the reserved contact afterward.",
@@ -185,7 +185,7 @@
     },
     {
       "id": "sms_multiline_unicode_input",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "device_operation",
       "description_for_judge": "Open an SMS draft via Phone Bridge and enter multiline Unicode text using enter_text. Never send the draft. Harness checks App write evidence and exact editable field text.",
       "prompt": "Open an empty SMS draft to +12025550147 using open_url with sms:+12025550147. If a draft from a previous benchmark exists, clear only its composer text first. In the visible message composer, use enter_text to enter exactly these two lines, preserving the newline, accented character and emoji:\nBridge café input ✅\nLine 2: 100% & #42\nLeave the message draft visible. Do not send it, press Send, or manually stage the clipboard.",
@@ -206,7 +206,7 @@
     },
     {
       "id": "settings_search_unicode_input",
-      "foreground_app_id": "com.aidenbridge",
+      "foreground_app_id": "link.aico.app",
       "category": "device_operation",
       "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new AidenBridge clipboard write and exact UIAutomator field text.",
       "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden résumé check #42. Use enter_text once the editable field is visible, then leave that field on screen.",
