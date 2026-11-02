@@ -1181,7 +1181,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
                 "tasks": [
                     {
                         "id": "open_clock",
-                        "foreground_app_id": "com.aidenbridge" if bridge_mode == "foreground" else None,
+                        "foreground_app_id": "link.aico.app" if bridge_mode == "foreground" else None,
                         "category": "diagnostic",
                         "prompt": "open clock",
                         "description_for_judge": "open clock",

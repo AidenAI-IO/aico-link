@@ -851,7 +851,7 @@ def _cmd_run_auto_agent_setup_inner(
                     active_skills=active_skills,
                     after_setup=(
                         (lambda: foreground_android_phone_bridge(bridge_serial, client)
-                         if unit.task.foreground_app_id == "com.aidenbridge"
+                         if unit.task.foreground_app_id == "link.aico.app"
                          else wait_for_android_phone_bridge(client))
                         if bridge_serial else None
                     ),

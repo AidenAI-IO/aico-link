@@ -60,13 +60,13 @@ def wait_for_android_phone_bridge(
 
 
 def foreground_android_phone_bridge(serial: str, client: AgentClient) -> None:
-    _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
+    _adb(serial, "shell", "am", "start", "-n", "link.aico.app/.MainActivity")
     wait_for_android_phone_bridge(client, timeout_sec=30, require_active=True)
 
 
 def clipboard_write_events(serial: str) -> list[dict]:
     script = (
-        'for file in /data/user/0/com.aidenbridge/files/diagnostic-*.jsonl; '
+        'for file in /data/user/0/link.aico.app/files/diagnostic-*.jsonl; '
         'do if [ -f "$file" ]; then tail -n 2000 "$file"; fi; done'
     )
     output = _adb(
@@ -112,7 +112,7 @@ def verify_android_bridge_input(serial: str, text: str, prior_writes: set[str]) 
         node.attrib
         for node in hierarchy.iter("node")
         if "EditText" in node.attrib.get("class", "")
-        and node.attrib.get("package") != "com.aidenbridge"
+        and node.attrib.get("package") != "link.aico.app"
     ]
     matching_fields = [field for field in editable_fields if field.get("text") == text]
     return {
@@ -188,8 +188,8 @@ def connected_android_phone_bridge(
     try:
         _adb(serial, "shell", "iptables", "-t", "nat", "-I", "OUTPUT", "1", *NAT_RULE)
         rule_installed = True
-        _adb(serial, "shell", "am", "force-stop", "com.aidenbridge")
-        _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
+        _adb(serial, "shell", "am", "force-stop", "link.aico.app")
+        _adb(serial, "shell", "am", "start", "-n", "link.aico.app/.MainActivity")
         wait_for_android_phone_bridge(client)
         yield
     finally:

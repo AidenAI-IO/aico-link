@@ -189,7 +189,7 @@ def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, 
     def run(command, **kwargs):
         commands.append((command, kwargs))
         return run_case_module.subprocess.CompletedProcess(
-            command, 0, stdout="package:com.aidenbridge\n" if app_installed else "",
+            command, 0, stdout="package:link.aico.app\n" if app_installed else "",
         )
     monkeypatch.setattr(run_case_module.subprocess, "run", run)
     monkeypatch.setattr(run_case_module, "_run_json", lambda *args, **kwargs: {
@@ -203,12 +203,12 @@ def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, 
         assert commands == []
     elif app_installed:
         assert [command[0][-3:] for command in commands] == [
-            ["list", "packages", "com.aidenbridge"],
-            ["am", "force-stop", "com.aidenbridge"],
+            ["list", "packages", "link.aico.app"],
+            ["am", "force-stop", "link.aico.app"],
         ]
     else:
         assert len(commands) == 1
-        assert commands[0][0][-3:] == ["list", "packages", "com.aidenbridge"]
+        assert commands[0][0][-3:] == ["list", "packages", "link.aico.app"]
         assert commands[0][1]["check"] is True
 
 

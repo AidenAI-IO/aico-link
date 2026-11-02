@@ -57,7 +57,7 @@ def test_foreground_app_waits_for_active_bridge(monkeypatch) -> None:
 
     assert calls[0] == (
         "emulator-5554",
-        ("shell", "am", "start", "-n", "com.aidenbridge/.MainActivity"),
+        ("shell", "am", "start", "-n", "link.aico.app/.MainActivity"),
     )
     assert calls[1] == {"timeout_sec": 30, "require_active": True}
 
@@ -100,7 +100,7 @@ def test_bridge_input_requires_new_app_write_and_exact_other_app_field(monkeypat
 
 
 @pytest.mark.parametrize("package,text", [
-    ("com.aidenbridge", "Aiden résumé check #42"),
+    ("link.aico.app", "Aiden résumé check #42"),
     ("com.android.settings", "Aiden résumé check #42 wrong"),
 ])
 def test_bridge_write_alone_does_not_pass_input(monkeypatch, package, text):
