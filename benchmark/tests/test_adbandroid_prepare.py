@@ -154,21 +154,6 @@ def test_adb_errors_become_prepare_errors():
         run_recipe(Broken(), "messages_draft", {"recipient": "1", "body": "x"})
 
 
-def test_launchable_activities_keeps_components_with_foreign_activity_packages(monkeypatch):
-    device = ADBAndroidDevice("serial-1")
-    monkeypatch.setattr(device, "_run_text", lambda args, **kw: (
-        "com.android.chrome/com.google.android.apps.chrome.Main\n"
-        "com.android.settings/.Settings\n"
-        "com.android.settings/.Settings$Alias\n"
-        "No activities found\n"
-    ))
-
-    assert device.launchable_activities() == {
-        "com.android.chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
-        "com.android.settings": "com.android.settings/.Settings",
-    }
-
-
 def test_content_query_parses_rows(monkeypatch):
     device = ADBAndroidDevice("serial-1")
     monkeypatch.setattr(device, "_run_text", lambda args, **kw: (

@@ -78,24 +78,6 @@ class FakeADBAndroidDevice:
     def reset_home(self):
         self.calls.append(("reset_home",))
 
-    # Launcher lookup, mirroring ADBAndroidDevice.launchable_activities().
-    launchable = {
-        "com.android.chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
-        "com.google.android.apps.maps": "com.google.android.apps.maps/com.google.android.maps.MapsActivity",
-        "com.android.settings": "com.android.settings/.Settings",
-    }
-
-    def launchable_activities(self):
-        self.calls.append(("launchable_activities",))
-        return dict(self.launchable)
-
-    def launch_app(self, package):
-        component = self.launchable.get(package)
-        if not component:
-            raise ADBCommandError(f"no launcher activity for package {package!r}")
-        self.calls.append(("launch_app", package))
-        return component
-
 
 @pytest.fixture()
 def bridge():
@@ -521,7 +503,6 @@ def test_tools_catalog_lists_expected_tools(bridge):
         "enter_text",
         "mouse_move",
         "mouse_scroll",
-        "open_app",
         "quick_action",
     }
     quick_action = next(tool for tool in body["tools"] if tool["name"] == "quick_action")

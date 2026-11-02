@@ -24,10 +24,7 @@ type OpenAppTool struct {
 	bridge     *PhoneBridge
 	bridgeOpen langtools.Tool
 	searchOpen langtools.Tool
-	// environment launches through an environment bridge that owns the device,
-	// before falling back to visual search. Nil outside environment-bridge mode.
-	environment *environmentAppLauncher
-	logf        func(string, ...any)
+	logf       func(string, ...any)
 }
 
 func NewOpenAppTool(bridge *PhoneBridge, restorer *PhoneBridgeRestorer, searchOpen langtools.Tool) *OpenAppTool {
@@ -162,17 +159,9 @@ func (t *OpenAppTool) Call(ctx context.Context, input string) (string, error) {
 			return returnNestedToolResult(ctx, bridgeOut, bridgeTE, bridgeErr)
 		}
 		bridgeErrorCode, bridgeError := openAppBridgeFailureDetails(bridgeTE, bridgeErr)
-		t.logRoute("bridge_open_app failed app=%q bridge_error_code=%q bridge_error=%q",
-			args.App, bridgeErrorCode, bridgeError)
-		if out, handled := t.launchThroughEnvironment(ctx, args.App); handled {
-			return out, nil
-		}
 		t.logRoute("selected=search_launch_app reason=bridge_failed previous=bridge_open_app app=%q bridge_error_code=%q bridge_error=%q",
 			args.App, bridgeErrorCode, bridgeError)
 	} else {
-		if out, handled := t.launchThroughEnvironment(ctx, args.App); handled {
-			return out, nil
-		}
 		t.logRoute("selected=search_launch_app reason=%s app=%q connected=%t bridge_platform=%q app_state=%q pip=%t fgs=%t",
 			openAppSearchRouteReason(t, status), args.App, status.Connected, status.Platform, status.AppState,
 			status.PipBridgeEnabled != nil && *status.PipBridgeEnabled,
@@ -181,28 +170,6 @@ func (t *OpenAppTool) Call(ctx context.Context, input string) (string, error) {
 
 	searchOut, searchTE, searchErr := callNestedTool(ctx, t.searchOpen, string(rawSearchInput))
 	return returnNestedToolResult(ctx, searchOut, searchTE, searchErr)
-}
-
-// launchThroughEnvironment opens the app through the environment bridge when it
-// supports a direct launch. It reports handled=false when the bridge has no such
-// tool, cannot resolve the app, or fails, so visual search remains the fallback.
-func (t *OpenAppTool) launchThroughEnvironment(ctx context.Context, app string) (string, bool) {
-	if t == nil || t.environment == nil {
-		return "", false
-	}
-	result, err := t.environment.Launch(ctx, app)
-	switch {
-	case err != nil:
-		t.logRoute("environment_open_app failed app=%q err=%q; falling back to search_launch_app", app, err.Error())
-		return "", false
-	case !result.Supported:
-		return "", false
-	case !result.Opened:
-		t.logRoute("environment_open_app declined app=%q reason=%q; falling back to search_launch_app", app, result.Reason)
-		return "", false
-	}
-	t.logRoute("selected=environment_open_app app=%q", app)
-	return result.Output, true
 }
 
 func phoneBridgeCanUseDirectOpenApp(status PhoneBridgeStatus) bool {
@@ -422,7 +389,6 @@ func (s *ToolSet) refreshOpenAppTool() {
 		return
 	}
 	openApp := NewOpenAppTool(s.phoneBridge, s.phoneBridgeRestorer, s.searchOpenTool)
-	openApp.environment = s.environmentLauncher
 	if screenshot, ok := s.tools["screenshot"]; ok && screenshot != nil {
 		s.tools[toolOpenApp] = newPostActionScreenshotTool(openApp, screenshot, postActionScreenshotDelay)
 		return

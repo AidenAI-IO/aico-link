@@ -54,28 +54,6 @@ ADB_RESERVED_QUICK_ACTIONS = {
 }
 DEFAULT_DOUBLE_TAP_PAUSE_MS = 120
 DEFAULT_LONG_PRESS_MS = 500
-# Semantic app names the Android launcher and benchmark suites use, mapped to
-# their launcher package. Names are matched case-insensitively after stripping
-# whitespace; a package that is not installed falls back to the launcher search
-# flow in the agent.
-ANDROID_APP_PACKAGES = {
-    "chrome": "com.android.chrome",
-    "google chrome": "com.android.chrome",
-    "browser": "com.android.chrome",
-    "maps": "com.google.android.apps.maps",
-    "google maps": "com.google.android.apps.maps",
-    "contacts": "com.google.android.contacts",
-    "people": "com.google.android.contacts",
-    "camera": "com.android.camera2",
-    "photos": "com.google.android.apps.photos",
-    "google photos": "com.google.android.apps.photos",
-    "files": "com.google.android.documentsui",
-    "documents": "com.google.android.documentsui",
-    "messages": "com.google.android.apps.messaging",
-    "clock": "com.google.android.deskclock",
-    "desk clock": "com.google.android.deskclock",
-    "settings": "com.android.settings",
-}
 # Upper bound for caller-supplied durations (swipe/long_press/pause). All
 # actions run under the single shared device lock, and the adb subprocess
 # timeout scales with the gesture duration — an unclamped value from a bad
@@ -262,22 +240,6 @@ class ADBToolsAPIHandler:
                     ],
                 },
             },
-            {
-                "name": "open_app",
-                "description": (
-                    "Launch an installed app by semantic name through its launcher activity. "
-                    "Deterministic and much faster than searching the launcher by sight."
-                ),
-                "args_schema": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "app": {"type": "string", "description": "App name or alias, such as Maps, Settings, or Chrome."},
-                        "name": {"type": "string", "description": "Alias for app."},
-                    },
-                    "required": ["app"],
-                },
-            },
         ]
 
         response = {"tools": tools}
@@ -437,8 +399,6 @@ class ADBToolsAPIHandler:
             return self._call_mouse_scroll(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "quick_action":
             return self._call_quick_action(tool_input, capture_screenshot=capture_screenshot)
-        elif tool_name == "open_app":
-            return self._call_open_app(tool_input, capture_screenshot=capture_screenshot)
         else:
             return {"output": f"unknown tool: {tool_name}", "is_error": True, "error": "unknown_tool"}
 
@@ -664,50 +624,6 @@ class ADBToolsAPIHandler:
             )
 
         return {"output": f"error: unsupported quick_action: {tool_input.get('action')!r}", "is_error": True}
-
-    def _call_open_app(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
-        """Launch an app by resolving its launcher activity, without visual search."""
-        unknown = sorted(set(tool_input) - {"app", "name"})
-        if unknown:
-            return {"output": f"error: unsupported open_app arguments: {unknown!r}", "is_error": True}
-        app = tool_input.get("app") or tool_input.get("name") or ""
-        if not isinstance(app, str) or not app.strip():
-            return {"output": "error: app is required", "is_error": True}
-        app = app.strip()
-
-        device = self.state.device
-        package = _resolve_app_package(app, set(device.launchable_activities()))
-        if not package:
-            output = {
-                "ok": False,
-                "target": app,
-                "suggestion": (
-                    "No installed launcher app matches this name. Check the exact app name "
-                    "or open it from a visible icon with touch_gesture."
-                ),
-            }
-            return {"output": json.dumps(output), "is_error": False}
-
-        result: dict[str, Any] = {}
-
-        def launch() -> None:
-            result["component"] = device.launch_app(package)
-
-        executed = self._execute_device(
-            launch,
-            tool_name="open_app",
-            tool_input=tool_input,
-            adb_summary=f"am start -n {package}",
-            capture_screenshot=capture_screenshot,
-        )
-        if executed.get("is_error"):
-            return executed
-        payload = json.loads(executed["output"])
-        payload["action_output"] = json.dumps(
-            {"ok": True, "target": app, "package": package, "component": result.get("component", "")},
-            ensure_ascii=False,
-        )
-        return {"output": json.dumps(payload, ensure_ascii=False), "is_error": False}
 
     def _call_enter_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         """Execute enter_text through adb input text."""
@@ -1173,7 +1089,6 @@ def _unknown_tool_fields(tool_name: str, tool_input: dict[str, Any]) -> list[str
         },
         "mouse_move": {"x", "y"},
         "quick_action": {"action", "list", "alternative", "alternative_index"},
-        "open_app": {"app", "name"},
     }.get(tool_name)
     return [] if allowed is None else sorted(set(tool_input) - allowed)
 
@@ -1349,41 +1264,6 @@ def _looks_like_wrong_ascii_ime(target_text: str, field_text: str, visible_texts
         return True
     indicators = ("拼音", "中文", "简体", "候选")
     return any(any(indicator in text for indicator in indicators) for text in visible_texts)
-
-
-def _resolve_app_package(app: str, installed: set[str]) -> str:
-    """Map a semantic app name to an installed launcher package.
-
-    The alias table covers the names the benchmark suites and model prompts use.
-    A name that is not in the table is matched by package suffix, so
-    ``com.example.maps`` also answers to ``maps``. Unknown names return ``""`` and
-    the caller defers to a visible-icon tap instead of guessing.
-    """
-    key = _normalize_app_name(app)
-    if not key:
-        return ""
-    mapped = ANDROID_APP_PACKAGES.get(key)
-    if mapped and (not installed or mapped in installed):
-        return mapped
-    if mapped and not installed:
-        # Without an installed-package list the mapping is the best evidence.
-        return mapped
-    if key in installed:
-        return key
-    # Accept the last dotted segment (e.g. "chrome" for com.android.chrome) and
-    # the last two (e.g. "google.android.apps.maps" style suffixes).
-    suffix_matches = [
-        package
-        for package in sorted(installed)
-        if key == _normalize_app_name(package.rsplit(".", 1)[-1])
-    ]
-    if len(suffix_matches) == 1:
-        return suffix_matches[0]
-    return ""
-
-
-def _normalize_app_name(value: str) -> str:
-    return " ".join(str(value or "").strip().lower().replace("_", " ").split())
 
 
 def _quick_action_id(tool_input: dict[str, Any]) -> str:

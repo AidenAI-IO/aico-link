@@ -71,7 +71,6 @@ class ADBAndroidDevice:
         self._screen_size: tuple[int, int] | None = None
         self._supports_keycombination: bool | None = None
         self._preferred_ime: str | None = None
-        self._launchable: dict[str, str] | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -286,41 +285,6 @@ class ADBAndroidDevice:
     def start_settings(self) -> None:
         self._run(["shell", "am", "start", "-a", "android.settings.SETTINGS"])
 
-    def launchable_activities(self) -> dict[str, str]:
-        """Return {package: "package/activity" component} for launcher apps.
-
-        The installed-app set is static for a device session, so the query is
-        cached. Activity classes need not share the package prefix (Chrome's is
-        com.google.android.apps.chrome.Main), so every component is kept; the
-        first listed one per package is its resolved launcher entry.
-        """
-        if self._launchable is not None:
-            return self._launchable
-        output = self._run_text(
-            [
-                "shell",
-                "cmd", "package", "query-activities",
-                "--brief",
-                "-a", "android.intent.action.MAIN",
-                "-c", "android.intent.category.LAUNCHER",
-            ],
-            timeout=15,
-        )
-        activities: dict[str, str] = {}
-        for line in output.splitlines():
-            component = line.strip()
-            if "/" not in component or " " in component:
-                continue
-            package, activity = component.split("/", 1)
-            if package and activity:
-                activities.setdefault(package, component)
-        self._launchable = activities
-        return activities
-
-    def start_activity(self, component: str) -> None:
-        """Launch one activity component deterministically."""
-        self._run(["shell", "am", "start", "-n", component])
-
     def start_intent(
         self,
         *,
@@ -350,12 +314,6 @@ class ADBAndroidDevice:
 
     def force_stop(self, package: str) -> None:
         self._run(["shell", "am", "force-stop", package])
-
-    def clear_app_data(self, package: str) -> None:
-        """Reset an app to its first-run state (``pm clear``)."""
-        output = self._run_text(["shell", "pm", "clear", package], timeout=20)
-        if "Success" not in output:
-            raise ADBCommandError(f"pm clear {package} failed: {output.strip()}")
 
     def content_query(self, uri: str, *, projection: str = "", where: str = "") -> list[dict[str, str]]:
         """Run ``content query`` and parse its ``Row: n k=v, k=v`` output."""
@@ -403,14 +361,6 @@ class ADBAndroidDevice:
         if not rows:
             return None
         return max(rows, key=lambda row: int(row["date_added"]))
-
-    def launch_app(self, package: str) -> str:
-        """Launch an app by package and return the component that was started."""
-        component = self.launchable_activities().get(package, "")
-        if not component:
-            raise ADBCommandError(f"no launcher activity for package {package!r}")
-        self.start_activity(component)
-        return component
 
     def expand_notifications(self) -> None:
         self._run(["shell", "cmd", "statusbar", "expand-notifications"])
