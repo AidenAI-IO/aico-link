@@ -86,6 +86,17 @@ def test_evaluate_environment_state_assertions_reports_exact_path_results():
     ]
 
 
+def test_evaluate_environment_state_assertions_resolves_array_indices():
+    state = {"apps": {"notes": {"notes": [{"content": "hello-aiden"}]}}}
+    results = evaluate_environment_state_assertions(state, {
+        "apps.notes.notes.0.content": "hello-aiden",
+        "apps.notes.notes.1.content": "hello-aiden",
+    })
+    assert [(item.passed, item.actual) for item in results] == [
+        (True, "hello-aiden"), (False, "<missing>"),
+    ]
+
+
 def test_evaluate_environment_state_assertions_supports_numeric_ranges():
     state = {
         "apps": {"scroll_lab": {"firstVisibleOrdinal": 8, "scrollTop": 720}},

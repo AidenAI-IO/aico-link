@@ -8,7 +8,7 @@ current `benchmark/` directory, covering the recommended entry points:
 - CLI: best for scripted runs, single-suite debugging, rejudge, compare, and unit
   tool tests.
 
-For Aiden/pi/OpenClaw comparisons, use **Agent experiments** in the WebUI or the
+For Aiden, pi, OpenClaw, Claude Code, and Codex comparisons, use **Agent experiments** in the WebUI or the
 `experiment` CLI command. See [Native agent experiments](experiments.md) for
 setup, supported tasks, comparison semantics, and the CI policy.
 
@@ -387,7 +387,7 @@ Common fields:
 | --- | --- |
 | `prompt_prefix` | Prefix for every task prompt; constrains device type, tool usage, etc. |
 | `global_reset` | Suite-level reset configuration |
-| `setup` | One task-level pre-step or an ordered array of pre-steps; supports `agent_prompt`, benchmark-token-protected `seed_memory`, `seed_episode`, `seed_notification`, and generic `assert_memory` checks |
+| `setup` | One task-level pre-step or an ordered array of pre-steps; supports `agent_prompt`, `environment_tools`, benchmark-token-protected `seed_memory`, `seed_episode`, `seed_notification`, and generic `assert_memory` checks |
 | `app_ids` | Optional MobileGym app IDs to preload during environment setup; omitted tasks skip eager app data loading |
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
 | `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
@@ -404,6 +404,17 @@ Common fields:
 For `agent_prompt`, set `expected_response` when setup success has a precise
 completion marker. The runner compares the trimmed response exactly and fails
 the task setup on any other output.
+
+`environment_tools` seeds a starting screen without an agent. It lists bridge
+tool calls as `{"name": ..., "input": ...}`; supported tools are
+`touch_gesture`, `keyboard_tap`, `enter_text`, and `quick_action`. Optional
+`expected_state` uses the same dotted paths as `environment_assertions`,
+including numeric list indexes such as `apps.notes.notes.0.content`. When
+`expected_state` is set, the runner reads the environment state before the
+first action and verifies it after the last one; an environment that cannot
+report state fails setup before any input is sent. Coordinates are specific to
+one screen layout, so restrict such tasks with `platforms` and run them against
+the environment they were recorded for. Setup failures are not agent scores.
 
 A unit suite is a different format with `kind` set to `unit`; it tests a tool's
 input/output directly without going through agent chat.
@@ -1368,6 +1379,12 @@ Common environment variables:
 | `AIDEN_BENCHMARK_JUDGE_BASE_URL` | Default OpenAI-compatible judge endpoint |
 | `AIDEN_BENCHMARK_JUDGE_API_KEY` | Judge API key |
 | `AIDEN_BENCHMARK_ANALYSIS_API_KEY` | Optional post-run analysis credential; defaults to the Judge key |
+| `AIDEN_BENCHMARK_PI_EXECUTABLE` | pi executable for [agent experiments](experiments.md) when `pi` is not on `PATH` |
+| `AIDEN_BENCHMARK_PI_API_KEY` | Default credential variable for external agent custom endpoints; an agent's `api_key_env` can name another variable |
+| `AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE` | OpenClaw CLI for agent experiments when `openclaw` is not on `PATH` |
+| `AIDEN_BENCHMARK_OPENCLAW_NODE` | Node 24.22.1+ or 26.12.1+ used to run OpenClaw when `node` is not suitable |
+| `AIDEN_BENCHMARK_CLAUDE_CODE_EXECUTABLE` | Claude Code CLI for agent experiments when `claude` is not on `PATH` |
+| `AIDEN_BENCHMARK_CODEX_EXECUTABLE` | Codex CLI for agent experiments when `codex` is not on `PATH` |
 | `BENCHMARK_STATE_FILE` | Default for CLI `--state-file` |
 | `MOBILEGYM_PARALLEL_ENVS` | Default parallel env count for `start_simulator.py` |
 | `AIDEN_BRIDGE_BIND_HOST` | MobileGym bridge bind host |

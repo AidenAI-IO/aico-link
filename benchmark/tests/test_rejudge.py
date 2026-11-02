@@ -38,7 +38,8 @@ def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp
     assert json.loads((attempt / "trace.json").read_text()) == trace
 
 
-@pytest.mark.parametrize("case", ["text", "hard_failure", "missing_image", "missing_memory", "judge_error"])
+@pytest.mark.parametrize("case", ["text", "hard_failure", "missing_image", "missing_memory", "judge_error",
+                                  "missing_state"])
 def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, monkeypatch, case):
     attempt = tmp_path / "tasks" / "task" / "attempt_1"
     attempt.mkdir(parents=True)
@@ -55,6 +56,10 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
         row["hard_assertions"] = {"required_tools": False}
     if case == "missing_image":
         row["metrics"]["post_screenshot_file"] = True
+    if case == "missing_state":
+        row["status"] = "judge_error"
+        row["hard_assertions"] = {"environment_state": None}
+        row["metrics"]["environment_state_error"] = "environment state unavailable"
     (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
     judged = []
 
@@ -69,6 +74,10 @@ def test_rejudge_preserves_execution_gates_and_updates_metrics(tmp_path: Path, m
     result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
     if case == "hard_failure":
         assert result == row
+        assert judged == []
+    elif case == "missing_state":
+        assert result["status"] == "judge_error"
+        assert result["metrics"]["agent_eligible"] is False
         assert judged == []
     elif case == "text":
         assert result["status"] == "passed"

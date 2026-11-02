@@ -10,50 +10,51 @@ import os
 from pathlib import Path
 import random
 import re
-import shutil
 import statistics
 import subprocess
 import tempfile
 import threading
 import urllib.parse
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import uuid
 
-from runner.harness import AidenAdapter, HarnessAdapter, OpenClawAdapter, PiAdapter
+from runner.harness import AidenAdapter
+from runner.harnesses import HARNESSES, SAFE_ID, validate_agents
 from runner.html_report import generate_report_html
 from runner.judge import JudgeConfig, DEFAULT_JUDGE_API_KEY_ENV
 from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerdict, TaskResult
+from runner.rejudge import execution_gate_blocks_rejudge, rejudge_run
 from runner.report import git_sha, now_iso, write_jsonl, write_manifest, write_metrics, write_summary
 from runner.runtask import evaluate_task_history, skipped_task_result, _apply_environment_assertions
 from runner.suite import Suite, load_suite
 
-
-SAFE_ID = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}\Z")
-THINKING_LEVELS = {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
-PI_CUSTOM_FIELDS = {"base_url", "api", "api_key_env", "context_window", "max_tokens"}
-PI_CUSTOM_APIS = {"openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai"}
-OPENCLAW_MIN_NODE = (24, 22, 1)
+if TYPE_CHECKING:
+    from runner.operations import OperationHarness
 
 
-def openclaw_runtime() -> tuple[str, str, str]:
-    """Resolve the installed CLI and a compatible Node without changing host PATH."""
-    executable = shutil.which(os.environ.get("AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE", "openclaw"))
-    node = shutil.which(os.environ.get("AIDEN_BENCHMARK_OPENCLAW_NODE", "node"))
-    if not executable or not node:
-        raise ValueError("OpenClaw CLI and Node 24.22.1+ are required; set AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE and AIDEN_BENCHMARK_OPENCLAW_NODE")
-    version = subprocess.check_output([node, "--version"], text=True, timeout=10).strip()
-    match = re.fullmatch(r"v(\d+)\.(\d+)\.(\d+)", version)
-    version_tuple = tuple(map(int, match.groups())) if match else ()
-    if not ((version_tuple[0] == 24 and version_tuple >= OPENCLAW_MIN_NODE)
-            or version_tuple >= (26, 12, 1)):
-        raise ValueError(f"OpenClaw requires Node 24.22.1+ or 26.12.1+; found {version}")
-    cli_version = subprocess.check_output([node, executable, "--version"], text=True, timeout=20).strip()
-    return executable, node, cli_version
+# Suite prompts were written for Aiden, which knows it operates a device. Coding
+# harnesses otherwise read "open Settings" as a request about their own host, so
+# every agent, Aiden included, receives the same device context.
+DEVICE_CONTEXT = ("The task refers to the connected mobile device. Operate that device only through "
+                  "the provided device tools; do not act on the computer you are running on.")
+# External harnesses receive only business tools, so native calls indicate a
+# policy gap; a native call that addresses a local endpoint is flagged for review.
+LOOPBACK_REFERENCE = re.compile(r"127\.0\.0\.1|localhost|0\.0\.0\.0|\[::1\]|host\.docker\.internal", re.IGNORECASE)
+
+
+def tool_usage_metrics(history: list[dict], business_tools: set[str]) -> dict[str, int]:
+    """Split one attempt's calls into shared business tools and native harness tools."""
+    from runner.trace import extract_trace
+    calls = extract_trace(history).tool_calls
+    native = [call for call in calls if call.tool not in business_tools]
+    return {"business_tool_calls": len(calls) - len(native), "native_tool_calls": len(native),
+            "native_loopback_calls": sum(bool(LOOPBACK_REFERENCE.search(json.dumps(call.input, ensure_ascii=False)))
+                                         for call in native)}
 
 
 def comparison_suite(path: Path) -> Suite:
     """Reuse original operation tasks and reject requirements we cannot preserve."""
-    from runner.operations import OPERATION_TOOLS, preparation_steps
+    from runner.operations import REQUIRED_BUSINESS_TOOLS, preparation_steps
     suite = load_suite(path)
     if not suite.tasks:
         raise ValueError("A comparison suite must contain at least one task")
@@ -71,70 +72,21 @@ def comparison_suite(path: Path) -> Suite:
         preparation_steps(task.setup)
         required = set(task.hard_assertions.required_tools)
         required.update(call.tool for call in task.hard_assertions.required_tool_calls)
-        if required - set(OPERATION_TOOLS):
-            raise ValueError(f"{task.id}: required tools are not shared business tools: {sorted(required - set(OPERATION_TOOLS))}")
+        if required - set(REQUIRED_BUSINESS_TOOLS):
+            raise ValueError(f"{task.id}: required tools are not shared business tools: {sorted(required - set(REQUIRED_BUSINESS_TOOLS))}")
     return suite
 
 
-def validate_agents(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list) or not 1 <= len(value) <= 8:
-        raise ValueError("agents must contain between 1 and 8 configurations")
-    result = []
-    ids = set()
-    for item in value:
-        if not isinstance(item, dict) or set(item) - ({"id", "kind", "provider", "model", "thinking"} | PI_CUSTOM_FIELDS):
-            raise ValueError("Unknown agent configuration fields")
-        agent = {key: str(val).strip() for key, val in item.items()}
-        if agent.get("kind") not in {"aiden", "pi", "openclaw"}:
-            raise ValueError("Supported agents: aiden, pi, openclaw")
-        agent.setdefault("id", agent["kind"])
-        if not SAFE_ID.fullmatch(agent["id"]) or agent["id"] in ids:
-            raise ValueError("Agent IDs must be unique safe directory names")
-        if agent["kind"] in {"pi", "openclaw"}:
-            if not agent.get("provider") or not agent.get("model"):
-                raise ValueError(f"{agent['kind']} requires an explicit provider and model")
-            agent.setdefault("thinking", "medium")
-            if agent["thinking"] not in THINKING_LEVELS:
-                raise ValueError("Unsupported pi thinking level")
-            if agent.get("base_url"):
-                url = urllib.parse.urlsplit(agent["base_url"])
-                try:
-                    port = url.port
-                except ValueError:
-                    raise ValueError("pi base_url has an invalid port") from None
-                if (url.scheme not in {"http", "https"} or not url.hostname or url.username is not None
-                        or url.query or url.fragment or port == 0
-                        or any(char.isspace() for char in agent["base_url"])):
-                    raise ValueError("pi base_url must be an HTTP(S) base URL without credentials, query or fragment")
-                agent["base_url"] = agent["base_url"].rstrip("/")
-                agent.setdefault("api", "openai-completions")
-                if agent["api"] not in PI_CUSTOM_APIS:
-                    raise ValueError("Unsupported pi custom API protocol")
-                agent.setdefault("api_key_env", "AIDEN_BENCHMARK_PI_API_KEY")
-                if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", agent["api_key_env"]):
-                    raise ValueError("api_key_env must be an environment variable name, not a key or command")
-                for name, default in (("context_window", 128000), ("max_tokens", 16384)):
-                    number = item.get(name, default)
-                    if type(number) is not int or number <= 0:
-                        raise ValueError(f"pi {name} must be a positive integer")
-                    agent[name] = number
-                if agent["max_tokens"] > agent["context_window"]:
-                    raise ValueError("pi max_tokens must not exceed context_window")
-            elif set(item) & PI_CUSTOM_FIELDS:
-                raise ValueError("pi custom endpoint fields require base_url")
-            if agent["kind"] == "openclaw" and not agent.get("base_url"):
-                raise ValueError("OpenClaw comparison requires an explicit custom API base_url")
-        elif set(agent) - {"id", "kind"}:
-            raise ValueError("Aiden uses the frozen Agent Config; set its model there")
-        ids.add(agent["id"])
-        result.append(agent)
-    return result
+def atomic_write(path: Path, write) -> None:
+    """Publish a generated file only after `write(temporary_path)` completes."""
+    temporary = path.with_suffix(".tmp")
+    write(temporary)
+    temporary.replace(path)
 
 
 def atomic_json(path: Path, value: Any) -> None:
-    temporary = path.with_suffix(".tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    atomic_write(path, lambda target: target.write_text(
+        json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"))
 
 
 def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult]], repeats: int) -> dict:
@@ -152,7 +104,8 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
         complete_cost = len(values) == planned and all(isinstance(v, (float, int)) for v in costs)
         total_cost = sum(costs) if complete_cost else None
         summaries.append({
-            "id": agent["id"], "planned": planned, "completed": len(values),
+            "id": agent["id"], "tool_layer": agent.get("tool_layer", "aiden"),
+            "planned": planned, "completed": len(values),
             "eligible": len(eligible), "passed": passed,
             "success_rate": passed / len(eligible) if eligible else None,
             "coverage": len(eligible) / planned,
@@ -162,6 +115,9 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
             "error_attempts": sum(row.metrics.get("agent_eligible") is not True for row in values),
             "timeouts": sum(row.status == "timeout" for row in values),
             "execution_errors": sum(bool(row.metrics.get("agent_error")) for row in values),
+            "native_tool_calls": sum(row.metrics.get("native_tool_calls") or 0 for row in values),
+            "api_retry_attempts": sum(bool(row.metrics.get("api_retries")) for row in values),
+            "native_loopback_attempts": sum(bool(row.metrics.get("native_loopback_calls")) for row in values),
             "exclusions": {reason: sum(row.metrics.get("agent_eligible") is not True
                                        and (row.metrics.get("failure_class") or "unknown") == reason
                                        for row in values)
@@ -199,8 +155,11 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
                          "left_only_pass": values[left]["passed"] - len(both_pass),
                          "right_only_pass": values[right]["passed"] - len(both_pass), "agents": values})
     from runner.operations import preparation_steps
+    # Deterministic environment_tools seeding is checked against expected
+    # state; only agent-driven steps can leave differing starting screens.
     preparation_tasks = [task.id for task in suite.tasks
-                         if preparation_steps(suite.global_reset) or preparation_steps(task.setup)]
+                         if any(step["type"] == "agent_prompt" for step in
+                                preparation_steps(suite.global_reset) + preparation_steps(task.setup))]
     return {"agents": summaries, "pairwise": pairwise, "paired_attempts": paired,
             "agent_preparation_tasks": preparation_tasks}
 
@@ -211,10 +170,13 @@ def comparison_html(manifest: dict, data: dict) -> str:
     for agent in data["agents"]:
         rate = f"{agent['success_rate']:.1%}" if agent["success_rate"] is not None else "—"
         duration = f"{agent['median_wall_ms'] / 1000:.2f}s" if agent["median_wall_ms"] is not None else "—"
-        summaries.append(f"<tr><td><a href='runs/{escape(agent['id'])}/report.html'>{escape(agent['id'])}</a></td>"
+        summaries.append(f"<tr><td><a href='runs/{escape(agent['id'])}/report.html'>{escape(agent['id'])}</a>"
+                         f" ({escape(agent.get('tool_layer', 'aiden'))} tools)</td>"
                          f"<td>{agent['passed']}/{agent['eligible']} ({rate})</td>"
                          f"<td>{agent['eligible']}/{agent['planned']}</td><td>{agent['completed']}/{agent['planned']}</td>"
                          f"<td>{duration}</td><td>{agent['timeouts']}</td><td>{agent['execution_errors']}</td>"
+                         f"<td>{agent['native_tool_calls']} ({agent['native_loopback_attempts']} flagged)</td>"
+                         f"<td>{agent['api_retry_attempts']}</td>"
                          f"<td>{escape(json.dumps(agent['exclusions']))}</td>"
                          f"<td>{escape(agent['total_cost_usd']) if agent['total_cost_usd'] is not None else '—'}</td></tr>")
     pairwise = []
@@ -235,7 +197,8 @@ def comparison_html(manifest: dict, data: dict) -> str:
                          for value in row["agents"].values())
         cells.append(f"<tr><td>{escape(row['task_id'])} / {row['attempt']}</td>{values}</tr>")
     headers = "".join(f"<th>{escape(agent['id'])}</th>" for agent in data["agents"])
-    scope = ("Shared screen/input tools; native agent harnesses; original suite assertions and rubric scoring. "
+    scope = ("Shared device UI tools from the Aiden tool layer or the neutral raw layer, as labeled per agent; "
+             "native agent harnesses; original suite assertions and rubric scoring. "
              "Each attempt resets the MobileGym environment. Memory, planning and context remain agent-owned. "
              "This is a cold-start operation comparison; model and native harness settings may differ.")
     preparation = (f"{len(data['agent_preparation_tasks'])} tasks use independent agent-driven preparation. "
@@ -245,12 +208,12 @@ def comparison_html(manifest: dict, data: dict) -> str:
 <title>Agent comparison</title><style>body{{font:16px system-ui;max-width:1100px;margin:40px auto;padding:0 20px;color:#202a35}}table{{border-collapse:collapse;width:100%;margin:24px 0}}th,td{{text-align:left;padding:12px;border-bottom:1px solid #ddd}}.scroll{{overflow:auto}}a{{color:#17654b}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}</style>
 <a href="/experiments">Experiments</a><h1>{escape(manifest['id'])}</h1>
 <p>Status: {escape(manifest['status'])}. {scope}</p>
-<p>Aiden runs in Docker; pi and OpenClaw run on the host with fresh configuration and workspace. Coverage excludes infrastructure/evaluation errors. Missing cost is unknown; pi costs are model-pricing estimates.</p>
+<p>Aiden runs in Docker; external harnesses run on the host with fresh configuration and workspace and only the business tools. Coverage excludes infrastructure/evaluation errors. Missing cost is unknown; pi costs are model-pricing estimates.</p>
 <p>{preparation}</p>
 <h2>Matched comparison</h2><p>Compare the same task and repeat only when both attempts are eligible. Latency uses only pairs where both passed. Exclusions can bias the remaining sample; report coverage alongside success.</p>
 <div class="scroll"><table><thead><tr><th>Pair</th><th>Agent</th><th>Matched success</th><th>Paired coverage</th><th>Both-pass median execution</th></tr></thead><tbody>{''.join(pairwise)}</tbody></table></div>
-<h2>Individual run diagnostics</h2><p>These success rates may have different denominators. Execution errors can overlap timeouts and remain failures when execution already started; they do not establish an agent-caused failure.</p>
-<div class="scroll"><table><thead><tr><th>Agent run</th><th>Success</th><th>Coverage</th><th>Recorded</th><th>Median execution</th><th>Timeouts</th><th>Execution errors</th><th>Exclusions</th><th>Total USD</th></tr></thead><tbody>{''.join(summaries)}</tbody></table></div>
+<h2>Individual run diagnostics</h2><p>These success rates may have different denominators. Execution errors can overlap timeouts and remain failures when execution already started; they do not establish an agent-caused failure. Native tool calls are harness tools outside the shared business catalog; flagged attempts referenced a local endpoint and should be reviewed in their native transcript. Model retries count reconnects or failed model requests that pi, Claude Code, or Codex reported; a timeout in such an attempt may reflect the network rather than the harness.</p>
+<div class="scroll"><table><thead><tr><th>Agent run</th><th>Success</th><th>Coverage</th><th>Recorded</th><th>Median execution</th><th>Timeouts</th><th>Execution errors</th><th>Native tool calls</th><th>Attempts with model retries</th><th>Exclusions</th><th>Total USD</th></tr></thead><tbody>{''.join(summaries)}</tbody></table></div>
 <h2>Paired attempts</h2><div class="scroll"><table><thead><tr><th>Task / repeat</th>{headers}</tr></thead><tbody>{''.join(cells)}</tbody></table></div>
 <details><summary>Frozen experiment configuration</summary><pre>{escape(json.dumps(manifest, indent=2))}</pre></details></html>"""
 
@@ -275,24 +238,20 @@ def write_experiment_results(suite: Suite, root: Path, agents: list[dict],
                 for status in ("passed", "failed", "skipped", "timeout", "judge_error")
             }},
         }
-        write_manifest(directory / "manifest.tmp", run_manifest)
-        (directory / "manifest.tmp").replace(directory / "manifest.json")
-        write_jsonl(directory / "results.tmp", rows[run_id])
-        (directory / "results.tmp").replace(directory / "results.jsonl")
-        write_metrics(directory / "metrics.tmp", suite.name, run_manifest, rows[run_id])
-        (directory / "metrics.tmp").replace(directory / "metrics.json")
-        write_summary(directory / "summary.tmp", suite.name, run_manifest, rows[run_id])
-        (directory / "summary.tmp").replace(directory / "summary.md")
-        run_report = directory / "report.tmp"
-        run_report.write_text(generate_report_html(directory), encoding="utf-8")
-        run_report.replace(directory / "report.html")
+        atomic_write(directory / "manifest.json", lambda path: write_manifest(path, run_manifest))
+        atomic_write(directory / "results.jsonl", lambda path: write_jsonl(path, rows[run_id]))
+        atomic_write(directory / "metrics.json",
+                     lambda path: write_metrics(path, suite.name, run_manifest, rows[run_id]))
+        atomic_write(directory / "summary.md",
+                     lambda path: write_summary(path, suite.name, run_manifest, rows[run_id]))
+        atomic_write(directory / "report.html",
+                     lambda path: path.write_text(generate_report_html(directory), encoding="utf-8"))
     data = comparison(suite, agents, rows, repeats)
     manifest["completed"] = sum(len(items) for items in rows.values())
     atomic_json(root / "manifest.json", manifest)
     atomic_json(root / "comparison.json", data)
-    report = root / "report.tmp"
-    report.write_text(comparison_html(manifest, data), encoding="utf-8")
-    report.replace(root / "report.html")
+    atomic_write(root / "report.html",
+                 lambda path: path.write_text(comparison_html(manifest, data), encoding="utf-8"))
 
 
 def _result_from_record(record: dict) -> TaskResult:
@@ -306,11 +265,8 @@ def _result_from_record(record: dict) -> TaskResult:
 
 
 def _retryable_judge_error(row: dict) -> bool:
-    metrics = row.get("metrics") or {}
     return (row.get("status") == "judge_error" and row.get("rubric_total", 0) > 0
-            and not row.get("hard_assertion_failures")
-            and not any(value is False for value in (row.get("hard_assertions") or {}).values())
-            and not metrics.get("agent_error") and metrics.get("first_failure_stage") != "setup")
+            and not execution_gate_blocks_rejudge(row))
 
 
 def _has_judge_errors(root: Path, agents: list[dict]) -> bool:
@@ -324,8 +280,6 @@ def _has_judge_errors(root: Path, agents: list[dict]) -> bool:
 def retry_experiment_judging(root: Path, judge_cfg: JudgeConfig, *,
                              api_key_env: str = DEFAULT_JUDGE_API_KEY_ENV) -> dict:
     """Re-score recorded judge errors and refresh both run and paired reports."""
-    from runner.rejudge import rejudge_run
-
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"))
     if manifest.get("status") not in {"completed", "canceled"}:
         raise ValueError("Only finished experiments can retry Judge scoring")
@@ -367,7 +321,17 @@ def retry_experiment_judging(root: Path, judge_cfg: JudgeConfig, *,
     return manifest
 
 
-def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[str, HarnessAdapter],
+def _task_for_tool_layer(task, layer: str, metrics: dict):
+    """Raw tools have their own names, so suite assertions on Aiden tool names do not apply."""
+    from runner.raw_tools import TOOL_LAYER as RAW_TOOL_LAYER
+    assertions = task.hard_assertions
+    if layer != RAW_TOOL_LAYER or not (assertions.required_tools or assertions.required_tool_calls):
+        return task
+    metrics["tool_name_assertions"] = "not_applicable"
+    return dc.replace(task, hard_assertions=dc.replace(assertions, required_tools=[], required_tool_calls=[]))
+
+
+def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[str, OperationHarness],
                    repeats: int, seed: int, stop: threading.Event, manifest: dict,
                    judge_cfg: JudgeConfig | None = None) -> dict:
     """Sequential paired blocks avoid sharing a mutable environment across agents."""
@@ -396,7 +360,7 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
         atomic_json(root / "manifest.json", manifest)
         artifacts = root / "runs" / agent_id / "tasks" / task.id / f"attempt_{attempt}"
         artifacts.mkdir(parents=True, exist_ok=True)
-        prompt = f"{suite.prompt_prefix}\n\n{task.prompt}".strip()
+        prompt = "\n\n".join(part for part in (DEVICE_CONTEXT, suite.prompt_prefix.strip(), task.prompt) if part)
         try:
             adapter = adapters[agent_id]
             if task.platforms and "android" not in task.platforms:
@@ -408,16 +372,20 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
                 continue
             execution = adapter.execute_operation(prompt, task.hard_assertions.must_complete_within_sec, artifacts, stop, task)
             digest = execution.metrics.get("business_tools_sha256")
+            scored_task = task
             if not execution.canceled:
                 if not digest:
                     raise ValueError("Operation attempt did not record its shared tool catalog")
-                expected = manifest.setdefault("business_tools_sha256", digest)
-                if digest != expected:
+                layer = execution.metrics.get("tool_layer", "aiden")
+                frozen = manifest.setdefault("business_tool_catalogs", {}).setdefault(
+                    layer, {"sha256": digest, "tools": execution.metrics.get("business_tools")})
+                if digest != frozen["sha256"]:
                     raise ValueError("Shared business tool catalog changed between attempts")
+                scored_task = _task_for_tool_layer(task, layer, execution.metrics)
             manifest["stage"] = "Evaluating task"
             atomic_json(root / "manifest.json", manifest)
             row = evaluate_task_history(
-                suite=suite, task=task, history=execution.history, episode=execution.episode,
+                suite=suite, task=scored_task, history=execution.history, episode=execution.episode,
                 attempt=attempt, artifact_dir=artifacts, run_id=agent_id, timed_out=execution.timed_out,
                 judge_cfg=judge_cfg, judge_cache_dir=root / "judge-cache", metrics=execution.metrics,
                 pre_screenshot=execution.pre_screenshot, post_screenshot=execution.post_screenshot,
@@ -425,10 +393,10 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
             row.metrics.update(execution.metrics)
             if not execution.canceled:
                 row = _apply_environment_assertions(row, task, execution.environment_state, execution.environment_state_error)
-                from runner.trace import extract_trace
-                from runner.operations import OPERATION_TOOLS
-                row.metrics["business_tool_calls"] = sum(
-                    call.tool in OPERATION_TOOLS for call in extract_trace(execution.history).tool_calls)
+                usage = tool_usage_metrics(execution.history, set(execution.metrics.get("business_tools") or ()))
+                usage["native_tool_calls"] = max(usage["native_tool_calls"],
+                                                 execution.metrics.get("native_tool_calls_reported") or 0)
+                row.metrics.update(usage)
             if execution.canceled:
                 row.status = "canceled"
                 row.metrics.update(agent_eligible=False, success=None, failure_class="canceled")
@@ -448,7 +416,8 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
 class ExperimentManager:
     def __init__(self, *, runs_dir: Path, suites_dir: Path, base_config_dir: Path,
                  daemon_image: str, build_daemon_image: bool, config_loader, judge_loader=None):
-        self.root = runs_dir / "experiments"
+        # Absolute, so recorded artifact paths resolve from any working directory.
+        self.root = runs_dir.resolve() / "experiments"
         self.root.mkdir(parents=True, exist_ok=True)
         self.suites_dir = suites_dir
         self.base_config_dir = base_config_dir
@@ -554,7 +523,7 @@ class ExperimentManager:
                         "created_at": now_iso(), "suite": suite.name, "suite_sha256": suite.sha256,
                         "track": "operations", "agents": agents, "repeats": repeats, "seed": seed,
                         "environment_url": environment_url,
-                        "scoring": "original-suite-v1",
+                        "scoring": "original-suite-v1", "device_context": DEVICE_CONTEXT,
                         "preparation": "shared-aiden-preparer-fresh-evaluated-agent",
                         "judge_config": dc.asdict(judge_cfg) if judge_cfg else None, "git_sha": sha, "git_dirty": dirty,
                         "total": len(suite.tasks) * repeats * len(agents), "completed": 0}
@@ -607,37 +576,19 @@ class ExperimentManager:
                 for agent in manifest["agents"]:
                     if stop.is_set():
                         break
-                    if agent["kind"] == "aiden":
+                    harness = HARNESSES[agent["kind"]]
+                    if harness.external:
+                        agent.update(harness.runtime(agent, Path(scratch)))
+                        external = harness.build(agent)
+                    else:
                         agent.update(model=model.get("model", ""), provider=model.get("provider", ""),
                                      image_id=image_id, config_sha256=config_sha)
-                        adapters[agent["id"]] = AidenAdapter(image=image_id, prepared_config=prepared)
-                    elif agent["kind"] == "pi":
-                        executable = shutil.which(os.environ.get("AIDEN_BENCHMARK_PI_EXECUTABLE", "pi"))
-                        if not executable:
-                            raise ValueError("pi executable not found; install pi or set AIDEN_BENCHMARK_PI_EXECUTABLE")
-                        from runner.harness import pi_environment
-                        env = pi_environment(executable, agent["provider"], Path(scratch) / "pi-probe")
-                        version = subprocess.check_output([executable, "--version"], env=env, text=True, timeout=15).strip()
-                        agent.update(version=version, executable=executable)
-                        adapters[agent["id"]] = PiAdapter(
-                            executable=executable, provider=agent["provider"], model=agent["model"],
-                            thinking=agent["thinking"], **{key: agent[key] for key in PI_CUSTOM_FIELDS if key in agent},
-                        )
-                    else:
-                        executable, node, version = openclaw_runtime()
-                        agent.update(version=version, executable=executable, node_version=subprocess.check_output(
-                            [node, "--version"], text=True).strip())
-                        adapters[agent["id"]] = OpenClawAdapter(
-                            executable=executable, node=node, provider=agent["provider"],
-                            model=agent["model"], thinking=agent["thinking"],
-                            **{key: agent[key] for key in PI_CUSTOM_FIELDS if key in agent},
-                        )
-                    native = adapters[agent["id"]]
+                        external = None
                     adapters[agent["id"]] = OperationAdapter(
-                        daemon=native if agent["kind"] == "aiden" else AidenAdapter(image=image_id, prepared_config=prepared),
-                        environment_url=manifest["environment_url"],
-                        pi=native if agent["kind"] == "pi" else None,
-                        openclaw=native if agent["kind"] == "openclaw" else None,
+                        # External harnesses use this daemon only as their Aiden-layer tool server.
+                        daemon=AidenAdapter(image=image_id, prepared_config=prepared),
+                        environment_url=manifest["environment_url"], external=external,
+                        tool_layer=agent["tool_layer"],
                         global_reset=suite.global_reset, prompt_prefix=suite.prompt_prefix,
                     )
                 if stop.is_set():
@@ -715,6 +666,14 @@ class ExperimentManager:
         finally:
             os.environ.pop(credential_env, None)
 
+    def wait(self, experiment_id: str) -> None:
+        """Block until the active experiment with this ID finishes."""
+        with self._lock:
+            active = self._active
+        if active and active[0] == experiment_id:
+            while active[2].is_alive():
+                active[2].join(timeout=0.5)
+
     def shutdown(self) -> None:
         with self._lock:
             active = self._active
@@ -739,9 +698,7 @@ def experiment_cli(args) -> int:
     try:
         record = manager.start(json.loads(Path(args.config).read_text(encoding="utf-8")))
         print(f"Experiment: {record['id']}", flush=True)
-        assert manager._active is not None
-        while manager._active[2].is_alive():
-            manager._active[2].join(timeout=0.5)
+        manager.wait(record["id"])
         final = next(item for item in manager.list() if item["id"] == record["id"])
         print(f"Status: {final['status']}", flush=True)
         if final.get("error"):

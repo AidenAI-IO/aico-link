@@ -84,10 +84,13 @@ def evaluate_environment_state_assertions(
     for path, expected in assertions.items():
         actual: Any = state
         for part in path.split("."):
-            if not isinstance(actual, dict) or part not in actual:
+            if isinstance(actual, list) and part.isdecimal() and int(part) < len(actual):
+                actual = actual[int(part)]
+            elif isinstance(actual, dict) and part in actual:
+                actual = actual[part]
+            else:
                 actual = _MISSING_STATE_PATH
                 break
-            actual = actual[part]
         if actual is _MISSING_STATE_PATH:
             passed = False
         elif is_range_assertion(expected):

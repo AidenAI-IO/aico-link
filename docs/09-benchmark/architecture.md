@@ -48,6 +48,16 @@ The runner does not call agent screenshot tools to create judge images. Judge
 only receives `pre.jpg` and `post.jpg`; intermediate screenshots may exist in
 agent history, but they are not the judge image input.
 
+A task's `setup` may use `environment_tools` to seed the same UI state before
+each evaluated harness without an agent. The setup lists bridge tools with
+`name` and `input` and may include `expected_state` paths. With
+`expected_state`, the runner confirms that the environment reports state before
+sending input, then checks tool errors and the expected state before capturing
+`pre.jpg`; failed preparation does not become an agent score. State paths can
+address list elements with numeric segments, such as
+`apps.notes.notes.0.content`. The phone-control `select_all_and_delete` task
+uses MobileGym coordinates and is limited to Android.
+
 ## Environment Bridge Routing
 
 Concurrent environments route requests by the `benchmark-task-id` HTTP header.

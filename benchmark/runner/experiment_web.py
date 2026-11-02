@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 from http import HTTPStatus
 from runner.experiment import SAFE_ID
+from runner.harnesses import HARNESSES
 
 
 def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool:
@@ -30,7 +31,7 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         try:
             if post:
                 payload = handler._read_json()
-                if any(isinstance(agent, dict) and agent.get("kind") in {"pi", "openclaw"}
+                if any(isinstance(agent, dict) and getattr(HARNESSES.get(agent.get("kind")), "external", False)
                        for agent in payload.get("agents", [])):
                     remote = str(handler.client_address[0]).split("%", 1)[0]
                     address = ipaddress.ip_address(remote)
@@ -88,7 +89,7 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         # Serve reports and evidence only; runtime configuration is never here.
         allowed = {"report.html", "manifest.json", "comparison.json", "results.jsonl", "results.original.jsonl", "metrics.json",
                    "suite.json", "history.json", "trace.json", "episode.json", "native-history.json",
-                   "native-events.jsonl", "native-output.json", "native-transcript.jsonl", "mcp-audit.jsonl", "stderr.log", "daemon-setup.log", "setup.log", "summary.md",
+                   "native-events.jsonl", "native-output.json", "native-transcript.jsonl", "tool-audit.jsonl", "mcp-audit.jsonl", "stderr.log", "daemon-setup.log", "setup.log", "summary.md",
                    "business-tools.json", "judge.json", "environment_state.json", "initial_environment_state.json", "setup.json", "release-error.txt", "pre.jpg", "post.jpg"}
         step_image = target.name.startswith("step_") and target.suffix in {".jpg", ".png"}
         if root not in target.parents or (target.name not in allowed and not step_image) or not target.is_file():
@@ -135,8 +136,9 @@ EXPERIMENT_HTML = r"""<!doctype html>
 <div class="grid" style="margin-top:20px">
 <fieldset><legend><label><input id="aiden" type="checkbox" checked> Aiden</label></legend>
 <p>Uses the current <a href="/">Agent Config</a>, frozen at experiment creation. Each attempt starts a fresh Docker daemon.</p></fieldset>
-<fieldset><legend><label><input id="pi" type="checkbox" checked> pi</label> <label><input id="openclaw" type="checkbox"> OpenClaw</label></legend>
-<p class="muted">pi and OpenClaw share the model settings below for like-for-like comparisons. Each uses its own native runtime.</p>
+<fieldset><legend><label><input id="pi" type="checkbox" checked> pi</label> <label><input id="openclaw" type="checkbox"> OpenClaw</label> <label><input id="claude-code" type="checkbox"> Claude Code</label> <label><input id="codex" type="checkbox"> Codex</label></legend>
+<p class="muted">External agents share the model settings below for like-for-like comparisons; Claude Code uses the Anthropic Messages protocol and Codex the OpenAI Responses protocol at the same endpoint. Each uses its own native runtime with only the device UI tools.</p>
+<div><label for="toolLayer">Device UI tools</label><select id="toolLayer"><option value="aiden">Aiden tool layer</option><option value="raw">Raw tools</option><option value="both">Both (separate runs)</option></select></div>
 <div><label for="provider">Provider</label><input id="provider" value="openrouter" autocomplete="off"></div>
 <div><label for="model">Exact model ID</label><input id="model" placeholder="Provider model ID" autocomplete="off"></div>
 <div><label for="thinking">Thinking level</label><select id="thinking"><option>off</option><option>minimal</option><option>low</option><option selected>medium</option><option>high</option><option>xhigh</option><option>max</option></select></div>
@@ -149,7 +151,7 @@ EXPERIMENT_HTML = r"""<!doctype html>
 </details>
 <p><button id="savePi" type="button" class="secondary">Save model settings</button> <span id="piSettingsStatus" role="status"></span></p>
 <p class="muted">OpenClaw requires its CLI and Node 24.22.1+ on the WebUI server; set AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE and AIDEN_BENCHMARK_OPENCLAW_NODE if needed. The provider API key must be in the server environment. Personal pi settings, extensions, skills, and sessions are not loaded.</p></fieldset></div>
-<p class="muted" id="scope">Aiden runs in Docker; pi and OpenClaw run on the server host in fresh working directories. These directories do not sandbox shell access. Native memory, planning, and context management remain agent-owned. Each attempt starts with fresh agent state.</p>
+<p class="muted" id="scope">Aiden runs in Docker; external agents run on the server host in fresh working directories with only the device UI tools. Native memory, planning, and context management remain agent-owned. Each attempt starts with fresh agent state.</p>
 <label for="seed">Scheduling seed</label><input id="seed" type="number" step="1" value="0" required style="max-width:180px">
 <p><button id="start" type="submit">Start experiment</button> <span id="estimate" class="muted"></span></p>
 <div id="error" role="alert"></div></form>
@@ -171,6 +173,14 @@ async function api(url, options) {
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
 }
+// External harnesses share the model settings below; endpoint marks a required base URL.
+const EXTERNAL_HARNESSES = [
+  {kind: 'pi', label: 'pi', endpoint: false},
+  {kind: 'openclaw', label: 'OpenClaw', endpoint: true},
+  {kind: 'claude-code', label: 'Claude Code', endpoint: true, api: 'anthropic-messages'},
+  {kind: 'codex', label: 'Codex', endpoint: true, api: 'openai-responses'},
+];
+function selectedExternal() { return EXTERNAL_HARNESSES.filter(item => $(item.kind).checked); }
 function estimate() {
   const suite = suites.find(item => item.key === $('suite').value);
   $('environmentFields').hidden = suite?.track !== 'operations';
@@ -178,11 +188,12 @@ function estimate() {
   const environment = environments.find(item => item.id === $('environmentSelect').value);
   $('externalEnvironment').hidden = !external;
   $('environment').required = external;
-  $('provider').required = $('pi').checked || $('openclaw').checked;
-  $('model').required = $('pi').checked || $('openclaw').checked;
-  $('piBaseUrl').required = $('openclaw').checked;
-  $('customEndpointLabel').textContent = $('openclaw').checked ? 'Custom API endpoint (required for OpenClaw)' : 'Custom API endpoint (optional)';
-  if ($('openclaw').checked) $('customEndpoint').open = true;
+  const harnesses = selectedExternal();
+  const endpointKinds = harnesses.filter(item => item.endpoint).map(item => item.label);
+  $('provider').required = $('model').required = harnesses.length > 0;
+  $('piBaseUrl').required = endpointKinds.length > 0;
+  $('customEndpointLabel').textContent = endpointKinds.length ? `Custom API endpoint (required for ${endpointKinds.join(', ')})` : 'Custom API endpoint (optional)';
+  if (endpointKinds.length) $('customEndpoint').open = true;
   $('start').disabled = !settingsLoaded || submitting || (!external && environment?.status !== 'running');
   $('startEnvironment').disabled = startingEnvironment || environments.some(item => ['starting','building'].includes(item.status));
   $('environmentStatus').textContent = external ? 'Connect a MobileGym environment managed outside this WebUI.' : environment
@@ -190,7 +201,7 @@ function estimate() {
     : 'No environment is selected. Start MobileGym to prepare a simulator.';
   $('environmentPreview').hidden = !environment?.web_url || environment.status !== 'running';
   if (environment?.web_url) $('environmentPreview').href = environment.web_url;
-  $('estimate').textContent = suite ? `${suite.tasks * Number($('repeats').value) * (Number($('aiden').checked) + Number($('pi').checked) + Number($('openclaw').checked))} planned attempts` : '';
+  $('estimate').textContent = suite ? `${suite.tasks * Number($('repeats').value) * (Number($('aiden').checked) + selectedExternal().length * ($('toolLayer').value === 'both' ? 2 : 1))} planned attempts` : '';
 }
 async function refresh() {
   const data = await api('/api/experiments');
@@ -310,10 +321,16 @@ $('experimentForm').addEventListener('submit', async event => {
   try {
     const agents = [];
     if ($('aiden').checked) agents.push({id:'aiden',kind:'aiden'});
-    if ($('pi').checked || $('openclaw').checked) {
+    if (selectedExternal().length) {
       const pi = await savePiSettings();
-      if ($('pi').checked) agents.push(pi);
-      if ($('openclaw').checked) agents.push({...pi,id:'openclaw',kind:'openclaw'});
+      const layers = $('toolLayer').value === 'both' ? ['aiden', 'raw'] : [$('toolLayer').value];
+      for (const harness of selectedExternal()) {
+        // Fixed-protocol harnesses use their own API; the shared endpoint and model still apply.
+        const shared = harness.api ? {...pi, api: harness.api} : pi;
+        for (const layer of layers) {
+          agents.push({...shared, id: layer === 'raw' ? `${harness.kind}-raw` : harness.kind, kind: harness.kind, tool_layer: layer});
+        }
+      }
     }
     const payload = {suite:$('suite').value,agents,repeats:Number($('repeats').value),seed:Number($('seed').value)};
     if ($('environmentSelect').value === 'external') payload.environment_url = $('environment').value;

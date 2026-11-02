@@ -1,6 +1,8 @@
 """Identical business tools and resettable environments for native harnesses.
 
-The daemon is a tool server for pi, never an agent delegated to by pi. Evaluation
+The daemon is a tool server for external harnesses, never an agent they delegate
+to. The business tool catalog is the UI operation surface that Aiden's model
+sees on the environment platform, derived from daemon tool metadata. Evaluation
 state stays in the runner; it is not included in the task or tool catalog.
 """
 from __future__ import annotations
@@ -8,20 +10,42 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import threading
+from typing import Protocol
 import uuid
 
 from runner.capture import take_environment_screenshot
 from runner.environment_state import read_environment_state
-from runner.harness import AidenAdapter, Execution, OpenClawAdapter, PiAdapter
-from runner.reset import call_environment_release, call_environment_setup
-from runner.suite import TaskSpec
+from runner.harness import AidenAdapter, Execution, ExternalHarness, record_catalog
+from runner.raw_tools import RAW_TOOL_CATALOG, TOOL_LAYER as RAW_TOOL_LAYER, RawToolBackend
+from runner.reset import call_environment_release, call_environment_setup, prepare_environment_tools
+from runner.suite import SETUP_KEYS, TaskSpec
+from runner.tool_gateway import ToolGateway
 from runner.trace import extract_trace
 
 
-OPERATION_TOOLS = (
+# Shared preparation is an environment fixture run by Aiden, not a scored attempt;
+# suite timeouts sized for a warm device are too short for a cold daemon.
+PREPARATION_MIN_TIMEOUT_SEC = 120
+AIDEN_TOOL_LAYER = "aiden"
+TOOL_LAYERS = (AIDEN_TOOL_LAYER, RAW_TOOL_LAYER)
+# Every derived catalog must contain these; suites may require only these.
+REQUIRED_BUSINESS_TOOLS = (
     "screenshot", "touch_gesture", "keyboard_tap", "enter_text",
     "mouse_move", "mouse_scroll", "wait_for_stable_screen",
 )
+
+
+def business_tool_catalog(descriptors: list[dict], platform: str) -> list[dict]:
+    """Select the daemon's model-visible UI operation tools for one platform."""
+    if descriptors and not any("ui_operation" in tool for tool in descriptors):
+        raise RuntimeError("The daemon image does not report UI tool metadata; rebuild the daemon image")
+    catalog = [tool for tool in descriptors
+               if tool.get("ui_operation") and tool.get("agent_exposed")
+               and (not tool.get("agent_platforms") or platform in tool["agent_platforms"])]
+    missing = set(REQUIRED_BUSINESS_TOOLS) - {tool["name"] for tool in catalog}
+    if missing:
+        raise RuntimeError(f"Shared business tools are missing: {sorted(missing)}")
+    return catalog
 
 
 def preparation_steps(setup) -> list[dict]:
@@ -30,6 +54,10 @@ def preparation_steps(setup) -> list[dict]:
         return []
     steps = setup if isinstance(setup, list) else [setup]
     for step in steps:
+        if step.get("type") == "environment_tools":
+            if not step.get("tools") or set(step) - SETUP_KEYS["environment_tools"]:
+                raise ValueError("Comparison environment_tools requires tools and optional expected_state")
+            continue
         if (step.get("type") != "agent_prompt" or not step.get("prompt")
                 or step.get("clear_history_after", True) is not True or step.get("evaluate")
                 or set(step) - {"type", "prompt", "timeout_sec", "clear_history_after", "expected_response", "evaluate"}):
@@ -37,14 +65,35 @@ def preparation_steps(setup) -> list[dict]:
     return steps
 
 
+class OperationHarness(Protocol):
+    def execute_operation(self, prompt: str, timeout: int, artifacts: Path,
+                          stop: threading.Event, task: TaskSpec) -> Execution: ...
+
+
 class OperationAdapter:
     def __init__(self, *, daemon: AidenAdapter, environment_url: str,
-                 pi: PiAdapter | None = None, openclaw: OpenClawAdapter | None = None,
+                 external: ExternalHarness | None = None, platform: str = "android",
+                 tool_layer: str = AIDEN_TOOL_LAYER,
                  global_reset: dict | None = None, prompt_prefix: str = ""):
-
-        self.daemon, self.environment_url, self.pi = daemon, environment_url, pi
-        self.openclaw = openclaw
+        if tool_layer not in TOOL_LAYERS or (tool_layer == RAW_TOOL_LAYER and external is None):
+            raise ValueError("Raw tools are available only to external harnesses")
+        self.daemon, self.environment_url, self.external = daemon, environment_url, external
+        self.platform, self.tool_layer = platform, tool_layer
         self.global_reset, self.prompt_prefix = global_reset, prompt_prefix
+
+    def select_tools(self, descriptors: list[dict]) -> list[dict]:
+        return business_tool_catalog(descriptors, self.platform)
+
+    def _execute_raw(self, prompt: str, timeout: int, artifacts: Path, stop: threading.Event,
+                     route: str) -> Execution:
+        """Serve neutral bridge primitives to the external harness; no daemon starts."""
+        assert self.external is not None
+        metrics = record_catalog(RAW_TOOL_CATALOG, artifacts, RAW_TOOL_LAYER)
+        with ToolGateway(RawToolBackend(self.environment_url, route), RAW_TOOL_CATALOG, artifacts) as gateway:
+            execution = self.external.execute(prompt, timeout, artifacts, stop,
+                                              tool_endpoint=gateway.url, tool_catalog=RAW_TOOL_CATALOG)
+        execution.metrics.update(metrics)
+        return execution
 
     def execute_operation(self, prompt: str, timeout: int, artifacts: Path,
                           stop: threading.Event, task: TaskSpec) -> Execution:
@@ -66,10 +115,15 @@ class OperationAdapter:
             steps = preparation_steps(self.global_reset) + preparation_steps(task.setup)
             for index, step in enumerate(steps):
                 directory = artifacts / "preparation" / str(index + 1)
+                if step["type"] == "environment_tools":
+                    directory.mkdir(parents=True, exist_ok=True)
+                    prepared = prepare_environment_tools(self.environment_url, route, step)
+                    (directory / "actions.json").write_text(json.dumps(prepared, ensure_ascii=False), encoding="utf-8")
+                    continue
                 prepared = self.daemon.execute(
-                    f"{self.prompt_prefix}\n\n{step['prompt']}".strip(), int(step.get("timeout_sec", 90)),
+                    f"{self.prompt_prefix}\n\n{step['prompt']}".strip(), max(int(step.get("timeout_sec", 90)), PREPARATION_MIN_TIMEOUT_SEC),
                     directory, stop, environment_url=self.environment_url,
-                    benchmark_task_id=route, tool_names=OPERATION_TOOLS,
+                    benchmark_task_id=route, select_tools=self.select_tools,
                 )
                 if prepared.canceled or stop.is_set():
                     return Execution(canceled=True)
@@ -84,11 +138,13 @@ class OperationAdapter:
             if task.environment_assertions:
                 initial = read_environment_state(self.environment_url, benchmark_task_id=route)
                 (artifacts / "initial_environment_state.json").write_text(json.dumps(initial, ensure_ascii=False), encoding="utf-8")
-            result = self.daemon.execute(
-                prompt, timeout, artifacts, stop, environment_url=self.environment_url,
-                benchmark_task_id=route, pi=self.pi, tool_names=OPERATION_TOOLS,
-                openclaw=self.openclaw,
-            )
+            if self.tool_layer == RAW_TOOL_LAYER:
+                result = self._execute_raw(prompt, timeout, artifacts, stop, route)
+            else:
+                result = self.daemon.execute(
+                    prompt, timeout, artifacts, stop, environment_url=self.environment_url,
+                    benchmark_task_id=route, external=self.external, select_tools=self.select_tools,
+                )
             result.pre_screenshot = pre
             if not result.canceled and task.environment_assertions:
                 try:

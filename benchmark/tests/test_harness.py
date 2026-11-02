@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import sys
 import threading
 
@@ -46,6 +47,7 @@ def test_pi_missing_usage_stays_unknown_and_native_retry_can_recover():
     result = normalize_pi_events([failed, assistant()])
     assert "agent_error" not in result.metrics
     assert result.metrics["cost_usd"] is None
+    assert result.metrics["api_retries"] == 1
     assert normalize_pi_events([failed]).metrics["agent_error"] == "temporary failure"
 
 
@@ -76,11 +78,12 @@ def test_pi_subprocess_uses_stdin_fresh_workspace_and_collects_real_protocol(tmp
 def test_pi_timeout_and_cancel_stop_process_and_preserve_partial_evidence(tmp_path, cancel):
     adapter = fake_pi(tmp_path, "import time\n" + f"print({json.dumps(json.dumps(assistant()))}, flush=True)\n" + "time.sleep(60)\n")
     stop = threading.Event()
-    timer = threading.Timer(.3, stop.set) if cancel else None
+    # Leave the fake process time to start and emit before it is stopped.
+    timer = threading.Timer(1.5, stop.set) if cancel else None
     if timer:
         timer.start()
     try:
-        result = adapter.execute("task", 5 if cancel else .3, tmp_path / "artifacts", stop)
+        result = adapter.execute("task", 5 if cancel else 1.5, tmp_path / "artifacts", stop)
     finally:
         if timer:
             timer.cancel()
@@ -154,6 +157,27 @@ else:
     assert all("endpoint-test-secret" not in path.read_text() for path in artifacts.iterdir())
 
 
+@pytest.mark.parametrize("catalog,expected", [
+    ([{"name": "screenshot"}, {"name": "touch_gesture"}], ["--tools", "screenshot,touch_gesture"]),
+    ([], ["--no-tools"]),
+])
+def test_pi_enables_only_shared_business_tools(tmp_path, catalog, expected):
+    body = f"""import json, os, sys
+from pathlib import Path
+sys.stdin.read()
+args = sys.argv[1:]
+start = args.index({expected[0]!r})
+assert args[start:start + {len(expected)}] == {expected!r}
+if 'AIDEN_OPERATION_CONFIG' in os.environ:
+    Path(json.loads(Path(os.environ['AIDEN_OPERATION_CONFIG']).read_text())['ready_file']).write_text('[]')
+print({json.dumps(json.dumps(assistant()))})
+"""
+    artifacts = tmp_path / "artifacts"
+    kwargs = {"tool_endpoint": "http://127.0.0.1:1", "tool_catalog": catalog} if catalog else {}
+    result = fake_pi(tmp_path, body).execute("task", 5, artifacts, threading.Event(), **kwargs)
+    assert result.metrics["exit_code"] == 0, (artifacts / "stderr.log").read_text()
+
+
 def test_custom_endpoint_missing_key_does_not_start_pi(tmp_path, monkeypatch):
     monkeypatch.delenv("MY_MISSING_KEY", raising=False)
     adapter = PiAdapter(executable="must-not-be-executed", provider="custom", model="vision", thinking="off",
@@ -220,10 +244,10 @@ def test_aiden_owned_daemon_always_stops_and_episode_is_retained(tmp_path, monke
 def test_pi_operations_use_daemon_tools_without_delegating_to_aiden_chat(tmp_path, monkeypatch):
     from runner import harness, webui
     from runner.harness import Execution
-    from runner.operations import OPERATION_TOOLS
+    from runner.operations import REQUIRED_BUSINESS_TOOLS
     lifecycle = []
     catalog = [{"name": name, "description": name, "args_schema": {"type": "object"}}
-               for name in OPERATION_TOOLS]
+               for name in REQUIRED_BUSINESS_TOOLS]
     monkeypatch.setattr(webui, "prepare_run_config", lambda *a, **k: None)
     def start(*args, **kwargs):
         assert kwargs["benchmark_task_id"] == "route-id"
@@ -239,9 +263,8 @@ def test_pi_operations_use_daemon_tools_without_delegating_to_aiden_chat(tmp_pat
             self.base_url = url
         def health(self):
             return True
-        def _get(self, path):
-            assert path == "/api/tools"
-            return 200, json.dumps({"tools": catalog}).encode()
+        def list_tools(self):
+            return catalog
         def chat(self, *a, **k):
             pytest.fail("Pi must never ask the Aiden agent to execute its task")
         def close(self):
@@ -249,12 +272,37 @@ def test_pi_operations_use_daemon_tools_without_delegating_to_aiden_chat(tmp_pat
     class Pi:
         def execute(self, prompt, timeout, artifacts, stop, **kwargs):
             assert kwargs["tool_catalog"] == catalog
-            assert kwargs["tool_endpoint"] == "http://127.0.0.1:8080"
+            # External harnesses reach the allowlisted gateway, not the daemon.
+            assert kwargs["tool_endpoint"].startswith("http://127.0.0.1:")
+            assert kwargs["tool_endpoint"] != "http://127.0.0.1:8080"
             return Execution(metrics={"cost_usd": 0.01})
     monkeypatch.setattr(harness, "AgentClient", Client)
     result = AidenAdapter(image="digest", prepared_config=tmp_path).execute(
         "task", 10, tmp_path / "artifacts", threading.Event(),
-        environment_url="http://127.0.0.1:9090", benchmark_task_id="route-id", pi=Pi(), tool_names=OPERATION_TOOLS)
+        environment_url="http://127.0.0.1:9090", benchmark_task_id="route-id", external=Pi(), select_tools=lambda tools: tools)
     assert len(result.metrics["business_tools_sha256"]) == 64
     assert result.metrics["cost_usd"] == 0.01
     assert lifecycle == ["stopped"]
+
+
+def test_aiden_step_screenshots_follow_tool_call_order(tmp_path, monkeypatch):
+    from runner import harness
+    episode = {"id": "ep_1", "events": [
+        {"type": "tool_call", "tool_name": "skill_read"}, {"type": "tool_result", "tool_name": "skill_read"},
+        {"type": "tool_call", "tool_name": "touch_gesture"},
+        {"type": "tool_result", "tool_name": "touch_gesture", "screenshot_ref": "artifacts/step_009.jpeg"},
+    ]}
+    assert harness.episode_step_screenshots(episode) == {2: "artifacts/step_009.jpeg"}
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command[:2])
+        if command[1] == "exec":
+            return subprocess.CompletedProcess(command, 0, stdout="/data/memory/episodes/2026/ep_1\n")
+        destination = Path(command[3]) / "artifacts"
+        destination.mkdir()
+        (destination / "step_009.jpeg").write_bytes(b"\xff\xd8step")
+        return subprocess.CompletedProcess(command, 0)
+    monkeypatch.setattr(harness.subprocess, "run", run)
+    assert harness.export_episode_screenshots("daemon", episode, tmp_path) == 1
+    assert (tmp_path / "step_2.jpg").read_bytes() == b"\xff\xd8step"
+    assert commands == [["docker", "exec"], ["docker", "cp"]]

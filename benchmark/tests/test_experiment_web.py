@@ -232,8 +232,8 @@ def test_environment_id_cannot_override_an_explicit_url(experiment_server):
 def test_saved_pi_settings_survive_new_manager_and_are_used_to_start(experiment_server, monkeypatch):
     app, base = experiment_server
     monkeypatch.setenv('AIDEN_BENCHMARK_PI_API_KEY', 'fixture-secret')
-    pi = {'kind': 'pi', 'provider': 'apibest', 'model': 'gpt-5.6-sol', 'thinking': 'medium',
-          'base_url': 'https://apibest.ai/v1', 'api': 'openai-completions',
+    pi = {'kind': 'pi', 'provider': 'benchmark-custom', 'model': 'vision-model', 'thinking': 'medium',
+          'base_url': 'https://gateway.example.com/v1', 'api': 'openai-completions',
           'api_key_env': 'AIDEN_BENCHMARK_PI_API_KEY', 'context_window': 1050000, 'max_tokens': 16384}
     status, response = request(base, '/api/experiments/settings', {'pi': pi})
     assert status == 200
@@ -251,7 +251,7 @@ def test_saved_pi_settings_survive_new_manager_and_are_used_to_start(experiment_
     })
     assert status == 201
     app.experiments._active[2].join(timeout=10)
-    assert json.loads(response)['experiment']['agents'][0]['model'] == 'gpt-5.6-sol'
+    assert json.loads(response)['experiment']['agents'][0]['model'] == 'vision-model'
 
 
 def test_invalid_settings_do_not_replace_saved_values(experiment_server):

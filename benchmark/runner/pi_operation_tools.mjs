@@ -5,12 +5,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 export function toolResult(response) {
   let output = response.output;
   try { output = JSON.parse(output); } catch { /* Plain text is a valid result. */ }
-  // The HTTP endpoint can report successful invocation while the business
-  // action failed. Preserve the explicit action outcome, including when it is
-  // wrapped with a screenshot; do not infer failure from screen stability.
-  let action = output?.action_output ?? output;
-  try { action = JSON.parse(action); } catch { /* Plain text is valid. */ }
-  const isError = !!response.is_error || response.tool_error != null || action?.ok === false;
+  // The benchmark tool gateway folds business failures (`ok:false`, including
+  // screenshot-wrapped action output) into is_error before responding.
+  const isError = !!response.is_error || response.tool_error != null;
   const content = [];
   if (output && typeof output === "object" && typeof output.data === "string"
       && output.width > 0 && output.height > 0
@@ -38,7 +35,11 @@ export default function operationTools(pi) {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ input: args }), signal,
         });
-        if (!response.ok) throw new Error(`Business tool ${tool.name}: HTTP ${response.status}`);
+        if (!response.ok) {
+          let detail = {};
+          try { detail = await response.json(); } catch { /* The error body may not be JSON. */ }
+          throw new Error(`Business tool ${tool.name}: HTTP ${response.status} ${detail?.error ?? ""}`.trim());
+        }
         return toolResult(await response.json());
       },
     });

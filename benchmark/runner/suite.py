@@ -16,6 +16,7 @@ from runner.platform import (
 VALID_CATEGORIES = {"diagnostic", "single_step", "multi_step", "memory", "perception", "device_operation"}
 SETUP_KEYS = {
     "agent_prompt": {"type", "prompt", "timeout_sec", "clear_history_after", "expected_response"},
+    "environment_tools": {"type", "tools", "expected_state"},
     "seed_memory": {"type", "memories", "timeout_sec", "clear_history_after"},
     "seed_episode": {"type", "episode", "consolidate", "timeout_sec", "consolidation_expectation", "evaluate"},
     "seed_session_chunk": {"type", "session_id", "summary", "messages", "timeout_sec", "clear_history_after"},
@@ -316,6 +317,17 @@ def load_suite(path: Path) -> Suite:
                         f"task {tid}: unsupported {setup_type} setup keys: {', '.join(unknown_setup_keys)}"
                     )
                 validate_setup_evaluation(setup_item)
+                if setup_type == "environment_tools":
+                    tools = setup_item.get("tools")
+                    if not isinstance(tools, list) or not tools:
+                        raise SuiteValidationError(f"task {tid}: environment_tools requires a non-empty tools list")
+                    for tool in tools:
+                        if (not isinstance(tool, dict) or set(tool) != {"name", "input"}
+                                or not isinstance(tool["name"], str) or not tool["name"].strip()
+                                or not isinstance(tool["input"], dict)):
+                            raise SuiteValidationError(f"task {tid}: invalid environment_tools entry")
+                    if "expected_state" in setup_item:
+                        _parse_environment_assertions(setup_item["expected_state"], tid)
                 if setup_type == "assert_memory":
                     validate_assert_memory_setup(
                         setup_item,

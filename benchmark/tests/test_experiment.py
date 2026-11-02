@@ -112,6 +112,38 @@ def test_judge_retry_updates_original_reports_without_reexecuting_agents(tmp_pat
         assert '"status": "passed"' in (run_dir / "report.html").read_text()
 
 
+def test_native_tool_calls_are_counted_and_loopback_access_is_flagged():
+    from runner.experiment import tool_usage_metrics
+    history = [
+        {"type": "tool_call", "tool_name": "touch_gesture", "tool_input": '{"type":"tap"}'},
+        {"type": "tool_result", "content": "ok"},
+        {"type": "tool_call", "tool_name": "bash", "tool_input": '{"command":"ls"}'},
+        {"type": "tool_result", "content": "ok"},
+        {"type": "tool_call", "tool_name": "bash", "tool_input": '{"command":"curl http://127.0.0.1:8080/api/tools"}'},
+        {"type": "tool_result", "content": "ok"},
+    ]
+    assert tool_usage_metrics(history, {"touch_gesture"}) == {
+        "business_tool_calls": 1, "native_tool_calls": 2, "native_loopback_calls": 1}
+
+
+def test_unreadable_environment_state_is_not_a_retryable_judge_error():
+    from runner.experiment import _retryable_judge_error
+    row = {"status": "judge_error", "rubric_total": 1, "hard_assertions": {"environment_state": None},
+           "metrics": {"failure_class": "evaluation", "first_failure_stage": "evaluation"}}
+    assert _retryable_judge_error(row)
+    row["metrics"]["environment_state_error"] = "environment state unavailable"
+    assert not _retryable_judge_error(row)
+
+
+def test_environment_tool_seeding_is_not_reported_as_agent_preparation():
+    suite = comparison_suite(SUITE_PATH.with_name("phone_control_v1.json"))
+    seeded = dc.replace(suite, tasks=[t for t in suite.tasks if t.id == "select_all_and_delete"])
+    agent_prepared = dc.replace(suite, tasks=[t for t in suite.tasks if t.id == "copy_paste_text"])
+    agents = [{"id": "aiden", "kind": "aiden"}]
+    assert comparison(seeded, agents, {"aiden": []}, 1)["agent_preparation_tasks"] == []
+    assert comparison(agent_prepared, agents, {"aiden": []}, 1)["agent_preparation_tasks"] == ["copy_paste_text"]
+
+
 def test_adapter_failure_does_not_abort_other_agents_or_inflate_coverage(tmp_path):
     agents = [{"id": "broken", "kind": "pi"}, {"id": "working", "kind": "aiden"}]
     run_experiment(tiny_suite(), tmp_path, agents,

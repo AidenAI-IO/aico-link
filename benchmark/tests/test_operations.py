@@ -7,7 +7,7 @@ import threading
 import pytest
 
 from runner import operations
-from runner.experiment import ExperimentManager, comparison_suite, run_experiment
+from runner.experiment import DEVICE_CONTEXT, ExperimentManager, comparison_suite, run_experiment
 from runner.harness import Execution, normalize_pi_events
 from runner.trace import extract_trace
 from runner.judge import JudgeConfig
@@ -33,7 +33,8 @@ def test_operations_score_device_state_and_require_identical_business_contract(t
         def __init__(self, number):
             self.number = number
         def execute_operation(self, prompt, timeout, artifacts, stop, task):
-            assert prompt == f"{suite.prompt_prefix}\n\n{task.prompt}".strip()
+            # Every agent gets the same device context ahead of the original task prompt.
+            assert prompt.startswith(DEVICE_CONTEXT) and prompt.endswith(task.prompt)
             assert "environment_assertions" not in prompt
             state = {"route": {"app": "scroll_lab", "path": "/item/scroll-item-024"}, "apps": {"scroll_lab": {
                 "selectedItemId": "scroll-item-024", "maxFirstVisibleOrdinal": 25 if mode == "failure" else 24}}}
@@ -81,7 +82,7 @@ def test_operation_attempt_resets_captures_and_releases_every_route(tmp_path, mo
         def execute(self, prompt, timeout, artifacts, stop, **kwargs):
             lifecycle.append("execute")
             assert kwargs["benchmark_task_id"] == routes[0]
-            assert kwargs["tool_names"] == operations.OPERATION_TOOLS
+            assert kwargs["select_tools"] == adapter.select_tools
             if stage == "execute_error":
                 raise RuntimeError("daemon failed")
             return successful_execution()
@@ -162,15 +163,13 @@ assert.equal(JSON.parse(result.content[0].text).screen_stable, false);
 assert.equal(JSON.parse(result.content[0].text).data, undefined);
 assert.deepEqual(hooks.tool_result({toolName: 'screenshot', details: result.details}), {isError: true});
 assert.equal(toolResult({output: 'plain error'}).content[0].text, 'plain error');
-for (const action of [{ok: false}, JSON.stringify({ok: false, suggestion: 'Refocus'})]) {
-  const failed = toolResult({is_error: false, output: JSON.stringify({
-    width: 10, height: 20, format: 'jpeg', data: 'aW1hZ2U=', action_output: action,
-  })});
-  assert.equal(failed.details.is_error, true);
-  assert.equal(failed.content[1].data, 'aW1hZ2U=');
-  assert.deepEqual(hooks.tool_result({toolName: 'screenshot', details: failed.details}), {isError: true});
-}
-assert.equal(toolResult({output: '{"ok":false}'}).details.is_error, true);
+// The gateway sets is_error for business failures; the image is still returned.
+const failed = toolResult({is_error: true, output: JSON.stringify({
+  width: 10, height: 20, format: 'jpeg', data: 'aW1hZ2U=', action_output: {ok: false},
+})});
+assert.equal(failed.details.is_error, true);
+assert.equal(failed.content[1].data, 'aW1hZ2U=');
+assert.deepEqual(hooks.tool_result({toolName: 'screenshot', details: failed.details}), {isError: true});
 assert.equal(toolResult({output: '{"ok":true,"screen_stable":false,"screen_changed":false}'}).details.is_error, false);
 assert.equal(toolResult({output: 'ok', tool_error: {code: 'failed'}}).details.is_error, true);
 globalThis.fetch = async () => ({ok: false, status: 500});
@@ -225,13 +224,75 @@ def test_shared_preparation_precedes_evaluated_agent_and_is_not_in_task_history(
         def execute(self, prompt, timeout, artifacts, stop, **kwargs):
             artifacts.mkdir(parents=True, exist_ok=True)
             lifecycle.append(prompt)
-            assert (kwargs.get("pi") is pi) == (prompt == "task")
+            assert (kwargs.get("external") is pi) == (prompt == "task")
             return successful_execution()
     task = comparison_suite(SUITE.with_name("phone_control_v1.json")).tasks[0]
     task.setup = {"type": "agent_prompt", "prompt": "Open settings", "expected_response": "Done"}
-    adapter = operations.OperationAdapter(daemon=Daemon(), environment_url="http://env", pi=pi,
+    adapter = operations.OperationAdapter(daemon=Daemon(), environment_url="http://env", external=pi,
                                           global_reset={"type": "agent_prompt", "prompt": "Home"})
     result = adapter.execute_operation("task", 10, tmp_path, threading.Event(), task)
     assert lifecycle == ["reset", "Home", "Open settings", "pre.jpg", "task", "post.jpg", "release"]
     assert len(result.history) == 3
     assert (tmp_path / "preparation/1/history.json").exists()
+
+
+def test_environment_preparation_checks_seeded_state_before_agent(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(operations, "call_environment_setup", lambda *a, **kw: calls.append("reset"))
+    monkeypatch.setattr(operations, "call_environment_release", lambda *a, **kw: calls.append("release"))
+    monkeypatch.setattr(operations, "take_environment_screenshot", lambda url, path, **kw: path.write_bytes(b"image"))
+    def prepare(url, route, setup):
+        calls.append("seed")
+        assert setup["expected_state"] == {"apps.notes.notes.0.content": "hello-aiden"}
+        return {"actions": [{"name": "enter_text", "ok": True}]}
+    monkeypatch.setattr(operations, "prepare_environment_tools", prepare)
+    class Daemon:
+        def execute(self, *args, **kwargs):
+            calls.append("agent")
+            return successful_execution()
+    task = next(t for t in comparison_suite(SUITE.with_name("phone_control_v1.json")).tasks
+                if t.id == "select_all_and_delete")
+    operations.OperationAdapter(daemon=Daemon(), environment_url="http://env").execute_operation(
+        task.prompt, 10, tmp_path, threading.Event(), task)
+    assert calls == ["reset", "seed", "agent", "release"]
+    assert json.loads((tmp_path / "preparation/1/actions.json").read_text())["actions"][0]["ok"]
+
+
+def descriptor(name, *, ui=True, exposed=True, platforms=None):
+    return {"name": name, "description": name, "args_schema": {"type": "object"},
+            "ui_operation": ui, "agent_exposed": exposed, "agent_platforms": platforms or []}
+
+
+def test_business_catalog_is_the_model_visible_ui_surface_for_the_platform():
+    tools = [descriptor(name) for name in operations.REQUIRED_BUSINESS_TOOLS] + [
+        descriptor("quick_action", platforms=["android", "ios", "macos"]),
+        descriptor("open_url", platforms=["android", "ios"]),
+        descriptor("search_launch_app", exposed=False, platforms=["ios", "macos"]),
+        descriptor("desktop_only", platforms=["macos"]),
+        descriptor("shell", ui=False), descriptor("recall_memory", ui=False),
+    ]
+    names = [tool["name"] for tool in operations.business_tool_catalog(tools, "android")]
+    assert names == [*operations.REQUIRED_BUSINESS_TOOLS, "quick_action", "open_url"]
+    with pytest.raises(RuntimeError, match="missing"):
+        operations.business_tool_catalog(tools[1:], "android")
+    legacy = [{key: value for key, value in tool.items() if key not in {"ui_operation", "agent_exposed"}}
+              for tool in tools]
+    with pytest.raises(RuntimeError, match="rebuild the daemon image"):
+        operations.business_tool_catalog(legacy, "android")
+
+
+def test_shared_preparation_gets_a_cold_daemon_timeout_floor(tmp_path, monkeypatch):
+    monkeypatch.setattr(operations, "call_environment_setup", lambda *a, **kw: None)
+    monkeypatch.setattr(operations, "call_environment_release", lambda *a, **kw: None)
+    monkeypatch.setattr(operations, "take_environment_screenshot", lambda url, path, **kw: path.write_bytes(b"x"))
+    timeouts = []
+    class Daemon:
+        def execute(self, prompt, timeout, artifacts, stop, **kwargs):
+            artifacts.mkdir(parents=True, exist_ok=True)
+            timeouts.append(timeout)
+            return successful_execution()
+    task = comparison_suite(SUITE.with_name("phone_control_v1.json")).tasks[0]
+    task.setup = {"type": "agent_prompt", "prompt": "回到桌面。", "timeout_sec": 30}
+    operations.OperationAdapter(daemon=Daemon(), environment_url="http://env").execute_operation(
+        "task", 10, tmp_path, threading.Event(), task)
+    assert timeouts == [operations.PREPARATION_MIN_TIMEOUT_SEC, 10]

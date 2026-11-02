@@ -1176,11 +1176,15 @@ def test_phone_control_text_editing_tasks_have_input_setup():
     suite = load_suite(suite_path)
     task_by_id = {task.id: task for task in suite.tasks}
 
-    for task_id in ("type_long_mixed_text", "select_all_and_delete", "copy_paste_text"):
+    for task_id in ("type_long_mixed_text", "copy_paste_text"):
         setup = task_by_id[task_id].setup
         assert setup is not None
         assert setup["type"] == "agent_prompt"
         assert setup["clear_history_after"] is True
+
+    seeded = task_by_id["select_all_and_delete"].setup
+    assert seeded["type"] == "environment_tools"
+    assert seeded["expected_state"] == {"apps.notes.notes.0.content": "hello-aiden"}
 
 
 def test_phone_control_drag_icon_excludes_adb_android():

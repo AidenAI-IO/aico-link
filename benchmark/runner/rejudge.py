@@ -35,6 +35,20 @@ def _post_screenshot_path(attempt_dir: Path) -> Path:
     return legacy_steps[-1] if legacy_steps else post
 
 
+def execution_gate_blocks_rejudge(row: dict) -> bool:
+    """Rejudging changes semantic verdicts, never recorded execution gates."""
+    metrics = row.get("metrics") or {}
+    return bool(
+        row.get("status") in {"timeout", "skipped"}
+        or row.get("hard_assertion_failures")
+        or any(value is False for value in (row.get("hard_assertions") or {}).values())
+        or metrics.get("agent_error")
+        or metrics.get("first_failure_stage") == "setup"
+        # Unreadable final state is unverified, not a passed state assertion.
+        or metrics.get("environment_state_error")
+    )
+
+
 def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
                 judge_api_key_env: str = "AIDEN_BENCHMARK_JUDGE_API_KEY",
                 only_judge_errors: bool = False) -> int:
@@ -50,14 +64,7 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             new_results.append(row)
             continue
         metrics = row.setdefault("metrics", {})
-        # Rejudging changes semantic verdicts, never recorded execution gates.
-        if (
-            row.get("status") in {"timeout", "skipped"}
-            or row.get("hard_assertion_failures")
-            or any(value is False for value in (row.get("hard_assertions") or {}).values())
-            or metrics.get("agent_error")
-            or metrics.get("first_failure_stage") == "setup"
-        ):
+        if execution_gate_blocks_rejudge(row):
             new_results.append(row)
             continue
         # Judge-free tasks are decided by recorded assertions; keep them as-is.

@@ -1,6 +1,7 @@
 # Agent operation experiments
 
-The benchmark supports one experiment containing separate Aiden, pi, and OpenClaw runs.
+The benchmark supports one experiment containing separate Aiden, pi, OpenClaw,
+Claude Code, and Codex runs.
 Use **Agent experiments** in the WebUI header, or open `/experiments`. Existing
 device benchmark jobs and Aiden regression suites keep their existing workflow.
 
@@ -24,20 +25,122 @@ successes. Both agents use the same judge, original rubric, before/after
 screenshots, tool execution evidence, and final response. Deterministic state
 assertions remain additional requirements.
 
-The shared business tools are `screenshot`, `touch_gesture`, `keyboard_tap`,
-`enter_text`, `mouse_move`, `mouse_scroll`, and `wait_for_stable_screen`. Their
-schemas and execution runtime are identical. Each attempt records its catalog
-hash; mismatches are ineligible. Pi's explicit extension calls the daemon tool
-API, forwards images as native image content, and retains actual execution
-inputs and errors for the existing scorer. It never delegates the task to
-Aiden's chat API. Native planning, context, retry, and memory behavior stay
-agent-owned. Each measured attempt starts cold.
-OpenClaw receives the same frozen tool catalog through a per-attempt stdio MCP
-server. Its `agent exec` owns the agent loop and native image/context behavior;
-the bridge records each actual business-tool request and result for scoring and
-saves step screenshots. OpenClaw's normal workspace, personal sessions, and
-ambient configuration are not loaded. The comparison tool policy exposes only
-the named MCP business tools, not filesystem, shell, or browser tools.
+### Device context
+
+Suite prompts were written for Aiden, which knows it operates a device. Coding
+harnesses can read a prompt such as "open Settings" as a request about their
+own host, so every agent, Aiden included, receives the same short device context
+before the suite prompt prefix and task prompt. The manifest records it as
+`device_context`. Shared `agent_prompt` preparation runs with at least 120
+seconds, because suite timeouts are sized for a warm device rather than a cold
+preparer daemon.
+
+Aiden attempts export the per-step screenshots of its episode from the daemon
+before the daemon is removed, so its run report shows each step like the
+external agents' gateway screenshots.
+
+### Tool layers
+
+The comparison measures device UI operation. External harnesses choose one of
+two tool layers with the agent's `tool_layer` field:
+
+- `aiden` (default): the Aiden tool layer described below. This compares
+  harnesses, meaning agent loop, prompt, context, planning, and visual grounding,
+  with the same tool implementation.
+- `raw`: neutral primitives on the environment bridge, without the Aiden tool
+  layer. Comparing native Aiden with an external harness on raw tools compares
+  complete stacks; comparing the same external harness on both layers measures
+  what the Aiden tool layer contributes.
+
+Aiden always uses its own tool layer. In the WebUI, **Device UI tools** selects
+the layer for external agents; **Both** runs each selected external agent once
+per layer, for example `pi` and `pi-raw`.
+
+The raw layer exposes `screenshot`, `tap`, `long_press`, `swipe`, `type_text`,
+`press_key` (`back`, `home`, `enter`, or `backspace`), and `wait`. Coordinates
+are pixels in the latest screenshot; the gateway converts them to the bridge's
+normalized coordinates. Tool descriptions name the connected mobile device,
+because task prompts may not mention it. Each action calls the bridge's shared input primitive,
+waits a fixed 500 ms, and returns a new screenshot, so tool-call budgets keep
+their meaning. The raw layer does not wait for a stable screen, detect screen
+changes, map semantic shortcuts such as `quick_action`, or recover app launches.
+External raw attempts do not start an Aiden daemon.
+
+Raw tool names differ from Aiden tool names, so a task's `required_tools` and
+`required_tool_calls` do not apply to raw attempts. Those attempts record
+`tool_name_assertions: not_applicable`; call budgets, state assertions, and
+rubric scoring still apply. The manifest freezes one catalog per tool layer
+under `business_tool_catalogs`, and the report labels each agent's layer.
+
+### Aiden tool layer
+
+The shared business tool catalog of the `aiden` layer
+is the UI operation surface that Aiden's model sees on the environment
+platform: every daemon tool whose `/api/tools` descriptor has
+`ui_operation: true`, `agent_exposed: true`, and an `agent_platforms` list that
+is empty or includes the platform. On MobileGym Android this covers
+`screenshot`, `wait_for_stable_screen`, `touch_gesture`, `keyboard_tap`,
+`enter_text`, `mouse_move`, `mouse_scroll`, and `quick_action`, plus `open_app`
+and `open_url` when the daemon registers them. The daemon tool metadata is the
+single source of truth; a new UI tool joins the comparison when it is marked
+there. Descriptions and schemas are shared unchanged.
+
+Each catalog must contain `screenshot`, `touch_gesture`, `keyboard_tap`,
+`enter_text`, `mouse_move`, `mouse_scroll`, and `wait_for_stable_screen`, and
+required-tool assertions may name only these. Each attempt records the catalog
+and its hash in `business-tools.json`; the experiment manifest freezes the
+first catalog of each layer, and a later mismatch makes the attempt ineligible. A daemon image
+without UI tool metadata fails with a request to rebuild it.
+
+### Tool exposure and the tool gateway
+
+External harnesses run unsandboxed on the benchmark host. Their native tools,
+such as shell, file editing, and desktop or browser control, would act on that
+host or bypass the device interface, so external harnesses receive only the
+business tools of their tool layer. The comparison therefore measures how each
+harness plans, grounds, and operates the UI with the same tools. Aiden keeps its
+full toolset because it runs inside its own daemon container.
+
+| Harness | Where it runs | Device access | Other tools |
+| --- | --- | --- | --- |
+| Aiden | Its per-attempt daemon container | Its daemon tools directly | Full toolset and skills, including memory and shell |
+| pi | Benchmark host subprocess | Gateway through the operation tools extension | None: `--tools` enables only the catalog |
+| OpenClaw | Benchmark host subprocess | Gateway through the stdio MCP bridge | None: its tool policy allows only `benchmark__*` |
+| Claude Code | Benchmark host subprocess | Gateway through the stdio MCP bridge | None: `--bare`, `--tools ""`, and `--strict-mcp-config` |
+| Codex | Benchmark host subprocess | Gateway through the stdio MCP bridge | MCP resource helpers and `request_user_input` only; shell, web, image, agent, browser, and computer tools are disabled |
+
+Each harness kind is registered in `runner/harnesses.py` with its
+configuration rules, installed-runtime check, and adapter; adding a harness
+does not change experiment orchestration.
+
+External attempts on the `aiden` layer also start a fresh Aiden daemon
+container, used only as the tool server; its chat API and agent loop are never
+called.
+
+The gateway is a per-attempt loopback endpoint in the runner. It serves only
+catalog tools from one backend: the daemon tool API for the `aiden` layer, or
+the environment bridge for the `raw` layer. External harnesses never receive
+the daemon or bridge URL, or the daemon's non-UI tools. It folds explicit business failures
+(`ok:false`, including screenshot-wrapped `action_output`) into `is_error`,
+returns images unchanged, and writes `tool-audit.jsonl` with `step_<n>`
+screenshots for every external harness. The pi extension and the MCP bridge
+only translate this contract to each harness's native tool and image format;
+neither delegates the task to Aiden's chat API. Native planning, context,
+retry, and memory behavior stay agent-owned. Each measured attempt starts cold.
+
+External harnesses run on the benchmark host with isolated configuration and a
+scratch workspace. OpenClaw's normal workspace, personal sessions, and ambient
+configuration are not loaded.
+
+Each attempt records `business_tool_calls` and `native_tool_calls`. For
+external harnesses, any native call means the tool policy did not hold; OpenClaw
+native calls are taken from its `toolSummary` because they never reach the
+gateway audit. `native_loopback_calls` counts native calls whose input
+references a local endpoint. `api_retries` counts failed model requests or
+endpoint reconnects that pi, Claude Code, or Codex reported; the report lists
+attempts with retries, whose timeouts may reflect the network rather than the
+harness. The comparison report lists native calls and
+flagged attempts per agent.
 
 Existing `phone_control_v1` and `app_workflow_v1` definitions are also accepted
 when their requirements are supported. Choose tasks whose apps and capabilities
@@ -60,7 +163,7 @@ memory, or evaluated preparation is rejected instead of silently changing it.
 The preparer is an environment fixture, and is not part of pi's harness.
 
 All agents require Docker for the shared tool runtime. Pi runs on the WebUI
-host with isolated configuration and workspace, which is not a shell sandbox.
+host with isolated configuration and workspace and only the business tools.
 OpenClaw runs on the WebUI host with a fresh one-shot state directory and
 workspace. Install OpenClaw 2026.10.8 or a compatible version and Node 24.22.1+
 (or 26.12.1+) there. Set `AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE` and
@@ -74,11 +177,11 @@ agent-plus-model operation performance.
 
 1. Configure Aiden in the existing WebUI **Agent Config**. It is captured when
    the experiment starts; edits during execution do not change that experiment.
-2. Install pi on the same host that runs the WebUI. Integration was developed
-   against `@earendil-works/pi-coding-agent` 0.85.0 and its print/JSON protocol.
-   Pin the package version for repeatable comparisons. `pi --help` must expose
-   `--mode json`, `--print`, `--no-session`, `--no-context-files`, and the resource
-   discovery switches used in `runner/harness.py`.
+2. Install pi on the same host that runs the WebUI. Use
+   `@earendil-works/pi-coding-agent` 0.85.0 or a version with the same
+   print/JSON protocol, and pin the package version for repeatable comparisons. `pi --help` must expose
+   `--mode json`, `--print`, `--no-session`, `--no-context-files`, `--tools`,
+   `--no-tools`, and the resource discovery switches used in `runner/harness.py`.
 3. Set the chosen provider's API key in the WebUI process environment, for
    example `OPENROUTER_API_KEY`. Custom API endpoints can instead use the explicit
    settings below. Personal pi OAuth files and `models.json` are deliberately
@@ -91,7 +194,7 @@ agent-plus-model operation performance.
    ```
 
 5. Open **Agent experiments**, select the comparison suite and agents, enter the
-   provider and exact model ID, and choose repetitions. pi and OpenClaw share
+   provider and exact model ID, and choose repetitions. External agents share
    the model settings in this UI. Aiden uses its model
    from Agent Config; the shared model field does not override Aiden. Select a
    running MobileGym environment from the selector, or click **Start MobileGym**
@@ -112,8 +215,12 @@ One experiment executes at a time per WebUI process. Agent order is shuffled
 inside each task/repetition block using the scheduling seed. This seed controls
 scheduling only; it is not a model sampling seed. Each attempt has a wall-clock
 deadline from the suite. The tool-call limit is a scoring assertion, not a live
-execution budget. Startup time is separate from Aiden execution time; pi timing
-currently includes CLI startup. Compare latency with this distinction in mind.
+execution budget. Startup time is separate from Aiden execution time; pi and
+OpenClaw timing includes CLI startup, and OpenClaw timing also includes MCP
+bridge startup. The runner deadline is authoritative for every harness:
+OpenClaw's own turn timeout is set slightly above it, so overruns are recorded
+as timeouts rather than execution errors. Compare latency with this distinction
+in mind.
 
 ## Custom pi API endpoints
 
@@ -206,8 +313,9 @@ runs/<agent-id>/report.html     detailed existing benchmark report
 runs/<agent-id>/tasks/.../      normalized history, trace, and native evidence
 ```
 
-Raw pi events and stderr are retained. OpenClaw retains its one-shot output,
-native transcript when available, MCP audit, and per-step screenshots. Tool
+Raw pi events and stderr are retained. OpenClaw retains its one-shot output
+and native transcript when available. External harness attempts also retain
+the gateway's `tool-audit.jsonl` and per-step screenshots. Pi tool
 results are matched by call ID
 before conversion to the existing scorer's adjacent call/result representation;
 the raw stream preserves original ordering. Native tool names are retained.
@@ -231,13 +339,16 @@ execution starts remain failures and are exposed separately; they do not prove
 the harness caused the failure. Runner deadlines retain partial Aiden history
 before daemon cleanup, just as pi retains its native event stream.
 
-Pi receives explicit business failures (`ok:false`, including screenshot-wrapped
-`action_output`) as tool errors while retaining the returned image and text.
-This translates the tool contract; native image processing, context management,
-retry policy, and task deadlines are unchanged.
+External harnesses receive explicit business failures as tool errors while
+retaining the returned image and text. This translates the tool contract;
+native image processing, context management, retry policy, and task deadlines
+are unchanged.
 
 Agent-driven preparation still runs independently for each attempt; it does
 not restore a common prepared snapshot. The report identifies affected tasks.
+`environment_tools` setup instead replays fixed bridge actions and checks its
+`expected_state` before the attempt starts, so it is not counted as
+agent-driven preparation.
 Inspect starting screenshots before attributing a difference to a harness.
 The existing `mobilegym_basic` (3 tasks), `mobilegym_scroll_regression` (2), and
 `mobilegym_scroll_sweep` (100) avoid agent-driven preparation. They are useful
@@ -254,13 +365,15 @@ local generated data and must not be committed.
 
 Experiments use unique directories and never overwrite earlier results. The
 server lists interrupted experiments after restart, preserving their artifacts.
-Automatic resume and merging independently launched experiments are not yet
-implemented; start a new experiment to rerun, retaining the original evidence.
+Interrupted experiments are not resumed, and independently launched
+experiments are not merged; start a new experiment to rerun, retaining the
+original evidence.
 
 Transient Judge failures are retried once after all agent attempts finish,
 using their saved screenshots and tool traces without repeating device actions.
 If the Judge is still unavailable, the experiment keeps `judge_error` attempts
-out of paired coverage. Once the Judge recovers, use **Retry Judge** on the
+out of paired coverage. Attempts whose final environment state could not be
+read are never rescored, because their state assertions were not verified. Once the Judge recovers, use **Retry Judge** on the
 experiment list to score only those attempts and refresh the run and comparison
 reports. The first scoring results remain in each run's
 `results.original.jsonl`; the main `results.jsonl` and reports show the latest
@@ -283,33 +396,71 @@ For CLI experiments, include an `openclaw` agent alongside `aiden` or `pi`:
 
 ```json
 {
-  "id": "openclaw", "kind": "openclaw", "provider": "apibest",
-  "model": "gpt-5.6-sol", "thinking": "medium",
-  "base_url": "https://apibest.ai/v1", "api": "openai-completions",
+  "id": "openclaw", "kind": "openclaw", "provider": "benchmark-custom",
+  "model": "replace-with-exact-backend-model-id", "thinking": "medium",
+  "base_url": "https://gateway.example.com/v1", "api": "openai-completions",
   "api_key_env": "AIDEN_BENCHMARK_PI_API_KEY",
-  "context_window": 1050000, "max_tokens": 16384
+  "context_window": 128000, "max_tokens": 16384
 }
 ```
 
-The OpenClaw CLI and a compatible Node are checked before task execution. Its
-MCP bridge runs on the WebUI host and calls the same benchmark daemon tool API
-used by pi. OpenClaw may name the exposed tools with its MCP server prefix; the
-scorer maps observed calls to the original business tool names. Reports mark
+Before task execution, the runner checks that the OpenClaw CLI exists and that
+Node is a supported version. The CLI version is recorded in the manifest but
+not enforced. Its
+MCP bridge runs on the WebUI host and calls the same tool gateway used by pi.
+OpenClaw may name the exposed tools with its MCP server prefix; scoring uses
+the gateway audit, which records the original business tool names. Reports mark
 adapter/setup errors as ineligible. Use a small smoke experiment before a full
 suite to confirm the selected OpenClaw version exposes and calls the MCP tools.
+
+## Claude Code and Codex setup
+
+Install the CLIs on the WebUI host. The integration was verified with Claude
+Code 2.1.308 and codex-cli 0.165.0. Set `AIDEN_BENCHMARK_CLAUDE_CODE_EXECUTABLE`
+or `AIDEN_BENCHMARK_CODEX_EXECUTABLE` when `claude` or `codex` is not on `PATH`.
+Both require an explicit custom endpoint and share the experiment's provider,
+model, base URL, key variable, and thinking settings with the other external
+agents. Their protocols are fixed: Claude Code uses `anthropic-messages` and
+Codex uses `openai-responses`, so the endpoint must serve that protocol for the
+selected model. Claude Code receives the base URL without a trailing `/v1`.
+
+Each attempt runs with a scratch home and configuration directory. Personal
+settings, credentials, sessions, `CLAUDE.md`, hooks, plugins, skills, and Codex
+rules are not loaded; the key is passed only through the environment. Thinking
+maps to Claude Code `--effort` (`off` and `minimal` become `low`) and to Codex
+`model_reasoning_effort` (`off` becomes `none`). Codex runs with a read-only
+sandbox and pre-approves only the benchmark MCP tools. Timing includes CLI and
+MCP bridge startup, and cost is unknown for custom endpoints. Native calls that
+either CLI reports are counted in `native_tool_calls`.
 
 ## CI policy
 
 Deterministic adapter, scheduling, validation, cancellation, and aggregation
-tests run in `make check` and the full CI benchmark suite. Operation lifecycle,
+tests run in `make check` and the full CI benchmark suite. An opt-in test in
+`tests/test_openclaw.py` runs an installed OpenClaw against a local fake model
+and checks that it offers only the business tools; set
+`AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE` and `AIDEN_BENCHMARK_OPENCLAW_NODE` to
+enable it. Similar opt-in tests in `tests/test_harnesses.py` run installed
+Claude Code or Codex against a local fake model that calls a business tool
+through the gateway; set `AIDEN_BENCHMARK_CLAUDE_CODE_EXECUTABLE` or
+`AIDEN_BENCHMARK_CODEX_EXECUTABLE`. Operation lifecycle,
 state-based scoring and the real JavaScript tool extension are tested without
 paid model calls. They use fake agents
 and subprocesses: no installed pi, paid model, live phone, or provider key is
 required. HTTP/UI integration tests run in the full benchmark suite.
 
-Real-model comparisons are manual through WebUI or CLI initially. Do not make
-them a per-PR merge gate: provider availability, model variability, latency, and
-cost are external factors. A later opt-in nightly or manually dispatched job can
-run a pinned configuration, retain artifacts, and publish trends using the
-existing operation suites. Such a job should distinguish infrastructure
-failures from agent regressions before considering any release gate.
+Real-model comparisons run manually through WebUI, CLI, or the **Agent
+Experiment** workflow (`.github/workflows/agent-experiment.yml`). They are not a
+per-PR merge gate: provider availability, model variability, latency, and cost
+are external factors.
+
+The workflow is dispatched with a suite, a comma-separated agent list such as
+`aiden,pi,openclaw,codex,pi-raw` (append `-raw` to an external agent for raw
+tools), and a repeat count. It runs on the benchmark runner, builds the daemon
+and MobileGym images as the benchmark workflow does, and installs pinned
+external CLI versions into the job workspace. Every agent uses the repository's
+benchmark model (`BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
+`BENCHMARK_AGENT_BASE_URL`, and `BENCHMARK_AGENT_API_KEY`), and the Judge uses
+the benchmark Judge settings. Claude Code and Codex need an endpoint and model
+that serve their protocols. The job summary shows per-agent results and matched
+pairs; reports and results are uploaded as an artifact.
