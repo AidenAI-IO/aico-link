@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ci.plan import BENCHMARK_ROOT, CatalogError, SuiteCase, load_catalog
+from runner.android_phone_bridge import ANDROID_BRIDGE_PACKAGE
 from runner.process import terminate_process_tree
 
 
@@ -134,12 +135,12 @@ def _environment_url(
             # A retained emulator may have just run the Bridge-enabled variant.
             adb_timeout = min(30, timeout_seconds) if timeout_seconds is not None else 30
             installed = subprocess.run(
-                ["adb", "-s", serial, "shell", "pm", "list", "packages", "com.aidenbridge"],
+                ["adb", "-s", serial, "shell", "pm", "list", "packages", ANDROID_BRIDGE_PACKAGE],
                 check=True, capture_output=True, text=True, timeout=adb_timeout,
             )
-            if "package:com.aidenbridge" in installed.stdout.splitlines():
+            if f"package:{ANDROID_BRIDGE_PACKAGE}" in installed.stdout.splitlines():
                 subprocess.run(
-                    ["adb", "-s", serial, "shell", "am", "force-stop", "com.aidenbridge"],
+                    ["adb", "-s", serial, "shell", "am", "force-stop", ANDROID_BRIDGE_PACKAGE],
                     check=True, stdout=log_file, stderr=log_file, timeout=adb_timeout,
                 )
         payload = _run_json(

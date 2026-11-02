@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from runner.agent_client import AgentClient
 from runner.android_phone_bridge import (
+    ANDROID_BRIDGE_PACKAGE,
     android_bridge_fixture,
     clipboard_write_ids,
     connected_android_phone_bridge,
@@ -851,7 +852,7 @@ def _cmd_run_auto_agent_setup_inner(
                     active_skills=active_skills,
                     after_setup=(
                         (lambda: foreground_android_phone_bridge(bridge_serial, client)
-                         if unit.task.foreground_app_id == "com.aidenbridge"
+                         if unit.task.foreground_app_id == ANDROID_BRIDGE_PACKAGE
                          else wait_for_android_phone_bridge(client))
                         if bridge_serial else None
                     ),

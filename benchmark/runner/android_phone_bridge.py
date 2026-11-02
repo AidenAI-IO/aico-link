@@ -17,6 +17,8 @@ from runner.agent_client import AgentClient, AgentRequestError, AgentTimeoutErro
 BOARD_ADDRESS = "192.168.42.1/32"
 REVERSE_PORT = "tcp:8080"
 INPUT_XML_PATH = "/sdcard/aiden-bridge-input.xml"
+ANDROID_BRIDGE_PACKAGE = "link.aico.app"
+ANDROID_BRIDGE_COMPONENT = f"{ANDROID_BRIDGE_PACKAGE}/.MainActivity"
 NAT_RULE = [
     "-d", BOARD_ADDRESS, "-p", "tcp", "--dport", "8080",
     "-j", "DNAT", "--to-destination", "127.0.0.1:8080",
@@ -60,13 +62,13 @@ def wait_for_android_phone_bridge(
 
 
 def foreground_android_phone_bridge(serial: str, client: AgentClient) -> None:
-    _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
+    _adb(serial, "shell", "am", "start", "-n", ANDROID_BRIDGE_COMPONENT)
     wait_for_android_phone_bridge(client, timeout_sec=30, require_active=True)
 
 
 def clipboard_write_events(serial: str) -> list[dict]:
     script = (
-        'for file in /data/user/0/com.aidenbridge/files/diagnostic-*.jsonl; '
+        f'for file in /data/user/0/{ANDROID_BRIDGE_PACKAGE}/files/diagnostic-*.jsonl; '
         'do if [ -f "$file" ]; then tail -n 2000 "$file"; fi; done'
     )
     output = _adb(
@@ -112,7 +114,7 @@ def verify_android_bridge_input(serial: str, text: str, prior_writes: set[str]) 
         node.attrib
         for node in hierarchy.iter("node")
         if "EditText" in node.attrib.get("class", "")
-        and node.attrib.get("package") != "com.aidenbridge"
+        and node.attrib.get("package") != ANDROID_BRIDGE_PACKAGE
     ]
     matching_fields = [field for field in editable_fields if field.get("text") == text]
     return {
@@ -188,8 +190,8 @@ def connected_android_phone_bridge(
     try:
         _adb(serial, "shell", "iptables", "-t", "nat", "-I", "OUTPUT", "1", *NAT_RULE)
         rule_installed = True
-        _adb(serial, "shell", "am", "force-stop", "com.aidenbridge")
-        _adb(serial, "shell", "am", "start", "-n", "com.aidenbridge/.MainActivity")
+        _adb(serial, "shell", "am", "force-stop", ANDROID_BRIDGE_PACKAGE)
+        _adb(serial, "shell", "am", "start", "-n", ANDROID_BRIDGE_COMPONENT)
         wait_for_android_phone_bridge(client)
         yield
     finally:

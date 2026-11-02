@@ -516,9 +516,9 @@ early.
 
 When any selected case enables AidenBridge, CI reads the current release
 filename from the unversioned distribution URL and compares its `versionCode`
-with the App already installed on the emulator. It downloads and installs the
-APK only when the versions differ. The job summary records the release filename,
-installed `versionCode`, and whether the installation was reused; when an APK is
+with the `link.aico.app` package already installed on the emulator. It downloads
+and installs the APK only when the versions differ. The job summary records the
+release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
 `versionCode` is treated as the same release.
 
