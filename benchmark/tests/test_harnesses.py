@@ -265,3 +265,55 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 're
                                api_key_env="BENCHMARK_TEST_KEY").execute(
         "task", 5, tmp_path / "artifacts", threading.Event(), tool_endpoint="http://127.0.0.1:9", tool_catalog=CATALOG)
     assert "agent_error" not in result.metrics and result.metrics["api_retries"] == 1
+
+
+def test_external_cli_finds_node_outside_its_install_directory(tmp_path, monkeypatch):
+    # CI installs the CLIs into their own prefix while setup-node provides `node`.
+    node_dir = tmp_path / "node-bin"
+    node_dir.mkdir()
+    node = node_dir / "node"
+    node.write_text(f"#!{sys.executable}\nimport sys\nexec(open(sys.argv[1]).read())\n")
+    node.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{node_dir}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setenv("BENCHMARK_TEST_KEY", "key")
+    cli_dir = tmp_path / "cli-bin"
+    cli_dir.mkdir()
+    executable = cli_dir / "codex"
+    executable.write_text("""#!/usr/bin/env node
+import json, sys
+sys.stdin.read()
+print(json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': 'Done'}}))
+print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 1, 'output_tokens': 1}}))
+""")
+    executable.chmod(0o755)
+    result = CodexAdapter(executable=str(executable), model="m", thinking="low", base_url="https://g.example/v1",
+                          api_key_env="BENCHMARK_TEST_KEY").execute(
+        "task", 5, tmp_path / "artifacts", threading.Event(), tool_endpoint="http://127.0.0.1:9", tool_catalog=CATALOG)
+    assert result.metrics["exit_code"] == 0, (tmp_path / "artifacts/stderr.log").read_text()
+    assert result.history[-1]["content"] == "Done"
+
+
+def test_cli_that_exits_before_reading_its_prompt_is_an_agent_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("BENCHMARK_TEST_KEY", "key")
+    executable = fake_cli(tmp_path, "import sys\nsys.stdout.close()\nsys.exit(127)\n")
+    # A prompt larger than the pipe buffer guarantees the write hits the closed pipe.
+    result = CodexAdapter(executable=executable, model="m", thinking="low", base_url="https://g.example/v1",
+                          api_key_env="BENCHMARK_TEST_KEY").execute(
+        "x" * 1_000_000, 5, tmp_path / "artifacts", threading.Event(),
+        tool_endpoint="http://127.0.0.1:9", tool_catalog=CATALOG)
+    assert result.metrics["exit_code"] == 127
+    assert "exited with code 127" in result.metrics["agent_error"]
+
+
+def test_claude_code_empty_result_falls_back_to_last_assistant_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("BENCHMARK_TEST_KEY", "key")
+    executable = fake_cli(tmp_path, """import json, sys
+sys.stdin.read()
+print(json.dumps({'type': 'assistant', 'message': {'content': [{'type': 'text', 'text': 'Settings is open.'}]}}))
+print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False, 'result': ''}))
+""")
+    result = ClaudeCodeAdapter(executable=executable, model="m", thinking="low", base_url="https://g.example",
+                               api_key_env="BENCHMARK_TEST_KEY").execute(
+        "task", 5, tmp_path / "artifacts", threading.Event(), tool_endpoint="http://127.0.0.1:9", tool_catalog=CATALOG)
+    assert "agent_error" not in result.metrics
+    assert result.history[-1]["content"] == "Settings is open."

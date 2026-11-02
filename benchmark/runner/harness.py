@@ -138,8 +138,13 @@ def _run_with_deadline(command: list[str], *, cwd: Path, env: dict[str, str], pr
                                 stdout=output, stderr=errors, start_new_session=True)
         try:
             assert proc.stdin is not None
-            proc.stdin.write(prompt.encode("utf-8"))
-            proc.stdin.close()
+            try:
+                proc.stdin.write(prompt.encode("utf-8"))
+                proc.stdin.close()
+            except BrokenPipeError:
+                # The CLI exited before reading its prompt; its exit code and
+                # stderr report why, so record it as the harness's own failure.
+                pass
             while proc.poll() is None:
                 if stop.wait(0.1):
                     canceled = True
@@ -374,9 +379,15 @@ CODEX_NATIVE_ITEMS = {"command_execution", "file_change", "web_search"}
 
 
 def _host_env(home: Path, *path_dirs: str | Path) -> dict[str, str]:
-    """A minimal environment for a host CLI with a scratch home."""
+    """A minimal environment for a host CLI with a scratch home.
+
+    npm-installed CLIs start through `#!/usr/bin/env node`, so the runtime's
+    directory is searched too even when Node is installed elsewhere.
+    """
     env = {key: value for key, value in os.environ.items() if key in {"LANG", "TMPDIR", *PASSTHROUGH_ENV}}
-    env.update(HOME=str(home), PATH=os.pathsep.join([*(str(path) for path in path_dirs), os.defpath]))
+    node = shutil.which("node")
+    dirs = [*(str(path) for path in path_dirs), *([str(Path(node).parent)] if node else []), os.defpath]
+    env.update(HOME=str(home), PATH=os.pathsep.join(dict.fromkeys(dirs)))
     return env
 
 
@@ -581,6 +592,13 @@ class ClaudeCodeAdapter:
         result = _gateway_execution(artifacts, "claude-code-tool-gateway-audit", started=started,
                                     returncode=returncode, timed_out=timed_out, canceled=canceled, model=self.model)
         outcome = next((event for event in reversed(events) if event.get("type") == "result"), {})
+        if not str(outcome.get("result") or "").strip():
+            # Some providers leave the result summary empty; the final assistant text is the answer.
+            texts = [block.get("text", "") for event in events if event.get("type") == "assistant"
+                     for block in (event.get("message") or {}).get("content") or []
+                     if isinstance(block, dict) and block.get("type") == "text" and block.get("text", "").strip()]
+            if texts:
+                outcome = {**outcome, "result": texts[-1]}
         usage = outcome.get("usage") if isinstance(outcome.get("usage"), dict) else {}
         input_parts = [usage.get(key) for key in
                        ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
