@@ -593,6 +593,54 @@ sufficient to inspect statuses and retry `runner publish-langfuse`; generated
 worker configs are also excluded because they contain materialized Agent
 credentials.
 
+### Main daily guard
+
+`.github/workflows/main-daily-guard.yml` watches merges to main with a small
+must-pass task set. It runs at 12:00 Asia/Shanghai every day (cron
+`0 4 * * *`, which GitHub may start late) and can also be dispatched manually.
+Unlike the benchmark sweep, it has a pass/fail contract: every attempt of every
+listed task must pass. A failed, timed-out, excluded (for example an environment
+setup failure), or missing attempt fails the guard.
+
+`benchmark/ci/main_daily_guard.json` is the source of truth for the task set.
+Each entry names a guard case `id`, the catalog case it reuses (`source`), and
+the `task_ids` to run:
+
+| Guard case | Source | Tasks |
+| --- | --- | --- |
+| `main-daily-guard-adb-basic` | `adb_android_basic` | `tap_back`, `quick_action_home`, `quick_action_notification_center`, `about_device_and_back`, `clock_from_settings` |
+| `main-daily-guard-adb-text` | `adb_android_text_editing` | `search_ascii_punctuation` |
+| `main-daily-guard-perception` | `perception` | `find_settings_iphone`, `x_327`, `task_4657`, `task_4724` |
+
+A guard case inherits its source's suite, environment, platform, concurrency,
+and timeout, so the suites and their scoring are unchanged. Sources must be
+plain ADB Android cases or isolated cases; MobileGym, external, and AidenBridge
+cases are rejected because the guard must run unattended on the benchmark
+runner. Guard case IDs must differ from catalog IDs, which keeps guard runs out
+of the catalog cases' history. To change the set, edit the JSON file and run
+`uv run --locked pytest -q tests/test_ci_main_daily_guard.py` from `benchmark/`.
+Only add tasks with a sustained pass history; the guard is a merge gate, not a
+capability benchmark.
+
+Each task runs once by default; the manual `repeats` input raises the attempt
+count, and every attempt must still pass. The job summary lists each case and
+every failed attempt with its failure class and evidence. The workflow uploads
+the verdict and run artifacts (30-day retention) before it marks the job as
+failed.
+
+On a scheduled failure, or a manual run with `notify` enabled, the workflow
+sends a Lark card to a dedicated group. The card lists the failed tasks, the
+tested commit, and the commits merged since this workflow's last successful run
+on main. Configure these secrets:
+
+- `MAIN_DAILY_GUARD_LARK_WEBHOOK_URL` (required for alerts): the custom bot
+  webhook of the guard group. Without it, the alert is skipped.
+- `MAIN_DAILY_GUARD_LARK_WEBHOOK_SECRET` (optional): set it when the bot enables
+  signature verification.
+
+The guard otherwise uses the same Agent, Judge, Langfuse, runner, and
+`BENCHMARK_ANDROID_SERIAL` configuration as the benchmark workflow.
+
 ## Runner and Local CLI Environment Variables
 
 - `AICO_BENCHMARK_AGENT_PROVIDER` - Agent provider type for the default config template.

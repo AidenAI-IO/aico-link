@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "main-daily-guard-adb-basic",
+      "source": "adb_android_basic",
+      "task_ids": [
+        "tap_back",
+        "quick_action_home",
+        "quick_action_notification_center",
+        "about_device_and_back",
+        "clock_from_settings"
+      ]
+    },
+    {
+      "id": "main-daily-guard-adb-text",
+      "source": "adb_android_text_editing",
+      "task_ids": ["search_ascii_punctuation"]
+    },
+    {
+      "id": "main-daily-guard-perception",
+      "source": "perception",
+      "task_ids": ["find_settings_iphone", "x_327", "task_4657", "task_4724"]
+    }
+  ]
+}
