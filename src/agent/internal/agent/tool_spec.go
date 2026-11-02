@@ -33,6 +33,9 @@ type ToolSpec struct {
 	// AgentPlatforms lists device_type-derived platforms where the tool should
 	// be shown to the conversational model. Empty means all platforms.
 	AgentPlatforms []string
+	// UIOperation marks tools that observe or operate the visible device UI.
+	// External harness comparisons expose exactly this surface.
+	UIOperation bool
 }
 
 type ToolSpecs struct {
@@ -53,6 +56,11 @@ type ToolDescriptor struct {
 	ExampleInput string          `json:"example_input"`
 	ArgsSchema   map[string]any  `json:"args_schema"`
 	HTTP         ToolHTTPBinding `json:"http"`
+	// AgentExposed and AgentPlatforms describe whether the conversational
+	// model sees the tool, so callers can reproduce its model-facing surface.
+	AgentExposed   bool     `json:"agent_exposed"`
+	AgentPlatforms []string `json:"agent_platforms,omitempty"`
+	UIOperation    bool     `json:"ui_operation"`
 }
 
 type ToolSkillDefinition struct {
@@ -69,6 +77,7 @@ type toolSpecMetadata struct {
 	AgentExposed   *bool
 	HTTPExposed    *bool
 	AgentPlatforms []string
+	UIOperation    bool
 }
 
 var builtInToolSpecMetadata = map[string]toolSpecMetadata{
@@ -105,28 +114,33 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "input",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"keys":["enter"]}`,
+		UIOperation:  true,
 	},
 	"enter_text": {
 		Category:       "input",
 		InputMode:      toolInputModeJSON,
 		ExampleInput:   `{"text":"hello你好","focus":{"x":450,"y":105}}`,
 		AgentPlatforms: []string{"ios", "android", "macos", "windows", "linux"},
+		UIOperation:    true,
 	},
 	"mouse_move": {
 		Category:     "input",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"x":500,"y":500}`,
+		UIOperation:  true,
 	},
 	"mouse_scroll": {
 		Category:     "input",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"delta":-3}`,
+		UIOperation:  true,
 	},
 	"quick_action": {
 		Category:       "input",
 		InputMode:      toolInputModeJSON,
 		ExampleInput:   `{"action":"list"}`,
 		AgentPlatforms: []string{"ios", "android", "macos"},
+		UIOperation:    true,
 	},
 	"recall_device_memory": {
 		Category:     "memory",
@@ -157,6 +171,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "observation",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{}`,
+		UIOperation:  true,
 	},
 	"shell": {
 		Category:     "system",
@@ -183,6 +198,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "input",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"type":"tap","point":{"x":500,"y":500}}`,
+		UIOperation:  true,
 	},
 	"weather": {
 		Category:     "system",
@@ -208,6 +224,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "observation",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"timeout_ms":2200,"stable_ms":250,"diff_threshold":6}`,
+		UIOperation:  true,
 	},
 	"request_user_action": {
 		Category:     "handoff",
@@ -225,12 +242,14 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		InputMode:      toolInputModeJSON,
 		ExampleInput:   `{"app":"微信"}`,
 		AgentPlatforms: []string{"ios", "android", "macos"},
+		UIOperation:    true,
 	},
 	toolOpenURL: {
 		Category:       "bridge",
 		InputMode:      toolInputModeJSON,
 		ExampleInput:   `{"url":"https://example.com"}`,
 		AgentPlatforms: []string{"ios", "android"},
+		UIOperation:    true,
 	},
 	toolSearchLaunchApp: {
 		Category:       "phone",
@@ -361,6 +380,7 @@ func NewToolSpec(tool langtools.Tool) ToolSpec {
 		AgentExposed:   agentExposed,
 		HTTPExposed:    httpExposed,
 		AgentPlatforms: normalizeAgentToolPlatforms(meta.AgentPlatforms),
+		UIOperation:    meta.UIOperation,
 	}
 }
 
@@ -460,6 +480,9 @@ func (spec ToolSpec) Descriptor() ToolDescriptor {
 			Method: "POST",
 			Path:   "/api/tools/" + spec.Name,
 		},
+		AgentExposed:   spec.AgentExposed,
+		AgentPlatforms: spec.AgentPlatforms,
+		UIOperation:    spec.UIOperation,
 	}
 }
 

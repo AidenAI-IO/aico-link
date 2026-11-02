@@ -164,6 +164,39 @@ func TestHTTPDescriptorIncludesStructuredArgsSchema(t *testing.T) {
 	}
 }
 
+func TestHTTPDescriptorReportsUIOperationSurface(t *testing.T) {
+	runtime := NewRuntimeWithDeps(
+		Config{},
+		nil,
+		NewMemoryManager(""),
+		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
+		NewSkillIndex(),
+	)
+	for _, name := range []string{"screenshot", "wait_for_stable_screen", "touch_gesture", "keyboard_tap", "mouse_move", "mouse_scroll", "quick_action"} {
+		descriptor, ok := runtime.ToolDescriptorByName(name)
+		if !ok {
+			t.Fatalf("expected %s in HTTP catalog", name)
+		}
+		if !descriptor.UIOperation || !descriptor.AgentExposed {
+			t.Fatalf("expected %s to be an Agent-exposed UI operation: %#v", name, descriptor)
+		}
+	}
+	quickAction, _ := runtime.ToolDescriptorByName("quick_action")
+	if strings.Join(quickAction.AgentPlatforms, ",") != "android,ios,macos" {
+		t.Fatalf("quick_action platforms = %#v", quickAction.AgentPlatforms)
+	}
+	for _, name := range []string{"open_app", "open_url"} {
+		if !NewToolSpec(&stubTool{name: name, description: "Bridge."}).UIOperation {
+			t.Fatalf("expected %s to be a UI operation", name)
+		}
+	}
+	for _, name := range []string{"shell", "recall_memory", "save_memory", "skill_read", "bridge_contacts"} {
+		if NewToolSpec(&stubTool{name: name, description: "Other."}).UIOperation {
+			t.Fatalf("expected %s outside the UI operation surface", name)
+		}
+	}
+}
+
 func TestAvailableToolsIncludesQuickAction(t *testing.T) {
 	runtime := NewRuntimeWithDeps(
 		Config{},
