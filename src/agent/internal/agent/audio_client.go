@@ -97,11 +97,8 @@ func NewAudioServiceClient(socketPath string) *AudioServiceClient {
 }
 
 // AudioRecordChunkReader reuses one Unix socket for a recording session's
-// long-poll chunk reads. audio_service reaps a client connection that stays
-// idle for a few seconds, so the reader reconnects instead of failing the
-// whole session when the service has dropped the socket.
+// long-poll chunk reads.
 type AudioRecordChunkReader struct {
-	client    *AudioServiceClient
 	conn      net.Conn
 	sessionID uint64
 }
@@ -111,7 +108,7 @@ func (c *AudioServiceClient) OpenRecordChunkReader(sessionID uint64) (*AudioReco
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	return &AudioRecordChunkReader{client: c, conn: conn, sessionID: sessionID}, nil
+	return &AudioRecordChunkReader{conn: conn, sessionID: sessionID}, nil
 }
 
 func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, error) {
@@ -119,51 +116,6 @@ func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, erro
 }
 
 func (r *AudioRecordChunkReader) readUntil(timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
-	chunk, readErr := r.readOnce(timeoutMs, deadline)
-	if readErr == nil || !isTransientAudioServiceError(readErr) {
-		return chunk, readErr
-	}
-	// The service drops client connections it considers idle. The recording
-	// session itself is unaffected, so reconnect once and retry this read
-	// before letting the caller tear down the conversation. A chunk the lost
-	// connection had already produced stays with the discarded socket, so at
-	// most one chunk is skipped per reconnect.
-	if err := r.reconnect(deadline); err != nil {
-		return nil, fmt.Errorf("%w (reconnect: %v)", readErr, err)
-	}
-	return r.readOnce(timeoutMs, deadline)
-}
-
-// reconnect replaces the dropped connection. A caller with an earlier deadline
-// (drainRecordChunks bounds shutdown) keeps its budget instead of waiting out the
-// default dial timeout.
-func (r *AudioRecordChunkReader) reconnect(deadline time.Time) error {
-	if r == nil || r.client == nil {
-		return fmt.Errorf("record chunk reader has no audio service client")
-	}
-	dialTimeout := 5 * time.Second
-	if !deadline.IsZero() {
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return fmt.Errorf("dial skipped: read deadline expired")
-		}
-		if remaining < dialTimeout {
-			dialTimeout = remaining
-		}
-	}
-	if r.conn != nil {
-		_ = r.conn.Close()
-		r.conn = nil
-	}
-	conn, err := net.DialTimeout("unix", r.client.socketPath, dialTimeout)
-	if err != nil {
-		return fmt.Errorf("dial: %w", err)
-	}
-	r.conn = conn
-	return nil
-}
-
-func (r *AudioRecordChunkReader) readOnce(timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
 	if r == nil || r.conn == nil {
 		return nil, fmt.Errorf("record chunk reader is closed")
 	}
@@ -209,6 +161,58 @@ func (r *AudioRecordChunkReader) Close() error {
 	}
 	err := r.conn.Close()
 	r.conn = nil
+	return err
+}
+
+// RecordChunkStream reads a recording session for a long-running consumer that
+// must not fail on a dropped connection, such as a realtime voice session.
+//
+// It reads through one persistent connection while that works. audio_service
+// closes client connections that stay idle for a few seconds, so after the
+// first persistent read error the stream closes that connection and retries the
+// read through the per-request path, which dials for each read and cannot hold
+// a dropped connection. It stays on that path for the rest of the session. This
+// is the same fallback AudioDialog applies to its persistent reader. The
+// recording session lives in audio_service by session ID, so either path reads
+// the same session.
+type RecordChunkStream struct {
+	client    *AudioServiceClient
+	reader    *AudioRecordChunkReader
+	sessionID uint64
+}
+
+// OpenRecordChunkStream opens a stream for sessionID. When the persistent
+// connection cannot be opened, the stream starts on the per-request path.
+func (c *AudioServiceClient) OpenRecordChunkStream(sessionID uint64) *RecordChunkStream {
+	stream := &RecordChunkStream{client: c, sessionID: sessionID}
+	if reader, err := c.OpenRecordChunkReader(sessionID); err == nil {
+		stream.reader = reader
+	}
+	return stream
+}
+
+// Read returns the next chunk. A persistent-connection error moves the stream to
+// per-request reads and retries this read there; an error on that path means the
+// service itself is unavailable and is returned.
+func (s *RecordChunkStream) Read(timeoutMs uint32) (*AudioChunkResult, error) {
+	if s.reader != nil {
+		chunk, err := s.reader.Read(timeoutMs)
+		if err == nil {
+			return chunk, nil
+		}
+		_ = s.reader.Close()
+		s.reader = nil
+	}
+	return s.client.ReadRecordChunk(s.sessionID, timeoutMs)
+}
+
+// Close releases the persistent connection, if one is still open.
+func (s *RecordChunkStream) Close() error {
+	if s.reader == nil {
+		return nil
+	}
+	err := s.reader.Close()
+	s.reader = nil
 	return err
 }
 

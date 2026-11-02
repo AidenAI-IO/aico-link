@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestAudioRequestUsesTopLevelFormatFields(t *testing.T) {
@@ -104,61 +103,48 @@ func audioTestSocketPath(t *testing.T) string {
 	return filepath.Join(dir, "a.sock")
 }
 
-func TestAudioRecordChunkReaderReconnectsAfterServiceClosesConnection(t *testing.T) {
+func TestRecordChunkStreamFallsBackWhenServiceClosesConnection(t *testing.T) {
 	socketPath := audioTestSocketPath(t)
-	serveReapedRecordChunks(t, socketPath, "first", "second")
+	serveReapedRecordChunks(t, socketPath, "first", "second", "third")
 
-	client := NewAudioServiceClient(socketPath)
-	reader, err := client.OpenRecordChunkReader(7)
-	if err != nil {
-		t.Fatalf("open reader: %v", err)
-	}
-	defer reader.Close()
+	stream := NewAudioServiceClient(socketPath).OpenRecordChunkStream(7)
+	defer stream.Close()
 
-	first, err := reader.Read(200)
-	if err != nil {
-		t.Fatalf("first read: %v", err)
-	}
-	if string(first.PCM) != "first" {
-		t.Fatalf("first chunk = %q, want %q", first.PCM, "first")
-	}
-
-	// The reused connection is gone by now; the read must recover by
-	// reconnecting instead of failing the whole realtime session.
-	second, err := reader.Read(200)
-	if err != nil {
-		t.Fatalf("second read after the service closed the connection: %v", err)
-	}
-	if string(second.PCM) != "second" {
-		t.Fatalf("second chunk = %q, want %q", second.PCM, "second")
+	// The first read uses the persistent connection; the service closes it
+	// afterwards. The stream must keep reading through the per-request path
+	// instead of failing the realtime session.
+	for _, want := range []string{"first", "second", "third"} {
+		chunk, err := stream.Read(200)
+		if err != nil {
+			t.Fatalf("read %q after the service closed the connection: %v", want, err)
+		}
+		if string(chunk.PCM) != want {
+			t.Fatalf("chunk = %q, want %q", chunk.PCM, want)
+		}
 	}
 }
 
-func TestAudioRecordChunkReaderReconnectReportsServiceUnavailable(t *testing.T) {
+func TestRecordChunkStreamReportsServiceUnavailable(t *testing.T) {
 	socketPath := audioTestSocketPath(t)
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
 
-	client := NewAudioServiceClient(socketPath)
-	reader, err := client.OpenRecordChunkReader(7)
-	if err != nil {
-		t.Fatalf("open reader: %v", err)
-	}
-	defer reader.Close()
+	stream := NewAudioServiceClient(socketPath).OpenRecordChunkStream(7)
+	defer stream.Close()
 
 	accepted, err := listener.Accept()
 	if err != nil {
 		t.Fatalf("accept: %v", err)
 	}
 
-	// The service goes away entirely: reconnecting must surface an error
-	// rather than looping forever.
+	// The service goes away entirely: the fallback must surface an error
+	// rather than hide the failure.
 	_ = accepted.Close()
 	_ = listener.Close()
 
-	if _, err := reader.Read(200); err == nil {
+	if _, err := stream.Read(200); err == nil {
 		t.Fatal("read after the audio service disappeared = nil, want an error")
 	}
 }
@@ -170,43 +156,5 @@ func TestSetPlaybackVolumeRejectsOutOfRange(t *testing.T) {
 		if err := client.SetPlaybackVolume(volume); err == nil {
 			t.Fatalf("expected error for volume %d", volume)
 		}
-	}
-}
-
-// drainRecordChunks bounds shutdown with a two-second budget and passes that
-// deadline to the reader. A reconnect must respect it instead of spending the
-// default five-second dial timeout, which would delay StopRecording.
-func TestAudioRecordChunkReaderReconnectRespectsReadDeadline(t *testing.T) {
-	socketPath := audioTestSocketPath(t)
-	listener, err := net.Listen("unix", socketPath)
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
-	defer listener.Close()
-
-	dialed := make(chan struct{}, 1)
-	go func() {
-		if conn, err := listener.Accept(); err == nil {
-			_ = conn.Close()
-			dialed <- struct{}{}
-		}
-	}()
-
-	client := NewAudioServiceClient(socketPath)
-	reader, err := client.OpenRecordChunkReader(7)
-	if err != nil {
-		t.Fatalf("open reader: %v", err)
-	}
-	defer reader.Close()
-	// The initial open consumes the accept that the reader's own dial produced.
-	<-dialed
-
-	if err := reader.reconnect(time.Now().Add(-time.Second)); err == nil {
-		t.Fatal("reconnect past an expired deadline = nil, want an error")
-	}
-	select {
-	case <-dialed:
-		t.Fatal("reconnect dialed after the deadline expired, want no dial attempt")
-	case <-time.After(200 * time.Millisecond):
 	}
 }
