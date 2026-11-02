@@ -986,6 +986,10 @@ func (d *fakeAudioDialog) FinalizeAndRotateSTT() error {
 	return nil
 }
 
+func (d *fakeAudioDialog) DiscardAndRotateSTT() error {
+	return nil
+}
+
 func (d *fakeAudioDialog) StopRecording() error {
 	d.addOp("stop")
 	d.stops++

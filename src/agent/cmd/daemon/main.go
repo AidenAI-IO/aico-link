@@ -288,6 +288,7 @@ type audioDialogRunner interface {
 	StartRecording() error
 	StopRecording() error
 	FinalizeAndRotateSTT() error
+	DiscardAndRotateSTT() error
 	RecordingActive() bool
 	ReadRecordChunk(timeoutMs uint32) (*agent.AudioChunkResult, error)
 	ReadRecordChunkMonitor(timeoutMs uint32) (*agent.AudioChunkResult, error)
@@ -780,6 +781,9 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			if !decision.Allowed {
 				logging.Infof("agent", "speaker", "rejected utterance reason=%s score=%.3f threshold=%.2f", decision.Reason, decision.Score, decision.Threshold)
 				firstTurn = false
+				if err := dialog.DiscardAndRotateSTT(); err != nil {
+					logging.Warnf("agent", "stt", "discard/rotate streaming STT after speaker reject: %v", err)
+				}
 				dialog.ResetVAD()
 				continue
 			}

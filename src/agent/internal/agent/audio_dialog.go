@@ -586,6 +586,18 @@ func (d *AudioDialog) forwardRecordSTTEvents(sessionID uint64, session *streamin
 // the microphone, then starts a fresh streaming session for the next turn.
 // Used by the Classic continuous-mic session so ASR matches turn boundaries.
 func (d *AudioDialog) FinalizeAndRotateSTT() error {
+	return d.rotateStreamingSTT(true)
+}
+
+// DiscardAndRotateSTT drops the current streaming STT turn without keeping its
+// transcript, then starts a fresh streaming session. Used when the Classic
+// speaker gate rejects an utterance so rejected speech cannot leak into the
+// next admitted turn.
+func (d *AudioDialog) DiscardAndRotateSTT() error {
+	return d.rotateStreamingSTT(false)
+}
+
+func (d *AudioDialog) rotateStreamingSTT(keepTranscript bool) error {
 	d.recordReadMu.Lock()
 	defer d.recordReadMu.Unlock()
 	d.recordMu.Lock()
@@ -619,27 +631,36 @@ func (d *AudioDialog) FinalizeAndRotateSTT() error {
 		transcript, err := recordSTT.FinalizeWithTimeout(audioDialogStreamingSTTFinalizeTimeout)
 		_ = recordSTT.Close()
 		finalizeDurationMs := time.Since(finalizeStart).Milliseconds()
-		if sttTelemetry == nil {
-			sttTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, finalizeStart)
-		}
-		sttTelemetry.streamingFinalizeMS = finalizeDurationMs
-		if err != nil {
-			sttTelemetry.streamingFinalizeError = err.Error()
-			logging.Warnf("agent", "stt", "finalize streaming transcript failed, falling back to one-shot STT: %v", err)
-		} else {
-			sttTelemetry.transcript = transcript
-			sttTelemetry.usedStreamingTranscript = strings.TrimSpace(transcript) != ""
+		if keepTranscript {
+			if sttTelemetry == nil {
+				sttTelemetry = newSTTTurnTelemetry(d.config, d.sttClient, finalizeStart)
+			}
+			sttTelemetry.streamingFinalizeMS = finalizeDurationMs
+			if err != nil {
+				sttTelemetry.streamingFinalizeError = err.Error()
+				logging.Warnf("agent", "stt", "finalize streaming transcript failed, falling back to one-shot STT: %v", err)
+			} else {
+				sttTelemetry.transcript = transcript
+				sttTelemetry.usedStreamingTranscript = strings.TrimSpace(transcript) != ""
+			}
+		} else if err != nil {
+			logging.Warnf("agent", "stt", "discard streaming transcript failed while rotating: %v", err)
 		}
 	}
 
 	d.recordMu.Lock()
 	stillActive := d.recordActive && d.sessionID == sessionID && d.recordSTTRotateGen == rotateGen
 	if stillActive {
-		if sttTelemetry != nil {
-			d.pendingSTTTelemetry = sttTelemetry
-			if sttTelemetry.streamingFinalizeError == "" {
-				d.recordText = sttTelemetry.transcript
+		if keepTranscript {
+			if sttTelemetry != nil {
+				d.pendingSTTTelemetry = sttTelemetry
+				if sttTelemetry.streamingFinalizeError == "" {
+					d.recordText = sttTelemetry.transcript
+				}
 			}
+		} else {
+			d.pendingSTTTelemetry = nil
+			d.recordText = ""
 		}
 	}
 	d.recordMu.Unlock()
