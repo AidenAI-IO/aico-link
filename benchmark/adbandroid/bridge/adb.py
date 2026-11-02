@@ -70,6 +70,8 @@ class ADBAndroidDevice:
         self.jpeg_quality = min(95, max(1, int(jpeg_quality)))
         self._screen_size: tuple[int, int] | None = None
         self._supports_keycombination: bool | None = None
+        self._preferred_ime: str | None = None
+        self._launchable: dict[str, str] | None = None
 
     # ---- low-level -------------------------------------------------------
 
@@ -204,18 +206,29 @@ class ADBAndroidDevice:
             self._restore_input_method(restore_ime)
 
     def dump_window_xml(self) -> str:
-        """Return the current Android UI hierarchy XML."""
-        try:
-            self._run_text(["shell", "uiautomator", "dump", WINDOW_XML_REMOTE_PATH], timeout=5)
-            xml = self._run_text(["shell", "cat", WINDOW_XML_REMOTE_PATH], timeout=5)
-        finally:
-            try:
-                self._run(["shell", "rm", "-f", WINDOW_XML_REMOTE_PATH], timeout=2)
-            except ADBCommandError:
-                pass
-        if "<hierarchy" not in xml:
+        """Return the current Android UI hierarchy XML.
+
+        The dump, the read-back and the cleanup share one adb shell invocation:
+        three separate adb round trips were the largest single cost in every
+        enter_text call, and the remote file is a scratch artifact of this call
+        alone.
+        """
+        xml = self._run_text(
+            [
+                "shell",
+                "uiautomator", "dump", WINDOW_XML_REMOTE_PATH,
+                ";", "cat", WINDOW_XML_REMOTE_PATH,
+                ";", "rm", "-f", WINDOW_XML_REMOTE_PATH,
+            ],
+            timeout=10,
+        )
+        start = xml.find("<?xml")
+        if start < 0 or "<hierarchy" not in xml[start:]:
             raise ADBCommandError("uiautomator dump did not produce hierarchy XML")
-        return xml
+        end = xml.rfind("</hierarchy>")
+        if end < 0:
+            return xml[start:].rstrip()
+        return xml[start:end + len("</hierarchy>")]
 
     def current_input_method(self) -> str:
         return self._run_text(["shell", "settings", "get", "secure", "default_input_method"], timeout=5).strip()
@@ -230,18 +243,36 @@ class ADBAndroidDevice:
             raise ADBCommandError(f"set input method {ime_id!r} failed: {output.strip()}")
 
     def _switch_to_ascii_input_method(self) -> str:
+        """Select an ASCII-capable IME and report the one to restore.
+
+        The IME list is static for the lifetime of a device session, so the
+        lookup is cached: probing it on every enter_text cost three adb round
+        trips per call.
+        """
         try:
             original_ime = self.current_input_method()
             if original_ime in PREFERRED_ASCII_INPUT_METHODS:
                 return ""
-            enabled_imes = set(self.list_input_methods())
-            preferred = next((ime for ime in PREFERRED_ASCII_INPUT_METHODS if ime in enabled_imes), "")
+            preferred = self._preferred_ascii_input_method()
             if not preferred or preferred == original_ime:
                 return ""
             self.set_input_method(preferred)
             return original_ime
         except ADBCommandError:
             return ""
+
+    def _preferred_ascii_input_method(self) -> str:
+        """Return the ASCII IME to switch to, caching the enabled-IME probe."""
+        if self._preferred_ime is not None:
+            return self._preferred_ime
+        try:
+            enabled_imes = set(self.list_input_methods())
+        except ADBCommandError:
+            return ""
+        self._preferred_ime = next(
+            (ime for ime in PREFERRED_ASCII_INPUT_METHODS if ime in enabled_imes), ""
+        )
+        return self._preferred_ime
 
     def _restore_input_method(self, ime_id: str) -> None:
         if not ime_id or ime_id.lower() == "null":
@@ -254,6 +285,132 @@ class ADBAndroidDevice:
 
     def start_settings(self) -> None:
         self._run(["shell", "am", "start", "-a", "android.settings.SETTINGS"])
+
+    def launchable_activities(self) -> dict[str, str]:
+        """Return {package: "package/activity" component} for launcher apps.
+
+        The installed-app set is static for a device session, so the query is
+        cached. Activity classes need not share the package prefix (Chrome's is
+        com.google.android.apps.chrome.Main), so every component is kept; the
+        first listed one per package is its resolved launcher entry.
+        """
+        if self._launchable is not None:
+            return self._launchable
+        output = self._run_text(
+            [
+                "shell",
+                "cmd", "package", "query-activities",
+                "--brief",
+                "-a", "android.intent.action.MAIN",
+                "-c", "android.intent.category.LAUNCHER",
+            ],
+            timeout=15,
+        )
+        activities: dict[str, str] = {}
+        for line in output.splitlines():
+            component = line.strip()
+            if "/" not in component or " " in component:
+                continue
+            package, activity = component.split("/", 1)
+            if package and activity:
+                activities.setdefault(package, component)
+        self._launchable = activities
+        return activities
+
+    def start_activity(self, component: str) -> None:
+        """Launch one activity component deterministically."""
+        self._run(["shell", "am", "start", "-n", component])
+
+    def start_intent(
+        self,
+        *,
+        action: str,
+        data: str = "",
+        package: str = "",
+        extras: dict[str, str] | None = None,
+        new_task: bool = False,
+        wait: bool = True,
+    ) -> None:
+        """Start an activity from an explicit intent (``am start``)."""
+        args = ["shell", "am", "start"]
+        if wait:
+            args.append("-W")
+        args += ["-a", action]
+        if data:
+            args += ["-d", _shell_quote(data)]
+        if package:
+            args += ["-p", package]
+        for key, value in (extras or {}).items():
+            args += ["--es", key, _shell_quote(value)]
+        if new_task:
+            args += ["-f", "0x10000000"]
+        output = self._run_text(args, timeout=20)
+        if "Error:" in output or "Exception" in output:
+            raise ADBCommandError(f"am start failed: {output.strip()}")
+
+    def force_stop(self, package: str) -> None:
+        self._run(["shell", "am", "force-stop", package])
+
+    def clear_app_data(self, package: str) -> None:
+        """Reset an app to its first-run state (``pm clear``)."""
+        output = self._run_text(["shell", "pm", "clear", package], timeout=20)
+        if "Success" not in output:
+            raise ADBCommandError(f"pm clear {package} failed: {output.strip()}")
+
+    def content_query(self, uri: str, *, projection: str = "", where: str = "") -> list[dict[str, str]]:
+        """Run ``content query`` and parse its ``Row: n k=v, k=v`` output."""
+        args = ["shell", "content", "query", "--uri", _shell_quote(uri)]
+        if projection:
+            args += ["--projection", projection]
+        if where:
+            args += ["--where", _shell_quote(where)]
+        output = self._run_text(args, timeout=15)
+        rows: list[dict[str, str]] = []
+        for line in output.splitlines():
+            match = re.match(r"\s*Row:\s*\d+\s+(.*)$", line)
+            if not match:
+                continue
+            row: dict[str, str] = {}
+            for part in re.split(r",\s+(?=[A-Za-z0-9_]+=)", match.group(1)):
+                key, _, value = part.partition("=")
+                row[key.strip()] = value.strip()
+            rows.append(row)
+        return rows
+
+    def content_delete(self, uri: str, *, where: str) -> None:
+        self._run(["shell", "content", "delete", "--uri", _shell_quote(uri), "--where", _shell_quote(where)], timeout=15)
+
+    def content_insert(self, uri: str, bindings: list[tuple[str, str, str]]) -> None:
+        """Insert one row; each binding is (column, type, value), type s/i/l/n."""
+        args = ["shell", "content", "insert", "--uri", _shell_quote(uri)]
+        for column, kind, value in bindings:
+            args += ["--bind", _shell_quote(f"{column}:{kind}:{value}")]
+        self._run(args, timeout=15)
+
+    def capture_photo(self) -> None:
+        """Take a photo through the Camera app and leave it in Pictures/DCIM."""
+        self.start_intent(action="android.media.action.STILL_IMAGE_CAMERA", wait=True)
+        time.sleep(1.5)
+        self.keyevent("KEYCODE_CAMERA")
+        time.sleep(1.5)
+
+    def newest_media_image(self) -> dict[str, str] | None:
+        rows = self.content_query(
+            "content://media/external/images/media",
+            projection="_id:_display_name:relative_path:date_added",
+        )
+        rows = [row for row in rows if row.get("date_added", "").isdigit()]
+        if not rows:
+            return None
+        return max(rows, key=lambda row: int(row["date_added"]))
+
+    def launch_app(self, package: str) -> str:
+        """Launch an app by package and return the component that was started."""
+        component = self.launchable_activities().get(package, "")
+        if not component:
+            raise ADBCommandError(f"no launcher activity for package {package!r}")
+        self.start_activity(component)
+        return component
 
     def expand_notifications(self) -> None:
         self._run(["shell", "cmd", "statusbar", "expand-notifications"])
@@ -316,3 +473,8 @@ def escape_adb_text(text: str) -> str:
     """
     escaped = text.replace(" ", "%s")
     return "'" + escaped.replace("'", "'\\''") + "'"
+
+
+def _shell_quote(value: str) -> str:
+    """Single-quote a value for the device shell that `adb shell` invokes."""
+    return "'" + str(value).replace("'", "'\\''") + "'"

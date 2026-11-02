@@ -414,35 +414,18 @@ jobs:
       - name: Publish completed runs to Langfuse
         if: ${{ always() }}
         # Observability is a side channel: a publish failure must not mask the
-        # benchmark verdict this job exists to report.
+        # benchmark verdict this job exists to report. Runs are independent, so
+        # ci.publish_langfuse fans them out; publishing them back to back made
+        # this step the second longest in a scheduled run after the cases.
         continue-on-error: true
         working-directory: benchmark
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          set -uo pipefail
-          attempted=0
-          succeeded=0
-          failed=0
-          for manifest in runs/"${RUN_ID_PREFIX}"-*/manifest.json; do
-            [[ -f "$manifest" ]] || continue
-            run_dir="$(dirname "$manifest")"
-            echo "::group::publish $(basename "$run_dir")"
-            if uv run python -m runner publish-langfuse --run-dir "$run_dir"; then
-              succeeded=$((succeeded + 1))
-            else
-              failed=$((failed + 1))
-              echo "::warning::Langfuse publication failed for $(basename "$run_dir")"
-            fi
-            echo "::endgroup::"
-            attempted=$((attempted + 1))
-          done
-          if (( attempted == 0 )); then
-            echo "::warning::No completed manifest under ${RUN_ID_PREFIX}-*; skipping Langfuse publication"
-          fi
-          publication_summary="Langfuse publication: $attempted attempted, $succeeded succeeded, $failed failed"
-          echo "::notice::$publication_summary"
-          echo "$publication_summary" >> "$GITHUB_STEP_SUMMARY"
+        run: >-
+          uv run python -m ci.publish_langfuse
+          --runs-dir runs
+          --run-id-prefix "$RUN_ID_PREFIX"
+          --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
         if: ${{ always() }}
         # The dashboard is a reporting side channel: losing it must not turn a

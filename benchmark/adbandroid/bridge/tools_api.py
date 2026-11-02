@@ -54,6 +54,28 @@ ADB_RESERVED_QUICK_ACTIONS = {
 }
 DEFAULT_DOUBLE_TAP_PAUSE_MS = 120
 DEFAULT_LONG_PRESS_MS = 500
+# Semantic app names the Android launcher and benchmark suites use, mapped to
+# their launcher package. Names are matched case-insensitively after stripping
+# whitespace; a package that is not installed falls back to the launcher search
+# flow in the agent.
+ANDROID_APP_PACKAGES = {
+    "chrome": "com.android.chrome",
+    "google chrome": "com.android.chrome",
+    "browser": "com.android.chrome",
+    "maps": "com.google.android.apps.maps",
+    "google maps": "com.google.android.apps.maps",
+    "contacts": "com.google.android.contacts",
+    "people": "com.google.android.contacts",
+    "camera": "com.android.camera2",
+    "photos": "com.google.android.apps.photos",
+    "google photos": "com.google.android.apps.photos",
+    "files": "com.google.android.documentsui",
+    "documents": "com.google.android.documentsui",
+    "messages": "com.google.android.apps.messaging",
+    "clock": "com.google.android.deskclock",
+    "desk clock": "com.google.android.deskclock",
+    "settings": "com.android.settings",
+}
 # Upper bound for caller-supplied durations (swipe/long_press/pause). All
 # actions run under the single shared device lock, and the adb subprocess
 # timeout scales with the gesture duration — an unclamped value from a bad
@@ -240,6 +262,22 @@ class ADBToolsAPIHandler:
                     ],
                 },
             },
+            {
+                "name": "open_app",
+                "description": (
+                    "Launch an installed app by semantic name through its launcher activity. "
+                    "Deterministic and much faster than searching the launcher by sight."
+                ),
+                "args_schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "app": {"type": "string", "description": "App name or alias, such as Maps, Settings, or Chrome."},
+                        "name": {"type": "string", "description": "Alias for app."},
+                    },
+                    "required": ["app"],
+                },
+            },
         ]
 
         response = {"tools": tools}
@@ -372,25 +410,35 @@ class ADBToolsAPIHandler:
                 },
             )
 
-    def _submit_tool_call(self, tool_name: str, tool_input: dict[str, Any]) -> dict[str, Any]:
-        """Dispatch tool call to the ADB device."""
+    def _submit_tool_call(
+        self, tool_name: str, tool_input: dict[str, Any], *, capture_screenshot: bool = True
+    ) -> dict[str, Any]:
+        """Dispatch a tool call to the ADB device.
+
+        ``capture_screenshot`` chooses whether a device action also returns a post-action
+        frame. The MNK provider transport discards it — it only reads ``is_error``
+        — so the mouse/keyboard path passes False and agent-side post-action
+        capture becomes the single screenshot authority.
+        """
         unknown = _unknown_tool_fields(tool_name, tool_input)
         if unknown:
             return {"output": f"error: unknown fields: {unknown!r}", "is_error": True}
         if tool_name == "touch_gesture":
-            return self._call_touch_gesture(tool_input)
+            return self._call_touch_gesture(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "keyboard_text":
-            return self._call_keyboard_text(tool_input)
+            return self._call_keyboard_text(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "keyboard_tap":
-            return self._call_keyboard_tap(tool_input)
+            return self._call_keyboard_tap(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "enter_text":
-            return self._call_enter_text(tool_input)
+            return self._call_enter_text(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_move":
-            return self._call_mouse_move(tool_input)
+            return self._call_mouse_move(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "mouse_scroll":
-            return self._call_mouse_scroll(tool_input)
+            return self._call_mouse_scroll(tool_input, capture_screenshot=capture_screenshot)
         elif tool_name == "quick_action":
-            return self._call_quick_action(tool_input)
+            return self._call_quick_action(tool_input, capture_screenshot=capture_screenshot)
+        elif tool_name == "open_app":
+            return self._call_open_app(tool_input, capture_screenshot=capture_screenshot)
         else:
             return {"output": f"unknown tool: {tool_name}", "is_error": True, "error": "unknown_tool"}
 
@@ -400,6 +448,7 @@ class ADBToolsAPIHandler:
         *,
         log_tool_name: str = "touch_gesture",
         log_tool_input: dict[str, Any] | None = None,
+        capture_screenshot: bool = True,
     ) -> dict[str, Any]:
         raw_gesture_type = tool_input.get("type", "")
         if not isinstance(raw_gesture_type, str):
@@ -422,6 +471,7 @@ class ADBToolsAPIHandler:
                         tool_name=log_tool_name,
                         tool_input=log_input,
                         adb_summary=f"input tap {x} {y}",
+                        capture_screenshot=capture_screenshot,
                     )
                 if gesture_type == "double_tap":
                     pause_ms = _duration_ms_arg(
@@ -438,6 +488,7 @@ class ADBToolsAPIHandler:
                         tool_name=log_tool_name,
                         tool_input=log_input,
                         adb_summary=f"input tap {x} {y} (x2)",
+                        capture_screenshot=capture_screenshot,
                     )
                 hold_ms = _duration_ms_arg(
                     tool_input.get("duration_ms") or tool_input.get("hold_ms"),
@@ -448,6 +499,7 @@ class ADBToolsAPIHandler:
                     tool_name=log_tool_name,
                     tool_input=log_input,
                     adb_summary=f"input swipe {x} {y} {x} {y} {hold_ms} (long_press)",
+                    capture_screenshot=capture_screenshot,
                 )
             elif gesture_type in ("swipe", "drag"):
                 width, height = device.screen_size()
@@ -481,28 +533,29 @@ class ADBToolsAPIHandler:
                     tool_name=log_tool_name,
                     tool_input=log_input,
                     adb_summary=f"input swipe {x1} {y1} {x2} {y2} {duration_ms}",
+                    capture_screenshot=capture_screenshot,
                 )
             else:
                 return {"output": f"error: unsupported gesture type: {gesture_type}", "is_error": True}
         except (TypeError, ValueError) as exc:
             return {"output": f"error: {exc}", "is_error": True}
 
-    def _call_mouse_move(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_mouse_move(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         """Validate mouse_move input and return a screenshot (no adb action)."""
         try:
             width, height = self.state.device.screen_size()
             _normalized_point_arg(tool_input)
         except (TypeError, ValueError) as exc:
             return {"output": f"error: {exc}", "is_error": True}
-        return self._call_noop_with_screenshot()
+        return self._call_noop_with_screenshot(capture_screenshot=capture_screenshot)
 
-    def _call_mouse_scroll(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_mouse_scroll(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         try:
             delta = int(tool_input.get("delta", 0))
         except (TypeError, ValueError) as exc:
             return {"output": f"error: invalid delta: {exc}", "is_error": True}
         if delta == 0:
-            return self._call_noop_with_screenshot()
+            return self._call_noop_with_screenshot(capture_screenshot=capture_screenshot)
         return self._call_touch_gesture(
             {
                 "type": "swipe",
@@ -512,9 +565,10 @@ class ADBToolsAPIHandler:
             },
             log_tool_name="mouse_scroll",
             log_tool_input=tool_input,
+            capture_screenshot=capture_screenshot,
         )
 
-    def _call_quick_action(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_quick_action(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         platform = "android"
         action = _quick_action_id(tool_input)
         if bool(tool_input.get("list")) or action == "list":
@@ -531,6 +585,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="input keyevent KEYCODE_BACK",
+                capture_screenshot=capture_screenshot,
             )
         if action == "home":
             return self._execute_device(
@@ -538,6 +593,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="input keyevent KEYCODE_HOME",
+                capture_screenshot=capture_screenshot,
             )
         if action == "app_switch":
             return self._execute_device(
@@ -545,6 +601,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary=f"input keyevent {KEYCODE_APP_SWITCH}",
+                capture_screenshot=capture_screenshot,
             )
         if action == "send":
             return self._execute_device(
@@ -552,6 +609,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary=f"input keyevent {KEYCODE_ENTER}",
+                capture_screenshot=capture_screenshot,
             )
         if action == "open_settings":
             return self._execute_device(
@@ -559,6 +617,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="am start -a android.settings.SETTINGS",
+                capture_screenshot=capture_screenshot,
             )
         if action == "notification_center":
             return self._execute_device(
@@ -566,6 +625,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="cmd statusbar expand-notifications",
+                capture_screenshot=capture_screenshot,
             )
         if action == "control_center":
             def expand_quick_settings() -> None:
@@ -576,6 +636,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="cmd statusbar expand-settings",
+                capture_screenshot=capture_screenshot,
             )
         if action == "dismiss_panel":
             return self._execute_device(
@@ -585,6 +646,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="cmd statusbar collapse",
+                capture_screenshot=capture_screenshot,
             )
         if action == "quit_app":
             return self._execute_device(
@@ -592,6 +654,7 @@ class ADBToolsAPIHandler:
                 tool_name="quick_action",
                 tool_input=tool_input,
                 adb_summary="input keyevent KEYCODE_HOME",
+                capture_screenshot=capture_screenshot,
             )
         if action in ADB_RESERVED_QUICK_ACTIONS:
             return _adb_reserved_quick_action(
@@ -602,7 +665,51 @@ class ADBToolsAPIHandler:
 
         return {"output": f"error: unsupported quick_action: {tool_input.get('action')!r}", "is_error": True}
 
-    def _call_enter_text(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_open_app(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
+        """Launch an app by resolving its launcher activity, without visual search."""
+        unknown = sorted(set(tool_input) - {"app", "name"})
+        if unknown:
+            return {"output": f"error: unsupported open_app arguments: {unknown!r}", "is_error": True}
+        app = tool_input.get("app") or tool_input.get("name") or ""
+        if not isinstance(app, str) or not app.strip():
+            return {"output": "error: app is required", "is_error": True}
+        app = app.strip()
+
+        device = self.state.device
+        package = _resolve_app_package(app, set(device.launchable_activities()))
+        if not package:
+            output = {
+                "ok": False,
+                "target": app,
+                "suggestion": (
+                    "No installed launcher app matches this name. Check the exact app name "
+                    "or open it from a visible icon with touch_gesture."
+                ),
+            }
+            return {"output": json.dumps(output), "is_error": False}
+
+        result: dict[str, Any] = {}
+
+        def launch() -> None:
+            result["component"] = device.launch_app(package)
+
+        executed = self._execute_device(
+            launch,
+            tool_name="open_app",
+            tool_input=tool_input,
+            adb_summary=f"am start -n {package}",
+            capture_screenshot=capture_screenshot,
+        )
+        if executed.get("is_error"):
+            return executed
+        payload = json.loads(executed["output"])
+        payload["action_output"] = json.dumps(
+            {"ok": True, "target": app, "package": package, "component": result.get("component", "")},
+            ensure_ascii=False,
+        )
+        return {"output": json.dumps(payload, ensure_ascii=False), "is_error": False}
+
+    def _call_enter_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         """Execute enter_text through adb input text."""
         unknown = sorted(set(tool_input) - {"text", "focus"})
         if unknown:
@@ -662,7 +769,10 @@ class ADBToolsAPIHandler:
                 xml_text = device.dump_window_xml()
             except (ADBCommandError, AttributeError) as exc:
                 xml_error = str(exc)
-            jpeg, width, height = device.screenshot_jpeg()
+            screenshot = None
+            if capture_screenshot:
+                jpeg, width, height = device.screenshot_jpeg()
+                screenshot = encode_screenshot(jpeg, "image/jpeg", width, height)
 
         committed, _, wrong_ime, verify_reason, _ = _verify_adb_text_entry(
             xml_text,
@@ -675,7 +785,6 @@ class ADBToolsAPIHandler:
             if wrong_ime and "English/Latin keyboard" not in suggestion:
                 suggestion += "; switch to the English/Latin keyboard before retrying"
             text_output["suggestion"] = suggestion
-        screenshot = encode_screenshot(jpeg, "image/jpeg", width, height)
         self.state.log_action(
             tool_name="enter_text",
             tool_input=tool_input,
@@ -683,17 +792,20 @@ class ADBToolsAPIHandler:
             duration_ms=duration_ms,
             screenshot=screenshot,
         )
-        output_data = {
+        output_data: dict[str, Any] = {
             "action_output": json.dumps(text_output, ensure_ascii=False),
-            "data": screenshot["data"],
-            "width": screenshot["width"],
-            "height": screenshot["height"],
-            "format": screenshot.get("format", "jpeg"),
-            "size": screenshot.get("size", 0),
         }
+        if screenshot is not None:
+            output_data.update({
+                "data": screenshot["data"],
+                "width": screenshot["width"],
+                "height": screenshot["height"],
+                "format": screenshot.get("format", "jpeg"),
+                "size": screenshot.get("size", 0),
+            })
         return {"output": json.dumps(output_data, ensure_ascii=False), "is_error": False}
 
-    def _call_keyboard_text(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_keyboard_text(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         text = tool_input.get("text", "")
         if not isinstance(text, str):
             return {"output": "error: text must be a string", "is_error": True}
@@ -711,9 +823,10 @@ class ADBToolsAPIHandler:
             tool_name="keyboard_text",
             tool_input=tool_input,
             adb_summary="input text",
+            capture_screenshot=capture_screenshot,
         )
 
-    def _call_keyboard_tap(self, tool_input: dict[str, Any]) -> dict[str, Any]:
+    def _call_keyboard_tap(self, tool_input: dict[str, Any], *, capture_screenshot: bool = True) -> dict[str, Any]:
         keys = tool_input.get("keys", [])
         if not keys:
             return {"output": "error: keys array is required", "is_error": True}
@@ -754,6 +867,7 @@ class ADBToolsAPIHandler:
                     tool_name="keyboard_tap",
                     tool_input=tool_input,
                     adb_summary="input keycombination " + " ".join(keycodes),
+                    capture_screenshot=capture_screenshot,
                 )
         # Other modifier combinations remain explicitly unsupported.
         if any(k in ("ctrl", "alt", "shift") for k in normalized_keys):
@@ -777,7 +891,7 @@ class ADBToolsAPIHandler:
             keycode: str | int = "KEYCODE_HOME"
             summary_key = "home"
         elif len(non_modifiers) == 0:
-            return self._call_noop_with_screenshot()
+            return self._call_noop_with_screenshot(capture_screenshot=capture_screenshot)
         elif has_meta and len(non_modifiers) == 1 and non_modifiers[0] == "h":
             keycode = "KEYCODE_HOME"
             summary_key = "home"
@@ -796,6 +910,7 @@ class ADBToolsAPIHandler:
             tool_name="keyboard_tap",
             tool_input=tool_input,
             adb_summary=f"input keyevent {keycode} ({summary_key})",
+            capture_screenshot=capture_screenshot,
         )
 
     # ---- execution helpers --------------------------------------------------
@@ -807,8 +922,13 @@ class ADBToolsAPIHandler:
         tool_name: str,
         tool_input: dict[str, Any],
         adb_summary: str,
+        capture_screenshot: bool = True,
     ) -> dict[str, Any]:
-        """Run a device action, then capture a post-action screenshot."""
+        """Run a device action and optionally capture a post-action screenshot.
+
+        The MNK provider transport reads only ``is_error`` from this result, so a
+        frame captured for it is encoded, serialized and sent only to be dropped.
+        """
         with self.state.lock:
             started = time.monotonic()
             try:
@@ -818,8 +938,10 @@ class ADBToolsAPIHandler:
             duration_ms = int((time.monotonic() - started) * 1000)
             if self.action_settle_sec > 0:
                 time.sleep(self.action_settle_sec)
-            jpeg, width, height = self.state.device.screenshot_jpeg()
-        screenshot = encode_screenshot(jpeg, "image/jpeg", width, height)
+            screenshot = None
+            if capture_screenshot:
+                jpeg, width, height = self.state.device.screenshot_jpeg()
+                screenshot = encode_screenshot(jpeg, "image/jpeg", width, height)
         self.state.log_action(
             tool_name=tool_name,
             tool_input=tool_input,
@@ -827,25 +949,28 @@ class ADBToolsAPIHandler:
             duration_ms=duration_ms,
             screenshot=screenshot,
         )
-        output_data = {
-            "action_output": "ok",
-            "data": screenshot["data"],
-            "width": screenshot["width"],
-            "height": screenshot["height"],
-            "format": screenshot.get("format", "jpeg"),
-        }
+        output_data: dict[str, Any] = {"action_output": "ok"}
+        if screenshot is not None:
+            output_data.update({
+                "data": screenshot["data"],
+                "width": screenshot["width"],
+                "height": screenshot["height"],
+                "format": screenshot.get("format", "jpeg"),
+            })
         return {"output": json.dumps(output_data), "is_error": False}
 
-    def _call_noop_with_screenshot(self) -> dict[str, Any]:
+    def _call_noop_with_screenshot(self, *, capture_screenshot: bool = True) -> dict[str, Any]:
+        if not capture_screenshot:
+            return {"output": json.dumps({"action_output": "ok"}), "is_error": False}
         with self.state.lock:
             jpeg, width, height = self.state.device.screenshot_jpeg()
-        screenshot = encode_screenshot(jpeg, "image/jpeg", width, height)
+        encoded = encode_screenshot(jpeg, "image/jpeg", width, height)
         output_data = {
             "action_output": "ok",
-            "data": screenshot["data"],
-            "width": screenshot["width"],
-            "height": screenshot["height"],
-            "format": screenshot.get("format", "jpeg"),
+            "data": encoded["data"],
+            "width": encoded["width"],
+            "height": encoded["height"],
+            "format": encoded.get("format", "jpeg"),
         }
         return {"output": json.dumps(output_data), "is_error": False}
 
@@ -1048,6 +1173,7 @@ def _unknown_tool_fields(tool_name: str, tool_input: dict[str, Any]) -> list[str
         },
         "mouse_move": {"x", "y"},
         "quick_action": {"action", "list", "alternative", "alternative_index"},
+        "open_app": {"app", "name"},
     }.get(tool_name)
     return [] if allowed is None else sorted(set(tool_input) - allowed)
 
@@ -1223,6 +1349,41 @@ def _looks_like_wrong_ascii_ime(target_text: str, field_text: str, visible_texts
         return True
     indicators = ("拼音", "中文", "简体", "候选")
     return any(any(indicator in text for indicator in indicators) for text in visible_texts)
+
+
+def _resolve_app_package(app: str, installed: set[str]) -> str:
+    """Map a semantic app name to an installed launcher package.
+
+    The alias table covers the names the benchmark suites and model prompts use.
+    A name that is not in the table is matched by package suffix, so
+    ``com.example.maps`` also answers to ``maps``. Unknown names return ``""`` and
+    the caller defers to a visible-icon tap instead of guessing.
+    """
+    key = _normalize_app_name(app)
+    if not key:
+        return ""
+    mapped = ANDROID_APP_PACKAGES.get(key)
+    if mapped and (not installed or mapped in installed):
+        return mapped
+    if mapped and not installed:
+        # Without an installed-package list the mapping is the best evidence.
+        return mapped
+    if key in installed:
+        return key
+    # Accept the last dotted segment (e.g. "chrome" for com.android.chrome) and
+    # the last two (e.g. "google.android.apps.maps" style suffixes).
+    suffix_matches = [
+        package
+        for package in sorted(installed)
+        if key == _normalize_app_name(package.rsplit(".", 1)[-1])
+    ]
+    if len(suffix_matches) == 1:
+        return suffix_matches[0]
+    return ""
+
+
+def _normalize_app_name(value: str) -> str:
+    return " ".join(str(value or "").strip().lower().replace("_", " ").split())
 
 
 def _quick_action_id(tool_input: dict[str, Any]) -> str:

@@ -33,6 +33,7 @@ type ToolSet struct {
 	// board's USB gadget profile, so bridge input bypasses local iOS isolation.
 	iosKeyboardIsolationOptional bool
 	searchOpenTool               *appSearchOpenTool
+	environmentLauncher          *environmentAppLauncher
 	skillInstallClient           *http.Client
 }
 
@@ -52,6 +53,7 @@ type builtinToolSetOptions struct {
 	mnkProvider                 mnk.Provider
 	shellTemporaryDirectory     string
 	disableIOSKeyboardIsolation bool
+	environmentLauncher         *environmentAppLauncher
 }
 
 func WithWaitForWakeupController(controller *WaitForWakeupController) BuiltinToolSetOption {
@@ -115,6 +117,7 @@ func NewBuiltinToolSetFromConfig(cfg Config, proxyCfg ProxyConfig, options ...Bu
 				BaseURL: cfg.EnvironmentBridge.Endpoint,
 				TaskID:  cfg.EnvironmentBridge.BenchmarkTaskID,
 			})),
+			withEnvironmentAppLauncher(newEnvironmentAppLauncher(cfg.EnvironmentBridge.Endpoint, cfg.EnvironmentBridge.BenchmarkTaskID)),
 		)
 	}
 	if !shouldEnableIOSKeyboardIsolation(cfg) {
@@ -258,6 +261,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		textInputHW:                  textInputHW,
 		iosKeyboardIsolation:         iosKeyboardIsolation,
 		iosKeyboardIsolationOptional: toolOptions.disableIOSKeyboardIsolation,
+		environmentLauncher:          toolOptions.environmentLauncher,
 		skillInstallClient:           newSkillInstallHTTPClient(proxyCfg),
 	}
 	touchGesture.primeScreenMapping = toolSet.PrimeScreenMapping

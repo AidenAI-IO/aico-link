@@ -150,27 +150,38 @@ def test_dump_window_xml_reads_dumped_temp_file_and_cleans_up(monkeypatch):
     calls = []
 
     def fake_run_text(args, *, timeout=None):
-        calls.append(("text", args, timeout))
-        if args == ["shell", "uiautomator", "dump", WINDOW_XML_REMOTE_PATH]:
-            return f"UI hierchary dumped to: {WINDOW_XML_REMOTE_PATH}"
-        if args == ["shell", "cat", WINDOW_XML_REMOTE_PATH]:
-            return "<?xml version='1.0'?><hierarchy />"
-        raise AssertionError(f"unexpected _run_text args: {args!r}")
-
-    def fake_run(args, *, timeout=None, binary=False):
-        calls.append(("run", args, timeout, binary))
-        assert args == ["shell", "rm", "-f", WINDOW_XML_REMOTE_PATH]
-        return b""
+        calls.append((args, timeout))
+        assert args == [
+            "shell",
+            "uiautomator", "dump", WINDOW_XML_REMOTE_PATH,
+            ";", "cat", WINDOW_XML_REMOTE_PATH,
+            ";", "rm", "-f", WINDOW_XML_REMOTE_PATH,
+        ]
+        # One shell invocation emits the dump banner, the XML and the cleanup.
+        return (
+            f"UI hierchary dumped to: {WINDOW_XML_REMOTE_PATH}\n"
+            "<?xml version='1.0'?><hierarchy />\n"
+        )
 
     monkeypatch.setattr(device, "_run_text", fake_run_text)
-    monkeypatch.setattr(device, "_run", fake_run)
 
     assert device.dump_window_xml() == "<?xml version='1.0'?><hierarchy />"
-    assert calls == [
-        ("text", ["shell", "uiautomator", "dump", WINDOW_XML_REMOTE_PATH], 5),
-        ("text", ["shell", "cat", WINDOW_XML_REMOTE_PATH], 5),
-        ("run", ["shell", "rm", "-f", WINDOW_XML_REMOTE_PATH], 2, False),
-    ]
+    assert calls == [(
+        [
+            "shell",
+            "uiautomator", "dump", WINDOW_XML_REMOTE_PATH,
+            ";", "cat", WINDOW_XML_REMOTE_PATH,
+            ";", "rm", "-f", WINDOW_XML_REMOTE_PATH,
+        ],
+        10,
+    )]
+
+
+def test_dump_window_xml_rejects_missing_hierarchy(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    monkeypatch.setattr(device, "_run_text", lambda args, **kw: "error: could not dump")
+    with pytest.raises(ADBCommandError, match="hierarchy"):
+        device.dump_window_xml()
 
 
 def test_input_text_switches_to_preferred_ascii_ime_and_restores(monkeypatch):
@@ -216,3 +227,30 @@ def test_input_text_switches_to_preferred_ascii_ime_and_restores(monkeypatch):
             5,
         ),
     ]
+
+
+def test_input_text_reuses_the_cached_input_method_probe(monkeypatch):
+    """The enabled-IME list is static, so later calls skip re-listing it."""
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+    ime_lists = []
+
+    def fake_run_text(args, *, timeout=None):
+        calls.append(args)
+        if args == ["shell", "settings", "get", "secure", "default_input_method"]:
+            return "com.google.android.inputmethod.latin/com.android.inputmethod.latin.LatinIME\n"
+        if args == ["shell", "ime", "list", "-s"]:
+            ime_lists.append(args)
+            return "org.pocketworkstation.pckeyboard/.LatinIME\n"
+        if args[0:3] == ["shell", "ime", "set"]:
+            return f"Input method {args[3]} selected"
+        return ""
+
+    monkeypatch.setattr(device, "_run_text", fake_run_text)
+    monkeypatch.setattr(device, "_run", lambda args, **kw: b"")
+    monkeypatch.setattr("adbandroid.bridge.adb.time.sleep", lambda _seconds: None)
+
+    device.input_text("first")
+    device.input_text("second")
+
+    assert len(ime_lists) == 1

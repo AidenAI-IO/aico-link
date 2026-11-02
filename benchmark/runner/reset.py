@@ -28,6 +28,7 @@ class SetupAssertionError(ResetError):
 
 
 STALE_ADB_OWNER_LEASE_STATES = {"expired", "abandoned"}
+DEFAULT_DEVICE_PREPARE_TIMEOUT_SEC = 120
 
 
 def _environment_endpoint(environment_url: str) -> EnvironmentEndpoint:
@@ -163,6 +164,23 @@ def prepare_environment_tools(
         if mismatches:
             raise ResetError("environment preparation state did not match expected_state: " + "; ".join(mismatches))
     return result
+
+
+def call_environment_prepare(
+    environment_url: str,
+    *,
+    recipe: str,
+    params: dict[str, Any],
+    timeout: int = 120,
+    task_id: str | None = None,
+) -> dict[str, Any]:
+    return _post_environment(
+        _environment_endpoint(environment_url).api("prepare"),
+        timeout=timeout,
+        headers=_environment_headers(task_id),
+        action="prepare",
+        payload={"recipe": recipe, "params": params},
+    )
 
 
 def clear_stale_adb_android_owner(environment_url: str, timeout: float = 2.0) -> str:
@@ -303,8 +321,11 @@ def _per_task_setup(
             raise ResetError("environment_tools requires environment_url")
         return prepare_environment_tools(environment_url, benchmark_task_id or "", setup)
     if setup_type == "agent_prompt":
+        prepared = _try_device_prepare(setup, environment_url, benchmark_task_id)
+        if prepared is not None:
+            return prepared
         _per_task_setup_agent_prompt(client, setup, prompt_prefix=prompt_prefix)
-        return
+        return None
     if setup_type == "seed_memory":
         _per_task_setup_seed_memory(client, setup)
         return
@@ -329,6 +350,42 @@ def _per_task_setup(
         _per_task_setup_assert_memory(client, setup)
         return
     raise ResetError(f"unsupported setup form: {setup!r}")
+
+
+def _try_device_prepare(
+    setup: dict[str, Any], environment_url: str | None, benchmark_task_id: str | None,
+) -> dict[str, Any] | None:
+    """Build an agent_prompt's start state on the device without the Agent.
+
+    ``device_prepare`` names a bridge recipe that reaches the same state the
+    prompt describes. It is an optimization, not a different contract: when the
+    bridge has no recipe support or cannot confirm the state, the caller runs the
+    agent prompt as before. The returned record lands in the task's setup.json.
+    """
+    spec = setup.get("device_prepare")
+    if spec is None:
+        return None
+    if not isinstance(spec, dict) or not isinstance(spec.get("recipe"), str):
+        raise ResetError(f"device_prepare must be an object with a recipe: {spec!r}")
+    if not environment_url:
+        return None
+    params = spec.get("params") or {}
+    try:
+        result = call_environment_prepare(
+            environment_url,
+            recipe=spec["recipe"],
+            params=params,
+            timeout=DEFAULT_DEVICE_PREPARE_TIMEOUT_SEC,
+            task_id=benchmark_task_id,
+        )
+    except ResetError as e:
+        print(
+            f"device_prepare {spec['recipe']} unavailable, falling back to agent setup: {e}",
+            flush=True,
+        )
+        return None
+    data = result.get("data") if isinstance(result.get("data"), dict) else result
+    return {"device_prepare": data}
 
 
 def _per_task_setup_agent_prompt(client: AgentClient, setup: dict[str, Any], *, prompt_prefix: str = "") -> None:

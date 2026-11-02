@@ -78,6 +78,24 @@ class FakeADBAndroidDevice:
     def reset_home(self):
         self.calls.append(("reset_home",))
 
+    # Launcher lookup, mirroring ADBAndroidDevice.launchable_activities().
+    launchable = {
+        "com.android.chrome": "com.android.chrome/com.google.android.apps.chrome.Main",
+        "com.google.android.apps.maps": "com.google.android.apps.maps/com.google.android.maps.MapsActivity",
+        "com.android.settings": "com.android.settings/.Settings",
+    }
+
+    def launchable_activities(self):
+        self.calls.append(("launchable_activities",))
+        return dict(self.launchable)
+
+    def launch_app(self, package):
+        component = self.launchable.get(package)
+        if not component:
+            raise ADBCommandError(f"no launcher activity for package {package!r}")
+        self.calls.append(("launch_app", package))
+        return component
+
 
 @pytest.fixture()
 def bridge():
@@ -397,6 +415,25 @@ def test_mnk_provider_executes_click_and_drag(bridge):
     assert ("swipe", 108, 384, 972, 1536, 700) in device.calls
 
 
+def test_mnk_provider_skips_the_post_action_screenshot(bridge):
+    """MNK returns a flat body, so a captured frame would only be dropped."""
+    _, device, base_url = bridge
+    assert _request(base_url, "/api/setup", method="POST", task_id="suite:mnk-noshot")[0] == 200
+    device.calls.clear()
+
+    status, _ = _request(
+        base_url,
+        "/api/providers/mnk",
+        method="POST",
+        task_id="suite:mnk-noshot",
+        payload={"operation": "click", "click": {"x": 500, "y": 250, "button": "left", "hold_ms": 0}},
+    )
+
+    assert status == 200
+    assert ("tap", 540, 480) in device.calls
+    assert ("screenshot_jpeg",) not in device.calls
+
+
 def test_mnk_provider_returns_flat_error_for_adb_failure(bridge):
     _, device, base_url = bridge
     status, _ = _request(base_url, "/api/setup", method="POST", task_id="suite:mnk-error")
@@ -484,6 +521,7 @@ def test_tools_catalog_lists_expected_tools(bridge):
         "enter_text",
         "mouse_move",
         "mouse_scroll",
+        "open_app",
         "quick_action",
     }
     quick_action = next(tool for tool in body["tools"] if tool["name"] == "quick_action")
