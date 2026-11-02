@@ -142,6 +142,13 @@ Scroll Lab targets (positions 24 and 83). Final selection and irreversible
 scroll overshoot are checked through `/state` and `/route`. The 100-depth
 `mobilegym_scroll_sweep.json` is optional calibration, not the regression gate.
 
+Use `benchmark/suites/mobilegym_touch_v1.json` for touch-control regressions on
+built-in apps: repeated presses of the same key whose visible effect is one
+character (Calculator 2 and the Phone dial pad), repeated delete presses, and
+recording stopwatch laps while the time display keeps changing. Calculator
+results are checked through `/state`; dial-pad digits and stopwatch laps live
+in page-local UI state, so those tasks are judged from the post-screenshot.
+
 ## 🔧 Configuration
 
 ### Environment Bridge mode

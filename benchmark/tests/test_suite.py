@@ -275,6 +275,26 @@ def test_mobilegym_basic_suite_loads_device_operation_tasks():
     assert all(task.rubric and task.rubric[0].check for task in suite.tasks)
 
 
+def test_mobilegym_touch_suite_starts_in_target_app_and_checks_outcome():
+    suite_path = Path(__file__).resolve().parents[1] / "suites" / "mobilegym_touch_v1.json"
+    suite = load_suite(suite_path)
+
+    assert suite.name == "mobilegym_touch_v1"
+    assert {task.id for task in suite.tasks} == {
+        "calc_repeated_digits", "calc_delete_repeated",
+        "dial_repeated_digits", "dial_delete_extra_digits",
+        "stopwatch_two_laps",
+    }
+    for task in suite.tasks:
+        assert task.foreground_app_id in task.app_ids
+        assert task.environment_assertions["route.app"] == task.foreground_app_id
+        assert task.hard_assertions.required_tools == ["touch_gesture"]
+        assert task.rubric and all(item.check for item in task.rubric)
+        if task.foreground_app_id == "calculator2":
+            assert task.environment_assertions["apps.calculator2.state"] == "RESULT"
+            assert task.environment_assertions["apps.calculator2.formula"]
+
+
 def test_vphone_ios_basic_warmup_requires_screenshot():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "vphone_ios_basic.json"
     suite = load_suite(suite_path)
