@@ -590,6 +590,9 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 }
 
 func wakeupReadyLabel(cfg agent.Config) string {
+	if !mcuServiceSocketAvailable(resolveMCUServiceSocket()) {
+		return "GPIO 33/32"
+	}
 	if cfg.TapWakeupEnabledOrDefault() {
 		return "MCU ASR or touch key"
 	}
@@ -712,6 +715,19 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 	playReadyCue := false
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext
+	speakerGate := agent.NewSpeakerGateFromConfig(cfg)
+	if runtime != nil {
+		speakerGate.SyncLiveSettings(runtime.ConfigSnapshot())
+	}
+	if speakerGate.Enabled {
+		if count, err := speakerGate.Store.Count(); err != nil {
+			logging.Warnf("agent", "speaker", "profile store unavailable: %v", err)
+		} else if count == 0 {
+			logging.Warnf("agent", "speaker", "speaker gate enabled but no enrolled profiles; utterances will be rejected until enrollment")
+		} else {
+			logging.Infof("agent", "speaker", "speaker gate enabled (%d profile(s), threshold=%.2f)", count, speakerGate.Threshold)
+		}
+	}
 
 	// Classic final UX: keep the mic open for the whole session (Realtime-like shell).
 	if err := dialog.StartRecording(); err != nil {
@@ -755,6 +771,20 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 			if len(utterance) == 0 {
 				logging.Infof("agent", "session", "listen timeout, closing voice session")
 				return false
+			}
+
+			if runtime != nil {
+				speakerGate.SyncLiveSettings(runtime.ConfigSnapshot())
+			}
+			decision := speakerGate.AllowUtterance(utterance)
+			if !decision.Allowed {
+				logging.Infof("agent", "speaker", "rejected utterance reason=%s score=%.3f threshold=%.2f", decision.Reason, decision.Score, decision.Threshold)
+				firstTurn = false
+				dialog.ResetVAD()
+				continue
+			}
+			if decision.Reason == "matched" {
+				logging.Infof("agent", "speaker", "accepted utterance score=%.3f threshold=%.2f", decision.Score, decision.Threshold)
 			}
 
 			if err := dialog.FinalizeAndRotateSTT(); err != nil {

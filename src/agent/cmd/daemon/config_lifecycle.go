@@ -36,14 +36,78 @@ type inputLifecycle struct {
 	newVoiceWatcher voiceWakeupWatcherFactory
 }
 
+func resolveMCUServiceSocket() string {
+	if v := strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET")); v != "" {
+		return v
+	}
+	return mcu.DefaultSocket
+}
+
+func mcuServiceSocketAvailable(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// multiWakeupWatcher starts/stops several GPIO (or other) watchers as one unit.
+type multiWakeupWatcher struct {
+	watchers []wakeupWatcher
+}
+
+func (m *multiWakeupWatcher) Start() error {
+	for i, w := range m.watchers {
+		if err := w.Start(); err != nil {
+			for j := 0; j < i; j++ {
+				m.watchers[j].Stop()
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *multiWakeupWatcher) Stop() {
+	for i := len(m.watchers) - 1; i >= 0; i-- {
+		m.watchers[i].Stop()
+	}
+}
+
+// newLegacyGPIOVoiceWatcher watches GPIO 33 then 32 (board voice + power keys).
+func newLegacyGPIOVoiceWatcher(callback func()) (wakeupWatcher, error) {
+	pins := []int{33, 32}
+	watchers := make([]wakeupWatcher, 0, len(pins))
+	for _, pin := range pins {
+		w, err := agent.NewGPIOWatcher(pin, callback)
+		if err != nil {
+			for i := len(watchers) - 1; i >= 0; i-- {
+				watchers[i].Stop()
+			}
+			return nil, fmt.Errorf("create GPIO %d watcher: %w", pin, err)
+		}
+		watchers = append(watchers, w)
+	}
+	return &multiWakeupWatcher{watchers: watchers}, nil
+}
+
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
-	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
+	socket := resolveMCUServiceSocket()
 	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
 	// Classic Mode B keeps the mic open for the whole voice session. Runtime.Run
 	// preempts on every turn start, so this hook must only stop TTS — never the
 	// session recording. Listen/session code owns StartRecording/StopRecording.
-	c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
-		return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+	if mcuServiceSocketAvailable(socket) {
+		source := newMCUWakeupSource(mcu.Client{Socket: socket}, defaultMCUVoiceCursorPath)
+		c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
+			return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+		}
+	} else {
+		logging.Warnf("agent", "wakeup", "MCU service socket %s unavailable; falling back to GPIO 33/32", socket)
+		c.newVoiceWatcher = newLegacyGPIOVoiceWatcher
 	}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
@@ -74,6 +138,15 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
 		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
 		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
+		// Speaker paths/max rebuild the embedder/store; enable+threshold also
+		// sync live per utterance, but including them here keeps the wakeup
+		// loop cfg from going permanently stale after a threshold-only edit.
+		VoiceSpeakerGateEnabled: cfg.VoiceSpeakerGateEnabled,
+		VoiceSpeakerThreshold:   cfg.VoiceSpeakerThreshold,
+		VoiceSpeakerToolsDir:    cfg.VoiceSpeakerToolsDir,
+		VoiceSpeakerModelDir:    cfg.VoiceSpeakerModelDir,
+		VoiceSpeakerStoreDir:    cfg.VoiceSpeakerStoreDir,
+		VoiceSpeakerMaxProfiles: cfg.VoiceSpeakerMaxProfiles,
 	}
 }
 

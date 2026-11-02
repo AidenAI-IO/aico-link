@@ -16,9 +16,13 @@ readonly MODULE_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-media-modul
 readonly MODEL_RKNN=silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn
 readonly MODEL_WEIGHTS=silero_vad_6_2_lstm_decoder_weights.bin
 readonly MODEL_SMART_TURN=smart-turn-v3.2-dyt-4s-rv1106-int8-mmse.rknn
+readonly MODEL_SPEAKER_BACKBONE=eres2net_backbone_rv1106_mmse.rknn
+readonly MODEL_SPEAKER_TAIL=eres2net_tail.f32
 readonly MODEL_RKNN_SHA256=81515d04c665ac8c1370d376c07987cf7f368a72ab9e3083dd68ad26c7ae1509
 readonly MODEL_WEIGHTS_SHA256=f4c25e3669172b75b928e4c4a855657fd747f24fd2d8af599e0852e713fbc183
 readonly MODEL_SMART_TURN_SHA256=160347b0f11db81b786fbd637d74089a8f51103adae0bfd3a01f206a0308afb2
+readonly MODEL_SPEAKER_BACKBONE_SHA256=f54ea8473ceccdc92d05f7bff67186ee57c25b74193a5b6ce0b0871c2fb8ad86
+readonly MODEL_SPEAKER_TAIL_SHA256=4462f8f9a3780745fd2926f48e54da036276c91c509bfeef8c76ecaa7329b863
 readonly REMOTE_RUNNER=${SCRIPT_DIR}/board-g0-remote.sh
 
 readonly -a APP_PAYLOAD=(
@@ -39,6 +43,9 @@ readonly -a APP_PAYLOAD=(
     bin/image_process
     bin/rknn_vad
     bin/smart_turn_helper
+    bin/speaker_verify_fbank
+    bin/speaker_verify_rknn
+    bin/speaker_verify_tail
     bin/ttyd
     bin/trigger
     lib/librga.so.2.1.0
@@ -51,7 +58,8 @@ Usage: scripts/debian-apps/prepare-board-g0.sh [bundle|verify]
 Create or verify the non-destructive apps-stage physical-board G0 payload. This
 script never contacts a board. The bundle contains the audited Debian/glibc
 C/C++ executables, RGA, the statically linked official RKNN mini runtime, the
-two pinned VAD model files, and the system media-module loader.
+pinned VAD / Smart Turn / ERes2Net speaker model files, and the system
+media-module loader.
 
 Environment:
   DEBIAN_APPS_OUTPUT_DIR     apps-stage build output.
@@ -124,6 +132,8 @@ write_bundle_metadata() {
         printf 'rknn_model_sha256=%s\n' "${MODEL_RKNN_SHA256}"
         printf 'decoder_weights_sha256=%s\n' "${MODEL_WEIGHTS_SHA256}"
         printf 'smart_turn_model_sha256=%s\n' "${MODEL_SMART_TURN_SHA256}"
+        printf 'speaker_backbone_sha256=%s\n' "${MODEL_SPEAKER_BACKBONE_SHA256}"
+        printf 'speaker_tail_sha256=%s\n' "${MODEL_SPEAKER_TAIL_SHA256}"
     } >"${root}/bundle-metadata.txt"
 }
 
@@ -150,6 +160,8 @@ run_bundle() {
     verify_model "${MODEL_DIR}/${MODEL_RKNN}" "${MODEL_RKNN_SHA256}"
     verify_model "${MODEL_DIR}/${MODEL_WEIGHTS}" "${MODEL_WEIGHTS_SHA256}"
     verify_model "${MODEL_DIR}/${MODEL_SMART_TURN}" "${MODEL_SMART_TURN_SHA256}"
+    verify_model "${MODEL_DIR}/${MODEL_SPEAKER_BACKBONE}" "${MODEL_SPEAKER_BACKBONE_SHA256}"
+    verify_model "${MODEL_DIR}/${MODEL_SPEAKER_TAIL}" "${MODEL_SPEAKER_TAIL_SHA256}"
     [ -x "${MODULE_HELPER}" ] || fail "missing executable media-module helper"
     [ -x "${REMOTE_RUNNER}" ] || fail "missing executable board G0 remote runner"
 
@@ -168,6 +180,8 @@ run_bundle() {
     cp -a "${MODEL_DIR}/${MODEL_RKNN}" "${payload_root}/model/"
     cp -a "${MODEL_DIR}/${MODEL_WEIGHTS}" "${payload_root}/model/"
     cp -a "${MODEL_DIR}/${MODEL_SMART_TURN}" "${payload_root}/model/"
+    cp -a "${MODEL_DIR}/${MODEL_SPEAKER_BACKBONE}" "${payload_root}/model/"
+    cp -a "${MODEL_DIR}/${MODEL_SPEAKER_TAIL}" "${payload_root}/model/"
     cp -a "${MODULE_HELPER}" "${payload_root}/aico-media-modules"
     cp -a "${REMOTE_RUNNER}" "${payload_root}/board-g0-remote.sh"
     cp -a "${AUDIT_DIR}/summary.txt" "${payload_root}/audit/"

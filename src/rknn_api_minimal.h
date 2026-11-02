@@ -24,6 +24,8 @@ typedef enum _rknn_query_cmd {
     RKNN_QUERY_SDK_VERSION = 5,
     RKNN_QUERY_NATIVE_INPUT_ATTR = 8,
     RKNN_QUERY_NATIVE_OUTPUT_ATTR = 9,
+    RKNN_QUERY_NATIVE_NHWC_INPUT_ATTR = 10,
+    RKNN_QUERY_NATIVE_NHWC_OUTPUT_ATTR = 11,
 } rknn_query_cmd;
 
 typedef enum _rknn_tensor_type {
@@ -100,6 +102,68 @@ int rknn_run(rknn_context context, void* extend);
 rknn_tensor_mem* rknn_create_mem(rknn_context context, uint32_t size);
 int rknn_destroy_mem(rknn_context context, rknn_tensor_mem* mem);
 int rknn_set_io_mem(rknn_context context, rknn_tensor_mem* mem, rknn_tensor_attr* attr);
+
+static inline const char* get_format_string(rknn_tensor_format fmt)
+{
+    switch (fmt) {
+    case RKNN_TENSOR_NCHW:
+        return "NCHW";
+    case RKNN_TENSOR_NHWC:
+        return "NHWC";
+    case RKNN_TENSOR_NC1HWC2:
+        return "NC1HWC2";
+    case RKNN_TENSOR_UNDEFINED:
+        return "UNDEFINED";
+    default:
+        return "UNKNOW";
+    }
+}
+
+static inline const char* get_type_string(rknn_tensor_type type)
+{
+    switch (type) {
+    case RKNN_TENSOR_FLOAT32:
+        return "FP32";
+    case RKNN_TENSOR_FLOAT16:
+        return "FP16";
+    case RKNN_TENSOR_INT8:
+        return "INT8";
+    case RKNN_TENSOR_UINT8:
+        return "UINT8";
+    case RKNN_TENSOR_INT16:
+        return "INT16";
+    case RKNN_TENSOR_UINT16:
+        return "UINT16";
+    case RKNN_TENSOR_INT32:
+        return "INT32";
+    case RKNN_TENSOR_UINT32:
+        return "UINT32";
+    case RKNN_TENSOR_INT64:
+        return "INT64";
+    case RKNN_TENSOR_BOOL:
+        return "BOOL";
+    case RKNN_TENSOR_INT4:
+        return "INT4";
+    case RKNN_TENSOR_BFLOAT16:
+        return "BF16";
+    default:
+        return "UNKNOW";
+    }
+}
+
+static inline const char* get_qnt_type_string(rknn_tensor_qnt_type type)
+{
+    switch (type) {
+    case RKNN_TENSOR_QNT_NONE:
+        return "NONE";
+    case RKNN_TENSOR_QNT_DFP:
+        return "DFP";
+    case RKNN_TENSOR_QNT_AFFINE_ASYMMETRIC:
+        return "AFFINE";
+    default:
+        return "UNKNOW";
+    }
+}
 
 #ifdef __cplusplus
 }

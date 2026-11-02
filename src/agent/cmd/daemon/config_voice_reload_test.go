@@ -21,6 +21,15 @@ func TestActiveVoiceConfigTracksTapWakeupEnabled(t *testing.T) {
 	}
 }
 
+func TestActiveVoiceConfigTracksSpeakerThreshold(t *testing.T) {
+	base := agent.DefaultConfig()
+	changed := base
+	changed.VoiceSpeakerThreshold = 0.25
+	if reflect.DeepEqual(activeVoiceConfig(base), activeVoiceConfig(changed)) {
+		t.Fatal("voice_speaker_threshold change did not change active voice lifecycle")
+	}
+}
+
 func TestActiveVoiceConfigIgnoresInactiveProviderSettings(t *testing.T) {
 	base := agent.DefaultConfig()
 	base.InputMode = "realtime"
