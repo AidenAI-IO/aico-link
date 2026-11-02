@@ -2,6 +2,7 @@ import base64
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import struct
 from pathlib import Path
 import subprocess
 import sys
@@ -214,3 +215,23 @@ print(json.dumps({'ok': True, 'status': 'ok', 'final': 'Done',
     result = adapter.execute("task", 5, tmp_path / "artifacts", threading.Event(),
                              tool_endpoint="http://127.0.0.1:9", tool_catalog=CATALOG)
     assert (result.metrics["native_tool_calls_reported"], result.metrics["native_tools_reported"]) == (0, [])
+
+
+def test_gateway_ignores_a_harness_that_disconnects_before_the_reply(tmp_path, daemon, capfd):
+    import socket
+    with ToolGateway(DaemonToolBackend(daemon), CATALOG, tmp_path) as gateway:
+        host, port = gateway.url.removeprefix("http://").split(":")
+        body = json.dumps({"input": {"source": "phone"}}).encode()
+        client = socket.create_connection((host, int(port)))
+        # Ask the kernel to reset rather than close politely, as a killed process would.
+        client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+        client.sendall(b"POST /api/tools/screenshot HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n"
+                       + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+        client.close()
+        for _ in range(50):
+            if (tmp_path / AUDIT_FILE).exists():
+                break
+            threading.Event().wait(0.1)
+        threading.Event().wait(0.3)
+    assert json.loads((tmp_path / AUDIT_FILE).read_text())["tool_name"] == "screenshot"
+    assert "Traceback" not in capfd.readouterr().err

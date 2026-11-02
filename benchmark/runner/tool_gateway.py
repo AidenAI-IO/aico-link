@@ -121,11 +121,16 @@ class ToolGateway:
 
             def _send(self, status: int, payload: dict) -> None:
                 data = json.dumps(payload, ensure_ascii=False).encode()
-                self.send_response(status)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
+                try:
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(data)))
+                    self.end_headers()
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    # The harness was stopped at its deadline while this call ran;
+                    # the call is already audited and nobody is left to read the reply.
+                    pass
 
             def log_message(self, *_):
                 pass
