@@ -1,6 +1,7 @@
 """One frozen experiment, independent agent runs, paired attempt reporting."""
 from __future__ import annotations
 
+import concurrent.futures
 import dataclasses as dc
 import hashlib
 import html
@@ -333,8 +334,12 @@ def _task_for_tool_layer(task, layer: str, metrics: dict):
 
 def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[str, OperationHarness],
                    repeats: int, seed: int, stop: threading.Event, manifest: dict,
-                   judge_cfg: JudgeConfig | None = None) -> dict:
-    """Sequential paired blocks avoid sharing a mutable environment across agents."""
+                   judge_cfg: JudgeConfig | None = None, concurrency: int = 1) -> dict:
+    """Run paired blocks in schedule order, up to `concurrency` attempts at a time.
+
+    Each attempt owns a fresh daemon, tool gateway, and environment route, so
+    attempts can overlap on a bridge with that many parallel environments.
+    """
     if any(task.rubric for task in suite.tasks) and judge_cfg is None:
         raise ValueError("This suite requires a configured Judge; rubric scoring cannot be disabled")
     rows: dict[str, list[TaskResult]] = {agent["id"]: [] for agent in agents}
@@ -345,19 +350,31 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
             order = list(adapters)
             rng.shuffle(order)
             schedule.extend((task, attempt, agent_id) for agent_id in order)
-    manifest.update(status="running", comparison_policy="matched-eligible-v2",
+    manifest.update(status="running", comparison_policy="matched-eligible-v2", concurrency=concurrency,
                     schedule=[{"task_id": t.id, "attempt": n, "agent_id": a} for t, n, a in schedule])
+    task_order = {task.id: index for index, task in enumerate(suite.tasks)}
+    lock = threading.Lock()
+    active: dict[int, dict] = {}
 
     def save() -> None:
+        # Callers hold the lock. Completion order varies with concurrency.
+        for values in rows.values():
+            values.sort(key=lambda row: (task_order.get(row.task_id, 0), row.attempt))
         write_experiment_results(suite, root, agents, rows, repeats, manifest)
 
-    save()
-    for task, attempt, agent_id in schedule:
-        if stop.is_set():
-            break
-        manifest.update(stage="Executing task", current_attempt={"agent_id": agent_id, "task_id": task.id,
-                                                                 "attempt": attempt, "started_at": now_iso()})
+    def publish_active() -> None:
+        manifest["current_attempts"] = list(active.values())
+        if active:
+            manifest["current_attempt"] = active[max(active)]
         atomic_json(root / "manifest.json", manifest)
+
+    def run_attempt(index: int, task, attempt: int, agent_id: str) -> None:
+        if stop.is_set():
+            return
+        with lock:
+            active[index] = {"agent_id": agent_id, "task_id": task.id, "attempt": attempt, "started_at": now_iso()}
+            manifest["stage"] = "Executing task"
+            publish_active()
         artifacts = root / "runs" / agent_id / "tasks" / task.id / f"attempt_{attempt}"
         artifacts.mkdir(parents=True, exist_ok=True)
         prompt = "\n\n".join(part for part in (DEVICE_CONTEXT, suite.prompt_prefix.strip(), task.prompt) if part)
@@ -367,50 +384,68 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
                 row = skipped_task_result(suite, task, attempt, artifacts, agent_id,
                                           f"Task requires {task.platforms}; environment platform is android")
                 row.metrics.update(agent_eligible=False, failure_class="platform")
-                rows[agent_id].append(row)
-                save()
-                continue
-            execution = adapter.execute_operation(prompt, task.hard_assertions.must_complete_within_sec, artifacts, stop, task)
-            digest = execution.metrics.get("business_tools_sha256")
-            scored_task = task
-            if not execution.canceled:
-                if not digest:
-                    raise ValueError("Operation attempt did not record its shared tool catalog")
-                layer = execution.metrics.get("tool_layer", "aiden")
-                frozen = manifest.setdefault("business_tool_catalogs", {}).setdefault(
-                    layer, {"sha256": digest, "tools": execution.metrics.get("business_tools")})
-                if digest != frozen["sha256"]:
-                    raise ValueError("Shared business tool catalog changed between attempts")
-                scored_task = _task_for_tool_layer(task, layer, execution.metrics)
-            manifest["stage"] = "Evaluating task"
-            atomic_json(root / "manifest.json", manifest)
-            row = evaluate_task_history(
-                suite=suite, task=scored_task, history=execution.history, episode=execution.episode,
-                attempt=attempt, artifact_dir=artifacts, run_id=agent_id, timed_out=execution.timed_out,
-                judge_cfg=judge_cfg, judge_cache_dir=root / "judge-cache", metrics=execution.metrics,
-                pre_screenshot=execution.pre_screenshot, post_screenshot=execution.post_screenshot,
-            )
-            row.metrics.update(execution.metrics)
-            if not execution.canceled:
-                row = _apply_environment_assertions(row, task, execution.environment_state, execution.environment_state_error)
-                usage = tool_usage_metrics(execution.history, set(execution.metrics.get("business_tools") or ()))
-                usage["native_tool_calls"] = max(usage["native_tool_calls"],
-                                                 execution.metrics.get("native_tool_calls_reported") or 0)
-                row.metrics.update(usage)
-            if execution.canceled:
-                row.status = "canceled"
-                row.metrics.update(agent_eligible=False, success=None, failure_class="canceled")
+            else:
+                row = _execute_and_score(suite, task, attempt, agent_id, adapter, prompt, artifacts, stop,
+                                         manifest, lock, judge_cfg, root)
         except Exception as exc:
             row = skipped_task_result(suite, task, attempt, artifacts, agent_id, str(exc))
             row.metrics.update(adapter_error=str(exc), agent_eligible=False, failure_class="adapter")
-        rows[agent_id].append(row)
+        with lock:
+            rows[agent_id].append(row)
+            active.pop(index, None)
+            save()
+            publish_active()
+
+    with lock:
         save()
-    manifest.pop("current_attempt", None)
-    manifest["stage"] = "Finished"
-    manifest["status"] = "canceled" if stop.is_set() else "completed"
-    manifest["finished_at"] = now_iso()
-    save()
+    # One worker keeps the original sequential schedule; more overlap blocks in order.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, concurrency),
+                                               thread_name_prefix="experiment") as executor:
+        for future in [executor.submit(run_attempt, index, *item) for index, item in enumerate(schedule)]:
+            future.result()
+    with lock:
+        manifest.pop("current_attempt", None)
+        manifest.pop("current_attempts", None)
+        manifest["stage"] = "Finished"
+        manifest["status"] = "canceled" if stop.is_set() else "completed"
+        manifest["finished_at"] = now_iso()
+        save()
     return manifest
+
+
+def _execute_and_score(suite: Suite, task, attempt: int, agent_id: str, adapter: OperationHarness, prompt: str,
+                       artifacts: Path, stop: threading.Event, manifest: dict, lock: threading.Lock,
+                       judge_cfg: JudgeConfig | None, root: Path) -> TaskResult:
+    execution = adapter.execute_operation(prompt, task.hard_assertions.must_complete_within_sec, artifacts, stop, task)
+    digest = execution.metrics.get("business_tools_sha256")
+    scored_task = task
+    if not execution.canceled:
+        if not digest:
+            raise ValueError("Operation attempt did not record its shared tool catalog")
+        layer = execution.metrics.get("tool_layer", "aiden")
+        with lock:
+            frozen = manifest.setdefault("business_tool_catalogs", {}).setdefault(
+                layer, {"sha256": digest, "tools": execution.metrics.get("business_tools")})
+        if digest != frozen["sha256"]:
+            raise ValueError("Shared business tool catalog changed between attempts")
+        scored_task = _task_for_tool_layer(task, layer, execution.metrics)
+    row = evaluate_task_history(
+        suite=suite, task=scored_task, history=execution.history, episode=execution.episode,
+        attempt=attempt, artifact_dir=artifacts, run_id=agent_id, timed_out=execution.timed_out,
+        judge_cfg=judge_cfg, judge_cache_dir=root / "judge-cache", metrics=execution.metrics,
+        pre_screenshot=execution.pre_screenshot, post_screenshot=execution.post_screenshot,
+    )
+    row.metrics.update(execution.metrics)
+    if not execution.canceled:
+        row = _apply_environment_assertions(row, task, execution.environment_state, execution.environment_state_error)
+        usage = tool_usage_metrics(execution.history, set(execution.metrics.get("business_tools") or ()))
+        usage["native_tool_calls"] = max(usage["native_tool_calls"],
+                                         execution.metrics.get("native_tool_calls_reported") or 0)
+        row.metrics.update(usage)
+    if execution.canceled:
+        row.status = "canceled"
+        row.metrics.update(agent_eligible=False, success=None, failure_class="canceled")
+    return row
 
 
 class ExperimentManager:
@@ -478,7 +513,7 @@ class ExperimentManager:
     def start(self, payload: dict) -> dict:
         if not isinstance(payload, dict):
             raise ValueError("Experiment configuration must be an object")
-        allowed = {"suite", "agents", "repeats", "seed", "environment_url"}
+        allowed = {"suite", "agents", "repeats", "seed", "environment_url", "concurrency"}
         if set(payload) - allowed:
             raise ValueError("Unknown experiment configuration fields")
         path = (self.suites_dir / str(payload.get("suite", ""))).resolve()
@@ -510,6 +545,9 @@ class ExperimentManager:
         repeats, seed = payload.get("repeats", 3), payload.get("seed", 0)
         if type(repeats) is not int or not 1 <= repeats <= 20 or type(seed) is not int:
             raise ValueError("repeats must be 1–20 and seed must be an integer")
+        concurrency = payload.get("concurrency", 1)
+        if type(concurrency) is not int or not 1 <= concurrency <= 8:
+            raise ValueError("concurrency must be 1–8 parallel attempts")
         with self._lock:
             if self._active and self._active[2].is_alive():
                 raise ValueError("An experiment is already running; stop it or wait for completion")
@@ -522,6 +560,7 @@ class ExperimentManager:
             manifest = {"schema_version": 1, "id": experiment_id, "status": "queued",
                         "created_at": now_iso(), "suite": suite.name, "suite_sha256": suite.sha256,
                         "track": "operations", "agents": agents, "repeats": repeats, "seed": seed,
+                        "concurrency": concurrency,
                         "environment_url": environment_url,
                         "scoring": "original-suite-v1", "device_context": DEVICE_CONTEXT,
                         "preparation": "shared-aiden-preparer-fresh-evaluated-agent",
@@ -553,6 +592,10 @@ class ExperimentManager:
                 data = health.get("data", health)
                 if data.get("bridge_type") != "mobilegym":
                     raise ValueError("Operation experiments require a resettable MobileGym environment")
+                concurrency = manifest.get("concurrency", 1)
+                if concurrency > int(data.get("env_count") or 1):
+                    raise ValueError(f"concurrency {concurrency} exceeds the environment's "
+                                     f"{data.get('env_count') or 1} parallel MobileGym environments")
                 manifest["environment_health"] = health
                 prepare_run_config(self.base_config_dir, prepared, agent_config_text=config_text)
                 manifest["stage"] = "Building daemon image" if self.build_daemon_image else "Checking daemon image"
@@ -595,7 +638,8 @@ class ExperimentManager:
                     manifest["status"] = "canceled"
                     atomic_json(root / "manifest.json", manifest)
                     return
-                run_experiment(suite, root, manifest["agents"], adapters, manifest["repeats"], manifest["seed"], stop, manifest, judge_cfg)
+                run_experiment(suite, root, manifest["agents"], adapters, manifest["repeats"], manifest["seed"], stop,
+                               manifest, judge_cfg, concurrency=manifest.get("concurrency", 1))
                 if judge_cfg is not None and not stop.is_set() and _has_judge_errors(root, manifest["agents"]):
                     manifest["stage"] = "Retrying Judge errors"
                     atomic_json(root / "manifest.json", manifest)

@@ -29,6 +29,11 @@ on:
         required: true
         default: '1'
         type: string
+      concurrency:
+        description: Parallel attempts, one MobileGym environment each
+        required: true
+        default: '3'
+        type: string
 
 permissions:
   contents: read
@@ -65,6 +70,7 @@ jobs:
       SUITE: ${{ inputs.suite || 'suites/phone_control_v1.json' }}
       AGENTS: ${{ inputs.agents || 'aiden,pi,openclaw,claude-code,codex' }}
       REPEATS: ${{ inputs.repeats || '1' }}
+      CONCURRENCY: ${{ inputs.concurrency || '3' }}
       # Model endpoints and npm are reached through the benchmark proxy; Docker
       # builds and local endpoints stay direct, as in the benchmark workflow.
       https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
@@ -95,6 +101,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$REPEATS" =~ ^[1-9][0-9]?$ ]] || { echo "repeats must be 1-99" >&2; exit 1; }
+          [[ "$CONCURRENCY" =~ ^[1-8]$ ]] || { echo "concurrency must be 1-8" >&2; exit 1; }
           missing=()
           for name in BENCHMARK_AGENT_PROVIDER BENCHMARK_AGENT_MODEL BENCHMARK_AGENT_BASE_URL \
                       BENCHMARK_AGENT_API_KEY BENCHMARK_JUDGE_API_KEY; do
@@ -163,6 +170,7 @@ jobs:
           --suite "$SUITE"
           --agents "$AGENTS"
           --repeats "$REPEATS"
+          --concurrency "$CONCURRENCY"
           --runs-dir "runs/$RUN_ID"
           --run-id "$RUN_ID"
           --daemon-image "$DAEMON_IMAGE"

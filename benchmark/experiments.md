@@ -11,9 +11,9 @@ Experiments reuse the existing suite files without copying or weakening tasks.
 Start with `mobilegym_basic.json`, `mobilegym_scroll_regression.json`, or
 `mobilegym_scroll_sweep.json`. There is no separate calculation or harness suite.
 Each experiment freezes the original suite and runs one independent run per
-agent, interleaving task/repetition blocks sequentially against the same
-MobileGym environment. The experiment repeat count overrides task repeats for
-both agents. Prompt prefixes, task prompts, rubric, tool assertions, state
+agent, interleaving task/repetition blocks against the same MobileGym
+environment, one attempt at a time unless `concurrency` is raised. The
+experiment repeat count overrides task repeats for every agent. Prompt prefixes, task prompts, rubric, tool assertions, state
 assertions, app selection, and deadlines retain their original meaning. For
 example, the original scroll regression still rejects overshooting item 24/83.
 
@@ -212,7 +212,13 @@ agent-plus-model operation performance.
    cancels the active execution. Unstarted attempts remain `not_run`.
 
 One experiment executes at a time per WebUI process. Agent order is shuffled
-inside each task/repetition block using the scheduling seed. This seed controls
+inside each task/repetition block using the scheduling seed. Blocks start in
+schedule order; with `concurrency` set above 1 (at most 8), that many attempts
+run at once. Each attempt owns a fresh daemon, tool gateway, and environment
+route, and the MobileGym environment must have at least as many parallel
+environments; launch fails otherwise. Concurrent attempts share the model
+endpoint and host, so latency can differ from a sequential run. Results are
+written in task order regardless of completion order. This seed controls
 scheduling only; it is not a model sampling seed. Each attempt has a wall-clock
 deadline from the suite. The tool-call limit is a scoring assertion, not a live
 execution budget. Startup time is separate from Aiden execution time; pi and
@@ -456,7 +462,8 @@ are external factors.
 
 The workflow is dispatched with a suite, a comma-separated agent list such as
 `aiden,pi,openclaw,codex,pi-raw` (append `-raw` to an external agent for raw
-tools), and a repeat count. It runs on the benchmark runner, builds the daemon
+tools), a repeat count, and a concurrency that starts that many MobileGym
+environments (default 3). It runs on the benchmark runner, builds the daemon
 and MobileGym images as the benchmark workflow does, and installs pinned
 external CLI versions into the job workspace. Every agent uses the repository's
 benchmark model (`BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,

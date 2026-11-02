@@ -386,3 +386,44 @@ def test_running_attempt_is_visible_before_agent_returns(tmp_path):
                    1, 0, threading.Event(), manifest(), JudgeConfig())
     record = json.loads((tmp_path / 'manifest.json').read_text())
     assert record['completed'] == 1 and 'current_attempt' not in record
+
+
+def test_concurrent_attempts_overlap_but_results_keep_schedule_order(tmp_path):
+    import time
+    suite = comparison_suite(SUITE_PATH)
+    agents = [{"id": "aiden", "kind": "aiden"}, {"id": "pi", "kind": "pi"}]
+    lock, running, peak = threading.Lock(), [0], [0]
+
+    class SlowAgent(FakeAgent):
+        def execute_operation(self, prompt, timeout, artifacts, stop, task):
+            with lock:
+                running[0] += 1
+                peak[0] = max(peak[0], running[0])
+            # Later tasks finish first, so completion order differs from the schedule.
+            time.sleep(0.05 * (len(suite.tasks) - [t.id for t in suite.tasks].index(task.id)))
+            with lock:
+                running[0] -= 1
+            return super().execute_operation(prompt, timeout, artifacts, stop, task)
+
+    calls = []
+    record = run_experiment(suite, tmp_path, agents, {a["id"]: SlowAgent(calls, a["id"]) for a in agents},
+                            2, 0, threading.Event(), manifest(), JudgeConfig(), concurrency=3)
+    assert peak[0] == 3
+    assert record["status"] == "completed" and record["concurrency"] == 3
+    assert record["completed"] == len(suite.tasks) * 2 * len(agents)
+    assert "current_attempts" not in record and "current_attempt" not in record
+    for agent in agents:
+        rows = [json.loads(line) for line in (tmp_path / "runs" / agent["id"] / "results.jsonl").read_text().splitlines()]
+        assert [(row["task_id"], row["attempt"]) for row in rows] == [
+            (task.id, attempt) for task in suite.tasks for attempt in (1, 2)]
+
+
+@pytest.mark.parametrize("concurrency", [0, 9, "3"])
+def test_manager_rejects_invalid_concurrency(tmp_path, concurrency):
+    manager = ExperimentManager(runs_dir=tmp_path, suites_dir=SUITE_PATH.parent,
+                                base_config_dir=tmp_path, daemon_image="unused", build_daemon_image=False,
+                                config_loader=lambda: "", judge_loader=lambda: {"api_key": "test-key"})
+    with pytest.raises(ValueError, match="concurrency must be 1–8"):
+        manager.start({"suite": SUITE_PATH.name, "agents": [{"kind": "aiden"}],
+                       "environment_url": "http://127.0.0.1:9", "concurrency": concurrency})
+    assert not list(manager.root.iterdir())

@@ -26,7 +26,7 @@ def test_agent_spec_rejects_invalid_selections(spec, message):
 
 def test_summary_reports_each_agent_layer_and_matched_pairs(tmp_path: Path):
     (tmp_path / "manifest.json").write_text(json.dumps({"id": "exp-1", "suite": "phone_control_v1",
-                                                        "repeats": 3, "status": "completed"}))
+                                                        "repeats": 3, "status": "completed", "concurrency": 3}))
     (tmp_path / "comparison.json").write_text(json.dumps({"agents": [
         {"id": "aiden", "tool_layer": "aiden", "passed": 9, "eligible": 10, "success_rate": .9, "coverage": .8,
          "median_wall_ms": 31000, "timeouts": 0, "api_retry_attempts": 1},
@@ -35,6 +35,7 @@ def test_summary_reports_each_agent_layer_and_matched_pairs(tmp_path: Path):
     ], "pairwise": [{"agent_ids": ["aiden", "pi-raw"], "eligible_pairs": 0, "planned_pairs": 12,
                      "both_pass": 0, "left_only_pass": 0, "right_only_pass": 0}]}))
     summary = run_experiment.summary_markdown(tmp_path)
+    assert "Up to 3 attempt(s) ran in parallel." in summary
     assert "| aiden | aiden | 9/10 (90%) | 80% | 31.0s | 0 | 1 |" in summary
     assert "| pi-raw | raw | 0/0 (—) | 0% | — | 2 | 0 |" in summary
     assert "| aiden vs pi-raw | 0/12 | 0 | 0 | 0 |" in summary

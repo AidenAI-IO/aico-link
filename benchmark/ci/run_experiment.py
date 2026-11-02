@@ -46,10 +46,10 @@ def agent_configs(spec: str, *, provider: str, model: str, base_url: str) -> lis
     return agents
 
 
-def start_mobilegym(runs_dir: Path, image: str, name: str) -> dict[str, Any]:
+def start_mobilegym(runs_dir: Path, image: str, name: str, envs: int) -> dict[str, Any]:
     output = subprocess.run(
         [sys.executable, "-m", "runner", "start-mobilegym-env", "--runs-dir", str(runs_dir), "--name", name,
-         "--mobilegym-image", image, "--no-build-mobilegym-image", "--json"],
+         "--envs", str(envs), "--mobilegym-image", image, "--no-build-mobilegym-image", "--json"],
         cwd=BENCHMARK_ROOT, check=True, capture_output=True, text=True,
     ).stdout
     return json.loads(output[output.index("{"):])
@@ -60,6 +60,7 @@ def summary_markdown(root: Path) -> str:
     data = json.loads((root / "comparison.json").read_text(encoding="utf-8"))
     lines = [f"## Agent experiment `{manifest['id']}`", "",
              f"Suite `{manifest['suite']}`, {manifest['repeats']} repeat(s), status **{manifest['status']}**.", "",
+             f"Up to {manifest.get('concurrency', 1)} attempt(s) ran in parallel.", "",
              "| Agent | Tool layer | Success | Coverage | Median execution | Timeouts | Retried attempts |",
              "| --- | --- | --- | --- | --- | --- | --- |"]
     for agent in data["agents"]:
@@ -82,6 +83,8 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--agents", required=True, help="Comma-separated: aiden, pi, openclaw, claude-code, codex, <external>-raw")
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--concurrency", type=int, default=3,
+                        help="Parallel attempts; starts this many MobileGym environments")
     parser.add_argument("--runs-dir", type=Path, required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--daemon-image", required=True)
@@ -99,9 +102,9 @@ def cli(argv: list[str] | None = None) -> int:
         raise SystemExit(f"{KEY_ENV} is required for external agents")
     runs_dir = args.runs_dir.resolve()
     runs_dir.mkdir(parents=True, exist_ok=True)
-    environment = start_mobilegym(runs_dir, args.mobilegym_image, args.run_id)
+    environment = start_mobilegym(runs_dir, args.mobilegym_image, args.run_id, args.concurrency)
     config = {"suite": args.suite.removeprefix("suites/"), "environment_url": environment["environment_url"],
-              "agents": agents, "repeats": args.repeats, "seed": args.seed}
+              "agents": agents, "repeats": args.repeats, "seed": args.seed, "concurrency": args.concurrency}
     config_path = runs_dir / "experiment-config.json"
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     try:
