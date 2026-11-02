@@ -128,21 +128,34 @@ func (r *AudioRecordChunkReader) readUntil(timeoutMs uint32, deadline time.Time)
 	// before letting the caller tear down the conversation. A chunk the lost
 	// connection had already produced stays with the discarded socket, so at
 	// most one chunk is skipped per reconnect.
-	if err := r.reconnect(); err != nil {
+	if err := r.reconnect(deadline); err != nil {
 		return nil, fmt.Errorf("%w (reconnect: %v)", readErr, err)
 	}
 	return r.readOnce(timeoutMs, deadline)
 }
 
-func (r *AudioRecordChunkReader) reconnect() error {
+// reconnect replaces the dropped connection. A caller with an earlier deadline
+// (drainRecordChunks bounds shutdown) keeps its budget instead of waiting out the
+// default dial timeout.
+func (r *AudioRecordChunkReader) reconnect(deadline time.Time) error {
 	if r == nil || r.client == nil {
 		return fmt.Errorf("record chunk reader has no audio service client")
+	}
+	dialTimeout := 5 * time.Second
+	if !deadline.IsZero() {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return fmt.Errorf("dial skipped: read deadline expired")
+		}
+		if remaining < dialTimeout {
+			dialTimeout = remaining
+		}
 	}
 	if r.conn != nil {
 		_ = r.conn.Close()
 		r.conn = nil
 	}
-	conn, err := net.DialTimeout("unix", r.client.socketPath, 5*time.Second)
+	conn, err := net.DialTimeout("unix", r.client.socketPath, dialTimeout)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
 	}

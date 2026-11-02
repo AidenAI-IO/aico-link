@@ -654,7 +654,7 @@ func (m *LiveActivityManager) CompleteTask(requestID, output string) *LiveActivi
 	return m.finishTask(requestID, LiveActivityStatusCompleted, firstNonEmptyString([]string{
 		truncateLiveActivityText(output, 120),
 		text.Completed,
-	}), "")
+	}), "", false)
 }
 
 func (m *LiveActivityManager) pauseForHumanHandoff(requestID, output string) *LiveActivityState {
@@ -695,21 +695,35 @@ func (m *LiveActivityManager) pauseForHumanHandoff(requestID, output string) *Li
 
 func (m *LiveActivityManager) FailTask(requestID, message string) *LiveActivityState {
 	text := m.getLiveActivityText()
-	return m.finishTask(requestID, LiveActivityStatusFailed, text.Failed, truncateLiveActivityText(message, 160))
+	return m.finishTask(requestID, LiveActivityStatusFailed, text.Failed, truncateLiveActivityText(message, 160), false)
+}
+
+// FailTaskUnlessSettled fails a task only while it is still in a non-terminal
+// state. Cancellation settles the task through CancelTask, and a caller that
+// observes the cancellation afterwards must not overwrite that outcome with a
+// failure. The check and the transition share the manager lock so both terminal
+// updates cannot race.
+func (m *LiveActivityManager) FailTaskUnlessSettled(requestID, message string) *LiveActivityState {
+	text := m.getLiveActivityText()
+	return m.finishTask(requestID, LiveActivityStatusFailed, text.Failed, truncateLiveActivityText(message, 160), true)
 }
 
 func (m *LiveActivityManager) CancelTask(requestID string) *LiveActivityState {
 	text := m.getLiveActivityText()
-	return m.finishTask(requestID, LiveActivityStatusCanceled, text.Canceled, "")
+	return m.finishTask(requestID, LiveActivityStatusCanceled, text.Canceled, "", false)
 }
 
-func (m *LiveActivityManager) finishTask(requestID, status, step, errText string) *LiveActivityState {
+func (m *LiveActivityManager) finishTask(requestID, status, step, errText string, onlyIfUnsettled bool) *LiveActivityState {
 	if m == nil || strings.TrimSpace(requestID) == "" {
 		return nil
 	}
 	now := time.Now()
 	m.mu.Lock()
 	state, ok := m.states[requestID]
+	if ok && onlyIfUnsettled && !isCancelableLiveActivityStatus(state.Status) {
+		m.mu.Unlock()
+		return &state
+	}
 	if !ok {
 		m.mu.Unlock()
 		return nil

@@ -246,6 +246,35 @@ func TestRuntimeOnRunCompleteRunsWhileTheRunOwnsTheGate(t *testing.T) {
 	}
 }
 
+func TestLiveActivityManagerFailTaskUnlessSettledKeepsCanceledState(t *testing.T) {
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	manager.StartTask("req-cancel", "Do a task")
+
+	manager.CancelTask("req-cancel")
+	state := manager.FailTaskUnlessSettled("req-cancel", "realtime voice session ended")
+
+	if state == nil || state.Status != LiveActivityStatusCanceled {
+		t.Fatalf("status = %#v, want the task to stay canceled", state)
+	}
+	if state.LastError != "" {
+		t.Fatalf("last_error = %q, want cancellation to keep an empty error", state.LastError)
+	}
+}
+
+func TestLiveActivityManagerFailTaskUnlessSettledStillFailsRunningTask(t *testing.T) {
+	manager := NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	manager.StartTask("req-run", "Do a task")
+
+	state := manager.FailTaskUnlessSettled("req-run", "connect realtime voice model: context deadline exceeded")
+
+	if state == nil || state.Status != LiveActivityStatusFailed {
+		t.Fatalf("status = %#v, want failed", state)
+	}
+	if state.LastError == "" {
+		t.Fatalf("last_error is empty, want the failure reason")
+	}
+}
+
 func TestRealtimeChatStreamMarksLiveActivityFailedOnError(t *testing.T) {
 	server := &Server{logger: newTestLogger(), runtime: newHistoryPageTestServer(t, 0).runtime}
 	server.liveActivity = NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
@@ -266,6 +295,35 @@ func TestRealtimeChatStreamMarksLiveActivityFailedOnError(t *testing.T) {
 	}
 	if state.EndedAt == nil || state.ShowsProgress {
 		t.Fatalf("live activity = %#v, want a finished task without progress", state)
+	}
+}
+
+// TestRealtimeChatStreamCancelKeepsCanceledState covers the race between
+// /api/chat/cancel and the stream handler: cancellation settles the task, then
+// the handler observes runCtx.Done() for the same request. The handler must not
+// overwrite canceled with failed.
+func TestRealtimeChatStreamCancelKeepsCanceledState(t *testing.T) {
+	server := &Server{logger: newTestLogger(), runtime: newHistoryPageTestServer(t, 0).runtime}
+	server.liveActivity = NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+
+	const requestID = "realtime-stream-cancel"
+	server.SetRealtimeChatHandler(func(context.Context, RealtimeChatRequest) (<-chan RealtimeChatEvent, error) {
+		// Reproduce the endpoint winning the race: the task is already canceled
+		// by the time the handler observes the run shutting down.
+		server.liveActivity.CancelTask(requestID)
+		events := make(chan RealtimeChatEvent)
+		close(events)
+		return events, nil
+	})
+
+	server.handleRealtimeChatStream(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/chat", nil), ChatRequest{RequestID: requestID}, TurnInput{InputText: "我叫啥"})
+
+	state := server.liveActivity.Snapshot(requestID)
+	if state == nil {
+		t.Fatalf("live activity state = nil, want a settled task")
+	}
+	if state.Status != LiveActivityStatusCanceled {
+		t.Fatalf("live activity status = %q, want %q; the stream handler overwrote cancellation", state.Status, LiveActivityStatusCanceled)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestAudioRequestUsesTopLevelFormatFields(t *testing.T) {
@@ -169,5 +170,43 @@ func TestSetPlaybackVolumeRejectsOutOfRange(t *testing.T) {
 		if err := client.SetPlaybackVolume(volume); err == nil {
 			t.Fatalf("expected error for volume %d", volume)
 		}
+	}
+}
+
+// drainRecordChunks bounds shutdown with a two-second budget and passes that
+// deadline to the reader. A reconnect must respect it instead of spending the
+// default five-second dial timeout, which would delay StopRecording.
+func TestAudioRecordChunkReaderReconnectRespectsReadDeadline(t *testing.T) {
+	socketPath := audioTestSocketPath(t)
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer listener.Close()
+
+	dialed := make(chan struct{}, 1)
+	go func() {
+		if conn, err := listener.Accept(); err == nil {
+			_ = conn.Close()
+			dialed <- struct{}{}
+		}
+	}()
+
+	client := NewAudioServiceClient(socketPath)
+	reader, err := client.OpenRecordChunkReader(7)
+	if err != nil {
+		t.Fatalf("open reader: %v", err)
+	}
+	defer reader.Close()
+	// The initial open consumes the accept that the reader's own dial produced.
+	<-dialed
+
+	if err := reader.reconnect(time.Now().Add(-time.Second)); err == nil {
+		t.Fatal("reconnect past an expired deadline = nil, want an error")
+	}
+	select {
+	case <-dialed:
+		t.Fatal("reconnect dialed after the deadline expired, want no dial attempt")
+	case <-time.After(200 * time.Millisecond):
 	}
 }

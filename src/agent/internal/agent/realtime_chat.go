@@ -164,6 +164,12 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 	// Every exit from here must settle the live activity. The stream path used
 	// to leave the task at running/planning when the session failed, so the
 	// device UI showed a request that never finished.
+	//
+	// Cancellation settles the task itself: /api/chat/cancel calls CancelTask
+	// after canceling the run, and runCtx.Done() reaches this handler at the same
+	// time. Settling only the states that are still running keeps a canceled
+	// request canceled instead of overwriting it with failed, and publishing one
+	// terminal update instead of two.
 	finished := false
 	finishTask := func(completed bool, text string) {
 		if finished || s.liveActivity == nil {
@@ -174,7 +180,9 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 			s.liveActivity.CompleteTask(req.RequestID, text)
 			return
 		}
-		s.liveActivity.FailTask(req.RequestID, text)
+		// FailTaskUnlessSettled keeps a task the cancel endpoint already settled as
+		// canceled, and publishes no second terminal update.
+		s.liveActivity.FailTaskUnlessSettled(req.RequestID, text)
 	}
 
 	handler := s.realtimeChatHandlerSnapshot()
