@@ -1,0 +1,194 @@
+name: Agent Experiment
+
+# Manually dispatched comparison of Aiden with external agent harnesses on an
+# existing operation suite. Real-model comparisons are not a merge gate: provider
+# availability, model variability, latency, and cost are external factors.
+on:
+  # TEMPORARY: GitHub dispatches only workflows that exist on the default branch.
+  # This push trigger runs the first experiment from the feature branch; remove it
+  # before merging.
+  push:
+    branches:
+      - feat/benchmark_4_otheragents
+    paths:
+      - .github/workflows/agent-experiment.yml
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Operation suite path
+        required: true
+        default: suites/phone_control_v1.json
+        type: string
+      agents:
+        description: Comma-separated agents; append -raw to an external agent for raw tools
+        required: true
+        default: aiden,pi,openclaw,claude-code,codex
+        type: string
+      repeats:
+        description: Attempts per task and agent
+        required: true
+        default: '1'
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One experiment per branch at a time; the single benchmark runner also
+  # serializes it with scheduled benchmark jobs.
+  group: agent-experiment-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  run:
+    if: ${{ startsWith(github.ref, 'refs/heads/') }}
+    runs-on: aiden-hosted-02
+    timeout-minutes: 720
+    env:
+      DOCKER_BUILDKIT: 1
+      BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
+      BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
+      BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
+      BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+      # External agents use the same model endpoint and key as Aiden.
+      AIDEN_BENCHMARK_PI_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+      BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
+      BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
+      BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
+      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aiden-agent-daemon:local' }}
+      DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn
+      MOBILEGYM_IMAGE: aiden-mobilegym-simulator:py311
+      MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
+      MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
+      RUN_ID: ci-exp-${{ github.run_id }}-${{ github.run_attempt }}
+      # Push runs have no inputs; they use the dispatch defaults.
+      SUITE: ${{ inputs.suite || 'suites/phone_control_v1.json' }}
+      AGENTS: ${{ inputs.agents || 'aiden,pi,openclaw,claude-code,codex' }}
+      REPEATS: ${{ inputs.repeats || '1' }}
+      # Model endpoints and npm are reached through the benchmark proxy; Docker
+      # builds and local endpoints stay direct, as in the benchmark workflow.
+      https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
+      no_proxy: localhost,127.0.0.1,::1,host.docker.internal
+      # Verified external CLI versions; update together with docs and tests.
+      NODE_VERSION: 24.22.1
+      PI_PACKAGE: '@earendil-works/pi-coding-agent@0.85.0'
+      OPENCLAW_PACKAGE: openclaw@2026.10.8
+      CLAUDE_CODE_PACKAGE: '@anthropic-ai/claude-code@2.1.308'
+      CODEX_PACKAGE: '@openai/codex@0.165.0'
+    steps:
+      - name: Reclaim persistent runner workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -n "${GITHUB_WORKSPACE:-}" && -d "$GITHUB_WORKSPACE" ]]; then
+            owner="$(id -u):$(id -g)"
+            if command -v sudo >/dev/null 2>&1; then
+              sudo chown -R "$owner" "$GITHUB_WORKSPACE"
+            elif [[ "$(id -u)" == "0" ]]; then
+              chown -R "$owner" "$GITHUB_WORKSPACE"
+            fi
+          fi
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validate inputs and credentials
+        run: |
+          set -euo pipefail
+          [[ "$REPEATS" =~ ^[1-9][0-9]?$ ]] || { echo "repeats must be 1-99" >&2; exit 1; }
+          missing=()
+          for name in BENCHMARK_AGENT_PROVIDER BENCHMARK_AGENT_MODEL BENCHMARK_AGENT_BASE_URL \
+                      BENCHMARK_AGENT_API_KEY BENCHMARK_JUDGE_API_KEY; do
+            [[ -n "${!name:-}" ]] || missing+=("$name")
+          done
+          if (( ${#missing[@]} )); then
+            echo "Missing benchmark configuration: ${missing[*]}" >&2
+            exit 1
+          fi
+          echo "Agents: $AGENTS"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: benchmark/uv.lock
+      - name: Install Python and benchmark dependencies
+        working-directory: benchmark
+        run: |
+          uv python install 3.12
+          uv sync --frozen --python 3.12
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install external agent CLIs
+        # Installed into the job workspace so runs never reuse or modify a global install.
+        run: |
+          set -euo pipefail
+          prefix="$RUNNER_TEMP/agent-clis"
+          packages=()
+          [[ ",$AGENTS," == *",pi,"* || ",$AGENTS," == *",pi-raw,"* ]] && packages+=("$PI_PACKAGE")
+          [[ ",$AGENTS," == *",openclaw"* ]] && packages+=("$OPENCLAW_PACKAGE")
+          [[ ",$AGENTS," == *",claude-code"* ]] && packages+=("$CLAUDE_CODE_PACKAGE")
+          [[ ",$AGENTS," == *",codex"* ]] && packages+=("$CODEX_PACKAGE")
+          if (( ${#packages[@]} == 0 )); then
+            echo "No external agents selected"
+            exit 0
+          fi
+          npm install --global --prefix "$prefix" --no-fund --no-audit "${packages[@]}"
+          bin="$prefix/bin"
+          {
+            echo "AIDEN_BENCHMARK_PI_EXECUTABLE=$bin/pi"
+            echo "AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE=$bin/openclaw"
+            echo "AIDEN_BENCHMARK_OPENCLAW_NODE=$(command -v node)"
+            echo "AIDEN_BENCHMARK_CLAUDE_CODE_EXECUTABLE=$bin/claude"
+            echo "AIDEN_BENCHMARK_CODEX_EXECUTABLE=$bin/codex"
+          } >> "$GITHUB_ENV"
+          for tool in pi openclaw claude codex; do
+            [[ -x "$bin/$tool" ]] && echo "$tool $("$bin/$tool" --version 2>&1 | head -1)"
+          done
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker
+      - name: Prepare benchmark images
+        working-directory: benchmark
+        run: >-
+          uv run python -m ci.prepare_images
+          --matrix-json '{"include":[{"environment":"mobilegym"}]}'
+          --daemon-image "$DAEMON_IMAGE"
+          --daemon-dockerfile "$DAEMON_DOCKERFILE"
+          --mobilegym-image "$MOBILEGYM_IMAGE"
+          --mobilegym-log "runs/$RUN_ID/mobilegym-image.log"
+      - name: Run agent experiment
+        working-directory: benchmark
+        run: >-
+          uv run python -m ci.run_experiment
+          --suite "$SUITE"
+          --agents "$AGENTS"
+          --repeats "$REPEATS"
+          --runs-dir "runs/$RUN_ID"
+          --run-id "$RUN_ID"
+          --daemon-image "$DAEMON_IMAGE"
+          --mobilegym-image "$MOBILEGYM_IMAGE"
+      - name: Upload experiment reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-experiment-${{ github.run_id }}-${{ github.run_attempt }}
+          # Reports, results, and evidence only; generated agent configuration is excluded.
+          path: |
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/manifest.json
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/comparison.json
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/report.html
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/setup.log
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/results.jsonl
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/report.html
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Clean up experiment services
+        if: ${{ always() }}
+        run: |
+          set -uo pipefail
+          for id in $(docker ps -aq --filter "name=aiden-mobilegym-env-mobilegym-$RUN_ID"); do
+            docker rm -f "$id" >/dev/null 2>&1 || true
+          done
+          for id in $(docker ps -aq --filter "name=aiden-benchmark-agent-experiment-"); do
+            docker rm -f "$id" >/dev/null 2>&1 || true
+          done
