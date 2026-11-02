@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -242,6 +243,29 @@ func TestRuntimeOnRunCompleteRunsWhileTheRunOwnsTheGate(t *testing.T) {
 	}
 	if len(turn) == 0 || turn[0].Type != "user" || !strings.Contains(turn[0].Content, "which turn is this") {
 		t.Fatalf("turn captured in OnRunComplete = %#v, want this run's turn", turn)
+	}
+}
+
+func TestRealtimeChatStreamMarksLiveActivityFailedOnError(t *testing.T) {
+	server := &Server{logger: newTestLogger(), runtime: newHistoryPageTestServer(t, 0).runtime}
+	server.liveActivity = NewLiveActivityManager(LiveActivityConfig{}, "en-US", newTestLogger())
+	server.SetRealtimeChatHandler(func(context.Context, RealtimeChatRequest) (<-chan RealtimeChatEvent, error) {
+		return nil, errors.New("connect realtime voice model: context deadline exceeded")
+	})
+
+	const requestID = "realtime-stream-failure"
+	rec := httptest.NewRecorder()
+	server.handleRealtimeChatStream(rec, httptest.NewRequest(http.MethodPost, "/api/chat", nil), ChatRequest{RequestID: requestID}, TurnInput{InputText: "我叫啥"})
+
+	state := server.liveActivity.Snapshot(requestID)
+	if state == nil {
+		t.Fatalf("live activity state = nil, want a failed task")
+	}
+	if state.Status != LiveActivityStatusFailed {
+		t.Fatalf("live activity status = %q, want %q", state.Status, LiveActivityStatusFailed)
+	}
+	if state.EndedAt == nil || state.ShowsProgress {
+		t.Fatalf("live activity = %#v, want a finished task without progress", state)
 	}
 }
 

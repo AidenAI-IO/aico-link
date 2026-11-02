@@ -161,13 +161,31 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 		s.liveActivity.StartTask(req.RequestID, input.InputText, s.liveActivityPhoneID(req))
 	}
 
+	// Every exit from here must settle the live activity. The stream path used
+	// to leave the task at running/planning when the session failed, so the
+	// device UI showed a request that never finished.
+	finished := false
+	finishTask := func(completed bool, text string) {
+		if finished || s.liveActivity == nil {
+			return
+		}
+		finished = true
+		if completed {
+			s.liveActivity.CompleteTask(req.RequestID, text)
+			return
+		}
+		s.liveActivity.FailTask(req.RequestID, text)
+	}
+
 	handler := s.realtimeChatHandlerSnapshot()
 	if handler == nil {
+		finishTask(false, "realtime voice session is unavailable")
 		stream.Write(ChatStreamEvent{Type: RealtimeChatEventError, RequestID: req.RequestID, EpisodeID: episodeID, Error: "realtime voice session is unavailable", History: s.webHistoryTurnSnapshot()})
 		return
 	}
 	events, err := handler(runCtx, RealtimeChatRequest{RequestID: req.RequestID, Message: input.InputText})
 	if err != nil {
+		finishTask(false, err.Error())
 		stream.Write(ChatStreamEvent{Type: RealtimeChatEventError, RequestID: req.RequestID, EpisodeID: episodeID, Error: err.Error(), History: s.webHistoryTurnSnapshot()})
 		return
 	}
@@ -176,10 +194,12 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 	for {
 		select {
 		case <-runCtx.Done():
+			finishTask(false, "request canceled")
 			stream.Write(ChatStreamEvent{Type: RealtimeChatEventError, RequestID: req.RequestID, EpisodeID: episodeID, Error: "request canceled", History: s.webHistoryTurnSnapshot()})
 			return
 		case event, ok := <-events:
 			if !ok {
+				finishTask(false, "realtime chat ended without a response")
 				stream.Write(ChatStreamEvent{Type: RealtimeChatEventError, RequestID: req.RequestID, EpisodeID: episodeID, Error: "realtime chat ended without a response", History: s.webHistoryTurnSnapshot()})
 				return
 			}
@@ -205,15 +225,15 @@ func (s *Server) handleRealtimeChatStream(w http.ResponseWriter, r *http.Request
 				}
 				if normalized, ok := s.publishMessage(assistant); ok {
 					history := s.webHistoryTurnSnapshot()
-					if s.liveActivity != nil {
-						s.liveActivity.CompleteTask(req.RequestID, normalized.Content)
-					}
+					finishTask(true, normalized.Content)
 					stream.Write(ChatStreamEvent{Type: "done", RequestID: req.RequestID, EpisodeID: episodeID, Response: normalized.Content, History: history})
 				} else {
+					finishTask(true, response.String())
 					stream.Write(ChatStreamEvent{Type: "done", RequestID: req.RequestID, EpisodeID: episodeID, Response: response.String(), History: s.webHistoryTurnSnapshot()})
 				}
 				return
 			case RealtimeChatEventError:
+				finishTask(false, event.Error)
 				stream.Write(ChatStreamEvent{Type: RealtimeChatEventError, RequestID: req.RequestID, EpisodeID: episodeID, Error: event.Error, History: s.webHistoryTurnSnapshot()})
 				return
 			}

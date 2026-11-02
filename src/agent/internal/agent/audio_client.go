@@ -97,8 +97,11 @@ func NewAudioServiceClient(socketPath string) *AudioServiceClient {
 }
 
 // AudioRecordChunkReader reuses one Unix socket for a recording session's
-// long-poll chunk reads.
+// long-poll chunk reads. audio_service reaps a client connection that stays
+// idle for a few seconds, so the reader reconnects instead of failing the
+// whole session when the service has dropped the socket.
 type AudioRecordChunkReader struct {
+	client    *AudioServiceClient
 	conn      net.Conn
 	sessionID uint64
 }
@@ -108,7 +111,7 @@ func (c *AudioServiceClient) OpenRecordChunkReader(sessionID uint64) (*AudioReco
 	if err != nil {
 		return nil, fmt.Errorf("dial: %w", err)
 	}
-	return &AudioRecordChunkReader{conn: conn, sessionID: sessionID}, nil
+	return &AudioRecordChunkReader{client: c, conn: conn, sessionID: sessionID}, nil
 }
 
 func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, error) {
@@ -116,6 +119,38 @@ func (r *AudioRecordChunkReader) Read(timeoutMs uint32) (*AudioChunkResult, erro
 }
 
 func (r *AudioRecordChunkReader) readUntil(timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
+	chunk, readErr := r.readOnce(timeoutMs, deadline)
+	if readErr == nil || !isTransientAudioServiceError(readErr) {
+		return chunk, readErr
+	}
+	// The service drops client connections it considers idle. The recording
+	// session itself is unaffected, so reconnect once and retry this read
+	// before letting the caller tear down the conversation. A chunk the lost
+	// connection had already produced stays with the discarded socket, so at
+	// most one chunk is skipped per reconnect.
+	if err := r.reconnect(); err != nil {
+		return nil, fmt.Errorf("%w (reconnect: %v)", readErr, err)
+	}
+	return r.readOnce(timeoutMs, deadline)
+}
+
+func (r *AudioRecordChunkReader) reconnect() error {
+	if r == nil || r.client == nil {
+		return fmt.Errorf("record chunk reader has no audio service client")
+	}
+	if r.conn != nil {
+		_ = r.conn.Close()
+		r.conn = nil
+	}
+	conn, err := net.DialTimeout("unix", r.client.socketPath, 5*time.Second)
+	if err != nil {
+		return fmt.Errorf("dial: %w", err)
+	}
+	r.conn = conn
+	return nil
+}
+
+func (r *AudioRecordChunkReader) readOnce(timeoutMs uint32, deadline time.Time) (*AudioChunkResult, error) {
 	if r == nil || r.conn == nil {
 		return nil, fmt.Errorf("record chunk reader is closed")
 	}
