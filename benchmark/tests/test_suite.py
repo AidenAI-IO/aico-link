@@ -286,8 +286,9 @@ def test_mobilegym_touch_suite_starts_in_target_app_and_checks_outcome():
         "stopwatch_two_laps",
     }
     for task in suite.tasks:
-        assert task.foreground_app_id in task.app_ids
-        assert task.environment_assertions["route.app"] == task.foreground_app_id
+        assert task.environment_assertions["route.app"] in task.app_ids
+        if task.foreground_app_id is not None:
+            assert task.environment_assertions["route.app"] == task.foreground_app_id
         assert task.hard_assertions.required_tools == ["touch_gesture"]
         assert task.rubric and all(item.check for item in task.rubric)
         if task.foreground_app_id == "calculator2":

@@ -97,7 +97,7 @@
       "foreground_app_id": "contacts",
       "environment_assertions": {
         "route.app": "contacts",
-        "route.path": "/"
+        "route.path": "/?dialpad=true"
       },
       "repeats": 1
     },
@@ -131,15 +131,15 @@
       "foreground_app_id": "contacts",
       "environment_assertions": {
         "route.app": "contacts",
-        "route.path": "/"
+        "route.path": "/?dialpad=true"
       },
       "repeats": 1
     },
     {
       "id": "stopwatch_two_laps",
       "category": "device_operation",
-      "prompt": "打开秒表，开始计时，记两次计次，然后暂停，告诉我两次计次各是多少。",
-      "description_for_judge": "The Clock app is already open. The agent switches to the stopwatch, starts it, records two laps while the time display keeps changing, pauses it, and reports both lap times shown on screen.",
+      "prompt": "打开时钟的秒表，开始计时，记两次计次，然后暂停，告诉我两次计次各是多少。",
+      "description_for_judge": "The agent opens the Clock app from the home screen, switches to the stopwatch, starts it, records two laps while the time display keeps changing, pauses it, and reports both lap times shown on screen.",
       "rubric": [
         {
           "id": "paused_with_two_laps",
@@ -161,7 +161,6 @@
       "app_ids": [
         "clock"
       ],
-      "foreground_app_id": "clock",
       "environment_assertions": {
         "route.app": "clock",
         "route.path": "/stopwatch"

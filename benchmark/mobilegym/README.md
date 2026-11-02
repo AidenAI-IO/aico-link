@@ -147,7 +147,10 @@ built-in apps: repeated presses of the same key whose visible effect is one
 character (Calculator 2 and the Phone dial pad), repeated delete presses, and
 recording stopwatch laps while the time display keeps changing. Calculator
 results are checked through `/state`; dial-pad digits and stopwatch laps live
-in page-local UI state, so those tasks are judged from the post-screenshot.
+in page-local UI state, so those tasks are judged from the post-screenshot. The
+stopwatch task starts from the home screen because opening Clock directly at
+`/` through the foreground setup leaves it on the redirect route, where tab
+transitions are rejected.
 
 ## 🔧 Configuration
 
