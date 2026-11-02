@@ -41,8 +41,12 @@
       "id": "calc_delete_repeated",
       "category": "device_operation",
       "prompt": "在当前的计算器里先输入 30000，再用删除键把末尾的三个 0 删掉，然后乘以 7 并按等号，告诉我结果。",
-      "description_for_judge": "Calculator 2 is already open. The agent types 30000, presses the delete key three times (each press removes one character), enters ×7, presses equals, and reports 210.",
+      "description_for_judge": "Calculator 2 is already open. The agent types 30000, presses the delete key three times (each press removes one character), enters ×7, presses equals, and reports 210. Entering 30×7 directly, or clearing everything and retyping, skips the repeated-delete step this task measures. In Calculator 2 the delete key is the top key of the operator column on the right (normalized x about 700-920, y about 395-510).",
       "rubric": [
+        {
+          "id": "deleted_after_entering_30000",
+          "check": "The tool trace shows the agent first entering five digits for 30000 and then three taps on the delete key (top of the right operator column) before entering ×7. Fail if the agent enters 30 and ×7 without those three deletes in between."
+        },
         {
           "id": "reported_result",
           "check": "The final response states the result 210."
@@ -105,8 +109,12 @@
       "id": "dial_delete_extra_digits",
       "category": "device_operation",
       "prompt": "打开拨号盘，输入 13900007777，然后用删除键删掉最后两位，先不要拨出。",
-      "description_for_judge": "The Phone app is already open on the call log. The agent opens the dial pad, enters 13900007777, then presses delete twice so the number becomes 139000077. Repeated digits and repeated delete presses each change only one character. The agent must not place the call.",
+      "description_for_judge": "The Phone app is already open on the call log. The agent opens the dial pad, enters 13900007777, then presses delete twice so the number becomes 139000077. Repeated digits and repeated delete presses each change only one character. Typing 139000077 directly skips the repeated-delete step this task measures. The dial-pad delete control is the small round icon button at the right end of the number field (normalized x about 815-925, y about 390-440). The agent must not place the call.",
       "rubric": [
+        {
+          "id": "deleted_after_entering_full_number",
+          "check": "The tool trace shows the agent entering all eleven digits of 13900007777 and then two taps on the dial-pad delete control at the right end of the number field. Fail if the agent types 139000077 directly without entering the two trailing digits and deleting them."
+        },
         {
           "id": "dialed_exact_number",
           "check": "The post-screenshot shows the Phone dial pad with exactly 139000077 in the number field: no missing, extra, or reordered digits."
