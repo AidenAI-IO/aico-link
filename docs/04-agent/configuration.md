@@ -574,9 +574,9 @@ model to judge from its screenshot. A UI action (tap, swipe, key press, text
 entry, app launch) counts toward a loop only when it repeats the previous UI
 action exactly and leaves the screen identical to what that action left, with
 no progress-grid block changed. Tools called in between, such as `screenshot`
-or `shell`, neither hide nor reset that count. The second such repeat adds a
-notice telling the model not to repeat it again, and `repeat_action_limit`
-ends the run. A different action on an unchanged screen, or a repeated action
+or `shell`, neither hide nor reset that count. The second identical UI action
+adds a notice telling the model not to repeat it again, and the identical UI
+action that reaches `repeat_action_limit` (the third, by default) ends the run. A different action on an unchanged screen, or a repeated action
 that keeps changing the screen, is never counted, and the guard never blocks a
 tool; a loop on a screen that keeps moving is left to `max_iterations` and
 `max_seconds`.
