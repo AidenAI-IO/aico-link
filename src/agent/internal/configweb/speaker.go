@@ -1,6 +1,7 @@
 package configweb
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -8,6 +9,9 @@ import (
 	"strings"
 	"time"
 )
+
+// Keep in sync with agent.speakerEnrollMaxBodyBytes (16s PCM16 mono @ 16 kHz).
+const speakerProxyMaxUploadBytes = 16 * 16000 * 2
 
 // handleSpeakerProxy forwards Classic speaker-gate management to the Agent.
 // Browser clients talk to Config Web only; the Agent owns capture, embeddings,
@@ -41,7 +45,16 @@ func (s *Server) handleSpeakerProxy(w http.ResponseWriter, r *http.Request) {
 
 	var body io.Reader
 	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
-		body = io.LimitReader(r.Body, maxRequestBodySize+1)
+		upload, readErr := io.ReadAll(io.LimitReader(r.Body, speakerProxyMaxUploadBytes+1))
+		if readErr != nil {
+			writeJSONError(w, http.StatusBadRequest, "read speaker upload: "+readErr.Error())
+			return
+		}
+		if len(upload) > speakerProxyMaxUploadBytes {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "speaker upload exceeds 16s PCM16 limit")
+			return
+		}
+		body = bytes.NewReader(upload)
 	}
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), body)
 	if err != nil {

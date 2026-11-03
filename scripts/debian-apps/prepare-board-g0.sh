@@ -24,6 +24,8 @@ readonly MODEL_SMART_TURN_SHA256=160347b0f11db81b786fbd637d74089a8f51103adae0bfd
 readonly MODEL_SPEAKER_BACKBONE_SHA256=f54ea8473ceccdc92d05f7bff67186ee57c25b74193a5b6ce0b0871c2fb8ad86
 readonly MODEL_SPEAKER_TAIL_SHA256=4462f8f9a3780745fd2926f48e54da036276c91c509bfeef8c76ecaa7329b863
 readonly REMOTE_RUNNER=${SCRIPT_DIR}/board-g0-remote.sh
+# Default install root used by scripts/debian-apps/run-board-g0.sh.
+readonly G0_REMOTE_DIR=/home/aico/debian-apps-g0
 
 readonly -a APP_PAYLOAD=(
     bin/aico-environment
@@ -58,8 +60,9 @@ Usage: scripts/debian-apps/prepare-board-g0.sh [bundle|verify]
 Create or verify the non-destructive apps-stage physical-board G0 payload. This
 script never contacts a board. The bundle contains the audited Debian/glibc
 C/C++ executables, RGA, the statically linked official RKNN mini runtime, the
-pinned VAD / Smart Turn / ERes2Net speaker model files, and the system
-media-module loader.
+pinned VAD / Smart Turn / ERes2Net speaker model files, the system
+media-module loader, and agent-speaker-paths.toml for Classic speaker-gate
+testing against the default /home/aico/debian-apps-g0 install root.
 
 Environment:
   DEBIAN_APPS_OUTPUT_DIR     apps-stage build output.
@@ -134,7 +137,20 @@ write_bundle_metadata() {
         printf 'smart_turn_model_sha256=%s\n' "${MODEL_SMART_TURN_SHA256}"
         printf 'speaker_backbone_sha256=%s\n' "${MODEL_SPEAKER_BACKBONE_SHA256}"
         printf 'speaker_tail_sha256=%s\n' "${MODEL_SPEAKER_TAIL_SHA256}"
+        printf 'voice_speaker_tools_dir=%s/bin\n' "${G0_REMOTE_DIR}"
+        printf 'voice_speaker_model_dir=%s/model\n' "${G0_REMOTE_DIR}"
     } >"${root}/bundle-metadata.txt"
+}
+
+write_speaker_agent_paths() {
+    local root=$1
+    {
+        printf '# Classic speaker-gate paths for this G0 bundle.\n'
+        printf '# run-board-g0.sh installs under %s, not /usr/lib/aico.\n' "${G0_REMOTE_DIR}"
+        printf '# Merge these keys into /userdata/agent/agent.toml before enabling the gate.\n'
+        printf 'voice_speaker_tools_dir = "%s/bin"\n' "${G0_REMOTE_DIR}"
+        printf 'voice_speaker_model_dir = "%s/model"\n' "${G0_REMOTE_DIR}"
+    } >"${root}/agent-speaker-paths.toml"
 }
 
 write_payload_manifest() {
@@ -187,6 +203,7 @@ run_bundle() {
     cp -a "${AUDIT_DIR}/summary.txt" "${payload_root}/audit/"
     cp -a "${AUDIT_DIR}/elf-audit.tsv" "${payload_root}/audit/"
     write_bundle_metadata "${payload_root}"
+    write_speaker_agent_paths "${payload_root}"
     write_payload_manifest "${payload_root}"
 
     chmod 0755 "${payload_root}/aico-media-modules" \

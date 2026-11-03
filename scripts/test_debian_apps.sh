@@ -482,6 +482,12 @@ DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null
 [ -s "${bundle_dir}/debian-apps-g0.tar.gz" ] || fail "G0 bundle was not created"
+speaker_paths=$(tar -xOf "${bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/agent-speaker-paths.toml) ||
+    fail "G0 bundle missing agent-speaker-paths.toml"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_tools_dir = "/home/aico/debian-apps-g0/bin"' ||
+    fail "G0 speaker tools dir snippet is wrong"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/home/aico/debian-apps-g0/model"' ||
+    fail "G0 speaker model dir snippet is wrong"
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" verify >/dev/null

@@ -1,6 +1,7 @@
 package configweb
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +62,42 @@ func TestSpeakerProxyForwardsStatusProfilesAndCapture(t *testing.T) {
 
 	if statusCalls.Load() != 1 || captureCalls.Load() != 1 || deleteCalls.Load() != 1 {
 		t.Fatalf("calls status=%d capture=%d delete=%d", statusCalls.Load(), captureCalls.Load(), deleteCalls.Load())
+	}
+}
+
+func TestSpeakerProxyForwardsLargeEnrollUpload(t *testing.T) {
+	const uploadBytes = 128 * 1024 // above the generic 64 KiB API body cap
+	var gotLen atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/speaker/enroll" {
+			t.Fatalf("unexpected upstream %s %s", r.Method, r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read upstream body: %v", err)
+		}
+		gotLen.Store(int64(len(body)))
+		writeJSON(w, http.StatusOK, map[string]any{"id": "owner", "status": "enrolled"})
+	}))
+	defer upstream.Close()
+
+	options := testOptions(t)
+	options.AgentHTTPBaseURL = upstream.URL
+	server, err := NewServer(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload := bytes.Repeat([]byte{0x01, 0x00}, uploadBytes/2)
+	req := httptest.NewRequest(http.MethodPost, "/api/speaker/enroll?id=owner", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	resp := httptest.NewRecorder()
+	server.APIHandler().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if gotLen.Load() != int64(uploadBytes) {
+		t.Fatalf("upstream body len=%d, want %d (must not truncate at 64KiB)", gotLen.Load(), uploadBytes)
 	}
 }
 
