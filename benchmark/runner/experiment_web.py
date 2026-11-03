@@ -3,8 +3,52 @@ from __future__ import annotations
 
 import ipaddress
 from http import HTTPStatus
+from urllib.parse import urlsplit
 from runner.experiment import SAFE_ID
 from runner.harnesses import HARNESSES
+
+
+def _is_loopback(address: str) -> bool:
+    address = ipaddress.ip_address(address.split("%", 1)[0])
+    mapped = getattr(address, "ipv4_mapped", None)
+    return address.is_loopback or bool(mapped and mapped.is_loopback)
+
+
+def _local_origin(value: str) -> tuple[str, str, int]:
+    if any(ord(char) <= 32 or ord(char) == 127 or char in "\\?#%" for char in value):
+        raise ValueError("Invalid local origin")
+    url = urlsplit(value)
+    if (url.scheme not in {"http", "https"} or not url.hostname or url.username is not None
+            or url.path or url.query or url.fragment or url.netloc.endswith(":")):
+        raise ValueError("Invalid local origin")
+    if url.hostname != "localhost" and not _is_loopback(url.hostname):
+        raise ValueError("Host must be localhost or a loopback IP address")
+    port = url.port
+    if port == 0:
+        raise ValueError("Invalid local port")
+    authority = f"[{url.hostname}]" if ":" in url.hostname else url.hostname
+    if url.netloc.lower() not in {authority, f"{authority}:{port}"}:
+        raise ValueError("Invalid local authority")
+    return url.scheme, url.hostname, port or (443 if url.scheme == "https" else 80)
+
+
+def _require_local_request(handler, action: str) -> bool:
+    """Allow local CLI requests and same-origin browsers, including IPv6."""
+    try:
+        if not _is_loopback(str(handler.client_address[0])):
+            raise ValueError("Remote connection")
+        hosts = handler.headers.get_all("Host", [])
+        origins = handler.headers.get_all("Origin", [])
+        if len(hosts) != 1 or len(origins) > 1:
+            raise ValueError("Missing or duplicate request origin")
+        local = _local_origin("http://" + hosts[0])
+        if origins and _local_origin(origins[0]) != local:
+            raise ValueError("Cross-origin request")
+    except ValueError:
+        handler._send_json({"error": f"{action} requires a local connection with a loopback Host and matching Origin"},
+                           status=HTTPStatus.FORBIDDEN)
+        return False
+    return True
 
 
 def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool:
@@ -15,10 +59,7 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
     if path == "/api/experiments/settings":
         try:
             if post:
-                address = ipaddress.ip_address(str(handler.client_address[0]).split("%", 1)[0])
-                mapped = getattr(address, "ipv4_mapped", None)
-                if not (address.is_loopback or (mapped and mapped.is_loopback)):
-                    handler._send_json({"error": "Experiment settings can only be saved from a local connection"}, status=HTTPStatus.FORBIDDEN)
+                if not _require_local_request(handler, "Saving experiment settings"):
                     return True
                 settings = manager.save_settings(handler._read_json())
             else:
@@ -31,16 +72,13 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
         try:
             if post:
                 payload = handler._read_json()
-                if any(isinstance(agent, dict) and getattr(HARNESSES.get(agent.get("kind")), "external", False)
-                       for agent in payload.get("agents", [])):
-                    remote = str(handler.client_address[0]).split("%", 1)[0]
-                    address = ipaddress.ip_address(remote)
-                    mapped = getattr(address, "ipv4_mapped", None)
-                    if not (address.is_loopback or (mapped is not None and mapped.is_loopback)):
-                        handler._send_json(
-                            {"error": "External agent experiments can only be started from a local connection"},
-                            status=HTTPStatus.FORBIDDEN,
-                        )
+                agents = payload.get("agents")
+                if not isinstance(agents, list) or not 1 <= len(agents) <= 8:
+                    raise ValueError("agents must contain between 1 and 8 configurations")
+                if any(not isinstance(agent, dict) or not isinstance(agent.get("kind"), str) for agent in agents):
+                    raise ValueError("Each agent must be an object with a string kind")
+                if any(getattr(HARNESSES.get(agent["kind"].strip()), "external", False) for agent in agents):
+                    if not _require_local_request(handler, "Starting external agent experiments"):
                         return True
                 environment_id = str(payload.pop("environment_id", "") or "").strip()
                 if environment_id:
@@ -64,11 +102,7 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
     if path.startswith("/api/experiments/") and post:
         parts = path.strip("/").split("/")
         if len(parts) == 4 and parts[3] == "rejudge":
-            remote = ipaddress.ip_address(str(handler.client_address[0]).split("%", 1)[0])
-            mapped = getattr(remote, "ipv4_mapped", None)
-            if not (remote.is_loopback or (mapped is not None and mapped.is_loopback)):
-                handler._send_json({"error": "Judge retry can only be started from a local connection"},
-                                   status=HTTPStatus.FORBIDDEN)
+            if not _require_local_request(handler, "Judge retry"):
                 return True
             try:
                 handler._send_json(manager.retry_judge(parts[2]), status=HTTPStatus.ACCEPTED)

@@ -493,14 +493,11 @@ def _build_task_units(
     args: argparse.Namespace,
     suite: Suite,
     target_platform: str,
+    environment_health: dict | None = None,
 ) -> list[TaskRunUnit]:
     units: list[TaskRunUnit] = []
     uses_mock_environment = _suite_has_mock_environment(suite)
-    bridge_type = ""
-    if any(task.environment_bridge_types for task in suite.tasks):
-        environment_url = str(getattr(args, "environment_url", "") or "").strip()
-        if environment_url and not uses_mock_environment:
-            bridge_type = str(_read_environment_health(environment_url).get("bridge_type") or "")
+    bridge_type = str((environment_health or {}).get("bridge_type") or "") if not uses_mock_environment else ""
     for task in suite.tasks:
         repeats = _task_repeats(args, task)
         task_target_platform = target_platform
@@ -576,6 +573,7 @@ def _cmd_run_auto_agent_setup(
     target_platform: str,
     run_id: str,
     run_dir: Path,
+    environment_health: dict | None = None,
 ) -> int:
     mock_server = None
     if _suite_has_mock_environment(suite):
@@ -613,6 +611,7 @@ def _cmd_run_auto_agent_setup(
             run_id,
             run_dir,
             mock_server=mock_server,
+            environment_health=environment_health,
         )
     finally:
         if mock_server is not None:
@@ -627,6 +626,7 @@ def _cmd_run_auto_agent_setup_inner(
     run_id: str,
     run_dir: Path,
     mock_server=None,
+    environment_health: dict | None = None,
 ) -> int:
     if args.repeats is not None and args.repeats <= 0:
         print(f"Error: --repeats must be positive, got {args.repeats}", file=sys.stderr)
@@ -659,7 +659,7 @@ def _cmd_run_auto_agent_setup_inner(
     workers_dir.mkdir(parents=True, exist_ok=True)
     setup_log = run_dir / "auto-agent-setup.log"
 
-    units = _build_task_units(args, suite, target_platform)
+    units = _build_task_units(args, suite, target_platform, environment_health)
     mock_platform_fallback = target_platform
     if not mock_platform_fallback and suite.mock_environment is not None:
         mock_platform_fallback = suite.mock_environment.platform.value
@@ -1123,8 +1123,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             target_platform,
             run_id,
             run_dir,
+            environment_health=environment_health,
         )
-    units = _build_task_units(args, suite, target_platform)
+    units = _build_task_units(args, suite, target_platform, environment_health)
     has_runnable_units = any(not unit.skip_reason for unit in units)
     if args.environment_url:
         clear_stale_adb_android_owner(args.environment_url)
@@ -1152,7 +1153,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
     if not args.environment_url:
         target_platform = daemon_platform.value
-        units = _build_task_units(args, suite, target_platform)
+        units = _build_task_units(args, suite, target_platform, environment_health)
         has_runnable_units = any(not unit.skip_reason for unit in units)
     if (
         has_runnable_units

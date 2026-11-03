@@ -187,14 +187,19 @@ def test_custom_endpoint_missing_key_does_not_start_pi(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("mode", ["success", "timeout", "runner_deadline", "cancel", "startup_error"])
-def test_aiden_owned_daemon_always_stops_and_episode_is_retained(tmp_path, monkeypatch, mode):
+@pytest.mark.parametrize("scope", ["", "ci-exp-123-1"])
+def test_aiden_owned_daemon_always_stops_and_episode_is_retained(tmp_path, monkeypatch, mode, scope):
     import time
     from runner import harness, webui
     from runner.agent_client import ChatResponse, AgentTimeoutError
     stop = threading.Event()
     lifecycle = []
+    monkeypatch.setenv("AICO_BENCHMARK_EXPERIMENT_RUN_ID", scope)
     monkeypatch.setattr(webui, "prepare_run_config", lambda *args, **kwargs: None)
-    def start(*args, **kwargs):
+    def start(job, **kwargs):
+        prefix = f"aico-benchmark-agent-experiment-{scope}-" if scope else "aico-benchmark-agent-experiment-"
+        assert webui.daemon_compose_project(job).startswith(prefix)
+        assert len(webui.daemon_compose_project(job).removeprefix(prefix)) == 16
         lifecycle.append("start")
         if mode == "startup_error":
             raise RuntimeError("startup failed")
@@ -239,6 +244,13 @@ def test_aiden_owned_daemon_always_stops_and_episode_is_retained(tmp_path, monke
             assert result.history[0]["content"] == "partial"
             assert json.loads((tmp_path / "artifacts/native-history.json").read_text()) == result.history
     assert lifecycle.count("start") == lifecycle.count("stop") == 1
+
+
+@pytest.mark.parametrize("scope", ["../other", "ci.*", "ci_exp_123", "x" * 81])
+def test_aiden_rejects_invalid_container_scope(tmp_path, monkeypatch, scope):
+    monkeypatch.setenv("AICO_BENCHMARK_EXPERIMENT_RUN_ID", scope)
+    with pytest.raises(ValueError, match="EXPERIMENT_RUN_ID"):
+        AidenAdapter(image="digest", prepared_config=tmp_path)
 
 
 def test_pi_operations_use_daemon_tools_without_delegating_to_aiden_chat(tmp_path, monkeypatch):

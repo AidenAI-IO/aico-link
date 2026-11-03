@@ -116,6 +116,7 @@ def cli(argv: list[str] | None = None) -> int:
              "--judge-model", os.environ["BENCHMARK_JUDGE_MODEL"],
              "--judge-base-url", os.environ["BENCHMARK_JUDGE_BASE_URL"]],
             cwd=BENCHMARK_ROOT,
+            env={**os.environ, "AICO_BENCHMARK_EXPERIMENT_RUN_ID": args.run_id},
         ).returncode
     finally:
         subprocess.run(["docker", "rm", "-f", environment["container_name"]], capture_output=True)

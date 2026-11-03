@@ -759,6 +759,10 @@ class AidenAdapter:
 
     def __init__(self, *, image: str, prepared_config: Path, ready_timeout: int = 90):
         self.image, self.prepared_config, self.ready_timeout = image, prepared_config, ready_timeout
+        scope = os.environ.get("AICO_BENCHMARK_EXPERIMENT_RUN_ID", "")
+        if scope and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", scope):
+            raise ValueError("Invalid AICO_BENCHMARK_EXPERIMENT_RUN_ID")
+        self.job_prefix = f"experiment-{scope}-" if scope else "experiment-"
 
     def execute(self, prompt: str, timeout: int, artifacts: Path, stop: threading.Event,
                 *, environment_url: str = "", benchmark_task_id: str = "",
@@ -772,7 +776,7 @@ class AidenAdapter:
         with tempfile.TemporaryDirectory(prefix="aiden-experiment-") as scratch:
             config = Path(scratch) / "config"
             prepare_run_config(self.prepared_config, config)
-            job = Job(id=f"experiment-{uuid.uuid4().hex[:16]}", endpoint="", docker_endpoint="", suites=[])
+            job = Job(id=f"{self.job_prefix}{uuid.uuid4().hex[:16]}", endpoint="", docker_endpoint="", suites=[])
             client = None
             worker = None
             result = Execution()

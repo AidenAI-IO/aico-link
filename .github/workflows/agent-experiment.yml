@@ -117,14 +117,21 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
       - name: Install external agent CLIs
         # Installed into the job workspace so runs never reuse or modify a global install.
+        working-directory: benchmark
         run: |
           set -euo pipefail
           prefix="$RUNNER_TEMP/agent-clis"
+          selected=$(uv run python -c '
+          import os
+          from ci.run_experiment import agent_configs
+          agents = agent_configs(os.environ["AGENTS"], provider="", model="", base_url="")
+          print(",".join(dict.fromkeys(agent["kind"] for agent in agents)))
+          ')
           packages=()
-          [[ ",$AGENTS," == *",pi,"* || ",$AGENTS," == *",pi-raw,"* ]] && packages+=("$PI_PACKAGE")
-          [[ ",$AGENTS," == *",openclaw"* ]] && packages+=("$OPENCLAW_PACKAGE")
-          [[ ",$AGENTS," == *",claude-code"* ]] && packages+=("$CLAUDE_CODE_PACKAGE")
-          [[ ",$AGENTS," == *",codex"* ]] && packages+=("$CODEX_PACKAGE")
+          [[ ",$selected," == *",pi,"* ]] && packages+=("$PI_PACKAGE")
+          [[ ",$selected," == *",openclaw,"* ]] && packages+=("$OPENCLAW_PACKAGE")
+          [[ ",$selected," == *",claude-code,"* ]] && packages+=("$CLAUDE_CODE_PACKAGE")
+          [[ ",$selected," == *",codex,"* ]] && packages+=("$CODEX_PACKAGE")
           if (( ${#packages[@]} == 0 )); then
             echo "No external agents selected"
             exit 0
@@ -176,13 +183,16 @@ jobs:
           # Reports, results, and evidence only; generated agent configuration is excluded.
           path: |
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/manifest.json
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/suite.json
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/comparison.json
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/report.html
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/setup.log
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/results.jsonl
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/manifest.json
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/report.html
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/tasks/*/*/native-events.jsonl
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/tasks/*/*/native-output.json
+            benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/tasks/*/*/tool-audit.jsonl
             benchmark/runs/${{ env.RUN_ID }}/experiments/*/runs/*/tasks/*/*/stderr.log
           if-no-files-found: warn
           retention-days: 30
@@ -190,9 +200,9 @@ jobs:
         if: ${{ always() }}
         run: |
           set -uo pipefail
-          for id in $(docker ps -aq --filter "name=aico-mobilegym-env-mobilegym-$RUN_ID"); do
+          for id in $(docker ps -aq --filter "name=^/aico-mobilegym-env-mobilegym-${RUN_ID}$"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done
-          for id in $(docker ps -aq --filter "name=aico-benchmark-agent-experiment-"); do
+          for id in $(docker ps -aq --filter "name=^/aico-benchmark-agent-experiment-${RUN_ID}-[0-9a-f]+-daemon-[0-9]+$"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done

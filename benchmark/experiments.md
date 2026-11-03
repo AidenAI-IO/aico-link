@@ -5,6 +5,11 @@ Claude Code, and Codex runs.
 Use **Agent experiments** in the WebUI header, or open `/experiments`. Existing
 device benchmark jobs and Aiden regression suites keep their existing workflow.
 
+Saving model settings, starting external agents, and retrying Judge require a
+local connection. Open the WebUI through `localhost` or a loopback IP address;
+browser requests must have the same origin as the WebUI. Local CLI HTTP clients
+may omit `Origin`, but must still send a loopback `Host`.
+
 ## Existing suite comparison
 
 Experiments reuse the existing suite files without copying or weakening tasks.
@@ -483,4 +488,7 @@ benchmark model (`BENCHMARK_AGENT_PROVIDER`, `BENCHMARK_AGENT_MODEL`,
 `BENCHMARK_AGENT_BASE_URL`, and `BENCHMARK_AGENT_API_KEY`), and the Judge uses
 the benchmark Judge settings. Claude Code and Codex need an endpoint and model
 that serve their protocols. The job summary shows per-agent results and matched
-pairs; reports and results are uploaded as an artifact.
+pairs; reports, results, frozen suites, per-agent manifests, and tool audits are
+uploaded as an artifact. Generated runtime configurations are excluded.
+The CI driver scopes daemon names with its run ID, including preparer daemons,
+so cancellation cleanup only removes services belonging to that workflow run.

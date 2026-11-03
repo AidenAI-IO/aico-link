@@ -33,9 +33,9 @@ def experiment_server(tmp_path, monkeypatch):
         thread.join(timeout=3)
 
 
-def request(base, path, payload=None):
+def request(base, path, payload=None, *, headers=None):
     data = json.dumps(payload).encode() if payload is not None else None
-    with urllib.request.urlopen(urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json"}), timeout=10) as response:
+    with urllib.request.urlopen(urllib.request.Request(base + path, data=data, headers={"Content-Type": "application/json", **(headers or {})}), timeout=10) as response:
         return response.status, response.read().decode()
 
 
@@ -71,7 +71,7 @@ def test_experiment_http_rejects_bad_config_and_artifact_traversal(experiment_se
         assert error.value.code == 404
 
 
-@pytest.mark.parametrize("kind", ["pi", "openclaw"])
+@pytest.mark.parametrize("kind", ["pi", "openclaw", "claude-code", "codex", " pi "])
 def test_external_agent_experiment_can_only_be_started_over_loopback(experiment_server, kind):
     app, _ = experiment_server
     class Handler:
@@ -85,6 +85,78 @@ def test_external_agent_experiment_can_only_be_started_over_loopback(experiment_
     from runner.experiment_web import handle_experiment_request
     assert handle_experiment_request(handler, "/api/experiments", post=True)
     assert handler.status == 403
+
+
+@pytest.mark.parametrize("payload", [[], {"agents": None}, {"agents": 5}, {"agents": {}},
+                                     {"agents": [None]}, {"agents": [{"kind": ["pi"]}]},
+                                     {"agents": [{"kind": {}}]}, {"agents": [{"kind": None}]}])
+def test_malformed_agents_return_json_error(experiment_server, payload):
+    app, base = experiment_server
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, "/api/experiments", payload)
+    assert error.value.code == 400
+    assert json.loads(error.value.read())["error"]
+    assert app.experiments._active is None
+
+
+@pytest.mark.parametrize("path", ["/api/experiments", "/api/experiments/settings",
+                                  "/api/experiments/exp-old/rejudge"])
+@pytest.mark.parametrize("headers", [
+    {"Origin": "https://attacker.example", "Content-Type": "text/plain"},
+    {"Origin": "null"},
+    {"Origin": "http://127.0.0.1:1"},
+    {"Origin": "http://[::1"},
+    {"Host": "rebinding.example"},
+    {"Host": "rebinding.example", "Origin": "http://rebinding.example"},
+    {"Host": "localhost.attacker.example"},
+    {"Host": "localhost@attacker.example"},
+    {"Host": "[::1"},
+    {"Host": "[::1]attacker.example"},
+    {"Host": "127.0.0.1:invalid"},
+])
+def test_local_mutations_reject_cross_site_requests(experiment_server, monkeypatch, path, headers):
+    app, base = experiment_server
+    def unexpected(*args):
+        pytest.fail("Blocked requests must not mutate settings or start work")
+    for method in ("start", "save_settings", "retry_judge"):
+        monkeypatch.setattr(app.experiments, method, unexpected)
+    with pytest.raises(urllib.error.HTTPError) as error:
+        request(base, path, {"agents": [{"kind": " pi ", "provider": "test", "model": "test"}],
+                             "environment_url": "http://env"}, headers=headers)
+    assert error.value.code == 403
+    assert json.loads(error.value.read())["error"]
+
+
+@pytest.mark.parametrize("address,host", [("127.0.0.1", "localhost:8080"),
+                                        ("::1", "[::1]:8080"),
+                                        ("::ffff:127.0.0.1", "[::ffff:127.0.0.1]:8080")])
+@pytest.mark.parametrize("browser", [False, True])
+def test_local_guard_accepts_cli_and_same_origin_ipv4_and_ipv6(address, host, browser):
+    from email.message import Message
+    from types import SimpleNamespace
+    from runner.experiment_web import _require_local_request
+    headers = Message()
+    headers["Host"] = host
+    if browser:
+        headers["Origin"] = "http://" + host
+    handler = SimpleNamespace(client_address=(address, 1234), headers=headers)
+    assert _require_local_request(handler, "Test")
+
+
+@pytest.mark.parametrize("header", ["Host", "Origin"])
+def test_local_guard_rejects_duplicate_origin_headers(header):
+    from email.message import Message
+    from types import SimpleNamespace
+    from runner.experiment_web import _require_local_request
+    headers = Message()
+    headers["Host"] = "localhost:8080"
+    headers["Origin"] = "http://localhost:8080"
+    headers[header] = headers[header]
+    errors = []
+    handler = SimpleNamespace(client_address=("127.0.0.1", 1234), headers=headers,
+                              _send_json=lambda payload, status: errors.append(status))
+    assert not _require_local_request(handler, "Test")
+    assert errors == [403]
 
 
 def test_judge_retry_route_requires_loopback(experiment_server):
@@ -235,7 +307,7 @@ def test_saved_pi_settings_survive_new_manager_and_are_used_to_start(experiment_
     pi = {'kind': 'pi', 'provider': 'benchmark-custom', 'model': 'vision-model', 'thinking': 'medium',
           'base_url': 'https://gateway.example.com/v1', 'api': 'openai-completions',
           'api_key_env': 'AIDEN_BENCHMARK_PI_API_KEY', 'context_window': 1050000, 'max_tokens': 16384}
-    status, response = request(base, '/api/experiments/settings', {'pi': pi})
+    status, response = request(base, '/api/experiments/settings', {'pi': pi}, headers={"Origin": base})
     assert status == 200
     saved = json.loads(response)['settings']
     replacement = ExperimentManager(runs_dir=app.experiments.root.parent,
