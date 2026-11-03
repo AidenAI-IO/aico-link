@@ -10,6 +10,8 @@ import (
 func TestLegacyGPIOVoiceWakeupAllowedBoardAndEnvGate(t *testing.T) {
 	originalModel := readDeviceTreeModel
 	t.Cleanup(func() { readDeviceTreeModel = originalModel })
+	restoreLegacyGPIOEnv := stashEnv(t, envLegacyGPIOVoiceWakeup, envLegacyGPIOVoiceWakeupAlt)
+	t.Cleanup(restoreLegacyGPIOEnv)
 
 	cases := []struct {
 		name  string
@@ -27,12 +29,7 @@ func TestLegacyGPIOVoiceWakeupAllowedBoardAndEnvGate(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			readDeviceTreeModel = func() string { return tc.model }
-			os.Unsetenv(envLegacyGPIOVoiceWakeup)
-			os.Unsetenv(envLegacyGPIOVoiceWakeupAlt)
-			t.Cleanup(func() {
-				os.Unsetenv(envLegacyGPIOVoiceWakeup)
-				os.Unsetenv(envLegacyGPIOVoiceWakeupAlt)
-			})
+			clearEnv(t, envLegacyGPIOVoiceWakeup, envLegacyGPIOVoiceWakeupAlt)
 			if tc.env != nil {
 				t.Setenv(envLegacyGPIOVoiceWakeup, *tc.env)
 			}
@@ -46,14 +43,11 @@ func TestLegacyGPIOVoiceWakeupAllowedBoardAndEnvGate(t *testing.T) {
 func TestWakeupReadyLabelUsesGatedGPIOFallback(t *testing.T) {
 	originalModel := readDeviceTreeModel
 	t.Cleanup(func() { readDeviceTreeModel = originalModel })
-	os.Unsetenv(envLegacyGPIOVoiceWakeup)
-	os.Unsetenv(envLegacyGPIOVoiceWakeupAlt)
+	restore := stashEnv(t, envLegacyGPIOVoiceWakeup, envLegacyGPIOVoiceWakeupAlt, "AICO_MCU_SERVICE_SOCKET")
+	t.Cleanup(restore)
+
+	clearEnv(t, envLegacyGPIOVoiceWakeup, envLegacyGPIOVoiceWakeupAlt)
 	t.Setenv("AICO_MCU_SERVICE_SOCKET", t.TempDir()+"/missing.sock")
-	t.Cleanup(func() {
-		os.Unsetenv(envLegacyGPIOVoiceWakeup)
-		os.Unsetenv(envLegacyGPIOVoiceWakeupAlt)
-		os.Unsetenv("AICO_MCU_SERVICE_SOCKET")
-	})
 
 	readDeviceTreeModel = func() string { return "Luckfox Pico Zero" }
 	if got := wakeupReadyLabel(agent.Config{}); got != "GPIO 33/32" {
@@ -67,3 +61,34 @@ func TestWakeupReadyLabelUsesGatedGPIOFallback(t *testing.T) {
 }
 
 func strPtr(v string) *string { return &v }
+
+type envSnapshot struct {
+	key   string
+	value string
+	set   bool
+}
+
+func stashEnv(t *testing.T, keys ...string) func() {
+	t.Helper()
+	snaps := make([]envSnapshot, 0, len(keys))
+	for _, key := range keys {
+		value, set := os.LookupEnv(key)
+		snaps = append(snaps, envSnapshot{key: key, value: value, set: set})
+	}
+	return func() {
+		for _, snap := range snaps {
+			if snap.set {
+				os.Setenv(snap.key, snap.value)
+				continue
+			}
+			os.Unsetenv(snap.key)
+		}
+	}
+}
+
+func clearEnv(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, key := range keys {
+		os.Unsetenv(key)
+	}
+}
