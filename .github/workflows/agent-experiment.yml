@@ -4,14 +4,6 @@ name: Agent Experiment
 # existing operation suite. Real-model comparisons are not a merge gate: provider
 # availability, model variability, latency, and cost are external factors.
 on:
-  # TEMPORARY: GitHub dispatches only workflows that exist on the default branch.
-  # This push trigger runs the first experiment from the feature branch; remove it
-  # before merging.
-  push:
-    branches:
-      - feat/benchmark_4_otheragents
-    paths:
-      - .github/workflows/agent-experiment.yml
   workflow_dispatch:
     inputs:
       suite:
@@ -66,11 +58,10 @@ jobs:
       MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
       MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
       RUN_ID: ci-exp-${{ github.run_id }}-${{ github.run_attempt }}
-      # Push runs have no inputs; they use the dispatch defaults.
-      SUITE: ${{ inputs.suite || 'suites/phone_control_v1.json' }}
-      AGENTS: ${{ inputs.agents || 'claude-code,codex' }}
-      REPEATS: ${{ inputs.repeats || '1' }}
-      CONCURRENCY: ${{ inputs.concurrency || '3' }}
+      SUITE: ${{ inputs.suite }}
+      AGENTS: ${{ inputs.agents }}
+      REPEATS: ${{ inputs.repeats }}
+      CONCURRENCY: ${{ inputs.concurrency }}
       # Model endpoints and npm are reached through the benchmark proxy; Docker
       # builds and local endpoints stay direct, as in the benchmark workflow.
       https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
