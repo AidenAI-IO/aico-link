@@ -448,7 +448,10 @@ func (t *WaitForWakeupTool) Name() string { return toolWaitForWakeup }
 
 func (t *WaitForWakeupTool) Description() string {
 	return `End the current agent run and return the voice interaction to wakeup-waiting mode. ` +
-		`Use this when the user asks Aico to stop listening, go idle, or wait for the next wakeup.`
+		`Use this when the user is finished or asks to stop the voice interaction, for example goodbye, ` +
+		`nothing else needed, stop listening, go idle, standby, sleep, or wait for the next wakeup. ` +
+		`Say a short farewell in the same response; a spoken farewell alone does not end the session. ` +
+		`Do not use this while the user is still engaged.`
 }
 
 func (t *WaitForWakeupTool) ArgsSchema() map[string]any {

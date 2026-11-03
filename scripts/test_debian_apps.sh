@@ -17,6 +17,7 @@ apps_scripts=(
     "${APPS_DIR}/container-build-apps.sh"
     "${APPS_DIR}/container-build-rootfs-cli-tools.sh"
     "${APPS_DIR}/audit-apps.sh"
+    "${APPS_DIR}/g0-remote-dir.sh"
     "${APPS_DIR}/prepare-board-g0.sh"
     "${APPS_DIR}/board-g0-remote.sh"
     "${APPS_DIR}/run-board-g0.sh"
@@ -26,7 +27,11 @@ for apps_script in "${apps_scripts[@]}"; do
 done
 
 grep -Fq 'aico@192.168.76.153' "${APPS_DIR}/run-board-g0.sh"
-grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/g0-remote-dir.sh"
+grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/prepare-board-g0.sh"
+grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq 'require_g0_bundle_remote_dir' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq 'install_root=' "${APPS_DIR}/prepare-board-g0.sh"
 grep -Fq 'volatile sig_atomic_t quit' "${REPO_ROOT}/src/example_audio_capture.cpp"
 grep -Fq 'signal(SIGTERM, signal_handler)' "${REPO_ROOT}/src/example_audio_capture.cpp"
 
@@ -262,6 +267,9 @@ touch \
     "${apps_dir}/bin/ota" \
     "${apps_dir}/bin/rknn_vad" \
     "${apps_dir}/bin/smart_turn_helper" \
+    "${apps_dir}/bin/speaker_verify_fbank" \
+    "${apps_dir}/bin/speaker_verify_rknn" \
+    "${apps_dir}/bin/speaker_verify_tail" \
     "${apps_dir}/bin/ttyd" \
     "${apps_dir}/lib/librga.so.2.1.0"
 chmod +x \
@@ -277,6 +285,13 @@ printf '%s\n' \
 printf '%s\n' \
     'librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T09:11:49)' \
     >"${apps_dir}/bin/smart_turn_helper"
+printf '%s\n' \
+    'librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T09:11:49)' \
+    >"${apps_dir}/bin/speaker_verify_rknn"
+chmod +x \
+    "${apps_dir}/bin/speaker_verify_fbank" \
+    "${apps_dir}/bin/speaker_verify_rknn" \
+    "${apps_dir}/bin/speaker_verify_tail"
 ln -s librga.so.2.1.0 "${apps_dir}/lib/librga.so.2"
 ln -s librga.so.2 "${apps_dir}/lib/librga.so"
 
@@ -310,7 +325,9 @@ case "${mode}" in
         fi
         printf ' 0x0000001d (RUNPATH) Library runpath: [%s]\n' "${runpath}"
     fi
-    if [[ "${file}" == */bin/rknn_vad || "${file}" == */bin/smart_turn_helper ]]; then
+    if [[ "${file}" == */bin/rknn_vad || "${file}" == */bin/smart_turn_helper || "${file}" == */bin/speaker_verify_rknn ]]; then
+        printf ' 0x00000001 (NEEDED) Shared library: [libc.so.6]\n'
+    elif [[ "${file}" == */bin/speaker_verify_fbank || "${file}" == */bin/speaker_verify_tail ]]; then
         printf ' 0x00000001 (NEEDED) Shared library: [libc.so.6]\n'
     elif [ "${MOCK_OPENCV_NEEDED:-0}" = 1 ] && [[ "${file}" == */bin/frame_service ]]; then
         printf ' 0x00000001 (NEEDED) Shared library: [libopencv_core.so.413]\n'
@@ -395,7 +412,7 @@ expect_audit_failure() {
 
 run_audit "${TEST_ROOT}/report-pass"
 grep -qx 'status=pass' "${TEST_ROOT}/report-pass/summary.txt"
-grep -qx 'elf_count=10' "${TEST_ROOT}/report-pass/summary.txt"
+grep -qx 'elf_count=13' "${TEST_ROOT}/report-pass/summary.txt"
 
 chmod -x "${apps_dir}/bin/mcu_service"
 expect_audit_failure nonexecutable-mcu-service
@@ -438,6 +455,9 @@ bundle_payload=(
     bin/image_process
     bin/rknn_vad
     bin/smart_turn_helper
+    bin/speaker_verify_fbank
+    bin/speaker_verify_rknn
+    bin/speaker_verify_tail
     bin/ttyd
     bin/trigger
     lib/librga.so.2.1.0
@@ -455,7 +475,7 @@ done
 chmod +x "${bundle_apps}/bin/"*
 ln -s librga.so.2.1.0 "${bundle_apps}/lib/librga.so.2"
 ln -s librga.so.2 "${bundle_apps}/lib/librga.so"
-printf 'status=pass\nelf_count=20\n' >"${bundle_audit}/summary.txt"
+printf 'status=pass\nelf_count=23\n' >"${bundle_audit}/summary.txt"
 
 help_bundle_dir=${TEST_ROOT}/bundle-help
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
@@ -467,9 +487,46 @@ DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null
 [ -s "${bundle_dir}/debian-apps-g0.tar.gz" ] || fail "G0 bundle was not created"
+speaker_paths=$(tar -xOf "${bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/agent-speaker-paths.toml) ||
+    fail "G0 bundle missing agent-speaker-paths.toml"
+printf '%s\n' "${speaker_paths}" | grep -Fq '[voice_settings.classic.runtime]' ||
+    fail "G0 speaker paths snippet missing [voice_settings.classic.runtime]"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_tools_dir = "/home/aico/debian-apps-g0/bin"' ||
+    fail "G0 speaker tools dir snippet is wrong"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/home/aico/debian-apps-g0/model"' ||
+    fail "G0 speaker model dir snippet is wrong"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'copy only the two key lines' ||
+    fail "G0 speaker paths snippet missing merge guidance"
+default_metadata=$(tar -xOf "${bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/bundle-metadata.txt) ||
+    fail "G0 bundle missing bundle-metadata.txt"
+printf '%s\n' "${default_metadata}" | grep -Fxq 'install_root=/home/aico/debian-apps-g0' ||
+    fail "G0 metadata install_root is wrong"
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" verify >/dev/null
+
+custom_bundle_dir=${TEST_ROOT}/bundle-tmp-remote
+DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
+DEBIAN_APPS_G0_OUTPUT_DIR="${custom_bundle_dir}" \
+AICO_G0_REMOTE_DIR=/tmp/debian-apps-g0 \
+    "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null
+custom_speaker_paths=$(tar -xOf "${custom_bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/agent-speaker-paths.toml) ||
+    fail "custom-remote G0 bundle missing agent-speaker-paths.toml"
+printf '%s\n' "${custom_speaker_paths}" | grep -Fq 'voice_speaker_tools_dir = "/tmp/debian-apps-g0/bin"' ||
+    fail "custom-remote G0 speaker tools dir snippet is wrong"
+printf '%s\n' "${custom_speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/tmp/debian-apps-g0/model"' ||
+    fail "custom-remote G0 speaker model dir snippet is wrong"
+custom_metadata=$(tar -xOf "${custom_bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/bundle-metadata.txt) ||
+    fail "custom-remote G0 bundle missing bundle-metadata.txt"
+printf '%s\n' "${custom_metadata}" | grep -Fxq 'install_root=/tmp/debian-apps-g0' ||
+    fail "custom-remote G0 metadata install_root is wrong"
+printf '%s\n' "${custom_metadata}" | grep -Fxq 'voice_speaker_tools_dir=/tmp/debian-apps-g0/bin' ||
+    fail "custom-remote G0 metadata tools dir is wrong"
+
+if AICO_G0_REMOTE_DIR=/opt/debian-apps-g0 \
+    "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null 2>&1; then
+    fail "prepare-board-g0 accepted an unsafe AICO_G0_REMOTE_DIR"
+fi
 
 printf 'corrupted payload\n' >"${bundle_apps}/bin/hello"
 if DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
@@ -524,6 +581,20 @@ AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
     "${APPS_DIR}/run-board-g0.sh" deploy >/dev/null
 grep -q '^scp' "${TEST_ROOT}/board-command-log"
 grep -q '^ssh' "${TEST_ROOT}/board-command-log"
+
+: >"${TEST_ROOT}/board-command-log"
+if BOARD_COMMAND_LOG="${TEST_ROOT}/board-command-log" \
+    SSH_BIN="${TEST_ROOT}/board-mock-bin/ssh" \
+    SCP_BIN="${TEST_ROOT}/board-mock-bin/scp" \
+    DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
+    DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
+    AICO_G0_REMOTE_DIR=/tmp/debian-apps-g0 \
+    AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
+        "${APPS_DIR}/run-board-g0.sh" deploy >/dev/null 2>&1; then
+    fail "board deploy accepted a bundle built for a different install root"
+fi
+[ ! -s "${TEST_ROOT}/board-command-log" ] ||
+    fail "board transfer ran despite an install-root mismatch"
 
 : >"${TEST_ROOT}/board-command-log"
 if BOARD_COMMAND_LOG="${TEST_ROOT}/board-command-log" \

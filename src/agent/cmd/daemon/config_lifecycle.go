@@ -36,14 +36,150 @@ type inputLifecycle struct {
 	newVoiceWatcher voiceWakeupWatcherFactory
 }
 
+func resolveMCUServiceSocket() string {
+	if v := strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(os.Getenv("AIDEN_MCU_SERVICE_SOCKET")); v != "" {
+		return v
+	}
+	return mcu.DefaultSocket
+}
+
+func mcuServiceSocketAvailable(path string) bool {
+	if path == "" {
+		return false
+	}
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// Env opt-in for GPIO 33/32 voice wakeup when the MCU socket is missing.
+// Never use that fallback on Aico Link SCH v1: those pins drive HDMI power/reset.
+const (
+	envLegacyGPIOVoiceWakeup    = "AICO_LEGACY_GPIO_VOICE_WAKEUP"
+	envLegacyGPIOVoiceWakeupAlt = "AIDEN_LEGACY_GPIO_VOICE_WAKEUP"
+	deviceTreeModelPath         = "/proc/device-tree/model"
+	deviceTreeModelPathFallback = "/sys/firmware/devicetree/base/model"
+)
+
+// readDeviceTreeModel is overridable in tests.
+var readDeviceTreeModel = func() string {
+	for _, path := range []string{deviceTreeModelPath, deviceTreeModelPathFallback} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		return strings.TrimRight(string(data), "\x00\n\r\t ")
+	}
+	return ""
+}
+
+func envTruthy(name string) (set bool, value bool) {
+	raw, ok := os.LookupEnv(name)
+	if !ok {
+		return false, false
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes", "on":
+		return true, true
+	case "0", "false", "no", "off", "":
+		return true, false
+	default:
+		return true, false
+	}
+}
+
+func boardUsesSCHV1HDMIOnGPIO32_33(model string) bool {
+	upper := strings.ToUpper(model)
+	return strings.Contains(upper, "SCH V1") || strings.Contains(upper, "AICO LINK SCH")
+}
+
+func boardAllowsLegacyGPIOVoiceKeys(model string) bool {
+	return strings.Contains(strings.ToLower(model), "pico zero")
+}
+
+// legacyGPIOVoiceWakeupAllowed decides whether GPIO 33/32 may replace MCU wakeup.
+// SCH v1 always denies. Otherwise allow Pico Zero boards or an explicit env opt-in.
+func legacyGPIOVoiceWakeupAllowed() bool {
+	model := readDeviceTreeModel()
+	if boardUsesSCHV1HDMIOnGPIO32_33(model) {
+		return false
+	}
+	if set, value := envTruthy(envLegacyGPIOVoiceWakeup); set {
+		return value
+	}
+	if set, value := envTruthy(envLegacyGPIOVoiceWakeupAlt); set {
+		return value
+	}
+	return boardAllowsLegacyGPIOVoiceKeys(model)
+}
+
+func usesLegacyGPIOVoiceWakeup() bool {
+	return !mcuServiceSocketAvailable(resolveMCUServiceSocket()) && legacyGPIOVoiceWakeupAllowed()
+}
+
+// multiWakeupWatcher starts/stops several GPIO (or other) watchers as one unit.
+type multiWakeupWatcher struct {
+	watchers []wakeupWatcher
+}
+
+func (m *multiWakeupWatcher) Start() error {
+	for i, w := range m.watchers {
+		if err := w.Start(); err != nil {
+			for j := 0; j < i; j++ {
+				m.watchers[j].Stop()
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *multiWakeupWatcher) Stop() {
+	for i := len(m.watchers) - 1; i >= 0; i-- {
+		m.watchers[i].Stop()
+	}
+}
+
+// newLegacyGPIOVoiceWatcher watches GPIO 33 then 32 (legacy Pico Zero voice keys).
+func newLegacyGPIOVoiceWatcher(callback func()) (wakeupWatcher, error) {
+	pins := []int{33, 32}
+	watchers := make([]wakeupWatcher, 0, len(pins))
+	for _, pin := range pins {
+		w, err := agent.NewGPIOWatcher(pin, callback)
+		if err != nil {
+			for i := len(watchers) - 1; i >= 0; i-- {
+				watchers[i].Stop()
+			}
+			return nil, fmt.Errorf("create GPIO %d watcher: %w", pin, err)
+		}
+		watchers = append(watchers, w)
+	}
+	return &multiWakeupWatcher{watchers: watchers}, nil
+}
+
 func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifecycle {
-	source := newMCUWakeupSource(mcu.Client{Socket: strings.TrimSpace(os.Getenv("AICO_MCU_SERVICE_SOCKET"))}, defaultMCUVoiceCursorPath)
+	socket := resolveMCUServiceSocket()
 	c := &inputLifecycle{runtime: runtime, server: server, newWatcher: newGPIOWatcher}
 	// Classic Mode B keeps the mic open for the whole voice session. Runtime.Run
 	// preempts on every turn start, so this hook must only stop TTS — never the
 	// session recording. Listen/session code owns StartRecording/StopRecording.
-	c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
-		return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+	switch {
+	case mcuServiceSocketAvailable(socket):
+		source := newMCUWakeupSource(mcu.Client{Socket: socket}, defaultMCUVoiceCursorPath)
+		c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
+			return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+		}
+	case legacyGPIOVoiceWakeupAllowed():
+		logging.Warnf("agent", "wakeup", "MCU service socket %s unavailable; using gated GPIO 33/32 fallback (model=%q)", socket, readDeviceTreeModel())
+		c.newVoiceWatcher = newLegacyGPIOVoiceWatcher
+	default:
+		logging.Warnf("agent", "wakeup", "MCU service socket %s unavailable; GPIO 33/32 fallback disabled (unsafe on SCH v1 HDMI). Prefer the MCU event service, or set %s=1 only on boards where those pins are voice keys", socket, envLegacyGPIOVoiceWakeup)
+		source := newMCUWakeupSource(mcu.Client{Socket: socket}, defaultMCUVoiceCursorPath)
+		c.newVoiceWatcher = func(callback func()) (wakeupWatcher, error) {
+			return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
+		}
 	}
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
@@ -74,6 +210,15 @@ func voiceConfig(cfg agent.Config) agent.Config {
 		VoiceInterruptOnWakeup: cfg.VoiceInterruptOnWakeup, TapWakeupEnabled: cfg.TapWakeupEnabled,
 		VoiceStreamingTTSEnabled: cfg.VoiceStreamingTTSEnabled,
 		VoiceToolCallSpeech:      cfg.VoiceToolCallSpeech, VoiceProgressSpeechEnabled: cfg.VoiceProgressSpeechEnabled,
+		// Speaker paths/max rebuild the embedder/store; enable+threshold also
+		// sync live per utterance, but including them here keeps the wakeup
+		// loop cfg from going permanently stale after a threshold-only edit.
+		VoiceSpeakerGateEnabled: cfg.VoiceSpeakerGateEnabled,
+		VoiceSpeakerThreshold:   cfg.VoiceSpeakerThreshold,
+		VoiceSpeakerToolsDir:    cfg.VoiceSpeakerToolsDir,
+		VoiceSpeakerModelDir:    cfg.VoiceSpeakerModelDir,
+		VoiceSpeakerStoreDir:    cfg.VoiceSpeakerStoreDir,
+		VoiceSpeakerMaxProfiles: cfg.VoiceSpeakerMaxProfiles,
 	}
 }
 

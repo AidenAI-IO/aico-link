@@ -23,6 +23,7 @@ const (
 	apiConfigTest
 	apiMemoryReset
 	apiConversationReset
+	apiSpeaker
 	apiModels
 	apiSTTTestStart
 	apiSTTTestStop
@@ -131,6 +132,13 @@ func matchAPIRequest(r *http.Request) apiMatch {
 			return apiMatch{endpoint: route.endpoint}
 		}
 	}
+	const speakerPrefix = apiPrefix + "/speaker"
+	if r.URL.Path == speakerPrefix || strings.HasPrefix(r.URL.Path, speakerPrefix+"/") {
+		switch r.Method {
+		case http.MethodGet, http.MethodPost, http.MethodDelete:
+			return apiMatch{endpoint: apiSpeaker, suffix: strings.TrimPrefix(r.URL.Path, speakerPrefix)}
+		}
+	}
 	const backupJobPrefix = apiPrefix + "/backup/jobs/"
 	if strings.HasPrefix(r.URL.Path, backupJobPrefix) {
 		suffix := strings.TrimPrefix(r.URL.Path, backupJobPrefix)
@@ -220,6 +228,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleConversationReset(w, r)
 	case apiMemoryReset:
 		s.handleMemoryReset(w, r)
+	case apiSpeaker:
+		s.handleSpeakerProxy(w, r)
 	case apiModels:
 		s.handleModels(w, r)
 	case apiSTTTestStart:

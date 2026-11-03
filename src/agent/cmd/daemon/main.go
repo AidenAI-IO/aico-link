@@ -288,6 +288,7 @@ type audioDialogRunner interface {
 	StartRecording() error
 	StopRecording() error
 	FinalizeAndRotateSTT() error
+	DiscardAndRotateSTT() error
 	RecordingActive() bool
 	ReadRecordChunk(timeoutMs uint32) (*agent.AudioChunkResult, error)
 	ReadRecordChunkMonitor(timeoutMs uint32) (*agent.AudioChunkResult, error)
@@ -590,6 +591,12 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 }
 
 func wakeupReadyLabel(cfg agent.Config) string {
+	if usesLegacyGPIOVoiceWakeup() {
+		return "GPIO 33/32"
+	}
+	if !mcuServiceSocketAvailable(resolveMCUServiceSocket()) {
+		return "MCU ASR (socket unavailable)"
+	}
 	if cfg.TapWakeupEnabledOrDefault() {
 		return "MCU ASR or touch key"
 	}
@@ -712,6 +719,19 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 	playReadyCue := false
 	var nextTurn *pendingVoiceTurn
 	var pendingTurnContext agent.VoiceTurnContext
+	speakerGate := agent.NewSpeakerGateFromConfig(cfg)
+	if runtime != nil {
+		speakerGate.SyncLiveSettings(runtime.ConfigSnapshot())
+	}
+	if speakerGate.Enabled {
+		if count, err := speakerGate.Store.Count(); err != nil {
+			logging.Warnf("agent", "speaker", "profile store unavailable: %v", err)
+		} else if count == 0 {
+			logging.Warnf("agent", "speaker", "speaker gate enabled but no enrolled profiles; utterances will be rejected until enrollment")
+		} else {
+			logging.Infof("agent", "speaker", "speaker gate enabled (%d profile(s), threshold=%.2f)", count, speakerGate.Threshold)
+		}
+	}
 
 	// Classic final UX: keep the mic open for the whole session (Realtime-like shell).
 	if err := dialog.StartRecording(); err != nil {
@@ -753,8 +773,25 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 				return true
 			}
 			if len(utterance) == 0 {
-				logging.Infof("agent", "session", "listen timeout, closing voice session")
+				logging.Infof("agent", "session", "no utterance, closing voice session")
 				return false
+			}
+
+			if runtime != nil {
+				speakerGate.SyncLiveSettings(runtime.ConfigSnapshot())
+			}
+			decision := speakerGate.AllowUtterance(utterance)
+			if !decision.Allowed {
+				logging.Infof("agent", "speaker", "rejected utterance reason=%s score=%.3f threshold=%.2f", decision.Reason, decision.Score, decision.Threshold)
+				firstTurn = false
+				if err := dialog.DiscardAndRotateSTT(); err != nil {
+					logging.Warnf("agent", "stt", "discard/rotate streaming STT after speaker reject: %v", err)
+				}
+				dialog.ResetVAD()
+				continue
+			}
+			if decision.Reason == "matched" {
+				logging.Infof("agent", "speaker", "accepted utterance score=%.3f threshold=%.2f", decision.Score, decision.Threshold)
 			}
 
 			if err := dialog.FinalizeAndRotateSTT(); err != nil {
@@ -1284,6 +1321,19 @@ func ignoreWakeupWhileListening() {
 	logging.Warnf("agent", "listen", "duplicate wakeup received while listening, ignoring")
 }
 
+func endListenOnWakeup(dialog audioDialogRunner, vadPending, captured []int16, speechDetected bool) ([]int16, bool) {
+	if speechDetected && len(captured) > 0 {
+		utterance := dialog.FinishPendingUtterance(vadPending)
+		if len(utterance) == 0 {
+			utterance = captured
+		}
+		logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
+		return utterance, false
+	}
+	logging.Infof("agent", "session", "wakeup pressed while idle listening, closing voice session")
+	return nil, false
+}
+
 func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signal, events <-chan voiceEvent, listenTimeout time.Duration) ([]int16, bool) {
 	frameSamples := dialog.VADFrameSamples()
 	if frameSamples <= 0 {
@@ -1305,16 +1355,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		case <-sigChan:
 			return nil, true
 		case <-events:
-			if speechDetected && len(captured) > 0 {
-				logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
-				utterance := dialog.FinishPendingUtterance(vadPending)
-				if len(utterance) > 0 {
-					return utterance, false
-				}
-				return captured, false
-			}
-			ignoreWakeupWhileListening()
-			continue
+			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
 		default:
 		}
 
@@ -1350,15 +1391,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		case <-sigChan:
 			return nil, true
 		case <-events:
-			if speechDetected && len(captured) > 0 {
-				logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
-				utterance := dialog.FinishPendingUtterance(vadPending)
-				if len(utterance) > 0 {
-					return utterance, false
-				}
-				return captured, false
-			}
-			ignoreWakeupWhileListening()
+			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
 		default:
 		}
 
@@ -1393,6 +1426,9 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 				hasPendingByte = false
 				pendingByte = 0
 				break
+			}
+			if dialog.VADSpeaking() {
+				speechDetected = true
 			}
 			if reporter, ok := dialog.(vadDebugReporter); ok {
 				state := reporter.VADDebugState()
