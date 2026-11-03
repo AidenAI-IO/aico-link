@@ -7,7 +7,10 @@ readonly APPS_OUTPUT=${DEBIAN_APPS_OUTPUT_DIR:-${REPO_ROOT}/output/debian-apps}
 readonly BUNDLE_DIR=${DEBIAN_APPS_G0_OUTPUT_DIR:-${APPS_OUTPUT}/board-g0}
 readonly ARCHIVE=${BUNDLE_DIR}/debian-apps-g0.tar.gz
 readonly BOARD_TARGET=${AICO_G0_BOARD_TARGET:-aico@192.168.76.153}
-readonly REMOTE_DIR=${AICO_G0_REMOTE_DIR:-/home/aico/debian-apps-g0}
+# shellcheck source=g0-remote-dir.sh
+source "${SCRIPT_DIR}/g0-remote-dir.sh"
+REMOTE_DIR=$(resolve_g0_remote_dir) || exit 1
+readonly REMOTE_DIR
 readonly LOCAL_RESULTS=${AICO_G0_LOCAL_RESULTS_DIR:-${BUNDLE_DIR}/board-results}
 readonly SSH_BIN=${SSH_BIN:-ssh}
 readonly SCP_BIN=${SCP_BIN:-scp}
@@ -64,17 +67,10 @@ fail() {
 }
 
 validate_configuration() {
-    local remote_user=
     case "${BOARD_TARGET}" in
         *[!A-Za-z0-9_.@:-]* | '') fail "unsafe AICO_G0_BOARD_TARGET" ;;
     esac
-    if [[ "${REMOTE_DIR}" =~ ^/home/([A-Za-z0-9._-]+)/debian-apps-g0$ ]]; then
-        remote_user=${BASH_REMATCH[1]}
-        [ "${remote_user}" != . ] && [ "${remote_user}" != .. ] ||
-            fail "AICO_G0_REMOTE_DIR contains an unsafe home component"
-    elif [ "${REMOTE_DIR}" != /tmp/debian-apps-g0 ]; then
-        fail "AICO_G0_REMOTE_DIR is outside the approved non-system locations"
-    fi
+    # REMOTE_DIR was already validated by resolve_g0_remote_dir at startup.
     case "${SSH_PORT}" in
         '' | *[!0-9]*) fail "AICO_G0_SSH_PORT must be numeric" ;;
     esac

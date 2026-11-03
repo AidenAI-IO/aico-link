@@ -17,6 +17,7 @@ apps_scripts=(
     "${APPS_DIR}/container-build-apps.sh"
     "${APPS_DIR}/container-build-rootfs-cli-tools.sh"
     "${APPS_DIR}/audit-apps.sh"
+    "${APPS_DIR}/g0-remote-dir.sh"
     "${APPS_DIR}/prepare-board-g0.sh"
     "${APPS_DIR}/board-g0-remote.sh"
     "${APPS_DIR}/run-board-g0.sh"
@@ -26,7 +27,9 @@ for apps_script in "${apps_scripts[@]}"; do
 done
 
 grep -Fq 'aico@192.168.76.153' "${APPS_DIR}/run-board-g0.sh"
-grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/g0-remote-dir.sh"
+grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/prepare-board-g0.sh"
+grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/run-board-g0.sh"
 grep -Fq 'volatile sig_atomic_t quit' "${REPO_ROOT}/src/example_audio_capture.cpp"
 grep -Fq 'signal(SIGTERM, signal_handler)' "${REPO_ROOT}/src/example_audio_capture.cpp"
 
@@ -484,13 +487,38 @@ DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
 [ -s "${bundle_dir}/debian-apps-g0.tar.gz" ] || fail "G0 bundle was not created"
 speaker_paths=$(tar -xOf "${bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/agent-speaker-paths.toml) ||
     fail "G0 bundle missing agent-speaker-paths.toml"
+printf '%s\n' "${speaker_paths}" | grep -Fq '[voice_settings.classic.runtime]' ||
+    fail "G0 speaker paths snippet missing [voice_settings.classic.runtime]"
 printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_tools_dir = "/home/aico/debian-apps-g0/bin"' ||
     fail "G0 speaker tools dir snippet is wrong"
 printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/home/aico/debian-apps-g0/model"' ||
     fail "G0 speaker model dir snippet is wrong"
+printf '%s\n' "${speaker_paths}" | grep -Fq 'copy only the two key lines' ||
+    fail "G0 speaker paths snippet missing merge guidance"
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" verify >/dev/null
+
+custom_bundle_dir=${TEST_ROOT}/bundle-tmp-remote
+DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
+DEBIAN_APPS_G0_OUTPUT_DIR="${custom_bundle_dir}" \
+AICO_G0_REMOTE_DIR=/tmp/debian-apps-g0 \
+    "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null
+custom_speaker_paths=$(tar -xOf "${custom_bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/agent-speaker-paths.toml) ||
+    fail "custom-remote G0 bundle missing agent-speaker-paths.toml"
+printf '%s\n' "${custom_speaker_paths}" | grep -Fq 'voice_speaker_tools_dir = "/tmp/debian-apps-g0/bin"' ||
+    fail "custom-remote G0 speaker tools dir snippet is wrong"
+printf '%s\n' "${custom_speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/tmp/debian-apps-g0/model"' ||
+    fail "custom-remote G0 speaker model dir snippet is wrong"
+custom_metadata=$(tar -xOf "${custom_bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/bundle-metadata.txt) ||
+    fail "custom-remote G0 bundle missing bundle-metadata.txt"
+printf '%s\n' "${custom_metadata}" | grep -Fxq 'voice_speaker_tools_dir=/tmp/debian-apps-g0/bin' ||
+    fail "custom-remote G0 metadata tools dir is wrong"
+
+if AICO_G0_REMOTE_DIR=/opt/debian-apps-g0 \
+    "${APPS_DIR}/prepare-board-g0.sh" bundle >/dev/null 2>&1; then
+    fail "prepare-board-g0 accepted an unsafe AICO_G0_REMOTE_DIR"
+fi
 
 printf 'corrupted payload\n' >"${bundle_apps}/bin/hello"
 if DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \

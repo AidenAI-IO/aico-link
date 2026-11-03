@@ -24,8 +24,10 @@ readonly MODEL_SMART_TURN_SHA256=160347b0f11db81b786fbd637d74089a8f51103adae0bfd
 readonly MODEL_SPEAKER_BACKBONE_SHA256=f54ea8473ceccdc92d05f7bff67186ee57c25b74193a5b6ce0b0871c2fb8ad86
 readonly MODEL_SPEAKER_TAIL_SHA256=4462f8f9a3780745fd2926f48e54da036276c91c509bfeef8c76ecaa7329b863
 readonly REMOTE_RUNNER=${SCRIPT_DIR}/board-g0-remote.sh
-# Default install root used by scripts/debian-apps/run-board-g0.sh.
-readonly G0_REMOTE_DIR=/home/aico/debian-apps-g0
+# shellcheck source=g0-remote-dir.sh
+source "${SCRIPT_DIR}/g0-remote-dir.sh"
+G0_REMOTE_DIR=$(resolve_g0_remote_dir) || exit 1
+readonly G0_REMOTE_DIR
 
 readonly -a APP_PAYLOAD=(
     bin/aico-environment
@@ -62,12 +64,17 @@ script never contacts a board. The bundle contains the audited Debian/glibc
 C/C++ executables, RGA, the statically linked official RKNN mini runtime, the
 pinned VAD / Smart Turn / ERes2Net speaker model files, the system
 media-module loader, and agent-speaker-paths.toml for Classic speaker-gate
-testing against the default /home/aico/debian-apps-g0 install root.
+testing against the selected G0 install root.
 
 Environment:
   DEBIAN_APPS_OUTPUT_DIR     apps-stage build output.
   DEBIAN_APPS_G0_OUTPUT_DIR  Bundle output directory.
-  SOURCE_DATE_EPOCH            Reproducible archive timestamp.
+  SOURCE_DATE_EPOCH          Reproducible archive timestamp.
+  AICO_G0_REMOTE_DIR         Install root encoded into agent-speaker-paths.toml
+                             and bundle-metadata.txt. Must be
+                             /home/*/debian-apps-g0 or /tmp/debian-apps-g0
+                             (default: /home/aico/debian-apps-g0). Keep the same
+                             value when calling run-board-g0.sh.
 EOF
 }
 
@@ -147,7 +154,15 @@ write_speaker_agent_paths() {
     {
         printf '# Classic speaker-gate paths for this G0 bundle.\n'
         printf '# run-board-g0.sh installs under %s, not /usr/lib/aico.\n' "${G0_REMOTE_DIR}"
-        printf '# Merge these keys into /userdata/agent/agent.toml before enabling the gate.\n'
+        printf '#\n'
+        printf '# If /userdata/agent/agent.toml already has [voice_settings.classic.runtime],\n'
+        printf '# copy only the two key lines below into that existing table.\n'
+        printf '# If the table is missing, you may append this whole file.\n'
+        printf '# Do not paste a second [voice_settings.classic.runtime] header into a\n'
+        printf '# file that already defines that table; TOML rejects duplicate tables.\n'
+        printf '# After merging, run:\n'
+        printf '#   /usr/lib/aico/agent config-check --config /userdata/agent/agent.toml\n'
+        printf '[voice_settings.classic.runtime]\n'
         printf 'voice_speaker_tools_dir = "%s/bin"\n' "${G0_REMOTE_DIR}"
         printf 'voice_speaker_model_dir = "%s/model"\n' "${G0_REMOTE_DIR}"
     } >"${root}/agent-speaker-paths.toml"
