@@ -157,7 +157,9 @@ def test_tool_layers_freeze_separate_catalogs_and_raw_skips_aiden_tool_name_asse
     assert rows["pi-raw"]["metrics"]["tool_name_assertions"] == "not_applicable"
     assert not rows["pi-raw"]["hard_assertion_failures"]
     assert rows["pi-raw"]["metrics"]["business_tool_calls"] == 1
-    assert "(raw tools)" in (tmp_path / "report.html").read_text()
+    # The overview labels each agent's tool layer.
+    report = (tmp_path / "report.html").read_text()
+    assert "report.html'>pi-raw</a>" in report and "<td>raw</td>" in report
 
 
 def test_tool_layer_is_validated_per_agent():

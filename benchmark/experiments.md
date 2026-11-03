@@ -331,12 +331,22 @@ retries remain part of the measured execution.
 Success is reported over eligible attempts together with coverage over planned
 attempts. Adapter/infrastructure failures are recorded separately and cannot
 inflate coverage. Missing attempts and canceled attempts are not successes.
-The primary comparison uses matched task/repetition pairs where both agents
-are eligible, with paired coverage. Latency is compared on pairs where both
-passed. Individual run rates remain diagnostics; their denominators can differ.
-The report separately counts timeouts, execution errors (which may overlap
-timeouts), and exclusions. `comparison_policy=matched-eligible-v2` identifies
-this reporting policy in new manifests; older artifacts are not rewritten.
+
+`report.html` opens with an overview row per agent: success over scored
+attempts, coverage, median time of passed attempts, scored timeouts, and
+excluded attempts grouped by reason. The task results table shows each
+agent's outcome per task and repeat, with the number of scored agents that
+passed; tasks no scored agent passed are marked. An exclusions table explains
+each reason: another platform, failed shared preparation, an unreachable model
+endpoint before the agent acted, an agent that never acted, a harness or
+infrastructure error, unavailable evaluation, or cancellation. Diagnostics
+list execution errors, model retries, native tool calls, and cost.
+
+`comparison.json` also holds matched comparisons for every agent pair: only
+task/repetition pairs where both agents are eligible, with paired coverage and
+latency on pairs where both passed. The CI job summary shows them.
+`comparison_policy=matched-eligible-v2` identifies this reporting policy in new
+manifests; older artifacts are not rewritten.
 
 Connection failures before any tool call, assistant text, or generated tokens
 are excluded consistently. Empty, zero-usage assistant error/retry records do

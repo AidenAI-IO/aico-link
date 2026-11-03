@@ -1,6 +1,7 @@
 """One frozen experiment, independent agent runs, paired attempt reporting."""
 from __future__ import annotations
 
+import collections
 import concurrent.futures
 import dataclasses as dc
 import hashlib
@@ -90,6 +91,36 @@ def atomic_json(path: Path, value: Any) -> None:
         json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8"))
 
 
+# Why an attempt was not scored, from the most to the least specific signal.
+EXCLUSION_REASONS = {
+    "platform": "Task requires another platform",
+    "preparation": "Shared environment preparation failed",
+    "network": "Model endpoint unreachable before the agent acted",
+    "not_started": "Agent exited or stalled before acting",
+    "harness": "Harness or infrastructure error",
+    "evaluation": "Judge or state evaluation unavailable",
+    "canceled": "Experiment canceled",
+}
+
+
+def exclusion_reason(row: TaskResult) -> str | None:
+    """Classify an ineligible attempt; eligible attempts return None."""
+    metrics = row.metrics
+    if metrics.get("agent_eligible") is True:
+        return None
+    failure_class = metrics.get("failure_class")
+    if row.status == "canceled" or failure_class == "canceled":
+        return "canceled"
+    if failure_class == "platform":
+        return "platform"
+    if failure_class == "adapter":
+        return "preparation" if "preparation" in str(metrics.get("adapter_error") or "") else "harness"
+    if failure_class == "evaluation" or row.status == "judge_error":
+        return "evaluation"
+    # Runtime marks attempts that never acted as unknown; retries show the endpoint was unreachable.
+    return "network" if metrics.get("api_retries") else "not_started"
+
+
 def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult]], repeats: int) -> dict:
     planned = len(suite.tasks) * repeats
     summaries = []
@@ -115,15 +146,14 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
             "cost_per_success_usd": total_cost / passed if total_cost is not None and passed else None,
             "error_attempts": sum(row.metrics.get("agent_eligible") is not True for row in values),
             "timeouts": sum(row.status == "timeout" for row in values),
+            # Timeouts that count as failures; excluded attempts can also have timed out.
+            "scored_timeouts": sum(row.status == "timeout" for row in eligible),
             "execution_errors": sum(bool(row.metrics.get("agent_error")) for row in values),
             "native_tool_calls": sum(row.metrics.get("native_tool_calls") or 0 for row in values),
             "api_retry_attempts": sum(bool(row.metrics.get("api_retries")) for row in values),
             "native_loopback_attempts": sum(bool(row.metrics.get("native_loopback_calls")) for row in values),
-            "exclusions": {reason: sum(row.metrics.get("agent_eligible") is not True
-                                       and (row.metrics.get("failure_class") or "unknown") == reason
-                                       for row in values)
-                           for reason in sorted({row.metrics.get("failure_class") or "unknown"
-                                                 for row in values if row.metrics.get("agent_eligible") is not True})},
+            "exclusions": dict(sorted(collections.Counter(
+                reason for reason in map(exclusion_reason, values) if reason).items())),
         })
     paired = []
     for task in suite.tasks:
@@ -134,7 +164,8 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
                 cells[agent["id"]] = ({"status": row.status, "wall_ms": row.metrics.get("wall_ms"),
                                        "eligible": row.metrics.get("agent_eligible") is True,
                                        "execution_error": row.metrics.get("agent_error"),
-                                       "failure_class": row.metrics.get("failure_class")}
+                                       "failure_class": row.metrics.get("failure_class"),
+                                       "exclusion": exclusion_reason(row)}
                                       if row else {"status": "not_run"})
             paired.append({"suite": suite.name, "task_id": task.id, "attempt": attempt, "agents": cells})
     pairwise = []
@@ -165,58 +196,137 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
             "agent_preparation_tasks": preparation_tasks}
 
 
+REPORT_STYLE = """
+:root{--bg:#f6f7f9;--panel:#fff;--text:#1d2733;--muted:#5b6876;--line:#dfe3e8;--accent:#17654b;
+--pass:#1f7a4d;--pass-bg:#e3f4ea;--fail:#a1322b;--fail-bg:#fbe7e5;--warn:#8a5a00;--warn-bg:#fdf1d8;
+--skip:#5b6876;--skip-bg:#eef0f3;--even:#f1f3f5}
+@media (prefers-color-scheme:dark){:root{--bg:#12161b;--panel:#1a2027;--text:#e4e8ec;--muted:#9aa6b2;
+--line:#2c343d;--accent:#5fc49a;--pass:#7fd6a6;--pass-bg:#173a29;--fail:#f29a92;--fail-bg:#43201d;
+--warn:#f0c46a;--warn-bg:#3d3014;--skip:#a4afba;--skip-bg:#262d35;--even:#232a32}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 48px}a{color:var(--accent)}
+h1{font-size:26px;margin:4px 0}h2{font-size:18px;margin:0 0 4px}.muted{color:var(--muted)}
+.meta{display:flex;flex-wrap:wrap;gap:6px 18px;margin:8px 0 0;color:var(--muted);font-size:14px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;margin:18px 0}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;margin-top:10px}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}
+th{font-size:13px;color:var(--muted);font-weight:600}td.num,th.num{text-align:right}
+.bar{display:inline-block;vertical-align:middle;width:72px;height:6px;border-radius:3px;background:var(--even);margin-left:8px}
+.bar>i{display:block;height:100%;border-radius:3px;background:var(--pass)}
+.badge{display:inline-block;min-width:22px;padding:1px 7px;border-radius:10px;font-size:13px;text-align:center}
+.pass{color:var(--pass);background:var(--pass-bg)}.fail{color:var(--fail);background:var(--fail-bg)}
+.timeout{color:var(--warn);background:var(--warn-bg)}.excluded{color:var(--skip);background:var(--skip-bg)}
+.small{font-size:12px}.chip{display:inline-block;margin:0 4px 2px 0;padding:0 7px;border-radius:9px;
+background:var(--skip-bg);color:var(--skip);font-size:12px}
+tr.unsolved td:first-child{box-shadow:inset 3px 0 var(--fail)}details{margin-top:8px}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}
+"""
+STATUS_BADGE = {"passed": ("pass", "Pass"), "failed": ("fail", "Fail"), "timeout": ("timeout", "Timeout")}
+EXCLUSION_SHORT = {"platform": "Platform", "preparation": "Setup", "network": "Network", "not_started": "No start",
+                   "harness": "Harness", "evaluation": "Judge", "canceled": "Canceled"}
+
+
 def comparison_html(manifest: dict, data: dict) -> str:
+    """Render the experiment overview, task results, exclusions, and diagnostics."""
     escape = lambda value: html.escape(str(value))
-    summaries = []
-    for agent in data["agents"]:
-        rate = f"{agent['success_rate']:.1%}" if agent["success_rate"] is not None else "—"
-        duration = f"{agent['median_wall_ms'] / 1000:.2f}s" if agent["median_wall_ms"] is not None else "—"
-        summaries.append(f"<tr><td><a href='runs/{escape(agent['id'])}/report.html'>{escape(agent['id'])}</a>"
-                         f" ({escape(agent.get('tool_layer', 'aiden'))} tools)</td>"
-                         f"<td>{agent['passed']}/{agent['eligible']} ({rate})</td>"
-                         f"<td>{agent['eligible']}/{agent['planned']}</td><td>{agent['completed']}/{agent['planned']}</td>"
-                         f"<td>{duration}</td><td>{agent['timeouts']}</td><td>{agent['execution_errors']}</td>"
-                         f"<td>{agent['native_tool_calls']} ({agent['native_loopback_attempts']} flagged)</td>"
-                         f"<td>{agent['api_retry_attempts']}</td>"
-                         f"<td>{escape(json.dumps(agent['exclusions']))}</td>"
-                         f"<td>{escape(agent['total_cost_usd']) if agent['total_cost_usd'] is not None else '—'}</td></tr>")
-    pairwise = []
-    for pair in data["pairwise"]:
-        for agent_id in pair["agent_ids"]:
-            value = pair["agents"][agent_id]
-            rate = f"{value['success_rate']:.1%}" if value['success_rate'] is not None else "—"
-            wall = value["both_pass_median_wall_ms"]
-            duration = f"{wall / 1000:.2f}s" if wall is not None else "—"
-            pairwise.append(f"<tr><td>{escape(' / '.join(pair['agent_ids']))}</td><td>{escape(agent_id)}</td>"
-                            f"<td>{value['passed']}/{pair['eligible_pairs']} ({rate})</td>"
-                            f"<td>{pair['eligible_pairs']}/{pair['planned_pairs']}</td>"
-                            f"<td>{duration} ({pair['both_pass']} pairs)</td></tr>")
-    cells = []
+    seconds = lambda ms: f"{ms / 1000:.1f}s" if isinstance(ms, (int, float)) else "—"
+    agents = data["agents"]
+    config = {agent["id"]: agent for agent in manifest.get("agents", [])}
+    ids = [agent["id"] for agent in agents]
+    headers = "".join(f"<th>{escape(agent_id)}</th>" for agent_id in ids)
+
+    models = sorted({str(agent.get("model")) for agent in config.values() if agent.get("model")})
+    judge = (manifest.get("judge_config") or {}).get("model")
+    started = str(manifest.get("created_at", ""))[:16].replace("T", " ")
+    meta = "".join(f"<span>{item}</span>" for item in (
+        f"Suite <b>{escape(manifest.get('suite', ''))}</b>", f"Status <b>{escape(manifest.get('status', ''))}</b>",
+        f"{manifest.get('repeats', 1)} repeat(s)", f"{manifest.get('concurrency', 1)} in parallel",
+        f"Model {escape(', '.join(models) or '—')}", f"Judge {escape(judge or '—')}", f"Started {escape(started)} UTC"))
+
+    overview = []
+    for agent in agents:
+        kind = config.get(agent["id"], {}).get("kind", "")
+        rate = agent["success_rate"]
+        chips = "".join(f"<span class='chip' title='{escape(EXCLUSION_REASONS.get(reason, reason))}'>"
+                        f"{escape(EXCLUSION_SHORT.get(reason, reason))} {count}</span>"
+                        for reason, count in agent["exclusions"].items())
+        overview.append(
+            f"<tr><td><a href='runs/{escape(agent['id'])}/report.html'>{escape(agent['id'])}</a></td>"
+            f"<td>{escape(HARNESSES[kind].label if kind in HARNESSES else kind)}</td>"
+            f"<td>{escape(agent.get('tool_layer', 'aiden'))}</td><td class='num'>{agent['passed']}/{agent['eligible']}</td>"
+            f"<td>{f'{rate:.0%}' if rate is not None else '—'}"
+            f"<span class='bar'><i style='width:{(rate or 0) * 100:.0f}%'></i></span></td>"
+            f"<td class='num'>{agent['coverage']:.0%}</td><td class='num'>{seconds(agent['median_wall_ms'])}</td>"
+            f"<td class='num'>{agent.get('scored_timeouts', agent['timeouts'])}</td><td>{sum(agent['exclusions'].values())} {chips}</td></tr>")
+
+    tasks = []
     for row in data["paired_attempts"]:
-        values = "".join(f"<td>{escape(value['status'])}"
-                         f"{'' if value.get('eligible') else ' (excluded or not run)'}</td>"
-                         for value in row["agents"].values())
-        cells.append(f"<tr><td>{escape(row['task_id'])} / {row['attempt']}</td>{values}</tr>")
-    headers = "".join(f"<th>{escape(agent['id'])}</th>" for agent in data["agents"])
-    scope = ("Shared device UI tools from the Aiden tool layer or the neutral raw layer, as labeled per agent; "
-             "native agent harnesses; original suite assertions and rubric scoring. "
-             "Each attempt resets the MobileGym environment. Memory, planning and context remain agent-owned. "
-             "This is a cold-start operation comparison; model and native harness settings may differ.")
-    preparation = (f"{len(data['agent_preparation_tasks'])} tasks use independent agent-driven preparation. "
-                   "Matching setup instructions do not guarantee identical starting states; inspect pre-screenshots."
-                   if data["agent_preparation_tasks"] else "No agent-driven preparation is required by this suite.")
-    return f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Agent comparison</title><style>body{{font:16px system-ui;max-width:1100px;margin:40px auto;padding:0 20px;color:#202a35}}table{{border-collapse:collapse;width:100%;margin:24px 0}}th,td{{text-align:left;padding:12px;border-bottom:1px solid #ddd}}.scroll{{overflow:auto}}a{{color:#17654b}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}</style>
-<a href="/experiments">Experiments</a><h1>{escape(manifest['id'])}</h1>
-<p>Status: {escape(manifest['status'])}. {scope}</p>
-<p>Aiden runs in Docker; external harnesses run on the host with fresh configuration and workspace and only the business tools. Coverage excludes infrastructure/evaluation errors. Missing cost is unknown; pi costs are model-pricing estimates.</p>
-<p>{preparation}</p>
-<h2>Matched comparison</h2><p>Compare the same task and repeat only when both attempts are eligible. Latency uses only pairs where both passed. Exclusions can bias the remaining sample; report coverage alongside success.</p>
-<div class="scroll"><table><thead><tr><th>Pair</th><th>Agent</th><th>Matched success</th><th>Paired coverage</th><th>Both-pass median execution</th></tr></thead><tbody>{''.join(pairwise)}</tbody></table></div>
-<h2>Individual run diagnostics</h2><p>These success rates may have different denominators. Execution errors can overlap timeouts and remain failures when execution already started; they do not establish an agent-caused failure. Native tool calls are harness tools outside the shared business catalog; flagged attempts referenced a local endpoint and should be reviewed in their native transcript. Model retries count reconnects or failed model requests that pi, Claude Code, or Codex reported; a timeout in such an attempt may reflect the network rather than the harness.</p>
-<div class="scroll"><table><thead><tr><th>Agent run</th><th>Success</th><th>Coverage</th><th>Recorded</th><th>Median execution</th><th>Timeouts</th><th>Execution errors</th><th>Native tool calls</th><th>Attempts with model retries</th><th>Exclusions</th><th>Total USD</th></tr></thead><tbody>{''.join(summaries)}</tbody></table></div>
-<h2>Paired attempts</h2><div class="scroll"><table><thead><tr><th>Task / repeat</th>{headers}</tr></thead><tbody>{''.join(cells)}</tbody></table></div>
-<details><summary>Frozen experiment configuration</summary><pre>{escape(json.dumps(manifest, indent=2))}</pre></details></html>"""
+        cells, scored, passed = [], 0, 0
+        for agent_id in ids:
+            cell = row["agents"].get(agent_id, {"status": "not_run"})
+            if cell.get("eligible"):
+                scored += 1
+                passed += cell["status"] == "passed"
+                tone, label = STATUS_BADGE.get(cell["status"], ("fail", cell["status"]))
+            elif cell["status"] == "not_run":
+                tone, label = "excluded", "Not run"
+            else:
+                tone, label = "excluded", EXCLUSION_SHORT.get(cell.get("exclusion") or "harness", "Excluded")
+            cells.append(f"<td><span class='badge {tone}'>{escape(label)}</span></td>")
+        name = row["task_id"] + (f" #{row['attempt']}" if manifest.get("repeats", 1) > 1 else "")
+        css = "unsolved" if scored and not passed else ""
+        tasks.append(f"<tr class='{css}'><td>{escape(name)}</td>{''.join(cells)}<td class='num'>{passed}/{scored}</td></tr>")
+
+    reasons = [reason for reason in EXCLUSION_REASONS if any(agent["exclusions"].get(reason) for agent in agents)]
+    exclusion_rows = "".join(
+        f"<tr><td>{escape(EXCLUSION_SHORT[reason])}</td><td class='muted'>{escape(EXCLUSION_REASONS[reason])}</td>"
+        + "".join(f"<td class='num'>{agent['exclusions'].get(reason, 0) or ''}</td>" for agent in agents) + "</tr>"
+        for reason in reasons)
+    exclusion_headers = "".join(f"<th class='num'>{escape(agent_id)}</th>" for agent_id in ids)
+    exclusions = ("<section class='panel'><h2>Exclusions</h2><p class='muted'>Excluded attempts are not scored. "
+                  "Uneven exclusions change which tasks each agent is scored on.</p><div class='scroll'><table>"
+                  f"<thead><tr><th>Reason</th><th>Meaning</th>{exclusion_headers}</tr></thead>"
+                  f"<tbody>{exclusion_rows}</tbody></table></div></section>") if reasons else ""
+
+    diagnostics = "".join(
+        f"<tr><td>{escape(agent['id'])}</td><td class='num'>{agent['completed']}/{agent['planned']}</td>"
+        f"<td class='num'>{agent['execution_errors']}</td><td class='num'>{agent['api_retry_attempts']}</td>"
+        f"<td class='num'>{agent['native_tool_calls']} ({agent['native_loopback_attempts']} flagged)</td>"
+        f"<td class='num'>{escape(agent['total_cost_usd']) if agent['total_cost_usd'] is not None else '—'}</td></tr>"
+        for agent in agents)
+    preparation = (f"{len(data['agent_preparation_tasks'])} task(s) use agent-driven preparation, which does not "
+                   "guarantee identical starting screens; inspect pre-screenshots."
+                   if data["agent_preparation_tasks"] else "No task uses agent-driven preparation.")
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Agent comparison</title>
+<style>{REPORT_STYLE}</style></head><body><main>
+<a href="/experiments">Experiments</a><h1>Agent comparison</h1>
+<div class="muted">{escape(manifest.get('id', ''))}</div><div class="meta">{meta}</div>
+<section class="panel"><h2>Overview</h2>
+<p class="muted">Success counts scored attempts only; coverage is the share of planned attempts that could be scored.
+Median time covers passed attempts, and timeouts count scored attempts that ran out of time.</p>
+<div class="scroll"><table><thead><tr><th>Agent</th><th>Harness</th><th>Tool layer</th><th class="num">Passed</th>
+<th>Success</th><th class="num">Coverage</th><th class="num">Median time</th><th class="num">Timeouts</th><th>Excluded</th>
+</tr></thead><tbody>{''.join(overview)}</tbody></table></div></section>
+<section class="panel"><h2>Task results</h2>
+<p class="muted">The last column counts passes among scored agents. Rows marked red were passed by no scored agent.
+Gray badges are excluded attempts.</p>
+<div class="scroll"><table><thead><tr><th>Task</th>{headers}<th class="num">Passed</th></tr></thead>
+<tbody>{''.join(tasks)}</tbody></table></div></section>
+{exclusions}
+<section class="panel"><h2>Diagnostics and scope</h2>
+<p class="muted">Every agent receives the same device context and the device UI tools of its labeled tool layer;
+planning, memory, and context stay agent-owned. Scoring uses the original suite assertions and rubric scoring.
+Aiden runs in its daemon container; external harnesses run on the
+host with fresh configuration and only the business tools. Each attempt resets the MobileGym environment.
+{escape(preparation)} Model retries are failed model requests or reconnects that pi, Claude Code, or Codex reported.
+Native tool calls are harness tools outside the business catalog; flagged ones referenced a local endpoint.
+Missing cost is unknown.</p>
+<div class="scroll"><table><thead><tr><th>Agent</th><th class="num">Recorded</th><th class="num">Execution errors</th>
+<th class="num">Attempts with model retries</th><th class="num">Native tool calls</th><th class="num">Total USD</th>
+</tr></thead><tbody>{diagnostics}</tbody></table></div>
+<details><summary>Frozen experiment configuration</summary><pre>{escape(json.dumps(manifest, indent=2))}</pre></details>
+</section></main></body></html>"""
 
 
 def write_experiment_results(suite: Suite, root: Path, agents: list[dict],

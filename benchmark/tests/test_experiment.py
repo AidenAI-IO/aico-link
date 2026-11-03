@@ -427,3 +427,34 @@ def test_manager_rejects_invalid_concurrency(tmp_path, concurrency):
         manager.start({"suite": SUITE_PATH.name, "agents": [{"kind": "aiden"}],
                        "environment_url": "http://127.0.0.1:9", "concurrency": concurrency})
     assert not list(manager.root.iterdir())
+
+
+@pytest.mark.parametrize("metrics,status,reason", [
+    ({"agent_eligible": True}, "passed", None),
+    ({"failure_class": "platform"}, "skipped", "platform"),
+    ({"failure_class": "adapter", "adapter_error": "Shared environment preparation failed"}, "skipped", "preparation"),
+    ({"failure_class": "adapter", "adapter_error": "Broken pipe"}, "skipped", "harness"),
+    ({"failure_class": "unknown", "api_retries": 8}, "timeout", "network"),
+    ({"failure_class": "unknown"}, "failed", "not_started"),
+    ({"failure_class": "evaluation"}, "judge_error", "evaluation"),
+    ({"failure_class": "canceled"}, "canceled", "canceled"),
+])
+def test_exclusion_reasons_separate_network_setup_and_platform(metrics, status, reason):
+    from runner.experiment import exclusion_reason
+    row = TaskResult(task_id="t", suite="s", run_id="r", category="single_step", attempt=1, status=status,
+                     rubric=[], metrics={"agent_eligible": False, **metrics})
+    assert exclusion_reason(row) == reason
+
+
+def test_report_shows_overview_matrix_task_badges_and_exclusions(tmp_path):
+    suite = tiny_suite()
+    agents = [{"id": "aiden", "kind": "aiden"}, {"id": "pi", "kind": "pi"}]
+    record = {**manifest(), "agents": agents}
+    run_experiment(suite, tmp_path, agents, {a["id"]: FakeAgent([], a["id"]) for a in agents},
+                   1, 0, threading.Event(), record, JudgeConfig())
+    report = (tmp_path / "report.html").read_text()
+    for section in ("Overview", "Task results", "Diagnostics and scope"):
+        assert f"<h2>{section}</h2>" in report
+    assert "<td>Aiden</td>" in report and "badge pass" in report
+    # Matched pairs stay in comparison.json for scripts and the CI summary.
+    assert json.loads((tmp_path / "comparison.json").read_text())["pairwise"][0]["eligible_pairs"] == 1
