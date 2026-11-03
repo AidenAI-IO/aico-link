@@ -86,7 +86,7 @@
         "prompt": "In one normal Chrome tab, open https://www.iana.org/domains/reserved, then navigate in that same tab to https://www.iana.org/domains/root/db. Leave the Top-Level Domains page visible with no browser menu open.",
         "timeout_sec": 180,
         "clear_history_after": true,
-        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "history", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "history", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Root Zone Database"]}]}}
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "history", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "history", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Top-Level Domains", "Root Zone Database"], "wait_sec": 40}]}}
       },
       "prompt": "Go back one page in this Chrome tab to the IANA-managed Reserved Domains page. Leave that page visible and tell me its heading. Do not open another tab or type a new URL.",
       "description_for_judge": "The pre-screenshot must show IANA Top-Level Domains in Chrome. A successful Back action should restore the earlier IANA-managed Reserved Domains page in the same tab; opening the URL afresh does not count.",
@@ -112,7 +112,7 @@
         "prompt": "In Chrome, open https://www.iana.org/domains/reserved in one normal tab and https://www.iana.org/domains/root/db in another. Leave the Top-Level Domains page visible, with the tab switcher closed.",
         "timeout_sec": 210,
         "clear_history_after": true,
-        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "reserved", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "root", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Root Zone Database"]}]}}
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "reserved", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "root", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Top-Level Domains", "Root Zone Database"], "wait_sec": 40}]}}
       },
       "prompt": "Use Chrome's tab switcher to return to the already open IANA-managed Reserved Domains tab. Leave that page visible and tell me its heading. Do not open a new tab or enter either URL again.",
       "description_for_judge": "Measure selection of an existing tab rather than navigation by URL. The pre-screenshot should show Top-Level Domains; accept successful taps that restore Reserved Domains when the trace contains no URL entry or new-tab action.",

@@ -291,6 +291,7 @@ class ADBAndroidDevice:
         action: str,
         data: str = "",
         package: str = "",
+        mime_type: str = "",
         extras: dict[str, str] | None = None,
         new_task: bool = False,
         wait: bool = True,
@@ -302,6 +303,8 @@ class ADBAndroidDevice:
         args += ["-a", action]
         if data:
             args += ["-d", _shell_quote(data)]
+        if mime_type:
+            args += ["-t", mime_type]
         if package:
             args += ["-p", package]
         for key, value in (extras or {}).items():

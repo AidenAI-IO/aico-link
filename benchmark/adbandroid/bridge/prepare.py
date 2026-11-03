@@ -142,13 +142,16 @@ def prepare_chrome_pages(device: Any, params: dict[str, Any]) -> dict[str, Any]:
             raise PrepareError(f"pages[{index}] must be an object")
         url = _string_param(page, "url")
         tab = str(page.get("tab") or "main")
+        # A heavy page (IANA's root zone list is >500 KB) can take longer to
+        # render than the recipe default, so a page may set its own wait.
+        page_timeout = _timeout_param(page) if "wait_sec" in page else timeout
         device.start_intent(
             action="android.intent.action.VIEW",
             data=url,
             package=CHROME_PACKAGE,
             extras={CHROME_APPLICATION_ID_EXTRA: f"aico.benchmark.tab.{tab}"},
         )
-        matched = wait_for_any_text(device, _texts_param(page, "wait_for_text", [url]), timeout_sec=timeout)
+        matched = wait_for_any_text(device, _texts_param(page, "wait_for_text", [url]), timeout_sec=page_timeout)
         opened.append({"url": url, "tab": tab, "confirmed_by": matched})
     return {"pages": opened}
 
@@ -265,13 +268,18 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
         if not folder:
             raise PrepareError("the new photo has no relative_path")
         document = urllib.parse.quote(f"primary:{folder}", safe="")
+        # DocumentsUI only opens a folder when the intent carries the
+        # directory MIME type; without it Files stays on its default root.
         device.start_intent(
             action="android.intent.action.VIEW",
             data=f"content://com.android.externalstorage.documents/document/{document}",
             package=FILES_PACKAGE,
+            mime_type="vnd.android.document/directory",
         )
+        name = str(photo.get("_display_name", ""))
+        stem = name.rsplit(".", 1)[0]
         details["confirmed_by"] = wait_for_any_text(
-            device, [photo.get("_display_name", "")], timeout_sec=timeout
+            device, [candidate for candidate in (name, stem) if candidate], timeout_sec=timeout
         )
     return details
 

@@ -145,6 +145,44 @@ def test_unknown_recipe_is_rejected():
         run_recipe(RecipeDevice(), "factory_reset", {})
 
 
+def test_a_page_can_extend_its_own_wait(monkeypatch):
+    waits = []
+    monkeypatch.setattr(prepare, "wait_for_any_text", lambda device, texts, timeout_sec: waits.append(timeout_sec) or texts[0])
+
+    run_recipe(RecipeDevice(), "chrome_pages", {"pages": [
+        {"url": "https://a.test/light", "wait_for_text": ["Light"]},
+        {"url": "https://a.test/heavy", "wait_for_text": ["Heavy"], "wait_sec": 40},
+    ]})
+
+    assert waits == [prepare.DEFAULT_WAIT_SEC, 40]
+
+
+def test_files_opens_the_photo_folder_as_a_directory_and_accepts_the_stem():
+    device = RecipeDevice(
+        screen_texts=["PXL_new"],
+        photos=[{"_id": "5", "_display_name": "old.jpg", "relative_path": "Pictures/", "date_added": "100"}],
+    )
+
+    result = run_recipe(device, "camera_photo", {"then": "files"})
+
+    intent = next(call[1] for call in device.calls if call[0] == "start_intent")
+    assert intent["mime_type"] == "vnd.android.document/directory"
+    assert intent["data"].endswith("/document/primary%3APictures")
+    assert result["confirmed_by"] == "PXL_new"
+
+
+def test_start_intent_passes_the_mime_type(monkeypatch):
+    device = ADBAndroidDevice("serial-1")
+    calls = []
+    monkeypatch.setattr(device, "_run_text", lambda args, **kw: calls.append(args) or "Status: ok")
+
+    device.start_intent(action="android.intent.action.VIEW", data="content://x/y", mime_type="vnd.android.document/directory")
+
+    args = calls[0]
+    assert args[args.index("-t") + 1] == "vnd.android.document/directory"
+    assert args[args.index("-d") + 1] == "'content://x/y'"
+
+
 def test_adb_errors_become_prepare_errors():
     class Broken(RecipeDevice):
         def force_stop(self, package):
