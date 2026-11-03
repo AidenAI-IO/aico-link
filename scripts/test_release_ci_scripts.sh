@@ -24,7 +24,7 @@ end
 raise 'three channel choices required' unless inputs['channel']['options'] == %w[dev staging prod]
 raise 'preview must not publish by default' unless inputs['plan_only']['default'] && !inputs['publish']['default']
 raise 'all channels must share one lock' unless release['concurrency'] == {
-  'group' => 'aiden-channel-release', 'cancel-in-progress' => false
+  'group' => 'aico-channel-release', 'cancel-in-progress' => false
 }
 jobs = release['jobs']
 raise 'plan must be read-only' unless release['permissions']['contents'] == 'read'
@@ -41,7 +41,7 @@ end
 apt = load_workflow.call('apt-repository.yml')
 apt_events = apt['on'] || apt[true]
 raise 'APT indexes must update only on publication or manual refresh' unless apt_events.keys.sort == %w[workflow_call workflow_dispatch]
-raise 'APT deploys must serialize' unless apt['concurrency'] == {'group' => 'aiden-apt-pages', 'cancel-in-progress' => false}
+raise 'APT deploys must serialize' unless apt['concurrency'] == {'group' => 'aico-apt-pages', 'cancel-in-progress' => false}
 raise 'APT deployment must depend on verified output' unless apt['jobs']['deploy']['needs'] == 'build'
 
 backup = load_workflow.call('build-backup.yml')
@@ -57,7 +57,7 @@ raise 'APT-only must reuse index workflow' unless backup_jobs['apt']['uses'] == 
 raise 'preflight must override APT-only' unless backup_jobs['apt']['if'].include?('!inputs.dry_run')
 backup_release = backup_jobs['release']
 raise 'backup must reuse channel decisions and publication' unless backup_release['uses'] == './.github/workflows/release.yml'
-raise 'backup must use runner 02' unless backup_release['with']['runner'] == 'aiden-hosted-02'
+raise 'backup must use runner 02' unless backup_release['with']['runner'] == 'aico-hosted-02'
 %w[channel source_ref version force_ota plan_only publish].each do |name|
   raise "backup does not forward #{name}" unless backup_release['with'][name] == "${{ inputs.#{name} }}"
 end
@@ -69,7 +69,7 @@ raise 'backup must forward secrets' unless backup_release['secrets'] == 'inherit
 raise 'preflight must not enter release flow' unless backup_release['if'].include?('!inputs.dry_run')
 preflight = backup_jobs['preflight']
 raise 'backup preflight must stay artifact-only' unless preflight['uses'] == './.github/workflows/build.yml' && preflight['with']['dry_run'] == true
-raise 'preflight must use backup runner and requested source' unless preflight['with']['runner'] == 'aiden-hosted-02' && preflight['with']['source_ref'] == '${{ inputs.source_ref }}'
+raise 'preflight must use backup runner and requested source' unless preflight['with']['runner'] == 'aico-hosted-02' && preflight['with']['source_ref'] == '${{ inputs.source_ref }}'
 raise 'preflight must be explicitly enabled' unless preflight['if'].include?('inputs.dry_run &&')
 raise 'caller must not acquire the callee release lock' if backup.dig('concurrency', 'group') == release.dig('concurrency', 'group')
 
@@ -95,7 +95,7 @@ primary_release = primary_jobs['release']
   raise "primary release #{key} must match backup" unless primary_release[key] == backup_release[key]
 end
 raise 'primary must supply scheduled defaults and preserve manual overrides' unless primary_release['with'] == {
-  'runner' => 'aiden-hosted-01',
+  'runner' => 'aico-hosted-01',
   'channel' => "${{ inputs.channel || 'dev' }}",
   'source_ref' => "${{ inputs.source_ref || 'main' }}",
   'version' => '${{ inputs.version }}',
@@ -103,7 +103,7 @@ raise 'primary must supply scheduled defaults and preserve manual overrides' unl
   'plan_only' => '${{ inputs.plan_only || false }}',
   'publish' => "${{ github.event_name == 'schedule' || inputs.publish }}"
 }
-expected_preflight = preflight.merge('with' => preflight['with'].merge('runner' => 'aiden-hosted-01', 'source_ref' => "${{ inputs.source_ref || 'main' }}"))
+expected_preflight = preflight.merge('with' => preflight['with'].merge('runner' => 'aico-hosted-01', 'source_ref' => "${{ inputs.source_ref || 'main' }}"))
 raise 'primary preflight must preserve dry-run isolation' unless primary_jobs['preflight'] == expected_preflight
 raise 'primary APT-only must preserve dry-run precedence' unless primary_jobs['apt'] == backup_jobs['apt']
 %w[business ota].each do |kind|
@@ -134,8 +134,8 @@ raise 'CI must use the full Docker test manifest' unless ci.include?('run: make 
 makefile = File.read(File.join(root, 'Makefile'))
 raise 'make check-full must execute the full Docker profile' unless makefile.include?('bash scripts/run_tests_in_docker.sh --profile full')
 raise 'Docker test wrapper must execute the manifest runner' unless File.read(File.join(root, 'scripts/run_tests_in_docker.sh')).include?('tests/run_manifest.py')
-raise 'CI must build the test image with BuildKit cache' unless ci.include?('docker/build-push-action@v6') && ci.include?('cache-from: type=gha,scope=aiden-firmware-test')
-raise 'CI must reuse the cached test image in the manifest runner' unless ci.include?('AIDEN_TEST_SKIP_BUILD:') && ci.include?('AIDEN_TEST_IMAGE: aiden-firmware-test:ci')
+raise 'CI must build the test image with BuildKit cache' unless ci.include?('docker/build-push-action@v6') && ci.include?('cache-from: type=gha,scope=aico-link-firmware-test')
+raise 'CI must reuse the cached test image in the manifest runner' unless ci.include?('AICO_TEST_SKIP_BUILD:') && ci.include?('AICO_TEST_IMAGE: aico-link-firmware-test:ci')
 raise 'CI must not duplicate the production ARM smoke suite' if ci.include?('--production --suite production-cross-smoke')
 raise 'CI Docker sandbox smoke must run in the test image with host networking' unless ci.include?('--docker-socket --host-network') && ci.include?('--suite docker-sandbox-smoke')
 raise 'manifest must cover channel decisions' unless manifest.include?('python3 scripts/test_channel_release.py')

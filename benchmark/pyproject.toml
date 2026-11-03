@@ -1,7 +1,7 @@
 [project]
-name = "aiden-benchmark"
+name = "aico-benchmark"
 version = "0.1.0"
-description = "Agent-driven phone-control benchmark for Aiden Firmware"
+description = "Agent-driven phone-control benchmark for Aico Link Firmware"
 requires-python = ">=3.10"
 dependencies = [
     "playwright>=1.40.0",

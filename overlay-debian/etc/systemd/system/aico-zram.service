@@ -1,0 +1,16 @@
+[Unit]
+Description=Configure bounded Aico Link zram swap
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/aico_boot.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_ZRAM
+ExecStart=/usr/lib/aico/aico-zram start
+ExecStop=/usr/lib/aico/aico-zram stop
+RemainAfterExit=yes
+TimeoutStartSec=15s
+TimeoutStopSec=15s
+
+[Install]
+WantedBy=multi-user.target

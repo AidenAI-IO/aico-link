@@ -7,13 +7,14 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 
 import pytest
 
 from runner.harnesses import openclaw_runtime, validate_agents
-from runner.harness import OpenClawAdapter
+from runner.harness import OpenClawAdapter, _gateway_execution, _gateway_history, refresh_gateway_evidence
 from runner.tool_gateway import AUDIT_FILE, DaemonToolBackend, ToolGateway
 from runner.trace import extract_trace
 
@@ -89,7 +90,8 @@ def test_gateway_forwards_only_catalog_tools_and_audits_business_failures(tmp_pa
             headers={"Content-Type": "application/json"}, method="POST")))
     assert FakeDaemon.calls == ["/api/tools/screenshot"]
     assert response["is_error"] is True
-    audit = json.loads((tmp_path / AUDIT_FILE).read_text())
+    started, audit = map(json.loads, (tmp_path / AUDIT_FILE).read_text().splitlines())
+    assert started["type"] == "tool_call" and started["call_id"] == audit["call_id"]
     assert audit["is_error"] is True and audit["screenshot_file"] == "step_1.jpg"
     assert (tmp_path / "step_1.jpg").read_bytes() == b"image bytes"
 
@@ -233,5 +235,77 @@ def test_gateway_ignores_a_harness_that_disconnects_before_the_reply(tmp_path, d
                 break
             threading.Event().wait(0.1)
         threading.Event().wait(0.3)
-    assert json.loads((tmp_path / AUDIT_FILE).read_text())["tool_name"] == "screenshot"
+    assert [json.loads(line)["tool_name"] for line in (tmp_path / AUDIT_FILE).read_text().splitlines()] == [
+        "screenshot", "screenshot"]
     assert "Traceback" not in capfd.readouterr().err
+
+
+def test_gateway_records_inflight_calls_and_drains_before_finalizing(tmp_path, monkeypatch):
+    from runner.runtask import evaluate_task_history
+    from runner.suite import load_suite
+
+    entered, release, closing, closed = (threading.Event() for _ in range(4))
+    class SlowBackend:
+        def invoke(self, name, args):
+            entered.set()
+            assert release.wait(5)
+            return 200, {"output": json.dumps({"width": 20, "height": 30, "format": "jpeg", "data": IMAGE})}
+
+    gateway = ToolGateway(SlowBackend(), CATALOG, tmp_path).__enter__()
+    close_server = gateway._server.server_close
+    def record_close():
+        closing.set()
+        close_server()
+        closed.set()
+    monkeypatch.setattr(gateway._server, "server_close", record_close)
+    def request():
+        with urllib.request.urlopen(urllib.request.Request(
+            f"{gateway.url}/api/tools/screenshot", data=b'{"input":{}}', method="POST"), timeout=5) as response:
+            response.read()
+    client = threading.Thread(target=request)
+    closer = threading.Thread(target=gateway.__exit__)
+    client.start()
+    try:
+        assert entered.wait(3)
+        execution = _gateway_execution(tmp_path, "codex-tool-gateway-audit", started=time.monotonic(),
+                                       returncode=-15, timed_out=True, canceled=False, model="fixture")
+        trace = extract_trace(execution.history)
+        assert len(trace.tool_calls) == 1 and not trace.tool_calls[0].has_result
+        suite = load_suite(Path(__file__).resolve().parents[1] / "suites/mobilegym_basic.json")
+        row = evaluate_task_history(suite=suite, task=suite.tasks[0], history=execution.history,
+            episode=execution.episode, metrics=execution.metrics, attempt=1, artifact_dir=tmp_path,
+            run_id="codex", timed_out=True, judge_cfg=None, judge_cache_dir=None)
+        assert row.status == "timeout" and row.metrics["agent_eligible"] is True
+        closer.start()
+        assert closing.wait(3)
+        assert not closed.is_set()
+    finally:
+        release.set()
+        client.join(timeout=5)
+        if closer.ident is None:
+            closer.start()
+        closer.join(timeout=5)
+    assert closed.is_set() and not client.is_alive() and not closer.is_alive()
+    execution.history.append({"type": "assistant", "content": "Partial answer", "usage": {"output_tokens": 2}})
+    refresh_gateway_evidence(execution, tmp_path)
+    trace = extract_trace(execution.history)
+    assert len(trace.tool_calls) == 1 and trace.tool_calls[0].has_result
+    assert trace.tool_calls[0].has_screenshot
+    assert trace.final_response == "Partial answer"
+    assert execution.history[-1]["usage"] == {"output_tokens": 2}
+    assert (tmp_path / "step_1.jpg").read_bytes() == b"image bytes"
+
+
+def test_gateway_pairs_parallel_results_in_call_order(tmp_path):
+    records = [
+        {"type": "tool_call", "call_id": 1, "tool_name": "screenshot", "raw_input": "{}"},
+        {"type": "tool_call", "call_id": 2, "tool_name": "touch_gesture", "raw_input": '{"type":"tap"}'},
+        {"type": "tool_result", "call_id": 2, "tool_name": "touch_gesture", "raw_input": '{"type":"tap"}',
+         "is_error": False, "observation": "second finished first"},
+    ]
+    (tmp_path / AUDIT_FILE).write_text("".join(json.dumps(record) + "\n" for record in records))
+    history, evidence = _gateway_history(tmp_path)
+    trace = extract_trace(history)
+    assert [(call.tool, call.has_result) for call in trace.tool_calls] == [
+        ("screenshot", False), ("touch_gesture", True)]
+    assert [event["tool_name"] for event in evidence if event["type"] == "tool_result"] == ["touch_gesture"]

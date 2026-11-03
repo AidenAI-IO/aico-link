@@ -6,13 +6,13 @@ sidebar_position: 3
 
 ## Target Hardware
 
-This page describes the current Aiden development-board reference setup. It is intended for prototyping and development. Complete all FPC and Dupont-wire connections with the power disconnected, then recheck power and signal wiring before first power-on.
+This page describes the legacy self-assembled Aico Link development-board setup. It is no longer maintained; the last firmware commit that supports it is [`ad07c4d363f2948048415ed3af0b5e4da86bcac0`](https://github.com/AidenAI-IO/aico-link/tree/ad07c4d363f2948048415ed3af0b5e4da86bcac0). Complete all FPC and Dupont-wire connections with the power disconnected, then recheck power and signal wiring before first power-on.
 
 Board markings, header orientation, and connector placement can vary by module revision, so always follow the markings on the physical module.
 
 | Hardware | Purpose | Quantity |
 | --- | --- | --- |
-| [Luckfox Pico Zero](https://wiki.luckfox.com/Luckfox-Pico-Zero) (RV1106) | Main board. Runs Aiden firmware and provides CSI, USB HID, and networking. | 1 |
+| [Luckfox Pico Zero](https://wiki.luckfox.com/Luckfox-Pico-Zero) (RV1106) | Main board. Runs Aico Link firmware and provides CSI, USB HID, and networking. | 1 |
 | [Firefly HDMI TO MIPI CSI](https://wiki.t-firefly.com/HDMI-TO-MIPI-CSI-RK628D/rk628d.html) (RK628D) | Four-lane HDMI-to-CSI video capture board, powered from 5 V. | 1 |
 | HDMI ESD protector | Protects the HDMI video-input path. | 1 |
 | USB-to-TTL module | Serial-console debugging when the Pico Zero USB port is in use. | 1 (optional) |
@@ -26,7 +26,7 @@ Board markings, header orientation, and connector placement can vary by module r
 
 ## Core Connection Topology
 
-The target device (iPhone / PC) connects to Aiden through a USB-C hub. The hub splits the connection into HDMI output (for screen capture) and USB-C output (for data/power to the Pico Zero):
+The target device (iPhone / PC) connects to Aico Link through a USB-C hub. The hub splits the connection into HDMI output (for screen capture) and USB-C output (for data/power to the Pico Zero):
 
 ```text
 Target Device (iPhone / PC)

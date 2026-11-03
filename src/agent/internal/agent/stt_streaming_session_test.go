@@ -1,12 +1,35 @@
 package agent
 
 import (
+	"context"
 	"errors"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"aico-agent/internal/stream"
 )
+
+type transcriptEventUploader struct {
+	events chan stream.TranscriptEvent
+}
+
+func (u *transcriptEventUploader) UploadPCM([]byte) error                          { return nil }
+func (u *transcriptEventUploader) Finalize() (string, error)                       { return "final", nil }
+func (u *transcriptEventUploader) Close() error                                    { return nil }
+func (u *transcriptEventUploader) TranscriptEvents() <-chan stream.TranscriptEvent { return u.events }
+
+type transcriptEventSTTClient struct{ uploader *transcriptEventUploader }
+
+func (c *transcriptEventSTTClient) Capabilities() STTCapabilities {
+	return STTCapabilities{SupportsStreamingUpload: true, SupportsInterimResults: true, SupportsSegmentFinals: true}
+}
+func (c *transcriptEventSTTClient) TranscribeWAV([]byte) (string, error) { return "", nil }
+func (c *transcriptEventSTTClient) NewStreamingUploader(context.Context, STTStreamConfig) (STTStreamUploader, error) {
+	return c.uploader, nil
+}
 
 type blockingFinalizeUploader struct {
 	transcript  string
@@ -122,5 +145,27 @@ func TestStreamingSTTSessionFinalizeWithTimeoutClosesUploader(t *testing.T) {
 	case <-uploader.closed:
 	case <-time.After(time.Second):
 		t.Fatal("expected uploader to be closed after finalize timeout")
+	}
+}
+
+func TestStreamingSTTSessionExposesOptionalTranscriptEvents(t *testing.T) {
+	uploader := &transcriptEventUploader{events: make(chan stream.TranscriptEvent, 1)}
+	client := &transcriptEventSTTClient{uploader: uploader}
+	session, err := beginStreamingSTTSession(context.Background(), client, STTStreamConfig{SampleRate: 16000, Channels: 1, BitWidth: 16})
+	if err != nil {
+		t.Fatalf("beginStreamingSTTSession() error = %v", err)
+	}
+	if session == nil || session.TranscriptEvents() == nil {
+		t.Fatal("expected optional transcript event channel")
+	}
+	want := stream.NewTranscriptHypothesis("segment-1", 1, "hello")
+	uploader.events <- want
+	select {
+	case got := <-session.TranscriptEvents():
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("transcript event=%+v want %+v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for transcript event")
 	}
 }

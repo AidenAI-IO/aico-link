@@ -42,6 +42,22 @@ def _record(**overrides):
     return record
 
 
+def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
+    runs = _group_into_runs([
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic",
+                execution_environment="adb", passed=2, pass_at_1=0.5),
+        _record(suite="adb_android_basic", run_id="ci-1-1-adb_android_basic-aidenbridge",
+                timestamp="2026-10-10T01:00:00+00:00", execution_environment="adb_aidenbridge",
+                passed=3, pass_at_1=0.75),
+    ])
+    summary, = _summarize_suites(runs)
+    assert summary["changed_fields"] == ["execution_environment"]
+    assert summary["previous"]["environment_label"] == "ADB device"
+    assert summary["latest"]["environment_label"] == "ADB + AidenBridge"
+    assert summary["delta"] == 0.25
+    assert len(summary["points"]) == 2
+
+
 def test_group_into_runs_weights_pass_rate_by_task_count() -> None:
     # One workflow run covers every suite, so a 2-task suite must not count as
     # much as a 10-task one: 11/12 is the run's rate, not the mean of 0.5 and 1.0.
@@ -392,6 +408,48 @@ def test_data_snapshot_can_be_reused_by_cli(tmp_path):
     assert "Scores unavailable." in (tmp_path / "week.md").read_text()
 
 
+def test_cli_excludes_retired_suite_names_from_all_report_views(tmp_path):
+    from ci.generate_dashboard import cli
+
+    source = tmp_path / "source.json"
+    source.write_text(json.dumps({
+        "generated_at": REPORT_END.isoformat(),
+        "history": [_record(run_id="current"),
+                    _record(suite="retired_suite_v1", run_id="retired", passed=4, pass_at_1=1.0)],
+        "warnings": ["retired: missing or invalid metrics: tasks.",
+                     "retired: failure details unavailable: 0 / 4 attempt outputs inspected.",
+                     "current: missing or invalid metrics: tasks.",
+                     "Langfuse experiment history is incomplete: APIError."],
+    }), encoding="utf-8")
+    data = tmp_path / "data.json"
+    weekly = tmp_path / "weekly.md"
+    html = tmp_path / "dashboard.html"
+
+    assert cli(["--history-json", str(source), "--output", str(html),
+                "--data-output", str(data), "--weekly-output", str(weekly)]) == 0
+    report = json.loads(data.read_text(encoding="utf-8"))
+    assert [record["suite"] for record in report["history"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["weekly"]["suites"]] == ["memory_v1"]
+    assert [suite["suite"] for suite in report["suites"]] == ["memory_v1"]
+    assert "retired_suite_v1" not in weekly.read_text(encoding="utf-8")
+    assert "retired_suite_v1" not in html.read_text(encoding="utf-8")
+    assert report["warnings"] == ["current: missing or invalid metrics: tasks.",
+                                  "Langfuse experiment history is incomplete: APIError."]
+    assert "retired:" not in weekly.read_text(encoding="utf-8")
+
+
+def test_catalog_suite_names_match_loader_fallback(tmp_path, monkeypatch):
+    from ci import generate_dashboard as dashboard
+
+    (tmp_path / "ci").mkdir()
+    catalog = tmp_path / "ci" / "suites.json"
+    catalog.write_text(json.dumps({"cases": [{"suite": "unnamed.json"}, {"suite": "named.json"}]}))
+    (tmp_path / "unnamed.json").write_text('{}')
+    (tmp_path / "named.json").write_text('{"name": "declared"}')
+    monkeypatch.setattr(dashboard, "_CATALOG_PATH", catalog)
+    assert dashboard._current_suite_names() == {"unnamed", "declared"}
+
+
 def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
     import shutil
     import subprocess
@@ -422,8 +480,8 @@ def test_generated_javascript_escapes_html_at_the_insertion_point(tmp_path):
         _k_record(suite="memory_v1"),
         _k_record(suite="memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
                   judge_prompt_version="v3", git_branch='<img src=x>', suite_sha256="memory-v2"),
-        _k_record(suite="episode_memory_v1"),
-        _k_record(suite="episode_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
+        _k_record(suite="notification_memory_v1"),
+        _k_record(suite="notification_memory_v1", workflow_run_id=4, timestamp="2026-10-11T00:00:00+00:00",
                   judge_prompt_version="v3", git_branch='<img src=x>'),
         _k_record(suite="shell_utility_v1", execution_environment="isolated"),
         _k_record(suite="skill_discovery_v1", execution_environment="external",
@@ -543,7 +601,7 @@ assert.deepEqual(DATA.capabilities, ['Memory', 'Shell utilities', 'Diagnostics',
 assert(!overviewHTML.includes('skill_discovery_v1'));
 assert(el('diagnostic-results').innerHTML.includes('Skill read: 25.0%'));
 assert(datasets.find(s => s.suite === 'skill_discovery_v1').latest.environment_label === 'External device');
-assert.deepEqual(namesForFilter('Memory').sort(), ['episode_memory_v1', 'memory_v1']);
+assert.deepEqual(namesForFilter('Memory').sort(), ['memory_v1', 'notification_memory_v1']);
 assert.deepEqual(namesForFilter('Shell utilities'), ['shell_utility_v1']);
 assert(namesForFilter('Other').includes('other'));
 assert.equal(el('change-summary').innerHTML, el('trend-capabilities').innerHTML);

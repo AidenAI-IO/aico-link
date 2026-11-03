@@ -87,8 +87,8 @@ Streaming replies that have already emitted speech are not modified. Their pendi
 Official firmware bundles prerecorded Chinese and English messages under:
 
 ```text
-/usr/share/aiden/audio/voice-notifications/tts-unavailable.zh-CN.wav
-/usr/share/aiden/audio/voice-notifications/tts-unavailable.en-US.wav
+/usr/share/aico/audio/voice-notifications/tts-unavailable.zh-CN.wav
+/usr/share/aico/audio/voice-notifications/tts-unavailable.en-US.wav
 ```
 
 When a final reply cannot use the configured TTS provider, the Agent bypasses TTS and plays the matching WAV directly through `audio_service`. This also covers startup-time TTS initialization failure and providers that complete without producing audio.
@@ -102,7 +102,7 @@ The fallback is deliberately limited:
 - playing the fallback does not acknowledge a pending response-tail notification, because the original reply and reminder were not spoken;
 - disabling `[memory_settings.notification]` also disables this fallback.
 
-Locale selection follows the device-level `locale`: `en-US` uses the English file and `zh-CN` uses the Chinese file. The same locale drives built-in notification text, response-tail punctuation, and prerecorded fallback selection. Development and custom images may override the asset directory with `AIDEN_TTS_FALLBACK_DIR`.
+Locale selection follows the device-level `locale`: `en-US` uses the English file and `zh-CN` uses the Chinese file. The same locale drives built-in notification text, response-tail punctuation, and prerecorded fallback selection. Development and custom images may override the asset directory with `AICO_TTS_FALLBACK_DIR`.
 
 ## Selection rules
 

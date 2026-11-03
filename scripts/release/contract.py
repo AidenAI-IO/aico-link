@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def declaration():
-    value = json.loads((ROOT / "overlay-debian/usr/lib/aiden/platform/contract.json").read_text())
+    value = json.loads((ROOT / "overlay-debian/usr/lib/aico/platform/contract.json").read_text())
     contract = value["platform_contract"]
-    override = os.environ.get("AIDEN_PLATFORM_CONTRACT", "")
+    override = os.environ.get("AICO_PLATFORM_CONTRACT", "")
     if override:
         if not re.fullmatch(r"[1-9][0-9]*", override):
             raise ValueError("Platform contract must be a positive integer")
@@ -21,8 +21,8 @@ def declaration():
     if type(contract) is not int or contract < 1:
         raise ValueError("Platform contract must be a positive integer")
     value["platform_contract"] = contract
-    fields = {"channel": "AIDEN_RELEASE_CHANNEL", "base_release": "AIDEN_PLATFORM_BASE",
-              "system_fingerprint": "AIDEN_SYSTEM_FINGERPRINT"}
+    fields = {"channel": "AICO_RELEASE_CHANNEL", "base_release": "AICO_PLATFORM_BASE",
+              "system_fingerprint": "AICO_SYSTEM_FINGERPRINT"}
     supplied = {key: os.environ.get(env, "") for key, env in fields.items()}
     if any(supplied.values()):
         if supplied["channel"] not in ("dev", "staging", "prod"):
@@ -37,16 +37,16 @@ def declaration():
 
 def package_manifest():
     platform = declaration()
-    version = os.environ["AIDEN_BUSINESS_VERSION"]
-    revision = os.environ["AIDEN_BUSINESS_REVISION"]
+    version = os.environ["AICO_BUSINESS_VERSION"]
+    revision = os.environ["AICO_BUSINESS_REVISION"]
     if not re.fullmatch(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)", version):
         raise ValueError("Invalid business version")
     if not re.fullmatch(r"[1-9][0-9]*", revision):
         raise ValueError("Invalid package revision")
     contract = platform["platform_contract"]
     manifest = {
-        "format": 1, "product": "aiden", "artifact_kind": "debian-package",
-        "package": "aiden-business", "business_release": version, "package_revision": revision,
+        "format": 1, "product": "aico", "artifact_kind": "debian-package",
+        "package": "aico-business", "business_release": version, "package_revision": revision,
         "architecture": "armhf", "required_platform_contract": {
             "min": contract, "max_exclusive": contract + 1},
         "config_schema": {"min_supported": 3, "target": 4}, "business_epoch": 1,
@@ -69,18 +69,18 @@ def main():
         args.output.write_text(
             'if [ "$phase" = preinst ]; then\n'
             '  case "${1:-}" in install|upgrade)\n'
-            "    python3 - <<'AIDEN_CONTRACT_CHECK'\n"
+            "    python3 - <<'AICO_CONTRACT_CHECK'\n"
             "import json, os, sys\n"
             f"expected = {expected!r}\n"
-            "path = os.environ.get('DPKG_ROOT', '') + '/usr/lib/aiden/platform/contract.json'\n"
+            "path = os.environ.get('DPKG_ROOT', '') + '/usr/lib/aico/platform/contract.json'\n"
             "try:\n"
             "    with open(path) as stream: actual = json.load(stream)\n"
             "    if type(actual.get('platform_contract')) is not int: raise ValueError('platform_contract must be an integer')\n"
             "    for key, value in expected.items():\n"
             "        if actual.get(key) != value: raise ValueError(f'{key}: expected {value}, got {actual.get(key)}')\n"
             "except (OSError, ValueError) as error:\n"
-            "    sys.exit(f'aiden-business: incompatible platform; install the matching channel OTA first: {error}')\n"
-            "AIDEN_CONTRACT_CHECK\n"
+            "    sys.exit(f'aico-business: incompatible platform; install the matching channel OTA first: {error}')\n"
+            "AICO_CONTRACT_CHECK\n"
             '    ;;\n  esac\nfi\n'
         )
     else:

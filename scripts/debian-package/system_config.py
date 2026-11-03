@@ -47,7 +47,7 @@ def stage(root):
         shutil.copyfile(ROOT / "overlay-debian" / path, destination)
         destination.chmod(int(record["mode"], 8))
     (root / "DEBIAN/conffiles").write_text("".join("/" + p + "\n" for p in files if p.startswith("etc/")))
-    document = root / "usr/lib/aiden/runtime-config.json"
+    document = root / "usr/lib/aico/runtime-config.json"
     document.parent.mkdir(parents=True, exist_ok=True)
     document.write_text(json.dumps({"format": 1, "files": files}, indent=2) + "\n")
 
@@ -59,7 +59,7 @@ def audit(root):
         if installed.is_symlink() or (stat.st_uid, stat.st_gid, stat.st_mode & 0o777) != (0, 0, int(record["mode"], 8)):
             raise ValueError(f"Configuration ownership/mode invalid: {path}")
         owner = subprocess.check_output(["dpkg-query", "--root=" + str(root), "-S", "/" + path], text=True)
-        if owner.strip() != "aiden-business: /" + path:
+        if owner.strip() != "aico-business: /" + path:
             raise ValueError(f"Wrong dpkg owner: {path}")
         if installed.read_bytes() != (ROOT / "overlay-debian" / path).read_bytes():
             raise ValueError(f"Configuration differs from source: {path}")

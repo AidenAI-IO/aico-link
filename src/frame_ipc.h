@@ -2,7 +2,7 @@
 
 #include "uds_message.h"
 
-namespace aiden {
+namespace aico {
 
 using FrameIpcMessage = UdsMessage;
 
@@ -11,4 +11,4 @@ FrameServiceStatus write_frame_message(int fd,
                                        const std::vector<uint8_t>& payload);
 FrameServiceStatus read_frame_message(int fd, FrameIpcMessage* out);
 
-}  // namespace aiden
+}  // namespace aico

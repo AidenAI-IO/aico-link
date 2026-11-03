@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screen"
 )
 
 type testMNKOpts struct {
@@ -23,8 +23,8 @@ type testMNKOpts struct {
 func testMNKProvider(t testing.TB, opts testMNKOpts) mnk.Provider {
 	t.Helper()
 	if opts.adbRunner != nil {
-		t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-		t.Setenv("AIDEN_ADB_SERIAL", "serial123")
+		t.Setenv("AICO_ADB_PATH", "/fake/adb")
+		t.Setenv("AICO_ADB_SERIAL", "serial123")
 		return mnk.NewADBProvider(opts.screenState, nil, opts.adbRunner.run)
 	}
 	return mnk.NewHIDProvider(

@@ -66,9 +66,9 @@ async function navigateTo(target) {
 
 // 2. Parameters are extracted and decoded.
 {
-  const context = await navigateTo('/wifi/Aiden%20IoT');
+  const context = await navigateTo('/wifi/Aico%20IoT');
   assert.equal(context.name, 'wifi-detail');
-  assert.equal(context.params.ssid, 'Aiden IoT', 'path parameters are URL-decoded');
+  assert.equal(context.params.ssid, 'Aico IoT', 'path parameters are URL-decoded');
 }
 
 // 3. Query strings are parsed alongside the path.
@@ -81,7 +81,7 @@ async function navigateTo(target) {
 // 4. Longer literal routes do not swallow their own sub-routes.
 {
   assert.equal((await navigateTo('/wifi')).name, 'wifi');
-  assert.equal((await navigateTo('/wifi/Aiden')).name, 'wifi-detail');
+  assert.equal((await navigateTo('/wifi/Aico')).name, 'wifi-detail');
 }
 
 // 5. An unknown path falls back to the root route, so a stale link cannot blank
@@ -101,8 +101,8 @@ async function navigateTo(target) {
   // `navigate` pushes before rendering; the stub collects the entries.
   const pushes = [];
   globalThis.window.history.pushState = (_state, _title, url) => pushes.push(url);
-  await router.navigate('/wifi/Aiden');
-  assert.deepEqual(pushes, ['/wifi/Aiden'], 'one entry per navigation');
+  await router.navigate('/wifi/Aico');
+  assert.deepEqual(pushes, ['/wifi/Aico'], 'one entry per navigation');
 }
 
 // 8. A malformed escape in a deep link falls back to the settings list
@@ -132,7 +132,7 @@ async function navigateTo(target) {
     handler(event);
     return event.defaultPrevented;
   };
-  assert.equal(click({href: '/api/backup/jobs/b1/archive', download: 'x.aiden-backup'}), false, 'downloads are not routed');
+  assert.equal(click({href: '/api/backup/jobs/b1/archive', download: 'x.aico-backup'}), false, 'downloads are not routed');
   assert.equal(click({href: '/webtty/', target: '_blank'}), false, 'new-tab links are not routed');
   assert.equal(click({href: '/wifi'}), true, 'in-app links are routed');
   assert.deepEqual(pushes, ['/wifi']);

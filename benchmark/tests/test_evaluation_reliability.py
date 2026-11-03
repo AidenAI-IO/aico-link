@@ -27,7 +27,7 @@ def judge(monkeypatch, responses, **kwargs):
                 return json.dumps({'choices': [{'message': {'content': value}}]}).encode()
         yield Response()
 
-    monkeypatch.setenv('AIDEN_BENCHMARK_JUDGE_API_KEY', 'test')
+    monkeypatch.setenv('AICO_BENCHMARK_JUDGE_API_KEY', 'test')
     monkeypatch.setattr('urllib.request.urlopen', urlopen)
     result = judge_task(description='Recommend a relaxing game', rubric=[RubricItem(id='ok', check='Uses preference')],
                         pre_screenshot=None, post_screenshot=None, trace={}, final_response='<final_answer>(a)</final_answer>',

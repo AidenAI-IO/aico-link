@@ -16,7 +16,7 @@ For local iterations, run the **quick feedback** profile:
 make check
 ```
 
-It runs shared contracts, C++ host tests (the `aiden_tests` target), Go format/vet
+It runs shared contracts, C++ host tests (the `aico_tests` target), Go format/vet
 and focused contract tests, Web tests, and a small benchmark sample plus SkillOpt.
 It intentionally does **not** run every Go test, all 879 benchmark cases, the
 long-running shell/release tests, or the 30-second CTest watchdog check.
@@ -49,8 +49,8 @@ A selected required suite with a missing dependency or an unexpected skip fails
 the runner. The JSON result at `output/test-summary.json` records the profile
 and the suites actually executed.
 
-The production cross-build smoke test requires the SDK and pinned ARM vendor
-inputs (`pico-sdk` and the RKNN archive). The Docker smoke runner downloads and
+The production cross-build smoke test uses the vendored `pico-sdk/` sources
+and requires the pinned RKNN archive. The Docker smoke runner downloads and
 checksums the pinned OpenCV-Mobile source when it is not already cached:
 
 ```bash
@@ -73,7 +73,7 @@ frame_service_cli --socket /run/frame_service/frame_service.sock list-frames
 For temporary service execution on development machines, the default socket is `/tmp/frame_service.sock`:
 
 ```bash
-/usr/lib/aiden/frame_service --socket /tmp/frame_service.sock
+/usr/lib/aico/frame_service --socket /tmp/frame_service.sock
 frame_service_cli --socket /tmp/frame_service.sock health
 ```
 
@@ -111,7 +111,7 @@ sudo example_usb_hid touch click 16000 16000
 Check the service on the device:
 
 ```bash
-systemctl status aiden-agent.service --no-pager
+systemctl status aico-agent.service --no-pager
 ```
 
 The Agent Web UI is available in every input mode. Open:

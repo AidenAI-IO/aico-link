@@ -1,7 +1,8 @@
 #pragma once
 
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include "audio_service_protocol.h"
+#include "audio_denoiser.h"
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
@@ -10,7 +11,7 @@
 #include <thread>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 // Manages a single microphone recording session.
 // The session captures PCM from AudioCapture and buffers it in a bounded
@@ -32,7 +33,7 @@ public:
     // Block until a PCM chunk is available or timeout_ms elapses.
     // Returns OK with data, TIMEOUT if no data arrived, or OK with
     // end_of_stream=true after stop once the queue has drained.
-    AidenServiceStatus pop_chunk(uint32_t timeout_ms, AudioChunkResult* out);
+    AicoServiceStatus pop_chunk(uint32_t timeout_ms, AudioChunkResult* out);
 
     // Signal the session to stop. Unblocks any pending pop_chunk().
     void stop();
@@ -44,6 +45,7 @@ public:
 
 private:
     void capture_loop();
+    void enqueue_pcm(std::vector<uint8_t> chunk);
     AudioConfig hardware_capture_config() const;
     void maybe_update_hw_sample_rate(uint64_t timestamp_us, size_t frame_samples_per_channel);
 
@@ -53,6 +55,9 @@ private:
     int hw_channels_    = 2;      // actual hardware channel count
     uint64_t prev_timestamp_us_ = 0;
     AudioCapture capture_;
+    std::unique_ptr<AudioDenoiser> denoiser_;
+    bool denoise_failure_logged_ = false;
+    std::atomic<bool> capture_done_{true};
     std::thread capture_thread_;
     std::mutex mutex_;
     std::condition_variable cv_;
@@ -60,4 +65,4 @@ private:
     std::atomic<bool> stopped_;
 };
 
-}  // namespace aiden
+}  // namespace aico

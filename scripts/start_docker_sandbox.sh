@@ -2,9 +2,9 @@
 set -euo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
-WAIT_TIMEOUT="${AIDEN_SANDBOX_WAIT_TIMEOUT:-180}"
-CONFIG_WEB_PORT="${AIDEN_CONFIG_WEB_PORT:-8000}"
-AGENT_WEB_PORT="${AIDEN_AGENT_WEB_PORT:-8080}"
+WAIT_TIMEOUT="${AICO_SANDBOX_WAIT_TIMEOUT:-180}"
+CONFIG_WEB_PORT="${AICO_CONFIG_WEB_PORT:-8000}"
+AGENT_WEB_PORT="${AICO_AGENT_WEB_PORT:-8080}"
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 
 if [[ $# -gt 0 ]]; then
@@ -40,8 +40,8 @@ if [[ "$CONFIG_WEB_PORT" == 0 || "$AGENT_WEB_PORT" == 0 ]]; then
             "$CONFIG_WEB_PORT" "$AGENT_WEB_PORT"
     )
 fi
-export AIDEN_CONFIG_WEB_PORT="$CONFIG_WEB_PORT"
-export AIDEN_AGENT_WEB_PORT="$AGENT_WEB_PORT"
+export AICO_CONFIG_WEB_PORT="$CONFIG_WEB_PORT"
+export AICO_AGENT_WEB_PORT="$AGENT_WEB_PORT"
 
 compose_args=(
     --detach
@@ -50,16 +50,16 @@ compose_args=(
     --build
 )
 
-echo "Building the current source and starting the Aiden Docker sandbox..."
+echo "Building the current source and starting the Aico Docker sandbox..."
 
-if ! docker compose up "${compose_args[@]}" aiden; then
+if ! docker compose up "${compose_args[@]}" aico; then
     echo "The sandbox did not become healthy. Recent logs:" >&2
-    docker compose logs --tail=100 aiden >&2 || true
+    docker compose logs --tail=100 aico >&2 || true
     exit 1
 fi
 
-echo "Aiden Docker sandbox is ready."
+echo "Aico Docker sandbox is ready."
 echo "Config Web: http://localhost:${CONFIG_WEB_PORT}"
 echo "Agent Web:  http://localhost:${AGENT_WEB_PORT}"
 echo "Terminal:   http://localhost:${AGENT_WEB_PORT}/webtty/ (ttyd)"
-echo "Logs:       docker compose logs -f aiden"
+echo "Logs:       docker compose logs -f aico"

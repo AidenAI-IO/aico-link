@@ -2,7 +2,7 @@ import base64
 import json
 from unittest.mock import patch
 
-from runner.capture import DEFAULT_SCREENSHOT_TIMEOUT_SEC, take_environment_screenshot
+from runner.capture import take_environment_screenshot
 
 
 class FakeResponse:
@@ -18,10 +18,6 @@ class FakeResponse:
 
     def __exit__(self, *exc):
         return False
-
-
-def test_default_screenshot_timeout_matches_provider_client():
-    assert DEFAULT_SCREENSHOT_TIMEOUT_SEC == 30
 
 
 def test_take_environment_screenshot_writes_screen_snapshot(tmp_path):

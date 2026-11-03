@@ -2,8 +2,8 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly RETENTION_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-agent-log-retention
-readonly RETENTION_PROGRAM=${REPO_ROOT}/overlay-debian/usr/lib/aiden/libexec/agent_log_retention.py
+readonly RETENTION_HELPER=${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-agent-log-retention
+readonly RETENTION_PROGRAM=${REPO_ROOT}/overlay-debian/usr/lib/aico/libexec/agent_log_retention.py
 readonly UNIT_DIR=${REPO_ROOT}/overlay-debian/etc/systemd/system
 readonly TEST_ROOT=$(mktemp -d)
 readonly PYTHON_BIN=$(command -v python3)
@@ -17,17 +17,17 @@ fail() {
 [ -x "${RETENTION_HELPER}" ] || fail "retention helper is missing or not executable"
 [ -r "${RETENTION_PROGRAM}" ] || fail "retention program is missing"
 grep -Fqx 'StandardOutput=append:/userdata/agent/log/agent.log' \
-    "${UNIT_DIR}/aiden-agent.service" \
+    "${UNIT_DIR}/aico-agent.service" \
     || fail "agent service no longer writes the expected persistent log"
-grep -Fqx 'ExecStart=/usr/lib/aiden/aiden-agent-log-retention' \
-    "${UNIT_DIR}/aiden-agent-log-retention.service" \
+grep -Fqx 'ExecStart=/usr/lib/aico/aico-agent-log-retention' \
+    "${UNIT_DIR}/aico-agent-log-retention.service" \
     || fail "retention service does not execute the retention helper"
 grep -Fqx 'OnUnitActiveSec=1min' \
-    "${UNIT_DIR}/aiden-agent-log-retention.timer" \
+    "${UNIT_DIR}/aico-agent-log-retention.timer" \
     || fail "retention timer does not run once per minute"
-grep -Fqx 'Wants=aiden-agent-log-retention.timer' \
-    "${UNIT_DIR}/aiden.target" \
-    || fail "aiden.target does not start the retention timer"
+grep -Fqx 'Wants=aico-agent-log-retention.timer' \
+    "${UNIT_DIR}/aico.target" \
+    || fail "aico.target does not start the retention timer"
 
 log_path=${TEST_ROOT}/agent.log
 level_path=${TEST_ROOT}/storage_level
@@ -36,12 +36,12 @@ config_path=${TEST_ROOT}/agent.toml
 run_retention() {
     max_bytes=$1
     retain_bytes=$2
-    AIDEN_AGENT_LOG_PATH="${log_path}" \
-    AIDEN_AGENT_STORAGE_LEVEL_PATH="${level_path}" \
-    AIDEN_AGENT_CONFIG_PATH="${config_path}" \
-    AIDEN_AGENT_LOG_MAX_BYTES="${max_bytes}" \
-    AIDEN_AGENT_LOG_RETAIN_BYTES="${retain_bytes}" \
-    AIDEN_PYTHON_BIN="${PYTHON_BIN}" \
+    AICO_AGENT_LOG_PATH="${log_path}" \
+    AICO_AGENT_STORAGE_LEVEL_PATH="${level_path}" \
+    AICO_AGENT_CONFIG_PATH="${config_path}" \
+    AICO_AGENT_LOG_MAX_BYTES="${max_bytes}" \
+    AICO_AGENT_LOG_RETAIN_BYTES="${retain_bytes}" \
+    AICO_PYTHON_BIN="${PYTHON_BIN}" \
         "${RETENTION_HELPER}"
 }
 
@@ -123,10 +123,10 @@ exec 4>&-
 target=${TEST_ROOT}/target.log
 printf 'do-not-touch' >"${target}"
 ln -s "${target}" "${log_path}.symlink"
-AIDEN_AGENT_LOG_PATH="${log_path}.symlink" \
-AIDEN_AGENT_LOG_MAX_BYTES=1 \
-AIDEN_AGENT_LOG_RETAIN_BYTES=1 \
-    AIDEN_PYTHON_BIN="${PYTHON_BIN}" \
+AICO_AGENT_LOG_PATH="${log_path}.symlink" \
+AICO_AGENT_LOG_MAX_BYTES=1 \
+AICO_AGENT_LOG_RETAIN_BYTES=1 \
+    AICO_PYTHON_BIN="${PYTHON_BIN}" \
     "${RETENTION_HELPER}" 2>/dev/null \
     && fail "retention helper accepted a symlink log path"
 [ "$(cat "${target}")" = 'do-not-touch' ] \

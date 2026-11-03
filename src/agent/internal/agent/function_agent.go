@@ -33,10 +33,9 @@ type structuredInputTool interface {
 
 const toolActionLogVersion = 1
 const maxToolObservationRunes = 4000
-const maxSkillReadObservationRunes = 20000
 
 type toolActionLog struct {
-	Version     int    `json:"aiden_action_log_version"`
+	Version     int    `json:"aico_action_log_version"`
 	Message     string `json:"message"`
 	ToolContent string `json:"tool_content,omitempty"`
 }
@@ -159,10 +158,10 @@ func ensureToolCallID(id string, index int) string {
 	return fmt.Sprintf("call_%d", index+1)
 }
 
-func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep, includeVisual bool) (string, []llms.MessageContent) {
+func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (string, []llms.MessageContent) {
 	visual, ok := a.visualScreenshotObservation(step)
 	if !ok {
-		return compactToolObservationForTool(step.Action.Tool, step.Observation), nil
+		return compactToolObservation(step.Observation), nil
 	}
 	result := visual.Result
 
@@ -174,16 +173,6 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep, includ
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
 		caption += " " + summary
 	}
-	if !includeVisual {
-		return toolContent, []llms.MessageContent{{
-			Role: llms.ChatMessageTypeHuman,
-			Parts: []llms.ContentPart{
-				llms.TextPart(caption),
-				llms.TextPart("[Image omitted]"),
-			},
-		}}
-	}
-
 	return toolContent, []llms.MessageContent{{
 		Role: llms.ChatMessageTypeHuman,
 		Parts: []llms.ContentPart{
@@ -195,14 +184,16 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep, includ
 
 func screenshotObservationStatusSummary(toolName string, result postActionScreenshotResult) string {
 	var notes []string
-	if result.ScreenChanged != nil {
-		if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
-			if *result.ScreenChanged {
+	if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
+		if result.FramesDiffered != nil {
+			if *result.FramesDiffered {
 				notes = append(notes, "Screen motion was observed during this wait window; this does not by itself prove that the preceding action succeeded.")
 			} else {
 				notes = append(notes, "No frame-to-frame screen motion was observed during this wait window; this does not by itself prove that the preceding action had no effect.")
 			}
-		} else if *result.ScreenChanged {
+		}
+	} else if result.ScreenChanged != nil {
+		if *result.ScreenChanged {
 			notes = append(notes, "A meaningful visible UI change was detected between the pre-action baseline and the final settled screenshot.")
 		} else {
 			notes = append(notes, "No meaningful visible UI change was detected between the pre-action baseline and the final settled screenshot.")
@@ -301,18 +292,6 @@ func compactToolObservation(observation string) string {
 
 func compactToolObservationWithStatus(observation string) (string, bool) {
 	return compactToolObservationLimitWithStatus(observation, maxToolObservationRunes)
-}
-
-func compactToolObservationForTool(toolName, observation string) string {
-	if strings.TrimSpace(toolName) == "skill_read" {
-		return compactToolObservationLimit(observation, maxSkillReadObservationRunes)
-	}
-	return compactToolObservation(observation)
-}
-
-func compactToolObservationLimit(observation string, maxRunes int) string {
-	compacted, _ := compactToolObservationLimitWithStatus(observation, maxRunes)
-	return compacted
 }
 
 func compactToolObservationLimitWithStatus(observation string, maxRunes int) (string, bool) {

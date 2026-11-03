@@ -72,7 +72,7 @@ Environment overrides:
                             clear them. Point them outside the repository to
                             survive a CI checkout that cleans ignored files.
   OTA_REPO                  Local factory config repository label (default:
-                            AidenAI-IO/aiden-firmware).
+                            AidenAI-IO/aico-link).
   OTA_CHANNEL               Local manifest channel (default: local).
   OTA_BASE_URL              Optional HTTP(S) base URL embedded in manifest
                             assets for non-GitHub distribution.
@@ -207,7 +207,7 @@ validate_key_pair() {
     "${REPO_ROOT}/scripts/validate_ota_pubkey.sh" "${public_key}"
 }
 
-# The key burned into /usr/share/keyrings/aiden-ota.pem decides whose manifests the
+# The key burned into /usr/share/keyrings/aico-ota.pem decides whose manifests the
 # device will accept; the private key decides who signs this build's own
 # manifest. They are the same key by default, which is what a self-contained
 # build wants. Keeping them separable lets a locally built image trust a
@@ -246,13 +246,10 @@ validate_trust_public_key() {
 }
 
 ensure_pico_sdk() {
-    # The pico-sdk submodule is the BSP build tree and is built in place, so
-    # only its presence is required. Its exact commit is recorded as provenance
-    # by the system stage but is not validated against a pinned build contract.
-    git -C "${REPO_ROOT}" submodule update --init -- pico-sdk
-    [ -e "${REPO_ROOT}/pico-sdk/.git" ] || die "pico-sdk submodule is unavailable"
+    # The vendored SDK is the BSP build tree and is built in place. The system
+    # stage records the owning firmware commit as its source provenance.
     [ -e "${REPO_ROOT}/pico-sdk/project/build.sh" ] \
-        || die "pico-sdk submodule has no project/build.sh"
+        || die "vendored pico-sdk has no project/build.sh; restore the repository checkout"
 }
 
 clean_generated_outputs() {
@@ -350,11 +347,11 @@ main() {
     local ota_public_key=${OTA_PUBLIC_KEY_PATH:-${DEFAULT_OTA_PUBLIC_KEY}}
     local ota_trust_public_key=${OTA_TRUST_PUBLIC_KEY_PATH:-}
     local go_root=${DEBIAN_APPS_GO_ROOT:-${DEFAULT_GO_ROOT}}
-    local ota_repo=${OTA_REPO:-AidenAI-IO/aiden-firmware}
+    local ota_repo=${OTA_REPO:-AidenAI-IO/aico-link}
     local ota_channel=${OTA_CHANNEL:-local}
     local ota_base_url=${OTA_BASE_URL:-}
     local ota_build_time=${OTA_BUILD_TIME:-$(date -u '+%Y-%m-%dT%H:%M:%SZ')}
-    local system_build_image=${DEBIAN_SYSTEM_BUILD_IMAGE:-aiden-debian13-armhf-builder:system}
+    local system_build_image=${DEBIAN_SYSTEM_BUILD_IMAGE:-aico-debian13-armhf-builder:system}
     local release_archive_epoch=${SOURCE_DATE_EPOCH:-${DEFAULT_SOURCE_DATE_EPOCH}}
     local git_revision ota_build_version
     git_revision=$(git -C "${REPO_ROOT}" rev-parse --short=12 HEAD)
@@ -392,7 +389,7 @@ main() {
     fi
     go_root=$(readlink -f "${go_root}")
 
-    TEMPORARY_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aiden-debian-build.XXXXXX")
+    TEMPORARY_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aico-debian-build.XXXXXX")
     trap cleanup EXIT
     validate_key_pair "${ota_private_key}" "${ota_public_key}" "${TEMPORARY_DIR}"
     validate_trust_public_key \
@@ -441,10 +438,10 @@ main() {
     local max_download_bytes
     local ota_board_config=${REPO_ROOT}/scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk
     local -a manifest_location_args=()
-    export AIDEN_OTA_BOARD_CONFIG_PATH=${ota_board_config}
+    export AICO_OTA_BOARD_CONFIG_PATH=${ota_board_config}
     # shellcheck source=/dev/null
     source "${REPO_ROOT}/scripts/ota_partition_layout.sh"
-    max_download_bytes=$(aiden_ota_manifest_max_download_bytes) \
+    max_download_bytes=$(aico_ota_manifest_max_download_bytes) \
         || die "failed to resolve the OTA partition download limit"
     if [ -n "${ota_base_url}" ]; then
         manifest_location_args=(--base-url "${ota_base_url}")

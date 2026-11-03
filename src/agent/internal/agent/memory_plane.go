@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/ble"
 )
 
 type MemoryPlane interface {

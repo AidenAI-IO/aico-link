@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"aiden-agent/internal/util"
+	"aico-agent/internal/util"
 
 	"github.com/tmc/langchaingo/llms"
 )

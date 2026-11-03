@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"aico-agent/internal/stream"
 	"github.com/gorilla/websocket"
 )
 
@@ -30,6 +32,102 @@ type dashScopeUploader struct {
 	err        error
 	closeOnce  sync.Once
 	eventSeq   atomic.Int64
+
+	eventsMu     sync.Mutex
+	events       chan stream.TranscriptEvent
+	eventsClosed bool
+	segmentID    string
+	revision     uint64
+	segmentFinal bool
+	latestText   string
+}
+
+// TranscriptEvents exposes bounded, revisioned transcript updates from the
+// realtime provider. The channel is closed when the session finishes.
+func (u *dashScopeUploader) TranscriptEvents() <-chan stream.TranscriptEvent {
+	if u == nil {
+		return nil
+	}
+	return u.events
+}
+
+func (u *dashScopeUploader) emitTranscript(event stream.TranscriptEvent) {
+	if u == nil || u.events == nil {
+		return
+	}
+	if err := event.Validate(); err != nil {
+		return
+	}
+	u.eventsMu.Lock()
+	defer u.eventsMu.Unlock()
+	if u.eventsClosed {
+		return
+	}
+	select {
+	case u.events <- event:
+	default:
+		// Hypotheses are replaceable snapshots. Keep the channel bounded and
+		// prefer a recent update over blocking the websocket reader.
+		select {
+		case <-u.events:
+		default:
+		}
+		select {
+		case u.events <- event:
+		default:
+		}
+	}
+}
+
+func (u *dashScopeUploader) closeTranscriptEvents() {
+	if u == nil || u.events == nil {
+		return
+	}
+	u.eventsMu.Lock()
+	defer u.eventsMu.Unlock()
+	if !u.eventsClosed {
+		u.eventsClosed = true
+		close(u.events)
+	}
+}
+
+func (u *dashScopeUploader) transcriptUpdate(text, itemID string, final bool) {
+	if u == nil {
+		return
+	}
+	u.mu.Lock()
+	if u.segmentFinal {
+		u.mu.Unlock()
+		return
+	}
+	if itemID == "" {
+		itemID = u.segmentID
+	}
+	if itemID == "" {
+		itemID = "dashscope-input-1"
+	}
+	if u.segmentID != itemID {
+		u.segmentID = itemID
+		u.revision = 0
+		u.latestText = ""
+	}
+	u.revision++
+	revision := u.revision
+	u.latestText = text
+	if final {
+		u.segmentFinal = true
+	}
+	u.mu.Unlock()
+
+	segment := stream.TranscriptSegment{SegmentID: itemID, Revision: revision, Text: text}
+	if final {
+		u.emitTranscript(stream.NewTranscriptSegmentFinal(itemID, revision, text))
+		if strings.TrimSpace(text) != "" {
+			u.emitTranscript(stream.NewTurnCommit([]stream.TranscriptSegment{segment}, text))
+		}
+		return
+	}
+	u.emitTranscript(stream.NewTranscriptHypothesis(itemID, revision, text))
 }
 
 func (u *dashScopeUploader) nextEventID() string {
@@ -158,14 +256,16 @@ func (u *dashScopeUploader) readErr() error {
 
 func (u *dashScopeUploader) finish(transcript string, err error) {
 	u.mu.Lock()
-	defer u.mu.Unlock()
 	if u.finished {
+		u.mu.Unlock()
 		return
 	}
 	u.finished = true
 	u.transcript = transcript
 	u.err = err
 	close(u.done)
+	u.mu.Unlock()
+	u.closeTranscriptEvents()
 }
 
 func (u *dashScopeUploader) readLoop() {
@@ -179,6 +279,7 @@ func (u *dashScopeUploader) readLoop() {
 			close(u.done)
 		}
 		u.mu.Unlock()
+		u.closeTranscriptEvents()
 		_ = u.conn.Close()
 	}()
 
@@ -213,6 +314,7 @@ func (u *dashScopeUploader) readLoop() {
 			if text == "" {
 				text = event.Text
 			}
+			u.transcriptUpdate(text, event.ItemID, true)
 			u.finish(text, nil)
 			return
 		case "error":
@@ -226,7 +328,14 @@ func (u *dashScopeUploader) readLoop() {
 			"input_audio_buffer.speech_stopped",
 			"input_audio_buffer.committed",
 			"conversation.item.input_audio_transcription.text":
-			// Intermediate events — continue reading.
+			if event.Type == "conversation.item.input_audio_transcription.text" {
+				text := event.Transcript
+				if text == "" {
+					text = event.Text
+				}
+				u.transcriptUpdate(text, event.ItemID, false)
+			}
+			// Other input lifecycle events are informational.
 		}
 	}
 }

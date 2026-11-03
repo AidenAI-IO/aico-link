@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // Logger is the Agent's leveled logger. It writes message-style records in the

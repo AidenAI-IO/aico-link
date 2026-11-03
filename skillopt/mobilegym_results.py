@@ -16,7 +16,7 @@ class MobileGymResultError(RuntimeError):
     pass
 
 
-def load_aiden_suite_task_results(
+def load_aico_suite_task_results(
     *,
     batch_dir: Path,
     suite: Suite,
@@ -73,10 +73,10 @@ def load_aiden_suite_task_results(
             metrics["mobilegym_runtime_sec"] = runtime_sec
         timed_out = runtime_sec is not None and runtime_sec > task.hard_assertions.must_complete_within_sec
 
-        history = merged.get("aiden_last_chat_history")
-        history_source = "aiden_last_chat_history"
+        history = merged.get("aico_last_chat_history")
+        history_source = "aico_last_chat_history"
         if not isinstance(history, list):
-            if _requires_full_aiden_history(suite, task):
+            if _requires_full_aico_history(suite, task):
                 history = None
             else:
                 history = _history_from_execution_agent_message(merged)
@@ -88,12 +88,12 @@ def load_aiden_suite_task_results(
                 run_id=run_id,
                 artifact_dir=artifact_dir,
                 status="failed",
-                error="missing aiden_last_chat_history",
+                error="missing aico_last_chat_history",
                 mobilegym_status=raw_status,
             ))
             continue
 
-        metrics["aiden_history_source"] = history_source
+        metrics["aico_history_source"] = history_source
         results.append(evaluate_task_history(
             suite=suite,
             task=task,
@@ -109,7 +109,7 @@ def load_aiden_suite_task_results(
     return results
 
 
-def load_aiden_suite_rollouts(
+def load_aico_suite_rollouts(
     *,
     batch_dir: Path,
     suite: Suite,
@@ -121,7 +121,7 @@ def load_aiden_suite_rollouts(
 ) -> list[RolloutResult]:
     return [
         task_result_to_rollout(result)
-        for result in load_aiden_suite_task_results(
+        for result in load_aico_suite_task_results(
             batch_dir=batch_dir,
             suite=suite,
             tasks=tasks,
@@ -187,14 +187,14 @@ def _history_from_execution_agent_message(row: dict[str, Any]) -> list[dict[str,
     execution = row.get("execution")
     message = execution.get("agent_message") if isinstance(execution, dict) else None
     if message is None:
-        message = row.get("agent_message") or row.get("aiden_last_response")
+        message = row.get("agent_message") or row.get("aico_last_response")
     text = str(message or "").strip()
     if not text:
         return None
     return [{"type": "assistant", "content": text}]
 
 
-def _requires_full_aiden_history(suite: Suite, task: TaskSpec) -> bool:
+def _requires_full_aico_history(suite: Suite, task: TaskSpec) -> bool:
     assertions = task.hard_assertions
     return bool(
         suite.trace_observations

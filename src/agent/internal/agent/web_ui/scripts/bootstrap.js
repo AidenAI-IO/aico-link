@@ -1,12 +1,16 @@
 // Initialize only after every feature script has been evaluated.
 loadHistory();
-setInterval(loadHistory, 2000);
+// Incremental refresh is a fallback for SSE; skip it while the tab is hidden.
+setInterval(function() {
+    if (!document.hidden) loadHistory();
+}, 2000);
+conversationEl.addEventListener('scroll', loadOlderHistoryNearTop, {passive: true});
 refreshCurrentLiveActivity();
 setInterval(refreshCurrentLiveActivity, 2000);
 loadToolCatalog();
 autoResizeInput();
 connectSSE();
-configureTerminal();
+startResourcePolling();
 
 inputEl.addEventListener('input', autoResizeInput);
 imageInputEl.addEventListener('change', handleImageSelection);
@@ -36,9 +40,3 @@ document.addEventListener('keydown', function(event) {
         closeStateDetails();
     }
 });
-
-function configureTerminal() {
-    const terminalUrl = '/webtty/';
-    terminalFrameEl.src = terminalUrl;
-    terminalOpenLinkEl.href = terminalUrl;
-}

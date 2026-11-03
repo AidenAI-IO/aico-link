@@ -1,0 +1,16 @@
+[Unit]
+Description=Provision the persistent Aico Link machine identity across A/B rootfs slots
+Requires=userdata.mount userdata-ota.mount aico-userdata-migrate.service
+After=userdata.mount userdata-ota.mount aico-userdata-migrate.service
+After=systemd-machine-id-commit.service
+Before=aico-environment.service aico-ota-health-marker.service aico.target
+ConditionPathExists=/usr/lib/aico/ota
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-machine-id-provision
+RemainAfterExit=yes
+TimeoutStartSec=180s
+
+[Install]
+WantedBy=multi-user.target

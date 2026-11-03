@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/screenprovider"
 )
 
 type recordingBridgeTextProvider struct {
@@ -124,7 +124,7 @@ func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {
 			endpoint := httptest.NewServer(http.HandlerFunc(server.handleProviderMNK))
 			defer endpoint.Close()
 			client := mnk.NewHTTPProvider(mnk.HTTPProviderConfig{BaseURL: endpoint.URL})
-			err := client.KeyboardText(context.Background(), "Aiden 2026!")
+			err := client.KeyboardText(context.Background(), "Aico 2026!")
 			if fail {
 				if err == nil || !strings.Contains(err.Error(), "keyboard disconnected") {
 					t.Fatalf("lost keyboard failure: %v", err)
@@ -132,7 +132,7 @@ func TestGoEnvironmentBridgeServesInternalKeyboardText(t *testing.T) {
 			} else if err != nil {
 				t.Fatal(err)
 			}
-			if sink.text != "Aiden 2026!" {
+			if sink.text != "Aico 2026!" {
 				t.Fatalf("typed %q", sink.text)
 			}
 		})
@@ -322,8 +322,8 @@ func TestEnvironmentBridgeTextInputUsesRemoteKeyboard(t *testing.T) {
 		Enabled: true, Endpoint: bridge.URL, BenchmarkTaskID: "typing-task",
 	}}, ProxyConfig{})
 	// Exercise the exact internal dependency used by enter_text's probe and chunks.
-	out, err := tools.textInputHW.keyboardText.Call(context.Background(), `{"text":"Aiden test-2026!"}`)
-	if err != nil || out != "ok" || gotText != "Aiden test-2026!" {
+	out, err := tools.textInputHW.keyboardText.Call(context.Background(), `{"text":"Aico test-2026!"}`)
+	if err != nil || out != "ok" || gotText != "Aico test-2026!" {
 		t.Fatalf("remote typing: output=%q err=%v text=%q", out, err, gotText)
 	}
 }

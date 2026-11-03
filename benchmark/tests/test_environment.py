@@ -20,7 +20,7 @@ def _manager_without_discovery(monkeypatch, tmp_path: Path) -> environment.Envir
 
 def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
     captured = {}
-    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
+    monkeypatch.delenv("AICO_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
     monkeypatch.setattr(environment.sys, "platform", "linux")
 
     def inspect(cmd, text=False, timeout=None):
@@ -39,7 +39,7 @@ def test_mobilegym_bridge_bind_uses_docker_gateway_on_linux(monkeypatch):
 
 
 def test_mobilegym_bridge_bind_is_loopback_on_docker_desktop(monkeypatch):
-    monkeypatch.delenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
+    monkeypatch.delenv("AICO_MOBILEGYM_BRIDGE_BIND_HOST", raising=False)
     monkeypatch.setattr(environment.sys, "platform", "darwin")
     monkeypatch.setattr(
         environment.subprocess,
@@ -51,7 +51,7 @@ def test_mobilegym_bridge_bind_is_loopback_on_docker_desktop(monkeypatch):
 
 
 def test_mobilegym_bridge_bind_rejects_all_interfaces_override(monkeypatch):
-    monkeypatch.setenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", "0.0.0.0")
+    monkeypatch.setenv("AICO_MOBILEGYM_BRIDGE_BIND_HOST", "0.0.0.0")
 
     with pytest.raises(RuntimeError, match="no usable IPv4 host gateway"):
         environment.mobilegym_bridge_bind_host()
@@ -69,7 +69,7 @@ def test_mobilegym_bridge_bind_rejects_all_interfaces_override(monkeypatch):
 def test_docker_published_binding_reports_actual_host_ip(monkeypatch, output, expected):
     monkeypatch.setattr(environment.subprocess, "check_output", lambda *args, **kwargs: output)
 
-    assert environment._docker_published_binding_safe("aiden-mobilegym-env-x", 9090) == expected
+    assert environment._docker_published_binding_safe("aico-mobilegym-env-x", 9090) == expected
 
 
 def test_list_all_coalesces_concurrent_docker_sync(monkeypatch, tmp_path: Path):
@@ -138,10 +138,10 @@ def test_recovered_mobilegym_container_is_not_reusable_for_new_runs(monkeypatch,
 
     recovered = manager._build_recovered_env(
         {
-            "name": "aiden-mobilegym-env-mg-old",
+            "name": "aico-mobilegym-env-mg-old",
             "id": "container-id",
             "created_at": "2026-08-14 08:00:00 +0800 CST",
-            "image": "aiden-mobilegym-simulator:test",
+            "image": "aico-mobilegym-simulator:test",
         }
     )
 
@@ -204,7 +204,7 @@ def test_ensure_mobilegym_image_reuses_matching_commit(monkeypatch, tmp_path: Pa
     )
 
     environment.ensure_mobilegym_image(
-        "aiden-mobilegym-simulator:test",
+        "aico-mobilegym-simulator:test",
         True,
         tmp_path / "build.log",
         repo_root=tmp_path,
@@ -215,7 +215,7 @@ def test_ensure_mobilegym_image_reuses_matching_commit(monkeypatch, tmp_path: Pa
     ("inspect_returncode", "labels"),
     [
         (1, None),
-        (0, {"io.aiden.mobilegym.commit": "0" * 40}),
+        (0, {"io.aico.mobilegym.commit": "0" * 40}),
     ],
 )
 def test_ensure_mobilegym_image_builds_missing_or_stale_image(
@@ -256,7 +256,7 @@ def test_ensure_mobilegym_image_builds_missing_or_stale_image(
     monkeypatch.setattr(environment.subprocess, "Popen", fake_popen)
 
     environment.ensure_mobilegym_image(
-        "aiden-mobilegym-simulator:test",
+        "aico-mobilegym-simulator:test",
         True,
         tmp_path / "build.log",
         repo_root=tmp_path,
@@ -278,7 +278,7 @@ def test_ensure_mobilegym_image_builds_missing_or_stale_image(
         "--build-arg",
         "MOBILEGYM_DEBIAN_MIRROR=mirror.example",
         "-t",
-        "aiden-mobilegym-simulator:test",
+        "aico-mobilegym-simulator:test",
         str(tmp_path),
     ]
 
@@ -302,7 +302,7 @@ def test_ensure_mobilegym_image_rejects_stale_image_when_build_disabled(monkeypa
 
     with pytest.raises(RuntimeError, match=f"expected {MOBILEGYM_COMMIT}"):
         environment.ensure_mobilegym_image(
-            "aiden-mobilegym-simulator:test",
+            "aico-mobilegym-simulator:test",
             False,
             tmp_path / "build.log",
             repo_root=tmp_path,

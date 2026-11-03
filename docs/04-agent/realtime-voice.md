@@ -87,7 +87,7 @@ them:
 | Qwen | JSON WebSocket | DashScope realtime protocol; server VAD/smart-turn, audio transcription, tools, and response cancellation |
 | OpenAI | JSON WebSocket | Native OpenAI Realtime events; input transcription is enabled explicitly and response interruption includes truncation |
 | xAI | JSON WebSocket | xAI realtime event aliases are normalized to the shared event model |
-| Gemini | Gemini Live WebSocket | `setup`/`serverContent` protocol; input/output transcription and function responses; server VAD does not expose Aiden speech boundary events |
+| Gemini | Gemini Live WebSocket | `setup`/`serverContent` protocol; input/output transcription and function responses; server VAD does not expose Aico speech boundary events |
 | Speko S2S | HTTP mint + delegated provider WebSocket | Mints a short-lived provider credential, then uses the selected Gemini or xAI adapter; OpenAI/WebRTC routing is intentionally rejected |
 
 Speko is a control-plane adapter, not another PCM relay. Its lease wrapper
@@ -105,7 +105,7 @@ audio → speech_started → speech_stopped → input_committed → transcript_f
 ```
 
 Providers may omit or reorder parts of this sequence. Gemini, for example,
-does not emit Aiden speech boundary events, so the daemon uses a local energy
+does not emit Aico speech boundary events, so the daemon uses a local energy
 gate only to prevent background task updates from entering while the user is
 speaking. It does not replace Gemini's server-side turn detector.
 

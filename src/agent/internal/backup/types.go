@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	FormatName      = "aiden-backup"
+	FormatName      = "aico-backup"
 	FormatVersion   = 1
-	ArchiveMIMEType = "application/vnd.aiden.backup"
-	ArchiveSuffix   = ".aiden-backup"
+	ArchiveMIMEType = "application/vnd.aico.backup"
+	ArchiveSuffix   = ".aico-backup"
 
 	DefaultChunkSize   = 1024 * 1024
 	DefaultMemoryKiB   = 32 * 1024

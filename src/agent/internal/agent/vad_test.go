@@ -161,6 +161,131 @@ func TestHelperVADScorerStopsAfterMalformedScoreResponse(t *testing.T) {
 	}
 }
 
+func TestAudioVADSmartTurnCommitsOnCompleteProbability(t *testing.T) {
+	detector := &stubTurnDetector{prob: 0.9}
+	vad, err := NewAudioVADWithScorer(AudioVADConfig{
+		SampleRate:        16000,
+		MinSpeechMs:       60,
+		SpeechThreshold:   0.5,
+		TurnDetector:      detector,
+		TurnThreshold:     0.5,
+		AnalyzeSilenceMs:  90,  // 3 frames
+		FallbackSilenceMs: 300, // 10 frames
+	}, &sequenceScorer{probabilities: []float64{0.9, 0.9, 0.1, 0.1, 0.1}})
+	if err != nil {
+		t.Fatalf("NewAudioVADWithScorer() error = %v", err)
+	}
+
+	speech := constantFrame(vad.FrameSamples(), 1000)
+	silence := constantFrame(vad.FrameSamples(), 0)
+	if utterance, err := vad.Process(speech); err != nil || utterance != nil {
+		t.Fatalf("speech1 = len %d err %v", len(utterance), err)
+	}
+	if utterance, err := vad.Process(speech); err != nil || utterance != nil {
+		t.Fatalf("speech2 = len %d err %v", len(utterance), err)
+	}
+	for i := 0; i < 2; i++ {
+		if utterance, err := vad.Process(silence); err != nil || utterance != nil {
+			t.Fatalf("silence %d = len %d err %v", i, len(utterance), err)
+		}
+	}
+	utterance, err := vad.Process(silence)
+	if err != nil {
+		t.Fatalf("analyze silence error = %v", err)
+	}
+	if utterance == nil {
+		t.Fatal("expected Smart Turn to commit utterance")
+	}
+	if detector.calls != 1 {
+		t.Fatalf("Predict calls = %d, want 1", detector.calls)
+	}
+}
+
+func TestAudioVADSmartTurnPredictErrorFailsOpenUntilFallback(t *testing.T) {
+	detector := &stubTurnDetector{err: errors.New("npu submit failed")}
+	vad, err := NewAudioVADWithScorer(AudioVADConfig{
+		SampleRate:        16000,
+		MinSpeechMs:       60,
+		SpeechThreshold:   0.5,
+		TurnDetector:      detector,
+		TurnThreshold:     0.5,
+		AnalyzeSilenceMs:  90,
+		FallbackSilenceMs: 2000, // long enough that repeated Predict failures commit first
+	}, &sequenceScorer{probabilities: []float64{0.9, 0.9, 0.1}})
+	if err != nil {
+		t.Fatalf("NewAudioVADWithScorer() error = %v", err)
+	}
+
+	speech := constantFrame(vad.FrameSamples(), 1000)
+	silence := constantFrame(vad.FrameSamples(), 0)
+	for i := 0; i < 2; i++ {
+		if _, err := vad.Process(speech); err != nil {
+			t.Fatalf("speech Process error = %v", err)
+		}
+	}
+	var utterance []int16
+	for i := 0; i < 20 && utterance == nil; i++ {
+		var processErr error
+		utterance, processErr = vad.Process(silence)
+		if processErr != nil {
+			t.Fatalf("Process() error = %v, want fail-open commit without killing Process", processErr)
+		}
+	}
+	if utterance == nil {
+		t.Fatal("expected repeated Smart Turn errors to commit on silence")
+	}
+	if detector.calls < smartTurnFailCommitAfter {
+		t.Fatalf("Predict calls = %d, want >= %d", detector.calls, smartTurnFailCommitAfter)
+	}
+}
+
+func TestAudioVADSmartTurnWaitsWhenIncomplete(t *testing.T) {
+	detector := &stubTurnDetector{prob: 0.1}
+	// Two speech frames, then many silence frames (scorer repeats last value).
+	probs := []float64{0.9, 0.9, 0.1}
+	vad, err := NewAudioVADWithScorer(AudioVADConfig{
+		SampleRate:        16000,
+		MinSpeechMs:       60,
+		SpeechThreshold:   0.5,
+		TurnDetector:      detector,
+		TurnThreshold:     0.5,
+		AnalyzeSilenceMs:  90,
+		FallbackSilenceMs: 200, // ~7 frames; force commit after longer silence
+	}, &sequenceScorer{probabilities: probs})
+	if err != nil {
+		t.Fatalf("NewAudioVADWithScorer() error = %v", err)
+	}
+
+	speech := constantFrame(vad.FrameSamples(), 1000)
+	silence := constantFrame(vad.FrameSamples(), 0)
+	for i := 0; i < 2; i++ {
+		if _, err := vad.Process(speech); err != nil {
+			t.Fatalf("speech Process error = %v", err)
+		}
+	}
+	// First analyze window: incomplete, so no commit.
+	for i := 0; i < 3; i++ {
+		if utterance, err := vad.Process(silence); err != nil || utterance != nil {
+			t.Fatalf("analyze window silence %d = len %d err %v", i, len(utterance), err)
+		}
+	}
+	if detector.calls != 1 {
+		t.Fatalf("Predict calls after analyze = %d, want 1", detector.calls)
+	}
+	// Continue silence until fallback forces commit.
+	var utterance []int16
+	for i := 0; i < 20 && utterance == nil; i++ {
+		var err error
+		utterance, err = vad.Process(silence)
+		if err != nil {
+			t.Fatalf("fallback silence %d error = %v", i, err)
+		}
+	}
+	if utterance == nil {
+		t.Fatal("expected fallback silence to commit utterance")
+	}
+}
+
 func newTestAudioVAD(t *testing.T, probabilities []float64) *AudioVAD {
 	t.Helper()
 	vad, err := NewAudioVADWithScorer(AudioVADConfig{
@@ -174,6 +299,22 @@ func newTestAudioVAD(t *testing.T, probabilities []float64) *AudioVAD {
 	}
 	return vad
 }
+
+type stubTurnDetector struct {
+	prob  float64
+	calls int
+	err   error
+}
+
+func (s *stubTurnDetector) Predict(pcm []int16) (float64, error) {
+	s.calls++
+	if s.err != nil {
+		return 0, s.err
+	}
+	return s.prob, nil
+}
+
+func (s *stubTurnDetector) Close() error { return nil }
 
 type sequenceScorer struct {
 	probabilities []float64

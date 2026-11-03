@@ -9,8 +9,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (

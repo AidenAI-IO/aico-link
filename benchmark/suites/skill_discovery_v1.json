@@ -72,7 +72,7 @@
         "ios"
       ],
       "description_for_judge": "The agent should autonomously load the relevant device-operation skill, create a note, and enter mixed Chinese and ASCII text into a visible field.",
-      "prompt": "请打开笔记应用，新建一条笔记，并在标题输入框中输入：Aiden测试 benchmark-2026!",
+      "prompt": "请打开笔记应用，新建一条笔记，并在标题输入框中输入：Aico测试 benchmark-2026!",
       "rubric": [
         {
           "id": "note_editor_open",
@@ -80,7 +80,7 @@
         },
         {
           "id": "mixed_text_visible",
-          "check": "The title field visibly contains the exact text Aiden测试 benchmark-2026! with both Chinese and ASCII portions intact."
+          "check": "The title field visibly contains the exact text Aico测试 benchmark-2026! with both Chinese and ASCII portions intact."
         }
       ],
       "hard_assertions": {

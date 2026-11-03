@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
 	"strings"

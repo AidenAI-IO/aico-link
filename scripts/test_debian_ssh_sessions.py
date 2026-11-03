@@ -13,7 +13,7 @@ from unittest.mock import Mock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-HELPER = ROOT / "overlay-debian/usr/lib/aiden/aiden-ssh-session-tty"
+HELPER = ROOT / "overlay-debian/usr/lib/aico/aico-ssh-session-tty"
 HOOK = ROOT / "overlay-debian/etc/ssh/sshrc"
 register_tty = runpy.run_path(str(HELPER))["register_tty"]
 
@@ -94,7 +94,7 @@ class SSHSessionTests(unittest.TestCase):
             xauth.chmod(0o755)
             hook = directory / "sshrc"
             hook.write_text(HOOK.read_text().replace(
-                "/usr/lib/aiden/aiden-ssh-session-tty", str(helper)
+                "/usr/lib/aico/aico-ssh-session-tty", str(helper)
             ).replace("/usr/bin/xauth", str(xauth)))
             for display, expected in (("localhost:10.0", "unix:10.0"),
                                       ("other:10.0", "other:10.0")):

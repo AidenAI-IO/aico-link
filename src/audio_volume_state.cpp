@@ -9,7 +9,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 namespace {
 
@@ -272,4 +272,4 @@ bool save_playback_volume_state(const char* path,
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

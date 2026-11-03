@@ -1,5 +1,5 @@
-#ifndef AIDEN_RKNN_API_MINIMAL_H
-#define AIDEN_RKNN_API_MINIMAL_H
+#ifndef AICO_RKNN_API_MINIMAL_H
+#define AICO_RKNN_API_MINIMAL_H
 
 #include <stdint.h>
 

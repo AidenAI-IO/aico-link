@@ -7,8 +7,8 @@ import (
 	"image/jpeg"
 	"testing"
 
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
 )
 
 // darkPhoneFrame is a 1920x1080 capture with a portrait phone in the middle

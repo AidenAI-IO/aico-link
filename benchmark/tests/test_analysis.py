@@ -4,12 +4,12 @@ from runner import analysis
 
 
 def test_config_from_env_enables_analysis_and_reads_limits(monkeypatch):
-    monkeypatch.setenv("AIDEN_BENCHMARK_LLM_ANALYSIS", "1")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MODEL", "anthropic/claude-sonnet-4-6")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_BASE_URL", "https://analysis.example.com/v1")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "1234")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "5678")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "9")
+    monkeypatch.setenv("AICO_BENCHMARK_LLM_ANALYSIS", "1")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MODEL", "anthropic/claude-sonnet-4-6")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_BASE_URL", "https://analysis.example.com/v1")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", "1234")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", "5678")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", "9")
 
     cfg = analysis.config_from_env()
 
@@ -22,44 +22,44 @@ def test_config_from_env_enables_analysis_and_reads_limits(monkeypatch):
 
 
 def test_resolve_analysis_api_key_uses_expected_precedence(monkeypatch):
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV", "CUSTOM_ANALYSIS_KEY")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV", "CUSTOM_ANALYSIS_KEY")
     monkeypatch.setenv("CUSTOM_ANALYSIS_KEY", "custom-secret")
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", "analysis-secret")
-    monkeypatch.setenv("AIDEN_BENCHMARK_JUDGE_API_KEY", "judge-secret")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY", "analysis-secret")
+    monkeypatch.setenv("AICO_BENCHMARK_JUDGE_API_KEY", "judge-secret")
     monkeypatch.setenv("OPENROUTER_API_KEY", "openrouter-secret")
     monkeypatch.setenv("MODEL_API_KEY", "model-secret")
-    monkeypatch.setenv("AIDEN_MODEL_API_KEY", "aiden-secret")
+    monkeypatch.setenv("AICO_MODEL_API_KEY", "aico-secret")
 
     cfg = analysis.AnalysisConfig(enabled=True)
 
     assert analysis.resolve_analysis_api_key(cfg) == ("CUSTOM_ANALYSIS_KEY", "custom-secret")
 
-    monkeypatch.delenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV")
+    monkeypatch.delenv("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV")
     monkeypatch.delenv("CUSTOM_ANALYSIS_KEY")
     cfg = analysis.AnalysisConfig(enabled=True)
     assert analysis.resolve_analysis_api_key(cfg) == (
-        "AIDEN_BENCHMARK_ANALYSIS_API_KEY",
+        "AICO_BENCHMARK_ANALYSIS_API_KEY",
         "analysis-secret",
     )
 
-    monkeypatch.delenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY")
+    monkeypatch.delenv("AICO_BENCHMARK_ANALYSIS_API_KEY")
     assert analysis.resolve_analysis_api_key(cfg) == (
-        "AIDEN_BENCHMARK_JUDGE_API_KEY",
+        "AICO_BENCHMARK_JUDGE_API_KEY",
         "judge-secret",
     )
 
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY")
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY")
     try:
         analysis.resolve_analysis_api_key(cfg)
     except analysis.AnalysisError as exc:
-        assert "AIDEN_BENCHMARK_ANALYSIS_API_KEY" in str(exc)
+        assert "AICO_BENCHMARK_ANALYSIS_API_KEY" in str(exc)
     else:
         raise AssertionError("expected legacy provider credentials to be ignored")
 
 
 def test_resolve_analysis_api_key_accepts_explicit_override(monkeypatch):
-    monkeypatch.delenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", raising=False)
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_ANALYSIS_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
 
     cfg = analysis.AnalysisConfig(enabled=True, api_key_value="ui-secret")
 
@@ -112,7 +112,7 @@ def test_chat_analysis_model_uses_configured_base_url(monkeypatch):
 
 
 def test_redact_removes_known_and_custom_secrets(monkeypatch):
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV", "CUSTOM_ANALYSIS_KEY")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV", "CUSTOM_ANALYSIS_KEY")
     monkeypatch.setenv("CUSTOM_ANALYSIS_KEY", "custom-secret-value")
     text = (
         "OPENROUTER_API_KEY=sk-or-v1-secret bearer Bearer abcdefghijklmnop "
@@ -135,11 +135,11 @@ def test_redact_removes_known_and_custom_secrets(monkeypatch):
 
 
 def test_redact_removes_benchmark_api_key_assignments_from_captured_logs(monkeypatch):
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", "current-analysis-secret")
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY", "current-analysis-secret")
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
     text = (
-        "AIDEN_BENCHMARK_ANALYSIS_API_KEY=captured-analysis-secret "
-        "AIDEN_BENCHMARK_JUDGE_API_KEY=captured-judge-secret"
+        "AICO_BENCHMARK_ANALYSIS_API_KEY=captured-analysis-secret "
+        "AICO_BENCHMARK_JUDGE_API_KEY=captured-judge-secret"
     )
 
     redacted = analysis.redact_text(text, analysis.AnalysisConfig(enabled=True))
@@ -296,7 +296,7 @@ def test_collect_context_mobilegym_run_includes_errors_runner_logs_and_bridge_ac
     (shard / "compose.log").write_text("compose ok", encoding="utf-8")
     (raw / "console.log").write_text("console ClockBoom", encoding="utf-8")
     (raw / "errors.jsonl").write_text(json.dumps({"id": "clock.Task", "error": "ClockBoom"}) + "\n", encoding="utf-8")
-    (raw / "aiden_bridge_actions.json").write_text(
+    (raw / "aico_bridge_actions.json").write_text(
         json.dumps([{"tool_name": "tap", "error": "ClockBoom"}]), encoding="utf-8"
     )
     code = repo / "benchmark" / "mobilegym" / "clock_runner.py"
@@ -318,7 +318,7 @@ def test_collect_context_mobilegym_bridge_inactive_setup_errors_add_known_issue(
     raw = shard / "raw" / "run"
     raw.mkdir(parents=True)
     error = (
-        "AidenAdapterError: setup tool keyboard_tap failed: error: "
+        "AicoAdapterError: setup tool keyboard_tap failed: error: "
         "keyboard_tap failed: mobilegym bridge episode is not active"
     )
     (run_dir / "summary.json").write_text(
@@ -345,10 +345,10 @@ def test_collect_context_mobilegym_bridge_inactive_setup_errors_add_known_issue(
             "task_ids": ["suite.task_a", "suite.task_b"],
             "summary": "MobileGym setup tools ran before the bridge episode was active.",
             "evidence": [
-                "AidenAdapterError: setup tool keyboard_tap failed: error: keyboard_tap failed: mobilegym bridge episode is not active"
+                "AicoAdapterError: setup tool keyboard_tap failed: error: keyboard_tap failed: mobilegym bridge episode is not active"
             ],
             "suspected_cause": (
-                "AidenGoAgent reset/setup lifecycle invoked setup tool_sequence before "
+                "Aico Agent reset/setup lifecycle invoked setup tool_sequence before "
                 "bridge /episode/start and daemon /api/mobilegym/episode/start bound an active episode."
             ),
         }
@@ -362,7 +362,7 @@ def test_analyze_run_normalizes_bridge_inactive_analysis_payload(monkeypatch, tm
     raw = shard / "raw" / "run"
     raw.mkdir(parents=True)
     error = (
-        "AidenAdapterError: setup tool keyboard_tap failed: error: "
+        "AicoAdapterError: setup tool keyboard_tap failed: error: "
         "keyboard_tap failed: mobilegym bridge episode is not active"
     )
     (run_dir / "summary.json").write_text(
@@ -389,7 +389,7 @@ def test_analyze_run_normalizes_bridge_inactive_analysis_payload(monkeypatch, tm
             }
         )
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", "test-key")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY", "test-key")
     monkeypatch.setattr(analysis, "chat_analysis_model", fake_chat)
 
     result = analysis.analyze_run(run_dir, repo, analysis.AnalysisConfig(enabled=True))
@@ -510,7 +510,7 @@ def test_analyze_run_writes_json_and_markdown_with_mocked_llm(monkeypatch, tmp_p
             }
         )
 
-    monkeypatch.setenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", "test-key")
+    monkeypatch.setenv("AICO_BENCHMARK_ANALYSIS_API_KEY", "test-key")
     monkeypatch.setattr(analysis, "chat_analysis_model", fake_chat)
 
     result = analysis.analyze_run(run_dir, repo, analysis.AnalysisConfig(enabled=True))
@@ -526,8 +526,8 @@ def test_analyze_run_writes_error_artifact_without_raising(monkeypatch, tmp_path
     run_dir = repo / "benchmark" / "runs" / "run-1"
     run_dir.mkdir(parents=True)
     (run_dir / "manifest.json").write_text(json.dumps({"run_id": "run-1"}), encoding="utf-8")
-    monkeypatch.delenv("AIDEN_BENCHMARK_ANALYSIS_API_KEY", raising=False)
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_ANALYSIS_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
 
     result = analysis.analyze_run(run_dir, repo, analysis.AnalysisConfig(enabled=True))
 

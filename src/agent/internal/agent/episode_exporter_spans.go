@@ -7,7 +7,7 @@ package agent
 // immutable, so create/update pairs are not used.
 
 import (
-	"aiden-agent/internal/agent/langfuse"
+	"aico-agent/internal/agent/langfuse"
 	"context"
 	"strings"
 	"time"
@@ -659,7 +659,7 @@ func (e *EpisodeExporter) traceUsageGenerationSpan(episode TaskEpisode, startTim
 	}
 	return &langfuse.Span{
 		ParentSpanID:    parentID,
-		Name:            "aiden-run-usage",
+		Name:            "aico-run-usage",
 		Type:            langfuse.TypeGeneration,
 		StartTime:       startTime,
 		EndTime:         endTime,

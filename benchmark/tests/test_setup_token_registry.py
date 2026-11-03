@@ -1,5 +1,4 @@
 import threading
-import time
 
 import pytest
 
@@ -25,7 +24,7 @@ def test_failed_setup_token_can_retry_and_then_caches_success():
     assert calls == 2
 
 
-def test_clear_completed_for_task_keeps_in_flight_entry():
+def test_clear_completed_for_task_keeps_in_flight_entry(monkeypatch):
     registry = SetupTokenRegistry()
     calls = 0
     entered = threading.Event()
@@ -46,17 +45,31 @@ def test_clear_completed_for_task_keeps_in_flight_entry():
         target=lambda: results.append(registry.run(("task-1", "token-1"), setup))
     )
     first.start()
-    assert entered.wait(timeout=2)
+    try:
+        assert entered.wait(timeout=2)
+        assert registry.clear_completed_for_task("task-1") == 0
+        waiting = threading.Event()
+        entry_completed = registry._entries[("task-1", "token-1")].completed
+        original_wait = entry_completed.wait
 
-    assert registry.clear_completed_for_task("task-1") == 0
-    second.start()
-    time.sleep(0.1)
-    assert calls == 1
+        # Observe the follower's wait so setup cannot finish before it has
+        # joined the in-flight entry, even on a heavily loaded runner.
+        def observed_wait(timeout=None):
+            waiting.set()
+            return original_wait(timeout)
 
-    allow_setup.set()
-    first.join(timeout=5)
-    second.join(timeout=5)
+        monkeypatch.setattr(entry_completed, "wait", observed_wait)
+        second.start()
+        assert waiting.wait(timeout=2)
+        assert calls == 1
+    finally:
+        allow_setup.set()
+        first.join(timeout=5)
+        if second.ident is not None:
+            second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
     assert results == [{"setup": True}, {"setup": True}]
+    assert calls == 1
     assert registry.run(("task-1", "token-1"), setup) == {"setup": True}
     assert calls == 2
 

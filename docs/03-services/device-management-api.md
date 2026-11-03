@@ -206,10 +206,10 @@ the save response is authoritative. `GET/PUT /api/system/environment` report
 `apply` too.
 
 Inside the companion app the page reports the level to the native navigation
-bar with `aiden_config_save_state` `{title, dirty, apply, action_label}`
+bar with `aico_config_save_state` `{title, dirty, apply, action_label}`
 (`title` and `action_label` already translated into the device's language, since
 the app keeps no catalogue for them), and announces a
-restart with `aiden_config_restart` `{apply, phase}` (`started`, `finished`,
+restart with `aico_config_restart` `{apply, phase}` (`started`, `finished`,
 `failed`). During a `reboot` the app on Android re-binds the USB network until
 the page reports the restart finished, because the process otherwise stays
 bound to the network that disappeared.
@@ -231,7 +231,7 @@ retryable. Config changes use the online application lifecycle above.
 
 Config Web is the sole owner of `StorageManager`: it detects and mounts the SD
 card, runs format/eject operations, migrates governed data, and writes
-`/run/aiden/storage.state`. The Agent runtime never performs those hardware
+`/run/aico/storage.state`. The Agent runtime never performs those hardware
 operations. It uses a read-only state view to include the SD archive root when
 serving previously migrated audio.
 

@@ -10,7 +10,7 @@ const DefaultScreenMemoryTTL = "90d"
 
 // QuickCaptureConfig configures GPIO-triggered Screen Memory capture.
 type QuickCaptureConfig struct {
-	// Enabled turns Quick Capture on. Legacy GPIO Wakeup remains independent.
+	// Enabled turns Quick Capture on. MCU ASR voice wakeup remains independent.
 	Enabled *bool `toml:"enabled,omitempty"`
 
 	// ScreenMemoryTTL is how long a captured memory lives. "forever" disables
@@ -45,7 +45,7 @@ func (c QuickCaptureConfig) Validate() error {
 		return fmt.Errorf("quick_capture.gpio_pin must be >= 0, got %d", c.GPIOPin)
 	}
 	if c.GPIOPin == 32 || c.GPIOPin == 33 {
-		return fmt.Errorf("quick_capture.gpio_pin %d is reserved for legacy wakeup", c.GPIOPin)
+		return fmt.Errorf("quick_capture.gpio_pin %d is unavailable for Quick Capture", c.GPIOPin)
 	}
 	if c.GPIOPin != 0 && c.GPIOPin != 3 {
 		return fmt.Errorf("quick_capture.gpio_pin must be 0 (disabled) or 3 (Luckfox Pico Zero physical pin 38), got %d", c.GPIOPin)

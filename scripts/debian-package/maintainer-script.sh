@@ -3,12 +3,12 @@
 # and dpkg may invoke either the old or the new scripts during error recovery.
 set -eu
 
-state_parent=/var/lib/aiden-business
+state_parent=/var/lib/aico-business
 state_dir=$state_parent/service-transition
 config_state=$state_parent/config-transition
-watcher=aiden-wifi-proxy-agent-restart.path
-restart_job=aiden-wifi-proxy-agent-restart.service
-services='aiden-wifi-proxy.service aiden-frame.service aiden-audio.service aiden-ble.service aiden-agent.service aiden-config-web.service aiden-ttyd.service'
+watcher=aico-wifi-proxy-agent-restart.path
+restart_job=aico-wifi-proxy-agent-restart.service
+services='aico-wifi-proxy.service aico-frame.service aico-audio.service aico-ble.service aico-agent.service aico-config-web.service aico-ttyd.service aico-mcu-event.service'
 
 live_systemd() {
     [ -z "${DPKG_ROOT:-}" ] && [ "${SYSTEMD_OFFLINE:-0}" != 1 ] &&
@@ -30,7 +30,7 @@ policy_allows() {
         /usr/sbin/policy-rc.d "$unit" "$action" || result=$?
         case "$result" in
             0|104) ;;
-            *) echo "aiden-business: service policy denied $action ($unit, exit $result)" >&2; return 1 ;;
+            *) echo "aico-business: service policy denied $action ($unit, exit $result)" >&2; return 1 ;;
         esac
     done
 }
@@ -110,7 +110,7 @@ case "$phase:${1:-}" in
         live_systemd || exit 0
         if [ "$phase:${1:-}" = postinst:configure ]; then
             runtime_config configure "$config_state"
-            systemd-tmpfiles --create /etc/tmpfiles.d/aiden.conf
+            systemd-tmpfiles --create /etc/tmpfiles.d/aico.conf
         fi
         restore_services
         rm -rf "$config_state"

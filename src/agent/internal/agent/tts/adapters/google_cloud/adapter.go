@@ -17,7 +17,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 const (
@@ -82,6 +82,9 @@ func (a *Adapter) Capabilities() tts.Capabilities {
 		SupportsContextContinuation: false,
 		SupportedSampleRates:        []int{24000},
 		RegionRestricted:            false,
+		TextGranularity:             tts.TextGranularitySentence,
+		SupportsIncrementalAudio:    true,
+		SupportsFlush:               true,
 	}
 }
 

@@ -7,12 +7,17 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"aico-agent/internal/stream"
 )
 
 var errStreamingSTTFinalizeTimeout = errors.New("streaming STT finalize timed out")
 
 type streamingSTTSession struct {
-	uploader STTStreamUploader
+	uploader       STTStreamUploader
+	events         <-chan stream.TranscriptEvent
+	eventsDone     chan struct{}
+	eventsDoneOnce sync.Once
 
 	mu           sync.Mutex
 	transcript   string
@@ -30,7 +35,20 @@ func beginStreamingSTTSession(ctx context.Context, client STTClient, cfg STTStre
 	if err != nil {
 		return nil, err
 	}
-	return &streamingSTTSession{uploader: uploader}, nil
+	var events <-chan stream.TranscriptEvent
+	if source, ok := uploader.(STTTranscriptEventSource); ok {
+		events = source.TranscriptEvents()
+	}
+	return &streamingSTTSession{uploader: uploader, events: events, eventsDone: make(chan struct{})}, nil
+}
+
+// TranscriptEvents returns optional revisioned transcript updates. A nil
+// channel means the provider only exposes the legacy final transcript.
+func (s *streamingSTTSession) TranscriptEvents() <-chan stream.TranscriptEvent {
+	if s == nil {
+		return nil
+	}
+	return s.events
 }
 
 func (s *streamingSTTSession) UploadPCM(pcm []byte) error {
@@ -116,7 +134,15 @@ func (s *streamingSTTSession) FinalizeWithTimeout(timeout time.Duration) (string
 }
 
 func (s *streamingSTTSession) Close() error {
-	if s == nil || s.uploader == nil {
+	if s == nil {
+		return nil
+	}
+	s.eventsDoneOnce.Do(func() {
+		if s.eventsDone != nil {
+			close(s.eventsDone)
+		}
+	})
+	if s.uploader == nil {
 		return nil
 	}
 	if err := s.uploader.Close(); err != nil {

@@ -542,7 +542,7 @@ func TestNativeTransportsExplainResponsesModeRequirement(t *testing.T) {
 
 func TestBuildOpenRouterMissingAPIKeyError(t *testing.T) {
 	t.Run("named environment reference", func(t *testing.T) {
-		const tokenEnv = "AIDEN_TEST_MISSING_OPENROUTER_KEY"
+		const tokenEnv = "AICO_TEST_MISSING_OPENROUTER_KEY"
 		t.Setenv(tokenEnv, "")
 		mgr := NewModelManager(ModelConfig{
 			Provider: "openrouter",

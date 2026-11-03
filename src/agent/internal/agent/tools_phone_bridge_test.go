@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/ble"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -300,17 +300,17 @@ func TestAppSearchOpenFlowCanBeReused(t *testing.T) {
 		hw:                hw,
 		vision:            vision,
 		platform:          "android",
-		searchTerm:        "Aiden",
+		searchTerm:        "Aico",
 		entryTool:         entryTool,
 		sleep:             testNoWaitSleep,
 		checkSearchOpenFn: androidSearchAlwaysOpen,
 		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(context.Context, screenshotResult, string) (bridgeSearchResult, error) {
 			called++
-			return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 200}, Label: "Aiden"}, nil
+			return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 200}, Label: "Aico"}, nil
 		},
 		confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
-			return bridgeAppOpenResult{Opened: true, Reason: "Aiden app visible"}, nil
+			return bridgeAppOpenResult{Opened: true, Reason: "Aico app visible"}, nil
 		},
 	})
 	if err != nil {
@@ -362,7 +362,7 @@ func TestSearchLaunchAppTextEntryDisablesBridgePath(t *testing.T) {
 		vision:    vision,
 		platform:  "android",
 		entryTool: entryTool,
-	}, newFastTextInputEngine(*hw, vision), "Aiden", false, false)
+	}, newFastTextInputEngine(*hw, vision), "Aico", false, false)
 	if err != nil {
 		t.Fatalf("enterSearchQuery() error = %v", err)
 	}
@@ -589,20 +589,20 @@ func TestAppSearchOpenFlowFallsBackToShorterTerm(t *testing.T) {
 		hw:                hw,
 		vision:            vision,
 		platform:          "android",
-		searchTerm:        "Aiden Bridge",
+		searchTerm:        "Aico Bridge",
 		entryTool:         entryTool,
 		sleep:             testNoWaitSleep,
 		checkSearchOpenFn: androidSearchAlwaysOpen,
 		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
 			terms = append(terms, term)
-			if term == "Aiden" {
-				return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 220}, Label: "Aiden"}, nil
+			if term == "Aico" {
+				return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 220}, Label: "Aico"}, nil
 			}
 			return bridgeSearchResult{Found: false}, nil
 		},
 		confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
-			return bridgeAppOpenResult{Opened: true, Reason: "Aiden app visible"}, nil
+			return bridgeAppOpenResult{Opened: true, Reason: "Aico app visible"}, nil
 		},
 	})
 	if err != nil {
@@ -611,7 +611,7 @@ func TestAppSearchOpenFlowFallsBackToShorterTerm(t *testing.T) {
 	if !result.Opened {
 		t.Fatalf("expected opened result, got %#v", result)
 	}
-	if len(terms) < 3 || terms[0] != "Aiden Bridge" || terms[1] != "Aiden Bridge" || terms[2] != "Aiden" {
+	if len(terms) < 3 || terms[0] != "Aico Bridge" || terms[1] != "Aico Bridge" || terms[2] != "Aico" {
 		t.Fatalf("unexpected search terms: %#v", terms)
 	}
 	if len(keyboardText.calls) < 2 {
@@ -637,24 +637,24 @@ func TestAppSearchOpenFlowRechecksSameTermBeforeFallback(t *testing.T) {
 		hw:                hw,
 		vision:            vision,
 		platform:          "android",
-		searchTerm:        "Aiden Bridge",
+		searchTerm:        "Aico Bridge",
 		entryTool:         entryTool,
 		sleep:             testNoWaitSleep,
 		checkSearchOpenFn: androidSearchAlwaysOpen,
 		searchEntries:     &androidSearchEntryStore{},
 		findAppTapFn: func(_ context.Context, _ screenshotResult, term string) (bridgeSearchResult, error) {
 			terms = append(terms, term)
-			if term == "Aiden Bridge" {
+			if term == "Aico Bridge" {
 				findCalls++
 				if findCalls == 1 {
 					return bridgeSearchResult{Found: false}, nil
 				}
-				return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 220}, Label: "Aiden Bridge"}, nil
+				return bridgeSearchResult{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 220}, Label: "Aico Bridge"}, nil
 			}
 			return bridgeSearchResult{Found: false}, nil
 		},
 		confirmAppOpenFn: func(context.Context, screenshotResult, string) (bridgeAppOpenResult, error) {
-			return bridgeAppOpenResult{Opened: true, Reason: "Aiden app visible"}, nil
+			return bridgeAppOpenResult{Opened: true, Reason: "Aico app visible"}, nil
 		},
 	})
 	if err != nil {
@@ -663,7 +663,7 @@ func TestAppSearchOpenFlowRechecksSameTermBeforeFallback(t *testing.T) {
 	if !result.Opened {
 		t.Fatalf("expected opened result, got %#v", result)
 	}
-	if len(terms) != 2 || terms[0] != "Aiden Bridge" || terms[1] != "Aiden Bridge" {
+	if len(terms) != 2 || terms[0] != "Aico Bridge" || terms[1] != "Aico Bridge" {
 		t.Fatalf("expected same-term recheck before fallback, got terms=%#v", terms)
 	}
 	if len(keyboardText.calls) != 3 {

@@ -1,0 +1,71 @@
+#!/usr/bin/python3
+"""Register an SSH PTY allocated after pam_systemd opened the login session."""
+
+import ctypes
+import os
+import sys
+
+
+def check(result):
+    if result < 0:
+        raise OSError(-result, os.strerror(-result))
+
+
+def register_tty():
+    tty = os.environ.get("SSH_TTY")
+    if not tty or not os.environ.get("XDG_SESSION_ID"):
+        return
+
+    fd = os.open(tty, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK | os.O_CLOEXEC)
+    try:
+        if not os.isatty(fd):
+            return
+
+        # libsystemd is already part of the rootfs. Use its public sd-bus API
+        # without adding a Python D-Bus dependency or a resident controller.
+        lib = ctypes.CDLL("libsystemd.so.0")
+        pointer = ctypes.c_void_p
+        string = ctypes.c_char_p
+        lib.sd_bus_open_system.argtypes = [ctypes.POINTER(pointer)]
+        lib.sd_bus_open_system.restype = ctypes.c_int
+        lib.sd_bus_set_method_call_timeout.argtypes = [pointer, ctypes.c_uint64]
+        lib.sd_bus_set_method_call_timeout.restype = ctypes.c_int
+        lib.sd_bus_call_method.argtypes = [
+            pointer, string, string, string, string, pointer, pointer, string,
+        ]
+        lib.sd_bus_call_method.restype = ctypes.c_int
+        lib.sd_bus_unref.argtypes = [pointer]
+        lib.sd_bus_unref.restype = pointer
+
+        bus = pointer()
+        check(lib.sd_bus_open_system(ctypes.byref(bus)))
+        try:
+            check(lib.sd_bus_set_method_call_timeout(bus, 2_000_000))
+
+            def call(method, signature=b"", *args):
+                check(lib.sd_bus_call_method(
+                    bus, b"org.freedesktop.login1",
+                    b"/org/freedesktop/login1/session/self",
+                    b"org.freedesktop.login1.Session", method,
+                    None, None, signature, *args,
+                ))
+
+            # SetTTY needs one connection to own the session temporarily.
+            # Never displace an existing controller; logind checks our UID.
+            call(b"TakeControl", b"b", ctypes.c_int(0))
+            try:
+                call(b"SetTTY", b"h", ctypes.c_int(fd))
+            finally:
+                call(b"ReleaseControl")
+        finally:
+            lib.sd_bus_unref(bus)
+    finally:
+        os.close(fd)
+
+
+if __name__ == "__main__":
+    try:
+        register_tty()
+    except OSError as error:
+        # Registration failure must not prevent shell, command or SFTP access.
+        print(f"aico-ssh-session-tty: {error}", file=sys.stderr)

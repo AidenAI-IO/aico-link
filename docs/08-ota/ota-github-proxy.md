@@ -64,8 +64,8 @@ When `github_proxy_url` is configured:
 
 Example transformation:
 ```
-Original: https://github.com/AidenAI-IO/aiden-firmware/releases/download/v1.0.0/update.tar.gz
-With proxy: https://gh-proxy.com/https://github.com/AidenAI-IO/aiden-firmware/releases/download/v1.0.0/update.tar.gz
+Original: https://github.com/AidenAI-IO/aico-link/releases/download/v1.0.0/update.tar.gz
+With proxy: https://gh-proxy.com/https://github.com/AidenAI-IO/aico-link/releases/download/v1.0.0/update.tar.gz
 ```
 
 Non-GitHub URLs are not affected by this setting.

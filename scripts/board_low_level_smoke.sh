@@ -132,7 +132,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         --artifact-dir)
             [ "$#" -ge 2 ] || die "--artifact-dir requires an argument"
-            AIDEN_LOW_LEVEL_ARTIFACT_DIR="$2"
+            AICO_LOW_LEVEL_ARTIFACT_DIR="$2"
             shift 2
             ;;
         --run-id)
@@ -169,14 +169,14 @@ require_uint "--click Y" "$HID_CLICK_Y"
 require_uint "--hid-duration-ms" "$HID_DURATION_MS"
 require_uint "--audio-seconds" "$AUDIO_SECONDS"
 
-export RUN_ID AIDEN_LOW_LEVEL_ARTIFACT_DIR
+export RUN_ID AICO_LOW_LEVEL_ARTIFACT_DIR
 export SEND_HID HID_KEY HID_TEXT HID_CLICK_X HID_CLICK_Y HID_CLICK_BUTTON HID_DURATION_MS
 export AUDIO_SECONDS PLAY_AUDIO
 
 echo "Board-local low-level smoke test"
 echo "Agent, Config Web, SSH, and HTTP APIs are intentionally not used."
 echo "run_id=$RUN_ID"
-echo "artifact_dir=$AIDEN_LOW_LEVEL_ARTIFACT_DIR"
+echo "artifact_dir=$AICO_LOW_LEVEL_ARTIFACT_DIR"
 if [ "$SEND_HID" = "1" ]; then
     echo "HID send is enabled: key=$HID_KEY text=${HID_TEXT:-<none>} click=${HID_CLICK_X},${HID_CLICK_Y},${HID_CLICK_BUTTON}"
 else
@@ -186,12 +186,12 @@ fi
 OVERALL_FAILS=0
 
 run_subcheck() {
-    aiden_subcheck_name="$1"
-    aiden_subcheck_script="$2"
-    section "$aiden_subcheck_name"
-    "$aiden_subcheck_script"
-    aiden_subcheck_rc=$?
-    if [ "$aiden_subcheck_rc" -ne 0 ]; then
+    aico_subcheck_name="$1"
+    aico_subcheck_script="$2"
+    section "$aico_subcheck_name"
+    "$aico_subcheck_script"
+    aico_subcheck_rc=$?
+    if [ "$aico_subcheck_rc" -ne 0 ]; then
         OVERALL_FAILS=$((OVERALL_FAILS + 1))
     fi
 }

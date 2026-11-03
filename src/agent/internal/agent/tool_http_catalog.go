@@ -49,12 +49,12 @@ func (r *Runtime) HTTPToolSkills(baseURL string) []ToolSkillDefinition {
 	}
 
 	return []ToolSkillDefinition{{
-		Name:        "aiden-http-tool-suite",
-		Description: "Use the Aiden HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
+		Name:        "aico-http-tool-suite",
+		Description: "Use the Aico HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
 		ToolNames:   names,
 		Markdown: buildHTTPToolSkillMarkdown(
-			"aiden-http-tool-suite",
-			"Use the Aiden HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
+			"aico-http-tool-suite",
+			"Use the Aico HTTP tool API to observe and operate the connected device with all HTTP-exposed tools.",
 			baseURL,
 			descriptors,
 		),
@@ -68,18 +68,18 @@ func buildHTTPToolSkillMarkdown(name, description string, baseURL string, descri
 	builder.WriteString(fmt.Sprintf("description: %s\n", description))
 	builder.WriteString("metadata:\n")
 	builder.WriteString("  transport: http\n")
-	builder.WriteString("  source: aiden-agent\n")
-	builder.WriteString("  base_url_env: AIDEN_AGENT_BASE_URL\n")
+	builder.WriteString("  source: aico-agent\n")
+	builder.WriteString("  base_url_env: AICO_AGENT_BASE_URL\n")
 	builder.WriteString(fmt.Sprintf("  base_url_default: %s\n", baseURL))
 	builder.WriteString("  tool_names:\n")
 	for _, descriptor := range descriptors {
 		builder.WriteString(fmt.Sprintf("    - %s\n", descriptor.Name))
 	}
 	builder.WriteString("---\n\n")
-	builder.WriteString("Use the Aiden HTTP tool API instead of assuming direct local access to the connected device.\n\n")
+	builder.WriteString("Use the Aico HTTP tool API instead of assuming direct local access to the connected device.\n\n")
 	builder.WriteString("Connection:\n")
-	builder.WriteString("- Prefer the base URL from `AIDEN_AGENT_BASE_URL`.\n")
-	builder.WriteString(fmt.Sprintf("- If `AIDEN_AGENT_BASE_URL` is unset, use `%s`.\n", baseURL))
+	builder.WriteString("- Prefer the base URL from `AICO_AGENT_BASE_URL`.\n")
+	builder.WriteString(fmt.Sprintf("- If `AICO_AGENT_BASE_URL` is unset, use `%s`.\n", baseURL))
 	if baseURL != defaultHTTPToolSkillBaseURL {
 		builder.WriteString(fmt.Sprintf("- Local fallback when the published host is unavailable: `%s`.\n", defaultHTTPToolSkillBaseURL))
 	}
@@ -97,7 +97,7 @@ func buildHTTPToolSkillMarkdown(name, description string, baseURL string, descri
 	builder.WriteString("Recommended workflow:\n")
 	builder.WriteString("- Start with `GET /api/tools` if you need to confirm the tool list or example payloads.\n")
 	builder.WriteString("- Use `screenshot` before input actions when you need current screen context; keyboard, mouse, and touch tools automatically wait for screen stability (or until the configured timeout) and return a post-action screenshot.\n")
-	builder.WriteString("- After actions that may animate, navigate, or load content, call `wait_for_stable_screen` before judging the result. It returns a screenshot observation; `screen_changed=false` means no visible change was observed during the wait window, and `stable=false` means the screen kept changing (for example video playback), so treat the screenshot as a best-effort observation.\n")
+	builder.WriteString("- After actions that may animate, navigate, or load content, call `wait_for_stable_screen` before judging the result. It returns a screenshot observation; `frames_differed=false` means no frame change was observed during the wait window, small areas of continuous motion such as video are ignored, and `stable=false` means the screen kept changing, so treat the screenshot as a best-effort observation.\n")
 	builder.WriteString("- After any screenshot, wait_for_stable_screen screenshot, or post-action screenshot, inspect the current screen before choosing the next action; do not repeat the same click, gesture, or key unless the image proves the previous action did not take effect.\n")
 	builder.WriteString("- For app launch requests, inspect the latest screenshot first. If the requested app icon or card is clearly visible, unique, and unobscured, use `touch_gesture` on its visible non-overlapping center instead of `open_app`; use `open_app` only when the target is not clearly tappable or one direct tap failed. Use `open_url` for HTTP/HTTPS webpages, `sms:<phone_number>?body=<message>`, `mailto:<email_address>?subject=<subject>`, or `tel:<phone_number>`.\n")
 	builder.WriteString("- Always inspect the post-action screenshot returned by `open_app` or `open_url` before answering or continuing. `ok:true` only confirms that the OS accepted the launch; it does not prove that the requested app or page is visible.\n")

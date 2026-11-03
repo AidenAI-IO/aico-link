@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct GeneratedSystemEnv {
     bool valid;
@@ -17,4 +17,4 @@ struct GeneratedSystemEnv {
 bool generate_systemd_environment(const std::string& input,
                                   GeneratedSystemEnv* generated);
 
-}  // namespace aiden
+}  // namespace aico

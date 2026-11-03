@@ -1,0 +1,27 @@
+[Unit]
+Description=Aico Link local configuration and recovery portal
+Requires=aico-userdata-migrate.service aico-environment.service
+Wants=aico-usb-dnsmasq.service aico-wifi-proxy.service
+After=aico-userdata-migrate.service aico-environment.service
+After=aico-wifi-proxy.service aico-usb-dnsmasq.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+ConditionPathExists=/usr/lib/aico/agent
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aico_boot.conf
+EnvironmentFile=/run/aico/system.env
+Environment=AICO_AGENT_INIT_SCRIPT=/usr/lib/aico/aico-agent-control
+Environment=AICO_FRAME_SERVICE_INIT_SCRIPT=/usr/lib/aico/aico-frame-control
+Environment=AICO_WIFI_PROXY_INIT_SCRIPT=/usr/lib/aico/aico-wifi-proxy-control
+Environment=AICO_ENV_RUN_BIN=/usr/lib/aico/aico-managed-env-run
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_CONFIG_WEB
+ExecStart=/usr/lib/aico/aico-managed-env-run /usr/lib/aico/agent config-web --bind=0.0.0.0 --port=80 --config=/userdata/agent/agent.toml --wifi-config=/userdata/debian/wifi/wpa_supplicant-wlan0.conf --wifi-config-environment=/run/aico/wpa_supplicant-config.env --wifi-region-state=/userdata/system/wifi-region.json --wifi-interface=wlan0 --wifi-backend=systemd-networkd --system-env=/userdata/system/env --web-root=/usr/share/aico/config-web
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=20s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

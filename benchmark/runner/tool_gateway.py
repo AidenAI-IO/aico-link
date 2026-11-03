@@ -103,6 +103,9 @@ class ToolGateway:
         gateway = self
 
         class Handler(BaseHTTPRequestHandler):
+            # A disconnected client must not hold shutdown on an incomplete body.
+            timeout = 30
+
             def do_GET(self):
                 if self.path == "/api/tools":
                     self._send(200, {"tools": gateway.catalog})
@@ -136,6 +139,9 @@ class ToolGateway:
                 pass
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        # ThreadingMixIn tracks non-daemon handlers and joins them in server_close.
+        # Drain accepted calls before final-state capture and device-route release.
+        self._server.daemon_threads = False
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         return self
@@ -154,6 +160,11 @@ class ToolGateway:
             tool_input = json.loads(body or b"{}").get("input", {})
         except (ValueError, AttributeError):
             tool_input = None
+        with self._lock:
+            self._calls += 1
+            call_id = self._calls
+            self._write_audit({"type": "tool_call", "call_id": call_id, "tool_name": name,
+                               "raw_input": json.dumps(tool_input or {}, ensure_ascii=False)})
         if not isinstance(tool_input, dict):
             status, payload = 400, {"error": "Request body must be an object with an input object", "is_error": True}
             tool_input = {}
@@ -165,22 +176,26 @@ class ToolGateway:
         payload["is_error"] = (bool(payload.get("is_error")) or payload.get("tool_error") is not None
                                or action_failed(output))
         raw_input = payload.get("raw_input") or json.dumps(tool_input, ensure_ascii=False)
-        self._audit(name, raw_input, payload, output, int((time.monotonic() - started) * 1000))
+        self._audit(call_id, name, raw_input, payload, output, int((time.monotonic() - started) * 1000))
         return status, payload
 
-    def _audit(self, name: str, raw_input: str, payload: dict, output: Any, elapsed_ms: int) -> None:
+    def _audit(self, call_id: int, name: str, raw_input: str, payload: dict, output: Any, elapsed_ms: int) -> None:
         shot = _screenshot(output)
         with self._lock:
-            self._calls += 1
-            record = {"tool_name": name, "raw_input": raw_input, "is_error": payload["is_error"],
+            record = {"type": "tool_result", "call_id": call_id,
+                      "tool_name": name, "raw_input": raw_input, "is_error": payload["is_error"],
                       "tool_error": payload.get("tool_error") or payload.get("error"),
                       "duration_ms": payload.get("duration_ms", elapsed_ms),
                       "observation": "screenshot observation" if shot else
                       (output if isinstance(output, str) else json.dumps(output, ensure_ascii=False)),
                       "has_screenshot": shot is not None}
             if shot:
-                path = self.artifacts / f"step_{self._calls}{shot[1]}"
+                path = self.artifacts / f"step_{call_id}{shot[1]}"
                 path.write_bytes(shot[0])
                 record["screenshot_file"] = path.name
-            with (self.artifacts / AUDIT_FILE).open("a", encoding="utf-8") as stream:
-                stream.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._write_audit(record)
+
+    def _write_audit(self, record: dict) -> None:
+        # Callers hold the lock, so starts and results are complete JSONL records.
+        with (self.artifacts / AUDIT_FILE).open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(record, ensure_ascii=False) + "\n")

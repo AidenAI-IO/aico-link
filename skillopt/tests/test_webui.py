@@ -22,7 +22,7 @@ def test_build_skillopt_command_uses_bridge_backend_options(tmp_path: Path):
             "validation_suite": "skillopt/device-operator/device_operator_verification",
             "budget": 3,
             "edit_budget": 2,
-            "daemon_image": "aiden-agent-daemon:local",
+            "daemon_image": "aico-agent-daemon:local",
             "agent_config": str(tmp_path / "agent.toml"),
             "no_build_daemon_image": True,
             "no_judge": True,
@@ -34,7 +34,7 @@ def test_build_skillopt_command_uses_bridge_backend_options(tmp_path: Path):
     assert cmd[:3] == [cmd[0], "-m", "skillopt"]
     assert cmd[cmd.index("--backend") + 1] == "mobilegym"
     assert cmd[cmd.index("--environment-url") + 1] == "http://127.0.0.1:50196"
-    assert cmd[cmd.index("--daemon-image") + 1] == "aiden-agent-daemon:local"
+    assert cmd[cmd.index("--daemon-image") + 1] == "aico-agent-daemon:local"
     assert cmd[cmd.index("--agent-config") + 1] == str(tmp_path / "agent.toml")
     assert "--no-build-daemon-image" in cmd
     assert "--no-judge" in cmd
@@ -271,7 +271,7 @@ def test_run_job_uses_agent_config_api_key_as_openrouter_fallback(tmp_path: Path
 
         def __init__(self, *args, **kwargs):
             observed["openrouter_api_key"] = kwargs["env"].get("OPENROUTER_API_KEY")
-            observed["judge_api_key"] = kwargs["env"].get("AIDEN_BENCHMARK_JUDGE_API_KEY")
+            observed["judge_api_key"] = kwargs["env"].get("AICO_BENCHMARK_JUDGE_API_KEY")
 
         def poll(self):
             return 0
@@ -311,7 +311,7 @@ def test_run_job_prefers_explicit_judge_api_key_over_agent_config(tmp_path: Path
 
         def __init__(self, *args, **kwargs):
             observed["openrouter_api_key"] = kwargs["env"].get("OPENROUTER_API_KEY")
-            observed["judge_api_key"] = kwargs["env"].get("AIDEN_BENCHMARK_JUDGE_API_KEY")
+            observed["judge_api_key"] = kwargs["env"].get("AICO_BENCHMARK_JUDGE_API_KEY")
 
         def poll(self):
             return 0
@@ -941,7 +941,7 @@ def test_webui_settings_use_agent_config_key_as_judge_key_fallback(tmp_path: Pat
 
 def test_index_html_reuses_benchmark_webui_shell():
     assert '<header class="topbar">' in INDEX_HTML
-    assert 'class="brand-title">Aiden SkillOpt' in INDEX_HTML
+    assert 'class="brand-title">Aico SkillOpt' in INDEX_HTML
     assert 'class="tile"' in INDEX_HTML
     assert 'id="suiteRows"' in INDEX_HTML
     assert 'id="runBtn"' in INDEX_HTML
@@ -956,7 +956,7 @@ def test_index_html_reuses_benchmark_webui_shell():
     assert 'id="judgeEnabled"' in INDEX_HTML
     assert 'id="judgeModel"' in INDEX_HTML
     assert 'id="judgeApiKey"' in INDEX_HTML
-    assert 'placeholder="AIDEN_BENCHMARK_JUDGE_API_KEY"' in INDEX_HTML
+    assert 'placeholder="AICO_BENCHMARK_JUDGE_API_KEY"' in INDEX_HTML
     assert 'id="optimizerModel"' in INDEX_HTML
     assert 'id="runEnvDialog"' in INDEX_HTML
     assert 'id="skill"' not in INDEX_HTML

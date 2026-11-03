@@ -1,13 +1,21 @@
 #include "audio_playback_session.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <chrono>
 #include <stdio.h>
 #include <thread>
 
-namespace aiden {
+namespace aico {
+
+const size_t AudioPlaybackSession::kMaxQueueChunks;
 
 AudioPlaybackSession::AudioPlaybackSession(uint64_t session_id, const AudioFormat& fmt)
-    : session_id_(session_id), fmt_(fmt), stopped_(false), final_received_(false), joined_(false) {}
+    : session_id_(session_id),
+      fmt_(fmt),
+      queue_bytes_(0),
+      max_queue_bytes_(playback_queue_byte_limit(fmt)),
+      stopped_(false),
+      final_received_(false),
+      joined_(false) {}
 
 AudioPlaybackSession::~AudioPlaybackSession() {
     stop();
@@ -22,7 +30,7 @@ bool AudioPlaybackSession::start() {
     {
         std::lock_guard<std::mutex> player_lock(player_mutex_);
         if (!player_.init(cfg)) {
-            AIDEN_LOG_ERROR("playback", "player_init_failed", "session_id=%llu",
+            AICO_LOG_ERROR("playback", "player_init_failed", "session_id=%llu",
                             static_cast<unsigned long long>(session_id_));
             return false;
         }
@@ -63,27 +71,44 @@ int AudioPlaybackSession::get_volume() const {
     return player_.get_volume();
 }
 
-AidenServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t len,
+size_t AudioPlaybackSession::queued_bytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return queue_bytes_;
+}
+
+AicoServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t len,
                                                     bool is_final) {
-    if (stopped_.load()) return AidenServiceStatus::SESSION_NOT_FOUND;
+    if (stopped_.load()) return AicoServiceStatus::SESSION_NOT_FOUND;
 
     std::unique_lock<std::mutex> lock(mutex_);
-    if (final_received_) return AidenServiceStatus::SESSION_NOT_FOUND;
+    if (stopped_.load() || final_received_) return AicoServiceStatus::SESSION_NOT_FOUND;
 
-    if (queue_.size() >= kMaxQueueChunks) {
-        // Apply back-pressure: wait for the queue to drain a bit.
-        cv_.wait_for(lock, std::chrono::milliseconds(200),
-                     [this] {
-                         return queue_.size() < kMaxQueueChunks / 2 ||
-                                final_received_ || stopped_.load();
-                     });
+    if (len > max_queue_bytes_) return AicoServiceStatus::TIMEOUT;
+    while (queue_.size() >= kMaxQueueChunks ||
+           queue_bytes_ > max_queue_bytes_ - len) {
+        // Apply back-pressure without ever allowing a producer to cross the
+        // hard queue bound. A timeout is reported explicitly so callers can
+        // account for a saturated playback path instead of silently growing
+        // the queue.
+        const bool woke = cv_.wait_for(
+            lock, std::chrono::milliseconds(200),
+            [this, len] {
+                return (queue_.size() < kMaxQueueChunks &&
+                        queue_bytes_ <= max_queue_bytes_ - len) ||
+                       final_received_ || stopped_.load();
+            });
         if (final_received_ || stopped_.load()) {
-            return AidenServiceStatus::SESSION_NOT_FOUND;
+            return AicoServiceStatus::SESSION_NOT_FOUND;
+        }
+        if (!woke && (queue_.size() >= kMaxQueueChunks ||
+                      queue_bytes_ > max_queue_bytes_ - len)) {
+            return AicoServiceStatus::TIMEOUT;
         }
     }
 
     if (data && len > 0) {
         queue_.push(std::vector<uint8_t>(data, data + len));
+        queue_bytes_ += len;
     }
     if (is_final) final_received_ = true;
     if (is_final) {
@@ -91,7 +116,7 @@ AidenServiceStatus AudioPlaybackSession::push_chunk(const uint8_t* data, size_t 
     } else {
         cv_.notify_one();
     }
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
 void AudioPlaybackSession::wait_until_done() {
@@ -114,7 +139,7 @@ void AudioPlaybackSession::playback_loop() {
             });
 
             if (stopped_.load()) {
-                AIDEN_LOG_INFO("playback", "interrupted_before_drain", "session_id=%llu",
+                AICO_LOG_INFO("playback", "interrupted_before_drain", "session_id=%llu",
                                static_cast<unsigned long long>(session_id_));
                 std::lock_guard<std::mutex> player_lock(player_mutex_);
                 player_.stop();
@@ -124,6 +149,14 @@ void AudioPlaybackSession::playback_loop() {
             if (!queue_.empty()) {
                 chunk = std::move(queue_.front());
                 queue_.pop();
+                // Keep accounting defensive for test fixtures or older
+                // callers that may have populated the legacy chunk queue
+                // without updating the byte counter.
+                if (queue_bytes_ >= chunk.size()) {
+                    queue_bytes_ -= chunk.size();
+                } else {
+                    queue_bytes_ = 0;
+                }
                 cv_.notify_one();  // wake push_chunk back-pressure waiter
             } else if (final_received_) {
                 // Queue drained and final chunk received — no more PCM writes are
@@ -138,13 +171,13 @@ void AudioPlaybackSession::playback_loop() {
                          playback_tail_drain_grace(fmt_, last_played_chunk_bytes),
                          [this] { return stopped_.load(); });
             if (stopped_.load()) {
-                AIDEN_LOG_INFO("playback", "interrupted_during_final_drain", "session_id=%llu",
+                AICO_LOG_INFO("playback", "interrupted_during_final_drain", "session_id=%llu",
                                static_cast<unsigned long long>(session_id_));
                 std::lock_guard<std::mutex> player_lock(player_mutex_);
                 player_.stop();
                 return;
             }
-            AIDEN_LOG_INFO("playback", "drain_completed", "session_id=%llu",
+            AICO_LOG_INFO("playback", "drain_completed", "session_id=%llu",
                            static_cast<unsigned long long>(session_id_));
             break;
         }
@@ -163,7 +196,7 @@ void AudioPlaybackSession::playback_loop() {
     }
 
     if (stopped_.load()) {
-        AIDEN_LOG_INFO("playback", "interrupted", "session_id=%llu",
+        AICO_LOG_INFO("playback", "interrupted", "session_id=%llu",
                        static_cast<unsigned long long>(session_id_));
     }
 
@@ -174,4 +207,4 @@ void AudioPlaybackSession::playback_loop() {
     }
 }
 
-}  // namespace aiden
+}  // namespace aico

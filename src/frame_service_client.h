@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct HealthResult {
     std::string state;
@@ -43,4 +43,4 @@ private:
     std::string socket_path_;
 };
 
-}  // namespace aiden
+}  // namespace aico

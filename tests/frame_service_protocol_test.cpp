@@ -4,13 +4,13 @@
 #include <string>
 #include <vector>
 
-using aiden::FrameServiceStatus;
-using aiden::FrameWirePrefix;
-using aiden::decode_frame_wire_prefix;
-using aiden::encode_frame_wire_prefix;
-using aiden::frame_service_status_from_string;
-using aiden::frame_service_status_to_string;
-using aiden::kFrameWirePrefixSize;
+using aico::FrameServiceStatus;
+using aico::FrameWirePrefix;
+using aico::decode_frame_wire_prefix;
+using aico::encode_frame_wire_prefix;
+using aico::frame_service_status_from_string;
+using aico::frame_service_status_to_string;
+using aico::kFrameWirePrefixSize;
 
 TEST_CASE("frame service status converts to stable protocol strings") {
     CHECK(std::string(frame_service_status_to_string(FrameServiceStatus::OK)) == "OK");

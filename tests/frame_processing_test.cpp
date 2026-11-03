@@ -4,21 +4,21 @@
 #include <cstring>
 #include <vector>
 
-using aiden::FrameMetadata;
-using aiden::convert_frame_to_rgb;
-using aiden::crop_frame_black_bars;
-using aiden::crop_frame_center;
-using aiden::crop_frame_center_aspect_auto;
-using aiden::crop_frame_horizontal_center;
-using aiden::crop_frame_horizontal_black_bars;
-using aiden::encode_frame_to_bmp;
-using aiden::encode_frame_to_png;
-using aiden::encode_rgb_to_png;
-using aiden::encode_rgb_to_bmp;
-using aiden::resolve_frame_black_bars_crop;
-using aiden::resolve_frame_center_aspect_auto_crop;
-using aiden::resolve_frame_center_crop;
-using aiden::scale_rgb_nearest;
+using aico::FrameMetadata;
+using aico::convert_frame_to_rgb;
+using aico::crop_frame_black_bars;
+using aico::crop_frame_center;
+using aico::crop_frame_center_aspect_auto;
+using aico::crop_frame_horizontal_center;
+using aico::crop_frame_horizontal_black_bars;
+using aico::encode_frame_to_bmp;
+using aico::encode_frame_to_png;
+using aico::encode_rgb_to_png;
+using aico::encode_rgb_to_bmp;
+using aico::resolve_frame_black_bars_crop;
+using aico::resolve_frame_center_aspect_auto_crop;
+using aico::resolve_frame_center_crop;
+using aico::scale_rgb_nearest;
 
 namespace {
 

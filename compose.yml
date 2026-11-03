@@ -1,7 +1,7 @@
 services:
-  aiden:
+  aico:
     platform: linux/amd64
-    image: ${AIDEN_DOCKER_IMAGE:-aiden-agent-sandbox:local}
+    image: ${AICO_DOCKER_IMAGE:-aico-agent-sandbox:local}
     build:
       context: .
       dockerfile: docker/dev/Dockerfile
@@ -9,19 +9,19 @@ services:
     restart: unless-stopped
     stop_grace_period: 20s
     ports:
-      - "127.0.0.1:${AIDEN_CONFIG_WEB_PORT:-8000}:80"
-      - "127.0.0.1:${AIDEN_AGENT_WEB_PORT:-8080}:8080"
+      - "127.0.0.1:${AICO_CONFIG_WEB_PORT:-8000}:80"
+      - "127.0.0.1:${AICO_AGENT_WEB_PORT:-8080}:8080"
     volumes:
-      - aiden-data:/userdata
+      - aico-data:/userdata
     environment:
-      AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT: ${AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT:-}
+      AICO_ENVIRONMENT_BRIDGE_ENDPOINT: ${AICO_ENVIRONMENT_BRIDGE_ENDPOINT:-}
       ENVIRONMENT_BRIDGE_ENDPOINT: ${ENVIRONMENT_BRIDGE_ENDPOINT:-}
-      AIDEN_ENVIRONMENT_BRIDGE_MODE: ${AIDEN_ENVIRONMENT_BRIDGE_MODE:-auto}
-      AIDEN_BENCHMARK_TASK_ID: ${AIDEN_BENCHMARK_TASK_ID:-docker-sandbox}
-      AIDEN_BRIDGE_EPISODE_ID: ${AIDEN_BRIDGE_EPISODE_ID:-docker-sandbox}
-      AIDEN_DEVICE_TYPE: ${AIDEN_DEVICE_TYPE:-}
-      AIDEN_PUBLIC_AGENT_WEB_PORT: ${AIDEN_AGENT_WEB_PORT:-8080}
-      AIDEN_CONFIG_WEB_PORT: ${AIDEN_CONFIG_WEB_PORT:-8000}
+      AICO_ENVIRONMENT_BRIDGE_MODE: ${AICO_ENVIRONMENT_BRIDGE_MODE:-auto}
+      AICO_BENCHMARK_TASK_ID: ${AICO_BENCHMARK_TASK_ID:-docker-sandbox}
+      AICO_BRIDGE_EPISODE_ID: ${AICO_BRIDGE_EPISODE_ID:-docker-sandbox}
+      AICO_DEVICE_TYPE: ${AICO_DEVICE_TYPE:-}
+      AICO_PUBLIC_AGENT_WEB_PORT: ${AICO_AGENT_WEB_PORT:-8080}
+      AICO_CONFIG_WEB_PORT: ${AICO_CONFIG_WEB_PORT:-8000}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,host.docker.internal}
@@ -38,4 +38,4 @@ services:
       start_period: 10s
 
 volumes:
-  aiden-data:
+  aico-data:

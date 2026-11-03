@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 	"context"
 	"io"
 	"testing"

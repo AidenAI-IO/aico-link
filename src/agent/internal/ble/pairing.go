@@ -11,7 +11,7 @@ import (
 
 	"github.com/godbus/dbus/v5"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 var errPairingModeState = errors.New("BLE pairing mode update failed")
@@ -492,7 +492,7 @@ func advertisedServiceUUIDs() []string {
 func advertisedManufacturerData(boardIdentity []byte) map[uint16]dbus.Variant {
 	identity := append([]byte(nil), boardIdentity...)
 	return map[uint16]dbus.Variant{
-		AidenManufacturerID: dbus.MakeVariant(identity),
+		AicoLinkManufacturerID: dbus.MakeVariant(identity),
 	}
 }
 
@@ -512,7 +512,7 @@ func stableDeviceName(baseName, adapterAddress string) string {
 	const maxLocalNameBytes = 29
 	baseName = strings.TrimSpace(baseName)
 	if baseName == "" {
-		baseName = "Aiden"
+		baseName = "Aico Link"
 	}
 	compactAddress := strings.NewReplacer(":", "", "-", "").Replace(strings.ToUpper(adapterAddress))
 	if len(compactAddress) < 4 {

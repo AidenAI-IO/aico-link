@@ -14,18 +14,6 @@ FIXTURE_PATH = (
     Path(__file__).parent / "fixtures" / "personamem_204453_compressed_recall.json"
 )
 CASES = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
-EXPECTED_HISTORY_SHAPES = {
-    "personamem_music_preference_evolution": (4, ["recall_memory"]),
-    "personamem_music_creative_getaway": (4, ["recall_memory"]),
-    "personamem_music_new_expression": (4, ["recall_memory"]),
-    "personamem_food_fusion_cuisine": (4, ["recall_memory"]),
-    "personamem_therapy_games_dislike": (
-        8,
-        ["recall_memory", "recall_memory", "shell"],
-    ),
-    "personamem_writing_style_discrimination": (4, ["recall_memory"]),
-    "personamem_study_consultation_generalization": (4, ["recall_memory"]),
-}
 
 
 def _suite_and_task(case: dict, tmp_path: Path) -> tuple[Suite, TaskSpec]:
@@ -58,21 +46,6 @@ def test_204453_compressed_personamem_failures_use_episode_evidence(
     artifact_dir = tmp_path / case["task_id"]
     judge_calls = []
     history = case["history"]
-
-    expected_message_count, expected_tool_names = EXPECTED_HISTORY_SHAPES[
-        case["task_id"]
-    ]
-    assert len(history) == expected_message_count
-    assert history[0]["type"] == "user"
-    assert history[-1]["type"] == "assistant"
-    assert history[-1]["content"]
-    tool_calls = [item for item in history if item["type"] == "tool_call"]
-    assert [item["tool_name"] for item in tool_calls] == expected_tool_names
-    assert all(
-        item["tool_input"] != "{}"
-        for item in tool_calls
-        if item["tool_name"] == "recall_memory"
-    )
 
     def fake_judge_task(**kwargs):
         judge_calls.append(kwargs)

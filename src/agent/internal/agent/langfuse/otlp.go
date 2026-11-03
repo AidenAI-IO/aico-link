@@ -33,8 +33,8 @@ const (
 	// model and expose the spans in real time instead of the legacy pipeline.
 	ingestionVersionHeader = "x-langfuse-ingestion-version"
 	ingestionVersionV4     = "4"
-	scopeName              = "aiden.agent.telemetry"
-	serviceName            = "aiden-agent"
+	scopeName              = "aico.agent.telemetry"
+	serviceName            = "aico-agent"
 )
 
 // Observation types recognized by Langfuse. An unrecognized type is not

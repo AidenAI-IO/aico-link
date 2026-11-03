@@ -39,7 +39,8 @@ def execution_gate_blocks_rejudge(row: dict) -> bool:
     """Rejudging changes semantic verdicts, never recorded execution gates."""
     metrics = row.get("metrics") or {}
     return bool(
-        row.get("status") in {"timeout", "skipped"}
+        row.get("status") == "timeout"
+        or (row.get("status") == "skipped" and not metrics.get("judging_disabled"))
         or row.get("hard_assertion_failures")
         or any(value is False for value in (row.get("hard_assertions") or {}).values())
         or metrics.get("agent_error")
@@ -50,7 +51,7 @@ def execution_gate_blocks_rejudge(row: dict) -> bool:
 
 
 def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
-                judge_api_key_env: str = "AIDEN_BENCHMARK_JUDGE_API_KEY",
+                judge_api_key_env: str = "AICO_BENCHMARK_JUDGE_API_KEY",
                 only_judge_errors: bool = False) -> int:
     cfg = JudgeConfig(model=judge_model, base_url=judge_base_url, api_key_env=judge_api_key_env)
     cache = run_dir / "_judge_cache"
@@ -129,6 +130,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
         row["status"] = "passed" if row["rubric_pass_count"] == row["rubric_total"] else "failed"
         metrics.pop("rejudge_error", None)
         metrics.pop("judge_error", None)
+        if metrics.pop("judging_disabled", False):
+            metrics.pop("error", None)
         metrics.update(
             success=row["status"] == "passed",
             agent_eligible=True,

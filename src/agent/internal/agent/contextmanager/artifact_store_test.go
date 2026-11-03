@@ -1,7 +1,7 @@
 package contextmanager
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"bytes"
 	"encoding/json"
 	"errors"

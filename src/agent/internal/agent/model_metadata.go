@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
 	"bytes"
 	"context"
 	"crypto/sha256"

@@ -82,6 +82,8 @@ func ParseConfigValidationErrors(err error) []ConfigValidationError {
 		field = "hid.pointer_mode"
 	case strings.Contains(errMsg, "max_iterations"):
 		field = "max_iterations"
+	case strings.Contains(errMsg, "context_prune_state_limit"):
+		field = "context_prune_state_limit"
 	case strings.Contains(errMsg, "vad_speech_threshold"):
 		field = "vad_speech_threshold"
 	case strings.Contains(errMsg, "voice_followup_timeout_ms"):
@@ -90,12 +92,6 @@ func ParseConfigValidationErrors(err error) []ConfigValidationError {
 		field = "voice_first_turn_timeout_ms"
 	case strings.Contains(errMsg, "voice_max_turns"):
 		field = "voice_max_turns"
-	case strings.Contains(errMsg, "voice_max_response_tokens"):
-		field = "voice_max_response_tokens"
-	case strings.Contains(errMsg, "screenshot_keep_n"):
-		field = "screenshot_keep_n"
-	case strings.Contains(errMsg, "screenshot_prune_interval"):
-		field = "screenshot_prune_interval"
 	case strings.Contains(errMsg, "screen_stable_timeout_ms"):
 		field = "screen_stable_timeout_ms"
 	case strings.Contains(errMsg, "screen_stable_ms"):

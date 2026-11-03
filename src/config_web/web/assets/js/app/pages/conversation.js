@@ -33,7 +33,7 @@ export const SEARCH_PROVIDERS = [
 ];
 
 /**
- * The three numeric limits, with the value that means "use the default" spelled
+ * The numeric limits, with the value that means "use the default" spelled
  * out, because the raw numbers (-1, 0) are not self-explanatory. Ranges match
  * `Config.Validate` in src/agent/internal/agent/config.go.
  */
@@ -49,10 +49,18 @@ export const LIMIT_FIELDS = [
   {
     key: 'context_prune_threshold',
     label: msg('conversation.prune_threshold', '历史消息裁剪阈值'),
-    description: msg('conversation.prune_threshold_help', '上下文占用达到该比例时清理较早的工具记录，0 表示自动（0.5）'),
+    description: msg('conversation.prune_threshold_help', '上下文占用达到该比例时清理旧状态并压缩较早的工具结果，0 表示自动（0.5）'),
     inputmode: 'decimal',
     parse: parse.fraction,
     invalid: msg('conversation.fraction_invalid', '请输入 0，或 0 到 1 之间的小数'),
+  },
+  {
+    key: 'context_prune_state_limit',
+    label: msg('conversation.prune_state_limit', '截图状态上限'),
+    description: msg('conversation.prune_state_limit_help', '带截图的状态超过该数量时清理旧状态，只保留当前这一轮的最新状态，0 表示自动（6）'),
+    inputmode: 'numeric',
+    parse: parse.integer(0),
+    invalid: msg('conversation.prune_state_limit_invalid', '请输入 0 或正整数'),
   },
   {
     key: 'context_compaction_threshold',
@@ -224,7 +232,7 @@ export async function websearchPage(context) {
         searchTile(),
         text(msg('websearch.title', 'Web 搜索'), 'page__title'),
         text(
-          msg('websearch.description', '连接后，Aiden 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'),
+          msg('websearch.description', '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'),
           'page__description',
         ),
       ]),

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aiden Agent</title>
+    <title>Aico</title>
     <link rel="stylesheet" href="/web-ui/styles.css">
 </head>
 <body>
@@ -13,12 +13,13 @@
                 <div class="topbar-title">
                     <span class="brand-dot" aria-hidden="true"></span>
                     <div>
-                        <h1>Aiden Agent</h1>
-                        <span class="topbar-subtitle">WORKSPACE</span>
+                        <h1>Aico</h1>
+                        <span class="topbar-subtitle">AICO LINK · WORKSPACE</span>
                     </div>
                 </div>
                 <div class="topbar-actions">
                     <nav class="workspace-links" aria-label="Workspace tools">
+                        <a href="https://aico.link" target="_blank" rel="noopener noreferrer" class="new-chat-btn">aico.link</a>
                         <a href="/coordinate-debug" class="new-chat-btn">Coordinate Debug</a>
                         <a href="/user_files" class="new-chat-btn">User Files</a>
                         <a href="/web-ui/context.html" target="_blank" rel="noopener" class="new-chat-btn">Context</a>
@@ -39,7 +40,7 @@
               <section class="conversation" id="conversation">
                 <div class="conversation-inner">
                     <div class="empty-state" id="emptyState">
-                        <h3>Aiden Agent</h3>
+                        <h3>Aico</h3>
                         <p>Ask a question or run a task.</p>
                     </div>
                     <div class="message-list" id="messages"></div>
@@ -68,7 +69,7 @@
                         id="input"
                         class="composer-input"
                         rows="1"
-                        placeholder="Message Aiden Agent..."
+                        placeholder="Message Aico..."
                     ></textarea>
                     <div class="composer-footer">
                         <div class="composer-toolbar">
@@ -87,8 +88,53 @@
         <aside class="inspector">
             <div class="inspector-header">
                 <span class="sidebar-kicker">Inspector</span>
-                <span class="inspector-hint">TOOLS · TERMINAL</span>
+                <span class="inspector-hint">TOOLS · HARDWARE</span>
             </div>
+            <section class="sidebar-card resource-panel" aria-labelledby="resourceTitle">
+                <div class="resource-panel-head">
+                    <span class="sidebar-kicker" id="resourceTitle">Hardware resources</span>
+                    <span class="resource-status" id="resourceStatus">Loading…</span>
+                </div>
+                <div class="resource-network">
+                    <div class="resource-reading"><span>Wi-Fi</span><span id="resourceWiFi">Unavailable</span></div>
+                    <div class="resource-rate-grid">
+                        <div><span class="resource-caption">↓ RX</span><span id="resourceRX">Unavailable</span></div>
+                        <div><span class="resource-caption">↑ TX</span><span id="resourceTX">Unavailable</span></div>
+                    </div>
+                </div>
+                <div class="resource-gauge">
+                    <div class="resource-reading"><span>Battery</span><span><span id="resourceBattery">Unavailable</span><span class="resource-caption" id="resourceVoltage"></span></span></div>
+                    <meter id="resourceBatteryMeter" min="0" max="100" value="0" aria-label="Battery level" hidden></meter>
+                </div>
+                <div class="resource-gauge-grid">
+                    <div class="resource-gauge">
+                        <div class="resource-reading"><span>CPU</span><span id="resourceCPU">Unavailable</span></div>
+                        <meter id="resourceCPUMeter" min="0" max="100" value="0" aria-label="CPU utilization" hidden></meter>
+                    </div>
+                    <div class="resource-gauge">
+                        <div class="resource-reading"><span>NPU</span><span id="resourceNPU">Unavailable</span></div>
+                        <meter id="resourceNPUMeter" min="0" max="100" value="0" aria-label="NPU utilization" hidden></meter>
+                    </div>
+                </div>
+                <div class="resource-gauge">
+                    <div class="resource-reading"><span>Memory</span><span id="resourceMemory">Unavailable</span></div>
+                    <meter id="resourceMemoryMeter" min="0" max="100" value="0" aria-label="Memory usage" hidden></meter>
+                </div>
+                <div class="resource-storage">
+                    <div class="resource-caption">Storage</div>
+                    <div id="resourceDisks">Unavailable</div>
+                </div>
+                <details class="resource-details">
+                    <summary>Details</summary>
+                    <dl>
+                        <dt>Network addresses</dt><dd id="resourceAddresses">Unavailable</dd>
+                        <dt>Traffic totals · RX / TX</dt><dd id="resourceTotals">Unavailable</dd>
+                        <dt>Memory · used / total</dt><dd id="resourceMemoryDetail">Unavailable</dd>
+                        <dt>Storage · used / total</dt><dd id="resourceDiskDetails">Unavailable</dd>
+                    </dl>
+                </details>
+            </section>
+            <a class="terminal-open-link" id="terminalOpenLink" href="/webtty/" target="_blank" rel="noopener noreferrer">Open terminal ↗</a>
             <div class="sidebar-card tool-lab">
                 <div class="sidebar-kicker">Tool Lab</div>
                 <strong>Manual tool test</strong>
@@ -117,23 +163,6 @@
                     <pre class="tool-block" id="toolResultOutput"></pre>
                 </div>
             </div>
-
-            <div class="sidebar-card terminal-panel">
-                <div class="terminal-panel-head">
-                    <div>
-                        <div class="sidebar-kicker">Terminal</div>
-                        <strong>ttyd</strong>
-                    </div>
-                    <a class="terminal-open-link" id="terminalOpenLink" href="/webtty/" target="_blank" rel="noopener noreferrer">Open ↗</a>
-                </div>
-                <iframe
-                    id="terminalFrame"
-                    class="terminal-frame"
-                    title="Aiden ttyd terminal"
-                    allow="clipboard-read; clipboard-write; fullscreen"
-                    referrerpolicy="no-referrer"
-                ></iframe>
-            </div>
         </aside>
     </div>
 
@@ -150,14 +179,17 @@
         </section>
     </div>
 
-    <!-- These classic scripts share page state. Keep state first and bootstrap last. -->
+    <!-- These classic scripts share page state. Load projection first and bootstrap last. -->
+    <script defer src="/web-ui/scripts/conversation_projection.js"></script>
     <script defer src="/web-ui/scripts/state.js"></script>
+    <script defer src="/web-ui/scripts/streaming_text.js"></script>
     <script defer src="/web-ui/scripts/events.js"></script>
     <script defer src="/web-ui/scripts/tools.js"></script>
     <script defer src="/web-ui/scripts/chat.js"></script>
     <script defer src="/web-ui/scripts/messages.js"></script>
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>
+    <script defer src="/web-ui/scripts/resources.js"></script>
     <script defer src="/web-ui/scripts/bootstrap.js"></script>
 </body>
 </html>

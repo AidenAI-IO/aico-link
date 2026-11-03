@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 FrameServiceStatus uds_request_once(const std::string& socket_path,
                                     const std::string& request_json,
@@ -12,4 +12,4 @@ FrameServiceStatus uds_request_once(const std::string& socket_path,
                                     UdsMessage* response,
                                     uint32_t timeout_ms = 5000);
 
-}  // namespace aiden
+}  // namespace aico

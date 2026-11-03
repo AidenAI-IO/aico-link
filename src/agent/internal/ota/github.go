@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 type githubRelease struct {

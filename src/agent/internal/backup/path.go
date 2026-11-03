@@ -7,6 +7,33 @@ import (
 	"strings"
 )
 
+// IsReservedSDUserPath applies the same managed-root boundary to backup and
+// restore, including FAT case folding and trailing-dot aliases. Top-level
+// DOS 8.3-shaped names with a tilde and numeric suffix are conservatively
+// reserved: their long-name target cannot be determined from an archive.
+func IsReservedSDUserPath(value string) bool {
+	root := strings.ToLower(strings.TrimRight(strings.SplitN(value, "/", 2)[0], "."))
+	switch root {
+	case "aico", ".aico-restore", "aico-res":
+		// The last name is the journal alias created by VFAT nonumtail.
+		return true
+	}
+	stem, extension, hasExtension := strings.Cut(root, ".")
+	if len(stem) > 8 || (hasExtension && (len(extension) > 3 || strings.ContainsAny(extension, ".~"))) {
+		return false
+	}
+	prefix, suffix, hasTilde := strings.Cut(stem, "~")
+	if !hasTilde || prefix == "" || len(prefix) > 6 || suffix == "" {
+		return false
+	}
+	for _, digit := range suffix {
+		if digit < '0' || digit > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func validateArchivePath(value string) error {
 	if value == "" || value == "." {
 		return fmt.Errorf("archive path is empty")

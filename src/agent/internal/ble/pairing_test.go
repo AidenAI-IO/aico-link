@@ -64,7 +64,7 @@ func TestBoardIdentityUsesFullAdapterAddress(t *testing.T) {
 		t.Fatalf("unexpected board identity text=%q bytes=%x", text, identity)
 	}
 	manufacturerData := advertisedManufacturerData(identity)
-	variant, ok := manufacturerData[AidenManufacturerID]
+	variant, ok := manufacturerData[AicoLinkManufacturerID]
 	if !ok || !bytes.Equal(variant.Value().([]byte), identity) {
 		t.Fatalf("advertisement does not carry board identity: %#v", manufacturerData)
 	}
@@ -82,7 +82,7 @@ func TestDisconnectedDeviceClearsSubscriberStatus(t *testing.T) {
 		status.WakeSubscriber = true
 		status.ANCSSubscribed = true
 	})
-	backend := newBlueZBackend(service, "Aiden", 0)
+	backend := newBlueZBackend(service, "Aico Link", 0)
 
 	backend.updateDeviceStatus(
 		dbus.ObjectPath("/org/bluez/hci0/dev_00_11_22_33_44_55"),
@@ -106,7 +106,7 @@ func TestUserDisabledConnectionStaysDisconnectedWhenLinkReturns(t *testing.T) {
 		status.WakeSubscriber = true
 		status.ANCSSubscribed = true
 	})
-	backend := newBlueZBackend(service, "Aiden", 0)
+	backend := newBlueZBackend(service, "Aico Link", 0)
 	backend.setConnectionEnabled(false)
 
 	backend.updateDeviceStatus(

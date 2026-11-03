@@ -92,6 +92,18 @@ def test_changes_name_settings_that_differ_between_the_windows():
     assert "agent model: model → anthropic/new; judge prompt: v2 → v3" in render_weekly(report, [])
 
 
+def test_config_changes_include_all_values_even_when_latest_runs_match():
+    report = summarize_weekly([
+        _record("2026-10-12T00:00:00+00:00", judge_prompt_version="v3"),
+        _record("2026-10-11T00:00:00+00:00", judge_prompt_version="v2"),
+        _record("2026-10-05T00:00:00+00:00", judge_prompt_version="v3"),
+        _record("2026-10-04T00:00:00+00:00", judge_prompt_version="v1"),
+    ], end=END)
+    assert report["suites"][0]["config_changes"] == [
+        {"field": "judge prompt", "previous": "v1, v3", "current": "v2, v3"},
+    ]
+
+
 def test_empty_window_is_reported_explicitly():
     assert "No benchmark runs in this window" in render_weekly(summarize_weekly([], end=END), [])
 
@@ -194,12 +206,15 @@ def test_every_ci_suite_has_a_capability():
     ("shell_utility_v1", "Shell utilities"),
     ("episode_memory_before_v1", "Memory"), ("episode_memory_after_v1", "Memory"),
     ("episode_memory_legacy_v1", "Memory"), ("adb_android_basic", "UI operation"),
+    ("adb_android_builtin_apps", "UI operation"),
+    ("adb_android_text_editing", "UI operation"),
     ("vphone_ios_basic", "UI operation"), ("app_workflow_v1", "UI operation"),
     ("quick_action_v1", "UI operation"), ("phone_control_v1", "UI operation"),
     ("mobilegym_basic", "UI operation"),
-    ("aiden_app_connection_capabilities_v1", "Device integration"),
-    ("aiden_app_phone_bridge_data_policy_v1", "Device integration"),
-    ("aiden_app_notes_entry_policy_v1", "Device integration"),
+    ("mobilegym_touch_v1", "UI operation"),
+    ("aico_app_connection_capabilities_v1", "Device integration"),
+    ("aico_app_phone_bridge_data_policy_v1", "Device integration"),
+    ("aico_app_notes_entry_policy_v1", "Device integration"),
     ("skill_discovery_v1", "Diagnostics"),
 ])
 def test_areas_follow_test_objectives_instead_of_tools_or_environments(suite, area):
@@ -250,3 +265,5 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "mobilegym"}) == "Simulator"
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "external"}) == "External device"
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
+    assert environment_of({"execution_environment": "adb"}) == "ADB device"
+    assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"

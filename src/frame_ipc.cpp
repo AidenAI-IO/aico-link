@@ -1,6 +1,6 @@
 #include "frame_ipc.h"
 
-namespace aiden {
+namespace aico {
 
 FrameServiceStatus write_frame_message(int fd,
                                        const std::string& header_json,
@@ -12,4 +12,4 @@ FrameServiceStatus read_frame_message(int fd, FrameIpcMessage* out) {
     return read_uds_message(fd, out);
 }
 
-}  // namespace aiden
+}  // namespace aico

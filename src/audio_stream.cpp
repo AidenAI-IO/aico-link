@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include <stdio.h>
 #include <signal.h>
 #include <stdint.h>
@@ -8,7 +8,7 @@ static bool quit = false;
 
 void signal_handler(int sig) { quit = true; }
 
-void on_audio_frame(const aiden::AudioFrame& frame) {
+void on_audio_frame(const aico::AudioFrame& frame) {
     int16_t* samples = (int16_t*)frame.data;
     uint32_t sample_count = frame.length / (2 * sizeof(int16_t));
     for (uint32_t i = 0; i < sample_count; i++) {
@@ -21,13 +21,13 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGPIPE, signal_handler);
 
-    aiden::AudioConfig config;
+    aico::AudioConfig config;
     config.device_name = (argc > 1) ? argv[1] : config.device_name;
     config.sample_rate = 16000;
     config.channels = 1;
     config.bit_width = 16;
 
-    aiden::AudioCapture capture;
+    aico::AudioCapture capture;
     if (!capture.init(config) || !capture.start(on_audio_frame))
         return 1;
 

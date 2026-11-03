@@ -16,8 +16,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/vmihailenco/msgpack/v5"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -86,6 +86,9 @@ func (a *Adapter) Capabilities() tts.Capabilities {
 		SupportsContextContinuation: false,
 		SupportedSampleRates:        []int{16000, 24000, 44100},
 		RegionRestricted:            true,
+		TextGranularity:             tts.TextGranularityIncremental,
+		SupportsIncrementalAudio:    true,
+		SupportsFlush:               true,
 	}
 }
 

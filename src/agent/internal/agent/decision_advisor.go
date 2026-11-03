@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/decision"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/decision"
+	"aico-agent/internal/logging"
 )
 
 // decisionAdvisor routes fixed-choice workflow decisions to the optional

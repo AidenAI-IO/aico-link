@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/realtimevoice"
+	"aico-agent/internal/agent/realtimevoice"
 )
 
 type NotificationSeverity uint8

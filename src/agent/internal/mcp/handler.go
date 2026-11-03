@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	serverName    = "aiden-agent"
+	serverName    = "aico-agent"
 	serverVersion = "1.0.0"
 	maxBodyBytes  = 8 << 20
 )
@@ -261,7 +261,7 @@ func (h *Handler) handleToolsCall(r *http.Request, req jsonRPCRequest) (jsonRPCR
 				{
 					Type: "resource",
 					Resource: &ResourceContents{
-						URI:      "aiden://support-bundle",
+						URI:      "aico://support-bundle",
 						MIMEType: mime,
 						Blob:     blob,
 					},

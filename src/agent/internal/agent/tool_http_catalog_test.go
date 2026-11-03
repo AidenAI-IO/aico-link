@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/ble"
+	"aico-agent/internal/ble"
 	"context"
 	"slices"
 	"strings"

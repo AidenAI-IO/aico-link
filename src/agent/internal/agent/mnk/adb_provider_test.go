@@ -28,8 +28,8 @@ func (r *adbTestRunner) run(_ context.Context, _ string, args ...string) ([]byte
 
 func newTestADBProvider(t *testing.T, runner *adbTestRunner) *ADBProvider {
 	t.Helper()
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 	return NewADBProvider(nil, nil, runner.run)
 }
 
@@ -97,7 +97,7 @@ func TestADBScreenClientRejectsAmbiguousDevices(t *testing.T) {
 		}
 		return runner.run(ctx, path, args...)
 	})
-	t.Setenv("AIDEN_ADB_SERIAL", "")
+	t.Setenv("AICO_ADB_SERIAL", "")
 	t.Setenv("ANDROID_SERIAL", "")
 	if _, err := client.ResolveSerial(context.Background(), "/fake/adb"); err == nil || !strings.Contains(err.Error(), "multiple adb devices") {
 		t.Fatalf("ResolveSerial() error = %v, want multiple-device error", err)
@@ -172,8 +172,8 @@ func TestADBProviderDragStartAndReleaseUseSeparateRawPrograms(t *testing.T) {
 		}
 		return nil, nil, nil
 	})
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 
 	if err := provider.DragStart(context.Background(), 500, 500, ButtonLeft); err != nil {
 		t.Fatalf("DragStart() error = %v", err)
@@ -236,8 +236,8 @@ func TestADBProviderDragStartFailureAttemptsRawTouchUp(t *testing.T) {
 		}
 		return nil, nil, nil
 	})
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 
 	err := provider.DragStart(context.Background(), 500, 500, ButtonLeft)
 	if err == nil || !strings.Contains(err.Error(), "simulated raw start failure") {
@@ -263,7 +263,7 @@ func TestADBProviderDragStartFailureAttemptsRawTouchUp(t *testing.T) {
 
 func TestParseADBTouchDevicesPrefersPhysicalTouchscreen(t *testing.T) {
 	output := `add device 1: /dev/input/event7
-  name:     "Aiden Aiden HID+ECM"
+  name:     "Aico Aico HID+ECM"
   events:
     KEY (0001): BTN_TOUCH
     ABS (0003): ABS_X                 : value 0, min 0, max 32767, fuzz 0, flat 0, resolution 0
@@ -391,8 +391,8 @@ func TestADBProviderTouchActionsDiscoversDeviceAndRunsSingleScript(t *testing.T)
 		}
 		return nil, nil, nil
 	})
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 	actions := []TouchAction{
 		{Type: "touch_down", Point: &Point{X: 100, Y: 800}},
 		{Type: "move_to", Point: &Point{X: 100, Y: 200}},
@@ -474,8 +474,8 @@ func TestADBProviderTouchActionsFallsBackToInputMotionEvent(t *testing.T) {
 			return nil, nil, nil
 		}
 	})
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 	err := provider.TouchActions(context.Background(), []TouchAction{
 		{Type: "touch_down", Point: &Point{X: 500, Y: 800}},
 		{Type: "wait", DurationMs: 80},
@@ -518,8 +518,8 @@ func TestADBProviderTouchActionsReportsPermissionFailureAsUnavailable(t *testing
 		}
 		return nil, []byte("sendevent: /dev/input/event3: Permission denied"), errors.New("exit status 1")
 	})
-	t.Setenv("AIDEN_ADB_PATH", "/fake/adb")
-	t.Setenv("AIDEN_ADB_SERIAL", "serial-test")
+	t.Setenv("AICO_ADB_PATH", "/fake/adb")
+	t.Setenv("AICO_ADB_SERIAL", "serial-test")
 	err := provider.TouchActions(context.Background(), []TouchAction{
 		{Type: "touch_down", Point: &Point{X: 500, Y: 500}},
 		{Type: "touch_up"},

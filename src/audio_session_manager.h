@@ -12,7 +12,7 @@
 #include <thread>
 #include <unordered_map>
 
-namespace aiden {
+namespace aico {
 
 // Owns all active record and playback sessions.
 // Thread-safe; all public methods may be called from any thread.
@@ -28,35 +28,35 @@ public:
     // --- Recording ---
 
     // Create and start a new record session.
-    AidenServiceStatus start_recording(const AudioFormat& fmt,
+    AicoServiceStatus start_recording(const AudioFormat& fmt,
                                        RecordStartResult* out);
 
     // Pop the next PCM chunk from a record session (long-poll).
-    AidenServiceStatus read_record_chunk(uint64_t session_id,
+    AicoServiceStatus read_record_chunk(uint64_t session_id,
                                          uint32_t timeout_ms,
                                          AudioChunkResult* out);
 
     // Stop a record session. Queued PCM remains readable until EOF, then the
     // session is removed lazily by read_record_chunk() or the idle reaper.
-    AidenServiceStatus stop_recording(uint64_t session_id);
+    AicoServiceStatus stop_recording(uint64_t session_id);
 
     // --- Playback ---
 
     // Create and start a new playback session.
-    AidenServiceStatus start_playback(const AudioFormat& fmt,
+    AicoServiceStatus start_playback(const AudioFormat& fmt,
                                       PlaybackStartResult* out);
 
     // Push a PCM chunk into a playback session.
-    AidenServiceStatus write_play_chunk(uint64_t session_id,
+    AicoServiceStatus write_play_chunk(uint64_t session_id,
                                         const uint8_t* data,
                                         size_t len,
                                         bool is_final);
 
     // Stop and remove a playback session.
-    AidenServiceStatus stop_playback(uint64_t session_id);
+    AicoServiceStatus stop_playback(uint64_t session_id);
 
-    AidenServiceStatus set_playback_volume(int volume);
-    AidenServiceStatus get_playback_volume(uint32_t* out) const;
+    AicoServiceStatus set_playback_volume(int volume);
+    AicoServiceStatus get_playback_volume(uint32_t* out) const;
 
     // --- Health ---
 
@@ -91,4 +91,4 @@ private:
     std::unordered_map<uint64_t, Clock::time_point> playback_last_active_;
 };
 
-}  // namespace aiden
+}  // namespace aico

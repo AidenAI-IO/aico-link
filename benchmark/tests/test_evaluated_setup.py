@@ -119,7 +119,7 @@ def test_notification_reinforcement_scores_memory_state_not_repeated_speech(tmp_
                                   artifact_dir=tmp_path, judge_cfg=None, judge_cache_dir=None,
                                   run_id="run", timed_out=False, memory_state=state)
     assert result.hard_assertions.memory_state is (not duplicates)
-    assert result.status == ("failed" if duplicates else "passed")
+    assert result.status == ("failed" if duplicates else "skipped")
     assert "does_not_duplicate" not in {r.id for r in task.rubric}
 
 

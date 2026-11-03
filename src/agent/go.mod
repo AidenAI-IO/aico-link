@@ -1,4 +1,4 @@
-module aiden-agent
+module aico-agent
 
 go 1.26
 

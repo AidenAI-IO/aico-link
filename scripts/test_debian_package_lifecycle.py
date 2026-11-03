@@ -13,13 +13,14 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-WATCHER = 'aiden-wifi-proxy-agent-restart.path'
-RESTART = 'aiden-wifi-proxy-agent-restart.service'
-AGENT = 'aiden-agent.service'
-FRAME = 'aiden-frame.service'
-TTYD = 'aiden-ttyd.service'
-UNITS = [WATCHER, RESTART, AGENT, FRAME, TTYD, 'aiden-audio.service',
-         'aiden-ble.service', 'aiden-config-web.service', 'aiden-wifi-proxy.service']
+WATCHER = 'aico-wifi-proxy-agent-restart.path'
+RESTART = 'aico-wifi-proxy-agent-restart.service'
+AGENT = 'aico-agent.service'
+FRAME = 'aico-frame.service'
+TTYD = 'aico-ttyd.service'
+UNITS = [WATCHER, RESTART, AGENT, FRAME, TTYD, 'aico-audio.service',
+         'aico-ble.service', 'aico-config-web.service', 'aico-wifi-proxy.service',
+         'aico-mcu-event.service']
 
 
 class LifecycleTests(unittest.TestCase):
@@ -38,7 +39,7 @@ class LifecycleTests(unittest.TestCase):
         self.policy = self.root / 'policy-rc.d'
         self.device = self.root / 'dpkg-root'
         self.config_transaction = self.root / 'package-state/config-transition'
-        contract = self.device / 'usr/lib/aiden/platform/contract.json'
+        contract = self.device / 'usr/lib/aico/platform/contract.json'
         subprocess.run(['python3', str(ROOT / 'scripts/release/contract.py'), 'platform', str(contract)], check=True)
         self.set_states({unit: ('inactive' if unit == RESTART else 'active') for unit in UNITS})
         self.env = {**os.environ, 'PATH': str(self.bin) + os.pathsep + os.environ['PATH'],
@@ -82,12 +83,12 @@ elif action != 'daemon-reload':
             helper.chmod(0o755)
 
     def relocate(self, text):
-        text = text.replace('/var/lib/aiden-business', str(self.root / 'package-state'))
+        text = text.replace('/var/lib/aico-business', str(self.root / 'package-state'))
         text = text.replace('/run/systemd/system', str(self.marker))
         text = text.replace('/usr/sbin/policy-rc.d', str(self.policy))
         text = text.replace('ROOT = Path(os.environ.get("DPKG_ROOT") or "/")', 'ROOT = Path(' + repr(str(self.device)) + ')')
-        text = text.replace("path = os.environ.get('DPKG_ROOT', '') + '/usr/lib/aiden/platform/contract.json'",
-                            'path = ' + repr(str(self.device / 'usr/lib/aiden/platform/contract.json')))
+        text = text.replace("path = os.environ.get('DPKG_ROOT', '') + '/usr/lib/aico/platform/contract.json'",
+                            'path = ' + repr(str(self.device / 'usr/lib/aico/platform/contract.json')))
         return text
 
     def set_states(self, states):
@@ -206,9 +207,9 @@ elif action != 'daemon-reload':
         package = self.root / ('package-' + version)
         control = package / 'DEBIAN'
         control.mkdir(parents=True)
-        (control / 'control').write_text(f'Package: aiden-business\nVersion: {version}\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: lifecycle fixture\n')
-        (package / 'usr/share/aiden-test').mkdir(parents=True)
-        (package / 'usr/share/aiden-test/version').write_text(version)
+        (control / 'control').write_text(f'Package: aico-business\nVersion: {version}\nArchitecture: all\nMaintainer: Test <test@example.invalid>\nDescription: lifecycle fixture\n')
+        (package / 'usr/share/aico-test').mkdir(parents=True)
+        (package / 'usr/share/aico-test/version').write_text(version)
         if scripts:
             for source in self.scripts.iterdir():
                 # dpkg --root sets DPKG_ROOT. Only the test fixture clears it
@@ -219,7 +220,7 @@ elif action != 'daemon-reload':
                 target = control / source.name
                 target.write_text(text)
                 target.chmod(0o755)
-        archive = self.root / ('aiden-business_' + version + '_all.deb')
+        archive = self.root / ('aico-business_' + version + '_all.deb')
         subprocess.run(['dpkg-deb', '--build', '--root-owner-group', str(package), str(archive)], check=True, stdout=subprocess.DEVNULL)
         return archive
 
@@ -242,7 +243,7 @@ elif action != 'daemon-reload':
         self.assertEqual(self.states(), before)
         self.dpkg('-i', package)
         self.assertEqual(self.states(), before)
-        self.dpkg('--remove', 'aiden-business')
+        self.dpkg('--remove', 'aico-business')
         self.assertTrue(all(value == 'inactive' for value in self.states().values()))
         self.assertFalse(self.transaction.exists())
 
@@ -252,7 +253,7 @@ elif action != 'daemon-reload':
         self.dpkg('-i', self.make_package('0.0.1-1', scripts=False))
         self.dpkg('-i', self.make_package('0.0.1-2', fail_preinst=True), success=False)
         self.assertEqual(self.states(), before)
-        self.assertEqual((self.root / 'dpkg-root/usr/share/aiden-test/version').read_text(), '0.0.1-1')
+        self.assertEqual((self.root / 'dpkg-root/usr/share/aico-test/version').read_text(), '0.0.1-1')
 
     @unittest.skipUnless(shutil.which('dpkg-deb') and shutil.which('dpkg'), 'requires Linux dpkg')
     def test_real_dpkg_configure_retry_restores_services(self):

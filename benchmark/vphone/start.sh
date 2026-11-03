@@ -243,10 +243,10 @@ case "$SUBCMD" in
     # Discover the currently running agent daemon's host port and token, so you
     # never have to paste --agent-url / --benchmark-token-file by hand. The port
     # is auto-assigned per start-agent-daemon run and changes each time.
-    ports="$(docker ps --filter name=aiden-benchmark-agent --format '{{.Ports}}' | head -1)"
+    ports="$(docker ps --filter name=aico-benchmark-agent --format '{{.Ports}}' | head -1)"
     host_port="$(printf '%s' "$ports" | sed -nE 's/.*127\.0\.0\.1:([0-9]+)->8080.*/\1/p')"
     if [ -z "$host_port" ]; then
-      echo "error: no running agent daemon found (container name aiden-benchmark-agent*)." >&2
+      echo "error: no running agent daemon found (container name aico-benchmark-agent*)." >&2
       echo "hint: start one first with: ./start.sh agent" >&2
       exit 1
     fi
@@ -265,11 +265,11 @@ case "$SUBCMD" in
       case "$1" in
         --judge-key)
           [ $# -ge 2 ] || { echo "error: --judge-key needs a value" >&2; exit 1; }
-          export AIDEN_BENCHMARK_JUDGE_API_KEY="$2"
+          export AICO_BENCHMARK_JUDGE_API_KEY="$2"
           shift 2
           ;;
         --judge-key=*)
-          export AIDEN_BENCHMARK_JUDGE_API_KEY="${1#--judge-key=}"
+          export AICO_BENCHMARK_JUDGE_API_KEY="${1#--judge-key=}"
           shift
           ;;
         *)
@@ -291,7 +291,7 @@ case "$SUBCMD" in
     judge_args=()
     case " ${passthru[*]:-} " in
       *" --judge-model "*|*" --judge-model="*|*" --judge "*|*" --judge="*)
-        if [ -z "${AIDEN_BENCHMARK_JUDGE_API_KEY:-}" ]; then
+        if [ -z "${AICO_BENCHMARK_JUDGE_API_KEY:-}" ]; then
           echo "error: judging requested but no judge key provided." >&2
           echo "hint: add --judge-key <judge API key>," >&2
           echo "      or drop --judge-model to run without scoring." >&2

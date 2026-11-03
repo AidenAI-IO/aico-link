@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // SessionArchiveCleaner cleans up old session archives

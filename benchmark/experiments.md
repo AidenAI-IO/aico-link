@@ -19,7 +19,7 @@ example, the original scroll regression still rejects overshooting item 24/83.
 
 Rubric tasks require the existing Judge. WebUI freezes its enabled/model/base
 URL/credential settings at experiment creation; CLI uses `--judge-model`,
-`--judge-base-url`, and `AIDEN_BENCHMARK_JUDGE_API_KEY`. Missing or disabled Judge
+`--judge-base-url`, and `AICO_BENCHMARK_JUDGE_API_KEY`. Missing or disabled Judge
 configuration prevents launch. Judge errors are ineligible attempts, never
 successes. Both agents use the same judge, original rubric, before/after
 screenshots, tool execution evidence, and final response. Deterministic state
@@ -123,7 +123,10 @@ the environment bridge for the `raw` layer. External harnesses never receive
 the daemon or bridge URL, or the daemon's non-UI tools. It folds explicit business failures
 (`ok:false`, including screenshot-wrapped `action_output`) into `is_error`,
 returns images unchanged, and writes `tool-audit.jsonl` with `step_<n>`
-screenshots for every external harness. The pi extension and the MCP bridge
+screenshots for every external harness. The audit records call starts as well
+as results, so unfinished calls remain visible at a timeout. Gateway shutdown
+drains accepted calls before final-state capture and environment release.
+The pi extension and the MCP bridge
 only translate this contract to each harness's native tool and image format;
 neither delegates the task to Aiden's chat API. Native planning, context,
 retry, and memory behavior stay agent-owned. Each measured attempt starts cold.
@@ -201,7 +204,7 @@ agent-plus-model operation performance.
    to create one on this page. A ready environment is selected automatically when
    none is selected. Configure Judge in the main page Settings.
    Use **External URL (advanced)** only for a separately managed simulator.
-6. Click **Save pi settings** to persist the model, endpoint, and credential
+6. Click **Save model settings** to persist the model, endpoint, and credential
    variable name on the server. New tabs and page reloads restore these settings;
    starting an experiment also saves the current values. API keys remain in the
    server environment.

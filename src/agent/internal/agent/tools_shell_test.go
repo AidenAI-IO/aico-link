@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/contextmanager"
 )
 
 func TestShellToolDescriptionMentionsNotificationHistory(t *testing.T) {

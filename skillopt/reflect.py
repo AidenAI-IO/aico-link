@@ -40,9 +40,9 @@ def _load_prompt(name: str) -> str:
 
 
 def fmt_trajectory_from_history(history: list[dict], max_chars: int = _MAX_TRAJ_CHARS) -> str:
-    """Render an Aiden ChatResponse.history list into analyst-readable text.
+    """Render Aico's ChatResponse.history list into analyst-readable text.
 
-    Aiden's history items are typed: user / assistant / tool_call / tool_result.
+    Aico's history items are typed: user / assistant / tool_call / tool_result.
     We collapse tool_call + tool_result pairs into a single [action]/[obs]
     block to mirror microsoft/SkillOpt's format.
     """

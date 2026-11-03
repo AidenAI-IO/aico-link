@@ -23,12 +23,12 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 
-DEFAULT_MOBILEGYM_IMAGE = "aiden-mobilegym-simulator:py311"
+DEFAULT_MOBILEGYM_IMAGE = "aico-mobilegym-simulator:py311"
 DEFAULT_MOBILEGYM_READY_TIMEOUT_SEC = 120
 DEFAULT_MOBILEGYM_PARALLEL_ENVS = 5
 MOBILEGYM_SUBMODULE_PATH = "benchmark/mobilegym/vendor/mobilegym"
 MOBILEGYM_SUBMODULE_SECTION = f'submodule "{MOBILEGYM_SUBMODULE_PATH}"'
-MOBILEGYM_COMMIT_LABEL = "io.aiden.mobilegym.commit"
+MOBILEGYM_COMMIT_LABEL = "io.aico.mobilegym.commit"
 LOG_TAIL_BYTES = 96 * 1024
 # WebUI polls list_all every 5s; cache the docker-sync result briefly so multiple
 # concurrent requests within a single poll window don't each fork docker.
@@ -178,7 +178,7 @@ class EnvironmentManager:
                     "docker",
                     "ps",
                     "--filter",
-                    "name=aiden-mobilegym-env-mg-",
+                    "name=aico-mobilegym-env-mg-",
                     "--format",
                     "{{.Names}}\t{{.ID}}\t{{.CreatedAt}}\t{{.Image}}",
                 ],
@@ -212,7 +212,7 @@ class EnvironmentManager:
         "unhealthy" so users won't accidentally select it for new runs.
         """
         container_name = container["name"]
-        prefix = "aiden-mobilegym-env-"
+        prefix = "aico-mobilegym-env-"
         if not container_name.startswith(prefix):
             return None
         env_id = container_name[len(prefix):]
@@ -292,7 +292,7 @@ class EnvironmentManager:
             status="building",
             message="ensuring Docker image",
             created_at=now_iso(),
-            container_name=f"aiden-mobilegym-env-{env_id}",
+            container_name=f"aico-mobilegym-env-{env_id}",
             bridge_port=bridge_port,
             web_port=web_port,
             image=self.mobilegym_image,
@@ -710,7 +710,7 @@ def build_mobilegym_environment_command(
 
 def mobilegym_bridge_bind_host() -> str:
     """Resolve the host interface reachable through host.docker.internal."""
-    configured = os.getenv("AIDEN_MOBILEGYM_BRIDGE_BIND_HOST", "").strip()
+    configured = os.getenv("AICO_MOBILEGYM_BRIDGE_BIND_HOST", "").strip()
     if not configured and sys.platform != "linux":
         return "127.0.0.1"
     gateway = configured or subprocess.check_output(

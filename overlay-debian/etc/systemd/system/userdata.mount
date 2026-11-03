@@ -1,8 +1,8 @@
 [Unit]
-Description=Aiden persistent userdata
+Description=Aico Link persistent userdata
 DefaultDependencies=no
-Requires=aiden-slot-resolve.service aiden-rootfs-grow.service
-After=aiden-slot-resolve.service aiden-rootfs-grow.service
+Requires=aico-slot-resolve.service aico-rootfs-grow.service
+After=aico-slot-resolve.service aico-rootfs-grow.service
 Before=local-fs.target
 
 [Mount]

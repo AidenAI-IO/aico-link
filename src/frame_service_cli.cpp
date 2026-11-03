@@ -44,12 +44,12 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    aiden::FrameServiceClient client(socket_path);
+    aico::FrameServiceClient client(socket_path);
     if (strcmp(command, "health") == 0) {
-        aiden::HealthResult health;
-        aiden::FrameServiceStatus status = client.health(&health);
-        if (status != aiden::FrameServiceStatus::OK) {
-            fprintf(stderr, "health failed: %s\n", aiden::frame_service_status_to_string(status));
+        aico::HealthResult health;
+        aico::FrameServiceStatus status = client.health(&health);
+        if (status != aico::FrameServiceStatus::OK) {
+            fprintf(stderr, "health failed: %s\n", aico::frame_service_status_to_string(status));
             return 1;
         }
         printf("state=%s capture_mode=%s latest_seq=%llu frame_age_ms=%llu ring=%u/%u consecutive_failures=%u last_error=%s last_recovery_ts=%llu avg_frame_serve_latency_ms=%.3f avg_capture_copy_latency_ms=%.3f\n",
@@ -68,10 +68,10 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(command, "latest-frame") == 0 || strcmp(command, "screenshot") == 0) {
-        aiden::FrameResult frame;
-        aiden::FrameServiceStatus status = client.latest_frame(0, 0, &frame);
-        if (status != aiden::FrameServiceStatus::OK) {
-            fprintf(stderr, "%s failed: %s\n", command, aiden::frame_service_status_to_string(status));
+        aico::FrameResult frame;
+        aico::FrameServiceStatus status = client.latest_frame(0, 0, &frame);
+        if (status != aico::FrameServiceStatus::OK) {
+            fprintf(stderr, "%s failed: %s\n", command, aico::frame_service_status_to_string(status));
             return 1;
         }
         if (strcmp(command, "latest-frame") == 0) {
@@ -81,7 +81,7 @@ int main(int argc, char** argv) {
             }
         } else {
             std::vector<uint8_t> bmp;
-            if (!aiden::encode_frame_to_bmp(frame.metadata, frame.data, &bmp)) {
+            if (!aico::encode_frame_to_bmp(frame.metadata, frame.data, &bmp)) {
                 fprintf(stderr, "failed to encode screenshot\n");
                 return 1;
             }
@@ -101,10 +101,10 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(command, "list-frames") == 0) {
-        aiden::FrameListResult list;
-        aiden::FrameServiceStatus status = client.list_frames(8, &list);
-        if (status != aiden::FrameServiceStatus::OK) {
-            fprintf(stderr, "list-frames failed: %s\n", aiden::frame_service_status_to_string(status));
+        aico::FrameListResult list;
+        aico::FrameServiceStatus status = client.list_frames(8, &list);
+        if (status != aico::FrameServiceStatus::OK) {
+            fprintf(stderr, "list-frames failed: %s\n", aico::frame_service_status_to_string(status));
             return 1;
         }
         for (size_t i = 0; i < list.frames.size(); ++i) {
@@ -119,9 +119,9 @@ int main(int argc, char** argv) {
     }
 
     if (strcmp(command, "restart") == 0) {
-        aiden::FrameServiceStatus status = client.restart();
-        if (status != aiden::FrameServiceStatus::OK) {
-            fprintf(stderr, "restart failed: %s\n", aiden::frame_service_status_to_string(status));
+        aico::FrameServiceStatus status = client.restart();
+        if (status != aico::FrameServiceStatus::OK) {
+            fprintf(stderr, "restart failed: %s\n", aico::frame_service_status_to_string(status));
             return 1;
         }
         printf("ok\n");

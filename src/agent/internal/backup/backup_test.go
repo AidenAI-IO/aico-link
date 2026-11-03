@@ -266,7 +266,7 @@ func TestOTASettingsAreWhitelistedAndCredentialPathsAreBounded(t *testing.T) {
 func TestAudioCopiesAreDeduplicatedAndConflictsMarked(t *testing.T) {
 	roots := testRoots(t)
 	emmc := filepath.Join(roots.Userdata, "audio/clip.wav")
-	sd := filepath.Join(roots.SD, "aiden/audio/clip.wav")
+	sd := filepath.Join(roots.SD, "aico/audio/clip.wav")
 	writeTestFile(t, emmc, "same", 0o600)
 	writeTestFile(t, sd, "same", 0o600)
 	options := PlanOptions{

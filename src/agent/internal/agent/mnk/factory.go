@@ -1,7 +1,7 @@
 package mnk
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 )
 
 // ProviderFactory 用于根据配置创建合适的 Provider

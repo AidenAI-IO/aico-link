@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    start|stop|restart|reload)
+        action=$1
+        [ "${action}" = reload ] && action=restart
+        exec systemctl "${action}" aico-wifi-proxy.service
+        ;;
+    status)
+        exec systemctl status aico-wifi-proxy.service --no-pager
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status}" >&2
+        exit 2
+        ;;
+esac

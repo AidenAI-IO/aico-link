@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"aico-agent/internal/stream"
 	"github.com/gorilla/websocket"
 )
 
@@ -242,6 +243,27 @@ func TestTencentASRSTTStreamingUploaderFinalizesTranscript(t *testing.T) {
 	}
 	if gotEndCopy != `{"type":"end"}` {
 		t.Fatalf("end payload = %q, want end message", gotEndCopy)
+	}
+
+	eventSource, ok := uploader.(STTTranscriptEventSource)
+	if !ok {
+		t.Fatal("streaming uploader does not expose transcript events")
+	}
+	var events []stream.TranscriptEvent
+	for event := range eventSource.TranscriptEvents() {
+		events = append(events, event)
+	}
+	if len(events) != 3 {
+		t.Fatalf("transcript events = %#v, want hypothesis, final, commit", events)
+	}
+	if events[0].Kind != stream.TranscriptHypothesis || events[0].Segment.SegmentID != "tencent-0" || events[0].Segment.Revision != 1 || events[0].Segment.Text != "h" {
+		t.Fatalf("hypothesis event = %#v", events[0])
+	}
+	if events[1].Kind != stream.TranscriptSegmentFinal || events[1].Segment.Revision != 2 || events[1].Segment.Text != "hello" {
+		t.Fatalf("segment final event = %#v", events[1])
+	}
+	if events[2].Kind != stream.TranscriptTurnCommit || events[2].Text != "hello" || len(events[2].CommitSegments) != 1 {
+		t.Fatalf("turn commit event = %#v", events[2])
 	}
 }
 

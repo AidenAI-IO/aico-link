@@ -87,7 +87,7 @@ func TestBuildSpeechTextNormalizesMarkdownInsideTTSTag(t *testing.T) {
 		"<tts>",
 		"**重点**：已完成 `audio_service` 检查。",
 		"- 当前音量是 **42**。",
-		"详情见 [PR #237](https://github.com/AidenAI-IO/aiden-firmware/pull/237)。",
+		"详情见 [PR #237](https://github.com/AidenAI-IO/aico-link/pull/237)。",
 		"</tts>",
 	}, "\n")
 
@@ -95,7 +95,7 @@ func TestBuildSpeechTextNormalizesMarkdownInsideTTSTag(t *testing.T) {
 	want := strings.Join([]string{
 		"重点：已完成 audio_service 检查。",
 		"当前音量是 42。",
-		"详情见 PR #237（https://github.com/AidenAI-IO/aiden-firmware/pull/237）。",
+		"详情见 PR #237（https://github.com/AidenAI-IO/aico-link/pull/237）。",
 	}, "\n")
 
 	if speech != want {
@@ -363,18 +363,18 @@ func TestSpeechStreamWriterFiltersInvalidUTF8BeforeStreaming(t *testing.T) {
 	}
 }
 
-func TestSpeechStreamWriterStreamsOnlyFirstLeadingTTSTag(t *testing.T) {
+func TestSpeechStreamWriterStreamsConsecutiveTTSTags(t *testing.T) {
 	sink := &flushingSpeechSink{}
 	writer := NewStreamWriter(sink)
 	payload := `<tts>第一句。</tts> <tts>第二句。</tts>正文`
 	if _, err := writer.Write([]byte(payload)); err != nil {
 		t.Fatalf("Write() error = %v", err)
 	}
-	if got := sink.String(); got != "第一句。" {
+	if got := sink.String(); got != "第一句。第二句。" {
 		t.Fatalf("streamed speech = %q", got)
 	}
-	if sink.flushCalls != 1 {
-		t.Fatalf("Flush() calls = %d, want 1", sink.flushCalls)
+	if sink.flushCalls != 2 {
+		t.Fatalf("Flush() calls = %d, want 2", sink.flushCalls)
 	}
 }
 

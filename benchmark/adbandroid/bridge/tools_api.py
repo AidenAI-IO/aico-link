@@ -23,6 +23,7 @@ from .adb import (
     KEYCODE_APP_SWITCH,
     KEYCODE_DEL,
     KEYCODE_ENTER,
+    KEYCODE_SPACE,
     KEYCODE_TAB,
     unsupported_adb_text_chars,
 )
@@ -769,6 +770,7 @@ class ADBToolsAPIHandler:
             "app_switch": KEYCODE_APP_SWITCH,
             "backspace": KEYCODE_DEL,
             "tab": KEYCODE_TAB,
+            "space": KEYCODE_SPACE,
         }
 
         if has_meta and len(non_modifiers) == 0:

@@ -36,6 +36,12 @@ type ToolSpec struct {
 	// UIOperation marks tools that observe or operate the visible device UI.
 	// External harness comparisons expose exactly this surface.
 	UIOperation bool
+	// RequiresCompleteResult marks tools whose output is only useful in full,
+	// such as instructions the model must follow. The tool must bound its own
+	// output; the result policy then delivers it whole or reports that it
+	// cannot fit, and current-turn pruning leaves it to conversation compaction
+	// instead of replacing it with a placeholder.
+	RequiresCompleteResult bool
 }
 
 type ToolSpecs struct {
@@ -78,6 +84,8 @@ type toolSpecMetadata struct {
 	HTTPExposed    *bool
 	AgentPlatforms []string
 	UIOperation    bool
+	// RequiresCompleteResult is copied to ToolSpec.RequiresCompleteResult.
+	RequiresCompleteResult bool
 }
 
 var builtInToolSpecMetadata = map[string]toolSpecMetadata{
@@ -193,6 +201,9 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 		Category:     "skills",
 		InputMode:    toolInputModeJSON,
 		ExampleInput: `{"name":"device-operator"}`,
+		// Skill files are instructions bounded by maxSkillReadBytes; a summary
+		// of them cannot be followed.
+		RequiresCompleteResult: true,
 	},
 	"touch_gesture": {
 		Category:     "input",
@@ -208,7 +219,7 @@ var builtInToolSpecMetadata = map[string]toolSpecMetadata{
 	"web_search": {
 		Category:     "web",
 		InputMode:    toolInputModeText,
-		ExampleInput: `{"query":"Aiden hardware agent"}`,
+		ExampleInput: `{"query":"Aico Link AI agent"}`,
 	},
 	"wikipedia": {
 		Category:     "web",
@@ -381,6 +392,8 @@ func NewToolSpec(tool langtools.Tool) ToolSpec {
 		HTTPExposed:    httpExposed,
 		AgentPlatforms: normalizeAgentToolPlatforms(meta.AgentPlatforms),
 		UIOperation:    meta.UIOperation,
+
+		RequiresCompleteResult: meta.RequiresCompleteResult,
 	}
 }
 
@@ -552,6 +565,7 @@ func validateTouchGestureFields(input string) error {
 		Start     json.RawMessage `json:"start"`
 		End       json.RawMessage `json:"end"`
 		Direction string          `json:"direction"`
+		Points    json.RawMessage `json:"points"`
 	}
 	if err := json.Unmarshal([]byte(input), &args); err != nil {
 		return fmt.Errorf("touch_gesture requires a JSON object: %w", err)
@@ -574,6 +588,20 @@ func validateTouchGestureFields(input string) error {
 		} else if !present(args.End) && strings.TrimSpace(args.Direction) == "" {
 			missing = "end or direction is required for swipe"
 		}
+	case "tap_sequence":
+		var points []json.RawMessage
+		if !present(args.Points) {
+			missing = "points is required for tap_sequence"
+		} else if json.Unmarshal(args.Points, &points) != nil {
+			missing = "points must be an array of JSON objects containing both numeric x and y coordinates"
+		} else {
+			for i, point := range points {
+				if !validTouchGestureCoordinate(point) {
+					missing = fmt.Sprintf("points[%d] must be a JSON object containing both numeric x and y coordinates", i)
+					break
+				}
+			}
+		}
 	}
 	if missing == "" {
 		for _, field := range []struct {
@@ -591,7 +619,7 @@ func validateTouchGestureFields(input string) error {
 		}
 	}
 	if missing != "" {
-		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":900},\"direction\":\"up\"}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
+		return fmt.Errorf("%s; no touch action was executed. Retry with all required fields together, preserving the intended gesture. Swipe example: {\"type\":\"swipe\",\"start\":{\"x\":500,\"y\":800},\"end\":{\"x\":500,\"y\":300}}. Tap example: {\"type\":\"tap\",\"point\":{\"x\":500,\"y\":500}}", missing)
 	}
 	return nil
 }

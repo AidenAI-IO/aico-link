@@ -10,7 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // Android launchers open app search in different ways: a mid-screen swipe

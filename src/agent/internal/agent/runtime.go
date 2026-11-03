@@ -15,18 +15,19 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/statemanager"
-	"aiden-agent/internal/agent/tokencounter"
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/util"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/statemanager"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/routines"
+	"aico-agent/internal/stream"
+	"aico-agent/internal/util"
 
 	"github.com/google/uuid"
 	"github.com/tmc/langchaingo/agents"
@@ -104,6 +105,7 @@ type Runtime struct {
 	episodeMaintenance      asyncRuntimeWork
 	telemetryExports        asyncRuntimeWork
 	episodeMemoryInitErr    error
+	routines                *routines.Manager
 }
 
 // ConfigSnapshot returns an immutable copy of the currently active runtime
@@ -127,6 +129,9 @@ type asyncRuntimeWork struct {
 }
 
 type RunRequest struct {
+	// Scheduled work waits for the current run and retains its conversation.
+	WaitForIdle       bool
+	ResumeSessionID   string
 	Input             string
 	Attachments       []InputAttachment
 	Turn              TurnInput
@@ -137,11 +142,19 @@ type RunRequest struct {
 	StreamWriter      io.Writer
 	MaxTokens         int
 	EventHandler      func(RunEvent)
+	// StreamSink receives typed v2 events in addition to the legacy event
+	// handler. It is optional so existing callers retain their current output.
+	StreamSink  stream.EventSink
+	StreamScope stream.EventScope
 	// OnRunActive runs after the previous run and its resources have been
 	// preempted and this run owns the runtime gate. Callers can register
 	// request-scoped output here without that output being interrupted by this
 	// run's own startup preemption.
-	OnRunActive   func(context.Context)
+	OnRunActive func(context.Context)
+	// OnRunComplete runs when the run has returned but still owns the runtime
+	// gate, so the latest turn in the context is still this run's: the next
+	// run appends its input only after it takes the gate.
+	OnRunComplete func()
 	SteerProvider func(context.Context) (RunSteerMessage, bool)
 	// FinalSteerProvider is called at terminal executor boundaries. It should
 	// atomically consume one last pending steer if available; otherwise it should
@@ -168,10 +181,11 @@ type RunResult struct {
 	// Deprecated: use WaitForWakeupRequested.
 	SleepRequested bool `json:"sleep_requested,omitempty"`
 	// Deprecated: use WaitForWakeupReason.
-	SleepReason    string       `json:"sleep_reason,omitempty"`
-	SpeechStreamed bool         `json:"-"`
-	Preempted      bool         `json:"preempted,omitempty"`
-	TurnFailure    *TurnFailure `json:"-"`
+	SleepReason      string `json:"sleep_reason,omitempty"`
+	SpeechStreamed   bool   `json:"-"`
+	speechGeneration uint64
+	Preempted        bool         `json:"preempted,omitempty"`
+	TurnFailure      *TurnFailure `json:"-"`
 }
 
 func canonicalTurnInputFromRunRequest(req RunRequest) TurnInput {
@@ -593,9 +607,10 @@ func NewRuntime(cfg Config) (*Runtime, error) {
 
 	rt.screenState = screenState
 
-	// Create PhoneBridge in proxy mode if environment bridge is enabled
+	// An ADB environment bridge handles screen and input, but the benchmark App
+	// can connect directly to this Agent for Phone Bridge commands.
 	endpoint := strings.TrimSpace(cfg.EnvironmentBridge.Endpoint)
-	if cfg.EnvironmentBridge.Enabled && endpoint != "" {
+	if cfg.EnvironmentBridge.Enabled && endpoint != "" && !cfg.EnvironmentBridge.LocalPhoneBridge {
 		rt.phoneBridge = NewPhoneBridgeProxy(
 			endpoint,
 			cfg.EnvironmentBridge.BenchmarkTaskID,
@@ -843,7 +858,8 @@ func (r *Runtime) Preempt() {
 }
 
 // RegisterPreemptHook adds a callback invoked when a new run preempts the
-// current one. Used to release audio resources (stop recording, stop TTS).
+// current one. Hooks should release interruptible playback (TTS); Classic
+// continuous-mic sessions own recording separately and must not stop the mic here.
 func (r *Runtime) RegisterPreemptHook(hook func()) {
 	if r == nil || hook == nil {
 		return
@@ -929,7 +945,9 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 
 	// Preempt any currently active run and its resources.
-	r.Preempt()
+	if !req.WaitForIdle {
+		r.Preempt()
+	}
 
 	unlockRun, err := r.lockRun(ctx)
 	if err != nil {
@@ -970,7 +988,11 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if req.OnRunActive != nil {
 			req.OnRunActive(isolationCtx)
 		}
-		return r.run(isolationCtx, req)
+		result, err := r.run(isolationCtx, req)
+		if req.OnRunComplete != nil {
+			req.OnRunComplete()
+		}
+		return result, err
 	})
 }
 
@@ -1142,7 +1164,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		callOptions = append(callOptions, chains.WithMaxTokens(req.MaxTokens))
 	}
 	var streamCallbackHandler *runtimeCallbackHandler
-	if req.StreamWriter != nil || req.EventHandler != nil || req.SteerProvider != nil || r.logger != nil {
+	if req.StreamWriter != nil || req.EventHandler != nil || req.StreamSink != nil || req.SteerProvider != nil || r.logger != nil {
 		streamCallbackHandler = &runtimeCallbackHandler{
 			writer:       req.StreamWriter,
 			metrics:      metrics,
@@ -1155,8 +1177,29 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			runID:        runID,
 			episode:      episodeRecorder,
 		}
+		if req.StreamSink != nil {
+			streamCallbackHandler.streamEmitter = newStreamEventEmitter(
+				req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID,
+			)
+			defer func(emitter *streamEventEmitter) {
+				state := stream.TerminalCompleted
+				if runErr != nil {
+					state = stream.TerminalFailed
+					if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+						state = stream.TerminalCancelled
+					}
+				}
+				// A cancellation-triggered run commonly reaches this defer with ctx
+				// already done. Terminal delivery is still required, so use a fresh
+				// bounded context for the observer instead of inheriting cancellation.
+				emitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
+					"state": string(state),
+					"error": streamErrorString(runErr),
+				}, nil)
+			}(streamCallbackHandler.streamEmitter)
+		}
 	}
-	if streamCallbackHandler != nil && req.StreamWriter != nil {
+	if streamCallbackHandler != nil && (req.StreamWriter != nil || req.StreamSink != nil) {
 		streamCallbackHandler.ResetStreaming(ctx)
 		callOptions = append(callOptions, chains.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 			streamCallbackHandler.HandleStreamingFunc(ctx, chunk)
@@ -1167,7 +1210,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if streamCallbackHandler != nil {
 		executorHandler = streamCallbackHandler
 	}
-	profile := r.buildAgentProfile(r.skills, availableTools)
+	// Read the user profile once per run: new sessions start with it and the
+	// refresh below brings an existing session up to date.
+	userProfile, profileErr := r.memories.UserProfilePrompt(ctx)
+	if profileErr != nil {
+		r.memories.warnProfileReadFailure(profileErr)
+	}
+	profile := r.buildAgentProfile(r.skills, availableTools, userProfile)
 	var steerStatus steerConversationStatus
 	var steerRecorder steerConversationRecorder
 	if req.SteerProvider != nil {
@@ -1207,6 +1256,24 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
 	}
+	// The profile only enriches the prompt, so a read or refresh failure keeps
+	// the section the session already carries instead of failing the run.
+	if profileErr == nil {
+		if err := refreshUserProfileSection(r.contextManager, userProfile); err != nil {
+			r.logger.Warn("[memory] refresh user profile section failed: %v", err)
+		}
+	}
+	// A request to keep a secret may come a turn before the secret itself.
+	episodeRecorder.setPriorUserTexts(recentUserTexts(r.contextManager, priorUserTurnsForMemoryRequests))
+	if req.ResumeSessionID != "" {
+		matches, err := r.contextManager.HasSessionAncestor(req.ResumeSessionID)
+		if err != nil {
+			return RunResult{}, err
+		}
+		if !matches {
+			return RunResult{}, errors.New("scheduled task session was cleared or replaced; reschedule it in the current conversation")
+		}
+	}
 	// append runtime context as assistant message if present (e.g., voice interruption notification)
 	if runtimeContext := strings.TrimSpace(req.RuntimeContext); runtimeContext != "" {
 		if err := r.contextManager.AppendMessage(messages.Message{
@@ -1217,8 +1284,23 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		}
 	}
 	// append user message to context manager
-	if err := r.contextManager.AppendMessage(userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)); err != nil {
+	userMessage := userMessageFromInput(r.contextManager, turnInput.InputText, turnInput.Attachments)
+	appended, err := r.contextManager.AppendMessagesWithResult([]messages.Message{userMessage})
+	if err != nil {
 		return RunResult{}, err
+	}
+	if streamCallbackHandler != nil && streamCallbackHandler.streamEmitter != nil {
+		contextRole := "backend"
+		if cfg.InputModeOrDefault() == "realtime" {
+			contextRole = "user"
+		}
+		emitAppendedStateEvents(
+			ctx,
+			appended,
+			streamCallbackHandler.streamEmitter,
+			episodeID,
+			contextRole,
+		)
 	}
 
 	notices, err := startRunNotices(func() *contextmanager.ContextManager { return r.contextManager }, runID)
@@ -1232,6 +1314,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// counted and traced as part of the episode rather than disappearing from the
 	// run's token accounting.
 	contextCompactor := compactor.NewCompactor(compactor.DefaultProtectRule, m)
+	if location, _, err := loadConfiguredTimezone(cfg.TimezoneOrDefault()); err == nil {
+		contextCompactor.Location = location
+	}
 	budgetContextWindow := contextWindow
 	if budgetContextWindow <= 0 {
 		budgetContextWindow = r.models.Spec().ContextWindow
@@ -1244,70 +1329,14 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		maxResponseTokens = req.MaxTokens
 	}
 	usableInputBudget := toolResultUsableInputBudget(budgetContextWindow, maxResponseTokens)
-	compactionTrigger, compactionEnabled := conversationCompactionTrigger(usableInputBudget, cfg.ContextCompactionThresholdOrDefault())
 	contextBudgetOptions := chains.GetLLMCallOptions(callOptions...)
 	contextBudgetOptions = append(contextBudgetOptions, llms.WithTools((&FunctionAgent{Tools: profile.Tools}).toolsAsLLM()))
-	var contextBudgetCallOptions llms.CallOptions
-	for _, option := range contextBudgetOptions {
-		if option != nil {
-			option(&contextBudgetCallOptions)
-		}
-	}
-	tokenUsage := estimateActivePromptTokens(r.contextManager, contextBudgetOptions)
-	messageTokenUsage := activeMessageTokens(r.contextManager, contextBudgetCallOptions)
-
-	// Historical state and tool-result pruning is deterministic and has its own
-	// configurable trigger. It is intentionally independent from conversation
-	// summarization and provider-managed Responses compaction.
-	pruneTrigger, pruneTarget, pruneEnabled := historicalPruneBudgets(usableInputBudget, cfg.ContextPruneThresholdOrDefault())
-	if pruneEnabled && messageTokenUsage > pruneTrigger {
-		if r.logger != nil {
-			r.logger.Info("Historical context prune: token usage reached threshold; tokenUsage=%d trigger=%d target=%d", messageTokenUsage, pruneTrigger, pruneTarget)
-		}
-		newManager, pruned, pruneErr := contextCompactor.PruneHistorical(r.contextManager, pruneTarget)
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(historicalPruneEvent(
-				contextCompactor.LastPruneStats(),
-				pruned,
-				pruneErr,
-				"threshold",
-			))
-		}
-		if pruneErr != nil {
-			return RunResult{}, pruneErr
-		}
-		if pruned {
-			if err = r.contextManager.Activate(newManager); err != nil {
-				return RunResult{}, err
-			}
-			tokenUsage = estimateActivePromptTokens(r.contextManager, contextBudgetOptions)
-		}
+	contextBudget := newRunContextBudget(r, cfg, contextCompactor, episodeRecorder, usableInputBudget, contextWindow)
+	if err := contextBudget.prepare(ctx, r.contextManager, contextBudgetOptions); err != nil {
+		return RunResult{}, err
 	}
 
-	if !cfg.Model.ResponsesProviderCompactionEnabled() && compactionEnabled && tokenUsage > compactionTrigger {
-		if r.logger != nil {
-			r.logger.Info("Compaction: token usage reached the threshold, summarizing conversation... tokenUsage: %d, trigger: %d, contextWindow: %d", tokenUsage, compactionTrigger, contextWindow)
-		}
-		newManager, compacted, err := contextCompactor.Compact(withTelemetryRole(ctx, telemetryRoleCompaction), r.contextManager, r.sessionChunkWriter())
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(contextCompactionEvent(
-				contextCompactor.LastCompactionStats(),
-				compacted,
-				err,
-				"threshold",
-			))
-		}
-		if err != nil {
-			return RunResult{}, err
-		}
-		if compacted {
-			if err = r.contextManager.Activate(newManager); err != nil {
-				return RunResult{}, err
-			}
-		}
-	}
-
-	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, cfg.ScreenshotPruningOrDefault(), r.contextManager)
+	agentLoop := NewAgentLoop(m, profile, maxIterations, executorHandler, episodeRecorder, r.contextManager)
 	agentLoop.notices = notices
 	agentLoop.ScreenState = r.screenState
 	agentLoop.SteerRecorder = steerRecorder
@@ -1318,151 +1347,12 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	agentLoop.TerminationPolicy = NewTerminationPolicy(cfg.TerminationPolicy)
 	agentLoop.DevicePlatform = r.devicePlatformFromState()
 	agentLoop.PointerMode = r.devicePointerModeFromState()
-	agentLoop.ContextBudgetGuard = func(guardCtx context.Context, currentManager *contextmanager.ContextManager, options llms.CallOptions) (*contextmanager.ContextManager, bool, error) {
-		if currentManager == nil {
-			return nil, false, nil
-		}
-		messageTokens := activeMessageTokens(currentManager, options)
-		toolSchemaTokens := tokencounter.EstimateToolSchemaTokens(options)
-		targetTokens := 0
-		reason := ""
-		hardBudgetExceeded := false
-		if pruneEnabled && messageTokens > pruneTrigger {
-			targetTokens = pruneTarget
-			reason = "active_turn_threshold"
-		}
-		if usableInputBudget > 0 && activePromptTokens(currentManager, options) > usableInputBudget {
-			hardBudgetExceeded = true
-			hardTarget := max(1, usableInputBudget-toolSchemaTokens)
-			// The emergency pass may break recent-exchange protection, so only
-			// reduce as far as the hard request budget requires. Normal pruning
-			// will continue toward its lower hysteresis target without touching
-			// those recent exchanges once the request is safe again.
-			targetTokens = hardTarget
-			if reason == "" {
-				reason = "active_turn_input_budget"
-			} else {
-				reason = "active_turn_threshold_and_input_budget"
-			}
-		}
-		if targetTokens == 0 {
-			return currentManager, false, nil
-		}
-
-		if r.logger != nil {
-			r.logger.Info("Context prune: model request reached budget during active run; messageTokens=%d toolSchemaTokens=%d trigger=%d target=%d usableInputBudget=%d reason=%s",
-				messageTokens, toolSchemaTokens, pruneTrigger, targetTokens, usableInputBudget, reason)
-		}
-		var newManager *contextmanager.ContextManager
-		var pruned bool
-		var pruneErr error
-		if hardBudgetExceeded {
-			newManager, pruned, pruneErr = contextCompactor.PruneForHardBudget(currentManager, targetTokens)
-		} else {
-			newManager, pruned, pruneErr = contextCompactor.PruneForBudget(currentManager, targetTokens)
-		}
-		activeManager := currentManager
-		if pruned && newManager != nil {
-			activeManager = newManager
-		}
-		var budgetErr error
-		if pruneErr == nil && hardBudgetExceeded {
-			afterMessageTokens := activeMessageTokens(activeManager, options)
-			if activePromptTokens(activeManager, options) > usableInputBudget {
-				budgetErr = fmt.Errorf("context remains over usable input budget after pruning: messageTokens=%d toolSchemaTokens=%d usableInputBudget=%d",
-					afterMessageTokens, toolSchemaTokens, usableInputBudget)
-			}
-		}
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(historicalPruneEvent(
-				contextCompactor.LastPruneStats(),
-				pruned,
-				errors.Join(pruneErr, budgetErr),
-				reason,
-			))
-		}
-		if pruneErr != nil {
-			return nil, false, pruneErr
-		}
-		changed := pruned
-		var pendingChunk pendingSessionChunk
-		if budgetErr != nil {
-			// Deterministic pruning cannot shrink historical user/assistant text.
-			// Try the existing summary recovery before failing locally, including
-			// when provider-managed compaction disables threshold summaries.
-			compactedManager, compacted, compactErr := contextCompactor.Compact(withTelemetryRole(guardCtx, telemetryRoleCompaction), activeManager, &pendingChunk)
-			if episodeRecorder != nil {
-				episodeRecorder.RecordEvent(contextCompactionEvent(
-					contextCompactor.LastCompactionStats(), compacted, compactErr, "active_turn_input_budget",
-				))
-			}
-			if compactErr != nil {
-				return nil, false, fmt.Errorf("compact context for hard input budget: %w", compactErr)
-			}
-			if compacted {
-				activeManager = compactedManager
-				changed = true
-			}
-			afterMessageTokens := activeMessageTokens(activeManager, options)
-			if activePromptTokens(activeManager, options) > usableInputBudget {
-				return nil, false, fmt.Errorf("context remains over usable input budget after pruning and compaction: messageTokens=%d toolSchemaTokens=%d usableInputBudget=%d",
-					afterMessageTokens, toolSchemaTokens, usableInputBudget)
-			}
-		}
-		// Only activate a revision after all preparation and budget checks pass.
-		if changed {
-			if switchErr := currentManager.Activate(activeManager); switchErr != nil {
-				return nil, false, switchErr
-			}
-			// Rejected candidates must not become searchable history. Once the
-			// revision is active, a chunk write failure must not roll back the
-			// loop's manager; the parent transcript still retains the full span.
-			if chunkErr := pendingChunk.persist(guardCtx, r.sessionChunkWriter()); chunkErr != nil {
-				if r.logger != nil {
-					r.logger.Warn("Context budget recovery: failed to persist accepted summary chunk: %v", chunkErr)
-				}
-			}
-		}
-		return currentManager, changed, nil
+	agentLoop.ContextBudgetGuard = contextBudget.guard
+	if contextBudget.thresholdCompactionEnabled() {
+		agentLoop.ContextCompactionTrigger = contextBudget.compactionTrigger
+		agentLoop.ContextThresholdCompaction = contextBudget.compactAtThreshold
 	}
-	compactAgentContext := func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager, triggerReason string) (*contextmanager.ContextManager, bool, error) {
-		// Compaction summarises the conversation with the same model as the run;
-		// tag it so its prompt becomes a `summarize-context` generation.
-		newManager, compacted, compactErr := contextCompactor.Compact(withTelemetryRole(recoveryCtx, telemetryRoleCompaction), currentManager, r.sessionChunkWriter())
-		if episodeRecorder != nil {
-			episodeRecorder.RecordEvent(contextCompactionEvent(
-				contextCompactor.LastCompactionStats(),
-				compacted,
-				compactErr,
-				triggerReason,
-			))
-		}
-		if compactErr != nil {
-			return nil, false, compactErr
-		}
-		if !compacted {
-			return currentManager, false, nil
-		}
-		if switchErr := currentManager.Activate(newManager); switchErr != nil {
-			return nil, false, switchErr
-		}
-		return currentManager, true, nil
-	}
-	if !cfg.Model.ResponsesProviderCompactionEnabled() && compactionEnabled {
-		agentLoop.ContextCompactionTrigger = compactionTrigger
-		agentLoop.ContextThresholdCompaction = func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
-			if r.logger != nil {
-				r.logger.Info("Compaction: context reached the threshold inside the agent loop; compacting before the next model call")
-			}
-			return compactAgentContext(recoveryCtx, currentManager, "agent_loop_threshold")
-		}
-	}
-	agentLoop.ContextOverflowRecovery = func(recoveryCtx context.Context, currentManager *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
-		if r.logger != nil {
-			r.logger.Info("Compaction: provider rejected the request because the context window was exceeded; compacting and retrying")
-		}
-		return compactAgentContext(recoveryCtx, currentManager, "provider_context_exceeded")
-	}
+	agentLoop.ContextOverflowRecovery = contextBudget.recoverOverflow
 
 	output, err = agentLoop.Run(ctx, normalizedInput, callOptions...)
 	// If the agent couldn't parse the LLM output format, extract the raw
@@ -1536,8 +1426,11 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 }
 
 func (r *Runtime) getSystemPrompt() string {
-	profile := r.buildAgentProfile(r.skills, r.availableTools())
-	return profile.SystemPrompt
+	userProfile, err := r.memories.UserProfilePrompt(context.Background())
+	if err != nil {
+		r.memories.warnProfileReadFailure(err)
+	}
+	return r.buildAgentProfile(r.skills, r.availableTools(), userProfile).SystemPrompt
 }
 
 // sessionChunkWriter builds the writer that persists a compacted conversation
@@ -1607,6 +1500,31 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			Message: &message,
 			After:   []messages.Message{},
 		}
+	}
+}
+
+// emitAppendedStateEvents publishes hook-inserted state after the append commits.
+func emitAppendedStateEvents(
+	ctx context.Context,
+	appended contextmanager.AppendResult,
+	emitter *streamEventEmitter,
+	episodeID string,
+	contextRole string,
+) {
+	if emitter == nil {
+		return
+	}
+	for i, item := range appended.Messages {
+		if item.Role != messages.MessageRoleState {
+			continue
+		}
+		message, ok := webMessageFromContextMessage(item, contextRole)
+		if !ok {
+			continue
+		}
+		message.RequestID = fmt.Sprintf("context-%s-%d", contextRole, appended.Start+i)
+		message.EpisodeID = episodeID
+		emitter.emit(ctx, stream.EventStateUpdated, stream.VisibilityUser, message, nil)
 	}
 }
 
@@ -1876,6 +1794,31 @@ func (r *Runtime) WebContextDump() contextmanager.MessageListDump {
 		return r.UserContextDump()
 	}
 	return r.ContextDump()
+}
+
+// WebContextWindow returns one range of the context that WebContextDump
+// would return, copying only that range.
+func (r *Runtime) WebContextWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) contextmanager.MessageListWindow {
+	if r == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	cfg := r.ConfigSnapshot()
+	realtime := cfg.InputModeOrDefault() == "realtime"
+	if !realtime && r.contextManager != nil {
+		return r.contextManager.MessageListWindow(selectRange)
+	}
+	folder := agentpath.UserContextManagerSessionFolder(cfg.ConfigDir)
+	if !realtime {
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return contextmanager.MessageListWindow{}
+		}
+		folder = agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	}
+	manager, err := contextmanager.LoadContextManagerFromCurrentSession(folder)
+	if err != nil || manager == nil {
+		return contextmanager.MessageListWindow{}
+	}
+	return manager.MessageListWindow(selectRange)
 }
 
 // ReadContextAttachment reads an attachment registered in the user or backend
@@ -2276,8 +2219,8 @@ func (r *Runtime) exportEpisodeBestEffort(episode TaskEpisode, promptCapture *te
 	}()
 }
 
-func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool) RoleProfile {
-	return buildProfile(
+func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langtools.Tool, userProfile string) RoleProfile {
+	profile := buildProfile(
 		AgentConfig{
 			Instruction: r.ConfigSnapshot().Instruction,
 			Prompt:      r.ConfigSnapshot().Prompt,
@@ -2288,6 +2231,11 @@ func (r *Runtime) buildAgentProfile(skills *SkillManager, availableTools []langt
 		availableTools,
 		agentRoleRules(),
 	)
+	// A new session has no earlier section to keep, so on a read failure the
+	// caller passes an empty profile; the next run's refresh adds it once the
+	// read works.
+	profile.SystemPrompt = withUserProfileSection(profile.SystemPrompt, userProfile)
+	return profile
 }
 
 // runtimeCallbackHandler implements callbacks.Handler for streaming output and
@@ -2302,6 +2250,7 @@ type runtimeCallbackHandler struct {
 	streamErr        error
 	logger           *Logger
 	eventHandler     func(RunEvent)
+	streamEmitter    *streamEventEmitter
 	episodeID        string
 	runtimeID        string
 	requestID        string
@@ -2424,6 +2373,9 @@ func (h *runtimeCallbackHandler) emitRunEvent(event RunEvent) {
 	}
 	if h.eventHandler != nil {
 		h.eventHandler(event)
+	}
+	if h.streamEmitter != nil {
+		h.streamEmitter.emitRunEvent(context.Background(), event)
 	}
 }
 
@@ -2739,6 +2691,9 @@ func (h *runtimeCallbackHandler) HandleRetrieverEnd(ctx context.Context, query s
 }
 
 func (h *runtimeCallbackHandler) HandleStreamingFunc(ctx context.Context, chunk []byte) {
+	if h.streamEmitter != nil {
+		h.streamEmitter.emitTextDelta(ctx, string(chunk))
+	}
 	if h.writer != nil && !h.streamingFailed() {
 		if _, err := h.writer.Write(chunk); err != nil {
 			h.recordStreamError(err)
@@ -2959,6 +2914,9 @@ Memory entries:
 
 // Close releases resources held by the runtime
 func (r *Runtime) Close() error {
+	if r.routines != nil {
+		r.routines.Close()
+	}
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

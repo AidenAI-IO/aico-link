@@ -38,7 +38,7 @@ class MockEnvironmentServer:
         self.port = port
         configured_token = str(auth_token or "").strip()
         self.auth_token = configured_token or secrets.token_urlsafe(32)
-        self.base_path = f"/_aiden_mock/{urllib.parse.quote(self.auth_token, safe='')}"
+        self.base_path = f"/_aico_mock/{urllib.parse.quote(self.auth_token, safe='')}"
         self.base_url = ""
         self.screen_text = spec.screen_text or "Mock phone environment ready."
         self.calls: list[dict[str, Any]] = []
@@ -52,7 +52,7 @@ class MockEnvironmentServer:
         if not self.base_url:
             return ""
         parsed = urllib.parse.urlparse(self.base_url)
-        return urllib.parse.urlunparse(parsed._replace(path="/_aiden_mock/REDACTED"))
+        return urllib.parse.urlunparse(parsed._replace(path="/_aico_mock/REDACTED"))
 
     def start(self) -> str:
         if self._httpd is not None:
@@ -168,7 +168,7 @@ class MockEnvironmentServer:
             outline="#c7c7cc",
             width=4,
         )
-        draw.text((95, 105), "Aiden Benchmark Mock Phone", fill="#111111")
+        draw.text((95, 105), "Aico Benchmark Mock Phone", fill="#111111")
         y = 180
         for line in _wrap_text(self.screen_text, width=72):
             draw.text((95, y), line, fill="#222222")
@@ -260,6 +260,13 @@ def _handler_for(server: MockEnvironmentServer):
             path = self._authorized_path()
             if path is None:
                 self._json(404, {"ok": False, "error": {"code": "not_found"}})
+                return
+            if path in {"/state", "/route"}:
+                if self._read_json() is None:
+                    return
+                # Match the state-reader contract; scripted screens have no app route.
+                data = server.snapshot() if path == "/state" else {}
+                self._json(200, {"ok": True, "data": data})
                 return
             if path == "/api/setup":
                 server.reset()

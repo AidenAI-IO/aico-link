@@ -1,9 +1,9 @@
 package contextmanager
 
 import (
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/session"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/session"
+	"aico-agent/internal/logging"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -484,17 +484,55 @@ func (c *ContextManager) StoreArtifact(mimeType string, data []byte, metadata Ar
 	return c.currentSession.StoreArtifact(mimeType, data, metadata)
 }
 
-func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error {
+// ScreenshotStateCount returns how many <state> messages in the active session
+// carry a screenshot, without copying the message list.
+func (c *ContextManager) ScreenshotStateCount() int {
+	if c == nil {
+		return 0
+	}
 	c.operationMu.Lock()
 	defer c.operationMu.Unlock()
 	if c.currentSession == nil {
-		return fmt.Errorf("current session is unavailable")
+		return 0
 	}
+	count := 0
 	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		for _, message := range currentMessages {
+			if message.Role != messages.MessageRoleState {
+				continue
+			}
+			for _, attachment := range message.Attachments {
+				if attachment.Source == messages.AttachmentSourceScreenshotObservation {
+					count++
+					break
+				}
+			}
+		}
+	})
+	return count
+}
+
+// AppendResult identifies the messages committed by one append after hooks and
+// protocol repair have run. Start is their index in the active session.
+type AppendResult struct {
+	SessionID string
+	Start     int
+	Messages  []messages.Message
+}
+
+func (c *ContextManager) appendToList(messagesToAppend []messages.Message) (AppendResult, error) {
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if c.currentSession == nil {
+		return AppendResult{}, fmt.Errorf("current session is unavailable")
+	}
+	result := AppendResult{SessionID: c.currentSession.SessionID()}
+	c.currentSession.ViewMessages(func(currentMessages []messages.Message) {
+		result.Start = len(currentMessages)
 		messagesToAppend = repairToolCallTailBeforeAppend(currentMessages, messagesToAppend)
 	})
 	if len(messagesToAppend) == 0 {
-		return nil
+		return result, nil
 	}
 	now := time.Now().UTC()
 	for i := range messagesToAppend {
@@ -505,10 +543,11 @@ func (c *ContextManager) appendToList(messagesToAppend []messages.Message) error
 
 	if err := c.currentSession.AppendMessages(messagesToAppend); err != nil {
 		logging.Errorf("agent", "cm", "Failed to append messages to session %v", c.currentSession.SessionID())
-		return err
+		return AppendResult{}, err
 	}
 
-	return nil
+	result.Messages = messages.CloneList(messagesToAppend)
+	return result, nil
 }
 
 func (c *ContextManager) flushFull() error {
@@ -526,8 +565,15 @@ func (c *ContextManager) AppendMessage(message messages.Message) error {
 // messages in one context-manager append operation. This keeps related
 // protocol messages, such as a tool call and its result, together.
 func (c *ContextManager) AppendMessages(messagesToAppend []messages.Message) error {
+	_, err := c.AppendMessagesWithResult(messagesToAppend)
+	return err
+}
+
+// AppendMessagesWithResult returns only the messages durably added by this
+// operation, including hook-inserted messages and their assigned timestamps.
+func (c *ContextManager) AppendMessagesWithResult(messagesToAppend []messages.Message) (AppendResult, error) {
 	if c == nil {
-		return fmt.Errorf("context manager is nil")
+		return AppendResult{}, fmt.Errorf("context manager is nil")
 	}
 	c.hooksMu.RLock()
 	hooks := append([]AppendMessageHook(nil), c.appendHooks...)
@@ -548,7 +594,7 @@ func (c *ContextManager) AppendMessages(messagesToAppend []messages.Message) err
 	}
 
 	if len(messageList) == 0 {
-		return nil
+		return AppendResult{}, nil
 	}
 	return c.appendToList(messageList)
 }
@@ -605,6 +651,48 @@ func (c *ContextManager) MessageListDump() MessageListDump {
 		ParentSessionID: c.currentSession.ParentSessionID(),
 		Messages:        c.currentSession.CloneMessageList(),
 	}
+}
+
+// MessageListWindow is a deep copy of one contiguous range of the active
+// session. Start is the index of Messages[0] in the full list, and Total is
+// the full list length when the range was taken.
+type MessageListWindow struct {
+	SessionID string
+	Total     int
+	Start     int
+	Messages  []messages.Message
+}
+
+// MessageListWindow copies only the range chosen by selectRange, so callers
+// that page through a long session do not clone the whole message list.
+// selectRange receives a read-only view and must not retain it; the returned
+// range is clamped to the list.
+func (c *ContextManager) MessageListWindow(selectRange func(sessionID string, view []messages.Message) (start, end int)) MessageListWindow {
+	if c == nil || selectRange == nil {
+		return MessageListWindow{}
+	}
+	c.operationMu.Lock()
+	defer c.operationMu.Unlock()
+	if c.currentSession == nil {
+		return MessageListWindow{}
+	}
+	window := MessageListWindow{SessionID: c.currentSession.SessionID()}
+	c.currentSession.ViewMessages(func(view []messages.Message) {
+		window.Total = len(view)
+		start, end := selectRange(window.SessionID, view)
+		if end > len(view) {
+			end = len(view)
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > end {
+			start = end
+		}
+		window.Start = start
+		window.Messages = messages.CloneList(view[start:end])
+	})
+	return window
 }
 
 // StoreAttachment persists attachment bytes on disk and returns metadata only.

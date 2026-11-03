@@ -1,0 +1,165 @@
+#!/bin/sh
+set -eu
+
+binary=${FRAME_SERVICE_BIN:-/usr/lib/aico/frame_service}
+socket=${SOCKET_PATH:-/run/frame_service/frame_service.sock}
+agent_config=${AGENT_CONFIG:-/userdata/agent/agent.toml}
+fps=${FRAME_SERVICE_FPS:-30}
+width=${FRAME_SERVICE_WIDTH:-1920}
+height=${FRAME_SERVICE_HEIGHT:-1080}
+warmup_frames=${FRAME_SERVICE_WARMUP_FRAMES:-}
+allow_uniform_frames=${FRAME_SERVICE_ALLOW_UNIFORM_FRAMES:-1}
+pixel_format=${FRAME_SERVICE_PIXEL_FORMAT:-nv12}
+requested_subdev=${FRAME_SERVICE_SUBDEV:-}
+requested_force=${FRAME_SERVICE_FORCE_TRIGGER:-auto}
+requested_edid=${FRAME_SERVICE_EDID:-auto}
+tc_edid=${FRAME_SERVICE_TC358743_EDID:-/usr/share/aico/edid/hdmi_1080p30_cta.hex}
+hpd_low=${FRAME_SERVICE_TC358743_HPD_LOW_SECONDS:-2}
+settle=${FRAME_SERVICE_TC358743_SETTLE_SECONDS:-5}
+
+detect_subdev() {
+    for name_file in /sys/class/video4linux/v4l-subdev*/name; do
+        [ -r "${name_file}" ] || continue
+        name=$(cat "${name_file}")
+        case "${name}" in
+            *rk628-csi*|*tc358743*) echo "/dev/$(basename "$(dirname "${name_file}")")"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+configured_keep_streamon() {
+    [ -r "${agent_config}" ] || {
+        echo 0
+        return
+    }
+    value=$(awk '
+        /^[[:space:]]*\[advanced_settings\.hardware\.frame_service\][[:space:]]*$/ { in_section = 1; next }
+        /^[[:space:]]*\[/ { in_section = 0 }
+        in_section && $1 == "keep_streamon" && $2 == "=" { print $3; exit }
+    ' "${agent_config}")
+    case "${value}" in
+        true|1) echo 1 ;;
+        *) echo 0 ;;
+    esac
+}
+
+# Do not make the HDMI bridge a systemd start-up prerequisite.  A bridge can be
+# registered before an HDMI source is connected, and TC358743 may return I2C
+# errors while it is powered but has no signal.  frame_service owns the socket
+# and its capture manager is deliberately responsible for retrying that state.
+# A special `auto` subdevice lets the capture source rediscover a bridge if the
+# kernel creates it after this helper starts (or if its v4l-subdev index moves).
+subdev=${requested_subdev}
+auto_subdev=0
+if [ "${subdev}" = auto ]; then
+    # Accept the same sentinel used by frame_service itself.  Treat it as
+    # automatic discovery rather than attempting to read a literal sysfs
+    # entry named "auto".
+    subdev=
+    auto_subdev=1
+fi
+if [ -z "${subdev}" ]; then
+    auto_subdev=1
+    subdev=$(detect_subdev || true)
+fi
+if [ -n "${subdev}" ]; then
+    name_file=/sys/class/video4linux/$(basename "${subdev}")/name
+    bridge_name=$(cat "${name_file}" 2>/dev/null || true)
+else
+    subdev=auto
+    bridge_name=
+    echo "HDMI bridge is not present yet; starting frame_service in recovery mode" >&2
+fi
+
+case "${requested_force}" in
+    0|1) force=${requested_force} ;;
+    auto|'') case "${bridge_name}" in *tc358743*) force=1 ;; *) force=0 ;; esac ;;
+    *) echo "Invalid FRAME_SERVICE_FORCE_TRIGGER=${requested_force}" >&2; exit 1 ;;
+esac
+case "${pixel_format}" in
+    nv12|nv16|uyvy|yuyv) ;;
+    *) echo "Invalid FRAME_SERVICE_PIXEL_FORMAT=${pixel_format}" >&2; exit 1 ;;
+esac
+case "${allow_uniform_frames}" in
+    0|1) ;;
+    *) echo "Invalid FRAME_SERVICE_ALLOW_UNIFORM_FRAMES=${allow_uniform_frames}" >&2; exit 1 ;;
+esac
+case "${warmup_frames}" in
+    ''|*[!0-9]*)
+        [ -z "${warmup_frames}" ] || {
+            echo "Invalid FRAME_SERVICE_WARMUP_FRAMES=${warmup_frames}" >&2
+            exit 1
+        }
+        ;;
+esac
+case "${requested_edid}" in
+    auto|'') case "${bridge_name}" in *tc358743*) edid=${tc_edid} ;; *) edid= ;; esac ;;
+    *) edid=${requested_edid} ;;
+esac
+
+case "${bridge_name}" in
+    *tc358743*)
+        if [ "${force}" = 1 ] && [ "${auto_subdev}" = 0 ]; then
+            # HPD/EDID preparation is an optimization for TC358743, not a
+            # prerequisite for the IPC service.  If the chip has no source,
+            # v4l2-ctl commonly fails with an I2C error.  Continue and let the
+            # C++ capture manager retry the operation when a source appears.
+            if [ ! -r "${edid}" ]; then
+                echo "TC358743 EDID is unreadable: ${edid}; continuing in recovery mode" >&2
+            elif ! command -v v4l2-ctl >/dev/null 2>&1; then
+                echo "v4l2-ctl is unavailable; continuing in recovery mode" >&2
+            else
+                if v4l2-ctl -d "${subdev}" --clear-edid=pad=0; then
+                    sleep "${hpd_low}"
+                    if v4l2-ctl --help-edid 2>&1 | grep -q -- '--fix-edid-checksums'; then
+                        fix_checksums=--fix-edid-checksums
+                    else
+                        fix_checksums=
+                    fi
+                    if v4l2-ctl -d "${subdev}" \
+                        --set-edid="pad=0,file=${edid}" ${fix_checksums:+"${fix_checksums}"}; then
+                        sleep "${settle}"
+                        force=0
+                    else
+                        echo "TC358743 EDID setup failed; continuing in recovery mode" >&2
+                    fi
+                else
+                    echo "TC358743 HPD preparation failed; continuing in recovery mode" >&2
+                fi
+            fi
+        fi
+        ;;
+esac
+
+set -- --socket "${socket}" --fps "${fps}" --pixel-format "${pixel_format}"
+if [ "${auto_subdev}" = 1 ] || [ "${subdev}" = auto ]; then
+    set -- "$@" --auto-subdev
+else
+    set -- "$@" --subdev "${subdev}"
+fi
+[ -z "${width}" ] || set -- "$@" --width "${width}"
+[ -z "${height}" ] || set -- "$@" --height "${height}"
+[ -z "${warmup_frames}" ] || set -- "$@" --warmup-frames "${warmup_frames}"
+if [ "$(configured_keep_streamon)" = 1 ]; then
+    set -- "$@" --keep-streamon
+else
+    set -- "$@" --pause-between-captures
+fi
+if [ "${allow_uniform_frames}" = 1 ]; then
+    set -- "$@" --allow-uniform-frames
+else
+    set -- "$@" --reject-uniform-frames
+fi
+if [ "${auto_subdev}" = 1 ] || [ "${subdev}" = auto ]; then
+    # The C++ auto-subdevice source performs a bounded bridge-aware trigger.
+    # Keep the shell option read-only so a failed no-signal probe cannot turn
+    # into an unbounded EDID write loop.
+    set -- "$@" --no-force-trigger
+elif [ "${force}" = 1 ]; then
+    set -- "$@" --force-trigger
+else
+    set -- "$@" --no-force-trigger
+fi
+[ -z "${edid}" ] || set -- "$@" --edid "${edid}"
+exec "${binary}" "$@"

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 bool convert_frame_to_rgb(const FrameMetadata& metadata,
                           const std::vector<uint8_t>& frame,
@@ -95,4 +95,4 @@ bool scale_rgb_nearest(const std::vector<uint8_t>& rgb,
                        uint32_t dst_height,
                        std::vector<uint8_t>* scaled);
 
-}  // namespace aiden
+}  // namespace aico

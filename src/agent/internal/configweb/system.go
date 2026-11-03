@@ -51,7 +51,7 @@ func (s *Server) handleAgentRestart(w http.ResponseWriter, r *http.Request) {
 
 const usbReenumerateScript = `set -eu
 UDC="$(ls /sys/class/udc 2>/dev/null | head -n 1)"
-GADGET_DIR=/sys/kernel/config/usb_gadget/aiden_hid
+GADGET_DIR=/sys/kernel/config/usb_gadget/aico_hid
 if [ -z "$UDC" ] || [ ! -d "$GADGET_DIR" ]; then
   echo 'Error: UDC device or gadget directory not found' >&2
   exit 1

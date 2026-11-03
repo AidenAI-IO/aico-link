@@ -16,6 +16,16 @@ from ci.dashboard_metrics import METRIC_CHARTS
 
 # Plain HTML (no Python format braces); the JSON payload replaces one marker.
 _TEMPLATE_PATH = Path(__file__).with_name("dashboard_template.html")
+_CATALOG_PATH = Path(__file__).with_name("suites.json")
+
+
+def _current_suite_names() -> set[str]:
+    root = _CATALOG_PATH.parent.parent
+    cases = json.loads(_CATALOG_PATH.read_text(encoding="utf-8"))["cases"]
+    return {
+        json.loads((root / case["suite"]).read_text(encoding="utf-8")).get("name", Path(case["suite"]).stem)
+        for case in cases
+    }
 
 
 def generate_dashboard(
@@ -381,12 +391,20 @@ def cli(argv: list[str] | None = None) -> int:
     repo = args.repo or os.environ.get("GITHUB_REPOSITORY", "")
     warnings = []
     report_end = datetime.now(timezone.utc)
+    current_suites = _current_suite_names()
 
     if args.history_json:
         payload = json.loads(args.history_json.read_text(encoding="utf-8"))
         history = payload["history"]
         warnings = payload.get("warnings", [])
         report_end = parse_timestamp(payload.get("generated_at")) or report_end
+        # Saved snapshots can predate the catalog filter. Remove only warnings
+        # tied to excluded runs; API-wide availability warnings still apply.
+        retained_ids = {r.get("run_id") for r in history if r.get("suite") in current_suites}
+        excluded_ids = {r.get("run_id") for r in history if r.get("suite") not in current_suites} - retained_ids
+        prefixes = tuple(f"{run_id}: {kind}" for run_id in excluded_ids if run_id
+                         for kind in ("missing or invalid metrics:", "failure details "))
+        warnings = [warning for warning in warnings if not warning.startswith(prefixes)]
     else:
         result = fetch_benchmark_history(
             lookback_days=args.lookback_days,
@@ -395,8 +413,10 @@ def cli(argv: list[str] | None = None) -> int:
             local_run_id_prefix=args.run_id_prefix,
             now=report_end,
             include_failure_details=True,
+            suite_filter=current_suites,
         )
         history, warnings = result.records, result.warnings
+    history = [record for record in history if record.get("suite") in current_suites]
     for warning in warnings:
         print(f"Warning: {warning}")
 

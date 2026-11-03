@@ -28,12 +28,12 @@ JSON
 
 bash "$GENERATOR" \
     --manifest "$TMP_DIR/manifest.json" \
-    --repo AidenAI-IO/aiden-firmware \
+    --repo AidenAI-IO/aico-link \
     --channel stable \
     --output "$TMP_DIR/config.json"
 
 jq -e '
-  .repo == "AidenAI-IO/aiden-firmware" and
+  .repo == "AidenAI-IO/aico-link" and
   .channel == "stable" and
   .download_safety_margin_bytes == 16777216 and
   (has("storage_mount_point") | not) and
@@ -50,11 +50,11 @@ jq -e '
 ' "$TMP_DIR/config.json" >/dev/null
 
 for repo in \
-    AidenAI-IO \
-    AidenAI-IO/aiden-firmware/extra \
-    /AidenAI-IO/aiden-firmware \
-    AidenAI-IO/ \
-    AidenAI-IO//aiden-firmware; do
+    AicoAI-IO \
+    AidenAI-IO/aico-link/extra \
+    /AidenAI-IO/aico-link \
+    AicoAI-IO/ \
+    AicoAI-IO//aico-link-firmware; do
     if bash "$GENERATOR" \
         --manifest "$TMP_DIR/manifest.json" \
         --repo "$repo" \

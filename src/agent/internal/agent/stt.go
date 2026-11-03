@@ -8,10 +8,17 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+
+	"aico-agent/internal/stream"
 )
 
 type STTCapabilities struct {
-	SupportsStreamingUpload bool
+	SupportsStreamingUpload       bool
+	SupportsInterimResults        bool
+	SupportsSegmentFinals         bool
+	SupportsProviderEndpointing   bool
+	SupportsWordTiming            bool
+	SupportsStreamingCancellation bool
 }
 
 type STTStreamConfig struct {
@@ -26,11 +33,80 @@ type STTStreamUploader interface {
 	Close() error
 }
 
+// STTTranscriptEventSource is an optional streaming uploader capability. It
+// exposes revisioned hypotheses and segment/turn boundaries while the legacy
+// Finalize method remains available for collectors.
+type STTTranscriptEventSource interface {
+	TranscriptEvents() <-chan stream.TranscriptEvent
+}
+
 // STTClient is the interface for speech-to-text providers
 type STTClient interface {
 	Capabilities() STTCapabilities
 	TranscribeWAV(wavData []byte) (string, error)
 	NewStreamingUploader(ctx context.Context, cfg STTStreamConfig) (STTStreamUploader, error)
+}
+
+// STTContextTranscriber is an optional extension implemented by providers that
+// can bind a transcription request to a caller-owned context. It is kept
+// separate from STTClient so existing providers and test doubles remain
+// source-compatible.
+type STTContextTranscriber interface {
+	TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error)
+}
+
+// STTBatchTranscriber is an optional extension for callers that need to
+// transcribe several independent recordings under one cancellation scope.
+// Results preserve the input order.
+type STTBatchTranscriber interface {
+	TranscribeBatch(ctx context.Context, wavData [][]byte) ([]string, error)
+}
+
+// TranscribeWAVWithContext uses a provider's context-aware implementation when
+// available and otherwise falls back to the legacy STTClient method. The
+// fallback preserves compatibility with providers that predate context
+// support; cancellation cannot interrupt such a provider's in-flight call.
+func TranscribeWAVWithContext(ctx context.Context, client STTClient, wavData []byte) (string, error) {
+	if client == nil {
+		return "", fmt.Errorf("STT client is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if transcriber, ok := client.(STTContextTranscriber); ok {
+		return transcriber.TranscribeWAVWithContext(ctx, wavData)
+	}
+	return client.TranscribeWAV(wavData)
+}
+
+// TranscribeBatch transcribes each recording in order. Providers may override
+// this by implementing STTBatchTranscriber; the default path uses the optional
+// context-aware single-record method and remains compatible with STTClient.
+func TranscribeBatch(ctx context.Context, client STTClient, wavData [][]byte) ([]string, error) {
+	if client == nil {
+		return nil, fmt.Errorf("STT client is unavailable")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if batch, ok := client.(STTBatchTranscriber); ok {
+		return batch.TranscribeBatch(ctx, wavData)
+	}
+	transcripts := make([]string, 0, len(wavData))
+	for i, audio := range wavData {
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("transcribe batch item %d: %w", i, err)
+		}
+		transcript, err := TranscribeWAVWithContext(ctx, client, audio)
+		if err != nil {
+			return nil, fmt.Errorf("transcribe batch item %d: %w", i, err)
+		}
+		transcripts = append(transcripts, transcript)
+	}
+	return transcripts, nil
 }
 
 // OpenAIWhisperSTT implements STT using OpenAI Whisper API
@@ -63,8 +139,16 @@ func NewOpenAIWhisperSTT(apiKey, model, baseURL, language string, httpClients ..
 	}
 }
 
-// TranscribeWAV transcribes a WAV file to text
+// TranscribeWAV transcribes a WAV file to text.
 func (s *OpenAIWhisperSTT) TranscribeWAV(wavData []byte) (string, error) {
+	return s.TranscribeWAVWithContext(context.Background(), wavData)
+}
+
+// TranscribeWAVWithContext transcribes a WAV file while honoring ctx.
+func (s *OpenAIWhisperSTT) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
@@ -95,7 +179,7 @@ func (s *OpenAIWhisperSTT) TranscribeWAV(wavData []byte) (string, error) {
 
 	// Create request
 	url := fmt.Sprintf("%s/audio/transcriptions", s.baseURL)
-	req, err := http.NewRequest("POST", url, &buf)
+	req, err := http.NewRequestWithContext(ctx, "POST", url, &buf)
 	if err != nil {
 		return "", fmt.Errorf("create request: %w", err)
 	}

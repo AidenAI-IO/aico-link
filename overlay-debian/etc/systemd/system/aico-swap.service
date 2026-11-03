@@ -1,0 +1,18 @@
+[Unit]
+Description=Activate the validated Aico Link userdata swapfile
+Requires=aico-userdata-migrate.service
+After=aico-userdata-migrate.service aico-zram.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/aico_boot.conf
+EnvironmentFile=/etc/aico_swap.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_SWAP
+ExecStart=/usr/lib/aico/aico-swap start
+ExecStop=/usr/lib/aico/aico-swap stop
+RemainAfterExit=yes
+TimeoutStartSec=180s
+TimeoutStopSec=5s
+
+[Install]
+WantedBy=multi-user.target

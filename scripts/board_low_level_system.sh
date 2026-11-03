@@ -38,16 +38,16 @@ uname -a 2>/dev/null | indent
 [ -r /etc/os-release ] && sed -n '1,8p' /etc/os-release | indent
 
 section "services"
-if [ -x /usr/lib/aiden/aiden-usb-gadget ]; then
-    pass "USB gadget helper present: /usr/lib/aiden/aiden-usb-gadget"
+if [ -x /usr/lib/aico/aico-usb-gadget ]; then
+    pass "USB gadget helper present: /usr/lib/aico/aico-usb-gadget"
 else
-    warn "USB gadget helper missing: /usr/lib/aiden/aiden-usb-gadget"
+    warn "USB gadget helper missing: /usr/lib/aico/aico-usb-gadget"
 fi
 check_exists "USB HID keyboard" /dev/hidg0
 check_exists "USB HID pointer" /dev/hidg1
 check_exists "USB HID consumer/control" /dev/hidg2
-if [ -r /sys/kernel/config/usb_gadget/aiden_hid/UDC ]; then
-    UDC="$(cat /sys/kernel/config/usb_gadget/aiden_hid/UDC 2>/dev/null)"
+if [ -r /sys/kernel/config/usb_gadget/aico_hid/UDC ]; then
+    UDC="$(cat /sys/kernel/config/usb_gadget/aico_hid/UDC 2>/dev/null)"
     if [ -n "$UDC" ]; then
         pass "USB HID gadget bound to UDC: $UDC"
     else
@@ -56,8 +56,8 @@ if [ -r /sys/kernel/config/usb_gadget/aiden_hid/UDC ]; then
 else
     warn "USB HID gadget UDC state not readable"
 fi
-service_check "HDMI frame service" "aiden-frame.service aiden_frame.service frame_service.service aiden-frame-service.service" "/usr/lib/aiden/aiden-frame-control"
-service_check "audio service" "aiden-audio.service aiden_audio.service audio_service.service aiden-audio-service.service" ""
+service_check "HDMI frame service" "aico-frame.service aico_frame.service frame_service.service aico-frame-service.service" "/usr/lib/aico/aico-frame-control"
+service_check "audio service" "aico-audio.service aico_audio.service audio_service.service aico-audio-service.service" ""
 
 section "binaries"
 HID_BIN="$(find_bin example_usb_hid)"

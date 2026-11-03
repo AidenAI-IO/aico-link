@@ -1,11 +1,11 @@
 #!/bin/sh
 set -eu
 
-agent_bin="${AIDEN_AGENT_BIN:-/usr/lib/aiden/agent}"
-agent_dir="${AIDEN_AGENT_DIR:-/userdata/agent}"
-system_env="${AIDEN_SYSTEM_ENV:-/userdata/system/env}"
-env_run_bin="${AIDEN_ENV_RUN_BIN:-/usr/local/bin/aiden-env-run}"
-run_dir="${AIDEN_AGENT_RUN_DIR:-/run/agent}"
+agent_bin="${AICO_AGENT_BIN:-/usr/lib/aico/agent}"
+agent_dir="${AICO_AGENT_DIR:-/userdata/agent}"
+system_env="${AICO_SYSTEM_ENV:-/userdata/system/env}"
+env_run_bin="${AICO_ENV_RUN_BIN:-/usr/local/bin/aico-env-run}"
+run_dir="${AICO_AGENT_RUN_DIR:-/run/agent}"
 supervisor_pid_file="$run_dir/supervisor.pid"
 agent_pid_file="$run_dir/agent.pid"
 lock_file="$run_dir/service.lock"
@@ -41,8 +41,8 @@ service_log() {
 }
 
 rotate_log_if_needed() {
-    max_bytes="${AIDEN_AGENT_LOG_MAX_BYTES:-10485760}"
-    retain_bytes="${AIDEN_AGENT_LOG_RETAIN_BYTES:-5242880}"
+    max_bytes="${AICO_AGENT_LOG_MAX_BYTES:-10485760}"
+    retain_bytes="${AICO_AGENT_LOG_RETAIN_BYTES:-5242880}"
     case "$max_bytes" in
         ''|0|*[!0-9]*) max_bytes=10485760 ;;
     esac
@@ -68,7 +68,7 @@ rotate_log_if_needed() {
 
 wait_for_agent_exit() {
     pid="$1"
-    check_interval="${AIDEN_AGENT_LOG_CHECK_INTERVAL:-1}"
+    check_interval="${AICO_AGENT_LOG_CHECK_INTERVAL:-1}"
     case "$check_interval" in
         ''|0|*[!0-9]*) check_interval=1 ;;
     esac
@@ -221,7 +221,7 @@ prepare_bridge_episode() {
 
     attempt=1
     health_status="000"
-    while [ "$attempt" -le "${AIDEN_BRIDGE_WAIT_ATTEMPTS:-10}" ]; do
+    while [ "$attempt" -le "${AICO_BRIDGE_WAIT_ATTEMPTS:-10}" ]; do
         health_status="$(curl -sS -o /dev/null -w '%{http_code}' \
             --connect-timeout 1 --max-time 2 "$endpoint/health" 2>/dev/null || true)"
         if [ "$health_status" != "000" ]; then
@@ -360,14 +360,14 @@ run_agent() {
     load_system_env
 
     set -- "$agent_bin" -dir "$agent_dir" -addr 0.0.0.0:8080
-    if [ -n "${AIDEN_DEVICE_TYPE:-}" ]; then
-        set -- "$@" --device-type "$AIDEN_DEVICE_TYPE"
+    if [ -n "${AICO_DEVICE_TYPE:-}" ]; then
+        set -- "$@" --device-type "$AICO_DEVICE_TYPE"
     fi
-    bridge_endpoint="${AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT:-${ENVIRONMENT_BRIDGE_ENDPOINT:-}}"
+    bridge_endpoint="${AICO_ENVIRONMENT_BRIDGE_ENDPOINT:-${ENVIRONMENT_BRIDGE_ENDPOINT:-}}"
     bridge_endpoint="${bridge_endpoint%/}"
-    bridge_mode="${AIDEN_ENVIRONMENT_BRIDGE_MODE:-auto}"
-    bridge_task_id="${AIDEN_BENCHMARK_TASK_ID:-docker-sandbox}"
-    bridge_episode_id="${AIDEN_BRIDGE_EPISODE_ID:-docker-sandbox}"
+    bridge_mode="${AICO_ENVIRONMENT_BRIDGE_MODE:-auto}"
+    bridge_task_id="${AICO_BENCHMARK_TASK_ID:-docker-sandbox}"
+    bridge_episode_id="${AICO_BRIDGE_EPISODE_ID:-docker-sandbox}"
     if bridge_enabled "$bridge_endpoint" "$bridge_mode"; then
         if bridge_identifiers_valid "$bridge_task_id" "$bridge_episode_id"; then
             ensure_bridge_episode \
@@ -482,7 +482,7 @@ stop_locked() {
         kill -TERM "-$supervisor_pid" 2>/dev/null || true
     fi
 
-    stop_attempts="${AIDEN_AGENT_STOP_ATTEMPTS:-150}"
+    stop_attempts="${AICO_AGENT_STOP_ATTEMPTS:-150}"
     case "$stop_attempts" in
         ''|0|*[!0-9]*) stop_attempts=150 ;;
     esac

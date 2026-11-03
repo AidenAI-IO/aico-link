@@ -1,0 +1,9 @@
+[Unit]
+Description=Initialize the Aico Link boot timeline
+Before=aico-agent.service aico-boot-timeline.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-boot-timeline init-systemd
+RemainAfterExit=yes
+TimeoutStartSec=5s

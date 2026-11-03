@@ -1,8 +1,8 @@
 [Unit]
-Description=Aiden OTA workspace
+Description=Aico Link OTA workspace
 DefaultDependencies=no
-Requires=userdata.mount aiden-slot-resolve.service aiden-rootfs-grow.service
-After=userdata.mount aiden-rootfs-grow.service
+Requires=userdata.mount aico-slot-resolve.service aico-rootfs-grow.service
+After=userdata.mount aico-rootfs-grow.service
 Before=local-fs.target
 
 [Mount]

@@ -22,27 +22,27 @@ class DockerSandboxContractTest(unittest.TestCase):
         compose = read_repo_file("compose.yml")
 
         self.assertIn("docker/dev/Dockerfile", compose)
-        self.assertIn('"127.0.0.1:${AIDEN_CONFIG_WEB_PORT:-8000}:80"', compose)
-        self.assertIn('"127.0.0.1:${AIDEN_AGENT_WEB_PORT:-8080}:8080"', compose)
-        self.assertIn("aiden-data:/userdata", compose)
+        self.assertIn('"127.0.0.1:${AICO_CONFIG_WEB_PORT:-8000}:80"', compose)
+        self.assertIn('"127.0.0.1:${AICO_AGENT_WEB_PORT:-8080}:8080"', compose)
+        self.assertIn("aico-data:/userdata", compose)
         self.assertIn("stop_grace_period: 20s", compose)
         self.assertIn("http://127.0.0.1:8080/api/tools", compose)
-        self.assertIn("AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT", compose)
+        self.assertIn("AICO_ENVIRONMENT_BRIDGE_ENDPOINT", compose)
         self.assertIn(
             "ENVIRONMENT_BRIDGE_ENDPOINT: ${ENVIRONMENT_BRIDGE_ENDPOINT:-}",
             compose,
         )
         self.assertIn(
-            "AIDEN_BENCHMARK_TASK_ID: ${AIDEN_BENCHMARK_TASK_ID:-docker-sandbox}",
+            "AICO_BENCHMARK_TASK_ID: ${AICO_BENCHMARK_TASK_ID:-docker-sandbox}",
             compose,
         )
         self.assertIn(
-            "AIDEN_BRIDGE_EPISODE_ID: ${AIDEN_BRIDGE_EPISODE_ID:-docker-sandbox}",
+            "AICO_BRIDGE_EPISODE_ID: ${AICO_BRIDGE_EPISODE_ID:-docker-sandbox}",
             compose,
         )
-        self.assertIn("AIDEN_DEVICE_TYPE: ${AIDEN_DEVICE_TYPE:-}", compose)
+        self.assertIn("AICO_DEVICE_TYPE: ${AICO_DEVICE_TYPE:-}", compose)
         self.assertIn(
-            "AIDEN_PUBLIC_AGENT_WEB_PORT: ${AIDEN_AGENT_WEB_PORT:-8080}",
+            "AICO_PUBLIC_AGENT_WEB_PORT: ${AICO_AGENT_WEB_PORT:-8080}",
             compose,
         )
         self.assertIn("host.docker.internal:host-gateway", compose)
@@ -60,7 +60,7 @@ class DockerSandboxContractTest(unittest.TestCase):
         self.assertIn("go build", dockerfile)
         self.assertIn("./cmd/daemon", dockerfile)
         self.assertNotIn("src/config_web.cpp", dockerfile)
-        self.assertIn("src/config_web/web/ /usr/share/aiden/config-web/", dockerfile)
+        self.assertIn("src/config_web/web/ /usr/share/aico/config-web/", dockerfile)
         self.assertIn("config-web", read_repo_file("docker/dev/entrypoint.sh"))
         self.assertIn("ttyd-builder", dockerfile)
         self.assertIn('ttyd_version="1.7.3"', dockerfile)
@@ -102,7 +102,7 @@ class DockerSandboxContractTest(unittest.TestCase):
                 "    printf '  --build\\n  --wait\\n  --wait-timeout duration\\n'\n"
                 "    exit 0\n"
                 "fi\n"
-                'printf \'%s\\n\' "$*" >>"$AIDEN_FAKE_DOCKER_LOG"\n'
+                'printf \'%s\\n\' "$*" >>"$AICO_FAKE_DOCKER_LOG"\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
@@ -110,7 +110,7 @@ class DockerSandboxContractTest(unittest.TestCase):
 
             environment = os.environ.copy()
             environment["PATH"] = f"{temporary_path}{os.pathsep}{environment['PATH']}"
-            environment["AIDEN_FAKE_DOCKER_LOG"] = str(invocations)
+            environment["AICO_FAKE_DOCKER_LOG"] = str(invocations)
             completed = subprocess.run(
                 [str(REPO_ROOT / "scripts/start_docker_sandbox.sh")],
                 env=environment,
@@ -139,8 +139,8 @@ class DockerSandboxContractTest(unittest.TestCase):
                 "    printf '  --build\\n  --wait\\n  --wait-timeout duration\\n'\n"
                 "    exit 0\n"
                 "fi\n"
-                'printf "%s %s\\n" "$AIDEN_CONFIG_WEB_PORT" "$AIDEN_AGENT_WEB_PORT" '
-                '>>"$AIDEN_FAKE_DOCKER_LOG"\n'
+                'printf "%s %s\\n" "$AICO_CONFIG_WEB_PORT" "$AICO_AGENT_WEB_PORT" '
+                '>>"$AICO_FAKE_DOCKER_LOG"\n'
                 "exit 0\n",
                 encoding="utf-8",
             )
@@ -150,9 +150,9 @@ class DockerSandboxContractTest(unittest.TestCase):
             environment.update(
                 {
                     "PATH": f"{temporary_path}{os.pathsep}{environment['PATH']}",
-                    "AIDEN_FAKE_DOCKER_LOG": str(invocation),
-                    "AIDEN_CONFIG_WEB_PORT": "0",
-                    "AIDEN_AGENT_WEB_PORT": "0",
+                    "AICO_FAKE_DOCKER_LOG": str(invocation),
+                    "AICO_CONFIG_WEB_PORT": "0",
+                    "AICO_AGENT_WEB_PORT": "0",
                 }
             )
             completed = subprocess.run(
@@ -167,15 +167,15 @@ class DockerSandboxContractTest(unittest.TestCase):
             self.assertNotEqual(agent_port, 0)
             self.assertNotEqual(config_port, agent_port)
 
-    def test_try_aiden_on_pc_is_the_hardware_free_sandbox_entrypoint(self):
-        guide = read_repo_file("docs/01-getting-started/try-aiden-on-pc.md")
+    def test_try_aico_on_pc_is_the_hardware_free_sandbox_entrypoint(self):
+        guide = read_repo_file("docs/01-getting-started/try-aico-on-pc.md")
         readme = read_repo_file("README.md")
 
         self.assertIn("docker compose up --build", guide)
         self.assertIn("make sandbox-start", guide)
         self.assertNotIn("make sandbox-update", guide)
         self.assertIn(
-            "AIDEN_BRIDGE_EPISODE_ID=my-sandbox-session", guide
+            "AICO_BRIDGE_EPISODE_ID=my-sandbox-session", guide
         )
         self.assertIn(
             "https://docs.astral.sh/uv/getting-started/installation/", guide
@@ -287,16 +287,16 @@ class DockerSandboxContractTest(unittest.TestCase):
             environment = os.environ.copy()
             environment.update(
                 {
-                    "AIDEN_AGENT_BIN": str(agent),
-                    "AIDEN_AGENT_DIR": str(agent_directory),
-                    "AIDEN_AGENT_RUN_DIR": str(temporary_path / "run"),
-                    "AIDEN_SYSTEM_ENV": str(temporary_path / "system-env"),
-                    "AIDEN_ENV_RUN_BIN": str(
-                        REPO_ROOT / "docker/dev/aiden-env-run"
+                    "AICO_AGENT_BIN": str(agent),
+                    "AICO_AGENT_DIR": str(agent_directory),
+                    "AICO_AGENT_RUN_DIR": str(temporary_path / "run"),
+                    "AICO_SYSTEM_ENV": str(temporary_path / "system-env"),
+                    "AICO_ENV_RUN_BIN": str(
+                        REPO_ROOT / "docker/dev/aico-env-run"
                     ),
-                    "AIDEN_AGENT_LOG_MAX_BYTES": "1024",
-                    "AIDEN_AGENT_LOG_RETAIN_BYTES": "256",
-                    "AIDEN_AGENT_LOG_CHECK_INTERVAL": "1",
+                    "AICO_AGENT_LOG_MAX_BYTES": "1024",
+                    "AICO_AGENT_LOG_RETAIN_BYTES": "256",
+                    "AICO_AGENT_LOG_CHECK_INTERVAL": "1",
                 }
             )
             supervisor = subprocess.Popen(
@@ -488,8 +488,8 @@ class DockerSandboxContractTest(unittest.TestCase):
             agent = temporary_path / "fake-agent.sh"
             agent.write_text(
                 "#!/bin/sh\n"
-                'printf "started\\n" >> "$AIDEN_FAKE_AGENT_STARTS"\n'
-                'if [ "${AIDEN_FAKE_AGENT_CRASH:-0}" = 1 ]; then exit 7; fi\n'
+                'printf "started\\n" >> "$AICO_FAKE_AGENT_STARTS"\n'
+                'if [ "${AICO_FAKE_AGENT_CRASH:-0}" = 1 ]; then exit 7; fi\n'
                 "trap 'exit 0' INT TERM\n"
                 "while :; do sleep 1; done\n",
                 encoding="utf-8",
@@ -510,18 +510,18 @@ class DockerSandboxContractTest(unittest.TestCase):
             base_environment.update(
                 {
                     "PATH": f"{fake_bin}:{base_environment['PATH']}",
-                    "AIDEN_AGENT_BIN": str(agent),
-                    "AIDEN_AGENT_DIR": str(agent_directory),
-                    "AIDEN_AGENT_RUN_DIR": str(run_directory),
-                    "AIDEN_SYSTEM_ENV": str(system_env),
-                    "AIDEN_ENV_RUN_BIN": str(
-                        REPO_ROOT / "docker/dev/aiden-env-run"
+                    "AICO_AGENT_BIN": str(agent),
+                    "AICO_AGENT_DIR": str(agent_directory),
+                    "AICO_AGENT_RUN_DIR": str(run_directory),
+                    "AICO_SYSTEM_ENV": str(system_env),
+                    "AICO_ENV_RUN_BIN": str(
+                        REPO_ROOT / "docker/dev/aico-env-run"
                     ),
-                    "AIDEN_AGENT_LOG_CHECK_INTERVAL": "1",
-                    "AIDEN_AGENT_STOP_ATTEMPTS": "1",
-                    "AIDEN_BRIDGE_WAIT_ATTEMPTS": "1",
-                    "AIDEN_ENVIRONMENT_BRIDGE_MODE": "true",
-                    "AIDEN_FAKE_AGENT_STARTS": str(starts_file),
+                    "AICO_AGENT_LOG_CHECK_INTERVAL": "1",
+                    "AICO_AGENT_STOP_ATTEMPTS": "1",
+                    "AICO_BRIDGE_WAIT_ATTEMPTS": "1",
+                    "AICO_ENVIRONMENT_BRIDGE_MODE": "true",
+                    "AICO_FAKE_AGENT_STARTS": str(starts_file),
                 }
             )
             first_bridge = BridgeServer(fail_setup_once=True)
@@ -534,10 +534,10 @@ class DockerSandboxContractTest(unittest.TestCase):
                 result = base_environment.copy()
                 result.update(
                     {
-                        "AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT": endpoint,
-                        "AIDEN_BENCHMARK_TASK_ID": task_id,
-                        "AIDEN_BRIDGE_EPISODE_ID": episode_id,
-                        "AIDEN_FAKE_AGENT_CRASH": "1" if crash else "0",
+                        "AICO_ENVIRONMENT_BRIDGE_ENDPOINT": endpoint,
+                        "AICO_BENCHMARK_TASK_ID": task_id,
+                        "AICO_BRIDGE_EPISODE_ID": episode_id,
+                        "AICO_FAKE_AGENT_CRASH": "1" if crash else "0",
                     }
                 )
                 return result
@@ -603,7 +603,7 @@ class DockerSandboxContractTest(unittest.TestCase):
                 self.assertEqual(first_bridge.reset_count_snapshot(), 1)
                 stop_supervisor(first_supervisor)
 
-                first_environment["AIDEN_FAKE_AGENT_CRASH"] = "0"
+                first_environment["AICO_FAKE_AGENT_CRASH"] = "0"
                 second_supervisor = start_supervisor(first_environment)
                 wait_until(
                     lambda: len(starts_file.read_text(encoding="utf-8").splitlines()) >= 3,

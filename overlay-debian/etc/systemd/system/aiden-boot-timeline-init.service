@@ -1,9 +1,0 @@
-[Unit]
-Description=Initialize the Aiden boot timeline
-Before=aiden-agent.service aiden-boot-timeline.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/lib/aiden/aiden-boot-timeline init-systemd
-RemainAfterExit=yes
-TimeoutStartSec=5s

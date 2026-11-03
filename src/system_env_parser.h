@@ -3,7 +3,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct EnvAssignment {
     std::string key;
@@ -19,8 +19,8 @@ struct SystemEnvProxy {
 
 std::string validate_system_proxy_url(const std::string& url);
 
-// Keys that may reach the systemd services through /run/aiden/system.env.
-// The file is loaded as root by every aiden service, and its source is
+// Keys that may reach the systemd services through /run/aico/system.env.
+// The file is loaded as root by every Aico Link service, and its source is
 // writable through the config portal, so names that steer the dynamic
 // loader or an interpreter must never be approved.
 bool is_allowed_system_env_key(const std::string& key);
@@ -35,4 +35,4 @@ bool render_system_env_without_proxy_assignments(const std::string& content,
                                                  std::string* rendered,
                                                  std::string* error);
 
-}  // namespace aiden
+}  // namespace aico

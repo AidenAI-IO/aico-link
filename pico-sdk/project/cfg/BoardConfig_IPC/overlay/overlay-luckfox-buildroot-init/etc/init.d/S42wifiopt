@@ -1,0 +1,58 @@
+#!/bin/sh
+#
+# WiFi optimization for the onboard AIC8800 SDIO combo module
+# - Switch to the onboard PCB antenna via the board-specific GPIO123 wiring
+# - Disable WiFi power save to prevent connectivity degradation
+#
+
+WLAN_DEV="wlan0"
+GPIO_NUM=123
+TIMEOUT=30
+
+start() {
+	# Switch to onboard PCB antenna
+	if [ ! -d /sys/class/gpio/gpio${GPIO_NUM} ]; then
+		echo ${GPIO_NUM} > /sys/class/gpio/export 2>/dev/null
+	fi
+	echo out > /sys/class/gpio/gpio${GPIO_NUM}/direction
+	echo 1 > /sys/class/gpio/gpio${GPIO_NUM}/value
+
+	# Wait for wlan0 to appear
+	i=0
+	while [ $i -lt $TIMEOUT ]; do
+		if ip link show $WLAN_DEV > /dev/null 2>&1; then
+			break
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+
+	if ! ip link show $WLAN_DEV > /dev/null 2>&1; then
+		echo "$WLAN_DEV not found after ${TIMEOUT}s, skipping power_save config"
+		return
+	fi
+
+	iw dev $WLAN_DEV set power_save off 2>/dev/null
+}
+
+stop() {
+	:
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

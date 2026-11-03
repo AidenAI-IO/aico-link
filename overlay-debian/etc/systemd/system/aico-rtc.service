@@ -1,0 +1,14 @@
+[Unit]
+Description=Calibrate an invalid RTC without blocking offline startup
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=systemd-timesyncd.service time-set.target
+ConditionPathExists=/dev/rtc0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-rtc
+TimeoutStartSec=10s
+
+[Install]
+WantedBy=sysinit.target

@@ -1,12 +1,12 @@
 package compactor
 
 import (
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -55,8 +55,12 @@ type HistoricalPruneStats struct {
 }
 
 type Compactor struct {
-	ProtectRule         ProtectRule
-	Model               model.Model
+	ProtectRule ProtectRule
+	Model       model.Model
+	// Location is the user's configured timezone. Summaries resolve relative
+	// times such as "tomorrow" against message timestamps shown in it; nil
+	// uses the host's local time.
+	Location            *time.Location
 	lastCompactionStats CompactionStats
 	lastPruneStats      HistoricalPruneStats
 }
@@ -156,8 +160,9 @@ func (c *Compactor) Compact(ctx context.Context, session *contextmanager.Context
 	// assemble
 	formattedSummary := c.formatSummary(summary)
 	newMessageList := append(append([]messages.Message(nil), heads...), messages.Message{
-		Role:    messages.MessageRoleUser,
-		Content: formattedSummary,
+		Role:              messages.MessageRoleUser,
+		Content:           formattedSummary,
+		CompactionSummary: true,
 	})
 	newMessageList = append(newMessageList, tails...)
 	c.lastCompactionStats.TokensAfter = estimateMessageListTokenUsage(newMessageList)
@@ -382,6 +387,14 @@ func compactCurrentTurnToolExchanges(messageList []messages.Message, targetToken
 		if !isCompletedToolExchange(messageList[i], messageList[i+1]) {
 			continue
 		}
+		// Results that are only useful in full (such as loaded skill
+		// instructions) are never replaced by placeholders here, including on
+		// the hard-budget path. If the budget still cannot be met, the guard
+		// falls back to conversation compaction, which summarizes them instead.
+		if toolExchangeRequiresComplete(messageList[i+1]) {
+			i++
+			continue
+		}
 		exchanges = append(exchanges, completedToolExchange{callIndex: i, resultIndex: i + 1})
 		i++
 	}
@@ -440,6 +453,15 @@ func compactCurrentTurnToolExchanges(messageList []messages.Message, targetToken
 		prunedMessages = append(prunedMessages, message)
 	}
 	return prunedMessages, len(changedExchanges)
+}
+
+func toolExchangeRequiresComplete(resultMessage messages.Message) bool {
+	for _, result := range resultMessage.ToolResults {
+		if result.Meta != nil && result.Meta.RequiresComplete {
+			return true
+		}
+	}
+	return false
 }
 
 func isCompletedToolExchange(callMessage, resultMessage messages.Message) bool {
@@ -643,17 +665,18 @@ func truncateRunes(value string, maxRunes int) string {
 func (c *Compactor) generateSummary(ctx context.Context, messageList []messages.Message) (string, error) {
 	var transcript strings.Builder
 	for _, msg := range messageList {
+		label := c.transcriptLabel(msg)
 		switch msg.Role {
 		case messages.MessageRoleToolCall:
 			for _, call := range msg.ToolCalls {
-				fmt.Fprintf(&transcript, "[%s] tool_call_id: %s\n tool_call_name: %s\n tool_call_arguments: %s\n", msg.Role, call.ID, call.Name, call.Arguments)
+				fmt.Fprintf(&transcript, "[%s] tool_call_id: %s\n tool_call_name: %s\n tool_call_arguments: %s\n", label, call.ID, call.Name, call.Arguments)
 			}
 		case messages.MessageRoleToolResult:
 			for _, result := range msg.ToolResults {
-				fmt.Fprintf(&transcript, "[%s] tool_call_id: %s\n tool_call_name: %s\n tool_call_result: %s\n", msg.Role, result.ToolCallID, result.Name, result.Content)
+				fmt.Fprintf(&transcript, "[%s] tool_call_id: %s\n tool_call_name: %s\n tool_call_result: %s\n", label, result.ToolCallID, result.Name, result.Content)
 			}
 		default:
-			fmt.Fprintf(&transcript, "[%s] %s\n", msg.Role, msg.Content)
+			fmt.Fprintf(&transcript, "[%s] %s\n", label, msg.Content)
 		}
 	}
 	if transcript.Len() == 0 {
@@ -682,6 +705,11 @@ Please summarize the conversation in a concised summary. Template:
 ## Critical Context
 [Specific values, error messages, configuration details]
 
+## User Plans and Time-Bound Information
+[Appointments, plans, deadlines, and other near-term information the user mentioned, even when unrelated to the goal. Resolve relative dates to absolute ones using the message timestamps, for example "2026-10-28 morning" for "tomorrow morning". Give a clock time only when the user stated one. Keep the user's own wording of what the plan is.]
+
+The summary is written at ` + c.now().Format(time.RFC3339) + `. Message labels show when each message was sent.
+
 And here are the conversation details:
 
 ` + transcript.String()
@@ -695,6 +723,26 @@ And here are the conversation details:
 		return "", executor.MarkLLMCallError(fmt.Errorf("LLM returned an empty summary"))
 	}
 	return result, nil
+}
+
+// transcriptLabel names a message's role and, when known, the time it was
+// sent, so the summary can turn relative times into absolute ones.
+func (c *Compactor) transcriptLabel(msg messages.Message) string {
+	if msg.Timestamp.IsZero() {
+		return string(msg.Role)
+	}
+	return string(msg.Role) + " " + c.inLocation(msg.Timestamp).Format(time.RFC3339)
+}
+
+func (c *Compactor) now() time.Time {
+	return c.inLocation(time.Now())
+}
+
+func (c *Compactor) inLocation(t time.Time) time.Time {
+	if c.Location == nil {
+		return t.Local()
+	}
+	return t.In(c.Location)
 }
 
 func (c *Compactor) formatSummary(summary string) string {

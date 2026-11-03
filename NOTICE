@@ -11,7 +11,9 @@ each with their own license terms:
 
 - **License**: Various (Linux Kernel GPL-2.0, Buildroot GPL-2.0+, U-Boot GPL-2.0+)
 - **Source**: https://github.com/LuckfoxTECH/luckfox-pico
-- **Location**: `pico-sdk/` (git submodule)
+- **Location**: `pico-sdk/` (vendored source)
+- **Imported snapshot**: https://github.com/AidenAI-IO/aiden-sdk, branch
+  `feat/hardware-adapt`, commit `c4fb3d8406e3a2d8b3401202330a5c8602a4d256`
 - **Description**: BSP and build system for Luckfox Pico development boards
 - **Note**: Linux kernel, U-Boot, and Buildroot components remain under their
   original GPL licenses. Our modifications to these components are also GPL-licensed
@@ -95,8 +97,8 @@ All are compatible with AGPL-3.0 for our use case.
 
 - **License**: BSD-style terms; see `pico-sdk/media/common_algorithm/common_algorithm/LICENSE`
 - **Source**: Luckfox/Rockchip Pico SDK RKAUDIO algorithms
-- **Location**: `overlay-debian/usr/lib/aiden/platform/lib/libaec_bf_process.so` and
-  `overlay-debian/usr/lib/aiden/platform/lib/librkaudio_common.so`
+- **Location**: `overlay-debian/usr/lib/aico/platform/lib/libaec_bf_process.so` and
+  `overlay-debian/usr/lib/aico/platform/lib/librkaudio_common.so`
 - **Description**: glibc armhf microphone beamforming/AEC runtime required by
   Debian `audio_service` VQE initialization
 
@@ -177,7 +179,7 @@ cat buildroot/.config | grep "^BR2_PACKAGE.*=y"
 
 If you believe any component's license is incorrectly stated or if you have
 concerns about license compatibility, please open an issue at:
-https://github.com/AidenAI-IO/aiden-firmware/issues
+https://github.com/AidenAI-IO/aico-link/issues
 
 ---
 

@@ -3,9 +3,10 @@ package agent
 import (
 	"strings"
 	"testing"
+	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 )
@@ -73,6 +74,73 @@ func TestInitializeContextManagerReusesSessionWhenSystemPromptMatches(t *testing
 	}
 	if text := messageText(messages.ConvertMessageList(reloaded.CloneMessageList())); text != "system\nhello\n" {
 		t.Fatalf("reloaded session = %q", text)
+	}
+}
+
+func TestInitializeContextManagerDateRolloverPreservesConfigurationChanges(t *testing.T) {
+	originalNow := promptNow
+	t.Cleanup(func() { promptNow = originalNow })
+	for _, tc := range []struct {
+		name   string
+		config AgentConfig
+	}{
+		{"timezone", AgentConfig{Timezone: "Asia/Shanghai"}},
+		{"locale", AgentConfig{Locale: "zh-CN"}},
+		{"instruction", AgentConfig{Instruction: "Current date: 2030-01-01 (Tuesday, timezone: UTC)"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			promptNow = func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
+			folder := t.TempDir()
+			original, err := InitializeContextManager(testPromptProfile(AgentConfig{}).SystemPrompt, folder, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			promptNow = func() time.Time { return time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC) }
+			changed, err := InitializeContextManager(testPromptProfile(tc.config).SystemPrompt, folder, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed.GetSessionID() == original.GetSessionID() {
+				t.Fatal("date rollover hid a configuration change")
+			}
+		})
+	}
+}
+
+func TestInitializeContextManagerReusesSessionWhenOnlyUserProfileChanges(t *testing.T) {
+	originalNow := promptNow
+	t.Cleanup(func() { promptNow = originalNow })
+	promptNow = func() time.Time { return time.Date(2026, 10, 22, 12, 0, 0, 0, time.UTC) }
+	base := testPromptProfile(AgentConfig{}).SystemPrompt
+	folder := t.TempDir()
+	original, err := InitializeContextManager(withUserProfileSection(base, "- Prefers metric units."), folder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := original.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, profile := range []string{"- Prefers imperial units.", ""} {
+		reloaded, err := InitializeContextManager(withUserProfileSection(base, profile), folder, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reloaded.GetSessionID() != original.GetSessionID() {
+			t.Fatalf("profile %q started a new session", profile)
+		}
+		dump := reloaded.MessageListDump().Messages
+		if last := dump[len(dump)-1]; last.Role != messages.MessageRoleUser || last.Content != "hello" {
+			t.Fatalf("profile change appended %#v, want transcript untouched", last)
+		}
+	}
+
+	changed, err := InitializeContextManager(withUserProfileSection(testPromptProfile(AgentConfig{Locale: "zh-CN"}).SystemPrompt, "- Prefers metric units."), folder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.GetSessionID() == original.GetSessionID() {
+		t.Fatal("profile section hid a configuration change")
 	}
 }
 

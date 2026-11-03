@@ -1,7 +1,7 @@
 package mnk
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 	"context"
 	"encoding/binary"
 	"math"

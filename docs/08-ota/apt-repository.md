@@ -1,20 +1,29 @@
 # GitHub APT Repository
 
-Business package repository: `https://aidenai-io.github.io/aiden-firmware/apt`.
+Business package repository: `https://aidenai-io.github.io/aico-link/apt`.
 GitHub Pages hosts the signed `InRelease`, `Release.gpg`, package indexes, and `.deb` files.
 Packages come only from published Releases in the three channels; unpublished Actions
 build artifacts are never added to the repository.
 
+The repository is Aico-only. A legacy contract whose base OTA release records an
+`aiden-business_<version>-1_armhf.deb` asset but no corresponding `aico-business`
+asset is excluded, along with every business release using that base. These
+contracts receive no APT suite or package pool; use a current Aico base image instead.
+The complete published history is still validated before this exclusion. Missing
+packages or invalid checksums/manifests in supported Aico contracts remain errors,
+and a history containing only legacy contracts cannot replace the site with an empty
+repository. Existing supported Aico contracts retain their normal version retention.
+
 ## Upgrading a board
 
 New base images with this feature automatically select a repository from
-`/usr/lib/aiden/platform/contract.json`. For example, dev with contract `1` uses
+`/usr/lib/aico/platform/contract.json`. For example, dev with contract `1` uses
 `dev-c1`; staging/prod each use the repository for their own contract.
 
 ```bash
 sudo apt update && sudo apt upgrade
-dpkg-query -W aiden-business
-sudo /usr/lib/aiden/ota --config /userdata/debian/ota/config.json self-check
+dpkg-query -W aico-business
+sudo /usr/lib/aico/ota --config /userdata/debian/ota/config.json self-check
 ```
 
 APT/dpkg automatically stops and restores previously running business services. User
@@ -27,7 +36,7 @@ switches to the repository for the new base contract only after installing the n
 The package's preinst still checks the channel, contract, base release tag, and system fingerprint.
 
 Config Web's "Check and install updates" action (`POST /api/ota/updates`) starts
-`aiden-hybrid-update.service`, which proceeds in this order:
+`aico-hybrid-update.service`, which proceeds in this order:
 
 1. Run `ota check` against the current channel's GitHub Release, verifying the signed
    manifest, version, and build time. Run `ota update` only when new firmware is available.
@@ -37,8 +46,8 @@ Config Web's "Check and install updates" action (`POST /api/ota/updates`) starts
    `committed`; a rollback or failed health confirmation ends the job without upgrading
    the business package.
 3. When no new firmware is available, or the new firmware has been confirmed, refresh
-   only the signed indexes from `aiden-business.sources`. Simulate
-   `apt-get --only-upgrade install aiden-business` and install only if that package has
+   only the signed indexes from `aico-business.sources`. Simulate
+   `apt-get --only-upgrade install aico-business` and install only if that package has
    an update. Targeting the package avoids upgrading other installed software through
    a general `apt-get upgrade`; a plan that changes other packages or removes any package
    is rejected. Platform repository pins, APT signature verification, and package
@@ -49,7 +58,7 @@ portal during a business package upgrade does not interrupt the job. Its marker 
 stored at `/userdata/ota/hybrid-update.pending`, allowing it to resume after an OTA
 reboot; `GET /api/ota/status` continues to provide logs and progress. A successful
 business package upgrade does not actively reboot the device. Any later reboot required
-by runtime configuration is still indicated by `/run/aiden-business-reboot-required.json`.
+by runtime configuration is still indicated by `/run/aico-business-reboot-required.json`.
 APT refresh or installation failures are reported as failures, not as "up to date".
 The worker limits each OTA metadata check, APT index refresh, and APT simulation
 to 600 seconds. APT index refresh is attempted up to three times, with 15- and
@@ -59,7 +68,7 @@ locks and clear the request marker. Firmware flashing and package installation
 are not subject to this metadata timeout.
 After an interrupted package installation, repair the dpkg state before retrying manually.
 
-`/etc/apt/preferences.d/aiden-business` assigns business packages from the matching
+`/etc/apt/preferences.d/aico-business` assigns business packages from the matching
 repository a priority of 990 and Debian repository packages a priority of 1, below the
 installed-package priority of 100. Normal `apt upgrade` therefore upgrades only business
 packages. Debian system packages are updated through OTA, preventing system libraries
@@ -73,7 +82,7 @@ contract through a new OTA.
 with the published package of the same version:
 
 ```bash
-sudo apt install --reinstall aiden-business
+sudo apt install --reinstall aico-business
 ```
 
 ## Initial setup for existing managed devices
@@ -82,9 +91,9 @@ Copy the public key and configuration tool from a reviewed source checkout. Do n
 scripts directly from unverified network responses.
 
 ```bash
-scp overlay-debian/usr/share/keyrings/aiden-archive-keyring.asc \
-    overlay-debian/usr/lib/aiden/aiden-apt-source luckfox:/tmp/
-ssh -t luckfox 'sudo python3 /tmp/aiden-apt-source --public-key /tmp/aiden-archive-keyring.asc'
+scp overlay-debian/usr/share/keyrings/aico-archive-keyring.asc \
+    overlay-debian/usr/lib/aico/aico-apt-source luckfox:/tmp/
+ssh -t luckfox 'sudo python3 /tmp/aico-apt-source --public-key /tmp/aico-archive-keyring.asc'
 ssh -t luckfox 'sudo apt update && sudo apt upgrade'
 ```
 
@@ -103,7 +112,7 @@ Initial setup:
 2. Store the ASCII-armored OpenPGP signing private key corresponding to the committed
    public key in the repository Actions secret `APT_SIGNING_PRIVATE_KEY`. Use a dedicated
    APT key; do not reuse the OTA Ed25519 PEM key.
-3. Push and merge this workflow, then manually run **Aiden APT Repository** to build the
+3. Push and merge this workflow, then manually run **Aico Link APT Repository** to build the
    index from published versions. Before merging, you can also select the feature branch
    in **Debian Build (backup / self-hosted-02)**, enable `apt_only`, and keep
    `dry_run=false` to refresh only the APT index, ignoring build and new-release parameters.
@@ -137,7 +146,7 @@ Local validation on Linux:
 ```bash
 python3 scripts/test_apt_repository.py
 GNUPGHOME=/path/to/private-gnupg python3 scripts/apt/repository.py \
-  --repo AidenAI-IO/aiden-firmware --output output/apt/site
+  --repo AidenAI-IO/aico-link --output output/apt/site
 ```
 
 Tests run a real `apt update` and simulated `apt upgrade`, covering contract isolation,

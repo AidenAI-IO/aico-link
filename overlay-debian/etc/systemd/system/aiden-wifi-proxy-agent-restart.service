@@ -1,7 +1,0 @@
-[Unit]
-Description=Restart the Aiden Agent after a proxy route change
-After=aiden-wifi-proxy.service
-
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/systemctl try-restart aiden-agent.service

@@ -3,7 +3,7 @@ package agent
 import (
 	"context"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 // audioBackend bridges the internal *AudioServiceClient to the

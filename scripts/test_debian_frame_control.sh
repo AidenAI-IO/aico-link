@@ -2,7 +2,7 @@
 set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-readonly HELPER="${REPO_ROOT}/overlay-debian/usr/lib/aiden/aiden-frame-control"
+readonly HELPER="${REPO_ROOT}/overlay-debian/usr/lib/aico/aico-frame-control"
 readonly TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
@@ -16,17 +16,17 @@ sh -n "${HELPER}"
 
 cat >"${TEST_ROOT}/systemctl" <<'EOF'
 #!/bin/sh
-printf '%s\n' "$*" >>"${AIDEN_SYSTEMCTL_TEST_LOG}"
+printf '%s\n' "$*" >>"${AICO_SYSTEMCTL_TEST_LOG}"
 case "${1:-}" in
     restart)
-        [ "${2:-}" = aiden-frame.service ]
+        [ "${2:-}" = aico-frame.service ]
         ;;
     is-active)
         [ "${2:-}" = --quiet ]
-        [ "${3:-}" = aiden-frame.service ]
+        [ "${3:-}" = aico-frame.service ]
         ;;
     show)
-        [ "${2:-}" = aiden-frame.service ]
+        [ "${2:-}" = aico-frame.service ]
         [ "${3:-}" = -p ]
         [ "${4:-}" = MainPID ]
         [ "${5:-}" = --value ]
@@ -37,12 +37,12 @@ esac
 EOF
 chmod 0755 "${TEST_ROOT}/systemctl"
 
-AIDEN_SYSTEMCTL_TEST_LOG="${TEST_ROOT}/systemctl.log" \
+AICO_SYSTEMCTL_TEST_LOG="${TEST_ROOT}/systemctl.log" \
 PATH="${TEST_ROOT}:${PATH}" "${HELPER}" restart
-grep -qx 'restart aiden-frame.service' "${TEST_ROOT}/systemctl.log" \
-    || fail "restart did not target aiden-frame.service"
+grep -qx 'restart aico-frame.service' "${TEST_ROOT}/systemctl.log" \
+    || fail "restart did not target aico-frame.service"
 
-output="$(AIDEN_SYSTEMCTL_TEST_LOG="${TEST_ROOT}/systemctl.log" \
+output="$(AICO_SYSTEMCTL_TEST_LOG="${TEST_ROOT}/systemctl.log" \
     PATH="${TEST_ROOT}:${PATH}" "${HELPER}" status)"
 grep -qx 'frame_service=running pid=812 supervisor=systemd' <<<"${output}" \
     || fail "active service status is missing"

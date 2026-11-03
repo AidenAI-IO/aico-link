@@ -20,7 +20,16 @@ readonly MODULE_DIR=${SDK_DIR}/output/out/sysdrv_out/kernel_drv_ko
 readonly DUMPIMAGE=${SDK_DIR}/sysdrv/source/uboot/u-boot/tools/dumpimage
 readonly KERNEL_IMAGE=${SDK_DIR}/sysdrv/source/objs_kernel/arch/arm/boot/zImage
 readonly KERNEL_CONFIG=${SDK_DIR}/sysdrv/source/objs_kernel/.config
-readonly BSP_DTB=${SDK_DIR}/output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-luckfox-pico-zero.dtb
+readonly BSP_DTB=${SDK_DIR}/output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aico-custom.dtb
+readonly EXPECTED_MODEL='Aico Link SCH v1'
+readonly -a EXPECTED_SERIAL_CONTRACTS=(
+    '0:/serial@ff4a0000:okay'
+    '1:/serial@ff4b0000:disabled'
+    '2:/serial@ff4c0000:disabled'
+    '3:/serial@ff4d0000:disabled'
+    '4:/serial@ff4e0000:okay'
+    '5:/serial@ff4f0000:okay'
+)
 readonly PARTITION_LAYOUT='32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)'
 readonly MISC_METADATA_HEX=00414230010000000f00010000000000000000000000000000000000671e21a4
 readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
@@ -88,7 +97,9 @@ audit_misc() {
 }
 
 audit_boot() {
-    local slot suffix root_label boot fdt kernel resource bootargs model serial status
+    local slot suffix root_label boot fdt kernel resource bootargs model
+    local serial_contract serial_index expected_path expected_status serial_path serial_status
+    local fiq_status fiq_serial_id
     : >"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
     for slot in a b; do
         suffix=_${slot}
@@ -108,35 +119,56 @@ audit_boot() {
         cmp "${kernel}" "${KERNEL_IMAGE}"
         bootargs=$(fdtget -t s "${fdt}" /chosen bootargs)
         model=$(fdtget -t s "${fdt}" / model)
-        serial=$(fdtget -t s "${fdt}" /aliases serial1)
-        status=$(fdtget -t s "${fdt}" /serial@ff4b0000 status)
-        [ "${model}" = 'Luckfox Pico Zero' ] || fail "boot_${slot}.img has the wrong model"
-        [ "${serial}" = /serial@ff4b0000 ] || fail "boot_${slot}.img has the wrong serial alias"
-        [ "${status}" = okay ] || fail "boot_${slot}.img disables the recovery serial port"
+        bash "${SCRIPT_DIR}/audit-poweroff-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
+        bash "${SCRIPT_DIR}/audit-tf-dtb.sh" "${fdt}" \
+            >>"${OUTPUT_DIR}/bsp-boot-fit-audit.txt"
+        fiq_status=$(fdtget -t s "${fdt}" /fiq-debugger status)
+        fiq_serial_id=$(fdtget -t u "${fdt}" /fiq-debugger rockchip,serial-id)
+        [ "${model}" = "${EXPECTED_MODEL}" ] \
+            || fail "boot_${slot}.img has the wrong model: ${model}"
+        [ "${fiq_status}" = okay ] \
+            || fail "boot_${slot}.img disables the FIQ recovery console"
+        [ "${fiq_serial_id}" = 2 ] \
+            || fail "boot_${slot}.img routes the FIQ recovery console to the wrong UART"
+        for serial_contract in "${EXPECTED_SERIAL_CONTRACTS[@]}"; do
+            IFS=: read -r serial_index expected_path expected_status \
+                <<<"${serial_contract}"
+            serial_path=$(fdtget -t s "${fdt}" "/aliases" "serial${serial_index}")
+            serial_status=$(fdtget -t s "${fdt}" "${serial_path}" status)
+            [ "${serial_path}" = "${expected_path}" ] \
+                || fail "boot_${slot}.img has the wrong serial${serial_index} alias"
+            [ "${serial_status}" = "${expected_status}" ] \
+                || fail "boot_${slot}.img has the wrong serial${serial_index} status"
+        done
         grep -qw "blkdevparts=mmcblk0:${PARTITION_LAYOUT}" <<<"${bootargs}" \
             || fail "boot_${slot}.img has the wrong partition command line"
         grep -qw "root=PARTLABEL=${root_label}" <<<"${bootargs}" \
             || fail "boot_${slot}.img has the wrong root PARTLABEL"
-        grep -qw "aiden.slot_suffix=${suffix}" <<<"${bootargs}" \
-            || fail "boot_${slot}.img has the wrong Aiden slot suffix"
+        grep -qw "aico.slot_suffix=${suffix}" <<<"${bootargs}" \
+            || fail "boot_${slot}.img has the wrong Aico Link slot suffix"
         grep -qw 'rootfstype=ext4' <<<"${bootargs}" \
             || fail "boot_${slot}.img is missing rootfstype=ext4"
-        grep -qw 'rootwait' <<<"${bootargs}" \
-            || fail "boot_${slot}.img is missing rootwait"
         grep -qw 'net.ifnames=0' <<<"${bootargs}" \
             || fail "boot_${slot}.img is missing net.ifnames=0"
         grep -qw 'rk_dma_heap_cma=100M' <<<"${bootargs}" \
             || fail "boot_${slot}.img is missing the production CMA setting"
         [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^root=')" -eq 1 ] \
             || fail "boot_${slot}.img contains multiple root arguments"
-        [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^aiden\.slot_suffix=')" -eq 1 ] \
+        [ "$(tr ' ' '\n' <<<"${bootargs}" | grep -c '^aico\.slot_suffix=')" -eq 1 ] \
             || fail "boot_${slot}.img contains multiple slot suffixes"
         {
             printf 'slot=%s\n' "${slot}"
             printf 'bootargs=%s\n' "${bootargs}"
             printf 'model=%s\n' "${model}"
-            printf 'serial1=%s\n' "${serial}"
-            printf 'serial1_status=%s\n' "${status}"
+            printf 'fiq_debugger_status=%s\n' "${fiq_status}"
+            printf 'fiq_debugger_serial_id=%s\n' "${fiq_serial_id}"
+            for serial_contract in "${EXPECTED_SERIAL_CONTRACTS[@]}"; do
+                IFS=: read -r serial_index expected_path expected_status \
+                    <<<"${serial_contract}"
+                printf 'serial%s=%s\n' "${serial_index}" "${expected_path}"
+                printf 'serial%s_status=%s\n' "${serial_index}" "${expected_status}"
+            done
             printf 'fdt_sha256=%s\n' "$(sha256sum "${fdt}" | awk '{print $1}')"
             printf 'kernel_sha256=%s\n' "$(sha256sum "${kernel}" | awk '{print $1}')"
             printf 'resource_sha256=%s\n' "$(sha256sum "${resource}" | awk '{print $1}')"
@@ -146,14 +178,28 @@ audit_boot() {
 }
 
 audit_modules() {
-    local module firmware_count module_count
+    local module firmware firmware_count module_count
     for module in \
         aic8800_bsp.ko aic8800_btlpm.ko aic8800_fdrv.ko \
         cfg80211.ko mac80211.ko mpp_vcodec.ko rga3.ko rknpu.ko rockit.ko \
         video_rkcif.ko video_rkisp.ko; do
         require_file "${MODULE_DIR}/${module}"
     done
-    require_file "${MODULE_DIR}/aic8800dc_fw/lmacfw_rf_8800dc.bin"
+    for module in mpp_vcodec.ko rockit.ko; do
+        grep -aq 'aico_page_abi=kernel-helpers-v1' "${MODULE_DIR}/${module}" \
+            || fail "media module lacks Debian kernel page compatibility: ${module}"
+    done
+    for firmware in \
+        aic_userconfig_8800d80.txt \
+        fmacfw_8800d80_h_u02.bin \
+        fmacfw_8800d80_u02.bin \
+        fw_adid_8800d80_u02.bin \
+        fw_patch_8800d80_u02.bin \
+        fw_patch_8800d80_u02_ext0.bin \
+        fw_patch_table_8800d80_u02.bin \
+        lmacfw_rf_8800d80_u02.bin; do
+        require_file "${MODULE_DIR}/aic8800dc_fw/${firmware}"
+    done
     module_count=$(find "${MODULE_DIR}" -maxdepth 1 -type f -name '*.ko' | wc -l)
     firmware_count=$(find "${MODULE_DIR}/aic8800dc_fw" -type f | wc -l)
     [ "${module_count}" -ge 11 ] || fail "too few kernel modules were produced"
@@ -173,7 +219,7 @@ write_hashes() {
             output/image/boot_a.img \
             output/image/boot_b.img \
             output/image/download.bin \
-            output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-luckfox-pico-zero.dtb \
+            output/out/sysdrv_out/board_uclibc_rv1106/rv1106g-aico-custom.dtb \
             sysdrv/source/objs_kernel/arch/arm/boot/zImage \
             sysdrv/source/objs_kernel/.config
         find output/out/sysdrv_out/kernel_drv_ko -type f -print0 \
@@ -184,6 +230,7 @@ write_hashes() {
         sha256sum \
             scripts/debian-system/build.sh \
             scripts/debian-system/audit-bsp.sh \
+            scripts/debian-system/audit-tf-dtb.sh \
             scripts/debian-system/canonicalize-bsp.py \
             scripts/debian-system/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
             scripts/debian-system/debian-system.config

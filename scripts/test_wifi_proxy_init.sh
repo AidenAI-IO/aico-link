@@ -2,7 +2,7 @@
 set -eu
 
 repo_root="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
-init_script="$repo_root/docker/dev/aiden-wifi-proxy-service"
+init_script="$repo_root/docker/dev/aico-wifi-proxy-service"
 
 if [ ! -r "/proc/$$/cmdline" ]; then
     echo "wifi_proxy init watchdog test skipped: /proc is unavailable"
@@ -64,7 +64,7 @@ exit 0
 EOF
 
 chmod +x "$fixture_dir/agent" "$fixture_dir/env-run" "$fixture_dir/agent-init"
-ln -s "$init_script" "$fixture_dir/aiden-wifi-proxy-service"
+ln -s "$init_script" "$fixture_dir/aico-wifi-proxy-service"
 
 wait_for_pid_file() {
     path="$1"
@@ -140,7 +140,7 @@ mismatched_pid=
 
 # Starting through a symlink must resolve to the same watchdog identity and
 # leave the existing supervisor and child untouched.
-run_init_at "$fixture_dir/aiden-wifi-proxy-service" start >/dev/null
+run_init_at "$fixture_dir/aico-wifi-proxy-service" start >/dev/null
 if [ "$(cat "$fixture_dir/watchdog.pid")" != "$watchdog_pid" ] ||
    [ "$(cat "$fixture_dir/proxy.pid")" != "$proxy_pid" ]; then
     echo "FAIL: symlink invocation started a duplicate watchdog" >&2

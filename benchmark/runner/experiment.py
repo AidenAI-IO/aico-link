@@ -131,7 +131,7 @@ def comparison(suite: Suite, agents: list[dict], rows: dict[str, list[TaskResult
         eligible = [row for row in values if row.metrics.get("agent_eligible") is True]
         passed = sum(row.status == "passed" for row in eligible)
         durations = sorted(row.metrics["wall_ms"] for row in eligible
-                           if isinstance(row.metrics.get("wall_ms"), (int, float)))
+                           if row.status == "passed" and isinstance(row.metrics.get("wall_ms"), (int, float)))
         costs = [row.metrics.get("cost_usd") for row in values]
         complete_cost = len(values) == planned and all(isinstance(v, (float, int)) for v in costs)
         total_cost = sum(costs) if complete_cost else None
@@ -330,9 +330,12 @@ Missing cost is unknown.</p>
 
 
 def write_experiment_results(suite: Suite, root: Path, agents: list[dict],
-                             rows: dict[str, list[TaskResult]], repeats: int, manifest: dict) -> None:
+                             rows: dict[str, list[TaskResult]], repeats: int, manifest: dict,
+                             *, changed_agent: str | None = None) -> None:
     for agent in agents:
         run_id = agent["id"]
+        if changed_agent is not None and run_id != changed_agent:
+            continue
         directory = root / "runs" / run_id
         directory.mkdir(parents=True, exist_ok=True)
         if not (directory / "suite.json").exists():
@@ -466,11 +469,11 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
     lock = threading.Lock()
     active: dict[int, dict] = {}
 
-    def save() -> None:
+    def save(changed_agent: str | None = None) -> None:
         # Callers hold the lock. Completion order varies with concurrency.
         for values in rows.values():
             values.sort(key=lambda row: (task_order.get(row.task_id, 0), row.attempt))
-        write_experiment_results(suite, root, agents, rows, repeats, manifest)
+        write_experiment_results(suite, root, agents, rows, repeats, manifest, changed_agent=changed_agent)
 
     def publish_active() -> None:
         manifest["current_attempts"] = list(active.values())
@@ -490,7 +493,11 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
         prompt = "\n\n".join(part for part in (DEVICE_CONTEXT, suite.prompt_prefix.strip(), task.prompt) if part)
         try:
             adapter = adapters[agent_id]
-            if task.platforms and "android" not in task.platforms:
+            if task.environment_bridge_types and "mobilegym" not in task.environment_bridge_types:
+                row = skipped_task_result(suite, task, attempt, artifacts, agent_id,
+                                          f"Task requires bridges {task.environment_bridge_types}; environment bridge is mobilegym")
+                row.metrics.update(agent_eligible=False, failure_class="platform")
+            elif task.platforms and "android" not in task.platforms:
                 row = skipped_task_result(suite, task, attempt, artifacts, agent_id,
                                           f"Task requires {task.platforms}; environment platform is android")
                 row.metrics.update(agent_eligible=False, failure_class="platform")
@@ -503,7 +510,7 @@ def run_experiment(suite: Suite, root: Path, agents: list[dict], adapters: dict[
         with lock:
             rows[agent_id].append(row)
             active.pop(index, None)
-            save()
+            save(agent_id)
             publish_active()
 
     with lock:
@@ -618,7 +625,7 @@ class ExperimentManager:
             item["report_url"] = f"/experiments/{item['id']}/report.html" if (path.parent / "report.html").exists() else ""
             item["setup_log_url"] = f"/experiments/{item['id']}/setup.log" if (path.parent / "setup.log").exists() else ""
             result.append(item)
-        return result
+        return sorted(result, key=lambda item: (item["id"] == active, item.get("created_at", "")), reverse=True)
 
     def start(self, payload: dict) -> dict:
         if not isinstance(payload, dict):

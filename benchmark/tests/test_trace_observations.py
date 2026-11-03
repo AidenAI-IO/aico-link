@@ -269,7 +269,7 @@ class ObservingClient:
         )
 
 
-def test_run_one_task_records_trace_observations_without_affecting_pass(tmp_path: Path):
+def test_run_one_task_records_trace_observations_without_affecting_outcome(tmp_path: Path):
     suite = Suite(
         name="phone",
         global_reset={},
@@ -297,5 +297,5 @@ def test_run_one_task_records_trace_observations_without_affecting_pass(tmp_path
         ObservingClient(), suite, task, 1, tmp_path / "artifacts", None, None, "run-1"
     )
 
-    assert result.status == "passed"
+    assert result.status == "skipped"
     assert result.metrics["trace_observations"][0]["passed"] is True

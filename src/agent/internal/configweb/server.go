@@ -17,10 +17,10 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/backup"
-	"aiden-agent/internal/logging"
-	"aiden-agent/internal/wifiproxy"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/backup"
+	"aico-agent/internal/logging"
+	"aico-agent/internal/wifiproxy"
 )
 
 const (
@@ -85,7 +85,7 @@ func NewServer(options Options) (*Server, error) {
 		options.LocalProxyEnvironmentPath = wifiproxy.DefaultEnvironmentPath
 	}
 	if strings.TrimSpace(options.WiFiProxyInitScript) == "" {
-		options.WiFiProxyInitScript = "/usr/lib/aiden/aiden-wifi-proxy-control"
+		options.WiFiProxyInitScript = "/usr/lib/aico/aico-wifi-proxy-control"
 	}
 	if strings.TrimSpace(options.WiFiBackend) == "" {
 		options.WiFiBackend = "legacy"

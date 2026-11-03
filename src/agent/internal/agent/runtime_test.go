@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -22,12 +22,12 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/compactor"
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/model"
-	speechtext "aiden-agent/internal/agent/speech"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/compactor"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/model"
+	speechtext "aico-agent/internal/agent/speech"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/chains"
@@ -1551,6 +1551,53 @@ func TestContextCompactionEventsUseDistinctTelemetryType(t *testing.T) {
 	}
 }
 
+func TestRunContextBudgetPruneDecisions(t *testing.T) {
+	budget := &runContextBudget{
+		usableInputBudget:  1_000,
+		pruneTrigger:       500,
+		pruneTarget:        425,
+		pruneEnabled:       true,
+		stateLimit:         4,
+		compactionTrigger:  800,
+		compactionEnabled:  true,
+		providerCompaction: false,
+	}
+	for _, tc := range []struct {
+		name          string
+		messageTokens int
+		states        int
+		promptTokens  int
+		schemaTokens  int
+		wantReason    string
+		wantTarget    int
+		wantHard      bool
+	}{
+		{name: "below triggers"},
+		{name: "token threshold precedes state count", messageTokens: 501, states: 5, promptTokens: 600, wantReason: "active_turn_threshold", wantTarget: 425},
+		{name: "state count alone", states: 5, promptTokens: 100, wantReason: "active_turn_state_count", wantTarget: math.MaxInt},
+		{name: "hard input budget alone", promptTokens: 1_001, schemaTokens: 100, wantReason: "active_turn_input_budget", wantTarget: 900, wantHard: true},
+		{name: "hard input budget overrides threshold target", messageTokens: 501, promptTokens: 1_001, schemaTokens: 100, wantReason: "active_turn_threshold_and_input_budget", wantTarget: 900, wantHard: true},
+		{name: "hard input budget overrides state target", states: 5, promptTokens: 1_001, schemaTokens: 1_000, wantReason: "active_turn_threshold_and_input_budget", wantTarget: 1, wantHard: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := budget.activePruneDecision(tc.messageTokens, tc.states, tc.promptTokens, tc.schemaTokens)
+			if got.reason != tc.wantReason || got.target != tc.wantTarget || got.hardBudgetExceeded != tc.wantHard {
+				t.Fatalf("activePruneDecision() = %+v, want reason=%q target=%d hard=%v", got, tc.wantReason, tc.wantTarget, tc.wantHard)
+			}
+		})
+	}
+	if got := budget.historicalPruneDecision(501, 5); got.reason != "threshold" || got.target != 425 {
+		t.Fatalf("historical threshold decision = %+v", got)
+	}
+	if got := budget.historicalPruneDecision(500, 5); got.reason != "state_count" || got.target != math.MaxInt {
+		t.Fatalf("historical state decision = %+v", got)
+	}
+	budget.providerCompaction = true
+	if budget.thresholdCompactionEnabled() {
+		t.Fatal("provider-managed compaction must disable threshold summaries")
+	}
+}
+
 func TestRuntimeRunAttachesPendingSteerToNextToolCall(t *testing.T) {
 	model := &scriptedModel{
 		responses: roleToolResponses(
@@ -2313,6 +2360,7 @@ type scriptedModel struct {
 	tools             [][]llms.Tool
 	toolChoices       []any
 	rawHTTPLogEnabled []bool
+	maxTokens         []int
 }
 
 func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
@@ -2320,6 +2368,7 @@ func (m *scriptedModel) GenerateContent(ctx context.Context, messages []llms.Mes
 	for _, option := range options {
 		option(&callOptions)
 	}
+	m.maxTokens = append(m.maxTokens, callOptions.MaxTokens)
 	m.sawStreaming = append(m.sawStreaming, callOptions.StreamingFunc != nil)
 	m.messages = append(m.messages, messages)
 	m.tools = append(m.tools, callOptions.Tools)
@@ -2462,7 +2511,7 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 	largeSchemaTool := &structuredStubTool{
 		// Cross the summary threshold while leaving room for the protected
 		// head/tail messages under the hard input budget after summarization.
-		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 800)},
+		stubTool: stubTool{name: "large_schema", description: strings.Repeat("schema ", 1750)},
 		schema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -2490,6 +2539,10 @@ func TestRuntimeRunCompactionTriggerIncludesToolSchema(t *testing.T) {
 		&ToolSet{tools: map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}},
 		NewSkillIndex(),
 	)
+	// NewRuntimeWithDeps registers memory tools. Keep this budget fixture
+	// independent of their evolving schemas: only the synthetic tool belongs
+	// in the request whose compaction behavior this test exercises.
+	runtime.tools.tools = map[string]langtools.Tool{largeSchemaTool.Name(): largeSchemaTool}
 	runtime.contextManager = manager
 	runtime.logger = nil
 
@@ -4108,6 +4161,25 @@ func TestRuntimeCloseStopsStoragePoller(t *testing.T) {
 	case <-rt.storage.stop:
 	default:
 		t.Fatal("Close() did not stop the storage poller")
+	}
+}
+
+func TestRuntimeKeepsPhoneBridgeLocalWithBenchmarkADBEnvironment(t *testing.T) {
+	rt, err := NewRuntime(Config{
+		ConfigDir: ensureTestConfigDir(t, t.TempDir()),
+		Model:     ModelConfig{Provider: "fake"},
+		EnvironmentBridge: EnvironmentBridgeConfig{
+			Enabled:          true,
+			Endpoint:         "http://127.0.0.1:18080",
+			LocalPhoneBridge: true,
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewRuntime() error = %v", err)
+	}
+	defer rt.Close()
+	if rt.phoneBridge.proxyMode {
+		t.Fatal("Phone Bridge must stay local when the ADB environment handles screen and input")
 	}
 }
 

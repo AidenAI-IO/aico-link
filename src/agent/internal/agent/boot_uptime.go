@@ -13,19 +13,19 @@ import (
 var bootUptimePath = "/proc/uptime"
 
 // bootTimelinePath is the per-boot profile written by
-// aiden-boot-timeline-init.service (see
-// overlay-debian/usr/lib/aiden/aiden-boot-timeline). The agent appends its own
+// aico-boot-timeline-init.service (see
+// overlay-debian/usr/lib/aico/aico-boot-timeline). The agent appends its own
 // milestones so the whole boot lives in one file. Overridable in tests.
-var bootTimelinePath = "/var/log/aiden_boot_timeline.log"
+var bootTimelinePath = "/var/log/aico_boot_timeline.log"
 
 // bootTimelineArchiveStatePath holds the path of the archive the boot timeline
 // wrote for this boot, published by boot_timeline_archive. Overridable in tests.
-var bootTimelineArchiveStatePath = "/run/aiden_boot_timeline.archive"
+var bootTimelineArchiveStatePath = "/run/aico_boot_timeline.archive"
 
 // bootTimelineLockPath is shared with
-// overlay-debian/usr/lib/aiden/aiden-boot-timeline.
+// overlay-debian/usr/lib/aico/aico-boot-timeline.
 // Holding an exclusive flock serializes Shell and Go milestone/archive writers.
-var bootTimelineLockPath = "/run/aiden_boot_timeline.lock"
+var bootTimelineLockPath = "/run/aico_boot_timeline.lock"
 
 const bootTimelineLockTimeout = time.Second
 
@@ -110,7 +110,7 @@ func withBootTimelineLock(fn func()) {
 }
 
 // refreshBootTimelineArchiveLocked mirrors boot_timeline_refresh_archive in
-// overlay-debian/usr/lib/aiden/aiden-boot-timeline. It replaces the archive
+// overlay-debian/usr/lib/aico/aico-boot-timeline. It replaces the archive
 // from a consistent point in the append/archive sequence. The caller holds
 // bootTimelineLockPath.
 //

@@ -13,7 +13,7 @@ expected = [('32K','env'),('512K@32K','idblock'),('256K','uboot'),('4M','misc'),
             ('32M','boot_a'),('32M','boot_b'),('1792M','rootfs_a'),('1792M','rootfs_b'),
             ('3G','userdata'),('300M','ota')]
 assert parts == expected, parts
-slot = read('overlay-debian/usr/lib/aiden/aiden-slot-resolve')
+slot = read('overlay-debian/usr/lib/aico/aico-slot-resolve')
 for number, (_, name) in enumerate(parts, 1):
     if number >= 4:
         assert f'{name}) number={number} ;;' in slot, name
@@ -23,10 +23,10 @@ assert not (root/'overlay-debian-oem').exists()
 assert not (root/'overlay-debian/oem').exists()
 assert not (root/'overlay-debian/etc/systemd/system/oem.mount').exists()
 assert read('overlay-debian/etc/locale.conf') == 'LANG=C.UTF-8\n'
-contract = json.loads(read('overlay-debian/usr/lib/aiden/platform/contract.json'))
+contract = json.loads(read('overlay-debian/usr/lib/aico/platform/contract.json'))
 assert type(contract['platform_contract']) is int and contract['platform_contract'] == 1
 assert contract['architecture'] == 'armhf'
-for line in read('overlay-debian/etc/systemd/system-preset/90-aiden.preset').splitlines():
+for line in read('overlay-debian/etc/systemd/system-preset/90-aico.preset').splitlines():
     line = line.strip()
     if not line or line.startswith('#'): continue
     fields = line.split()
@@ -42,9 +42,9 @@ for name in ['frame_service_cli','audio_service_cli']:
 assert 'assets/business/' in package
 assert 'ln -s ' not in package
 assert 'config_aivqe.json' not in package
-assert (root/'overlay-debian/usr/share/aiden/audio/config_aivqe.json').is_file()
+assert (root/'overlay-debian/usr/share/aico/audio/config_aivqe.json').is_file()
 for path in ['assets/business/models','assets/business/audio/voice-notifications',
-             'overlay-debian/usr/lib/aiden/platform/lib','overlay-debian/usr/share/aiden/edid']:
+             'overlay-debian/usr/lib/aico/platform/lib','overlay-debian/usr/share/aico/edid']:
     assert (root/path).is_dir(), path
 # rootfs creation must embed platform data before producing its archive.
 rootfs = read('scripts/debian-system/container-build-rootfs.sh')

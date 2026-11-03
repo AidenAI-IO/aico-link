@@ -1,0 +1,3 @@
+#!/bin/sh
+# Runs after normal service and filesystem teardown; the binary verifies safety.
+exec /usr/lib/aico/mcu_service shutdown-hook "$1"

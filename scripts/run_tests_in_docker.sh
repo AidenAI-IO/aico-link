@@ -3,10 +3,10 @@ set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-readonly IMAGE="${AIDEN_TEST_IMAGE:-aiden-firmware-test:local}"
+readonly IMAGE="${AICO_TEST_IMAGE:-aico-link-firmware-test:local}"
 readonly PLATFORM=linux/amd64
-readonly CACHE_DIR="${AIDEN_TEST_CACHE_DIR:-${REPO_ROOT}/.cache/docker-test}"
-readonly SUMMARY_PATH="${AIDEN_TEST_SUMMARY:-${REPO_ROOT}/output/test-summary.json}"
+readonly CACHE_DIR="${AICO_TEST_CACHE_DIR:-${REPO_ROOT}/.cache/docker-test}"
+readonly SUMMARY_PATH="${AICO_TEST_SUMMARY:-${REPO_ROOT}/output/test-summary.json}"
 
 usage() {
     cat <<'EOF'
@@ -24,10 +24,10 @@ Manifest options are passed to tests/run_manifest.py:
   --host-network     Use the host network for the Docker sandbox smoke suite (requires --docker-socket)
 
 Environment:
-  AIDEN_TEST_IMAGE   Docker image tag (default: aiden-firmware-test:local)
-  AIDEN_TEST_JOBS    Parallel build jobs inside the container
-  AIDEN_TEST_SUMMARY JSON summary output path
-  AIDEN_TEST_SKIP_BUILD  Use an image built by CI's persistent BuildKit cache
+  AICO_TEST_IMAGE   Docker image tag (default: aico-link-firmware-test:local)
+  AICO_TEST_JOBS    Parallel build jobs inside the container
+  AICO_TEST_SUMMARY JSON summary output path
+  AICO_TEST_SKIP_BUILD  Use an image built by CI's persistent BuildKit cache
 EOF
 }
 
@@ -76,9 +76,9 @@ docker info >/dev/null 2>&1 || {
 
 mkdir -p "$CACHE_DIR" "$(dirname "$SUMMARY_PATH")"
 
-if [ "${AIDEN_TEST_SKIP_BUILD:-0}" = "1" ]; then
+if [ "${AICO_TEST_SKIP_BUILD:-0}" = "1" ]; then
     docker image inspect "$IMAGE" >/dev/null 2>&1 || {
-        echo "AIDEN_TEST_SKIP_BUILD=1 but Docker image is missing: $IMAGE" >&2
+        echo "AICO_TEST_SKIP_BUILD=1 but Docker image is missing: $IMAGE" >&2
         exit 1
     }
 else
@@ -98,7 +98,7 @@ gid=$(id -g)
 case "$SUMMARY_PATH" in
     "$REPO_ROOT"/*) ;;
     *)
-        echo "AIDEN_TEST_SUMMARY must be inside the repository: $SUMMARY_PATH" >&2
+        echo "AICO_TEST_SUMMARY must be inside the repository: $SUMMARY_PATH" >&2
         exit 1
         ;;
 esac
@@ -108,15 +108,15 @@ docker_args=(
     --platform "$PLATFORM"
     --init
     --user "${uid}:${gid}"
-    --env HOME=/tmp/aiden-home
-    --env AIDEN_TEST_JOBS="${AIDEN_TEST_JOBS:-2}"
-    --env GOCACHE=/tmp/aiden-cache/go-build
-    --env GOMODCACHE=/tmp/aiden-cache/go-mod
-    --env GOPATH=/tmp/aiden-cache/go-path
-    --env UV_CACHE_DIR=/tmp/aiden-cache/uv
-    --env AIDEN_TEST_HOST_NETWORK="$use_host_network"
+    --env HOME=/tmp/aico-home
+    --env AICO_TEST_JOBS="${AICO_TEST_JOBS:-2}"
+    --env GOCACHE=/tmp/aico-cache/go-build
+    --env GOMODCACHE=/tmp/aico-cache/go-mod
+    --env GOPATH=/tmp/aico-cache/go-path
+    --env UV_CACHE_DIR=/tmp/aico-cache/uv
+    --env AICO_TEST_HOST_NETWORK="$use_host_network"
     --volume "$REPO_ROOT:$REPO_ROOT"
-    --volume "$CACHE_DIR:/tmp/aiden-cache"
+    --volume "$CACHE_DIR:/tmp/aico-cache"
     --workdir "$REPO_ROOT"
 )
 # Do not expose the host daemon to ordinary PR test commands. A suite that

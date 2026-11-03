@@ -17,7 +17,7 @@
 #include <arm_neon.h>
 #endif
 
-namespace aiden_vad {
+namespace aico_vad {
 
 constexpr int kSampleRate = 16000;
 constexpr int kFrameSamples = 512;
@@ -669,4 +669,4 @@ inline void print_benchmark_result(const std::string& label,
               << std::endl;
 }
 
-}  // namespace aiden_vad
+}  // namespace aico_vad

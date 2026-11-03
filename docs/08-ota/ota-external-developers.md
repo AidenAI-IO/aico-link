@@ -23,7 +23,7 @@ Build the complete Debian firmware and signed OTA asset set:
 ```bash
 VERSION="v1.0.0-custom"
 CHANNEL="custom"
-BASE_URL="https://firmware.example.com/aiden/$VERSION"
+BASE_URL="https://firmware.example.com/aico/$VERSION"
 
 OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
@@ -63,7 +63,7 @@ publish a custom tag manually and update through an explicit manifest URL:
 
 ```bash
 TAG="$VERSION"
-REPO="YOUR_USERNAME/aiden-firmware"
+REPO="YOUR_USERNAME/aico-link-firmware"
 
 gh release create "$TAG" \
   --title "Custom Firmware $TAG" \
@@ -83,7 +83,7 @@ renaming or recompressing anything:
 rsync -avz \
   output/debian/image/*.img.tar.gz \
   output/debian/image/manifest.json \
-  user@firmware.example.com:/var/www/firmware/aiden/$VERSION/
+  user@firmware.example.com:/var/www/firmware/aico/$VERSION/
 ```
 
 For local testing, serve the same directory directly:
@@ -106,7 +106,7 @@ Run an update from a direct manifest URL:
 
 ```bash
 ota update \
-  --manifest-url "https://firmware.example.com/aiden/v1.0.0-custom/manifest.json" \
+  --manifest-url "https://firmware.example.com/aico/v1.0.0-custom/manifest.json" \
   --public-key /userdata/ota/custom_pubkey.pem
 ```
 
@@ -122,7 +122,7 @@ version, build time, safety margin, and partition hashes:
 
 ```json
 {
-  "manifest_url": "https://firmware.example.com/aiden/latest/manifest.json",
+  "manifest_url": "https://firmware.example.com/aico/latest/manifest.json",
   "public_key_path": "/userdata/ota/custom_pubkey.pem"
 }
 ```
@@ -171,8 +171,8 @@ versions with the same build time.
 Inspect the Debian boot-time health unit and log:
 
 ```bash
-systemctl status aiden-ota-health.service
-journalctl -u aiden-ota-health.service
+systemctl status aico-ota-health.service
+journalctl -u aico-ota-health.service
 tail -f /var/log/ota/ota.log
 ```
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 func TestHandleProviderMNKUnavailableWithoutProvider(t *testing.T) {

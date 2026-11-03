@@ -3,9 +3,9 @@ set -euo pipefail
 
 readonly REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly OVERLAY=${REPO_ROOT}/overlay-debian
-readonly UNIT=${OVERLAY}/etc/systemd/system/aiden-agent.service
-readonly HELPER=${OVERLAY}/usr/lib/aiden/aiden-python-prepare
-readonly PROFILE=${OVERLAY}/etc/profile.d/aiden-python.sh
+readonly UNIT=${OVERLAY}/etc/systemd/system/aico-agent.service
+readonly HELPER=${OVERLAY}/usr/lib/aico/aico-python-prepare
+readonly PROFILE=${OVERLAY}/etc/profile.d/aico-python.sh
 readonly TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
@@ -31,11 +31,11 @@ for assignment in \
     grep -qx "Environment=${assignment}" "${UNIT}" \
         || fail "Agent unit is missing ${assignment}"
 done
-grep -qx 'ExecStartPre=/usr/lib/aiden/aiden-python-prepare' "${UNIT}" \
+grep -qx 'ExecStartPre=/usr/lib/aico/aico-python-prepare' "${UNIT}" \
     || fail "Agent unit does not run the directory preparation helper"
 
 test_userdata=${TEST_ROOT}/data
-test_helper=${TEST_ROOT}/aiden-python-prepare
+test_helper=${TEST_ROOT}/aico-python-prepare
 sed \
     -e "s#/userdata/agent/python#${test_userdata}/agent/python#g" \
     -e "s#/userdata/agent/log#${test_userdata}/agent/log#g" \

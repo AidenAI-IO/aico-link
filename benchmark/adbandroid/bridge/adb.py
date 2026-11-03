@@ -18,7 +18,7 @@ from typing import Any
 
 DEFAULT_SCREENSHOT_MAX_WIDTH = 720
 DEFAULT_JPEG_QUALITY = 75
-WINDOW_XML_REMOTE_PATH = "/sdcard/aiden-window.xml"
+WINDOW_XML_REMOTE_PATH = "/sdcard/aico-window.xml"
 PREFERRED_ASCII_INPUT_METHODS = (
     "org.pocketworkstation.pckeyboard/.LatinIME",
     "com.android.inputmethod.latin/.LatinIME",
@@ -40,6 +40,7 @@ ADB_TEXT_CHARS = set(
 KEYCODE_HOME = 3
 KEYCODE_BACK = 4
 KEYCODE_TAB = 61
+KEYCODE_SPACE = 62
 KEYCODE_ENTER = 66
 KEYCODE_DEL = 67
 KEYCODE_APP_SWITCH = 187

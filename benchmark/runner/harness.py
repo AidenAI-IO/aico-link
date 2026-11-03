@@ -407,6 +407,7 @@ def _write_bridge_config(root: Path, tool_endpoint: str, tool_catalog: list[dict
 def _gateway_history(artifacts: Path) -> tuple[list[dict], list[dict]]:
     """Rebuild scorer history and tool evidence from the tool gateway audit."""
     calls = []
+    pending = {}
     audit = artifacts / AUDIT_FILE
     if audit.exists():
         for line in audit.read_text(encoding="utf-8").splitlines():
@@ -416,17 +417,36 @@ def _gateway_history(artifacts: Path) -> tuple[list[dict], list[dict]]:
                 # A call interrupted at the deadline can leave a partial final line.
                 break
             if isinstance(call, dict):
-                calls.append(call)
+                call_id = call.get("call_id")
+                if call.get("type") == "tool_call":
+                    pending[call_id] = call
+                    calls.append(call)
+                elif call.get("type") == "tool_result" and call_id in pending:
+                    pending[call_id].update(call)
+                else:
+                    # Historical audits contain one untyped record per completed call.
+                    calls.append(call)
     history, evidence = [], []
     for call in calls:
         name, raw = call["tool_name"], call.get("raw_input") or "{}"
         history.append({"type": "tool_call", "tool_name": name, "tool_input": raw})
+        if call.get("type") == "tool_call":
+            continue
         history.append({"type": "tool_result", "tool_name": name,
                         "is_error": call["is_error"], "content": call["observation"]})
         evidence.append({"type": "visual_coordinate_mapping", "metadata": {"tool": name, "normalized_input": raw}})
         evidence.append({"type": "tool_result", "tool_name": name,
                          "is_error": call["is_error"], "tool_error": call.get("tool_error")})
     return history, evidence
+
+
+def refresh_gateway_evidence(execution: Execution, artifacts: Path) -> None:
+    """Refresh gateway-backed histories after shutdown has drained pending calls."""
+    if not execution.episode or not execution.episode.get("source", "").endswith("-tool-gateway-audit"):
+        return
+    history, evidence = _gateway_history(artifacts)
+    execution.history = history + [item for item in execution.history if item.get("type") == "assistant"]
+    execution.episode["events"] = evidence
 
 
 def _final_answer(history: list[dict], text: Any, usage: dict[str, Any] | None) -> None:
@@ -782,6 +802,7 @@ class AidenAdapter:
                         with ToolGateway(DaemonToolBackend(client.base_url), catalog, artifacts) as gateway:
                             execution = external.execute(prompt, timeout, artifacts, stop,
                                                          tool_endpoint=gateway.url, tool_catalog=catalog)
+                        refresh_gateway_evidence(execution, artifacts)
                         execution.metrics.update(result.metrics)
                         return execution
                 started = time.monotonic()

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"unicode"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/netproxy"
 )
 
 type EnvAssignment struct {
@@ -85,8 +85,8 @@ func isAllowedSystemEnvKey(key string) bool {
 	switch key {
 	case "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY",
 		"all_proxy", "ALL_PROXY", "no_proxy", "NO_PROXY",
-		"ANTHROPIC_BASE_URL", "ANDROID_SERIAL", "AIDEN_ADB_SERIAL",
-		"AIDEN_POINTER_MODE", "AIDEN_WIFI_PROXY_ENABLED":
+		"ANTHROPIC_BASE_URL", "ANDROID_SERIAL", "AICO_ADB_SERIAL",
+		"AICO_POINTER_MODE", "AICO_WIFI_PROXY_ENABLED":
 		return true
 	}
 	return strings.HasSuffix(key, "_KEY") ||

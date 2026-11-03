@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct UdsMessage {
     std::string header_json;
@@ -16,4 +16,4 @@ FrameServiceStatus write_uds_message(int fd,
                                      const std::vector<uint8_t>& payload);
 FrameServiceStatus read_uds_message(int fd, UdsMessage* out);
 
-}  // namespace aiden
+}  // namespace aico

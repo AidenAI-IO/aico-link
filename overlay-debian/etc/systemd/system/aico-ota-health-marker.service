@@ -1,0 +1,26 @@
+[Unit]
+Description=Aggregate local health before committing an Aico Link OTA slot
+Requires=userdata.mount userdata-ota.mount
+Requires=aico-userdata-migrate.service aico-environment.service
+Wants=systemd-networkd.service aico-wifi-driver.service aico-wlan-guard.service
+Wants=bluetooth.service aico-usb-gadget.service aico-usb-dnsmasq.service
+Wants=aico-frame.service aico-audio.service aico-ble.service
+Wants=aico-wifi-proxy.service aico-config-web.service
+After=userdata.mount userdata-ota.mount
+After=aico-userdata-migrate.service aico-environment.service systemd-networkd.service
+After=aico-wifi-driver.service aico-wlan-guard.service bluetooth.service
+After=aico-usb-gadget.service aico-usb-dnsmasq.service
+After=aico-frame.service aico-audio.service aico-ble.service
+After=aico-wifi-proxy.service aico-config-web.service
+Before=aico-ota-health.service
+ConditionPathExists=/userdata/ota/pending_boot.json
+ConditionPathExists=/usr/lib/aico/ota
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-ota-health-aggregate
+TimeoutStartSec=60s
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

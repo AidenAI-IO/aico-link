@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace aiden {
+namespace aico {
 
 inline void include_centered_minimal_width(int source_width,
                                            uint32_t minimal_width,
@@ -21,4 +21,4 @@ inline void include_centered_minimal_width(int source_width,
     *right = std::max(*right, centered_right);
 }
 
-}  // namespace aiden
+}  // namespace aico

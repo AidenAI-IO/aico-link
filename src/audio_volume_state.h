@@ -2,7 +2,7 @@
 
 #include <string>
 
-namespace aiden {
+namespace aico {
 
 static const char kDefaultAudioVolumeStatePath[] =
     "/userdata/audio_service/playback_volume";
@@ -22,4 +22,4 @@ bool save_playback_volume_state(const char* path,
                                 int volume,
                                 std::string* error = nullptr);
 
-}  // namespace aiden
+}  // namespace aico

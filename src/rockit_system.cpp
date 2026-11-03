@@ -6,7 +6,7 @@ extern "C" {
 #include "rk_mpi_sys.h"
 }
 
-namespace aiden {
+namespace aico {
 
 namespace {
 
@@ -47,4 +47,4 @@ void release_rockit_system() {
     }
 }
 
-}  // namespace aiden
+}  // namespace aico

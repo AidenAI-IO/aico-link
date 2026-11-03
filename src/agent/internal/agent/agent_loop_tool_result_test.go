@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/tokencounter"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/tokencounter"
 
 	"github.com/tmc/langchaingo/chains"
 	"github.com/tmc/langchaingo/llms"
@@ -243,7 +243,6 @@ func TestAgentLoopTerminatesRecursiveArtifactRecovery(t *testing.T) {
 		8,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 
@@ -283,7 +282,6 @@ func TestAgentLoopCompactsWhenToolResultCrossesContextThreshold(t *testing.T) {
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	turnOptions := []llms.CallOption{
@@ -318,7 +316,7 @@ func TestAgentLoopCompactionCanRetryWhenManagerIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("freshNewContextManager() error = %v", err)
 	}
-	loop := NewAgentLoop(nil, RoleProfile{}, 1, nil, nil, executor.ScreenshotPruningConfig{}.WithDefaults(), manager)
+	loop := NewAgentLoop(nil, RoleProfile{}, 1, nil, nil, manager)
 	loop.ContextCompactionTrigger = 1
 	compactionCalls := 0
 	loop.ContextThresholdCompaction = func(_ context.Context, current *contextmanager.ContextManager) (*contextmanager.ContextManager, bool, error) {
@@ -364,7 +362,6 @@ func TestAgentLoopUsesRuntimeFallbackWindowForCurrentToolResultGuard(t *testing.
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "run the tool", chains.WithMaxTokens(1_000))
@@ -426,7 +423,6 @@ func TestAgentLoopTouchGestureInvalidJSONSelfCorrectsBeforeAction(t *testing.T) 
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 
@@ -487,7 +483,6 @@ func TestAgentLoopStoresLargeToolResultAsBoundedArtifact(t *testing.T) {
 		4,
 		nil,
 		recorder,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "run tests")
@@ -565,7 +560,6 @@ func TestAgentLoopDoesNotRepeatCompletedActionWhenArtifactPersistenceFails(t *te
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	answer, err := loop.Run(context.Background(), "perform action once")
@@ -608,7 +602,6 @@ func TestAgentLoopPersistsBoundedToolResultWhenPolicyFails(t *testing.T) {
 		4,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.ToolResultPolicy = failingToolResultPolicy{err: errors.New("policy unavailable")}

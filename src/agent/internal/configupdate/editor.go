@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // Snapshot returns the resolved config at path in the Config Web JSON shape,

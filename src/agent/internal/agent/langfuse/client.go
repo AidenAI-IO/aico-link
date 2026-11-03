@@ -33,7 +33,7 @@ type Client struct {
 
 func NewClient(cfg Config) *Client {
 	var transport http.RoundTripper
-	if proxy := strings.TrimSpace(os.Getenv("AIDEN_LANGFUSE_HTTPS_PROXY")); proxy != "" {
+	if proxy := strings.TrimSpace(os.Getenv("AICO_LANGFUSE_HTTPS_PROXY")); proxy != "" {
 		// CI's model and device endpoints use direct routing. Only telemetry
 		// inherits this proxy; retain NO_PROXY for local Langfuse deployments.
 		proxyConfig := httpproxy.FromEnvironment()

@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 )
 
 // ModelDisplayInfo represents UI display information for a model.

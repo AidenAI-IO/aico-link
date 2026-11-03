@@ -15,7 +15,7 @@ import uuid
 
 from runner.capture import take_environment_screenshot
 from runner.environment_state import read_environment_state
-from runner.harness import AidenAdapter, Execution, ExternalHarness, record_catalog
+from runner.harness import AidenAdapter, Execution, ExternalHarness, record_catalog, refresh_gateway_evidence
 from runner.raw_tools import RAW_TOOL_CATALOG, TOOL_LAYER as RAW_TOOL_LAYER, RawToolBackend
 from runner.reset import call_environment_release, call_environment_setup, prepare_environment_tools
 from runner.suite import SETUP_KEYS, TaskSpec
@@ -92,6 +92,7 @@ class OperationAdapter:
         with ToolGateway(RawToolBackend(self.environment_url, route), RAW_TOOL_CATALOG, artifacts) as gateway:
             execution = self.external.execute(prompt, timeout, artifacts, stop,
                                               tool_endpoint=gateway.url, tool_catalog=RAW_TOOL_CATALOG)
+        refresh_gateway_evidence(execution, artifacts)
         execution.metrics.update(metrics)
         return execution
 

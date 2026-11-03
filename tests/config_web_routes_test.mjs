@@ -24,7 +24,7 @@ for (const retiredPath of [
   );
 }
 
-// Debian's aiden-environment generator still shares the strict parser with
+// Debian's aico-environment generator still shares the strict parser with
 // its host tests; these files no longer implement any Config Web routes.
 for (const environmentPath of [
   'src/system_env_parser.cpp',

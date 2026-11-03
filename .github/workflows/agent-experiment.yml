@@ -38,8 +38,8 @@ concurrency:
 
 jobs:
   run:
-    if: ${{ startsWith(github.ref, 'refs/heads/') }}
-    runs-on: aiden-hosted-02
+    if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
+    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     timeout-minutes: 720
     env:
       DOCKER_BUILDKIT: 1
@@ -52,9 +52,9 @@ jobs:
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
-      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aiden-agent-daemon:local' }}
+      DAEMON_IMAGE: ${{ vars.DAEMON_IMAGE || 'aico-agent-daemon:local' }}
       DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn
-      MOBILEGYM_IMAGE: aiden-mobilegym-simulator:py311
+      MOBILEGYM_IMAGE: aico-mobilegym-simulator:py311
       MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
       MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
       RUN_ID: ci-exp-${{ github.run_id }}-${{ github.run_attempt }}
@@ -91,7 +91,7 @@ jobs:
       - name: Validate inputs and credentials
         run: |
           set -euo pipefail
-          [[ "$REPEATS" =~ ^[1-9][0-9]?$ ]] || { echo "repeats must be 1-99" >&2; exit 1; }
+          [[ "$REPEATS" =~ ^([1-9]|1[0-9]|20)$ ]] || { echo "repeats must be 1-20" >&2; exit 1; }
           [[ "$CONCURRENCY" =~ ^[1-8]$ ]] || { echo "concurrency must be 1-8" >&2; exit 1; }
           missing=()
           for name in BENCHMARK_AGENT_PROVIDER BENCHMARK_AGENT_MODEL BENCHMARK_AGENT_BASE_URL \
@@ -139,7 +139,9 @@ jobs:
             echo "AIDEN_BENCHMARK_CODEX_EXECUTABLE=$bin/codex"
           } >> "$GITHUB_ENV"
           for tool in pi openclaw claude codex; do
-            [[ -x "$bin/$tool" ]] && echo "$tool $("$bin/$tool" --version 2>&1 | head -1)"
+            if [[ -x "$bin/$tool" ]]; then
+              echo "$tool $("$bin/$tool" --version 2>&1 | head -1)"
+            fi
           done
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -188,9 +190,9 @@ jobs:
         if: ${{ always() }}
         run: |
           set -uo pipefail
-          for id in $(docker ps -aq --filter "name=aiden-mobilegym-env-mobilegym-$RUN_ID"); do
+          for id in $(docker ps -aq --filter "name=aico-mobilegym-env-mobilegym-$RUN_ID"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done
-          for id in $(docker ps -aq --filter "name=aiden-benchmark-agent-experiment-"); do
+          for id in $(docker ps -aq --filter "name=aico-benchmark-agent-experiment-"); do
             docker rm -f "$id" >/dev/null 2>&1 || true
           done

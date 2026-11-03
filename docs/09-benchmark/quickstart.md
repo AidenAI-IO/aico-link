@@ -19,18 +19,18 @@ This page is a compact quickstart. The complete guide is
 2. Configure the Agent model when using the built-in config template:
 
    ```bash
-   export AIDEN_BENCHMARK_AGENT_PROVIDER=openai
-   export AIDEN_BENCHMARK_AGENT_MODEL=your-agent-model
-   export AIDEN_BENCHMARK_AGENT_BASE_URL=https://your-agent-endpoint.example/v1
-   export AIDEN_BENCHMARK_AGENT_API_KEY=...
+   export AICO_BENCHMARK_AGENT_PROVIDER=openai
+   export AICO_BENCHMARK_AGENT_MODEL=your-agent-model
+   export AICO_BENCHMARK_AGENT_BASE_URL=https://your-agent-endpoint.example/v1
+   export AICO_BENCHMARK_AGENT_API_KEY=...
    ```
 
 3. Configure the Judge when it is enabled:
 
    ```bash
-   export AIDEN_BENCHMARK_JUDGE_MODEL=your-judge-model
-   export AIDEN_BENCHMARK_JUDGE_BASE_URL=https://your-judge-endpoint.example/v1
-   export AIDEN_BENCHMARK_JUDGE_API_KEY=...
+   export AICO_BENCHMARK_JUDGE_MODEL=your-judge-model
+   export AICO_BENCHMARK_JUDGE_BASE_URL=https://your-judge-endpoint.example/v1
+   export AICO_BENCHMARK_JUDGE_API_KEY=...
    ```
 
 4. Optional post-run Analysis settings default to the Judge model, endpoint, and
@@ -38,9 +38,9 @@ This page is a compact quickstart. The complete guide is
    runtime:
 
    ```bash
-   export AIDEN_BENCHMARK_ANALYSIS_MODEL=your-analysis-model
-   export AIDEN_BENCHMARK_ANALYSIS_BASE_URL=https://your-analysis-endpoint.example/v1
-   export AIDEN_BENCHMARK_ANALYSIS_API_KEY=...
+   export AICO_BENCHMARK_ANALYSIS_MODEL=your-analysis-model
+   export AICO_BENCHMARK_ANALYSIS_BASE_URL=https://your-analysis-endpoint.example/v1
+   export AICO_BENCHMARK_ANALYSIS_API_KEY=...
    ```
 
 5. Either an existing agent daemon, or an environment bridge plus

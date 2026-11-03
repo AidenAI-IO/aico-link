@@ -1,7 +1,7 @@
 package agentpath
 
 import (
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 	"os"
 	"path/filepath"
 	"strings"

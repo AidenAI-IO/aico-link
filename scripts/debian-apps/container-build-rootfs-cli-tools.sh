@@ -8,7 +8,7 @@ export PATH=/usr/local/go/bin:${PATH}
 export GOTOOLCHAIN=local
 export GOCACHE=/go-build-cache
 export GOMODCACHE=/go-mod-cache
-export GOPATH=/tmp/aiden-rootfs-cli-go
+export GOPATH=/tmp/aico-rootfs-cli-go
 
 exec "${REPO_ROOT}/scripts/build_rootfs_cli_tools.sh" \
     --catalog "${REPO_ROOT}/scripts/rootfs_cli_tools.catalog" \

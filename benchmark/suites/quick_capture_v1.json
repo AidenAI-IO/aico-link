@@ -53,10 +53,10 @@
             "id": "mem_1700000000000000200_qc_dense_payment",
             "type": "screen_snapshot",
             "title": "支付宝企业付款确认页",
-            "content": "支付宝企业付款确认页。\n\n- 金额：￥12,480.60\n- 时间：2026/08/19 09:07\n- 账户：AIDEN-cn_HZ.7F-02\n- 地址：荔信三街 18 号 B 座 1206",
+            "content": "支付宝企业付款确认页。\n\n- 金额：￥12,480.60\n- 时间：2026/08/19 09:07\n- 账户：AICO-cn_HZ.7F-02\n- 地址：荔信三街 18 号 B 座 1206",
             "tags": ["付款", "金额", "账户", "地址"],
             "entities": ["支付宝", "杭州智联科技"],
-            "evidence": ["￥12,480.60", "2026/08/19 09:07", "AIDEN-cn_HZ.7F-02", "荔信三街 18 号 B 座 1206"],
+            "evidence": ["￥12,480.60", "2026/08/19 09:07", "AICO-cn_HZ.7F-02", "荔信三街 18 号 B 座 1206"],
             "priority": 85
           }
         ]
@@ -65,7 +65,7 @@
       "expected_recalled_memory_ids": ["mem_1700000000000000200_qc_dense_payment"],
       "rubric": [
         {"id": "recalls_dense_snapshot", "check": "The trace recalls the dense payment screen_snapshot."},
-        {"id": "keeps_all_exact_values", "check": "The final answer contains all four exact values: ￥12,480.60, 2026/08/19 09:07, AIDEN-cn_HZ.7F-02, and 荔信三街 18 号 B 座 1206. It must preserve punctuation and case."}
+        {"id": "keeps_all_exact_values", "check": "The final answer contains all four exact values: ￥12,480.60, 2026/08/19 09:07, AICO-cn_HZ.7F-02, and 荔信三街 18 号 B 座 1206. It must preserve punctuation and case."}
       ],
       "hard_assertions": {
         "min_tool_calls": 1,
@@ -126,7 +126,7 @@
     {
       "id": "preserve_duplicate_snapshots",
       "category": "memory",
-      "description_for_judge": "Two deliberate captures of the same screen must remain two independent screen_snapshot records. The agent must retrieve both IDs rather than treating the newer one as a replacement.",
+      "description_for_judge": "Two deliberate captures of the same screen must remain two independent screen_snapshot records. The agent must retrieve both IDs rather than treating the newer one as a replacement, and the request is read-only: deleting either record fails the task.",
       "setup": {
         "type": "seed_memory",
         "clear_history_after": true,
@@ -151,7 +151,7 @@
           }
         ]
       },
-      "prompt": "CA1735 那张登机牌我好像手滑记了两遍，你看下两份是不是都还在。顺便把座位和登机口告诉我。",
+      "prompt": "CA1735 那张登机牌我特意记了两次，你看下两份是不是都还在，别删。顺便把座位和登机口告诉我。",
       "expected_recalled_memory_ids": [
         "mem_1700000000000000400_qc_duplicate_a",
         "mem_1700000000000000401_qc_duplicate_b"
@@ -165,7 +165,7 @@
         "max_tool_calls": 6,
         "must_complete_within_sec": 90,
         "response_required": true,
-        "forbidden_tools": ["recall_session_chunks", "recall_device_memory", "inspect_episode"],
+        "forbidden_tools": ["recall_session_chunks", "recall_device_memory", "inspect_episode", "forget_memory"],
         "required_tool_calls": [
           {"tool": "recall_memory"}
         ]

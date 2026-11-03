@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	agentmessages "aiden-agent/internal/agent/messages"
+	agentmessages "aico-agent/internal/agent/messages"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -414,11 +414,11 @@ func TestReasoningContentReplayPreservesAssistantBoundaries(t *testing.T) {
 }
 
 func TestDeepSeekNamedProviderConfig(t *testing.T) {
-	t.Setenv("AIDEN_TEST_DEEPSEEK_KEY", "test-key")
+	t.Setenv("AICO_TEST_DEEPSEEK_KEY", "test-key")
 	path := filepath.Join(t.TempDir(), "agent.toml")
 	if err := os.WriteFile(path, []byte(`[model_settings.providers.account]
 type = "DeepSeek"
-api_key = "$AIDEN_TEST_DEEPSEEK_KEY"
+api_key = "$AICO_TEST_DEEPSEEK_KEY"
 
 [model_settings.model]
 provider = "account"

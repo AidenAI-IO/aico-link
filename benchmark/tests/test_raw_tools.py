@@ -122,7 +122,7 @@ def test_raw_layer_serves_external_harness_without_starting_a_daemon(tmp_path, b
     result = adapter.execute_operation("task", 10, tmp_path, threading.Event(), task)
     assert result.metrics["tool_layer"] == "raw"
     assert result.metrics["business_tools"] == [tool["name"] for tool in RAW_TOOL_CATALOG]
-    audit = json.loads((tmp_path / AUDIT_FILE).read_text())
+    audit = json.loads((tmp_path / AUDIT_FILE).read_text().splitlines()[-1])
     assert audit["tool_name"] == "tap" and audit["has_screenshot"] is True
     with pytest.raises(ValueError, match="external"):
         operations.OperationAdapter(daemon=Daemon(), environment_url=bridge, tool_layer="raw")

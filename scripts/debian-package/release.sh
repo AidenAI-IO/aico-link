@@ -17,17 +17,17 @@ build    Build/audit applications, package them and stage release assets (Linux 
 stage    Package already audited apps from the current clean commit and stage release assets.
 
 Defaults: scripts/debian-package/version.sh (0.0.1-2).
-Overrides: AIDEN_BUSINESS_VERSION, AIDEN_BUSINESS_REVISION,
+Overrides: AICO_BUSINESS_VERSION, AICO_BUSINESS_REVISION,
 DEBIAN_APPS_OUTPUT_DIR, DEBIAN_PACKAGE_OUTPUT_DIR, DEBIAN_PACKAGE_BUILD_IMAGE.
 Build uses the same Go/OpenCV cache variables as debian_build.sh.
-Channel publication: scripts/release/release.py (or the Aiden Channel Release workflow).
+Channel publication: scripts/release/release.py (or the Aico Link Channel Release workflow).
 No BSP, rootfs, firmware OTA signing key or Agent credentials are needed.
 EOF
 }
 
 stage_package() {
     python3 "${PACKAGE_SCRIPT_DIR}/release.py" check-source "${PACKAGE_REPO_ROOT}" "${DEBIAN_APPS_OUTPUT_DIR}"
-    export DEBIAN_PACKAGE_BUILD_IMAGE=${DEBIAN_PACKAGE_BUILD_IMAGE:-aiden-debian13-armhf-builder:package}
+    export DEBIAN_PACKAGE_BUILD_IMAGE=${DEBIAN_PACKAGE_BUILD_IMAGE:-aico-debian13-armhf-builder:package}
     docker build -t "${DEBIAN_PACKAGE_BUILD_IMAGE}" -f "${PACKAGE_SCRIPT_DIR}/Dockerfile" "${PACKAGE_REPO_ROOT}"
     "${PACKAGE_SCRIPT_DIR}/build.sh"
     python3 "${PACKAGE_SCRIPT_DIR}/release.py" stage "${PACKAGE_REPO_ROOT}" "${DEBIAN_APPS_OUTPUT_DIR}" "${DEBIAN_PACKAGE_OUTPUT_DIR}"

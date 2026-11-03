@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screenprovider"
 
 	langtools "github.com/tmc/langchaingo/tools"
 )
@@ -205,9 +205,10 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 	keyboardText := &KeyboardTextTool{dev: kbDev, adb: adbInput, keyboardLayout: hidCfg.KeyboardLayoutOrDefault(), iosKeyboardIsolation: iosKeyboardIsolation}
 	keyboardText.textProvider, _ = mnkProvider.(mnk.TextProvider)
 	touchGesture := &TouchGestureTool{
-		mnkProvider: mnkProvider,
-		screen:      screen,
-		touchscreen: hidCfg.PointerTouchscreen(),
+		mnkProvider:  mnkProvider,
+		screen:       screen,
+		touchscreen:  hidCfg.PointerTouchscreen(),
+		captureFrame: newFrameCapturer(provider),
 	}
 	quickAction := &QuickActionTool{keyboard: keyboardTap, touch: touchGesture, iosKeyboardIsolation: iosKeyboardIsolation}
 	textInputHW := &textInputHardwareDeps{
@@ -219,11 +220,16 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		screenshot:   screenshot,
 	}
 
+	// A touchscreen has no pointer; an absolute mouse leaves one on screen.
+	var pointerTrack *pointerTracker
+	if !hidCfg.PointerTouchscreen() {
+		pointerTrack = &pointerTracker{}
+	}
 	tools := map[string]langtools.Tool{
 		"keyboard_tap":           newPostActionStableScreenshotTool(keyboardTap, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable),
+		"mouse_move":             newPostActionStableScreenshotTool(&MouseMoveTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
 		"mouse_scroll":           newPostActionStableScreenshotTool(&MouseScrollTool{mnkProvider: mnkProvider}, waitStable, screenshot, postActionScreenshotDelay, screenStable),
-		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable),
+		"touch_gesture":          newPostActionStableScreenshotTool(touchGesture, waitStable, screenshot, postActionScreenshotDelay, screenStable).(*postActionScreenshotTool).withPointerTracker(pointerTrack),
 		"quick_action":           newPostActionStableScreenshotTool(quickAction, waitStable, screenshot, postActionScreenshotDelay, screenStable),
 		"screenshot":             screenshot,
 		"wait_for_stable_screen": waitStable,

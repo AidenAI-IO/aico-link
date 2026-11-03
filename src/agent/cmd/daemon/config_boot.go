@@ -7,14 +7,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func configForRunningUSB(cfg agent.Config) (agent.Config, error) {
 	if cfg.EnvironmentBridge.Enabled || cfg.DeviceTypeOverride != "" || cfg.HID.InputBackendADB() {
 		return cfg, nil
 	}
-	descriptor, err := os.ReadFile("/sys/kernel/config/usb_gadget/aiden_hid/functions/hid.usb1/report_desc")
+	descriptor, err := os.ReadFile("/sys/kernel/config/usb_gadget/aico_hid/functions/hid.usb1/report_desc")
 	if os.IsNotExist(err) {
 		return cfg, nil // Host development has no board USB gadget.
 	}

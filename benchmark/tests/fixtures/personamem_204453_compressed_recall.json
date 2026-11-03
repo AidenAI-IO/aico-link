@@ -257,7 +257,7 @@
         "request_id": "req-dkoonrefw5kt",
         "content": "",
         "tool_name": "shell",
-        "tool_input": "{\"command\":\"grep -io '[^\\\"]*game[^\\\"]*' /tmp/aiden-config/sessions/s_1b016e54-31aa-4260-b8d6-6e9c3a65835a/tool-results/tr_7496f6e3-d6c6-4eac-a9ec-88a3eb1a1e3a.data | head -40\"}",
+        "tool_input": "{\"command\":\"grep -io '[^\\\"]*game[^\\\"]*' /tmp/aico-config/sessions/s_1b016e54-31aa-4260-b8d6-6e9c3a65835a/tool-results/tr_7496f6e3-d6c6-4eac-a9ec-88a3eb1a1e3a.data | head -40\"}",
         "timestamp": "2026-08-14T12:58:59.800105761Z"
       },
       {
@@ -266,7 +266,7 @@
         "request_id": "req-dkoonrefw5kt",
         "content": "Dislikes role-playing games for relaxation\nThe user tried role-playing games for relaxation but felt they were not a good fit and did not enjoy complex characters, stories, and rules.\nThe user tried role-playing games for relaxation but felt they were not a good fit and did not enjoy complex characters, stories, and rules.\ngames",
         "tool_name": "shell",
-        "tool_input": "{\"command\":\"grep -io '[^\\\"]*game[^\\\"]*' /tmp/aiden-config/sessions/s_1b016e54-31aa-4260-b8d6-6e9c3a65835a/tool-results/tr_7496f6e3-d6c6-4eac-a9ec-88a3eb1a1e3a.data | head -40\"}",
+        "tool_input": "{\"command\":\"grep -io '[^\\\"]*game[^\\\"]*' /tmp/aico-config/sessions/s_1b016e54-31aa-4260-b8d6-6e9c3a65835a/tool-results/tr_7496f6e3-d6c6-4eac-a9ec-88a3eb1a1e3a.data | head -40\"}",
         "timestamp": "2026-08-14T12:58:59.805208719Z"
       },
       {

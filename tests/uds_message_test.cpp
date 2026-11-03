@@ -6,10 +6,10 @@
 #include <unistd.h>
 #include <vector>
 
-using aiden::FrameServiceStatus;
-using aiden::UdsMessage;
-using aiden::read_uds_message;
-using aiden::write_uds_message;
+using aico::FrameServiceStatus;
+using aico::UdsMessage;
+using aico::read_uds_message;
+using aico::write_uds_message;
 
 namespace {
 
@@ -54,7 +54,7 @@ TEST_CASE("uds message preserves arbitrary binary payload bytes") {
 TEST_CASE("uds message rejects oversized payload without retaining partial output") {
     SocketPair sockets;
     const uint64_t too_large_payload = 64ull * 1024ull * 1024ull + 1ull;
-    std::vector<uint8_t> prefix = aiden::encode_frame_wire_prefix(2, too_large_payload);
+    std::vector<uint8_t> prefix = aico::encode_frame_wire_prefix(2, too_large_payload);
     UdsMessage message;
 
     REQUIRE(::write(sockets.fds[0], prefix.data(), prefix.size()) == (ssize_t)prefix.size());

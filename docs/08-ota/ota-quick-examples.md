@@ -49,7 +49,7 @@ then copy the exact archives and manifest without renaming or recompressing:
 
 ```bash
 VERSION="v1.0.0"
-BASE_URL="https://firmware.example.com/aiden/$VERSION"
+BASE_URL="https://firmware.example.com/aico/$VERSION"
 
 OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \
@@ -63,7 +63,7 @@ OTA_BASE_URL="$BASE_URL" \
 rsync -avz \
   output/debian/image/*.img.tar.gz \
   output/debian/image/manifest.json \
-  user@firmware.example.com:/var/www/firmware/aiden/$VERSION/
+  user@firmware.example.com:/var/www/firmware/aico/$VERSION/
 
 ota update \
   --manifest-url "$BASE_URL/manifest.json" \
@@ -78,7 +78,7 @@ configured for that custom source.
 
 ```bash
 TAG="v1.0.0-custom"
-REPO="YOUR_USERNAME/aiden-firmware"
+REPO="YOUR_USERNAME/aico-link-firmware"
 
 OTA_PRIVATE_KEY_PATH="$PWD/ota_private_key.pem" \
 OTA_PUBLIC_KEY_PATH="$PWD/ota_public_key.pem" \

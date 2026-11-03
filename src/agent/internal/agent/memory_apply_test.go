@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -58,6 +59,82 @@ func TestApplyMemoryCandidateUpdatesAndReinforcesByID(t *testing.T) {
 	}
 	if parsed.Item.Revision != 3 || len(parsed.Item.SourceRefs[0].EventIDs) != 2 {
 		t.Fatalf("merged item=%#v", parsed.Item)
+	}
+}
+
+func TestReplaceMemoryRequiresCurrentRevisionAndPreservesOtherRecords(t *testing.T) {
+	store := NewLongTermMemoryStore(t.TempDir())
+	ctx := context.Background()
+	old := MemoryItem{ID: "theme_", Type: "preference", Content: "Use dark mode.", EvidenceExcerpts: []string{"Use dark mode."}}
+	other := MemoryItem{ID: "contrast", Type: "preference", Content: "Use high contrast.", EvidenceExcerpts: []string{"Use high contrast."}}
+	for _, item := range []MemoryItem{old, other} {
+		if _, err := store.AddMemory(ctx, item); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replacement := MemoryItem{Type: "preference", Content: "Use light mode.", EvidenceExcerpts: []string{"Use light mode."}}
+	if _, err := store.ReplaceMemory(ctx, "missing", 1, replacement); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("absent replacement target: %v, want target missing", err)
+	}
+	if _, err := store.ReplaceMemory(ctx, "theme?", 1, replacement); !errors.Is(err, errMemoryTargetMissing) {
+		t.Fatalf("different id resolving to the same file: %v, want target mismatch", err)
+	}
+	if _, err := store.ReplaceMemory(ctx, old.ID, 2, replacement); !errors.Is(err, errMemoryRevisionChanged) {
+		t.Fatalf("stale replacement error = %v, want revision conflict", err)
+	}
+	if _, err := store.ReplaceMemory(ctx, old.ID, 1, MemoryItem{Type: "fact", Content: "Wrong type."}); err == nil {
+		t.Fatal("replacement with a different type succeeded")
+	}
+	id, err := store.ReplaceMemory(ctx, old.ID, 1, replacement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := store.Search(ctx, MemoryQuery{Limit: 10})
+	if err != nil || len(active) != 2 {
+		t.Fatalf("active memories = %#v, err = %v", active, err)
+	}
+	for _, item := range active {
+		if item.ID == old.ID {
+			t.Fatal("old preference remains active")
+		}
+	}
+	updated, err := readMemoryMarkdown(store.memoryPath(id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Item.Supersedes != old.ID || updated.Item.Content != replacement.Content {
+		t.Fatalf("replacement = %#v, err = %v", updated.Item, err)
+	}
+	retained, err := readMemoryMarkdown(store.memoryPath(other.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.Item.Status != "active" {
+		t.Fatalf("unrelated memory = %#v, err = %v", retained.Item, err)
+	}
+}
+
+func TestRecallLegacyMemoryExposesEffectiveRevision(t *testing.T) {
+	root := t.TempDir()
+	store := NewLongTermMemoryStore(root)
+	ctx := context.Background()
+	item := MemoryItem{ID: "legacy", Type: "fact", Content: "The office is in Paris.", EvidenceExcerpts: []string{"The office is in Paris."}}
+	if _, err := store.AddMemory(ctx, item); err != nil {
+		t.Fatal(err)
+	}
+	path := store.memoryPath(item.ID)
+	parsed, err := readMemoryMarkdown(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Item.Revision = 0
+	if err := os.WriteFile(path, []byte(formatMemoryMarkdown(parsed.Item)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	store = NewLongTermMemoryStore(root)
+	results, err := store.Search(ctx, MemoryQuery{Limit: 1})
+	if err != nil || len(results) != 1 || results[0].Revision != 1 {
+		t.Fatalf("legacy recall = %#v, err = %v", results, err)
 	}
 }
 
@@ -307,6 +384,50 @@ func TestDeviceMemoryApplyUsesCommonUpdateAndRevision(t *testing.T) {
 	}
 	if current.Revision != 2 || len(current.RevisionHistory) != 1 || len(current.EvidenceRefs) != 2 {
 		t.Fatalf("merged device memory=%#v", current)
+	}
+}
+
+func TestDeviceMemoryProcedureUpdateReplacesOnlyWhenRequested(t *testing.T) {
+	store := NewDeviceMemoryStore(t.TempDir())
+	ctx := context.Background()
+	oldStep := ProcedureStep{Tool: "touch_gesture", Description: "Use the old route"}
+	newStep := ProcedureStep{Tool: "touch_gesture", Description: "Use the new route"}
+	first := DeviceMemoryItem{
+		ID: "devmem_route", Type: "procedure", Status: deviceMemoryStatusActive,
+		Title: "Route", Summary: "Use the route", Content: "Current route",
+		Steps:        []ProcedureStep{oldStep},
+		EvidenceRefs: []MemorySourceRef{{Type: "episode", ID: "episode-1", EventIDs: []string{"result-1"}}},
+	}
+	if _, err := store.ApplyMemoryIntent(ctx, MemoryIntent{DeviceItem: &first, Action: MemoryIntentActionCreate}); err != nil {
+		t.Fatal(err)
+	}
+	update := first
+	update.Revision = 1
+	update.Steps = []ProcedureStep{newStep}
+	update.EvidenceRefs = []MemorySourceRef{{Type: "episode", ID: "episode-2", EventIDs: []string{"result-2"}}}
+	intent := MemoryIntent{DeviceItem: &update, Action: MemoryIntentActionUpdate, ExpectedRevision: 1}
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatal(err)
+	}
+	merged, found, err := store.Get(ctx, first.ID)
+	if err != nil || !found || !equalEpisodeMemorySteps(merged.Steps, []ProcedureStep{oldStep, newStep}) {
+		t.Fatalf("ordinary update should merge steps: found=%v err=%v item=%#v", found, err, merged)
+	}
+	intent.ReplaceSteps = true
+	if _, err := store.ApplyMemoryIntent(ctx, intent); !errors.Is(err, errEpisodeMemoryRevisionChanged) {
+		t.Fatalf("stale replacement accepted as already applied: %v", err)
+	}
+	intent.ExpectedRevision = 2
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyMemoryIntent(ctx, intent); err != nil {
+		t.Fatalf("identical replacement retry failed: %v", err)
+	}
+	replaced, found, err := store.Get(ctx, first.ID)
+	if err != nil || !found || replaced.Revision != 3 || !equalEpisodeMemorySteps(replaced.Steps, []ProcedureStep{newStep}) ||
+		len(replaced.RevisionHistory) != 2 || !equalEpisodeMemorySteps(replaced.RevisionHistory[1].Steps, []ProcedureStep{oldStep, newStep}) {
+		t.Fatalf("replacement lost order or history: found=%v err=%v item=%#v", found, err, replaced)
 	}
 }
 

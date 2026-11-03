@@ -14,8 +14,8 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/configupdate"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/configupdate"
 )
 
 func TestRunConfigUpdateIODelegatesToService(t *testing.T) {
@@ -442,8 +442,7 @@ func TestWebConfigDTOFromAgentConfig_UsesRuntimeDefaults(t *testing.T) {
 		t.Fatalf("agent input mode default = %q, want empty (unconfigured)", defaults.Agent.InputMode)
 	}
 	if defaults.Agent.VoiceFollowupTimeoutMs == 0 ||
-		defaults.Agent.VoiceFirstTurnTimeoutMs == 0 ||
-		defaults.Agent.VoiceMaxResponseTokens == 0 {
+		defaults.Agent.VoiceFirstTurnTimeoutMs == 0 {
 		t.Fatalf("voice defaults were not populated: %+v", defaults.Agent)
 	}
 }

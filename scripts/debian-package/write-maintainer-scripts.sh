@@ -20,9 +20,9 @@ for phase in preinst postinst prerm postrm; do
     {
         printf '#!/bin/sh\nset -eu\nphase=%s\n' "${phase}"
         if [ "${phase}" = preinst ]; then cat "${contract_check}"; fi
-        printf 'runtime_config() {\npython3 - "$@" <<\x27AIDEN_RUNTIME_CONFIG\x27\n'
+        printf 'runtime_config() {\npython3 - "$@" <<\x27AICO_RUNTIME_CONFIG\x27\n'
         cat "${config_hook}"
-        printf '\nAIDEN_RUNTIME_CONFIG\n}\n'
+        printf '\nAICO_RUNTIME_CONFIG\n}\n'
         cat "${script_dir}/maintainer-script.sh"
     } > "${destination}/${phase}"
     chmod 0755 "${destination}/${phase}"

@@ -1407,7 +1407,7 @@ INDEX_HTML = r"""<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Aiden SkillOpt</title>
+  <title>Aico SkillOpt</title>
   <style>
     :root {
       --bg: #f4f4f4;
@@ -1742,7 +1742,7 @@ INDEX_HTML = r"""<!doctype html>
   <header class="topbar">
     <div class="brand">
       <div class="brand-mark">S</div>
-      <div class="brand-title">Aiden SkillOpt</div>
+      <div class="brand-title">Aico SkillOpt</div>
     </div>
     <div id="headerStatus" class="header-meta">Idle</div>
   </header>
@@ -1776,7 +1776,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="judge-inline">
             <label class="check-label"><input id="judgeEnabled" type="checkbox" checked> Enable judge</label>
             <div class="field"><label for="judgeModel">Judge model</label><input id="judgeModel" autocomplete="off" placeholder="agent.toml [model_settings.model].model"></div>
-            <div class="field"><label for="judgeApiKey">API key</label><input id="judgeApiKey" type="password" autocomplete="off" placeholder="AIDEN_BENCHMARK_JUDGE_API_KEY"></div>
+            <div class="field"><label for="judgeApiKey">API key</label><input id="judgeApiKey" type="password" autocomplete="off" placeholder="AICO_BENCHMARK_JUDGE_API_KEY"></div>
           </div>
           <div class="run-actions">
             <button id="runBtn" class="primary">Run selected target</button>
@@ -2147,7 +2147,7 @@ INDEX_HTML = r"""<!doctype html>
       document.getElementById('judgeModel').value = String(judge.model || DEFAULT_JUDGE_MODEL);
       const keyInput = document.getElementById('judgeApiKey');
       keyInput.value = '';
-      keyInput.placeholder = judge.has_api_key ? 'Saved; leave blank to keep' : 'AIDEN_BENCHMARK_JUDGE_API_KEY';
+      keyInput.placeholder = judge.has_api_key ? 'Saved; leave blank to keep' : 'AICO_BENCHMARK_JUDGE_API_KEY';
       const so = settings.skillopt || {};
       if(so.budget) document.getElementById('budget').value = String(so.budget);
       if(so.edit_budget) document.getElementById('editBudget').value = String(so.edit_budget);

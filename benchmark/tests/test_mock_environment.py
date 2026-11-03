@@ -14,6 +14,8 @@ import pytest
 from PIL import Image
 
 from runner import mock_environment as mock_environment_module
+from runner.assertions import evaluate_environment_state_assertions
+from runner.environment_state import read_environment_state
 from runner.mock_environment import MAX_REQUEST_BODY_BYTES, MockEnvironmentServer
 from runner.suite import MockEnvironmentSpec, MockToolResponseSpec, load_suite
 
@@ -32,12 +34,50 @@ def _json_request(url: str, method: str = "GET", payload: dict | None = None) ->
 
 def _task_mock_environment(suite_name: str, task_id: str):
     suite_path = (
-        Path(__file__).resolve().parents[1] / "suites" / "aiden_app" / suite_name
+        Path(__file__).resolve().parents[1] / "suites" / "aico_app" / suite_name
     )
     suite = load_suite(suite_path)
     task = next(task for task in suite.tasks if task.id == task_id)
     assert task.mock_environment is not None
     return suite_path, task.mock_environment
+
+
+@pytest.mark.parametrize("task_id,actions,errors", [
+    ("clipboard_read_recovers", [{"action": "read"}, {"action": "read"}], [True, False]),
+    ("clipboard_read_stops_on_failure", [{"action": "read"}], [True]),
+    ("clipboard_verify_ambiguous_write", [
+        {"action": "write", "text": "Cedar room 619"}, {"action": "read"},
+    ], [True, False]),
+])
+def test_recovery_state_is_readable_through_runner_contract(task_id, actions, errors):
+    suite_path = Path(__file__).resolve().parents[1] / "suites" / "tool_recovery_v1.json"
+    task = next(t for t in load_suite(suite_path).tasks if t.id == task_id)
+    server = MockEnvironmentServer(task.mock_environment, suite_path.parent)
+    base_url = server.start()
+
+    def state_passes():
+        state = read_environment_state(base_url, benchmark_task_id="recovery-test")
+        return all(c.passed for c in evaluate_environment_state_assertions(state, task.environment_assertions))
+
+    try:
+        assert not state_passes()
+        for index, (action, error) in enumerate(zip(actions, errors)):
+            result = _json_request(f"{base_url}/api/tools/bridge_clipboard", "POST", {"input": action})
+            assert result["is_error"] is error
+            assert state_passes() is (index == len(actions) - 1)
+        if task_id == "clipboard_verify_ambiguous_write":
+            _json_request(f"{base_url}/api/tools/bridge_clipboard", "POST", {"input": actions[0]})
+            assert not state_passes()
+        _json_request(f"{base_url}/api/setup", "POST", {})
+        assert not state_passes()
+        parsed = urllib.parse.urlparse(base_url)
+        for path in ("/state", "/route"):
+            unprotected = urllib.parse.urlunparse(parsed._replace(path=path))
+            with pytest.raises(urllib.error.HTTPError) as exc_info:
+                _json_request(unprotected, "POST", {})
+            assert exc_info.value.code == 404
+    finally:
+        server.stop()
 
 
 def test_mock_environment_wildcard_bind_advertises_loopback(tmp_path):
@@ -53,7 +93,7 @@ def test_mock_environment_wildcard_bind_advertises_loopback(tmp_path):
         assert server._httpd.server_address[0] == "0.0.0.0"
         parsed = urllib.parse.urlparse(base_url)
         assert parsed.hostname == "127.0.0.1"
-        assert parsed.path == f"/_aiden_mock/{server.auth_token}"
+        assert parsed.path == f"/_aico_mock/{server.auth_token}"
         health = _json_request(f"{base_url}/health")
         assert health["ok"] is True
         assert health["data"]["platform"] == "ios"

@@ -27,7 +27,7 @@ ROOT_CAUSE_CATEGORIES = {
     "insufficient_evidence",
 }
 BRIDGE_INACTIVE_SETUP_RE = re.compile(
-    r"AidenAdapterError:\s*setup tool\s+\S+\s+failed:.*mobilegym bridge episode is not active",
+    r"AicoAdapterError:\s*setup tool\s+\S+\s+failed:.*mobilegym bridge episode is not active",
     re.IGNORECASE,
 )
 
@@ -59,7 +59,7 @@ class AnalysisError(RuntimeError):
 
 
 SECRET_NAME_RE = re.compile(
-    r"(?i)(?P<prefix>[\"']?\b(api[_-]?key|token|password|secret|bearer|authorization|OPENROUTER_API_KEY|MODEL_API_KEY|AIDEN_MODEL_API_KEY|AIDEN_BENCHMARK_ANALYSIS_API_KEY|AIDEN_BENCHMARK_JUDGE_API_KEY|AIDEN_CONTROL_TOKEN)\b[\"']?\s*[:=]\s*)(?P<quote>[\"']?)(?P<value>[^\"'\s,}]+)(?P=quote)?"
+    r"(?i)(?P<prefix>[\"']?\b(api[_-]?key|token|password|secret|bearer|authorization|OPENROUTER_API_KEY|MODEL_API_KEY|AICO_MODEL_API_KEY|AICO_BENCHMARK_ANALYSIS_API_KEY|AICO_BENCHMARK_JUDGE_API_KEY|AICO_CONTROL_TOKEN)\b[\"']?\s*[:=]\s*)(?P<quote>[\"']?)(?P<value>[^\"'\s,}]+)(?P=quote)?"
 )
 BASIC_AUTH_RE = re.compile(r"(?i)authorization\s*:\s*basic\s+[A-Za-z0-9._~+/=-]{8,}")
 BEARER_RE = re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{12,}")
@@ -76,7 +76,7 @@ def _int_env(name: str, default: int) -> int:
 
 
 def config_from_env() -> AnalysisConfig:
-    enabled = os.environ.get("AIDEN_BENCHMARK_LLM_ANALYSIS", "").strip().lower() in {
+    enabled = os.environ.get("AICO_BENCHMARK_LLM_ANALYSIS", "").strip().lower() in {
         "1",
         "true",
         "yes",
@@ -84,19 +84,19 @@ def config_from_env() -> AnalysisConfig:
     }
     return AnalysisConfig(
         enabled=enabled,
-        model=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_MODEL")
-        or os.environ.get("AIDEN_BENCHMARK_JUDGE_MODEL")
+        model=os.environ.get("AICO_BENCHMARK_ANALYSIS_MODEL")
+        or os.environ.get("AICO_BENCHMARK_JUDGE_MODEL")
         or DEFAULT_MODEL,
-        base_url=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_BASE_URL")
-        or os.environ.get("AIDEN_BENCHMARK_JUDGE_BASE_URL")
+        base_url=os.environ.get("AICO_BENCHMARK_ANALYSIS_BASE_URL")
+        or os.environ.get("AICO_BENCHMARK_JUDGE_BASE_URL")
         or DEFAULT_BASE_URL,
-        max_log_bytes=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", DEFAULT_MAX_LOG_BYTES),
-        max_code_bytes=_int_env("AIDEN_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", DEFAULT_MAX_CODE_BYTES),
+        max_log_bytes=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_LOG_BYTES", DEFAULT_MAX_LOG_BYTES),
+        max_code_bytes=_int_env("AICO_BENCHMARK_ANALYSIS_MAX_CODE_BYTES", DEFAULT_MAX_CODE_BYTES),
         total_context_bytes=_int_env(
-            "AIDEN_BENCHMARK_ANALYSIS_TOTAL_CONTEXT_BYTES", DEFAULT_TOTAL_CONTEXT_BYTES
+            "AICO_BENCHMARK_ANALYSIS_TOTAL_CONTEXT_BYTES", DEFAULT_TOTAL_CONTEXT_BYTES
         ),
-        timeout_sec=_int_env("AIDEN_BENCHMARK_ANALYSIS_TIMEOUT_SEC", DEFAULT_TIMEOUT_SEC),
-        api_key_env=os.environ.get("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
+        timeout_sec=_int_env("AICO_BENCHMARK_ANALYSIS_TIMEOUT_SEC", DEFAULT_TIMEOUT_SEC),
+        api_key_env=os.environ.get("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV") or None,
     )
 
 
@@ -107,19 +107,19 @@ def resolve_analysis_api_key(cfg: AnalysisConfig) -> tuple[str, str]:
     if cfg.api_key_env:
         names.append(cfg.api_key_env)
     else:
-        env_name = os.environ.get("AIDEN_BENCHMARK_ANALYSIS_API_KEY_ENV")
+        env_name = os.environ.get("AICO_BENCHMARK_ANALYSIS_API_KEY_ENV")
         if env_name:
             names.append(env_name)
     names.extend(
-        ["AIDEN_BENCHMARK_ANALYSIS_API_KEY", "AIDEN_BENCHMARK_JUDGE_API_KEY"]
+        ["AICO_BENCHMARK_ANALYSIS_API_KEY", "AICO_BENCHMARK_JUDGE_API_KEY"]
     )
     for name in names:
         value = os.environ.get(name, "").strip()
         if value:
             return name, value
     raise AnalysisError(
-        "missing analysis API key: set AIDEN_BENCHMARK_ANALYSIS_API_KEY or "
-        "AIDEN_BENCHMARK_JUDGE_API_KEY"
+        "missing analysis API key: set AICO_BENCHMARK_ANALYSIS_API_KEY or "
+        "AICO_BENCHMARK_JUDGE_API_KEY"
     )
 
 
@@ -137,9 +137,9 @@ def redact_text(text: str, cfg: AnalysisConfig) -> str:
     names = [cfg.api_key_env] if cfg.api_key_env else []
     names.extend(
         [
-            "AIDEN_BENCHMARK_ANALYSIS_API_KEY",
-            "AIDEN_BENCHMARK_JUDGE_API_KEY",
-            "AIDEN_CONTROL_TOKEN",
+            "AICO_BENCHMARK_ANALYSIS_API_KEY",
+            "AICO_BENCHMARK_JUDGE_API_KEY",
+            "AICO_CONTROL_TOKEN",
         ]
     )
     if cfg.api_key_value:
@@ -589,7 +589,7 @@ def _collect_mobilegym_context(
             if isinstance(value, dict):
                 task_metadata[str(task_id)] = value
         terms.update(_terms_from_text(json.dumps(meta, ensure_ascii=False)))
-    for action_path in sorted(run_dir.glob("**/aiden_bridge_actions.json")):
+    for action_path in sorted(run_dir.glob("**/aico_bridge_actions.json")):
         excerpt, truncated = _read_excerpt(action_path, cfg.max_log_bytes, cfg, warnings)
         logs.append({"path": str(action_path.relative_to(run_dir)), "excerpt": excerpt, "truncated": truncated})
         terms.update(_terms_from_text(excerpt))
@@ -609,7 +609,7 @@ def _collect_mobilegym_context(
                 "errors": _extract_errors(row) or ([reason] if reason else []),
                 "trace_excerpt": redact_text(json.dumps(row, ensure_ascii=False)[: cfg.max_log_bytes], cfg),
                 "history_excerpt": redact_text(
-                    json.dumps(row.get("aiden_last_chat_history") or [], ensure_ascii=False)[: cfg.max_log_bytes],
+                    json.dumps(row.get("aico_last_chat_history") or [], ensure_ascii=False)[: cfg.max_log_bytes],
                     cfg,
                 ),
                 "log_refs": [
@@ -669,7 +669,7 @@ def _known_issue_hints(failures: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "summary": "MobileGym setup tools ran before the bridge episode was active.",
             "evidence": bridge_inactive_evidence,
             "suspected_cause": (
-                "AidenGoAgent reset/setup lifecycle invoked setup tool_sequence before "
+                "Aico Agent reset/setup lifecycle invoked setup tool_sequence before "
                 "bridge /episode/start and daemon /api/mobilegym/episode/start bound an active episode."
             ),
         }
@@ -689,7 +689,7 @@ def _mobilegym_status(row: dict[str, Any]) -> tuple[str, str]:
     execution = row.get("execution") if isinstance(row.get("execution"), dict) else {}
     stop_reason = str(execution.get("stop_reason") or row.get("stop_reason") or "")
     timeout_text = (error_text + stop_reason).lower()
-    if "timeout" in timeout_text or "aidenadaptertimeout" in timeout_text:
+    if "timeout" in timeout_text or "aicoadaptertimeout" in timeout_text:
         return "timeout", error_text or stop_reason
     if error_text or row.get("is_error") is True:
         return "error", error_text or stop_reason or "is_error"
@@ -841,8 +841,8 @@ def _apply_bridge_inactive_issue(issue: dict[str, Any], payload: dict[str, Any])
         payload["recommendations"] = recommendations
     lifecycle_rec = {
         "priority": "high",
-        "target": "benchmark/mobilegym/adapter/aiden_go_agent.py",
-        "suggestion": "仅在 bridge /episode/start 和 daemon /api/mobilegym/episode/start 激活 MobileGym episode 后，再执行 Aiden suite global_reset/setup。",
+        "target": "benchmark/mobilegym/adapter/aico_go_agent.py",
+        "suggestion": "Run Aico suite global_reset/setup only after bridge /episode/start and daemon /api/mobilegym/episode/start activate the MobileGym episode.",
     }
     if not any("/api/mobilegym/episode/start" in json.dumps(item, ensure_ascii=False) for item in recommendations):
         recommendations.insert(0, lifecycle_rec)

@@ -1,0 +1,11 @@
+[Unit]
+Description=Retry pending Aico Link suspend recovery
+
+[Timer]
+OnBootSec=15s
+OnUnitInactiveSec=10s
+AccuracySec=1s
+Unit=aico-suspend-recover.service
+
+[Install]
+WantedBy=aico.target

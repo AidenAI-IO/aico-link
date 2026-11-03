@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"aiden-agent/internal/agent/mnk"
+	"aico-agent/internal/agent/mnk"
 )
 
 type closeCountingDevice struct {

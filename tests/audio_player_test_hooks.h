@@ -2,7 +2,7 @@
 
 #include <chrono>
 
-namespace aiden {
+namespace aico {
 namespace test {
 
 enum class AudioPlayerOperation {
@@ -19,4 +19,4 @@ void unblock_audio_player_operation(AudioPlayerOperation operation);
 int max_concurrent_audio_player_operations();
 
 }  // namespace test
-}  // namespace aiden
+}  // namespace aico

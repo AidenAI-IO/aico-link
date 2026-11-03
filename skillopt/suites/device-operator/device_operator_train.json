@@ -67,7 +67,7 @@
       "id": "spotlight_type_exact_query",
       "category": "single_step",
       "description_for_judge": "Agent must focus the iPhone search field, type the exact query once, and verify the visible text.",
-      "prompt": "在搜索框里输入 Aiden-Device-2026。",
+      "prompt": "在搜索框里输入 Aico-Device-2026。",
       "rubric": [
         {
           "id": "field_focused_first",
@@ -75,7 +75,7 @@
         },
         {
           "id": "exact_text_visible",
-          "check": "Post-screenshot shows the exact text Aiden-Device-2026 in the search field."
+          "check": "Post-screenshot shows the exact text Aico-Device-2026 in the search field."
         },
         {
           "id": "typed_once",

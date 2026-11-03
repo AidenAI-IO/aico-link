@@ -1362,8 +1362,8 @@ func TestNormalizeSkillInstallURLGitHubTree(t *testing.T) {
 }
 
 func TestSkillManageTool_InstallQAGitHubURL(t *testing.T) {
-	if os.Getenv("AIDEN_E2E_SKILL_INSTALL") != "1" {
-		t.Skip("set AIDEN_E2E_SKILL_INSTALL=1 to run the live GitHub install check")
+	if os.Getenv("AICO_E2E_SKILL_INSTALL") != "1" {
+		t.Skip("set AICO_E2E_SKILL_INSTALL=1 to run the live GitHub install check")
 	}
 
 	dir := t.TempDir()

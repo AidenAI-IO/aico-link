@@ -7,7 +7,7 @@
 #include <mutex>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 struct FrameBufferFrame {
     FrameMetadata metadata;
@@ -39,4 +39,4 @@ private:
     mutable std::mutex mutex_;
 };
 
-}  // namespace aiden
+}  // namespace aico

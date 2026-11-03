@@ -50,10 +50,10 @@ func TestBuildTTSProviderConfigForAcceptsRecordName(t *testing.T) {
 }
 
 func TestBuildTTSProviderConfigForResolvesAPIKeyEnvironmentReference(t *testing.T) {
-	t.Setenv("AIDEN_TEST_SWITCH_KEY", "sk-env-switch")
+	t.Setenv("AICO_TEST_SWITCH_KEY", "sk-env-switch")
 	cfg := Config{
 		TTSProviders: map[string]TTSProvider{
-			"fish-main": {Type: "fish-audio", APIKey: "$AIDEN_TEST_SWITCH_KEY"},
+			"fish-main": {Type: "fish-audio", APIKey: "$AICO_TEST_SWITCH_KEY"},
 		},
 	}
 
@@ -64,10 +64,10 @@ func TestBuildTTSProviderConfigForResolvesAPIKeyEnvironmentReference(t *testing.
 }
 
 func TestBuildTTSProviderConfigForDoesNotFallbackWhenRecordEnvironmentReferenceIsUnavailable(t *testing.T) {
-	t.Setenv("AIDEN_TEST_MISSING_SWITCH_KEY", "")
+	t.Setenv("AICO_TEST_MISSING_SWITCH_KEY", "")
 	cfg := Config{
 		TTSProviders: map[string]TTSProvider{
-			"fish-main": {Type: "fish-audio", APIKey: "$AIDEN_TEST_MISSING_SWITCH_KEY"},
+			"fish-main": {Type: "fish-audio", APIKey: "$AICO_TEST_MISSING_SWITCH_KEY"},
 		},
 		TTS: TTSConfig{Provider: "minimax", APIKey: "active-provider-secret"},
 	}

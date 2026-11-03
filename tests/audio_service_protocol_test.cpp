@@ -2,16 +2,16 @@
 #include "audio_service_protocol.h"
 #include <string>
 
-using aiden::AidenServiceStatus;
-using aiden::AudioFormat;
-using aiden::audio_format_to_json;
-using aiden::audio_format_from_json;
-using aiden::audio_request_json;
-using aiden::audio_response_json;
-using aiden::audio_response_status;
-using aiden::audio_json_u64;
-using aiden::audio_json_bool;
-using aiden::audio_json_u32;
+using aico::AicoServiceStatus;
+using aico::AudioFormat;
+using aico::audio_format_to_json;
+using aico::audio_format_from_json;
+using aico::audio_request_json;
+using aico::audio_response_json;
+using aico::audio_response_status;
+using aico::audio_json_u64;
+using aico::audio_json_bool;
+using aico::audio_json_u32;
 
 // -----------------------------------------------------------------------
 // AudioFormat encode / decode
@@ -68,12 +68,12 @@ TEST_CASE("audio_request_json appends extra fields") {
 }
 
 TEST_CASE("audio_response_json wraps status with no extra fields") {
-    std::string json = audio_response_json(AidenServiceStatus::OK);
+    std::string json = audio_response_json(AicoServiceStatus::OK);
     CHECK(json == R"({"status":"OK"})");
 }
 
 TEST_CASE("audio_response_json appends extra fields") {
-    std::string json = audio_response_json(AidenServiceStatus::TIMEOUT, R"("detail":"poll expired")");
+    std::string json = audio_response_json(AicoServiceStatus::TIMEOUT, R"("detail":"poll expired")");
     CHECK(json == R"({"status":"TIMEOUT","detail":"poll expired"})");
 }
 
@@ -82,15 +82,15 @@ TEST_CASE("audio_response_json appends extra fields") {
 // -----------------------------------------------------------------------
 
 TEST_CASE("audio_response_status parses status field") {
-    CHECK(audio_response_status(R"({"status":"OK"})") == AidenServiceStatus::OK);
-    CHECK(audio_response_status(R"({"status":"TIMEOUT"})") == AidenServiceStatus::TIMEOUT);
-    CHECK(audio_response_status(R"({"status":"SESSION_NOT_FOUND"})") == AidenServiceStatus::SESSION_NOT_FOUND);
+    CHECK(audio_response_status(R"({"status":"OK"})") == AicoServiceStatus::OK);
+    CHECK(audio_response_status(R"({"status":"TIMEOUT"})") == AicoServiceStatus::TIMEOUT);
+    CHECK(audio_response_status(R"({"status":"SESSION_NOT_FOUND"})") == AicoServiceStatus::SESSION_NOT_FOUND);
 }
 
 TEST_CASE("audio_response_status returns INTERNAL_ERROR for bad input") {
-    CHECK(audio_response_status(nullptr)        == AidenServiceStatus::INTERNAL_ERROR);
-    CHECK(audio_response_status("not json")     == AidenServiceStatus::TRANSPORT_ERROR);
-    CHECK(audio_response_status(R"({"x":"y"})") == AidenServiceStatus::INTERNAL_ERROR);
+    CHECK(audio_response_status(nullptr)        == AicoServiceStatus::INTERNAL_ERROR);
+    CHECK(audio_response_status("not json")     == AicoServiceStatus::TRANSPORT_ERROR);
+    CHECK(audio_response_status(R"({"x":"y"})") == AicoServiceStatus::INTERNAL_ERROR);
 }
 
 TEST_CASE("audio_json_u64 parses string-encoded uint64") {

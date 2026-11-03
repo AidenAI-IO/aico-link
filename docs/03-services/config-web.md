@@ -5,7 +5,7 @@ sidebar_position: 2
 # Config Web: Web-based Configuration Interface
 
 Config Web is the bundled browser client served by the `config-web` subcommand
-of the Go Agent binary (`/usr/lib/aiden/agent`). Device operations are exposed by
+of the Go Agent binary (`/usr/lib/aico/agent`). Device operations are exposed by
 the independently mountable [Device Management API](device-management-api.md),
 so the page can be replaced or removed without coupling those operations to the
 static UI. Configuration changes are persisted to
@@ -23,20 +23,20 @@ and USB-ECM access use the same API behavior.
 | --- | --- |
 | Port | `80` |
 | Config | `/userdata/agent/agent.toml` |
-| Binary | `/usr/lib/aiden/agent config-web` |
-| Web root | `/usr/share/aiden/config-web` |
+| Binary | `/usr/lib/aico/agent config-web` |
+| Web root | `/usr/share/aico/config-web` |
 
 ## Startup
 
 ```bash
-systemctl start aiden-config-web.service
-systemctl stop aiden-config-web.service
-systemctl restart aiden-config-web.service
-systemctl status aiden-config-web.service
+systemctl start aico-config-web.service
+systemctl stop aico-config-web.service
+systemctl restart aico-config-web.service
+systemctl status aico-config-web.service
 ```
 
 The service is enabled through the Debian systemd preset and is also pulled in
-by `aiden.target`.
+by `aico.target`.
 
 Config Web treats the Agent configuration as a recovery resource. A readable,
 parseable `agent.toml` with invalid values does not stop port 80 from starting:

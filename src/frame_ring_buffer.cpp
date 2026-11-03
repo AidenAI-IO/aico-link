@@ -1,6 +1,6 @@
 #include "frame_ring_buffer.h"
 
-namespace aiden {
+namespace aico {
 
 FrameRingBuffer::FrameRingBuffer(size_t capacity)
     : capacity_(capacity), next_seq_(1) {}
@@ -127,4 +127,4 @@ std::vector<FrameMetadata> FrameRingBuffer::list_frames(size_t count) const {
     return out;
 }
 
-}  // namespace aiden
+}  // namespace aico

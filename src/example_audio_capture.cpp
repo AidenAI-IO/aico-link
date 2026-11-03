@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include <stdio.h>
 #include <signal.h>
 #include <stdint.h>
@@ -12,7 +12,7 @@ void signal_handler(int) {
     quit = 1;
 }
 
-void on_audio_frame(const aiden::AudioFrame& frame) {
+void on_audio_frame(const aico::AudioFrame& frame) {
     frame_count++;
     if (audio_fp) {
         // Data is interleaved stereo (L R L R...), extract left channel only
@@ -30,7 +30,7 @@ int main(int argc, char* argv[]) {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    aiden::AudioConfig config;
+    aico::AudioConfig config;
     config.device_name = (argc > 1) ? argv[1] : config.device_name;
     config.sample_rate = 16000;
     config.channels = 1;
@@ -42,7 +42,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    aiden::AudioCapture capture;
+    aico::AudioCapture capture;
 
     printf("Initializing audio capture...\n");
     if (!capture.init(config)) {

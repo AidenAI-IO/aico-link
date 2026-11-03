@@ -1,6 +1,6 @@
 # Three-Channel Releases
 
-All production releases use **Aiden Channel Release** (`.github/workflows/release.yml`),
+All production releases use **Aico Link Channel Release** (`.github/workflows/release.yml`),
 which can be triggered manually or called by the primary and backup build entry points.
 **Debian Build (scheduled / primary)** checks `main` hourly and automatically publishes
 runtime changes to `dev`. `staging` and `prod` remain manual; fallback and standalone
@@ -9,7 +9,7 @@ business-package workflows only produce build artifacts.
 ## Release decisions
 
 Each channel compares against its own last successful release, including file contents,
-paths, modes, and the SDK gitlink commit in the Git tree. Drafts, failed builds, and
+paths, modes, and the vendored SDK files in the Git tree. Drafts, failed builds, and
 workflow artifacts do not advance the baseline.
 
 | Comparison result | Build and publish | Base contract |
@@ -45,7 +45,8 @@ not differences from their common ancestor. Thus an identical-content squash doe
 trigger a release, while system-content changes still require a new OTA contract.
 The Full comparison link in release notes also uses the two-endpoint comparison; commit
 summaries retain messages from the new history.
-GitHub release notes no longer list individual files. OTA releases add a notice in the form
+GitHub release descriptions begin with channel and kind metadata rather than repeating the
+release title, and no longer list individual files. OTA releases add a notice in the form
 `Commit <sha> (and more) requires OTA update.`, with the SHA linked to the first system-change
 commit found from oldest to newest in the release range; `(and more)` appears only when further
 relevant commits exist. The search is not limited by the 100-commit summary, skips reverted paths
@@ -77,12 +78,12 @@ For example, if dev's OTA contract is `4`, its next two business packages still 
 After another dev system OTA, later dev packages use the new contract; staging/prod
 continue to use their own published bases.
 
-`AIDEN_PLATFORM_CONTRACT` is decimal text such as `1`; generated JSON fields and package
+`AICO_PLATFORM_CONTRACT` is decimal text such as `1`; generated JSON fields and package
 compatibility bounds `min` / `max_exclusive` are integers. The old `"1.0.0"` format is rejected.
 
 `scripts/release/contract.py` generates all of the following from the release plan:
 
-- `/usr/lib/aiden/platform/contract.json` in the rootfs.
+- `/usr/lib/aico/platform/contract.json` in the rootfs.
 - `release-manifest.json` and pre-install checks in the `.deb`.
 - The `platform-contract.json` release asset.
 
@@ -100,7 +101,7 @@ without the field are treated as 0.
 
 After merging the workflow into the GitHub default branch:
 
-1. Open **Aiden Channel Release**, choose channel and source_ref (default main;
+1. Open **Aico Link Channel Release**, choose channel and source_ref (default main;
    a commit SHA is accepted).
 2. Keep `plan_only=true` and inspect the plan, contract, and change list in Summary and
    the `release-plan` artifact.
@@ -110,7 +111,7 @@ After merging the workflow into the GitHub default branch:
 The primary **Debian Build (scheduled / primary)** (`build-scheduled.yml`) and backup
 **Debian Build (backup / self-hosted-02)** (`build-backup.yml`) expose the same
 `channel`, `source_ref`, `version`, `force_ota`, `plan_only`, and `publish` parameters.
-OTAs are fixed to `aiden-hosted-01` and `aiden-hosted-02`, respectively; business packages
+OTAs are fixed to `aico-hosted-01` and `aico-hosted-02`, respectively; business packages
 are still built on GitHub-hosted Ubuntu. Manual runs of both entry points default to
 `channel=dev`, `source_ref=main`, `plan_only=false`, `publish=true`, `dry_run=false`,
 and `apt_only=false`, which builds and publishes validated artifacts.
@@ -145,10 +146,15 @@ it can be passed to the called publish job; planning and build jobs remain read-
 Repository Actions permissions must allow it. Configuring approvers and allowed release
 branches for the `staging` and `prod` Environments is recommended.
 
-Firmware can use `aiden-hosted-01`, `aiden-hosted-02`, or `ubuntu-24.04`; business
+Firmware can use `aico-hosted-01`, `aico-hosted-02`, or `ubuntu-24.04`; business
 packages use GitHub-hosted Ubuntu. Firmware reuses `build.yml` SDK cleanup, toolchain,
 cache, signing, and final audit. The supplied source_ref is resolved once and all later
 steps pin that SHA; the commit must contain this release tooling.
+
+The canonical runner inputs resolve through repository variables
+`AICO_RUNNER_PRIMARY` and `AICO_RUNNER_BACKUP`. Their defaults remain the existing
+GitHub registrations `aiden-hosted-01` and `aiden-hosted-02`; set the variables when
+those external registrations change. Benchmark jobs use the same primary variable.
 
 All channels share one workflow concurrency group, and release history is rechecked
 before publication. GitHub concurrency is not an unlimited queue: one running and one
@@ -163,7 +169,7 @@ environment; macOS can inspect plans and artifacts.
 
 ```bash
 python3 scripts/release/release.py plan \
-  --repo AidenAI-IO/aiden-firmware --channel dev
+  --repo AidenAI-IO/aico-link --channel dev
 
 # Clean working tree; HEAD must match source_commit in the plan.
 # OTA builds also require the signing/trusted-public-key variables used by debian_build.sh.

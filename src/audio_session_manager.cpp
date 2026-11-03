@@ -1,11 +1,11 @@
 #include "audio_session_manager.h"
 #include "audio_volume_state.h"
-#include "aiden_log.h"
+#include "aico_log.h"
 #include <chrono>
 #include <stdio.h>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 AudioSessionManager::AudioSessionManager()
     : AudioSessionManager(nullptr) {}
@@ -25,13 +25,13 @@ AudioSessionManager::AudioSessionManager(const char* volume_state_path)
         if (load_status == AudioVolumeStateLoadStatus::LOADED) {
             playback_volume_ = persisted_volume;
             last_persisted_playback_volume_ = persisted_volume;
-            AIDEN_LOG_INFO("volume", "state_loaded", "volume=%d path=%s",
+            AICO_LOG_INFO("volume", "state_loaded", "volume=%d path=%s",
                            playback_volume_, volume_state_path_.c_str());
         } else if (load_status == AudioVolumeStateLoadStatus::MISSING) {
             last_persisted_playback_volume_ = playback_volume_;
         } else if (load_status == AudioVolumeStateLoadStatus::INVALID ||
                    load_status == AudioVolumeStateLoadStatus::ERROR) {
-            AIDEN_LOG_WARN("volume", "state_ignored", "path=%s error=%s",
+            AICO_LOG_WARN("volume", "state_ignored", "path=%s error=%s",
                            volume_state_path_.c_str(), error.c_str());
         }
     }
@@ -63,7 +63,7 @@ bool AudioSessionManager::persist_playback_volume_if_changed(int volume) {
 
     std::string error;
     if (!save_playback_volume_state(volume_state_path_.c_str(), volume, &error)) {
-        AIDEN_LOG_ERROR("volume", "state_persist_failed", "path=%s error=%s",
+        AICO_LOG_ERROR("volume", "state_persist_failed", "path=%s error=%s",
                         volume_state_path_.c_str(), error.c_str());
         return false;
     }
@@ -76,7 +76,7 @@ bool AudioSessionManager::persist_playback_volume_if_changed(int volume) {
 // Recording
 // -----------------------------------------------------------------------
 
-AidenServiceStatus AudioSessionManager::start_recording(const AudioFormat& fmt,
+AicoServiceStatus AudioSessionManager::start_recording(const AudioFormat& fmt,
                                                          RecordStartResult* out) {
     // Serialize the entire teardown+start sequence so two concurrent
     // start_recording() calls cannot overlap hardware access.
@@ -95,7 +95,7 @@ AidenServiceStatus AudioSessionManager::start_recording(const AudioFormat& fmt,
     for (size_t i = 0; i < stale_records.size(); ++i) {
         stale_records[i].second->stop();
         stale_records[i].second->join();
-        AIDEN_LOG_INFO("recording", "session_replaced", "session_id=%llu",
+        AICO_LOG_INFO("recording", "session_replaced", "session_id=%llu",
                        static_cast<unsigned long long>(stale_records[i].first));
     }
 
@@ -106,7 +106,7 @@ AidenServiceStatus AudioSessionManager::start_recording(const AudioFormat& fmt,
     }
     auto session = std::make_shared<AudioRecordSession>(id, fmt);
     if (!session->start()) {
-        return AidenServiceStatus::INTERNAL_ERROR;
+        return AicoServiceStatus::INTERNAL_ERROR;
     }
     out->session_id = id;
     {
@@ -114,12 +114,12 @@ AidenServiceStatus AudioSessionManager::start_recording(const AudioFormat& fmt,
         record_sessions_[id] = std::move(session);
         record_last_active_[id] = now;
     }
-    AIDEN_LOG_INFO("recording", "session_started", "session_id=%llu",
+    AICO_LOG_INFO("recording", "session_started", "session_id=%llu",
                    static_cast<unsigned long long>(id));
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
-AidenServiceStatus AudioSessionManager::read_record_chunk(uint64_t session_id,
+AicoServiceStatus AudioSessionManager::read_record_chunk(uint64_t session_id,
                                                            uint32_t timeout_ms,
                                                            AudioChunkResult* out) {
     reap_idle_sessions();
@@ -130,13 +130,13 @@ AidenServiceStatus AudioSessionManager::read_record_chunk(uint64_t session_id,
         const Clock::time_point now = Clock::now();
         auto it = record_sessions_.find(session_id);
         if (it == record_sessions_.end()) {
-            return AidenServiceStatus::SESSION_NOT_FOUND;
+            return AicoServiceStatus::SESSION_NOT_FOUND;
         }
         session = it->second;
         record_last_active_[session_id] = now;
     }
     // pop_chunk blocks without holding the manager lock.
-    AidenServiceStatus status = session->pop_chunk(timeout_ms, out);
+    AicoServiceStatus status = session->pop_chunk(timeout_ms, out);
 
     // Clean up stopped sessions lazily.
     if (out->end_of_stream) {
@@ -147,54 +147,54 @@ AidenServiceStatus AudioSessionManager::read_record_chunk(uint64_t session_id,
     return status;
 }
 
-AidenServiceStatus AudioSessionManager::stop_recording(uint64_t session_id) {
+AicoServiceStatus AudioSessionManager::stop_recording(uint64_t session_id) {
     std::shared_ptr<AudioRecordSession> session;
     {
         std::lock_guard<std::mutex> lock(mutex_);
         auto it = record_sessions_.find(session_id);
         if (it == record_sessions_.end()) {
-            return AidenServiceStatus::SESSION_NOT_FOUND;
+            return AicoServiceStatus::SESSION_NOT_FOUND;
         }
         session = it->second;
         record_last_active_[session_id] = Clock::now();
     }
     session->stop();
-    AIDEN_LOG_INFO("recording", "session_stopped", "session_id=%llu",
+    AICO_LOG_INFO("recording", "session_stopped", "session_id=%llu",
                    static_cast<unsigned long long>(session_id));
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
 // -----------------------------------------------------------------------
 // Playback
 // -----------------------------------------------------------------------
 
-AidenServiceStatus AudioSessionManager::start_playback(const AudioFormat& fmt,
+AicoServiceStatus AudioSessionManager::start_playback(const AudioFormat& fmt,
                                                          PlaybackStartResult* out) {
     const Clock::time_point now = Clock::now();
     std::lock_guard<std::mutex> lock(mutex_);
     if (!playback_sessions_.empty() ||
         draining_playback_state_->count.load(std::memory_order_acquire) > 0) {
-        AIDEN_LOG_WARN("playback", "session_start_rejected", "reason=active_or_draining");
-        return AidenServiceStatus::SERVICE_RECOVERING;
+        AICO_LOG_WARN("playback", "session_start_rejected", "reason=active_or_draining");
+        return AicoServiceStatus::SERVICE_RECOVERING;
     }
     uint64_t id = next_session_id();
     auto session = std::make_shared<AudioPlaybackSession>(id, fmt);
     if (!session->start()) {
-        return AidenServiceStatus::INTERNAL_ERROR;
+        return AicoServiceStatus::INTERNAL_ERROR;
     }
     if (!session->set_volume(playback_volume_)) {
         session->stop();
-        return AidenServiceStatus::INTERNAL_ERROR;
+        return AicoServiceStatus::INTERNAL_ERROR;
     }
     out->session_id = id;
     playback_sessions_[id] = std::move(session);
     playback_last_active_[id] = now;
-    AIDEN_LOG_INFO("playback", "session_started", "session_id=%llu volume=%d",
+    AICO_LOG_INFO("playback", "session_started", "session_id=%llu volume=%d",
                    static_cast<unsigned long long>(id), playback_volume_);
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
-AidenServiceStatus AudioSessionManager::write_play_chunk(uint64_t session_id,
+AicoServiceStatus AudioSessionManager::write_play_chunk(uint64_t session_id,
                                                           const uint8_t* data,
                                                           size_t len,
                                                           bool is_final) {
@@ -206,14 +206,14 @@ AidenServiceStatus AudioSessionManager::write_play_chunk(uint64_t session_id,
         const Clock::time_point now = Clock::now();
         auto it = playback_sessions_.find(session_id);
         if (it == playback_sessions_.end()) {
-            return AidenServiceStatus::SESSION_NOT_FOUND;
+            return AicoServiceStatus::SESSION_NOT_FOUND;
         }
         session = it->second;
         playback_last_active_[session_id] = now;
     }
-    AidenServiceStatus status = session->push_chunk(data, len, is_final);
+    AicoServiceStatus status = session->push_chunk(data, len, is_final);
 
-    if (is_final && status == AidenServiceStatus::OK) {
+    if (is_final && status == AicoServiceStatus::OK) {
         // Move the session into a draining set so no further writes are
         // accepted, but stop_playback() can still interrupt the tail drain.
         std::shared_ptr<AudioPlaybackSession> owned;
@@ -251,7 +251,7 @@ AidenServiceStatus AudioSessionManager::write_play_chunk(uint64_t session_id,
     return status;
 }
 
-AidenServiceStatus AudioSessionManager::stop_playback(uint64_t session_id) {
+AicoServiceStatus AudioSessionManager::stop_playback(uint64_t session_id) {
     std::shared_ptr<AudioPlaybackSession> session;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -264,21 +264,21 @@ AidenServiceStatus AudioSessionManager::stop_playback(uint64_t session_id) {
             std::lock_guard<std::mutex> draining_lock(draining_playback_state_->mutex);
             auto draining_it = draining_playback_state_->sessions.find(session_id);
             if (draining_it == draining_playback_state_->sessions.end()) {
-                return AidenServiceStatus::SESSION_NOT_FOUND;
+                return AicoServiceStatus::SESSION_NOT_FOUND;
             }
             session = draining_it->second;
             draining_playback_state_->sessions.erase(draining_it);
         }
     }
     session->stop();
-    AIDEN_LOG_INFO("playback", "session_stopped", "session_id=%llu",
+    AICO_LOG_INFO("playback", "session_stopped", "session_id=%llu",
                    static_cast<unsigned long long>(session_id));
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
-AidenServiceStatus AudioSessionManager::set_playback_volume(int volume) {
+AicoServiceStatus AudioSessionManager::set_playback_volume(int volume) {
     if (volume < 0 || volume > 100) {
-        return AidenServiceStatus::INTERNAL_ERROR;
+        return AicoServiceStatus::INTERNAL_ERROR;
     }
 
     std::lock_guard<std::mutex> volume_lock(volume_set_mutex_);
@@ -299,21 +299,21 @@ AidenServiceStatus AudioSessionManager::set_playback_volume(int volume) {
 
     for (size_t i = 0; i < sessions.size(); ++i) {
         if (!sessions[i]->set_volume(volume)) {
-            return AidenServiceStatus::INTERNAL_ERROR;
+            return AicoServiceStatus::INTERNAL_ERROR;
         }
     }
     if (!persist_playback_volume_if_changed(volume)) {
-        return AidenServiceStatus::INTERNAL_ERROR;
+        return AicoServiceStatus::INTERNAL_ERROR;
     }
-    AIDEN_LOG_INFO("volume", "updated", "volume=%d", volume);
-    return AidenServiceStatus::OK;
+    AICO_LOG_INFO("volume", "updated", "volume=%d", volume);
+    return AicoServiceStatus::OK;
 }
 
-AidenServiceStatus AudioSessionManager::get_playback_volume(uint32_t* out) const {
-    if (!out) return AidenServiceStatus::INTERNAL_ERROR;
+AicoServiceStatus AudioSessionManager::get_playback_volume(uint32_t* out) const {
+    if (!out) return AicoServiceStatus::INTERNAL_ERROR;
     std::lock_guard<std::mutex> lock(mutex_);
     *out = static_cast<uint32_t>(playback_volume_);
-    return AidenServiceStatus::OK;
+    return AicoServiceStatus::OK;
 }
 
 // -----------------------------------------------------------------------
@@ -378,14 +378,14 @@ void AudioSessionManager::reap_idle_sessions() {
 
 	for (size_t i = 0; i < expired_records.size(); ++i) {
 		expired_records[i].second->stop();
-		AIDEN_LOG_INFO("recording", "idle_session_reaped", "session_id=%llu",
+		AICO_LOG_INFO("recording", "idle_session_reaped", "session_id=%llu",
 		               static_cast<unsigned long long>(expired_records[i].first));
 	}
 	for (size_t i = 0; i < expired_playbacks.size(); ++i) {
 		expired_playbacks[i].second->stop();
-		AIDEN_LOG_INFO("playback", "idle_session_reaped", "session_id=%llu",
+		AICO_LOG_INFO("playback", "idle_session_reaped", "session_id=%llu",
                        static_cast<unsigned long long>(expired_playbacks[i].first));
     }
 }
 
-}  // namespace aiden
+}  // namespace aico

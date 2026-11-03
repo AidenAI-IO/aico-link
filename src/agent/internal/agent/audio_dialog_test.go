@@ -1,14 +1,17 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,9 +19,92 @@ import (
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
 
-	"aiden-agent/internal/agent/model"
-	ttsmodule "aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/model"
+	ttsmodule "aico-agent/internal/agent/tts"
+	"aico-agent/internal/stream"
 )
+
+func TestAudioDialogForwardsCurrentSTTTranscriptEventsOnly(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 2)
+	session := &streamingSTTSession{events: events}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan struct {
+		sessionID uint64
+		event     stream.TranscriptEvent
+	}, 1)
+	dialog.SetSTTTranscriptObserver(func(sessionID uint64, event stream.TranscriptEvent) {
+		observed <- struct {
+			sessionID uint64
+			event     stream.TranscriptEvent
+		}{sessionID: sessionID, event: event}
+	})
+
+	go dialog.forwardRecordSTTEvents(42, session)
+	want := stream.NewTranscriptHypothesis("segment-1", 1, "hello")
+	events <- want
+	select {
+	case got := <-observed:
+		if got.sessionID != 42 || !reflect.DeepEqual(got.event, want) {
+			t.Fatalf("observed = %#v, want session 42 event %#v", got, want)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for transcript observer")
+	}
+
+	dialog.recordSTTMu.Lock()
+	dialog.recordSTT = nil
+	dialog.recordSTTMu.Unlock()
+	events <- stream.NewTranscriptHypothesis("segment-1", 2, "stale")
+	close(events)
+	select {
+	case got := <-observed:
+		t.Fatalf("stale transcript reached observer: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAudioDialogTranscriptObserverStopsWhenSessionCloses(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 1)
+	session := &streamingSTTSession{
+		events:     events,
+		eventsDone: make(chan struct{}),
+	}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan stream.TranscriptEvent, 1)
+	dialog.SetSTTTranscriptObserver(func(_ uint64, event stream.TranscriptEvent) {
+		observed <- event
+	})
+
+	go dialog.forwardRecordSTTEvents(7, session)
+	_ = session.Close()
+	events <- stream.NewTranscriptHypothesis("segment-1", 1, "late")
+	select {
+	case got := <-observed:
+		t.Fatalf("closed session forwarded transcript: %#v", got)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestAudioDialogTranscriptObserverDropsBufferedEventFromClosedSession(t *testing.T) {
+	events := make(chan stream.TranscriptEvent, 1)
+	session := &streamingSTTSession{events: events, eventsDone: make(chan struct{})}
+	dialog := &AudioDialog{recordSTT: session}
+	observed := make(chan stream.TranscriptEvent, 1)
+	dialog.SetSTTTranscriptObserver(func(_ uint64, event stream.TranscriptEvent) {
+		observed <- event
+	})
+
+	events <- stream.NewTranscriptHypothesis("segment-1", 1, "late")
+	if err := session.Close(); err != nil {
+		t.Fatalf("close session: %v", err)
+	}
+	dialog.forwardRecordSTTEvents(7, session)
+	select {
+	case event := <-observed:
+		t.Fatalf("closed session forwarded buffered transcript: %#v", event)
+	default:
+	}
+}
 
 func waitForAudioDialogRecordSTT(t *testing.T, dialog *AudioDialog) {
 	t.Helper()
@@ -114,7 +200,7 @@ func TestAudioDialogStartRecordingRetriesUntilAudioServiceAvailable(t *testing.T
 		recordingStartRetryInterval = oldInterval
 	})
 
-	socketDir, err := os.MkdirTemp("/tmp", "aiden-audio-dialog-*")
+	socketDir, err := os.MkdirTemp("/tmp", "aico-audio-dialog-*")
 	if err != nil {
 		t.Fatalf("create temp socket dir: %v", err)
 	}
@@ -308,6 +394,8 @@ func TestAudioDialogStopRecordingFallsBackToOneShotWhenStreamingFinalizeTimesOut
 
 	socketPath := startFakeAudioServiceSocket(t, func(req audioRequest) (audioResponse, []byte) {
 		switch req.Op {
+		case "read_record_chunk":
+			return audioResponse{Status: "OK", EndOfStream: true}, []byte{5, 0, 6, 0}
 		case "stop_recording":
 			return audioResponse{Status: "OK"}, nil
 		default:
@@ -358,6 +446,10 @@ func TestAudioDialogStopRecordingFallsBackToOneShotWhenStreamingFinalizeTimesOut
 	}
 	if len(sttClient.inputs) != 1 {
 		t.Fatalf("expected fallback one-shot STT call, got %d", len(sttClient.inputs))
+	}
+	wantWAV := pcm16MonoToWAV([]int16{1, 2, 3, 4, 5, 6}, 16000)
+	if !bytes.Equal(sttClient.inputs[0], wantWAV) {
+		t.Fatal("one-shot fallback omitted drained tail")
 	}
 	select {
 	case <-uploader.closed:
@@ -1182,6 +1274,46 @@ func (m *blockingFirstCallModel) Spec() model.ModelSpec {
 
 func (m *blockingFirstCallModel) CallOptions() []chains.ChainCallOption { return nil }
 
+func TestAudioDialogRunAgentTurnUsesModelMaxResponseTokens(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		maxTokens int
+	}{
+		{name: "default", maxTokens: DefaultConfig().Model.MaxResponseTokens},
+		{name: "custom", maxTokens: 4096},
+		{name: "zero", maxTokens: 0},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := withTestConfigDir(t, Config{
+				Model: ModelConfig{Provider: "fake", MaxResponseTokens: tt.maxTokens},
+			})
+			model := &scriptedModel{responses: roleDirectResponses("ok")}
+			models := NewModelManager(cfg.Model, ProxyConfig{})
+			models.model = model
+			runtime := NewRuntimeWithDeps(
+				cfg, models, NewMemoryManager(""),
+				&ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex(),
+			)
+			// The runtime owns the current model settings; a live voice dialog
+			// may still hold the configuration from before a model reload.
+			dialogConfig := cfg
+			dialogConfig.Model.MaxResponseTokens = 128
+			dialog := &AudioDialog{config: dialogConfig}
+			if _, err := dialog.RunAgentTurn(context.Background(), TurnInput{InputText: "hello"}, runtime); err != nil {
+				t.Fatalf("RunAgentTurn() error = %v", err)
+			}
+			if len(model.maxTokens) == 0 {
+				t.Fatal("voice turn did not call the model")
+			}
+			for i, got := range model.maxTokens {
+				if got != tt.maxTokens {
+					t.Fatalf("model call %d max tokens = %d, want %d", i, got, tt.maxTokens)
+				}
+			}
+		})
+	}
+}
+
 func TestAudioDialogRunAgentTurnCommitsVoicePreRunTelemetry(t *testing.T) {
 	plane := &capturingEpisodePlane{}
 	model := &scriptedModel{responses: roleDirectResponses("ok")}
@@ -1189,7 +1321,6 @@ func TestAudioDialogRunAgentTurnCommitsVoicePreRunTelemetry(t *testing.T) {
 		Model:                    ModelConfig{Provider: "fake"},
 		Audio:                    AudioConfig{SampleRate: 16000},
 		VoiceStreamingTTSEnabled: boolPtr(true),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,
@@ -1245,7 +1376,6 @@ func TestAudioDialogRunAgentTurnDoesNotWaitForAgentSendPromptDrain(t *testing.T)
 	cfg := withTestConfigDir(t, Config{
 		Model:                    ModelConfig{Provider: "fake"},
 		VoiceStreamingTTSEnabled: boolPtr(false),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,
@@ -1289,7 +1419,6 @@ func TestAudioDialogRunAgentTurnDoesNotWaitForAgentSendPromptStart(t *testing.T)
 	cfg := withTestConfigDir(t, Config{
 		Model:                    ModelConfig{Provider: "fake"},
 		VoiceStreamingTTSEnabled: boolPtr(false),
-		VoiceMaxResponseTokens:   64,
 	})
 	runtime := NewRuntimeWithDeps(
 		cfg,
@@ -1440,5 +1569,133 @@ func serveDelayedStartRecording(t *testing.T, socketPath string, ready chan<- st
 			close(ready)
 			return
 		}
+	}
+}
+
+// Finalization must observe the complete upload, not just the live chunks.
+type tailCheckingSTTUploader struct {
+	stubSTTStreamUploader
+}
+
+func (u *tailCheckingSTTUploader) Finalize() (string, error) {
+	if !bytes.Equal(bytes.Join(u.writes, nil), []byte{1, 0, 2, 0, 3, 0, 4, 0}) {
+		return "", errors.New("finalized before tail upload")
+	}
+	return u.stubSTTStreamUploader.Finalize()
+}
+
+func TestAudioDialogStopRecordingDrainsTailBeforeFinalizeAndArchive(t *testing.T) {
+	for _, persistent := range []bool{false, true} {
+		name := "per-request"
+		if persistent {
+			name = "persistent"
+		}
+		t.Run(name, func(t *testing.T) {
+			stopped := make(chan struct{})
+			var drainReads atomic.Int32
+			socketPath := startFakeAudioServiceSocket(t, func(req audioRequest) (audioResponse, []byte) {
+				switch req.Op {
+				case "stop_recording":
+					close(stopped)
+					return audioResponse{Status: "OK"}, nil
+				case "read_record_chunk":
+					select {
+					case <-stopped:
+						switch drainReads.Add(1) {
+						case 1:
+							return audioResponse{Status: "TIMEOUT"}, nil
+						case 2:
+							return audioResponse{Status: "OK"}, []byte{3, 0}
+						default:
+							return audioResponse{Status: "OK", EndOfStream: true}, []byte{4, 0}
+						}
+					default:
+						return audioResponse{Status: "OK"}, []byte{1, 0, 2, 0}
+					}
+				}
+				return audioResponse{Status: "OK"}, nil
+			}, persistent)
+			uploader := &tailCheckingSTTUploader{stubSTTStreamUploader: stubSTTStreamUploader{transcript: "complete"}}
+			stt := &stubSTTClient{transcript: "fallback"}
+			dialog := &AudioDialog{
+				config:      Config{InputMode: "stt", Audio: AudioConfig{SampleRate: 16000}},
+				audioClient: NewAudioServiceClient(socketPath), sttClient: stt,
+				recordActive: true, sessionID: 42,
+				recordSTT:    &streamingSTTSession{uploader: uploader},
+				audioArchive: NewAudioArchiveManager(AudioArchiveConfig{Enabled: true, StoragePath: t.TempDir()}),
+			}
+			if persistent {
+				var err error
+				dialog.recordReader, err = dialog.audioClient.OpenRecordChunkReader(42)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := dialog.ReadRecordChunk(100); err != nil {
+				t.Fatal(err)
+			}
+			if err := dialog.StopRecording(); err != nil {
+				t.Fatal(err)
+			}
+			if !uploader.finalized || !uploader.closed {
+				t.Fatal("stream was not finalized and closed")
+			}
+			input, err := dialog.PrepareTurnInput([]int16{1, 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if input.Transcript != "complete" || len(stt.inputs) != 0 {
+				t.Fatal("streaming transcript did not include the tail")
+			}
+			artifact, ok := firstAudioArtifact(input)
+			if !ok {
+				t.Fatal("missing audio artifact")
+			}
+			wav, err := os.ReadFile(artifact.Path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(wav, pcm16MonoToWAV([]int16{1, 2, 3, 4}, 16000)) {
+				t.Fatal("archive omitted or duplicated tail")
+			}
+			if _, err := dialog.PrepareTurnInput([]int16{9}); err != nil {
+				t.Fatal(err)
+			}
+			if len(stt.inputs) != 1 || !bytes.Equal(stt.inputs[0], pcm16MonoToWAV([]int16{9}, 16000)) {
+				t.Fatal("tail leaked into next input")
+			}
+		})
+	}
+}
+
+func TestAudioDialogStopRecordingDrainFailureClosesWithoutFinalize(t *testing.T) {
+	oldTimeout := audioDialogRecordDrainTimeout
+	audioDialogRecordDrainTimeout = 20 * time.Millisecond
+	t.Cleanup(func() { audioDialogRecordDrainTimeout = oldTimeout })
+	for _, status := range []string{"TIMEOUT", "INTERNAL_ERROR"} {
+		t.Run(status, func(t *testing.T) {
+			socketPath := startFakeAudioServiceSocket(t, func(req audioRequest) (audioResponse, []byte) {
+				if req.Op == "read_record_chunk" {
+					return audioResponse{Status: status}, nil
+				}
+				return audioResponse{Status: "OK"}, nil
+			})
+			uploader := &stubSTTStreamUploader{}
+			dialog := &AudioDialog{
+				audioClient: NewAudioServiceClient(socketPath), recordActive: true, sessionID: 42,
+				recordSTT: &streamingSTTSession{uploader: uploader},
+			}
+			reader, err := dialog.audioClient.OpenRecordChunkReader(42)
+			if err != nil {
+				t.Fatal(err)
+			}
+			dialog.recordReader = reader
+			if err := dialog.StopRecording(); err == nil || !strings.Contains(err.Error(), "drain recording") {
+				t.Fatalf("StopRecording() = %v", err)
+			}
+			if dialog.RecordingActive() || reader.conn != nil || !uploader.closed || uploader.finalized {
+				t.Fatal("failed drain did not clean up without finalizing")
+			}
+		})
 	}
 }

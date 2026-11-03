@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {

@@ -40,7 +40,7 @@ def prepare_images(
     mobilegym_log: Path,
 ) -> None:
     daemon_environment = dict(os.environ)
-    daemon_environment["AIDEN_DAEMON_IMAGE"] = daemon_image
+    daemon_environment["AICO_DAEMON_IMAGE"] = daemon_image
     daemon_environment["DAEMON_DOCKERFILE"] = daemon_dockerfile
     subprocess.run(
         ["docker", "compose", "-f", str(DAEMON_COMPOSE_FILE), "build", "daemon"],

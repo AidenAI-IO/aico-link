@@ -3,7 +3,7 @@
  *
  * The same document is served to a standalone browser and to the WebView embedded
  * in the companion app, and the two need different chrome: a standalone browser
- * has no app around it, so the frame carries the Aiden wordmark, while the
+ * has no app around it, so the frame carries the Aico Link wordmark, while the
  * embedded case must not repeat branding the native screen already shows.
  *
  * Detection is deliberately multi-signal, because the most obvious signal is not
@@ -60,7 +60,7 @@ export function isEmbedded(win = typeof window === 'undefined' ? null : window) 
 
   const agent = (win.navigator && win.navigator.userAgent) || '';
   // 4. The host's own user-agent token.
-  if (/AidenApp/i.test(agent)) return true;
+  if (/AicoApp/i.test(agent)) return true;
   // 5. Android marks its WebView in the user agent; Chrome and Safari do not.
   return ANDROID_WEBVIEW_TOKEN.test(agent);
 }

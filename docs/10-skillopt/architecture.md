@@ -69,7 +69,7 @@ the maximum number of skill edits proposed in each iteration.
 
 ### Direct Device Backend
 
-`--backend device` without `--environment-url` uses `AidenDeviceBackend`. It
+`--backend device` without `--environment-url` uses `AicoDeviceBackend`. It
 talks to an existing agent daemon through `/api/chat` and temporarily overrides
 the skill text while each phase runs.
 
@@ -216,9 +216,9 @@ when those files already exist.
 | Variable | Meaning |
 | --- | --- |
 | `OPENROUTER_API_KEY` | Optimizer and judge API key. |
-| `AIDEN_SKILLS_DIR` | Optional override for skill source directory. |
-| `AIDEN_ENVIRONMENT_URL` | Default bridge endpoint for CLI runs. |
-| `AIDEN_DAEMON_IMAGE` | Default daemon image for benchmark runner workers. |
+| `AICO_SKILLS_DIR` | Optional override for skill source directory. |
+| `AICO_ENVIRONMENT_URL` | Default bridge endpoint for CLI runs. |
+| `AICO_DAEMON_IMAGE` | Default daemon image for benchmark runner workers. |
 
 ## Design Decisions
 

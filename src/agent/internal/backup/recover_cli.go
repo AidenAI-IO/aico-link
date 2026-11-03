@@ -21,7 +21,7 @@ type RecoveryStatus struct {
 }
 
 // RunRecover implements `agent backup-recover`, the oneshot executed by
-// aiden-backup-recover.service before the Agent starts.  It exits non-zero
+// aico-backup-recover.service before the Agent starts.  It exits non-zero
 // (and leaves the failure marker) only when formal data may be inconsistent.
 func RunRecover(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("backup-recover", flag.ContinueOnError)
@@ -29,9 +29,9 @@ func RunRecover(args []string, stdout, stderr io.Writer) int {
 	roots := DefaultRoots()
 	fs.StringVar(&roots.Userdata, "userdata-root", roots.Userdata, "userdata root")
 	fs.StringVar(&roots.SD, "sd-root", roots.SD, "SD-card root")
-	statusPath := fs.String("status", "/run/aiden/backup/recovery.json", "status document path")
-	failedMarker := fs.String("failed-marker", "/run/aiden/backup/recovery.failed", "marker created when formal data may be inconsistent")
-	otaBinary := fs.String("ota-binary", "/usr/lib/aiden/ota", "OTA binary used for identity provisioning")
+	statusPath := fs.String("status", "/run/aico/backup/recovery.json", "status document path")
+	failedMarker := fs.String("failed-marker", "/run/aico/backup/recovery.failed", "marker created when formal data may be inconsistent")
+	otaBinary := fs.String("ota-binary", "/usr/lib/aico/ota", "OTA binary used for identity provisioning")
 	otaConfig := fs.String("ota-config", "/userdata/debian/ota/config.json", "OTA configuration path")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -70,7 +70,7 @@ func RunRecover(args []string, stdout, stderr io.Writer) int {
 	}
 	for _, result := range results {
 		if result.RebootRequired {
-			// aiden-machine-id.service runs provision-identity again and reboots
+			// aico-machine-id.service runs provision-identity again and reboots
 			// itself when required; report it so the log explains the reboot.
 			logf("restore %s: identity provisioning requests a reboot", result.JobID)
 		}

@@ -184,6 +184,10 @@ type TerminationPolicy struct {
 	artifactResultHash   string
 	artifactResultStreak int
 
+	// probationUsed records that a fresh observation already lifted the
+	// tool restriction once since the last progress.
+	probationUsed bool
+
 	lastToolName string
 }
 
@@ -212,6 +216,7 @@ func (p *TerminationPolicy) ResetForSteer() {
 	p.lastToolName = ""
 	p.artifactResultHash = ""
 	p.artifactResultStreak = 0
+	p.probationUsed = false
 }
 
 func (p *TerminationPolicy) CheckBeforeIteration(ctx context.Context, iteration, maxIterations int) TerminationDecision {
@@ -270,6 +275,9 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		return TerminationDecision{}
 	}
 	p.lastToolName = strings.TrimSpace(toolName)
+	// An observation earns the restriction allowance only when the
+	// restriction was already in effect, not by causing it.
+	restrictedBefore := p.tier == TierRestrictTools
 	signature := toolCallSignature(toolName, input)
 	resultHash := observationProgressHash(toolName, observation)
 	// Artifact recovery often alternates a query with reading its saved output.
@@ -303,7 +311,10 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		p.sameSigStreak = 1
 	}
 
-	if resultHash != "" && resultHash == previousResultHash && sameSignature {
+	// A screenshot observation hashes to a constant, so "same result" would
+	// only repeat the signature check; the screen comparison below decides
+	// whether a visual result is new.
+	if !hasScreenshot && resultHash != "" && resultHash == previousResultHash && sameSignature {
 		p.sameResultStreak++
 	} else {
 		p.lastResultHash = resultHash
@@ -314,7 +325,16 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 	}
 
 	if screen != nil {
-		if changed, comparable := screenshotProgressChanged(previousScreen, screen); comparable {
+		changed, comparable := screenshotProgressChanged(previousScreen, screen)
+		// A post-action observation reports screen_changed against a baseline
+		// taken just before the action, with the pointer's own movement
+		// excluded; prefer it over comparing with an older observation.
+		// Observation tools report a different screen_changed (any frame
+		// difference while waiting), so only action results qualify.
+		if reported, ok := observationScreenChanged(observation); ok && isLoopRestrictedActionTool(toolName) {
+			changed, comparable = reported, true
+		}
+		if comparable {
 			if changed && !isError {
 				madeProgress = true
 			}
@@ -339,6 +359,17 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 	}
 	if !madeProgress && p.sameResultStreak >= 2 {
 		p.bumpStall(2)
+	}
+	// The restriction asks the model to diagnose with a fresh observation.
+	// Once it has, allow one more action instead of blocking every action
+	// until the screen changes on its own; another stall restricts again.
+	// This runs after the repeat scoring so a repeated observation cannot
+	// take the allowance back.
+	if !madeProgress && restrictedBefore && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
+		p.probationUsed = true
+		p.stallScore = p.cfg.RestrictToolsStallScore - 1
+		p.refreshTier()
+		p.lastNoticeTier = p.tier
 	}
 
 	if p.sameSigStreak >= p.cfg.RepeatActionLimit && p.sameResultStreak >= p.cfg.SameResultLimit {
@@ -374,6 +405,7 @@ func (p *TerminationPolicy) bumpStall(delta int) {
 }
 
 func (p *TerminationPolicy) recordProgress() {
+	p.probationUsed = false
 	p.stallScore = 0
 	p.tier = TierNone
 	p.lastNoticeTier = TierNone
@@ -551,18 +583,28 @@ func extractScreenshotImage(observation string) (image.Image, bool) {
 }
 
 func screenshotProgressChanged(before, after image.Image) (changed, comparable bool) {
+	return screenshotProgressChangedExcluding(before, after, nil)
+}
+
+// screenshotProgressChangedExcluding is screenshotProgressChanged with grid
+// blocks that intersect any excluded rectangle never counted as changed. The
+// total block count is unchanged, so the threshold keeps its meaning.
+func screenshotProgressChangedExcluding(before, after image.Image, excluded []image.Rectangle) (changed, comparable bool) {
+	ratio, comparable := screenshotProgressChangeRatio(before, after, excluded)
+	return comparable && ratio > screenshotProgressChangedBlockThreshold, comparable
+}
+
+// screenshotProgressChangeRatio returns the share of progress-grid blocks
+// that changed, with blocks intersecting an excluded rectangle not counted.
+// Screenshots of different sizes count as a full change.
+func screenshotProgressChangeRatio(before, after image.Image, excluded []image.Rectangle) (float64, bool) {
 	if before == nil || after == nil {
-		return false, false
+		return 0, false
 	}
 	if before.Bounds() != after.Bounds() {
-		return true, true
+		return 1, true
 	}
-	bounds := screenshotProgressBounds(after.Bounds())
-	diffRatio, ok := screenshotProgressBlockDiffRatio(before, after, bounds)
-	if !ok {
-		return false, false
-	}
-	return diffRatio > screenshotProgressChangedBlockThreshold, true
+	return screenshotProgressBlockDiffRatio(before, after, screenshotProgressBounds(after.Bounds()), excluded)
 }
 
 func screenshotProgressBounds(full image.Rectangle) image.Rectangle {
@@ -578,11 +620,16 @@ func screenshotProgressBounds(full image.Rectangle) image.Rectangle {
 	return full
 }
 
-func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Rectangle) (float64, bool) {
+func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Rectangle, excluded []image.Rectangle) (float64, bool) {
 	width := bounds.Dx()
 	height := bounds.Dy()
 	if width <= 0 || height <= 0 {
 		return 0, false
+	}
+	if b, ok := before.(*image.YCbCr); ok {
+		if a, ok := after.(*image.YCbCr); ok && a.SubsampleRatio == b.SubsampleRatio && a.Rect == b.Rect {
+			return screenshotProgressYCbCrBlockDiffRatio(b, a, bounds, excluded)
+		}
 	}
 	columns := screenshotProgressGridColumns
 	if width < columns {
@@ -601,6 +648,9 @@ func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Re
 		for column := 0; column < columns; column++ {
 			x0 := bounds.Min.X + width*column/columns
 			x1 := bounds.Min.X + width*(column+1)/columns
+			if rectanglesOverlap(image.Rect(x0, y0, x1, y1), excluded) {
+				continue
+			}
 			pixelCount := uint64((x1 - x0) * (y1 - y0))
 			var beforeR, beforeG, beforeB uint64
 			var afterR, afterG, afterB uint64
@@ -627,11 +677,83 @@ func screenshotProgressBlockDiffRatio(before, after image.Image, bounds image.Re
 	return float64(changedBlocks) / float64(totalBlocks), true
 }
 
+// screenshotProgressYCbCrBlockDiffRatio is the block comparison for decoded
+// JPEG screenshots. It reads the Y, Cb and Cr planes directly and samples
+// every other pixel, which keeps each block mean while avoiding a per-pixel
+// color conversion that took most of a second per comparison on the board.
+func screenshotProgressYCbCrBlockDiffRatio(before, after *image.YCbCr, bounds image.Rectangle, excluded []image.Rectangle) (float64, bool) {
+	width, height := bounds.Dx(), bounds.Dy()
+	columns := min(screenshotProgressGridColumns, width)
+	rows := min(screenshotProgressGridRows, height)
+	changedBlocks := 0
+	for row := 0; row < rows; row++ {
+		y0 := bounds.Min.Y + height*row/rows
+		y1 := bounds.Min.Y + height*(row+1)/rows
+		for column := 0; column < columns; column++ {
+			x0 := bounds.Min.X + width*column/columns
+			x1 := bounds.Min.X + width*(column+1)/columns
+			if rectanglesOverlap(image.Rect(x0, y0, x1, y1), excluded) {
+				continue
+			}
+			var beforeY, beforeCb, beforeCr, afterY, afterCb, afterCr, count int
+			for y := y0; y < y1; y += tapSequenceSampleStep {
+				for x := x0; x < x1; x += tapSequenceSampleStep {
+					yi, ci := before.YOffset(x, y), before.COffset(x, y)
+					beforeY += int(before.Y[yi])
+					beforeCb += int(before.Cb[ci])
+					beforeCr += int(before.Cr[ci])
+					afterY += int(after.Y[yi])
+					afterCb += int(after.Cb[ci])
+					afterCr += int(after.Cr[ci])
+					count++
+				}
+			}
+			threshold := screenshotProgressBlockChannelThreshold * count
+			if absInt(beforeY-afterY) > threshold || absInt(beforeCb-afterCb) > threshold || absInt(beforeCr-afterCr) > threshold {
+				changedBlocks++
+			}
+		}
+	}
+	return float64(changedBlocks) / float64(columns*rows), true
+}
+
+func rectanglesOverlap(block image.Rectangle, rects []image.Rectangle) bool {
+	for _, rect := range rects {
+		if block.Overlaps(rect) {
+			return true
+		}
+	}
+	return false
+}
+
 func absDiffUint64(a, b uint64) uint64 {
 	if a > b {
 		return a - b
 	}
 	return b - a
+}
+
+// isLoopProbationObservationTool reports whether a tool returns a fresh view
+// of the screen that can lift a loop-guard restriction once.
+func isLoopProbationObservationTool(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "screenshot", "wait_for_stable_screen":
+		return true
+	default:
+		return false
+	}
+}
+
+// observationScreenChanged returns the screen_changed field of a post-action
+// observation when it is present.
+func observationScreenChanged(observation string) (bool, bool) {
+	var payload struct {
+		ScreenChanged *bool `json:"screen_changed"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(observation)), &payload); err != nil || payload.ScreenChanged == nil {
+		return false, false
+	}
+	return *payload.ScreenChanged, true
 }
 
 func isLoopRestrictedActionTool(name string) bool {

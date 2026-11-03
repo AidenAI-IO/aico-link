@@ -1,0 +1,12 @@
+[Unit]
+Description=Initialize RV1106 microphone controls
+Requires=aico-media-modules.service
+After=aico-media-modules.service sound.target
+Before=aico-audio.service
+PartOf=aico-audio.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-audio-mixer
+RemainAfterExit=yes
+TimeoutStartSec=30s

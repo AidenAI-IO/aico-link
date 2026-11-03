@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/ble"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/ble"
+	"aico-agent/internal/logging"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -307,18 +307,7 @@ func (p *NotificationMemoryProcessor) resolveRecords(ctx context.Context, record
 			ordered = append(ordered, result)
 		}
 	}
-	ordered = coalesceNotificationBatchTargets(ordered)
-	validated := make([]validatedNotificationResult, 0, len(ordered))
-	for _, result := range ordered {
-		proposal, err := p.validateNotificationProposal(ctx, result.record, result.proposal, result.refs)
-		if err != nil {
-			p.logInvalidNotificationProposal(result.record, err)
-			continue
-		}
-		result.proposal = proposal
-		validated = append(validated, result)
-	}
-	for _, result := range validated {
+	for _, result := range p.validateNotificationBatch(ctx, ordered) {
 		if err := p.applyNotificationProposal(ctx, result.record, result.proposal, result.refs); err != nil {
 			return err
 		}
@@ -357,6 +346,24 @@ func (p *NotificationMemoryProcessor) logNotificationMemoryResponseFailure(reaso
 	}
 	logging.Warnf("agent", "notification_memory", "%s: attempt=%d/%d response_bytes=%d response_sha256=%x json_offset=%d",
 		reason, attempt, notificationJSONMaxAttempts, len(raw), digest, offset)
+}
+
+// validateNotificationBatch validates every proposal before coalescing, so an
+// invalid later action cannot displace a valid earlier action on the same
+// memory. Validation also fills inferred scopes, which keeps target keys equal
+// for actions that name the same memory with and without a scope.
+func (p *NotificationMemoryProcessor) validateNotificationBatch(ctx context.Context, ordered []validatedNotificationResult) []validatedNotificationResult {
+	validated := make([]validatedNotificationResult, 0, len(ordered))
+	for _, result := range ordered {
+		proposal, err := p.validateNotificationProposal(ctx, result.record, result.proposal, result.refs)
+		if err != nil {
+			p.logInvalidNotificationProposal(result.record, err)
+			continue
+		}
+		result.proposal = proposal
+		validated = append(validated, result)
+	}
+	return coalesceNotificationBatchTargets(validated)
 }
 
 func coalesceNotificationBatchTargets(results []validatedNotificationResult) []validatedNotificationResult {
@@ -449,7 +456,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			if !result.Sensitive {
+				temporaryRefs = append(temporaryRefs, memoryResultMergeReference("temporary", result))
+			}
 		}
 	}
 	if p.longTerm != nil {
@@ -458,7 +467,9 @@ func (p *NotificationMemoryProcessor) searchRelatedNotificationMemories(ctx cont
 			return nil, err
 		}
 		for _, result := range results {
-			longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			if !result.Sensitive {
+				longTermRefs = append(longTermRefs, memoryResultMergeReference("long_term", result))
+			}
 		}
 	}
 	refs := make([]MemoryMergeReference, 0, 8)
@@ -495,6 +506,9 @@ func (p *NotificationMemoryProcessor) validateNotificationProposal(ctx context.C
 		case "add", "update", "reinforce", "remove", "promote":
 		default:
 			return notificationMemoryProposal{}, fmt.Errorf("notification proposal has unsupported action %q", action.Action)
+		}
+		if action.Scope == "" {
+			action.Scope = inferNotificationTargetScope(action, refs)
 		}
 		if action.Scope != "temporary" && action.Scope != "long_term" {
 			return notificationMemoryProposal{}, fmt.Errorf("notification proposal has invalid scope %q", action.Scope)
@@ -680,7 +694,7 @@ func (p *NotificationMemoryProcessor) applyNotificationProposal(ctx context.Cont
 			sourceRefs := mergeMemorySourceRefs(ref.SourceRefs, []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}})
 			memoryType := firstNonEmptyString([]string{action.Type, ref.Type, "fact"})
 			priority, confidence := notificationMemoryMetadata(action, memoryType, ref)
-			item := MemoryItem{ID: "mem_notification_" + record.ContextID, Type: memoryType, TimeScope: "long_term", Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, ref.Title}), Content: firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary}), ExpiresAt: p.now().Add(notificationLongTermTTL).Format(time.RFC3339Nano), Tags: mergeUniqueStrings(ref.Tags, action.Tags), Entities: mergeUniqueStrings(ref.Entities, action.Entities), SourceRefs: sourceRefs, EvidenceRefs: ref.EvidenceRefs, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
+			item := MemoryItem{ID: "mem_notification_" + record.ContextID, Type: memoryType, TimeScope: "long_term", Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, ref.Title}), Content: firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary}), ExpiresAt: p.now().Add(notificationLongTermTTL).Format(time.RFC3339Nano), Tags: mergeUniqueStrings(ref.Tags, action.Tags), Entities: mergeUniqueStrings(ref.Entities, action.Entities), SourceRefs: sourceRefs, EvidenceRefs: ref.EvidenceRefs, Origin: memoryOriginNotification, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, ref.Content, ref.Summary, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
 			if _, err := p.longTerm.ApplyMemoryIntent(ctx, MemoryIntent{Item: item, Action: MemoryIntentActionCreate}); err != nil {
 				return err
 			}
@@ -702,7 +716,7 @@ func (p *NotificationMemoryProcessor) applyNotificationProposal(ctx context.Cont
 		}
 		memoryType := firstNonEmptyString([]string{action.Type, existingRef.Type, "fact"})
 		priority, confidence := notificationMemoryMetadata(action, memoryType, existingRef)
-		item := MemoryItem{ID: id, Type: memoryType, TimeScope: action.Scope, Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, existingRef.Title}), Content: firstNonEmptyString([]string{action.Content, existingRef.Content}), Tags: mergeUniqueStrings(mergeUniqueStrings(notificationMemoryTags(record.NotificationEvent), existingRef.Tags), action.Tags), Entities: mergeUniqueStrings(mergeUniqueStrings(compactNotificationEntities(record.NotificationEvent), existingRef.Entities), action.Entities), ExpiresAt: action.ExpiresAt, SourceRefs: []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}}, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, existingRef.Content, record.NotificationEvent.Message, record.NotificationEvent.Title})}}
+		item := MemoryItem{ID: id, Type: memoryType, TimeScope: action.Scope, Priority: priority, Confidence: confidence, Title: firstNonEmptyString([]string{action.Title, existingRef.Title}), Content: firstNonEmptyString([]string{action.Content, existingRef.Content}), Tags: mergeUniqueStrings(mergeUniqueStrings(notificationMemoryTags(record.NotificationEvent), existingRef.Tags), action.Tags), Entities: mergeUniqueStrings(mergeUniqueStrings(compactNotificationEntities(record.NotificationEvent), existingRef.Entities), action.Entities), ExpiresAt: action.ExpiresAt, SourceRefs: []MemorySourceRef{{Type: "notification", ID: record.ContextID, EventIDs: mergeUniqueStrings(notificationMemoryEvidenceIDs(record), action.SourceEventIDs)}}, EvidenceExcerpts: []string{firstNonEmptyString([]string{action.Content, existingRef.Content, record.NotificationEvent.Message, record.NotificationEvent.Title})}, Origin: memoryOriginNotification}
 		if action.Action == "remove" {
 			item = MemoryItem{ID: id}
 		}
@@ -776,6 +790,33 @@ func notificationMemoryMetadata(action notificationMemoryAction, memoryType stri
 		}
 	}
 	return priority, confidence
+}
+
+// inferNotificationTargetScope fills an omitted scope for update, reinforce,
+// and remove from the catalog: the target memory_id already fixes its store
+// when exactly one active catalog entry has that id. Add and promote choose a
+// destination, so their scope is never inferred.
+func inferNotificationTargetScope(action notificationMemoryAction, refs []MemoryMergeReference) string {
+	switch action.Action {
+	case "update", "reinforce", "remove":
+	default:
+		return ""
+	}
+	id := strings.TrimSpace(action.MemoryID)
+	if id == "" {
+		return ""
+	}
+	scope := ""
+	for _, ref := range refs {
+		if ref.ID != id || ref.Status != "active" {
+			continue
+		}
+		if scope != "" && scope != ref.Scope {
+			return ""
+		}
+		scope = ref.Scope
+	}
+	return scope
 }
 
 func findNotificationReference(id, scope string, refs []MemoryMergeReference) (MemoryMergeReference, bool) {

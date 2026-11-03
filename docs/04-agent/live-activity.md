@@ -4,9 +4,9 @@ sidebar_position: 13
 
 # Live Activity / Dynamic Island
 
-Live Activity is Aiden's iOS task-status panel and a system entry point back to
-the companion app. Task state stays local to the board and phone. Aiden does
-not register ActivityKit push tokens, publish task state to an Aiden backend,
+Live Activity is Aico's iOS task-status panel and a system entry point back to
+the companion app. Task state stays local to the board and phone. Aico does
+not register ActivityKit push tokens, publish task state to an Aico-hosted backend,
 or use APNs for Live Activity updates.
 
 ## Local Update Flow
@@ -18,7 +18,7 @@ Agent task state changes
         |
         | coalesced BLE Wake (reason=live_activity, no task text)
         v
-iOS CoreBluetooth wakes Aiden briefly
+iOS CoreBluetooth wakes the companion app briefly
         |
         | USB ECM HTTP GET /api/live-activity/current?phone_id=<stable>
         v
@@ -41,12 +41,12 @@ snapshot, so skipped intermediate Wake notifications do not lose final state.
 
 ## Behavior
 
-- `ready` / `connected`: Aiden is available. The app creates this standby Live
+- `ready` / `connected`: Aico is available. The app creates this standby Live
   Activity before or while entering background so Dynamic Island remains an
-  entry point back to the Aiden App.
+  entry point back to the Aico companion app.
 - `running`: shows task title, current step, phase, progress, stop state, and
   the detailed `tool_status` lifecycle when available.
-- `needs_app`: asks the user to return to the Aiden App when an operation needs the
+- `needs_app`: asks the user to return to the Aico companion app when an operation needs the
   foreground companion app.
 - `waiting_user` with `current_action=request_user_input`: keeps the handoff
   instruction visible after `request_user_action` so the user can take over
@@ -55,7 +55,7 @@ snapshot, so skipped intermediate Wake notifications do not lose final state.
   existing Live Activity instead of immediately replacing it with standby.
 
 The app requests a one-time system alert only for high-value transitions:
-initial USB ECM connection, human handoff, foreground Aiden recovery,
+initial USB ECM connection, human handoff, foreground companion-app recovery,
 completion, and failure. Ordinary tool calls, progress changes, and repeated
 snapshots update silently. Alerts are deduplicated by request and transition;
 an explicit new USB connection session receives a new connection event ID.
@@ -139,7 +139,7 @@ the target app is visible.
 `phone_app_state` events additionally report `return_entry` and
 `return_entry_available`. When the iOS app is backgrounded or inactive, it can
 report `return_entry="dynamic_island"` so board-side recovery logic knows that a
-visible Aiden entry may return the user to the App.
+visible companion-app entry may return the user to the App.
 
 ## API
 

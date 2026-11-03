@@ -1,14 +1,14 @@
 package agent
 
 import (
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 	"fmt"
 	"os"
 	"strings"
 	"sync/atomic"
 )
 
-const touchscreenRCADebugEnv = "AIDEN_TOUCHSCREEN_RCA_DEBUG"
+const touchscreenRCADebugEnv = "AICO_TOUCHSCREEN_RCA_DEBUG"
 
 var touchscreenRCADebugEnabledValue atomic.Bool
 

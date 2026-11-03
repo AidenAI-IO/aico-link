@@ -1,0 +1,20 @@
+[Unit]
+Description=Create the Aico Link HID and ECM USB gadget
+Requires=aico-userdata-migrate.service
+After=aico-userdata-migrate.service systemd-modules-load.service
+Before=aico-usb-dnsmasq.service aico-config-web.service
+StartLimitIntervalSec=60s
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/aico_boot.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_USB_HID
+ExecStart=/usr/lib/aico/aico-usb-gadget start
+ExecStop=/usr/lib/aico/aico-usb-gadget stop
+RemainAfterExit=yes
+TimeoutStartSec=60s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

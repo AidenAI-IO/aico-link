@@ -1,10 +1,10 @@
 #!/bin/sh
 set -eu
 
-sandbox_project="aiden-sandbox-smoke-$$"
-config_port="${AIDEN_SANDBOX_TEST_CONFIG_PORT:-0}"
-agent_port="${AIDEN_SANDBOX_TEST_AGENT_PORT:-0}"
-bridge_port="${AIDEN_SANDBOX_TEST_BRIDGE_PORT:-}"
+sandbox_project="aico-sandbox-smoke-$$"
+config_port="${AICO_SANDBOX_TEST_CONFIG_PORT:-0}"
+agent_port="${AICO_SANDBOX_TEST_AGENT_PORT:-0}"
+bridge_port="${AICO_SANDBOX_TEST_BRIDGE_PORT:-}"
 sandbox_bridge_endpoint=""
 sandbox_device_type=""
 bridge_pid=""
@@ -17,12 +17,12 @@ if grep -q 'scripts/debian-apps/debian.sources' "$script_dir/../docker/test/Dock
 fi
 
 compose() {
-    AIDEN_CONFIG_WEB_PORT="$config_port" \
-    AIDEN_AGENT_WEB_PORT="$agent_port" \
-    AIDEN_DEVICE_TYPE="$sandbox_device_type" \
-    AIDEN_ENVIRONMENT_BRIDGE_ENDPOINT="$sandbox_bridge_endpoint" \
-    AIDEN_BENCHMARK_TASK_ID=docker-sandbox-smoke \
-    AIDEN_BRIDGE_EPISODE_ID=docker-sandbox-smoke \
+    AICO_CONFIG_WEB_PORT="$config_port" \
+    AICO_AGENT_WEB_PORT="$agent_port" \
+    AICO_DEVICE_TYPE="$sandbox_device_type" \
+    AICO_ENVIRONMENT_BRIDGE_ENDPOINT="$sandbox_bridge_endpoint" \
+    AICO_BENCHMARK_TASK_ID=docker-sandbox-smoke \
+    AICO_BRIDGE_EPISODE_ID=docker-sandbox-smoke \
         docker compose -p "$sandbox_project" "$@"
 }
 
@@ -52,7 +52,7 @@ request() {
 }
 
 agent_pid() {
-    compose exec -T aiden /usr/local/bin/aiden-agent-service status 2>/dev/null \
+    compose exec -T aico /usr/local/bin/aico-agent-service status 2>/dev/null \
         | sed -n 's/^agent=running pid=\([0-9][0-9]*\).*/\1/p'
 }
 
@@ -79,7 +79,7 @@ agent_port="${selected_ports#* }"
 compose up -d --build
 wait_for_agent
 
-compose exec -T aiden sh -ec '
+compose exec -T aico sh -ec '
 python3 --version
 python3 -m pip --version
 ttyd --version
@@ -129,9 +129,9 @@ case "$terminal_token" in
     *) printf 'ttyd token endpoint failed through Agent Web.\n' >&2; exit 1 ;;
 esac
 
-container_id="$(compose ps -q aiden)"
+container_id="$(compose ps -q aico)"
 restart_count="$(docker inspect --format '{{.RestartCount}}' "$container_id")"
-ttyd_pid="$(compose exec -T aiden sh -ec '
+ttyd_pid="$(compose exec -T aico sh -ec '
 for process in /proc/[0-9]*; do
     executable="$(readlink "$process/exe" 2>/dev/null || true)"
     if [ "$executable" = /usr/local/bin/ttyd ]; then
@@ -142,7 +142,7 @@ done
 exit 1
 ')"
 test -n "$ttyd_pid"
-compose exec -T aiden sh -c 'kill "$1"' sh "$ttyd_pid"
+compose exec -T aico sh -c 'kill "$1"' sh "$ttyd_pid"
 
 attempt=1
 while [ "$attempt" -le 30 ]; do
@@ -168,7 +168,7 @@ test -n "$before_pid"
 request 'PUT config web /api/system/environment' \
     -fsS --max-time 15 -X PUT \
     -H 'Content-Type: application/json' \
-    --data '{"system_env":"no_proxy=aiden-docker-sandbox-smoke\n"}' \
+    --data '{"system_env":"no_proxy=aico-docker-sandbox-smoke\n"}' \
     "http://127.0.0.1:$config_port/api/system/environment" \
     | grep -q '"agent_restart_required":true'
 
@@ -195,7 +195,7 @@ compose up -d
 wait_for_agent
 request 'GET config web /api/system/environment' \
     -fsS --max-time 10 "http://127.0.0.1:$config_port/api/system/environment" \
-    | grep -q 'no_proxy=aiden-docker-sandbox-smoke'
+    | grep -q 'no_proxy=aico-docker-sandbox-smoke'
 
 printf 'Docker sandbox smoke test passed (agent pid %s -> %s).\n' "$before_pid" "$after_pid"
 
@@ -206,7 +206,7 @@ compose down -v
 if [ -z "$bridge_port" ]; then
     bridge_port="$(python3 -c 'import socket; sock = socket.socket(); sock.bind(("", 0)); print(sock.getsockname()[1]); sock.close()')"
 fi
-bridge_log="$(mktemp -t aiden-docker-bridge.XXXXXX)"
+bridge_log="$(mktemp -t aico-docker-bridge.XXXXXX)"
 python3 -c '
 import json
 import sys
@@ -267,21 +267,21 @@ test "$setup_count" -eq 1
 request 'PUT config web /api/system/environment (restart race)' \
     -fsS --max-time 15 -X PUT \
     -H 'Content-Type: application/json' \
-    --data '{"system_env":"no_proxy=aiden-docker-sandbox-race\n"}' \
+    --data '{"system_env":"no_proxy=aico-docker-sandbox-race\n"}' \
     "http://127.0.0.1:$config_port/api/system/environment" >/dev/null
 curl -fsS --max-time 15 -X POST \
     "http://127.0.0.1:$config_port/api/system/environment/apply" \
     >/dev/null
 wait_for_agent
 
-compose exec -T aiden sh -c '
+compose exec -T aico sh -c '
 count=0
 for process in /proc/[0-9]*; do
     executable="$(readlink "$process/exe" 2>/dev/null || true)"
-    if [ "$executable" = /usr/lib/aiden/agent ]; then
+    if [ "$executable" = /usr/lib/aico/agent ]; then
         command_line="$(tr "\000" " " < "$process/cmdline" 2>/dev/null || true)"
         case "$command_line" in
-            */usr/lib/aiden/agent\ config-web\ *|*/usr/lib/aiden/agent\ wifi-proxy\ *) continue ;;
+            */usr/lib/aico/agent\ config-web\ *|*/usr/lib/aico/agent\ wifi-proxy\ *) continue ;;
         esac
         count="$((count + 1))"
     fi

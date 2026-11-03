@@ -32,7 +32,8 @@ def check_source(root, apps):
     for name in ("hardware-demo-status.txt", "pico-sdk-status.txt"):
         if (metadata / name).read_text().strip():
             raise ValueError("Application binaries were built from a dirty source tree")
-    sdk_commit = command("git", "-C", str(root / "pico-sdk"), "rev-parse", "HEAD")
+    # The vendored SDK shares the firmware source commit.
+    sdk_commit = commit
     if (metadata / "pico-sdk-commit.txt").read_text().strip() != sdk_commit:
         raise ValueError("Application SDK commit does not match the checkout")
     if "status=pass" not in (apps / "apps-audit/summary.txt").read_text().splitlines():
@@ -43,7 +44,7 @@ def check_source(root, apps):
 def package_manifest(package):
     data = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        return archive.extractfile("./usr/share/doc/aiden-business/release-manifest.json").read()
+        return archive.extractfile("./usr/share/doc/aico-business/release-manifest.json").read()
 
 
 def verify_runtime_config(package, enabled):
@@ -51,7 +52,7 @@ def verify_runtime_config(package, enabled):
         raise ValueError("Unknown runtime configuration ownership")
     data = subprocess.check_output(["dpkg-deb", "--fsys-tarfile", str(package)])
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
-        name = "./usr/lib/aiden/runtime-config.json"
+        name = "./usr/lib/aico/runtime-config.json"
         if not enabled:
             if name in archive.getnames():
                 raise ValueError("Undeclared runtime configuration payload")
@@ -61,7 +62,11 @@ def verify_runtime_config(package, enabled):
             raise ValueError("Missing runtime configuration inventory")
         expected_conffiles = set()
         for path, record in document["files"].items():
-            if Path(path).is_absolute() or ".." in Path(path).parts or not path.startswith(("etc/", "usr/lib/aiden/")):
+            entry = Path(path)
+            hdmi_profile = entry.parent.as_posix() == "usr/share/aico/hdmi" and entry.suffix == ".hex"
+            allowed = (path.startswith(("etc/", "usr/lib/aico/")) or hdmi_profile
+                       or path == "usr/lib/systemd/system-shutdown/aico-mcu-shutdown")
+            if entry.is_absolute() or ".." in entry.parts or not allowed:
                 raise ValueError("Unsafe runtime configuration path")
             member = archive.getmember("./" + path)
             if (not member.isfile() or (member.uid, member.gid, member.mode) != (0, 0, int(record["mode"], 8))
@@ -79,8 +84,8 @@ def verify_runtime_config(package, enabled):
 
 def stage(root, apps, output):
     commit, sdk_commit = check_source(root, apps)
-    version = os.environ["AIDEN_BUSINESS_VERSION"] + "-" + os.environ["AIDEN_BUSINESS_REVISION"]
-    package_name = f"aiden-business_{version}_armhf.deb"
+    version = os.environ["AICO_BUSINESS_VERSION"] + "-" + os.environ["AICO_BUSINESS_REVISION"]
+    package_name = f"aico-business_{version}_armhf.deb"
     release = output / "release"
     if release.exists():
         shutil.rmtree(release)
@@ -90,18 +95,18 @@ def stage(root, apps, output):
     (release / "release-manifest.json").write_bytes(package_manifest(package))
     compatibility = json.loads(package_manifest(package))["required_platform_contract"]
     metadata = {
-        "format": 1, "package": "aiden-business", "version": version, "architecture": "armhf",
+        "format": 1, "package": "aico-business", "version": version, "architecture": "armhf",
         "tag": f"business-v{version}", "source_commit": commit, "sdk_commit": sdk_commit,
         "package_file": package_name, "package_sha256": sha256(package),
     }
     (release / "build-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (release / "RELEASE-NOTES.md").write_text(
-        f"Aiden business package {version} for armhf.\n\n"
+        f"Aico Link business package {version} for armhf.\n\n"
         f"Source: `{commit}`\n\n"
         f"Requires Debian platform contract >={compatibility['min']} and <{compatibility['max_exclusive']}. "
         "Contains applications, resources and managed runtime configuration; no partition images.\n\n"
         "Verify SHA256SUMS before installing with apt. Package maintainer scripts "
-        "stop and restore previously running Aiden services; then run the OTA self-check. "
+        "stop and restore previously running Aico Link services; then run the OTA self-check. "
         "See docs/08-ota/debian-package.md for the installation procedure.\n\n"
         "This GitHub prerelease distributes .deb files; it is not an APT repository "
         "or a signed firmware OTA release.\n"
@@ -120,10 +125,10 @@ def verify(release):
     for field in ("source_commit", "sdk_commit"):
         if not re.fullmatch(r"[0-9a-f]{40}", metadata[field]):
             raise ValueError(f"Invalid {field}")
-    name = f"aiden-business_{version}_armhf.deb"
+    name = f"aico-business_{version}_armhf.deb"
     if metadata["package_file"] != name or metadata["tag"] != f"business-v{version}":
         raise ValueError("Package filename or release tag does not match its version")
-    if metadata["package"] != "aiden-business" or metadata["architecture"] != "armhf":
+    if metadata["package"] != "aico-business" or metadata["architecture"] != "armhf":
         raise ValueError("Wrong package or architecture")
     expected_assets = {name, "release-manifest.json", "build-metadata.json", "RELEASE-NOTES.md", "SHA256SUMS"}
     if {p.name for p in release.iterdir()} != expected_assets:
@@ -137,7 +142,7 @@ def verify(release):
     package = release / metadata["package_file"]
     if sha256(package) != metadata["package_sha256"]:
         raise ValueError("Package checksum does not match build metadata")
-    for field, expected in (("Package", "aiden-business"), ("Version", version), ("Architecture", "armhf")):
+    for field, expected in (("Package", "aico-business"), ("Version", version), ("Architecture", "armhf")):
         if command("dpkg-deb", "--field", str(package), field) != expected:
             raise ValueError(f"Package {field} mismatch")
     manifest_bytes = (release / "release-manifest.json").read_bytes()

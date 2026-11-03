@@ -13,7 +13,7 @@ import (
 	"github.com/godbus/dbus/v5/introspect"
 	"github.com/godbus/dbus/v5/prop"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -36,12 +36,29 @@ const (
 	blueZAgentManagerInterface   = "org.bluez.AgentManager1"
 	blueZAgentInterface          = "org.bluez.Agent1"
 
-	applicationPath   = dbus.ObjectPath("/com/aiden/ble")
-	wakeServicePath   = dbus.ObjectPath("/com/aiden/ble/service0")
-	wakeCharPath      = dbus.ObjectPath("/com/aiden/ble/service0/char0")
-	advertisementPath = dbus.ObjectPath("/com/aiden/ble/advertisement0")
-	agentPath         = dbus.ObjectPath("/com/aiden/ble/agent0")
+	applicationPath   = dbus.ObjectPath("/com/aico/ble")
+	wakeServicePath   = dbus.ObjectPath("/com/aico/ble/service0")
+	wakeCharPath      = dbus.ObjectPath("/com/aico/ble/service0/char0")
+	advertisementPath = dbus.ObjectPath("/com/aico/ble/advertisement0")
+	agentPath         = dbus.ObjectPath("/com/aico/ble/agent0")
 	blueZRootPath     = dbus.ObjectPath("/")
+)
+
+// ErrAdvertisementRegistration marks a backend start that failed because the
+// controller rejected the advertising set. After a warm reboot that is usually
+// a set left over from the previous boot, which the caller can clear before
+// the next attempt.
+var ErrAdvertisementRegistration = errors.New("register BLE advertisement")
+
+// iOS caches GATT handles per bond. Auto-allocated handles grow on every
+// RegisterApplication within one bluetoothd lifetime, so a backend retry or
+// restart moves the Wake characteristic and a bonded iPhone keeps reading the
+// stale handle (ATT Invalid Handle). Pin the Wake service where a fresh
+// bluetoothd places it, right after GAP, GATT and Device Information, so
+// phones bonded on a normal boot keep a valid cache.
+const (
+	wakeServiceHandle   uint16 = 0x0013
+	wakeCharValueHandle uint16 = 0x0015
 )
 
 type managedObjects map[dbus.ObjectPath]map[string]map[string]dbus.Variant
@@ -102,7 +119,7 @@ type blueZBackend struct {
 
 func newBlueZBackend(service *Service, deviceName string, pairingWindow time.Duration) *blueZBackend {
 	if strings.TrimSpace(deviceName) == "" {
-		deviceName = "Aiden"
+		deviceName = "Aico Link"
 	}
 	if pairingWindow < 0 {
 		pairingWindow = 0
@@ -339,6 +356,8 @@ func (b *blueZBackend) exportObjects() error {
 			"UUID":            {Value: WakeServiceUUID, Emit: prop.EmitConst},
 			"Primary":         {Value: true, Emit: prop.EmitConst},
 			"Characteristics": {Value: []dbus.ObjectPath{wakeCharPath}, Emit: prop.EmitConst},
+			// BlueZ writes the allocated handle back when this is zero.
+			"Handle": {Value: wakeServiceHandle, Writable: true, Emit: prop.EmitFalse},
 		},
 	}, &struct{}{})
 	if err != nil {
@@ -350,6 +369,8 @@ func (b *blueZBackend) exportObjects() error {
 		blueZGattCharInterface: {
 			"UUID":    {Value: WakeCharacteristicUUID, Emit: prop.EmitConst},
 			"Service": {Value: wakeServicePath, Emit: prop.EmitConst},
+			// The value handle; BlueZ places the declaration one below it.
+			"Handle": {Value: wakeCharValueHandle, Writable: true, Emit: prop.EmitFalse},
 			// Keep the pairing probe encrypted, but use a standard notification
 			// subscription. BlueZ 5.65 on the board rejects encrypt-notify CCCD
 			// writes even for the bonded phone; Wake carries only a poll hint.
@@ -545,16 +566,39 @@ func (b *blueZBackend) registerAgent() error {
 }
 
 func (b *blueZBackend) registerGatt() error {
+	err := b.callRegisterApplication()
+	if err == nil {
+		return nil
+	}
+	// A BlueZ whose built-in services outgrow the pinned range rejects the
+	// whole application. Keep BLE working with automatic allocation.
+	logging.Warnf(
+		"ble_service", "bluez",
+		"BLE GATT pinned handles rejected, using automatic allocation: %v", err,
+	)
+	b.setGattHandles(0)
+	if err := b.callRegisterApplication(); err != nil {
+		return fmt.Errorf("register BLE GATT application: %w", err)
+	}
+	return nil
+}
+
+func (b *blueZBackend) callRegisterApplication() error {
 	options := map[string]dbus.Variant{}
-	if err := callWithTimeout(
+	return callWithTimeout(
 		b.conn.Object(BlueZBusName, b.adapter),
 		blueZGattManagerInterface+".RegisterApplication",
 		applicationPath,
 		options,
-	).Err; err != nil {
-		return fmt.Errorf("register BLE GATT application: %w", err)
+	).Err
+}
+
+func (b *blueZBackend) setGattHandles(handle uint16) {
+	for _, object := range b.gattObjects {
+		if _, err := object.properties.Get(object.interfaceName, "Handle"); err == nil {
+			object.properties.SetMust(object.interfaceName, "Handle", handle)
+		}
 	}
-	return nil
 }
 
 func (b *blueZBackend) setAdvertising(enabled bool) error {
@@ -575,7 +619,7 @@ func (b *blueZBackend) setAdvertising(enabled bool) error {
 			options,
 		).Err
 		if err != nil {
-			return fmt.Errorf("register BLE advertisement: %w", err)
+			return fmt.Errorf("%w: %w", ErrAdvertisementRegistration, err)
 		}
 	} else {
 		err = callWithTimeout(
@@ -1121,7 +1165,7 @@ func (a *pairingAgent) authorize(method string, device dbus.ObjectPath) *dbus.Er
 		return nil
 	}
 	logging.Warnf("ble_service", "agent", "BLE pairing agent rejected method=%s device=%s", method, device)
-	return dbus.NewError("org.bluez.Error.Rejected", []any{"only the trusted iPhone may use Aiden BLE"})
+	return dbus.NewError("org.bluez.Error.Rejected", []any{"only the trusted iPhone may use Aico Link BLE"})
 }
 
 func variantDevicePath(options map[string]dbus.Variant) dbus.ObjectPath {

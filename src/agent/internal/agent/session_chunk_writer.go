@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"

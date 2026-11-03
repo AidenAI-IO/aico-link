@@ -1,0 +1,27 @@
+[Unit]
+Description=Aico Link BLE peripheral and ANCS service
+Requires=aico-environment.service bluetooth.service
+After=aico-environment.service bluetooth.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+ConditionPathExists=/usr/lib/aico/ble_service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aico_boot.conf
+EnvironmentFile=/etc/aico_ble_service.conf
+EnvironmentFile=/run/aico/system.env
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_BLE_SERVICE
+RuntimeDirectory=ble_service
+LogsDirectory=ble_service
+ExecStartPre=/usr/lib/aico/aico-bluetooth-clear-adv
+ExecStart=/usr/lib/aico/ble_service --socket ${SOCKET_PATH} --device-name ${DEVICE_NAME} --event-capacity ${EVENT_CAPACITY} --pairing-window ${PAIRING_WINDOW_SECONDS}s
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=20s
+TimeoutStopSec=10s
+StandardOutput=append:/var/log/ble_service/ble_service.log
+StandardError=append:/var/log/ble_service/ble_service.log
+
+[Install]
+WantedBy=multi-user.target

@@ -99,10 +99,12 @@ func ComponentDefinitions() []ComponentDefinition {
 			return []SourceSpec{{Path: filepath.Join(r.Userdata, "audio"), Kind: SourceDirectory, Optional: true}}
 		}},
 		{ID: ComponentSDManagedAudio, SchemaVersion: 1, DefaultSelected: true, RequiresSD: true, Sources: func(r Roots) []SourceSpec {
-			return []SourceSpec{{Path: filepath.Join(r.SD, "aiden/audio"), Kind: SourceDirectory, Optional: true, SD: true, Exclude: []string{"**/*.aiden-partial"}}}
+			return []SourceSpec{{Path: filepath.Join(r.SD, "aico/audio"), Kind: SourceDirectory, Optional: true, SD: true, Exclude: []string{"**/*.aico-partial"}}}
 		}},
 		{ID: ComponentSDUserFiles, SchemaVersion: 1, Advanced: true, RequiresSD: true, Sources: func(r Roots) []SourceSpec {
-			return []SourceSpec{{Path: r.SD, Kind: SourceDirectory, Optional: true, SD: true, Exclude: []string{"aiden", "aiden/**", ".aiden-restore", ".aiden-restore/**", "lost+found", "lost+found/**", "**/*.aiden-partial"}}}
+			// The planner excludes managed roots through IsReservedSDUserPath,
+			// matching restore's FAT-aware boundary instead of glob spelling.
+			return []SourceSpec{{Path: r.SD, Kind: SourceDirectory, Optional: true, SD: true, Exclude: []string{"lost+found", "lost+found/**", "**/*.aico-partial"}}}
 		}},
 		{ID: ComponentPythonEnvironment, SchemaVersion: 1, Advanced: true, Sources: func(r Roots) []SourceSpec {
 			return []SourceSpec{{Path: filepath.Join(r.Userdata, "agent/python"), Kind: SourceDirectory, Optional: true}}

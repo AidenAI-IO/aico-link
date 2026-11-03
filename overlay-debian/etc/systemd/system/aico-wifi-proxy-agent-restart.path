@@ -1,0 +1,15 @@
+[Unit]
+Description=Watch Aico Link proxy environment changes
+# Disabling implicit paths.target ordering lets this watcher start after the
+# initial proxy environment exists without creating an early-boot cycle.
+DefaultDependencies=no
+After=aico-wifi-proxy.service
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Path]
+PathChanged=/run/wifi_proxy/proxy-env
+Unit=aico-wifi-proxy-agent-restart.service
+
+[Install]
+WantedBy=aico.target

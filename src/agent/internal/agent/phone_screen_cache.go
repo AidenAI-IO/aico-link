@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/logging"
 )
 
 const phoneScreenCacheFileName = "phone_screen.json"

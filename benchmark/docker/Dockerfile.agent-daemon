@@ -1,4 +1,4 @@
-# Aiden agent daemon image used by benchmark workers.
+# Aico agent daemon image used by benchmark workers.
 
 FROM golang:1.23-bullseye AS agent-daemon-builder
 

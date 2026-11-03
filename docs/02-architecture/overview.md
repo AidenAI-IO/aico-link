@@ -4,7 +4,9 @@ sidebar_position: 1
 
 # System Architecture Overview
 
-Aiden Hardware combines HDMI video capture, audio recording/playback, USB HID control, and LLM Agent into an automated system that runs on-device.
+Aico Link is the hardware platform. It combines HDMI video capture, audio
+recording/playback, and USB HID control with Aico, the AI Agent running on the
+board. The official website is [aico.link](https://aico.link).
 
 ## Overall Architecture
 
@@ -42,7 +44,7 @@ Aiden Hardware combines HDMI video capture, audio recording/playback, USB HID co
 
 | Layer | Module | Description |
 | --- | --- | --- |
-| Hardware Abstraction | `src/aiden_sdk.*` | Encapsulates GPIO, audio, video, HID-related low-level capabilities |
+| Hardware Abstraction | `src/aico_sdk.*` | Encapsulates GPIO, audio, video, HID-related low-level capabilities |
 | Common Transport | `src/uds_*` | Unix domain socket one-shot request/response transport layer |
 | Hardware Services | `frame_service`, `audio_service`, `ble_service` | Centrally manage hardware resources and expose them to other processes |
 | Utility Programs | `*_cli`, `example_*`, `image_process` | Debugging, validation, and single-capability examples |

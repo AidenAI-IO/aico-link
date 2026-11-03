@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 type commandResult struct {

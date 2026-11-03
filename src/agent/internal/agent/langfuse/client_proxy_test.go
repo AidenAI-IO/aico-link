@@ -6,7 +6,7 @@ import (
 )
 
 func TestDedicatedTelemetryProxyRespectsRoutingAndNoProxy(t *testing.T) {
-	t.Setenv("AIDEN_LANGFUSE_HTTPS_PROXY", "http://telemetry-proxy.example:8080")
+	t.Setenv("AICO_LANGFUSE_HTTPS_PROXY", "http://telemetry-proxy.example:8080")
 	t.Setenv("HTTP_PROXY", "")
 	t.Setenv("http_proxy", "")
 	t.Setenv("NO_PROXY", "internal.example")

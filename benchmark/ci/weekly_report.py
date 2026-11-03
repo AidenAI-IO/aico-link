@@ -80,40 +80,47 @@ def _config_value(record: dict[str, Any], field: str) -> str:
 
 
 def _config_changes(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """List settings whose latest value differs between the two windows."""
+    """List settings with different values across the two windows."""
     if not current or not previous:
         return []
-    def latest(records: list[dict[str, Any]]) -> dict[str, Any]:
-        return max(records, key=lambda record: parse_timestamp(record["timestamp"]))
-    now, before = latest(current), latest(previous)
-    return [{"field": label, "previous": _config_value(before, field), "current": _config_value(now, field)}
-            for field, label in CONFIG_LABELS.items()
-            if _config_value(before, field) != _config_value(now, field)]
+    def values(records: list[dict[str, Any]], field: str) -> list[str]:
+        return sorted({_config_value(record, field) for record in records})
+
+    changes = []
+    for field, label in CONFIG_LABELS.items():
+        before, now = values(previous, field), values(current, field)
+        if before != now:
+            changes.append({"field": label, "previous": ", ".join(before), "current": ", ".join(now)})
+    return changes
 
 
 # Primary test objectives, in report order. Tool calls are a mechanism shared
 # across areas, while execution environments are separate run metadata.
 CAPABILITY_SUITES = {
-    "Memory": ("memory_v1", "episode_memory_v1", "notification_memory_v1",
+    "Memory": ("memory_v1", "memory_admission_v1", "notification_memory_v1",
                "personamem_lt_recall_v1", "quick_capture_v1", "episode_memory_before_v1",
                "episode_memory_after_v1", "episode_memory_legacy_v1"),
     "Experience reflection": ("episode_reflection_v1", "episode_reflection_v2"),
     "Visual grounding": ("perception_v1",),
     "UI operation": ("mobilegym_basic", "mobilegym_scroll_regression", "mobilegym_scroll_sweep",
-                     "phone_control_v1", "adb_android_basic", "vphone_ios_basic",
+                     "mobilegym_touch_v1",
+                     "phone_control_v1", "adb_android_basic", "adb_android_text_editing",
+                     "adb_android_builtin_apps", "vphone_ios_basic",
                      "app_workflow_v1", "quick_action_v1"),
-    "Device integration": ("aiden_app_connection_capabilities_v1",
-                           "aiden_app_phone_bridge_data_policy_v1", "aiden_app_notes_entry_policy_v1"),
+    "Device integration": ("aico_app_connection_capabilities_v1",
+                           "aico_app_android_bridge_capabilities_v1",
+                           "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
 }
-DIAGNOSTIC_SUITES = ("skill_discovery_v1",)
+DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"
 OTHER_CAPABILITY = "Other"
 _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.items() for suite in suites}
 AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
 ENVIRONMENT_LABELS = {
     "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
-    "adb": "ADB device", "external": "External device", "mixed": "Mixed",
+    "adb": "ADB device", "adb_aidenbridge": "ADB + AidenBridge",
+    "external": "External device", "mixed": "Mixed",
 }
 
 
@@ -232,8 +239,8 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
-        "", "Rates are totals over each window's runs; changes compare a suite's last 7 days with its previous 7.",
-        "Configuration changes list settings that differ between the two windows' latest runs.", "",
+        "", "Rates are descriptive totals over each window's task mix, not matched-run comparisons.",
+        "Configuration changes compare all recorded values in the two windows.", "",
         "### By test area", "",
         "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",

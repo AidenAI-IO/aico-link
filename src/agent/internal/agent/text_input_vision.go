@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/logging"
 
 	"github.com/tmc/langchaingo/llms"
 )

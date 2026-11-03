@@ -5,8 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
+	"aico-agent/internal/agent/messages"
 
 	"github.com/tmc/langchaingo/llms"
 	langtools "github.com/tmc/langchaingo/tools"
@@ -58,7 +57,6 @@ func TestAgentLoopCombinesTerminationPolicyWithToolExecutionHooks(t *testing.T) 
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.toolExecutionHookFactory = func() toolExecutionHookHandler {
@@ -107,7 +105,6 @@ func TestAgentLoopPersistsSoftNoticeInContext(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.TerminationPolicy = NewTerminationPolicy(TerminationPolicyConfig{
@@ -158,7 +155,6 @@ func TestAgentLoopEscalatesFromPersistedNoticeToRestrictionAndTermination(t *tes
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.TerminationPolicy = NewTerminationPolicy(DefaultTerminationPolicyConfig())
@@ -170,21 +166,26 @@ func TestAgentLoopEscalatesFromPersistedNoticeToRestrictionAndTermination(t *tes
 	if !strings.Contains(output, "not making measurable progress") {
 		t.Fatalf("output = %q, want loop-guard stop message", output)
 	}
-	if model.callCount != 3 {
-		t.Fatalf("model call count = %d, want termination before fourth response", model.callCount)
+	// Undecodable screenshots never count as progress: the second repeat
+	// notices, the third restricts, and the fourth terminates.
+	if model.callCount != 4 {
+		t.Fatalf("model call count = %d, want termination after the fourth response", model.callCount)
 	}
-	if got := countLoopGuardNotices(model.messages[2]); got != 1 {
-		t.Fatalf("restriction notice count in deciding prompt = %d, want 1", got)
+	if got := countLoopGuardNotices(model.messages[3]); got != 2 {
+		t.Fatalf("loop-guard notice count in deciding prompt = %d, want soft notice and restriction", got)
 	}
 	notices := collectMessagesByRole(manager.MessageListDump().Messages, messages.MessageRoleNotice)
-	if len(notices) != 2 {
-		t.Fatalf("persisted notices = %d, want restriction and termination notices", len(notices))
+	if len(notices) != 3 {
+		t.Fatalf("persisted notices = %d, want soft notice, restriction and termination", len(notices))
 	}
-	if !strings.HasPrefix(notices[1].Content, "Interrupt [loop_detected]:") {
-		t.Fatalf("termination notice = %q", notices[1].Content)
+	if !strings.HasPrefix(notices[2].Content, "Interrupt [loop_detected]:") {
+		t.Fatalf("termination notice = %q", notices[2].Content)
 	}
-	if strings.Contains(notices[0].Content, "<notice>") || !strings.Contains(notices[0].Content, "Loop guard: UI action tools are temporarily restricted because repeated actions produced no progress.") {
-		t.Fatalf("persisted notice = %#v", notices[0])
+	if !strings.Contains(notices[0].Content, "Loop guard: recent tool calls are repeating or not changing the screen.") {
+		t.Fatalf("soft notice = %#v", notices[0])
+	}
+	if strings.Contains(notices[1].Content, "<notice>") || !strings.Contains(notices[1].Content, "Loop guard: UI action tools are temporarily restricted because repeated actions produced no progress.") {
+		t.Fatalf("persisted restriction notice = %#v", notices[1])
 	}
 }
 
@@ -207,7 +208,6 @@ func TestAgentLoopBudgetExhaustionReturnsGracefulStop(t *testing.T) {
 		1,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	loop.TerminationPolicy = NewTerminationPolicy(TerminationPolicyConfig{
@@ -238,7 +238,6 @@ func TestAgentLoopReturnsContextErrorBeforeGracefulStop(t *testing.T) {
 		10,
 		nil,
 		nil,
-		executor.ScreenshotPruningConfig{}.WithDefaults(),
 		manager,
 	)
 	ctx, cancel := context.WithCancel(context.Background())

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 // TTSSettingsRequest is the body for POST /api/settings/tts.

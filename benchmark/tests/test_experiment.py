@@ -51,7 +51,14 @@ def manifest():
     return {"id": "exp-test", "status": "queued", "created_at": now_iso()}
 
 
-def test_interleaved_runs_have_identical_inputs_independent_artifacts_and_paired_report(tmp_path):
+def test_interleaved_runs_have_identical_inputs_independent_artifacts_and_paired_report(tmp_path, monkeypatch):
+    from runner import experiment
+    rendered = []
+    render = experiment.generate_report_html
+    def record_render(directory):
+        rendered.append((directory.name, len((directory / "results.jsonl").read_text().splitlines())))
+        return render(directory)
+    monkeypatch.setattr(experiment, "generate_report_html", record_render)
     suite = tiny_suite()
     agents = [{"id": "aiden", "kind": "aiden"}, {"id": "pi", "kind": "pi"}]
     calls = []
@@ -71,6 +78,9 @@ def test_interleaved_runs_have_identical_inputs_independent_artifacts_and_paired
         assert all(Path(row["artifact_dir"]).is_relative_to(root) for row in rows)
         assert (root / "report.html").exists()
         assert json.loads((root / "manifest.json").read_text())["suite_sha256"] == suite.sha256
+        # Initialize and finalize every report; intermediate saves render only the
+        # agent with new results, without rereading other agents' screenshots.
+        assert [count for name, count in rendered if name == agent["id"]] == [0, 1, 2, 2]
 
 
 def test_judge_retry_updates_original_reports_without_reexecuting_agents(tmp_path, monkeypatch):
@@ -178,6 +188,37 @@ def test_paired_scores_use_same_denominator_and_latency_uses_both_passes():
     assert pair["agents"]["pi"]["success_rate"] == .5
     assert pair["agents"]["aiden"]["both_pass_median_wall_ms"] == 10
     assert pair["agents"]["pi"]["both_pass_median_wall_ms"] == 20
+    assert data["agents"][0]["median_wall_ms"] == 55
+    assert data["agents"][1]["median_wall_ms"] == 10.5
+
+
+def test_overview_latency_is_unknown_without_passed_attempts():
+    suite = tiny_suite()
+    row = TaskResult(suite=suite.name, run_id="pi", task_id=suite.tasks[0].id,
+                     category="test", attempt=1, status="timeout", rubric=[],
+                     metrics={"agent_eligible": True, "wall_ms": 90000})
+    data = comparison(suite, [{"id": "pi", "kind": "pi"}], {"pi": [row]}, 1)
+    assert data["agents"][0]["median_wall_ms"] is None
+
+
+def test_experiment_list_orders_by_creation_time_and_prioritizes_active_run(tmp_path):
+    manager = ExperimentManager(runs_dir=tmp_path, suites_dir=SUITE_PATH.parent,
+                                base_config_dir=tmp_path, daemon_image="unused", build_daemon_image=False,
+                                config_loader=lambda: "")
+    for experiment_id, created_at in (("exp-ffff", "2026-11-02T00:00:00Z"),
+                                      ("exp-1111", "2026-11-03T00:00:00Z")):
+        root = manager.root / experiment_id
+        root.mkdir()
+        atomic_json(root / "manifest.json", {"id": experiment_id, "status": "completed", "created_at": created_at})
+    assert [item["id"] for item in manager.list()] == ["exp-1111", "exp-ffff"]
+    stop = threading.Event()
+    worker = threading.Thread(target=stop.wait)
+    worker.start()
+    try:
+        manager._active = ("exp-ffff", stop, worker)
+        assert [item["id"] for item in manager.list()] == ["exp-ffff", "exp-1111"]
+    finally:
+        manager.shutdown()
 
 
 @pytest.mark.parametrize("evidence", ["none", "text", "tool", "tokens"])
@@ -342,7 +383,7 @@ def test_missing_judge_cannot_silently_pass_rubric_tasks(tmp_path):
 
 @pytest.mark.parametrize("settings", [{"enabled": False}, {}])
 def test_manager_requires_judge_before_launch(tmp_path, monkeypatch, settings):
-    monkeypatch.delenv("AIDEN_BENCHMARK_JUDGE_API_KEY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_JUDGE_API_KEY", raising=False)
     manager = ExperimentManager(runs_dir=tmp_path, suites_dir=SUITE_PATH.parent,
                                 base_config_dir=tmp_path, daemon_image="unused", build_daemon_image=False,
                                 config_loader=lambda: "", judge_loader=lambda: settings)

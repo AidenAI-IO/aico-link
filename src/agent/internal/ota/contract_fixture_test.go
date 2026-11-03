@@ -13,7 +13,7 @@ import (
 
 func contractFixtureRoot(t *testing.T) string {
 	t.Helper()
-	if configured := os.Getenv("AIDEN_CONTRACT_FIXTURES"); configured != "" {
+	if configured := os.Getenv("AICO_CONTRACT_FIXTURES"); configured != "" {
 		return configured
 	}
 	_, source, _, ok := runtime.Caller(0)

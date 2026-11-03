@@ -16,6 +16,7 @@ type sttTurnTelemetry struct {
 	streamingSupported        bool
 	streamingReady            bool
 	streamingReadyMS          int64
+	streamingPreReadyOverflow bool
 	streamingUnavailableError string
 	streamingUploadError      string
 	streamingFinalizeMS       int64
@@ -84,6 +85,9 @@ func (m *sttTurnTelemetry) event(end time.Time) TaskEpisodeEvent {
 	}
 	if m.streamingReadyMS > 0 {
 		metadata["streaming_ready_ms"] = m.streamingReadyMS
+	}
+	if m.streamingPreReadyOverflow {
+		metadata["streaming_pre_ready_overflow"] = true
 	}
 	if strings.TrimSpace(m.streamingUnavailableError) != "" {
 		metadata["streaming_unavailable_error"] = strings.TrimSpace(m.streamingUnavailableError)

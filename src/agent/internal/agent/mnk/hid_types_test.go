@@ -76,7 +76,7 @@ func TestHIDDeviceWriteReopensWhenDeviceNodeRecreated(t *testing.T) {
 func TestHIDDeviceWriteReopensAfterWatchdogRefreshState(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hidg0")
-	statePath := filepath.Join(dir, "aiden_usb_ecm_watchdog.state")
+	statePath := filepath.Join(dir, "aico_usb_ecm_watchdog.state")
 	if err := os.WriteFile(path, nil, 0o600); err != nil {
 		t.Fatalf("create test hid device: %v", err)
 	}
@@ -112,12 +112,12 @@ func TestTriggerUSBCompositeRefreshUsesConfiguredCommand(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "usb-refresh")
 	argsPath := filepath.Join(dir, "args")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AIDEN_USB_REFRESH_TEST_ARGS\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AICO_USB_REFRESH_TEST_ARGS\"\n"
 	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write refresh command: %v", err)
 	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
-	t.Setenv("AIDEN_USB_REFRESH_TEST_ARGS", argsPath)
+	t.Setenv("AICO_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
+	t.Setenv("AICO_USB_REFRESH_TEST_ARGS", argsPath)
 
 	if err := triggerUSBCompositeRefresh(); err != nil {
 		t.Fatalf("triggerUSBCompositeRefresh returned error: %v", err)
@@ -139,7 +139,7 @@ func TestTriggerUSBCompositeRefreshDoesNotWaitForInheritedOutput(t *testing.T) {
 	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write refresh command: %v", err)
 	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
+	t.Setenv("AICO_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
 
 	start := time.Now()
 	if err := triggerUSBCompositeRefresh(); err != nil {
@@ -213,12 +213,12 @@ func TestHIDDeviceOpenRefreshesUSBCompositeOnENXIO(t *testing.T) {
 	dir := t.TempDir()
 	commandPath := filepath.Join(dir, "usb-refresh")
 	markerPath := filepath.Join(dir, "refreshed")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AIDEN_USB_REFRESH_TEST_MARKER\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$AICO_USB_REFRESH_TEST_MARKER\"\n"
 	if err := os.WriteFile(commandPath, []byte(script), 0o755); err != nil {
 		t.Fatalf("write refresh command: %v", err)
 	}
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
-	t.Setenv("AIDEN_USB_REFRESH_TEST_MARKER", markerPath)
+	t.Setenv("AICO_USB_COMPOSITE_REFRESH_COMMAND", commandPath)
+	t.Setenv("AICO_USB_REFRESH_TEST_MARKER", markerPath)
 	setUSBCompositeRebindDelay(t, 0)
 
 	writer := &fakeHIDWriteCloser{}
@@ -246,7 +246,7 @@ func TestHIDDeviceOpenRefreshesUSBCompositeOnENXIO(t *testing.T) {
 }
 
 func TestHIDDeviceOpenReportsUSBCompositeRefreshFailure(t *testing.T) {
-	t.Setenv("AIDEN_USB_COMPOSITE_REFRESH_COMMAND", filepath.Join(t.TempDir(), "missing-refresh"))
+	t.Setenv("AICO_USB_COMPOSITE_REFRESH_COMMAND", filepath.Join(t.TempDir(), "missing-refresh"))
 	setUSBCompositeRebindDelay(t, 0)
 
 	openCount := 0

@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 
 	"github.com/google/uuid"
 )

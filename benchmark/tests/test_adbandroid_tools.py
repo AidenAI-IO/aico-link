@@ -152,6 +152,10 @@ def test_keyboard_tap_keys_array_semantics(bridge):
     _invoke(base_url, "keyboard_tap", {"keys": ["backspace"]})
     assert ("keyevent", 67) in device.calls
 
+    status, body = _invoke(base_url, "keyboard_tap", {"keys": ["space"]})
+    assert status == 200 and body["is_error"] is False
+    assert ("keyevent", 62) in device.calls
+
     _invoke(base_url, "keyboard_tap", {"keys": ["delete"]})
     assert device.calls[-1][0:2] == ("screenshot_jpeg",)
     assert ("keyevent", 67) in device.calls
@@ -207,7 +211,7 @@ def test_enter_text_does_not_claim_success_on_mismatch(bridge):
     status, body = _invoke(
         base_url,
         "enter_text",
-        {"text": "hello-aiden", "focus": {"x": 500, "y": 100}},
+        {"text": "hello-aico", "focus": {"x": 500, "y": 100}},
     )
     assert status == 200
     output, screenshot = _text_entry_output(body)

@@ -4,7 +4,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 static const uint32_t MAX_HEADER_LEN = 1024U * 1024U;
 static const uint64_t MAX_PAYLOAD_LEN = 64ULL * 1024ULL * 1024ULL;
@@ -133,4 +133,4 @@ FrameServiceStatus read_uds_message(int fd, UdsMessage* out) {
     return status;
 }
 
-}  // namespace aiden
+}  // namespace aico

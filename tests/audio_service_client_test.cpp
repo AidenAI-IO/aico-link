@@ -6,13 +6,13 @@
 #include <string>
 #include <unistd.h>
 
-using aiden::AidenServiceStatus;
-using aiden::AudioServiceClient;
-using aiden::UdsServer;
-using aiden::UdsMessage;
-using aiden::write_uds_message;
-using aiden::audio_response_json;
-using aiden::audio_json_u64;
+using aico::AicoServiceStatus;
+using aico::AudioServiceClient;
+using aico::UdsServer;
+using aico::UdsMessage;
+using aico::write_uds_message;
+using aico::audio_response_json;
+using aico::audio_json_u64;
 
 namespace {
 
@@ -20,7 +20,7 @@ struct TempSocketPath {
     std::string path;
 
     TempSocketPath() {
-        char tmpl[] = "/tmp/aiden_audio_client_XXXXXX";
+        char tmpl[] = "/tmp/aico_audio_client_XXXXXX";
         int fd = ::mkstemp(tmpl);
         REQUIRE(fd >= 0);
         ::close(fd);
@@ -41,7 +41,7 @@ struct StubServer {
                  [response_json](const UdsMessage&, int fd) {
                      write_uds_message(fd, response_json, {});
                  }) {
-        REQUIRE(server.start() == AidenServiceStatus::OK);
+        REQUIRE(server.start() == AicoServiceStatus::OK);
     }
 
     ~StubServer() { server.stop(); }
@@ -61,8 +61,8 @@ TEST_CASE("AudioServiceClient::health parses OK response") {
         R"("record_sessions":0,"playback_sessions":1})");
 
     AudioServiceClient client(stub.path());
-    aiden::AudioHealthResult h;
-    REQUIRE(client.health(&h) == AidenServiceStatus::OK);
+    aico::AudioHealthResult h;
+    REQUIRE(client.health(&h) == AicoServiceStatus::OK);
     CHECK(h.recording_active  == false);
     CHECK(h.playback_active   == true);
     CHECK(h.record_sessions   == 0);
@@ -77,8 +77,8 @@ TEST_CASE("AudioServiceClient::start_recording parses session_id from response")
     StubServer stub(R"({"status":"OK","session_id":"42"})");
 
     AudioServiceClient client(stub.path());
-    aiden::RecordStartResult rs;
-    REQUIRE(client.start_recording({}, &rs) == AidenServiceStatus::OK);
+    aico::RecordStartResult rs;
+    REQUIRE(client.start_recording({}, &rs) == AicoServiceStatus::OK);
     CHECK(rs.session_id == 42ULL);
 }
 
@@ -86,8 +86,8 @@ TEST_CASE("AudioServiceClient::start_recording propagates error status") {
     StubServer stub(R"({"status":"INTERNAL_ERROR"})");
 
     AudioServiceClient client(stub.path());
-    aiden::RecordStartResult rs;
-    CHECK(client.start_recording({}, &rs) == AidenServiceStatus::INTERNAL_ERROR);
+    aico::RecordStartResult rs;
+    CHECK(client.start_recording({}, &rs) == AicoServiceStatus::INTERNAL_ERROR);
 }
 
 // -----------------------------------------------------------------------
@@ -98,14 +98,14 @@ TEST_CASE("AudioServiceClient::stop_recording returns OK on success") {
     StubServer stub(R"({"status":"OK"})");
 
     AudioServiceClient client(stub.path());
-    CHECK(client.stop_recording(1) == AidenServiceStatus::OK);
+    CHECK(client.stop_recording(1) == AicoServiceStatus::OK);
 }
 
 TEST_CASE("AudioServiceClient::stop_recording propagates SESSION_NOT_FOUND") {
     StubServer stub(R"({"status":"SESSION_NOT_FOUND"})");
 
     AudioServiceClient client(stub.path());
-    CHECK(client.stop_recording(999) == AidenServiceStatus::SESSION_NOT_FOUND);
+    CHECK(client.stop_recording(999) == AicoServiceStatus::SESSION_NOT_FOUND);
 }
 
 // -----------------------------------------------------------------------
@@ -116,8 +116,8 @@ TEST_CASE("AudioServiceClient::start_playback parses session_id from response") 
     StubServer stub(R"({"status":"OK","session_id":"7"})");
 
     AudioServiceClient client(stub.path());
-    aiden::PlaybackStartResult ps;
-    REQUIRE(client.start_playback({}, &ps) == AidenServiceStatus::OK);
+    aico::PlaybackStartResult ps;
+    REQUIRE(client.start_playback({}, &ps) == AicoServiceStatus::OK);
     CHECK(ps.session_id == 7ULL);
 }
 
@@ -130,7 +130,7 @@ TEST_CASE("AudioServiceClient::write_play_chunk returns OK on success") {
 
     AudioServiceClient client(stub.path());
     uint8_t pcm[8] = {0};
-    CHECK(client.write_play_chunk(1, pcm, sizeof(pcm), false) == AidenServiceStatus::OK);
+    CHECK(client.write_play_chunk(1, pcm, sizeof(pcm), false) == AicoServiceStatus::OK);
 }
 
 // -----------------------------------------------------------------------
@@ -141,6 +141,6 @@ TEST_CASE("AudioServiceClient returns TRANSPORT_ERROR when service is not runnin
     TempSocketPath sock;  // socket file does not exist
     AudioServiceClient client(sock.path.c_str());
 
-    aiden::AudioHealthResult h;
-    CHECK(client.health(&h) == AidenServiceStatus::TRANSPORT_ERROR);
+    aico::AudioHealthResult h;
+    CHECK(client.health(&h) == AicoServiceStatus::TRANSPORT_ERROR);
 }

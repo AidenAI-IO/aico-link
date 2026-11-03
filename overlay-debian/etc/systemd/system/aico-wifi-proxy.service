@@ -1,0 +1,27 @@
+[Unit]
+Description=Aico Link per-network loopback proxy
+Requires=aico-userdata-migrate.service aico-environment.service
+Wants=aico-wifi-driver.service network.target
+After=aico-userdata-migrate.service aico-environment.service
+After=aico-wifi-driver.service network.target
+Before=aico-agent.service aico-config-web.service
+StartLimitIntervalSec=60s
+StartLimitBurst=5
+ConditionPathExists=/usr/lib/aico/agent
+
+[Service]
+Type=simple
+EnvironmentFile=/run/aico/system.env
+RuntimeDirectory=wifi_proxy
+LogsDirectory=wifi_proxy
+ExecStart=/usr/lib/aico/agent wifi-proxy --listen=127.0.0.1:18080 --config=/userdata/system/wifi-proxies.json --environment=/run/wifi_proxy/proxy-env --wifi-interface=wlan0
+ExecStartPost=/usr/lib/aico/aico-wifi-proxy-wait /run/wifi_proxy/proxy-env
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=10s
+TimeoutStopSec=10s
+StandardOutput=append:/var/log/wifi_proxy/wifi_proxy.log
+StandardError=append:/var/log/wifi_proxy/wifi_proxy.log
+
+[Install]
+WantedBy=multi-user.target

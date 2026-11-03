@@ -6,7 +6,7 @@ sidebar_position: 6
 
 ## Current implementation
 
-Aiden uses the AIC8800 driver's self-managed regulatory-domain path. The
+Aico Link uses the AIC8800 driver's self-managed regulatory-domain path. The
 persisted `country=` value in
 `/userdata/debian/wifi/wpa_supplicant-wlan0.conf` is the authoritative user
 configuration, but `wpa_supplicant` does not apply that value to the
@@ -35,7 +35,7 @@ The main implementation is distributed across:
 | --- | --- |
 | Configuration loading and normalization | `src/agent/internal/configweb/wifi.go` |
 | Country-code driver integration | `src/agent/internal/wifiregion/` |
-| Driver and service startup | `overlay-debian/usr/lib/aiden/aiden-wifi-driver` and the related systemd unit |
+| Driver and service startup | `overlay-debian/usr/lib/aico/aico-wifi-driver` and the related systemd unit |
 | Configuration UI | `src/config_web/web/assets/js/config/wifi.js` |
 | Persistent Wi-Fi configuration | `/userdata/debian/wifi/wpa_supplicant-wlan0.conf` |
 

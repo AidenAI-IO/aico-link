@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 // -----------------------------------------------------------------------
 // Wire types
@@ -55,11 +55,11 @@ bool audio_format_from_json(const char* json, AudioFormat* out);
 std::string audio_request_json(const char* op, const std::string& extra_fields = "");
 
 // Build a response envelope: {"status":"<status>", ...extra_fields}
-std::string audio_response_json(AidenServiceStatus status,
+std::string audio_response_json(AicoServiceStatus status,
                                 const std::string& extra_fields = "");
 
 // Parse the "status" field from a response envelope.
-AidenServiceStatus audio_response_status(const char* json);
+AicoServiceStatus audio_response_status(const char* json);
 
 // Parse a uint64 session_id field from a JSON object.
 uint64_t audio_json_u64(const char* json, const char* key);
@@ -70,4 +70,4 @@ bool audio_json_bool(const char* json, const char* key);
 // Parse a uint32 field from a JSON object.
 uint32_t audio_json_u32(const char* json, const char* key);
 
-}  // namespace aiden
+}  // namespace aico

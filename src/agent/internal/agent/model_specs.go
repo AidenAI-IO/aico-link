@@ -3,7 +3,7 @@ package agent
 import (
 	"strings"
 
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 )
 
 // modelSpecRegistry covers the chat models referenced from this repo (overlay

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Bound the shared Wi-Fi service logs before a service opens them for append.
+# Copying retained content back preserves the inode held by systemd writers.
+set -u
+
+max_lines=${AICO_WIFI_LOG_MAX_LINES:-2000}
+keep_lines=${AICO_WIFI_LOG_KEEP_LINES:-1000}
+case "${max_lines}:${keep_lines}" in
+    ''|*[!0-9:]*|*:0|0:*) exit 0 ;;
+esac
+
+trim() {
+    path=$1
+    [ -f "${path}" ] || return 0
+    lines=$(wc -l <"${path}" 2>/dev/null || echo 0)
+    case "${lines}" in ''|*[!0-9]*) return 0 ;; esac
+    [ "${lines}" -gt "${max_lines}" ] || return 0
+    tmp="${path}.tmp.$$"
+    if tail -n "${keep_lines}" "${path}" >"${tmp}" 2>/dev/null &&
+        cat "${tmp}" >"${path}" 2>/dev/null; then
+        rm -f "${tmp}" 2>/dev/null || true
+    else
+        rm -f "${tmp}" 2>/dev/null || true
+    fi
+}
+
+trim /var/log/wifi_driver/wifi_driver.log
+trim /var/log/wpa_supplicant/wlan0.log

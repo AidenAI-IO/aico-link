@@ -22,9 +22,9 @@ var defaultQuickActionsJSON []byte
 const QuickActionsFileName = "quick_actions.json"
 
 // BundledQuickActionsPath is the on-device install path, populated by
-// the aiden-business Debian package from
+// the aico-business Debian package from
 // src/agent/internal/agent/quick_actions.json.
-const BundledQuickActionsPath = "/usr/share/aiden/" + QuickActionsFileName
+const BundledQuickActionsPath = "/usr/share/aico/" + QuickActionsFileName
 
 const (
 	quickActionStatusActive   = "active"

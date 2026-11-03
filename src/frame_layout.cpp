@@ -3,7 +3,7 @@
 #include <cstring>
 #include <limits>
 
-namespace aiden {
+namespace aico {
 
 namespace {
 
@@ -112,4 +112,4 @@ bool compact_nv12(const uint8_t* source,
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

@@ -1,0 +1,26 @@
+#!/bin/sh
+# Finish or roll back restore transactions interrupted by a power loss before
+# any service can touch /userdata.  The transaction format, commit/rollback
+# logic and bind-mount handling live in the agent binary (internal/backup) so
+# the boot path and Config Web can never disagree about the log.
+set -eu
+
+AGENT_BIN=${AGENT_BIN:-/usr/lib/aico/agent}
+STATUS_FILE=${AICO_BACKUP_RECOVERY_STATUS:-/run/aico/backup/recovery.json}
+FAILED_MARKER=${AICO_BACKUP_RECOVERY_FAILED:-/run/aico/backup/recovery.failed}
+
+mkdir -p "$(dirname "${STATUS_FILE}")"
+rm -f "${FAILED_MARKER}"
+
+if [ ! -x "${AGENT_BIN}" ]; then
+    echo "aico-backup-recover: ${AGENT_BIN} is not executable" >&2
+    exit 1
+fi
+
+exec "${AGENT_BIN}" backup-recover \
+    --userdata-root /userdata \
+    --sd-root /mnt/sdcard \
+    --status "${STATUS_FILE}" \
+    --failed-marker "${FAILED_MARKER}" \
+    --ota-binary /usr/lib/aico/ota \
+    --ota-config /userdata/debian/ota/config.json

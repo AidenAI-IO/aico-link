@@ -1,8 +1,8 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/mnk"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/mnk"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
 	"fmt"

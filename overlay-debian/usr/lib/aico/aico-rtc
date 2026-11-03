@@ -1,0 +1,37 @@
+#!/bin/sh
+set -eu
+
+default_date=${RTC_DEFAULT_DATE:-2026-06-09}
+command -v hwclock >/dev/null 2>&1 || exit 0
+
+# A baseline makes offline boot usable; it does not imply NTP synchronization.
+# UTC parsing keeps locale, time zones and time-of-day digits from turning a
+# valid clock into an apparent reset clock.
+export LC_ALL=C TZ=UTC0
+case "${default_date}" in
+    [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+    *) echo "Invalid RTC_DEFAULT_DATE: ${default_date}" >&2; exit 1 ;;
+esac
+if ! baseline_epoch=$(date -u -d "${default_date} 00:00:00 UTC" +%s); then
+    echo "Invalid RTC_DEFAULT_DATE: ${default_date}" >&2
+    exit 1
+fi
+
+# Do not mistake an absent, unreadable or malformed RTC for a reset date.
+if ! rtc_time=$(hwclock --show --utc --noadjfile 2>/dev/null); then
+    echo "Unable to read RTC; leaving clocks unchanged" >&2
+    exit 0
+fi
+if [ -z "${rtc_time}" ] || ! rtc_epoch=$(date -u -d "${rtc_time}" +%s 2>/dev/null); then
+    echo "Unable to parse RTC time; leaving clocks unchanged" >&2
+    exit 0
+fi
+[ "${rtc_epoch}" -lt "${baseline_epoch}" ] || exit 0
+
+# Only repair a stale RTC. Preserve a system time already advanced by
+# timesyncd (or an operator), and never overwrite an RTC at/after the baseline.
+current_epoch=$(date -u +%s)
+if [ "${current_epoch}" -lt "${baseline_epoch}" ]; then
+    date -u --set="@${baseline_epoch}" >/dev/null
+fi
+hwclock --systohc --utc --noadjfile

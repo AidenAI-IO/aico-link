@@ -32,7 +32,7 @@ func FirmwareVersion() string {
 }
 
 func otaStatePath() string {
-	if v := strings.TrimSpace(os.Getenv("AIDEN_OTA_STATE_PATH")); v != "" {
+	if v := strings.TrimSpace(os.Getenv("AICO_OTA_STATE_PATH")); v != "" {
 		return v
 	}
 	return defaultOTAStatePath

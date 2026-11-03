@@ -113,7 +113,7 @@ export async function storagePage(context) {
     if (confirmed) engine.createBackup();
   }
 
-  const restoreInput = el('input', {attrs: {type: 'file', accept: '.aiden-backup,application/vnd.aiden.backup,application/octet-stream', hidden: 'hidden'}, data: {action: 'restore-file'}});
+  const restoreInput = el('input', {attrs: {type: 'file', accept: '.aico-backup,application/vnd.aico.backup,application/octet-stream', hidden: 'hidden'}, data: {action: 'restore-file'}});
   restoreInput.addEventListener('change', async () => {
     const chosen = restoreInput.files && restoreInput.files[0];
     restoreInput.value = '';
@@ -170,7 +170,7 @@ export async function storagePage(context) {
       caption: msg('storage.backup_caption', '备份与还原'),
       joined: true,
       rows: [
-        text(msg('storage.full_backup_intro', '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aiden 备份恢复。'), 'ds-group__intro'),
+        text(msg('storage.full_backup_intro', '将 Agent 数据和设置（记忆、会话、设备身份等）完整备份到当前电脑或手机，或从 Aico Link 备份恢复。'), 'ds-group__intro'),
         progressNode,
         el('div', {class: 'ds-button-pair'}, [
           el('div', {class: 'ds-button-pair__item'}, [create]),
@@ -233,8 +233,12 @@ export async function storagePage(context) {
     });
     if (!confirmed) return;
     try {
-      await request('/api/storage/eject', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
-      toast(msg('storage.ejected', '存储卡已弹出，可以安全取出。'));
+      const result = await request('/api/storage/eject', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+      if (result.warning_code === 'storage_flush_failed') {
+        toast(msg('storage.ejected_with_warning', '存储卡已弹出，可以取出；部分待写入数据可能未保存。'), {durationMs: 6000});
+      } else {
+        toast(msg('storage.ejected', '存储卡已弹出，可以安全取出。'));
+      }
     } catch (error) {
       toast(error && error.message ? error.message : resolve(msg('storage.eject_failed', '弹出存储卡失败。')));
     }
@@ -251,10 +255,10 @@ export async function storagePage(context) {
       }
       const disposition = response.headers.get('Content-Disposition') || '';
       const match = disposition.match(/filename="([^"]+)"/i);
-      const filename = match ? match[1] : 'aiden-config.toml';
+      const filename = match ? match[1] : 'aico-config.toml';
       if (isEmbedded()) {
         // A WebView cannot save a blob download; the app writes and shares it.
-        postToHost({type: 'aiden_file_export', filename, mime: 'application/toml', text: await response.text()});
+        postToHost({type: 'aico_file_export', filename, mime: 'application/toml', text: await response.text()});
       } else {
         const url = URL.createObjectURL(await response.blob());
         const link = el('a', {attrs: {href: url, download: filename}});
@@ -359,6 +363,9 @@ export async function storagePage(context) {
             el('div', {class: 'ds-button-pair__item'}, [formatButton]),
             el('div', {class: 'ds-button-pair__item'}, [ejectButton]),
           ]),
+          status.last_warning
+            ? text(msg('storage.last_flush_warning', '此前存储卡同步失败，部分待写入数据可能未保存。'), 'ds-card__note ds-card__note--danger')
+            : null,
         ],
       }),
       fullBackupGroup(),

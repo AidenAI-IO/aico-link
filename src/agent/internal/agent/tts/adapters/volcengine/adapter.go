@@ -15,8 +15,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 
-	"aiden-agent/internal/agent/tts"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/tts"
+	"aico-agent/internal/logging"
 )
 
 const (
@@ -26,7 +26,7 @@ const (
 	defaultSpeaker    = "zh_female_vv_uranus_bigtts"
 	connectTimeout    = 10 * time.Second
 	synthesisTimeout  = 60 * time.Second
-	defaultUserID     = "aiden-agent"
+	defaultUserID     = "aico-agent"
 	statusCodeOK      = 20000000
 )
 
@@ -81,7 +81,11 @@ func New(cfg tts.ProviderConfig) (tts.TTSProvider, error) {
 func (a *Adapter) Name() string { return ProviderName }
 
 func (a *Adapter) Capabilities() tts.Capabilities {
-	return tts.Capabilities{SupportedSampleRates: []int{8000, 16000, 22050, 24000, 32000, 44100, 48000}}
+	return tts.Capabilities{
+		SupportedSampleRates:     []int{8000, 16000, 22050, 24000, 32000, 44100, 48000},
+		TextGranularity:          tts.TextGranularityIncremental,
+		SupportsIncrementalAudio: true,
+	}
 }
 
 func (a *Adapter) Close() error { return nil }

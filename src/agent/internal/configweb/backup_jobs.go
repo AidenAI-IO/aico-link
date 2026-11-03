@@ -12,8 +12,8 @@ import (
 	"sync"
 	"time"
 
-	"aiden-agent/internal/agent"
-	"aiden-agent/internal/backup"
+	"aico-agent/internal/agent"
+	"aico-agent/internal/backup"
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
 )
@@ -216,7 +216,7 @@ func (s *Server) handleMaintenanceSession(w http.ResponseWriter, r *http.Request
 		return
 	}
 	hardware := s.readHardwareID()
-	w.Header().Set("Set-Cookie", "aiden_maintenance="+token+"; Path=/api; HttpOnly; SameSite=Strict")
+	w.Header().Set("Set-Cookie", "aico_maintenance="+token+"; Path=/api; HttpOnly; SameSite=Strict")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token, "csrf_token": csrf, "expires_at": expiry,
 		"device": map[string]any{"hardware_id": hardware, "firmware_version": agent.FirmwareVersion()},
@@ -391,7 +391,7 @@ func (s *Server) handleCreateBackupJob(w http.ResponseWriter, r *http.Request) {
 }
 
 func backupFilename(at time.Time) string {
-	return "aiden-backup-" + at.Local().Format("20060102-150405") + backup.ArchiveSuffix
+	return "aico-backup-" + at.Local().Format("20060102-150405") + backup.ArchiveSuffix
 }
 
 func (s *Server) handleBackupJob(w http.ResponseWriter, r *http.Request, id string) {
@@ -722,40 +722,40 @@ type quiescedService struct {
 // serviceStopOrder is the order writers are stopped; services are restarted
 // in the reverse of their position in serviceStartOrder.
 var serviceStartOrder = []string{
-	"aiden-environment.service",
+	"aico-environment.service",
 	"bluetooth.service",
-	"aiden-ble.service",
+	"aico-ble.service",
 	"wpa_supplicant@wlan0.service",
-	"aiden-wifi-proxy.service",
-	"aiden-audio.service",
-	"aiden-agent.service",
+	"aico-wifi-proxy.service",
+	"aico-audio.service",
+	"aico-agent.service",
 	"ssh.service",
-	"aiden-ttyd.service",
+	"aico-ttyd.service",
 }
 
 func backupQuiesceUnits(components []backup.ComponentID) []string {
 	var units []string
 	if containsComponent(components, backup.ComponentUserHome) {
-		units = append(units, "aiden-ttyd.service", "ssh.service")
+		units = append(units, "aico-ttyd.service", "ssh.service")
 	}
 	if containsComponent(components, backup.ComponentDeviceIdentity) {
-		units = append(units, "aiden-ble.service", "bluetooth.service")
+		units = append(units, "aico-ble.service", "bluetooth.service")
 	}
-	return append(units, "aiden-audio.service", "aiden-agent.service")
+	return append(units, "aico-audio.service", "aico-agent.service")
 }
 
 func restoreQuiesceUnits(components []backup.ComponentID) []string {
 	var units []string
 	if containsComponent(components, backup.ComponentUserHome) || containsComponent(components, backup.ComponentDeviceIdentity) {
-		units = append(units, "aiden-ttyd.service", "ssh.service")
+		units = append(units, "aico-ttyd.service", "ssh.service")
 	}
 	if containsComponent(components, backup.ComponentNetwork) {
-		units = append(units, "aiden-wifi-proxy.service", "wpa_supplicant@wlan0.service")
+		units = append(units, "aico-wifi-proxy.service", "wpa_supplicant@wlan0.service")
 	}
 	if containsComponent(components, backup.ComponentDeviceIdentity) {
-		units = append(units, "aiden-ble.service", "bluetooth.service")
+		units = append(units, "aico-ble.service", "bluetooth.service")
 	}
-	return append(units, "aiden-audio.service", "aiden-agent.service")
+	return append(units, "aico-audio.service", "aico-agent.service")
 }
 
 // quiesceUnits records each unit's active state and stops the active ones in
@@ -823,7 +823,7 @@ func (s *Server) resumeServices(ctx context.Context, services []quiescedService)
 // environment when its source was restored, before the Agent starts.
 func (s *Server) resumeRestoredServices(ctx context.Context, services []quiescedService, components []backup.ComponentID) error {
 	if s.services != nil && (containsComponent(components, backup.ComponentSystemEnvironment) || containsComponent(components, backup.ComponentAgentConfig)) {
-		services = append([]quiescedService{{unit: "aiden-environment.service", wasActive: true}}, services...)
+		services = append([]quiescedService{{unit: "aico-environment.service", wasActive: true}}, services...)
 	}
 	return s.resumeServices(ctx, services)
 }

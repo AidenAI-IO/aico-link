@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 	"github.com/tmc/langchaingo/llms"
 	fakellm "github.com/tmc/langchaingo/llms/fake"
 	"github.com/tmc/langchaingo/llms/ollama"

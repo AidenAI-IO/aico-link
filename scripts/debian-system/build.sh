@@ -14,13 +14,13 @@ else
     OUTPUT_DIR=${DEFAULT_OUTPUT_DIR}
 fi
 readonly OUTPUT_DIR
-# The BSP is built in place from the repository pico-sdk submodule. The A/B,
-# RockUSB and reproducibility changes are commits in that submodule, so the
-# system stage applies no patches of its own.
+# The BSP is built in place from the vendored pico-sdk directory. The A/B,
+# RockUSB and reproducibility changes are tracked in this repository, so the
+# system stage stages compatible media modules without editing BSP sources.
 readonly SDK_DIR=${DEBIAN_SYSTEM_SDK_DIR:-${REPO_ROOT}/pico-sdk}
 readonly IMAGE_DIR=${OUTPUT_DIR}/image
 readonly APPS_OUTPUT=${DEBIAN_APPS_OUTPUT_DIR:-${REPO_ROOT}/output/debian-apps}
-readonly ROOTFS_BUILD_IMAGE=${DEBIAN_SYSTEM_BUILD_IMAGE:-aiden-debian13-armhf-builder:system}
+readonly ROOTFS_BUILD_IMAGE=${DEBIAN_SYSTEM_BUILD_IMAGE:-aico-debian13-armhf-builder:system}
 readonly BSP_BUILD_IMAGE=${DEBIAN_SYSTEM_BSP_BUILD_IMAGE:-luckfoxtech/luckfox_pico:1.0}
 readonly JOBS=${RK_JOBS:-$(getconf _NPROCESSORS_ONLN)}
 readonly BUILD_EPOCH=${SOURCE_DATE_EPOCH:-1767360516}
@@ -32,7 +32,7 @@ Usage: scripts/debian-system/build.sh [all|builder|rootfs|bsp|images|config|audi
 Environment:
   DEBIAN_SYSTEM_OUTPUT_DIR       Output directory (default: output/debian-system).
   DEBIAN_SYSTEM_SDK_DIR          Luckfox BSP SDK build tree (default: repository
-                                 pico-sdk submodule; built in place).
+                                 pico-sdk directory; built in place).
   DEBIAN_APPS_OUTPUT_DIR         Audited application output.
   DEBIAN_SYSTEM_BUILD_IMAGE      Rootfs/image builder image name.
   DEBIAN_SYSTEM_APT_CACHE_PROXY  Optional HTTP cache URL reachable from the rootfs
@@ -65,6 +65,13 @@ require_command() {
     }
 }
 
+kernel_setting_is_disabled() {
+    local kernel_config=$1
+    local symbol=$2
+
+    ! grep -Eq "^${symbol}=(y|m)$" "${kernel_config}"
+}
+
 validate_epoch() {
     case "${BUILD_EPOCH}" in
         '' | *[!0-9]*)
@@ -77,26 +84,21 @@ validate_epoch() {
 prepare_sdk() {
     local source_commit
 
-    if [ ! -d "${SDK_DIR}/.git" ] && [ ! -f "${SDK_DIR}/.git" ]; then
-        echo "Luckfox SDK submodule is missing: ${SDK_DIR}" >&2
-        echo "run: git submodule update --init -- pico-sdk" >&2
-        exit 1
-    fi
     if [ ! -e "${SDK_DIR}/project/build.sh" ]; then
         echo "Luckfox SDK has no project/build.sh: ${SDK_DIR}" >&2
         exit 1
     fi
-    # The pinned submodule commit carries the Aiden A/B and RockUSB changes.
+    # The vendored SDK carries the Aico Link A/B and RockUSB changes.
     # Check a file it adds so a stale checkout fails here instead of an hour
     # into the BSP build.
-    if [ ! -e "${SDK_DIR}/sysdrv/source/uboot/u-boot/configs/aiden-rv1106-rockusb.config" ]; then
-        echo "Luckfox SDK lacks the Aiden RV1106 RockUSB config; update the submodule" >&2
+    if [ ! -e "${SDK_DIR}/sysdrv/source/uboot/u-boot/configs/aico-rv1106-rockusb.config" ]; then
+        echo "Luckfox SDK lacks the Aico Link RV1106 RockUSB config; restore the SDK sources" >&2
         exit 1
     fi
 
     mkdir -p "${OUTPUT_DIR}"
 
-    # The submodule owns the BSP source changes. The system stage only overlays
+    # The vendored SDK carries the BSP source changes. The system stage only overlays
     # the production board configuration and kernel config that it owns.
     install -m 0755 \
         "${SCRIPT_DIR}/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk" \
@@ -107,8 +109,8 @@ prepare_sdk() {
         project/cfg/BoardConfig_IPC/BoardConfig-EMMC-Debian13-RV1106_Luckfox_Pico_Zero-IPC.mk \
         "${SDK_DIR}/.BoardConfig.mk"
 
-    # Provenance only: the checked-out submodule commit is recorded, but it is
-    # not validated against a pinned build contract.
+    # Keep the metadata field stable: the vendored SDK resolves to its owning
+    # firmware commit; an external SDK checkout resolves to its own commit.
     source_commit=$(git -C "${SDK_DIR}" rev-parse HEAD)
     printf '%s\n' "${source_commit}" >"${OUTPUT_DIR}/source-sdk-commit.txt"
 }
@@ -158,7 +160,7 @@ run_rootfs_container() {
 
     if [ "${script}" = scripts/debian-system/container-build-rootfs.sh ]; then
         platform_args=(-v "${OTA_PUBLIC_KEY_PATH}:/run/secrets/ota_pubkey.pem:ro"
-            -v "${OUTPUT_DIR}/aiden-business.deb:/aiden-business.deb:ro")
+            -v "${OUTPUT_DIR}/aico-business.deb:/aico-business.deb:ro")
     fi
     docker run --rm --privileged \
         ${platform_args[@]+"${platform_args[@]}"} \
@@ -170,10 +172,10 @@ run_rootfs_container() {
         -e "SOURCE_DATE_EPOCH=${BUILD_EPOCH}" \
         -e "DEBIAN_SYSTEM_BUILD_IMAGE_ID=${image_id}" \
         -e "PICO_SDK_COMMIT=${sdk_commit}" \
-        -e "AIDEN_PLATFORM_CONTRACT=${AIDEN_PLATFORM_CONTRACT:-}" \
-        -e "AIDEN_RELEASE_CHANNEL=${AIDEN_RELEASE_CHANNEL:-}" \
-        -e "AIDEN_PLATFORM_BASE=${AIDEN_PLATFORM_BASE:-}" \
-        -e "AIDEN_SYSTEM_FINGERPRINT=${AIDEN_SYSTEM_FINGERPRINT:-}" \
+        -e "AICO_PLATFORM_CONTRACT=${AICO_PLATFORM_CONTRACT:-}" \
+        -e "AICO_RELEASE_CHANNEL=${AICO_RELEASE_CHANNEL:-}" \
+        -e "AICO_PLATFORM_BASE=${AICO_PLATFORM_BASE:-}" \
+        -e "AICO_SYSTEM_FINGERPRINT=${AICO_SYSTEM_FINGERPRINT:-}" \
         -e "DEBIAN_SYSTEM_APT_CACHE_PROXY=${DEBIAN_SYSTEM_APT_CACHE_PROXY:-}" \
         -v "${REPO_ROOT}:/work:ro" \
         -v "${REPO_ROOT}:${REPO_ROOT}:ro" \
@@ -221,12 +223,23 @@ run_bsp() {
         -e "RK_JOBS=${JOBS}" \
         -e "SOURCE_DATE_EPOCH=${BUILD_EPOCH}" \
         -e "KBUILD_BUILD_TIMESTAMP=${build_timestamp}" \
-        -e KBUILD_BUILD_USER=aiden \
+        -e KBUILD_BUILD_USER=aico \
         -e KBUILD_BUILD_HOST=system \
         -v "${SDK_DIR}:/sdk" \
+        -v "${SCRIPT_DIR}:/aico-bsp-scripts:ro" \
+        -v "${OUTPUT_DIR}:/aico-system-output" \
         -w /sdk \
         "${BSP_BUILD_IMAGE}" \
-        bash -lc './build.sh uboot && ./build.sh driver && ./build.sh env && ./build.sh abimages'
+        bash -lc './build.sh uboot && ./build.sh driver &&
+            python3 /aico-bsp-scripts/prepare-media-compat.py \
+                --sdk /sdk --output /aico-system-output/media-compat \
+                --kernel-build /sdk/sysdrv/source/objs_kernel \
+                --cross-compile /sdk/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf- \
+                --jobs "${RK_JOBS}" &&
+            install -m 0644 /aico-system-output/media-compat/mpp_vcodec.ko \
+                /aico-system-output/media-compat/rockit.ko \
+                /sdk/output/out/sysdrv_out/kernel_drv_ko/ &&
+            ./build.sh env && ./build.sh abimages'
 
     "${SCRIPT_DIR}/canonicalize-bsp.py" \
         --source-date-epoch "${BUILD_EPOCH}" \
@@ -251,16 +264,18 @@ run_bsp() {
         CONFIG_BT_RFCOMM_TTY CONFIG_BT_LE CONFIG_BT_HCIUART \
         CONFIG_BT_HCIUART_H4 CONFIG_CRYPTO_ECDH CONFIG_CRYPTO_CMAC \
         CONFIG_MEDIA_CONTROLLER CONFIG_VIDEO_V4L2_SUBDEV_API \
-        CONFIG_VIDEO_RK628_CSI CONFIG_VIDEO_TC358743; do
+        CONFIG_VIDEO_RK628_CSI; do
         grep -qx "${symbol}=y" "${kernel_config}" || {
             echo "Required production kernel setting is not enabled: ${symbol}" >&2
             exit 1
         }
     done
-    grep -qx '# CONFIG_VIDEO_TC358743_CEC is not set' "${kernel_config}" || {
-        echo "TC358743 CEC must remain disabled in the production kernel" >&2
-        exit 1
-    }
+    for symbol in CONFIG_VIDEO_TC358743 CONFIG_VIDEO_TC358743_CEC; do
+        kernel_setting_is_disabled "${kernel_config}" "${symbol}" || {
+            echo "Production kernel setting must remain disabled: ${symbol}" >&2
+            exit 1
+        }
+    done
     grep -qx \
         'blkdevparts=mmcblk0:32K(env),512K@32K(idblock),256K(uboot),4M(misc),32M(boot_a),32M(boot_b),1792M(rootfs_a),1792M(rootfs_b),3G(userdata),300M(ota)' \
         "${env_text}"

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace aiden {
+namespace aico {
 
 static const size_t kDefaultFrameServiceRingSize = 3;
 static const double kDefaultFrameServiceFps = 3.0;

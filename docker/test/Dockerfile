@@ -28,6 +28,7 @@ RUN apt-get update \
         gcc-arm-linux-gnueabihf \
         git \
         gnupg \
+        gpgv \
         jq \
         libopencv-core-dev \
         libopencv-imgproc-dev \
@@ -81,8 +82,8 @@ ENV PATH=/usr/local/go/bin:/opt/uv/bin:${PATH} \
 
 WORKDIR /workspace
 
-RUN mkdir -p /tmp/aiden-home /tmp/aiden-cache \
-    && chmod 1777 /tmp/aiden-home /tmp/aiden-cache \
+RUN mkdir -p /tmp/aico-home /tmp/aico-cache \
+    && chmod 1777 /tmp/aico-home /tmp/aico-cache \
     && test "$(go env GOVERSION)" = "go${GO_VERSION}" \
     && node --version | grep -Eq '^v22\.' \
     && cmake --version \

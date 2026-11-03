@@ -1,0 +1,46 @@
+#!/bin/sh
+set -eu
+
+# Bind mount persistent user home directory from userdata
+source_home=/userdata/home
+target_home=/home
+# Sibling of ${source_home}: staging must never live inside the directory it
+# is going to become.
+staging_home=/userdata/.home-seed
+
+# Ensure userdata is mounted
+findmnt -nr --target /userdata >/dev/null
+
+# Create source and target directories
+mkdir -p "${source_home}" "${target_home}"
+chmod 0755 "${source_home}"
+
+# If /home is not already a mount point or not mounted from userdata, bind mount it
+if ! findmnt -nr -o TARGET --target "${target_home}" \
+    | awk -v target="${target_home}" '$1 == target {found=1} END {exit !found}'; then
+    # The factory rootfs ships /home/aico, and a device upgraded from a
+    # release without this service holds any home created since. Seed those
+    # into userdata first so the bind mount does not hide them. Reading
+    # ${target_home} here is safe because it is still the rootfs directory.
+    if [ -z "$(ls -A "${source_home}")" ] && [ -n "$(ls -A "${target_home}")" ]; then
+        # Copy into a staging directory and publish it with a rename. A copy
+        # cut short by the unit timeout or a power loss would otherwise leave
+        # entries in ${source_home}, and the emptiness test above would read
+        # that on the next boot as a finished seed and bind incomplete data
+        # over ${target_home}. Clearing the staging directory first lets a
+        # failed attempt retry from clean.
+        rm -rf "${staging_home}"
+        mkdir "${staging_home}"
+        chmod 0755 "${staging_home}"
+        if ! cp -a "${target_home}/." "${staging_home}/"; then
+            rm -rf "${staging_home}"
+            echo "failed to stage ${target_home} into ${source_home}" >&2
+            exit 1
+        fi
+        sync -f "${staging_home}"
+        rmdir "${source_home}"
+        mv "${staging_home}" "${source_home}"
+        sync -f "${source_home}"
+    fi
+    mount --bind "${source_home}" "${target_home}"
+fi

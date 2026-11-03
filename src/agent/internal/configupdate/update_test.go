@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 func TestUpdateConfigFilePreservesCommentsAndUnknownFields(t *testing.T) {

@@ -8,7 +8,7 @@ import sys
 
 ROOT = Path(os.environ.get("DPKG_ROOT") or "/")
 NEW_FILES = {}  # Replaced by the package builder, before payload unpacking.
-DOCUMENT = ROOT / "usr/lib/aiden/runtime-config.json"
+DOCUMENT = ROOT / "usr/lib/aico/runtime-config.json"
 
 
 def installed_files():
@@ -60,13 +60,13 @@ def configure(state):
         (run / "reboot-required").touch()
         packages = run / "reboot-required.pkgs"
         existing = packages.read_text().splitlines() if packages.exists() else []
-        if "aiden-business" not in existing:
+        if "aico-business" not in existing:
             with packages.open("a") as stream:
-                stream.write("aiden-business\n")
-        detail = run / "aiden-business-reboot-required.json"
+                stream.write("aico-business\n")
+        detail = run / "aico-business-reboot-required.json"
         paths = set(json.loads(detail.read_text())) if detail.exists() else set()
         detail.write_text(json.dumps(sorted(paths | set(changed)), indent=2) + "\n")
-        print("aiden-business: configuration installed; reboot when convenient to apply network/boot settings")
+        print("aico-business: configuration installed; reboot when convenient to apply network/boot settings")
 
 
 action, directory = sys.argv[1:]

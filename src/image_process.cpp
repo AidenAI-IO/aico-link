@@ -11,7 +11,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-namespace aiden_image {
+namespace aico_image {
 namespace {
 
 static void append_stbi(void* context, void* data, int size) {
@@ -203,4 +203,4 @@ int encode_to_jpg_fit(const cv::Mat& image_rgb,
     return kSuccess;
 }
 
-}  // namespace aiden_image
+}  // namespace aico_image

@@ -74,7 +74,7 @@ def load_agent_model_config(path: Path) -> dict[str, str]:
 
 def default_agent_config_path() -> Path | None:
     candidates = []
-    if env_path := os.environ.get("AIDEN_AGENT_CONFIG"):
+    if env_path := os.environ.get("AICO_AGENT_CONFIG"):
         candidates.append(Path(env_path))
     candidates.extend([
         Path("/userdata/agent/agent.toml"),

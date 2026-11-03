@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 	"github.com/tmc/langchaingo/llms"
 )
 
@@ -20,6 +20,9 @@ var (
 	// errMemoryMergeEmpty marks a response with no usable content. Keep the
 	// message stable: it is matched against historical device logs.
 	errMemoryMergeEmpty = errors.New("memory merge model returned an empty response")
+	// errMemoryMergeModelCall marks a failed request to the model, as opposed
+	// to a response that arrived but could not be used.
+	errMemoryMergeModelCall = errors.New("memory merge model call")
 )
 
 // isMemoryMergeTruncatedStopReason reports whether a finish reason means the
@@ -132,7 +135,7 @@ func (e *MemoryMergeEngine) Extract(ctx context.Context, req MemoryMergeRequest)
 	}
 	response, err := e.model.GenerateContent(callCtx, messages, llms.WithJSONMode(), llms.WithMaxTokens(maxTokens))
 	if err != nil {
-		return references, "", fmt.Errorf("memory merge model call: %w", err)
+		return references, "", fmt.Errorf("%w: %w", errMemoryMergeModelCall, err)
 	}
 	content, err := memoryMergeResponseContent(response, maxTokens)
 	return references, content, err

@@ -6,7 +6,7 @@ from runner.suite import HardAssertions, Suite, TaskSpec
 from skillopt import backends
 
 
-def test_aiden_device_backend_overrides_when_skill_text_differs(monkeypatch, tmp_path: Path):
+def test_aico_device_backend_overrides_when_skill_text_differs(monkeypatch, tmp_path: Path):
     skill_path = tmp_path / "SKILL.md"
     skill_path.write_text("base", encoding="utf-8")
     suite = Suite(
@@ -58,7 +58,7 @@ def test_aiden_device_backend_overrides_when_skill_text_differs(monkeypatch, tmp
     monkeypatch.setattr(backends, "with_skill_override", fake_skill_override)
     monkeypatch.setattr(backends, "run_one_task", fake_run_one_task)
 
-    backend = backends.AidenDeviceBackend(agent_url="http://agent.local")
+    backend = backends.AicoDeviceBackend(agent_url="http://agent.local")
     rollouts = backend.run_rollout(
         suite=suite,
         tasks=[task],

@@ -13,7 +13,7 @@ from runner.recovery import DEFAULT_ENVIRONMENT_SETUP_TIMEOUT_SEC
 from runner.reset import call_environment_release, call_environment_setup, _post_environment, _environment_headers
 
 
-MOBILEGYM_PREFLIGHT_COMPLETE_ENV = "AIDEN_BENCHMARK_MOBILEGYM_PREFLIGHT_COMPLETE"
+MOBILEGYM_PREFLIGHT_COMPLETE_ENV = "AICO_BENCHMARK_MOBILEGYM_PREFLIGHT_COMPLETE"
 
 
 def _environment_count(health: dict[str, Any]) -> int:

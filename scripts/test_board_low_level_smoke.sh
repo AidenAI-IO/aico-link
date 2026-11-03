@@ -37,7 +37,7 @@ for script in \
     board_low_level_logs.sh \
     board_low_level_system.sh
 do
-    if grep -E 'curl|https?://|/api/|AIDEN_AGENT|AIDEN_CONFIG_WEB|/var/log/agent|agent\.log|ssh |scp ' "$SCRIPT_DIR/$script" >/dev/null; then
+    if grep -E 'curl|https?://|/api/|AICO_AGENT|AICO_CONFIG_WEB|/var/log/agent|agent\.log|ssh |scp ' "$SCRIPT_DIR/$script" >/dev/null; then
         echo "unexpected network dependency in $script" >&2
         exit 1
     fi

@@ -91,7 +91,7 @@ def cli(argv: list[str] | None = None) -> int:
     parser.add_argument("--mobilegym-image", required=True)
     args = parser.parse_args(argv)
     # Workflow variables use the benchmark workflow's names; the runner reads the
-    # AIDEN_* names for Aiden's config template and the Judge credential.
+    # AICO_* names for Aiden's config template and the Judge credential.
     for action_name, runtime_name in ACTION_ENVIRONMENT_ALIASES.items():
         if os.environ.get(action_name):
             os.environ.setdefault(runtime_name, os.environ[action_name])
@@ -109,7 +109,7 @@ def cli(argv: list[str] | None = None) -> int:
     config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
     try:
         status = subprocess.run(
-            # Aiden's agent.toml is rendered from the benchmark template and AIDEN_* model variables.
+            # Aiden's agent.toml is rendered from the benchmark template and AICO_* model variables.
             [sys.executable, "-m", "runner", "experiment", "--config", str(config_path), "--out", str(runs_dir),
              "--agent-config", str(runs_dir / "experiment-agent.toml"),
              "--daemon-image", args.daemon_image, "--no-build-daemon-image",

@@ -1,4 +1,4 @@
-#include "aiden_sdk.h"
+#include "aico_sdk.h"
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
@@ -17,8 +17,8 @@ void on_wakeup() {
 int main() {
     signal(SIGINT, signal_handler);
 
-    aiden::WakeupListener listener33;
-    aiden::WakeupListener listener32;
+    aico::WakeupListener listener33;
+    aico::WakeupListener listener32;
 
     printf("Starting wakeup listeners on GPIO 33 and GPIO 32...\n");
     if (!listener33.start(33, on_wakeup) || !listener32.start(32, on_wakeup)) {

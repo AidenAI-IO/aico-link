@@ -5,7 +5,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-namespace aiden {
+namespace aico {
 
 static int connect_socket(const std::string& socket_path, uint32_t timeout_ms) {
     if (socket_path.empty()) {
@@ -59,4 +59,4 @@ FrameServiceStatus uds_request_once(const std::string& socket_path,
     return status;
 }
 
-}  // namespace aiden
+}  // namespace aico

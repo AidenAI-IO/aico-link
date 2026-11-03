@@ -144,7 +144,7 @@
       "category": "memory",
       "platforms": ["ios"],
       "description_for_judge": "The agent must use the real iPhone UI to reach the active Ethernet interface's IPv4 details without modifying network configuration. The final screenshot, rather than the final response, is the source of truth.",
-      "prompt": "On this iPhone, open Settings and find the IPv4 details page for the active Aiden USB wired Ethernet connection. Do not modify, renew, or save any network settings. Finish on a page where IP Address, Subnet Mask, and Router are simultaneously visible, and explicitly call screenshot once before responding.",
+      "prompt": "On this iPhone, open Settings and find the IPv4 details page for the active Aico USB wired Ethernet connection. Do not modify, renew, or save any network settings. Finish on a page where IP Address, Subnet Mask, and Router are simultaneously visible, and explicitly call screenshot once before responding.",
       "repeats": 5,
       "rubric": [
         {"id": "reached_ethernet_ipv4_details", "check": "The post-screenshot shows the active Ethernet interface detail page and its IPv4 Address section."},
@@ -170,34 +170,34 @@
         },
         "timeout_sec": 90,
         "episode": {
-          "id": "ep_benchmark_iphone_aiden_hid_ecm_ipv4_wifi_contrast_v2",
+          "id": "ep_benchmark_iphone_aico_hid_ecm_ipv4_wifi_contrast_v2",
           "status": "completed",
-          "user_goal": "Determine the verified Settings path to the active Aiden USB wired interface and its IPv4 details, explicitly distinguishing it from Wi-Fi, without changing any settings.",
-          "device_scope": {"device_id": "default", "platform": "ios", "app_name": "Settings", "page_name": "Aiden HID+ECM Ethernet IPv4 Details"},
+          "user_goal": "Determine the verified Settings path to the active Aico USB wired interface and its IPv4 details, explicitly distinguishing it from Wi-Fi, without changing any settings.",
+          "device_scope": {"device_id": "default", "platform": "ios", "app_name": "Settings", "page_name": "Aico HID+ECM Ethernet IPv4 Details"},
           "initial_state": {"summary": "The iPhone is on the Home Screen and Settings is not open in the foreground."},
           "outcome": {
             "success": true,
-            "final_state": "The Aiden HID+ECM Ethernet interface detail page visibly shows the IPv4 Address section with IP Address, Subnet Mask, and Router labels at the same time.",
+            "final_state": "The Aico HID+ECM Ethernet interface detail page visibly shows the IPv4 Address section with IP Address, Subnet Mask, and Router labels at the same time.",
             "final_answer": "The Ethernet IPv4 details page was reached and visually verified without changing the configuration.",
             "verifier_reason": "The final screenshot observation contains all three required IPv4 field labels on the Ethernet detail page."
           },
-          "tags": ["ios", "settings", "ethernet", "ipv4", "aiden-hid-ecm", "usb-network", "navigation"],
-          "entities": ["iPhone", "Settings", "Ethernet", "Aiden HID+ECM", "IPv4 Address", "IP Address", "Subnet Mask", "Router"],
+          "tags": ["ios", "settings", "ethernet", "ipv4", "aico-hid-ecm", "usb-network", "navigation"],
+          "entities": ["iPhone", "Settings", "Ethernet", "Aico HID+ECM", "IPv4 Address", "IP Address", "Subnet Mask", "Router"],
           "events": [
             {"event_id": "home_screen_call", "type": "tool_call", "tool_name": "screenshot", "tool_input": "{}", "content": "Inspect the iPhone before beginning the navigation."},
             {"event_id": "home_screen_result", "type": "tool_result", "tool_name": "screenshot", "observation": "The iPhone Home Screen is visible."},
             {"event_id": "open_settings_call", "type": "tool_call", "tool_name": "open_app", "tool_input": "{\"app_name\":\"Settings\"}", "content": "Open the iOS Settings app."},
-            {"event_id": "open_settings_result", "type": "tool_result", "tool_name": "open_app", "observation": "On this iPhone connected to Aiden hardware, the Settings main page includes a dedicated Ethernet entry for the USB HID+ECM wired connection."},
-            {"event_id": "open_wifi_call", "type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{\"type\":\"tap\",\"target\":\"Wi-Fi\"}", "content": "Check whether the active Aiden USB wired interface is exposed under Wi-Fi."},
-            {"event_id": "open_wifi_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Wi-Fi page lists wireless networks and does not expose the Aiden HID+ECM USB wired interface. The wired connection must be accessed through the separate Ethernet section."},
+            {"event_id": "open_settings_result", "type": "tool_result", "tool_name": "open_app", "observation": "On this iPhone connected to Aico hardware, the Settings main page includes a dedicated Ethernet entry for the USB HID+ECM wired connection."},
+            {"event_id": "open_wifi_call", "type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{\"type\":\"tap\",\"target\":\"Wi-Fi\"}", "content": "Check whether the active Aico USB wired interface is exposed under Wi-Fi."},
+            {"event_id": "open_wifi_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Wi-Fi page lists wireless networks and does not expose the Aico HID+ECM USB wired interface. The wired connection must be accessed through the separate Ethernet section."},
             {"event_id": "return_settings_call", "type": "tool_call", "tool_name": "quick_action", "tool_input": "{\"action\":\"back\"}", "content": "Return to the Settings main page after ruling out Wi-Fi."},
             {"event_id": "return_settings_result", "type": "tool_result", "tool_name": "quick_action", "observation": "The Settings main page is visible again with Wi-Fi and Ethernet as separate entries."},
             {"event_id": "open_ethernet_call", "type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{\"type\":\"tap\",\"target\":\"Ethernet\"}", "content": "Open the Ethernet settings entry."},
-            {"event_id": "open_ethernet_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Ethernet page is visible. In the Interfaces section, the active Aiden USB composite network interface is explicitly named Aiden HID+ECM."},
-            {"event_id": "open_interface_call", "type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{\"type\":\"tap\",\"target\":\"Aiden HID+ECM\"}", "content": "Open the Aiden HID+ECM Ethernet interface details."},
-            {"event_id": "open_interface_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Aiden HID+ECM interface detail page is visible with an IPv4 Address section."},
+            {"event_id": "open_ethernet_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Ethernet page is visible. In the Interfaces section, the active Aico USB composite network interface is explicitly named Aico HID+ECM."},
+            {"event_id": "open_interface_call", "type": "tool_call", "tool_name": "touch_gesture", "tool_input": "{\"type\":\"tap\",\"target\":\"Aico HID+ECM\"}", "content": "Open the Aico HID+ECM Ethernet interface details."},
+            {"event_id": "open_interface_result", "type": "tool_result", "tool_name": "touch_gesture", "observation": "The Aico HID+ECM interface detail page is visible with an IPv4 Address section."},
             {"event_id": "verify_ipv4_call", "type": "tool_call", "tool_name": "screenshot", "tool_input": "{}", "content": "Capture the final page without changing, renewing, or saving any network setting."},
-            {"event_id": "verify_ipv4_result", "type": "tool_result", "tool_name": "screenshot", "observation": "The final visible page is the Aiden HID+ECM Ethernet interface detail page. The IPv4 Address section simultaneously shows the IP Address, Subnet Mask, and Router labels. The current values are transient and are intentionally not retained as reusable facts."}
+            {"event_id": "verify_ipv4_result", "type": "tool_result", "tool_name": "screenshot", "observation": "The final visible page is the Aico HID+ECM Ethernet interface detail page. The IPv4 Address section simultaneously shows the IP Address, Subnet Mask, and Router labels. The current values are transient and are intentionally not retained as reusable facts."}
           ]
         }
       }

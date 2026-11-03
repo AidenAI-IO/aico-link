@@ -83,7 +83,7 @@ func TestInternalConfigReloadRejectsRemoteRequest(t *testing.T) {
 	server := &Server{runtime: &Runtime{config: Config{ConfigDir: t.TempDir()}}}
 	req := httptest.NewRequest(http.MethodPost, "/api/internal/config/reload", strings.NewReader(`{}`))
 	req.RemoteAddr = "192.0.2.10:1234"
-	req.Header.Set("X-Aiden-Internal", "config-web")
+	req.Header.Set("X-Aico-Internal", "config-web")
 	rec := httptest.NewRecorder()
 	server.handleInternalConfigReload(rec, req)
 	if rec.Code != http.StatusNotFound {

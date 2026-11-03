@@ -32,7 +32,7 @@ func TestRequestEventsPreservesCursorAndMetadata(t *testing.T) {
 		Message:          "World",
 		MetadataComplete: true,
 	})
-	dir, err := os.MkdirTemp("/tmp", "aiden-ble-client-")
+	dir, err := os.MkdirTemp("/tmp", "aico-ble-client-")
 	if err != nil {
 		t.Fatal(err)
 	}

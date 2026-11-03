@@ -5,10 +5,10 @@
 #include <string>
 #include <vector>
 
-using aiden::FrameBufferFrame;
-using aiden::FrameMetadata;
-using aiden::FrameRingBuffer;
-using aiden::FrameServiceStatus;
+using aico::FrameBufferFrame;
+using aico::FrameMetadata;
+using aico::FrameRingBuffer;
+using aico::FrameServiceStatus;
 
 namespace {
 

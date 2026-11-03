@@ -1,0 +1,5 @@
+name: aico_smoke
+description: Quick smoke tests for the Aico Agent
+tasks:
+  - clock.CountAlarms
+  - phone_control_v1.CheckCallHistory

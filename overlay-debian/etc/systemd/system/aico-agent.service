@@ -1,0 +1,41 @@
+[Unit]
+Description=Aico AI Agent on Aico Link
+Requires=aico-userdata-migrate.service aico-environment.service aico-boot-timeline-init.service
+Requires=aico-wifi-proxy.service
+Requires=aico-backup-recover.service
+Wants=aico-frame.service aico-audio.service aico-ble.service
+After=aico-userdata-migrate.service aico-environment.service aico-boot-timeline-init.service
+After=aico-frame.service aico-audio.service aico-ble.service aico-wifi-proxy.service time-set.target
+After=aico-backup-recover.service
+StartLimitIntervalSec=120s
+StartLimitBurst=5
+ConditionPathExists=/usr/lib/aico/agent
+# A restore transaction that could not be finished or rolled back at boot
+# leaves this marker; the Agent must not run on possibly inconsistent data.
+ConditionPathExists=!/run/aico/backup/recovery.failed
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aico_boot.conf
+EnvironmentFile=/run/aico/system.env
+Environment=AICO_MCU_SERVICE_SOCKET=/run/mcu_service/mcu_service.sock
+Environment=AICO_BLE_SERVICE_SOCKET=/run/ble_service/ble_service.sock
+Environment=AICO_USB_COMPOSITE_REFRESH_COMMAND=/usr/lib/aico/aico-usb-ecm-watchdog
+Environment=PYTHONUSERBASE=/userdata/agent/python
+Environment=PIP_USER=1
+Environment=PIP_NO_CACHE_DIR=1
+Environment=PIP_DISABLE_PIP_VERSION_CHECK=1
+Environment=PIP_BREAK_SYSTEM_PACKAGES=1
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_AGENT
+RuntimeDirectory=agent
+ExecStartPre=/usr/lib/aico/aico-python-prepare
+ExecStart=/usr/lib/aico/aico-managed-env-run /usr/lib/aico/agent -dir /userdata/agent -addr 0.0.0.0:8080
+Restart=on-failure
+RestartSec=2s
+TimeoutStartSec=30s
+TimeoutStopSec=10s
+StandardOutput=append:/userdata/agent/log/agent.log
+StandardError=append:/userdata/agent/log/agent.log
+
+[Install]
+WantedBy=multi-user.target

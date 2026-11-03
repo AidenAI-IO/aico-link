@@ -4,6 +4,9 @@ Name=wlan0
 [Network]
 DHCP=yes
 IPv6AcceptRA=yes
+# Roaming between APs of one network drops carrier for up to a few seconds on
+# the AIC8800. Keep the DHCP address through that gap instead of releasing it.
+IgnoreCarrierLoss=3s
 
 [DHCPv4]
 RouteMetric=20

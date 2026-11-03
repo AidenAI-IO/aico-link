@@ -12,7 +12,7 @@
 namespace {
 
 std::string make_temp_path(const char* leaf) {
-    char tmpl[] = "/tmp/aiden_vad_common_XXXXXX";
+    char tmpl[] = "/tmp/aico_vad_common_XXXXXX";
     int fd = mkstemp(tmpl);
     REQUIRE(fd >= 0);
     close(fd);
@@ -38,12 +38,12 @@ std::string write_recurrent_weights(uint32_t version) {
 
     out.write("SVLW", 4);
     write_u32(out, version);
-    write_u32(out, aiden_vad::kHidden);
-    write_u32(out, aiden_vad::kHidden);
-    write_floats(out, aiden_vad::kGates * aiden_vad::kHidden);
-    write_floats(out, aiden_vad::kGates * aiden_vad::kHidden);
-    write_floats(out, 2 * aiden_vad::kGates);
-    write_floats(out, aiden_vad::kHidden);
+    write_u32(out, aico_vad::kHidden);
+    write_u32(out, aico_vad::kHidden);
+    write_floats(out, aico_vad::kGates * aico_vad::kHidden);
+    write_floats(out, aico_vad::kGates * aico_vad::kHidden);
+    write_floats(out, 2 * aico_vad::kGates);
+    write_floats(out, aico_vad::kHidden);
     write_floats(out, 1);
     REQUIRE(out.good());
     return path;
@@ -55,10 +55,10 @@ std::string write_combined_weights(uint32_t version) {
     REQUIRE(out);
 
     const uint32_t layers[4][5] = {
-        {aiden_vad::kSTFTBins, 128, 3, 1, 1},
+        {aico_vad::kSTFTBins, 128, 3, 1, 1},
         {128, 64, 3, 2, 1},
         {64, 64, 3, 2, 1},
-        {64, aiden_vad::kHidden, 3, 1, 1},
+        {64, aico_vad::kHidden, 3, 1, 1},
     };
 
     out.write("SVCE", 4);
@@ -80,7 +80,7 @@ std::string write_combined_weights(uint32_t version) {
 TEST_CASE("SileroWeights accepts current SVLW version 2 combined weights") {
     const std::string path = write_combined_weights(2);
 
-    aiden_vad::SileroWeights weights;
+    aico_vad::SileroWeights weights;
     std::string err;
     CHECK(weights.load(path, true, &err));
     CHECK(err.empty());
@@ -92,7 +92,7 @@ TEST_CASE("SileroWeights accepts current SVLW version 2 combined weights") {
 TEST_CASE("SileroWeights rejects unknown SVLW versions with the version number") {
     const std::string path = write_recurrent_weights(3);
 
-    aiden_vad::SileroWeights weights;
+    aico_vad::SileroWeights weights;
     std::string err;
     CHECK_FALSE(weights.load(path, false, &err));
     CHECK(err == "unsupported weights version: 3");
@@ -101,19 +101,19 @@ TEST_CASE("SileroWeights rejects unknown SVLW versions with the version number")
 }
 
 TEST_CASE("SileroLSTMDecoder uses PyTorch LSTMCell gate order") {
-    aiden_vad::RecurrentWeights weights;
+    aico_vad::RecurrentWeights weights;
     weights.lstm_B[0] = 10.0f;                         // input gate
-    weights.lstm_B[aiden_vad::kHidden] = -10.0f;        // forget gate
-    weights.lstm_B[2 * aiden_vad::kHidden] = 1.0f;      // cell gate
-    weights.lstm_B[3 * aiden_vad::kHidden] = 10.0f;     // output gate
+    weights.lstm_B[aico_vad::kHidden] = -10.0f;        // forget gate
+    weights.lstm_B[2 * aico_vad::kHidden] = 1.0f;      // cell gate
+    weights.lstm_B[3 * aico_vad::kHidden] = 10.0f;     // output gate
     weights.dec_weight[0] = 10.0f;
     weights.dec_bias = -5.0f;
 
-    aiden_vad::SileroLSTMDecoder decoder;
+    aico_vad::SileroLSTMDecoder decoder;
     std::string err;
     REQUIRE(decoder.init(&weights, &err));
 
-    std::vector<float> encoder_out(aiden_vad::kHidden, 0.0f);
+    std::vector<float> encoder_out(aico_vad::kHidden, 0.0f);
     const float probability = decoder.infer(encoder_out.data());
 
     CHECK(probability > 0.5f);

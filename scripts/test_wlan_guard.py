@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-GUARD = ROOT / 'overlay-debian/usr/lib/aiden/aiden-wlan-guard'
+GUARD = ROOT / 'overlay-debian/usr/lib/aico/aico-wlan-guard'
 MOCK = r'''#!/bin/sh
 step=$(cat "$CASE_ROOT/step")
 name=${0##*/}

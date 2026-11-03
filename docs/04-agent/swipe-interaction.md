@@ -4,11 +4,11 @@ sidebar_position: 15
 
 # Swipe Interaction
 
-Aiden controls phone scrolling and picker wheels through USB HID while observing the result through HDMI screenshots. Because it does not receive native accessibility or scroll events, every gesture must be verified from the visible screen.
+Aico controls phone scrolling and picker wheels through USB HID while observing the result through HDMI screenshots. Because it does not receive native accessibility or scroll events, every gesture must be verified from the visible screen.
 
 ## Constraints
 
-| Capability | Aiden behavior |
+| Capability | Aico behavior |
 | --- | --- |
 | Touch confirmation | Infer success from the screenshot returned after the action. |
 | Widget value reading | Read visible values from the screen; no native picker value API is available. |

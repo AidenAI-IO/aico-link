@@ -1,8 +1,8 @@
 package mnk
 
 import (
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/binary"
 	"fmt"

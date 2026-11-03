@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
 // Bounds of the valid image payload inside one V4L2-mapped plane. The offset
 // is relative to the beginning of the mapped plane and the length is relative
@@ -33,4 +33,4 @@ bool compact_nv12(const uint8_t* source,
                   uint32_t stride,
                   std::vector<uint8_t>* compact);
 
-}  // namespace aiden
+}  // namespace aico

@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"aiden-agent/internal/agent/contextmanager"
-	"aiden-agent/internal/agent/executor"
-	"aiden-agent/internal/agent/messages"
-	"aiden-agent/internal/agent/model"
-	"aiden-agent/internal/agent/screen"
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/executor"
+	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/agent/model"
+	"aico-agent/internal/agent/screen"
+	"aico-agent/internal/logging"
 
 	"github.com/tmc/langchaingo/agents"
 	"github.com/tmc/langchaingo/callbacks"
@@ -43,7 +43,6 @@ type AgentLoop struct {
 	CallbacksHandler           callbacks.Handler
 	MaxIterations              int
 	Recorder                   *EpisodeRecorder
-	ScreenshotPruning          executor.ScreenshotPruningConfig
 	SteerInterrupt             func() <-chan struct{}
 	SteerProvider              func(context.Context) (RunSteerMessage, bool)
 	SteerWaiter                func(context.Context) (RunSteerMessage, bool, error)
@@ -68,32 +67,19 @@ func NewAgentLoop(
 	maxIterations int,
 	callbacksHandler callbacks.Handler,
 	recorder *EpisodeRecorder,
-	screenshotPruning executor.ScreenshotPruningConfig,
 	contextManager *contextmanager.ContextManager,
 ) *AgentLoop {
 	if contextManager == nil {
 		logging.Fatalf("agent", "agent_loop", "context manager is nil")
 	}
 	return &AgentLoop{
-		Model:             model,
-		Profile:           profile,
-		CallbacksHandler:  callbacksHandler,
-		MaxIterations:     maxIterations,
-		Recorder:          recorder,
-		ScreenshotPruning: screenshotPruning,
-		ToolResultPolicy:  NewToolResultPolicy(),
-		contextManager:    contextManager,
-	}
-}
-
-func (l *AgentLoop) outboundTransforms() []executor.OutboundMessageTransform {
-	modelName := l.Model.Spec().Name
-	modelProvider := l.Model.Spec().Provider
-	return []executor.OutboundMessageTransform{
-		executor.AnthropicScreenshotPruner{
-			Enabled: IsAnthropicModel(modelProvider, modelName),
-			Config:  l.ScreenshotPruning,
-		},
+		Model:            model,
+		Profile:          profile,
+		CallbacksHandler: callbacksHandler,
+		MaxIterations:    maxIterations,
+		Recorder:         recorder,
+		ToolResultPolicy: NewToolResultPolicy(),
+		contextManager:   contextManager,
 	}
 }
 
@@ -104,7 +90,7 @@ func (l *AgentLoop) Run(ctx context.Context, input string, options ...chains.Cha
 		defer l.notices.finishOnReturn(ctx, &runErr)
 	}
 	agentTools := l.Profile.Tools
-	transforms := l.outboundTransforms()
+	var transforms []executor.OutboundMessageTransform
 	if IsAnthropicModel(l.Model.Spec().Provider, l.Model.Spec().Name) {
 		frames := newVisualCoordinates(l.ScreenState)
 		transforms = append(transforms, frames)
@@ -746,14 +732,16 @@ func (l *AgentLoop) persistSteer(ctx context.Context, executor *executor.LLMExec
 	// the model as an empty message while being recorded as the placeholder.
 	steer.Content = steerHumanMessageContent(steer)
 
-	// Persist the interrupt notice and new instruction together.
+	// Persist the interrupt notice and new instruction together. The
+	// instruction keeps its send time, which can be earlier than when the loop
+	// picks it up, so a summary resolves its relative dates correctly.
 	manager := l.contextManager
 	if executor != nil {
 		manager = executor.ContextManager()
 	}
 	if err := manager.AppendMessages([]messages.Message{
 		interruptNotice("steer", "A new instruction interrupted the current execution plan. Continue this run using the following user instruction; the previous plan is not confirmed complete."),
-		{Role: messages.MessageRoleUser, Content: steer.Content},
+		{Role: messages.MessageRoleUser, Content: steer.Content, Timestamp: steer.Timestamp},
 	}); err != nil {
 		return err
 	}
@@ -919,7 +907,7 @@ func selectToolCall(choice llms.ContentChoice, call llms.ToolCall) llms.ContentC
 // responsesGenerationInfoForToolCall removes unexecuted parallel function-call
 // items from stateless Responses replay. Some compatible providers, including
 // DeepSeek, always allow parallel tool calls even when the request asks them
-// not to. Aiden executes one call per iteration, so replaying the other calls
+// not to. Aico executes one call per iteration, so replaying the other calls
 // without matching function_call_output items would make the next request
 // invalid.
 func responsesGenerationInfoForToolCall(info map[string]any, toolID string) map[string]any {
@@ -957,7 +945,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 	toolContent := prepared.Content
 	var followups []llms.MessageContent
 	if parser != nil && parser.isVisualObservationTool(step.Action.Tool) {
-		if content, visualFollowups := parser.observationMessagesForStep(step, true); len(visualFollowups) > 0 {
+		if content, visualFollowups := parser.observationMessagesForStep(step); len(visualFollowups) > 0 {
 			toolContent = content
 			followups = visualFollowups
 			prepared = PreparedToolResult{Content: content, Complete: true}
@@ -988,7 +976,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 const unexecutedInteractionToolResult = "Not executed: this runtime runs one tool call per turn. Call it again if it is still needed."
 
 // unexecutedInteractionToolResults answers the native Interactions function calls
-// the iteration did not execute. Aiden runs one tool call per iteration so that
+// the iteration did not execute. Aico runs one tool call per iteration so that
 // every action is gated and observed on its own, while the Interactions API
 // returns all the calls the model decided on and requires a function_result for
 // each call_id. The remaining calls are reported as unexecuted instead of being

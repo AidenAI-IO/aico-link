@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	speechtext "aiden-agent/internal/agent/speech"
+	speechtext "aico-agent/internal/agent/speech"
 )
 
 // bufferResetRecorder is a fake terminal writer that records whether

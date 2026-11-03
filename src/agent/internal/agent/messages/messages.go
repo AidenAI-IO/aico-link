@@ -78,6 +78,10 @@ type Message struct {
 	// next assistant turn when a tool result follows, so storing only the
 	// human-readable reasoning text is insufficient.
 	AnthropicThinkingBlocks []json.RawMessage `json:"anthropic_thinking_blocks,omitempty"`
+	// CompactionSummary marks the user-role message that holds a context
+	// compaction summary. It is written by the model, not the user, so code
+	// that needs the user's own words skips it.
+	CompactionSummary bool `json:"compaction_summary,omitempty"`
 }
 
 // Usage is the provider-neutral token usage recorded for an LLM response.
@@ -189,6 +193,10 @@ type ToolResultMeta struct {
 	ObservationComplete bool   `json:"observation_complete,omitempty"`
 	ProcessingErrorCode string `json:"processing_error_code,omitempty"`
 	ArtifactStoreError  string `json:"artifact_store_error,omitempty"`
+	// RequiresComplete marks a complete result from a tool whose output is
+	// only useful in full. Current-turn pruning must not replace it with a
+	// placeholder; conversation compaction may still summarize it.
+	RequiresComplete bool `json:"requires_complete,omitempty"`
 }
 
 // RecoverableToolResult carries trusted recovery metadata across compaction

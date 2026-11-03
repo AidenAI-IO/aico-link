@@ -65,7 +65,7 @@
       "category": "memory",
       "platforms": ["ios"],
       "description_for_judge": "The agent must use the real iPhone UI to reach the active Ethernet interface's IPv4 details without modifying network configuration. The final screenshot, rather than the final response, is the source of truth.",
-      "prompt": "On this iPhone, open Settings and find the IPv4 details page for the active Aiden USB wired Ethernet connection. Do not modify, renew, or save any network settings. Finish on a page where IP Address, Subnet Mask, and Router are simultaneously visible, and explicitly call screenshot once before responding.",
+      "prompt": "On this iPhone, open Settings and find the IPv4 details page for the active Aico USB wired Ethernet connection. Do not modify, renew, or save any network settings. Finish on a page where IP Address, Subnet Mask, and Router are simultaneously visible, and explicitly call screenshot once before responding.",
       "repeats": 5,
       "rubric": [
         {"id": "reached_ethernet_ipv4_details", "check": "The post-screenshot shows the active Ethernet interface detail page and its IPv4 Address section."},
@@ -86,13 +86,13 @@
         "memories": [
           {
             "store": "device",
-            "id": "legacy_iphone_aiden_hid_ecm_ipv4_procedure",
+            "id": "legacy_iphone_aico_hid_ecm_ipv4_procedure",
             "type": "procedure",
             "priority": 70,
             "title": "Verified procedure",
-            "content": "Goal: reach the active Aiden USB wired interface's IPv4 details without changing settings. Verified path: open Settings, use the dedicated Ethernet entry rather than Wi-Fi, open Aiden HID+ECM, and stop on the interface detail page where the IPv4 Address section shows IP Address, Subnet Mask, and Router. Verify the final visible page with a screenshot. Do not modify, renew, or save network settings.",
-            "tags": ["ios", "settings", "ethernet", "ipv4", "aiden-hid-ecm", "usb-network", "navigation"],
-            "entities": ["iPhone", "Settings", "Ethernet", "Aiden HID+ECM", "IPv4 Address", "IP Address", "Subnet Mask", "Router"]
+            "content": "Goal: reach the active Aico USB wired interface's IPv4 details without changing settings. Verified path: open Settings, use the dedicated Ethernet entry rather than Wi-Fi, open Aico HID+ECM, and stop on the interface detail page where the IPv4 Address section shows IP Address, Subnet Mask, and Router. Verify the final visible page with a screenshot. Do not modify, renew, or save network settings.",
+            "tags": ["ios", "settings", "ethernet", "ipv4", "aico-hid-ecm", "usb-network", "navigation"],
+            "entities": ["iPhone", "Settings", "Ethernet", "Aico HID+ECM", "IPv4 Address", "IP Address", "Subnet Mask", "Router"]
           }
         ]
       }

@@ -75,7 +75,7 @@ remove_stale_path() {
   fi
 }
 
-# Aiden platform share assets are now part of rootfs and must be preserved.
+# Aico Link platform share assets are now part of rootfs and must be preserved.
 
 # Rootfs CLI tools are generated for each image build. Remove stale binaries
 # from both the previous successful staging run and the current catalog before

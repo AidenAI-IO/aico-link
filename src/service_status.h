@@ -1,10 +1,10 @@
 #pragma once
 
-namespace aiden {
+namespace aico {
 
-// Shared status codes for all Aiden IPC services (frame_service, audio_service, ...).
+// Shared status codes for all Aico Link IPC services (frame_service, audio_service, ...).
 // Each service maps its own domain errors onto these codes in its protocol layer.
-enum class AidenServiceStatus {
+enum class AicoServiceStatus {
     OK,
     NO_NEW_FRAME,       // frame_service: ring buffer has no newer frame than requested seq
     FRAME_NOT_FOUND,    // frame_service: requested seq not in ring buffer
@@ -15,7 +15,7 @@ enum class AidenServiceStatus {
     INTERNAL_ERROR,     // unexpected server-side failure
 };
 
-const char* service_status_to_string(AidenServiceStatus status);
-bool service_status_from_string(const char* text, AidenServiceStatus* out);
+const char* service_status_to_string(AicoServiceStatus status);
+bool service_status_from_string(const char* text, AicoServiceStatus* out);
 
-}  // namespace aiden
+}  // namespace aico

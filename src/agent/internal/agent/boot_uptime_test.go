@@ -78,7 +78,7 @@ func TestBootUptimeMissingFile(t *testing.T) {
 func TestMarkBootTimelineAppendsRecord(t *testing.T) {
 	withBootUptimeFile(t, "51.18 40.00\n")
 
-	timeline := filepath.Join(t.TempDir(), "aiden_boot_timeline.log")
+	timeline := filepath.Join(t.TempDir(), "aico_boot_timeline.log")
 	if err := os.WriteFile(timeline, []byte("0.10 0.10 rcS:begin\n"), 0o644); err != nil {
 		t.Fatalf("seed timeline: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestMarkBootTimelineDoesNotCreateFile(t *testing.T) {
 func TestStartDoesNotMarkListeningWhenBindFails(t *testing.T) {
 	withBootUptimeFile(t, "15.26 5.00\n")
 
-	timeline := filepath.Join(t.TempDir(), "aiden_boot_timeline.log")
+	timeline := filepath.Join(t.TempDir(), "aico_boot_timeline.log")
 	if err := os.WriteFile(timeline, []byte("0.10 0.10 rcS:begin\n"), 0o644); err != nil {
 		t.Fatalf("seed timeline: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestMarkBootTimelineRefreshesArchive(t *testing.T) {
 	withBootUptimeFile(t, "31.40 5.00\n")
 	dir := t.TempDir()
 
-	timeline := filepath.Join(dir, "aiden_boot_timeline.log")
+	timeline := filepath.Join(dir, "aico_boot_timeline.log")
 	if err := os.WriteFile(timeline, []byte("0.10 0.10 rcS:begin\n25.52 0.03 rcS:end\n"), 0o644); err != nil {
 		t.Fatalf("seed timeline: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestMarkBootTimelineArchiveRefreshNoopWithoutState(t *testing.T) {
 	withBootUptimeFile(t, "31.40 5.00\n")
 	dir := t.TempDir()
 
-	timeline := filepath.Join(dir, "aiden_boot_timeline.log")
+	timeline := filepath.Join(dir, "aico_boot_timeline.log")
 	if err := os.WriteFile(timeline, []byte("0.10 0.10 rcS:begin\n"), 0o644); err != nil {
 		t.Fatalf("seed timeline: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestMarkBootTimelineArchiveRefreshNoopWithoutState(t *testing.T) {
 func TestMarkBootTimelineWaitsForArchivePublicationLock(t *testing.T) {
 	withBootUptimeFile(t, "31.41 5.00\n")
 	dir := t.TempDir()
-	timeline := filepath.Join(dir, "aiden_boot_timeline.log")
+	timeline := filepath.Join(dir, "aico_boot_timeline.log")
 	archive := filepath.Join(dir, "boot-20260807-000000.log")
 	state := filepath.Join(dir, "archive.state")
 	if err := os.WriteFile(timeline, []byte("0.10 0.10 rcS:begin\n25.52 0.03 rcS:end\n"), 0o644); err != nil {
@@ -306,7 +306,7 @@ func TestMarkBootTimelineWaitsForArchivePublicationLock(t *testing.T) {
 func TestConcurrentBootTimelineMarksDoNotRegressArchive(t *testing.T) {
 	withBootUptimeFile(t, "42.00 5.00\n")
 	dir := t.TempDir()
-	timeline := filepath.Join(dir, "aiden_boot_timeline.log")
+	timeline := filepath.Join(dir, "aico_boot_timeline.log")
 	archive := filepath.Join(dir, "boot-20260807-000000.log")
 	state := filepath.Join(dir, "archive.state")
 	initial := []byte("0.10 0.10 rcS:begin\n25.52 0.03 rcS:end\n")

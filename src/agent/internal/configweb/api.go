@@ -198,7 +198,7 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.startDeferredRestartIfIdle()
-	w.Header().Set("X-Aiden-API-Version", "1")
+	w.Header().Set("X-Aico-API-Version", "1")
 	switch match.endpoint {
 	case apiDeviceSnapshot:
 		s.handleGetDeviceSnapshot(w, r)

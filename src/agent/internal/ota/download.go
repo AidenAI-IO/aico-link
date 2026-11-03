@@ -10,7 +10,7 @@ import (
 	"syscall"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 const defaultProgressInterval = 5 * time.Second

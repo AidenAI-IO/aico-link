@@ -1,0 +1,8 @@
+[Unit]
+Description=Recover interrupted Aico Link suspend and stale MCU grants
+After=aico-mcu-event.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/aico-power --recover
+TimeoutStartSec=30s

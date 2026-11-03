@@ -2,15 +2,15 @@
 set -euo pipefail
 
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly RESULTS_ROOT=${AIDEN_G0_RESULTS_DIR:-${SCRIPT_DIR}/results}
-readonly RKNN_FRAMES=${AIDEN_G0_RKNN_FRAMES:-1000}
-readonly AUDIO_SECONDS=${AIDEN_G0_AUDIO_SECONDS:-10}
-readonly CAMERA_FRAMES=${AIDEN_G0_CAMERA_FRAMES:-10}
-readonly STRESS_SECONDS=${AIDEN_G0_STRESS_SECONDS:-7200}
-readonly STRESS_RKNN_FRAMES=${AIDEN_G0_STRESS_RKNN_FRAMES:-1000}
-readonly STRESS_SAMPLE_SECONDS=${AIDEN_G0_STRESS_SAMPLE_SECONDS:-2}
-readonly CMA_RECOVERY_TOLERANCE_KB=${AIDEN_G0_CMA_RECOVERY_TOLERANCE_KB:-4096}
-readonly DEVICE_ROOT=${AIDEN_G0_DEVICE_ROOT:-/dev}
+readonly RESULTS_ROOT=${AICO_G0_RESULTS_DIR:-${SCRIPT_DIR}/results}
+readonly RKNN_FRAMES=${AICO_G0_RKNN_FRAMES:-1000}
+readonly AUDIO_SECONDS=${AICO_G0_AUDIO_SECONDS:-10}
+readonly CAMERA_FRAMES=${AICO_G0_CAMERA_FRAMES:-10}
+readonly STRESS_SECONDS=${AICO_G0_STRESS_SECONDS:-7200}
+readonly STRESS_RKNN_FRAMES=${AICO_G0_STRESS_RKNN_FRAMES:-1000}
+readonly STRESS_SAMPLE_SECONDS=${AICO_G0_STRESS_SAMPLE_SECONDS:-2}
+readonly CMA_RECOVERY_TOLERANCE_KB=${AICO_G0_CMA_RECOVERY_TOLERANCE_KB:-4096}
+readonly DEVICE_ROOT=${AICO_G0_DEVICE_ROOT:-/dev}
 readonly MODEL=${SCRIPT_DIR}/model/silero_vad_6_2_encoder_rv1106_w8a8_v1.rknn
 readonly WEIGHTS=${SCRIPT_DIR}/model/silero_vad_6_2_lstm_decoder_weights.bin
 
@@ -30,17 +30,17 @@ Actions:
   snapshot       Record a system, memory, CMA, DMA-BUF, process, and device snapshot.
 
 Environment:
-  AIDEN_G0_RKNN_FRAMES    RKNN benchmark frame count (default: 1000).
-  AIDEN_G0_CAMERA_FRAMES  Camera frame count (default: 10).
-  AIDEN_G0_AUDIO_SECONDS  Audio capture duration (default: 10).
-  AIDEN_G0_STRESS_SECONDS Concurrent stress duration (default: 7200 / 2 hours).
-  AIDEN_G0_STRESS_RKNN_FRAMES
+  AICO_G0_RKNN_FRAMES    RKNN benchmark frame count (default: 1000).
+  AICO_G0_CAMERA_FRAMES  Camera frame count (default: 10).
+  AICO_G0_AUDIO_SECONDS  Audio capture duration (default: 10).
+  AICO_G0_STRESS_SECONDS Concurrent stress duration (default: 7200 / 2 hours).
+  AICO_G0_STRESS_RKNN_FRAMES
                           RKNN frames per stress iteration (default: 1000).
-  AIDEN_G0_STRESS_SAMPLE_SECONDS
+  AICO_G0_STRESS_SAMPLE_SECONDS
                           Resource sample interval (default: 2).
-  AIDEN_G0_CMA_RECOVERY_TOLERANCE_KB
+  AICO_G0_CMA_RECOVERY_TOLERANCE_KB
                           Allowed post-stress CMA delta (default: 4096).
-  AIDEN_G0_RESULTS_DIR    Result directory root (default: bundle/results).
+  AICO_G0_RESULTS_DIR    Result directory root (default: bundle/results).
 EOF
 }
 
@@ -206,13 +206,13 @@ run_load_modules() {
     exec > >(tee "${RESULT_DIR}/run.log") 2>&1
     verify_bundle
     snapshot before-load
-    "${SCRIPT_DIR}/aiden-media-modules"
+    "${SCRIPT_DIR}/aico-media-modules"
     snapshot after-load
     [ -e "${DEVICE_ROOT}/rknpu" ] || fail "${DEVICE_ROOT}/rknpu was not created"
 }
 
 run_rknn() {
-    require_uint AIDEN_G0_RKNN_FRAMES "${RKNN_FRAMES}"
+    require_uint AICO_G0_RKNN_FRAMES "${RKNN_FRAMES}"
     [ -e "${DEVICE_ROOT}/rknpu" ] ||
         fail "${DEVICE_ROOT}/rknpu is missing; load media modules first"
     new_result_dir rknn
@@ -229,7 +229,7 @@ run_rknn() {
 }
 
 run_camera() {
-    require_uint AIDEN_G0_CAMERA_FRAMES "${CAMERA_FRAMES}"
+    require_uint AICO_G0_CAMERA_FRAMES "${CAMERA_FRAMES}"
     new_result_dir camera
     exec > >(tee "${RESULT_DIR}/run.log") 2>&1
     verify_bundle
@@ -241,7 +241,7 @@ run_camera() {
 }
 
 run_audio_capture() {
-    require_uint AIDEN_G0_AUDIO_SECONDS "${AUDIO_SECONDS}"
+    require_uint AICO_G0_AUDIO_SECONDS "${AUDIO_SECONDS}"
     new_result_dir audio-capture
     exec > >(tee "${RESULT_DIR}/run.log") 2>&1
     verify_bundle
@@ -290,10 +290,10 @@ run_stress() {
     local camera_status audio_status rknn_status before_cma after_cma
     local before_dmesg_lines=0 kernel_log_available=0 bad_log=0
     local actual_pid label pattern
-    require_uint AIDEN_G0_STRESS_SECONDS "${STRESS_SECONDS}"
-    require_uint AIDEN_G0_STRESS_RKNN_FRAMES "${STRESS_RKNN_FRAMES}"
-    require_uint AIDEN_G0_STRESS_SAMPLE_SECONDS "${STRESS_SAMPLE_SECONDS}"
-    require_uint AIDEN_G0_CMA_RECOVERY_TOLERANCE_KB "${CMA_RECOVERY_TOLERANCE_KB}"
+    require_uint AICO_G0_STRESS_SECONDS "${STRESS_SECONDS}"
+    require_uint AICO_G0_STRESS_RKNN_FRAMES "${STRESS_RKNN_FRAMES}"
+    require_uint AICO_G0_STRESS_SAMPLE_SECONDS "${STRESS_SAMPLE_SECONDS}"
+    require_uint AICO_G0_CMA_RECOVERY_TOLERANCE_KB "${CMA_RECOVERY_TOLERANCE_KB}"
     [ -e "${DEVICE_ROOT}/rknpu" ] ||
         fail "${DEVICE_ROOT}/rknpu is missing; load media modules first"
     [ -e "${DEVICE_ROOT}/video0" ] ||

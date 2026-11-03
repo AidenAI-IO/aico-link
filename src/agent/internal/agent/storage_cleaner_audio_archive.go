@@ -8,7 +8,7 @@ import (
 	"sort"
 	"time"
 
-	"aiden-agent/internal/logging"
+	"aico-agent/internal/logging"
 )
 
 // AudioArchiveCleaner cleans up old audio archive files

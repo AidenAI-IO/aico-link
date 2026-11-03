@@ -56,7 +56,8 @@ sending input, then checks tool errors and the expected state before capturing
 `pre.jpg`; failed preparation does not become an agent score. State paths can
 address list elements with numeric segments, such as
 `apps.notes.notes.0.content`. The phone-control `select_all_and_delete` task
-uses MobileGym coordinates and is limited to Android.
+uses MobileGym coordinates and declares `environment_bridge_types: ["mobilegym"]`.
+Other bridges, including ADB Android, skip it before setup.
 
 ## Environment Bridge Routing
 
@@ -158,8 +159,8 @@ The output is one yes/no verdict plus reason per rubric item. Results are
 cached by screenshots, trace, rubric, final response, and model.
 
 Agent, Judge, and Analysis runtime configuration use separate role-specific
-namespaces: `AIDEN_BENCHMARK_AGENT_*`, `AIDEN_BENCHMARK_JUDGE_*`, and
-`AIDEN_BENCHMARK_ANALYSIS_*`. Provider-specific environment variable names are
+namespaces: `AICO_BENCHMARK_AGENT_*`, `AICO_BENCHMARK_JUDGE_*`, and
+`AICO_BENCHMARK_ANALYSIS_*`. Provider-specific environment variable names are
 not part of the benchmark runtime contract.
 
 ## Artifacts

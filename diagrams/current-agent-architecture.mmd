@@ -1,0 +1,38 @@
+---
+title: Aico Agent - Current Streaming Architecture
+line9:
+  theme: boardroom
+---
+flowchart LR
+  webInput[Web text input]
+  webOutput[Web UI<br>conversation]
+  mic[Board microphone]
+  speaker[Board speaker]
+  capture[C++ audio_service<br>capture]
+  playback[C++ audio_service<br>playback]
+  classic[AudioDialog<br>VAD and STT]
+  realtime[Realtime daemon loop<br>native provider]
+  api[Chat API]
+  runtime[Runtime.Run]
+  loop[AgentLoop]
+  model[LLM adapters]
+  tools[Tools and Phone Bridge]
+  speech[Speech projection<br>and TTS]
+  context[(ContextManager)]
+  memory[(Episode memory)]
+  history[History API]
+  events[Semantic events<br>bounded replay]
+  sse[V2 SSE]
+
+  webInput -->|POST chat| api --> runtime --> loop
+  api -->|NDJSON| webOutput
+  loop --> model
+  loop --> tools
+  mic --> capture --> classic --> runtime
+  capture --> realtime
+  loop --> speech --> playback --> speaker
+  realtime --> playback
+  runtime --> context --> history --> webOutput
+  runtime --> memory
+  runtime -->|text and state| events --> sse --> webOutput
+  realtime -->|normalized events| events

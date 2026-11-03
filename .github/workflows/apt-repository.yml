@@ -1,4 +1,4 @@
-name: Aiden APT Repository
+name: Aico Link APT Repository
 
 on:
   workflow_call:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: aiden-apt-pages
+  group: aico-apt-pages
   cancel-in-progress: false
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_REPO: ${{ github.repository }}
           APT_SIGNING_PRIVATE_KEY: ${{ secrets.APT_SIGNING_PRIVATE_KEY }}
-          GNUPGHOME: ${{ runner.temp }}/aiden-apt-gnupg
+          GNUPGHOME: ${{ runner.temp }}/aico-apt-gnupg
         run: |
           test -n "$APT_SIGNING_PRIVATE_KEY"
           install -d -m 0700 "$GNUPGHOME"
@@ -43,7 +43,7 @@ jobs:
       - name: Remove signing material
         if: always()
         env:
-          GNUPGHOME: ${{ runner.temp }}/aiden-apt-gnupg
+          GNUPGHOME: ${{ runner.temp }}/aico-apt-gnupg
         run: |
           gpgconf --kill all || true
           rm -rf -- "$GNUPGHOME"

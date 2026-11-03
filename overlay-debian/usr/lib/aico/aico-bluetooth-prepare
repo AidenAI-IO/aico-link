@@ -1,0 +1,31 @@
+#!/bin/sh
+set -eu
+
+for module in aes_generic cmac; do
+    [ -d "/sys/module/${module}" ] && continue
+    [ -f "/usr/lib/aico/platform/modules/${module}.ko" ] || continue
+    insmod "/usr/lib/aico/platform/modules/${module}.ko"
+done
+for algorithm in aes ecdh; do
+    grep -Eq "^name[[:space:]]*: ${algorithm}$" /proc/crypto || {
+        echo "Bluetooth crypto algorithm is unavailable: ${algorithm}" >&2
+        exit 1
+    }
+done
+[ -c /dev/ttyS0 ] || { echo "Bluetooth UART /dev/ttyS0 is missing" >&2; exit 1; }
+model=$(tr -d '\000' < /proc/device-tree/model 2>/dev/null || true)
+if [ "$model" = "Aico Link SCH v1" ]; then
+    fw_state=$(cat /sys/devices/platform/aic-bsp/aicbsp_info/fw_state 2>/dev/null || true)
+    case "$fw_state" in
+        provisioned|reused) ;;
+        *)
+            echo "AIC8800 shared firmware is not ready: ${fw_state:-missing}" >&2
+            exit 1
+            ;;
+    esac
+else
+    [ -d /sys/module/aic8800_fdrv ] || {
+        echo "AIC8800 firmware driver is not loaded" >&2
+        exit 1
+    }
+fi

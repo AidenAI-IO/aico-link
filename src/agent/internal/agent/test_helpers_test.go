@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent/agentpath"
-	"aiden-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/agentpath"
+	"aico-agent/internal/agent/contextmanager"
 
 	"github.com/tmc/langchaingo/llms"
 )

@@ -12,15 +12,15 @@ sidebar_position: 1
 | --- | --- |
 | Config | `/userdata/agent/agent.toml` |
 | Log | `/userdata/agent/log/agent.log` |
-| Binary | `/usr/lib/aiden/agent` |
+| Binary | `/usr/lib/aico/agent` |
 | Session data | `/userdata/agent/` |
 
 ## Startup
 
 ```bash
-systemctl start aiden-agent.service
-systemctl status aiden-agent.service
-systemctl restart aiden-agent.service
+systemctl start aico-agent.service
+systemctl status aico-agent.service
+systemctl restart aico-agent.service
 ```
 
 ## Input Modes

@@ -22,7 +22,7 @@ bin/
 pico-sdk/
 .toolchains/
 .cache/
-aiden-backup/
+aico-backup/
 
 # Python
 .venv/

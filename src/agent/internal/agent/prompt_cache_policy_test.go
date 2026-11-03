@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/model"
+	"aico-agent/internal/agent/model"
 	"encoding/json"
 	"os"
 	"path/filepath"

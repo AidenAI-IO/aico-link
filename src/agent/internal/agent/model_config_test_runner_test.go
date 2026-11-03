@@ -10,7 +10,7 @@ import (
 )
 
 func TestRunModelProviderTestUsesRuntimeProviderResolution(t *testing.T) {
-	t.Setenv("AIDEN_MODEL_CONFIG_TEST_KEY", "model-config-test-secret")
+	t.Setenv("AICO_MODEL_CONFIG_TEST_KEY", "model-config-test-secret")
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -32,7 +32,7 @@ func TestRunModelProviderTestUsesRuntimeProviderResolution(t *testing.T) {
 		ModelProviders: map[string]ModelProvider{
 			"work": {
 				Type:    "openai",
-				APIKey:  "$AIDEN_MODEL_CONFIG_TEST_KEY",
+				APIKey:  "$AICO_MODEL_CONFIG_TEST_KEY",
 				BaseURL: server.URL + "/v1",
 			},
 		},

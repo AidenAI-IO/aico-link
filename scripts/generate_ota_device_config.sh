@@ -21,7 +21,7 @@ output=""
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/ota_partition_layout.sh"
-download_safety_margin_bytes="$(aiden_ota_download_safety_margin_bytes)"
+download_safety_margin_bytes="$(aico_ota_download_safety_margin_bytes)"
 
 while [ "$#" -gt 0 ]; do
   case "$1" in

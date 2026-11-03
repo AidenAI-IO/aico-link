@@ -25,12 +25,12 @@ namespace {
 
 struct Options {
     std::string gadget_root = "/sys/kernel/config/usb_gadget";
-    std::string gadget_name = "aiden_hid";
+    std::string gadget_name = "aico_hid";
     std::string keyboard_dev = "/dev/hidg0";
     std::string touch_dev = "/dev/hidg1";
     std::string state_dir = "/tmp";
-    std::string manufacturer = "Aiden";
-    std::string product_name = "Aiden HID Gadget";
+    std::string manufacturer = "Aico";
+    std::string product_name = "Aico Link HID Gadget";
     std::string serial = "0001";
     std::string udc;
     int width = 32767;
@@ -630,7 +630,7 @@ void setup_gadget(const Options& options, const std::string& mode) {
     ensure_dir(gadget + "/configs/c.1/strings");
     ensure_dir(gadget + "/configs/c.1/strings/0x409");
     write_text_file(gadget + "/configs/c.1/MaxPower", "250");
-    write_text_file(gadget + "/configs/c.1/strings/0x409/configuration", "Aiden HID");
+    write_text_file(gadget + "/configs/c.1/strings/0x409/configuration", "Aico Link HID");
 
     if (mode == "keyboard" || mode == "composite") {
         setup_keyboard_function(gadget);
@@ -744,7 +744,7 @@ Options parse_global_options(std::vector<std::string>& args) {
         }
     }
 
-    const char* env_mode = getenv("AIDEN_POINTER_MODE");
+    const char* env_mode = getenv("AICO_POINTER_MODE");
     if (env_mode != nullptr) {
         if (std::string(env_mode) == "touchscreen") {
             options.pointer_touchscreen = true;

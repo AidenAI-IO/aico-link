@@ -23,7 +23,12 @@ def _data(**overrides):
     data = {
         "weekly": {"start": "2026-10-06T00:00:00+00:00", "end": "2026-10-13T00:00:00+00:00",
                    "totals": _week(), "change": None,
-                   "suites": [_suite("memory", 0.5, 2.0, 4.0, 2), _suite("perception", 0.9, 9, 10)]},
+                   "suites": [_suite("memory", 0.5, 2.0, 4.0, 2), _suite("perception", 0.9, 9, 10)],
+                   "capabilities": [
+                       {"capability": "Memory", "pass_at_1": 0.5, "change": None, "suites": ["memory"]},
+                       {"capability": "Visual grounding", "pass_at_1": 0.9, "change": None,
+                        "suites": ["perception"]},
+                   ]},
         "runs": [{}, {}],
         "regressions": [],
         "warnings": [],
@@ -52,9 +57,10 @@ def test_card_summarizes_the_last_week():
 
 def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "memory: 50.0%" in text.splitlines()
-    assert "perception: 90.0%" in text.splitlines()
-    assert text.index("memory") < text.index("perception")
+    assert "**Memory**: 50.0%\n- memory: 50.0%" in text
+    assert "**Visual grounding**: 90.0%\n- perception: 90.0%" in text
+    assert text.index("**Memory**") < text.index("**Visual grounding**")
+    assert "**pass@1 by dataset**" not in text
 
 
 def test_changes_from_the_previous_week_are_colored_by_direction():
@@ -62,14 +68,17 @@ def test_changes_from_the_previous_week_are_colored_by_direction():
     data["weekly"]["change"] = -0.05
     data["weekly"]["suites"] = [_suite("up", 0.9, 9, 10, change=0.1), _suite("down", 0.4, 4, 10, change=-0.2),
                                 _suite("flat", 0.5, 5, 10, change=0.0004), _suite("new", 0.5, 5, 10)]
+    data["weekly"]["capabilities"][0]["suites"] = ["up", "down", "flat", "new"]
+    data["weekly"]["capabilities"][1]["suites"] = []
     text = _text(_build_card(data, "https://example.com/d.html"))
     assert "75.0% <font color='red'>-5.0pp</font> (18/24" in text
-    assert "up: 90.0% <font color='green'>+10.0pp</font>" in text.splitlines()
-    assert "down: 40.0% <font color='red'>-20.0pp</font>" in text
-    assert "flat: 50.0% <font color='grey'>±0.0pp</font>" in text
+    assert "- up: 90.0% <font color='green'>+10.0pp</font>" in text.splitlines()
+    assert "- down: 40.0% <font color='red'>-20.0pp</font>" in text
+    assert "- flat: 50.0% <font color='grey'>±0.0pp</font>" in text
     # Without a previous-week rate, no change is shown.
-    assert "new: 50.0%" in text.splitlines()
+    assert "- new: 50.0%" in text.splitlines()
     assert "Config changed" not in text
+    assert text.index("- down:") < text.index("- new:") < text.index("- up:")
 
 
 def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
@@ -77,18 +86,39 @@ def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
     suite = _suite("perception", 0.75, 9, 12, change=-0.08)
     suite["config_changes"] = [{"field": "agent model", "previous": "google/a", "current": "anthropic/b"}]
     data["weekly"]["suites"] = [suite]
+    data["weekly"]["capabilities"][0]["suites"] = ["perception"]
+    data["weekly"]["capabilities"][1]["suites"] = []
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "perception: 75.0% <font color='red'>-8.0pp</font>" in text.splitlines()
+    assert "- perception: 75.0% <font color='red'>-8.0pp</font>" in text.splitlines()
     assert "Config changed" not in text
     assert "google/a" not in text and "anthropic/b" not in text
     assert "9/12" not in text and "1 run" not in text
+    assert "1 dataset comparison has configuration changes" in text
+
+
+def test_card_labels_window_comparisons_without_configuration_changes():
+    text = _text(_build_card(_data(), "https://example.com/d.html"))
+    assert "Changes describe each window's task mix, not matched runs." in text
+
+
+def test_configuration_note_links_to_weekly_summary_and_preserves_dashboard():
+    data = _data()
+    data["weekly"]["suites"][0].update(change=0.1, config_changes=[{"field": "judge prompt"}])
+    url = "https://github.com/owner/repo/actions/runs/123#summary"
+    card = _build_card(data, "https://example.com/dashboard.html", url)
+    assert f"[View weekly comparisons]({url})" in _text(card)
+    action = next(element for element in card["elements"] if element["tag"] == "action")
+    assert action["actions"][0]["url"] == "https://example.com/dashboard.html"
+    assert "see the dashboard" not in _text(card)
 
 
 def test_unknown_dataset_rate_shows_a_dash_without_counts():
     data = _data()
     data["weekly"]["suites"] = [_suite("new", None)]
+    data["weekly"]["capabilities"][0]["suites"] = ["new"]
+    data["weekly"]["capabilities"][1]["suites"] = []
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "new: —" in text and "new: — (" not in text
+    assert "- new: —" in text and "new: — (" not in text
 
 
 def test_cost_is_shown_only_when_known():
@@ -122,15 +152,14 @@ def test_button_opens_the_dashboard():
 def test_card_leads_with_capability_rates():
     data = _data()
     data["weekly"]["capabilities"] = [
-        {"capability": "Memory", "pass_at_1": 0.75, "passed": 12, "eligible_tasks": 16,
-         "task_count": 8, "run_count": 2, "change": 0.25},
-        {"capability": "Visual grounding", "pass_at_1": 0.5, "passed": 6, "eligible_tasks": 12,
-         "task_count": 12, "run_count": 1, "change": None},
+        {"capability": "Memory", "pass_at_1": 0.75, "change": 0.25, "suites": ["memory"]},
+        {"capability": "Visual grounding", "pass_at_1": 0.5, "change": None,
+         "suites": ["perception"]},
     ]
     text = _text(_build_card(data, "https://example.com/d.html"))
-    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font> (8 tasks, 2 runs, 12/16 eligible first attempts passed)" in text
-    assert "**Visual grounding**: 50.0% (12 tasks, 1 run, 6/12 eligible first attempts passed)" in text
-    assert text.index("**Memory**") < text.index("memory: 50.0%")
+    assert "**Memory**: 75.0% <font color='green'>+25.0pp</font>\n- memory: 50.0%" in text
+    assert "**Visual grounding**: 50.0%\n- perception: 90.0%" in text
+    assert text.index("**Memory**") < text.index("**Visual grounding**")
 
 
 def test_card_labels_skill_discovery_as_a_diagnostic_observation():

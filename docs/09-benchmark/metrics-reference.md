@@ -49,9 +49,9 @@ the experiment to the underlying Agent telemetry.
 | `tool_calls` in Experiment Output | Ordered tool names and arguments from the saved trace, not tool results. This list differs from the numeric `benchmark.tool_calls` score. |
 | `trace_artifact.status` | `available`: valid saved trace; `missing`: absent; `invalid`: malformed or unexpected structure; `unreadable`: file could not be read. |
 | `trace_artifact.path` | Evidence path relative to the run directory; may be null when unavailable. |
-| `aiden_episode_id` | Unambiguous Agent episode ID, or null if unavailable. |
-| `aiden_trace_id` | Execution trace's 32-character hexadecimal OTLP ID. A known ID does not prove successful ingestion. |
-| `aiden_trace_url` | Optional link to the execution trace; null when the episode ID or project lookup is unavailable. |
+| `aico_episode_id` | Unambiguous Agent episode ID, or null if unavailable. |
+| `aico_trace_id` | Execution trace's 32-character hexadecimal OTLP ID. A known ID does not prove successful ingestion. |
+| `aico_trace_url` | Optional link to the execution trace; null when the episode ID or project lookup is unavailable. |
 | `execution_trace_status` | `available`: a benchmark execution root was found and linked; `pending_or_missing`: the episode is known but its execution root was not found; `no_episode`: no unambiguous episode ID. Older items may omit this field. |
 
 When `execution_trace_status=available`, the Experiment drawer uses the execution
@@ -80,7 +80,7 @@ Attempt fields below are exported as `benchmark.<field>` scores unless noted.
 | `success` | `true`, `false`, or unknown | A known task outcome; unknown must not become zero. |
 | `agent_eligible` | Whether this attempt participates in Agent capability metrics | Always inspect it alongside success rates. |
 | `failure_class` | `agent`, `environment`, `evaluation`, `skipped`, or `unknown` | Separate capability failures from invalid measurements. |
-| `quality_score` | Usually the fraction of judge rubric checks passed; hard-gate failures receive zero; unavailable evaluation receives unknown | Indicates partial completion, not necessarily task success. With `--no-judge`, a passing attempt receives 1 without semantic rubric evaluation. |
+| `quality_score` | Usually the fraction of judge rubric checks passed; hard-gate failures receive zero; unavailable evaluation receives unknown | Indicates partial completion, not necessarily task success. With `--no-judge`, unevaluated rubric tasks have unknown quality; tasks without a rubric receive 1 when deterministic assertions pass. |
 | `rubric_pass_rate` | Passed rubric checks divided by rubric count | Inspect individual verdicts: hard-gate failure may prevent the judge from running. |
 | `expected_answer_match`, `expected_recalled_memory_match` | Deterministic checks when the suite configures them | Not automatically present in every memory task. |
 
@@ -490,8 +490,11 @@ Langfuse's `benchmark.rubric_pass_rate` independently divides the stored pass
 count by the stored rubric total whenever the total is nonzero. It is omitted
 when that total is zero. For example, three `yes` verdicts out of four yield
 quality 0.75 and rubric pass rate 0.75, but the task fails. With `--no-judge`,
-the same four configured checks may remain unevaluated: quality can be 1 and
-the exported rubric ratio 0/4. Inspect verdicts before comparing these fields.
+the same four configured checks remain unevaluated: quality is unknown and
+the exported rubric ratio is 0/4. These attempts are `skipped`, with
+`judging_disabled=true`, and excluded from capability metrics until rejudged.
+Known hard-gate failures still count as failures. Inspect verdicts before
+comparing these fields.
 
 ### 3.7 Fixed-k capability and first-success calculations
 

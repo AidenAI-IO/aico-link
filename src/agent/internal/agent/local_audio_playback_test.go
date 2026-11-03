@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"aiden-agent/internal/agent/tts"
+	"aico-agent/internal/agent/tts"
 )
 
 func TestLocalAudioBackendWritesWAVAndCleansUp(t *testing.T) {
@@ -34,7 +34,7 @@ func TestLocalAudioBackendWritesWAVAndCleansUp(t *testing.T) {
 		}
 		playedPath = args[len(args)-1]
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLocalAudioPlaybackHelper")
-		cmd.Env = append(os.Environ(), "AIDEN_LOCAL_AUDIO_HELPER=1")
+		cmd.Env = append(os.Environ(), "AICO_LOCAL_AUDIO_HELPER=1")
 		return cmd
 	}
 
@@ -100,7 +100,7 @@ func TestLocalAudioRecordingBackendStreamsPCMAndStops(t *testing.T) {
 	localAudioRecorderLookPath = func(string) (string, error) { return "helper", nil }
 	localAudioRecorderCommandContext = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLocalAudioRecordingHelper")
-		cmd.Env = append(os.Environ(), "AIDEN_LOCAL_AUDIO_RECORD_HELPER=1")
+		cmd.Env = append(os.Environ(), "AICO_LOCAL_AUDIO_RECORD_HELPER=1")
 		return cmd
 	}
 
@@ -138,7 +138,7 @@ func TestSendLocalRecordingChunkPrefersBufferedDeliveryAfterStop(t *testing.T) {
 }
 
 func TestLocalAudioRecordingHelper(t *testing.T) {
-	if os.Getenv("AIDEN_LOCAL_AUDIO_RECORD_HELPER") == "1" {
+	if os.Getenv("AICO_LOCAL_AUDIO_RECORD_HELPER") == "1" {
 		_, _ = os.Stdout.Write([]byte("local-pcm"))
 		os.Exit(0)
 	}
@@ -341,11 +341,11 @@ func TestLocalAudioBackendSerializesPlayerAdmission(t *testing.T) {
 		idx := int(atomic.AddInt32(&startCount, 1))
 		starts <- idx
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLocalAudioPlaybackHelper")
-		cmd.Env = append(os.Environ(), "AIDEN_LOCAL_AUDIO_HELPER=1")
+		cmd.Env = append(os.Environ(), "AICO_LOCAL_AUDIO_HELPER=1")
 		if idx == 1 {
-			cmd.Env = append(cmd.Env, "AIDEN_LOCAL_AUDIO_WAIT_FILE="+releaseFirst)
+			cmd.Env = append(cmd.Env, "AICO_LOCAL_AUDIO_WAIT_FILE="+releaseFirst)
 		} else {
-			cmd.Env = append(cmd.Env, "AIDEN_LOCAL_AUDIO_EXIT=1")
+			cmd.Env = append(cmd.Env, "AICO_LOCAL_AUDIO_EXIT=1")
 		}
 		return cmd
 	}
@@ -399,7 +399,7 @@ func TestLocalAudioBackendSerializesPlayerAdmission(t *testing.T) {
 }
 
 func TestWriteWAVHeaderRejectsOversizeData(t *testing.T) {
-	file, err := os.CreateTemp("", "aiden-tts-header-*.wav")
+	file, err := os.CreateTemp("", "aico-tts-header-*.wav")
 	if err != nil {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
@@ -463,16 +463,16 @@ func waitLocalAudioDone(t *testing.T, done <-chan error) error {
 }
 
 func TestLocalAudioPlaybackHelper(t *testing.T) {
-	if os.Getenv("AIDEN_LOCAL_AUDIO_HELPER") != "1" {
+	if os.Getenv("AICO_LOCAL_AUDIO_HELPER") != "1" {
 		return
 	}
-	if os.Getenv("AIDEN_LOCAL_AUDIO_EXIT") == "1" {
+	if os.Getenv("AICO_LOCAL_AUDIO_EXIT") == "1" {
 		return
 	}
-	if os.Getenv("AIDEN_LOCAL_AUDIO_FAIL") == "1" {
+	if os.Getenv("AICO_LOCAL_AUDIO_FAIL") == "1" {
 		os.Exit(3)
 	}
-	if waitFile := os.Getenv("AIDEN_LOCAL_AUDIO_WAIT_FILE"); waitFile != "" {
+	if waitFile := os.Getenv("AICO_LOCAL_AUDIO_WAIT_FILE"); waitFile != "" {
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
 			if _, err := os.Stat(waitFile); err == nil {
@@ -496,7 +496,7 @@ func TestLocalAudioBackendDrainReportsPlayerFailure(t *testing.T) {
 	localAudioLookPath = func(name string) (string, error) { return name, nil }
 	localAudioCommandContext = func(ctx context.Context, name string, args ...string) *exec.Cmd {
 		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=TestLocalAudioPlaybackHelper")
-		cmd.Env = append(os.Environ(), "AIDEN_LOCAL_AUDIO_HELPER=1", "AIDEN_LOCAL_AUDIO_FAIL=1")
+		cmd.Env = append(os.Environ(), "AICO_LOCAL_AUDIO_HELPER=1", "AICO_LOCAL_AUDIO_FAIL=1")
 		return cmd
 	}
 

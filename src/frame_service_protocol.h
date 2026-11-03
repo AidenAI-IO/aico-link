@@ -6,11 +6,11 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 
-// FrameServiceStatus is an alias for the shared AidenServiceStatus.
+// FrameServiceStatus is an alias for the shared AicoServiceStatus.
 // All frame_service code continues to compile without modification.
-using FrameServiceStatus = AidenServiceStatus;
+using FrameServiceStatus = AicoServiceStatus;
 
 struct FramePlaneMetadata {
     uint32_t offset = 0;
@@ -49,4 +49,4 @@ bool frame_service_status_from_string(const char* text, FrameServiceStatus* out)
 std::vector<uint8_t> encode_frame_wire_prefix(uint32_t header_len, uint64_t payload_len);
 bool decode_frame_wire_prefix(const uint8_t* data, size_t len, FrameWirePrefix* out);
 
-}  // namespace aiden
+}  // namespace aico

@@ -1,6 +1,6 @@
-# Aiden MobileGym Integration
+# Aico MobileGym Integration
 
-MobileGym is integrated into Aiden benchmarks solely as a simulator, using the unified `benchmark/runner` framework.
+MobileGym is integrated into Aico benchmarks solely as a simulator, using the unified `benchmark/runner` framework.
 
 ## 🎯 Architecture
 
@@ -9,7 +9,7 @@ MobileGym **serves only as a device simulator**, exposed through the unified env
 ```text
 benchmark/runner/main.py (test orchestration)
   ↓ /api/chat
-Aiden Go Daemon (environment-bridge mode)
+Aico Go Daemon (environment-bridge mode)
   ↓ /api/providers/mnk + /api/providers/screenshot
 MobileGym Bridge Server (HTTP ↔ env.step)
   ↓ env.step(action)
@@ -33,7 +33,7 @@ python benchmark/mobilegym/scripts/start_simulator.py \
   --env-url http://localhost:4173 \
   --bridge-port 8888 &
 
-# 2. Start the Aiden daemon in environment bridge mode.
+# 2. Start the Aico daemon in environment bridge mode.
 # When manually debugging a single task, use the same benchmark-task-id for the daemon and runner.
 go run src/agent/cmd/daemon/main.go \
   --config /path/to/agent.toml \
@@ -93,8 +93,8 @@ benchmark/mobilegym/
 
 **Removed components** (no longer needed):
 - ❌ `adapter/register.py` - agent registration
-- ❌ `adapter/aiden_go_agent.py` - MobileGym Agent adapter
-- ❌ `scripts/run_aiden.py` - MobileGym test framework entry point
+- ❌ `adapter/aico_go_agent.py` - MobileGym Agent adapter
+- ❌ `scripts/run_aico.py` - MobileGym test framework entry point
 - ❌ `suites/*.yaml` - custom MobileGym suites (replaced by benchmark/suites/*.json)
 
 ## 🎯 Test definitions
@@ -142,6 +142,16 @@ Scroll Lab targets (positions 24 and 83). Final selection and irreversible
 scroll overshoot are checked through `/state` and `/route`. The 100-depth
 `mobilegym_scroll_sweep.json` is optional calibration, not the regression gate.
 
+Use `benchmark/suites/mobilegym_touch_v1.json` for touch-control regressions on
+built-in apps: repeated presses of the same key whose visible effect is one
+character (Calculator 2 and the Phone dial pad), repeated delete presses, and
+recording stopwatch laps while the time display keeps changing. Calculator
+results are checked through `/state`; dial-pad digits and stopwatch laps live
+in page-local UI state, so those tasks are judged from the post-screenshot. The
+stopwatch task starts from the home screen because opening Clock directly at
+`/` through the foreground setup leaves it on the redirect route, where tab
+transitions are rejected.
+
 ## 🔧 Configuration
 
 ### Environment Bridge mode
@@ -161,9 +171,9 @@ go run cmd/daemon/main.go \
 Environment variables available when starting the simulator:
 
 - `MOBILEGYM_ENV_URL`: MobileGym web simulator URL (default: `http://localhost:4173`)
-- `AIDEN_BRIDGE_BIND_HOST`: Bridge bind address (default: `127.0.0.1`)
-- `AIDEN_BRIDGE_PORT`: Bridge port (automatically assigned by default)
-- `AIDEN_BRIDGE_PUBLIC_HOST`: Bridge public address (required for Docker)
+- `AICO_BRIDGE_BIND_HOST`: Bridge bind address (default: `127.0.0.1`)
+- `AICO_BRIDGE_PORT`: Bridge port (automatically assigned by default)
+- `AICO_BRIDGE_PUBLIC_HOST`: Bridge public address (required for Docker)
 
 The Docker-published bridge is unauthenticated and is bound only to Docker's
 host-gateway interface on Linux (`docker network inspect bridge` gateway), so
@@ -173,7 +183,7 @@ same host may reach the control port, including automatically assigned ports.
 Use this setup only on a trusted benchmark host. It does not provide isolation
 from untrusted workloads sharing the Docker daemon.
 Docker Desktop on macOS and Windows keeps the binding on loopback. Set
-`AIDEN_MOBILEGYM_BRIDGE_BIND_HOST` to the address that `host.docker.internal`
+`AICO_MOBILEGYM_BRIDGE_BIND_HOST` to the address that `host.docker.internal`
 resolves to from Agent containers when the default lookup does not match it:
 a non-default Docker network, a daemon configured with `host-gateway-ip`, or
 Docker Desktop on Linux (use `127.0.0.1`).

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+    restart|reload)
+        systemctl restart aico-frame.service
+        ;;
+    start|stop)
+        systemctl "$1" aico-frame.service
+        ;;
+    status)
+        if systemctl is-active --quiet aico-frame.service; then
+            pid=$(systemctl show aico-frame.service -p MainPID --value 2>/dev/null || true)
+            case "${pid}" in
+                ''|*[!0-9]*) pid=0 ;;
+            esac
+            echo "frame_service=running pid=${pid} supervisor=systemd"
+            exit 0
+        fi
+        echo "frame_service=stopped"
+        exit 1
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status}" >&2
+        exit 2
+        ;;
+esac

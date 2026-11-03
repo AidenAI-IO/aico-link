@@ -21,7 +21,7 @@ index da062ea..d72e684 100644
 @@ -250,6 +258,12 @@ static int load_rkmpp_library()
      {
 -        librockchip_mpp = dlopen("/oem/usr/lib/librockchip_mpp.so", RTLD_LOCAL | RTLD_NOW);
-+        librockchip_mpp = dlopen("/usr/lib/aiden/platform/lib/librockchip_mpp.so", RTLD_LOCAL | RTLD_NOW);
++        librockchip_mpp = dlopen("/usr/lib/aico/platform/lib/librockchip_mpp.so", RTLD_LOCAL | RTLD_NOW);
      }
 +    if (!librockchip_mpp)
 +    {

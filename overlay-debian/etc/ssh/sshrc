@@ -1,7 +1,7 @@
 # sshd runs this as the login user after allocating SSH_TTY. Its stdin carries
 # X11 cookies, so the helper opens SSH_TTY instead of using stdin.
 if [ -n "${SSH_TTY:-}" ] && [ -n "${XDG_SESSION_ID:-}" ]; then
-    /usr/lib/aiden/aiden-ssh-session-tty || :
+    /usr/lib/aico/aico-ssh-session-tty || :
 fi
 
 # An sshrc replaces sshd's built-in xauth setup; preserve that behavior for

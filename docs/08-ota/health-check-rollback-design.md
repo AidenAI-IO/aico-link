@@ -19,5 +19,5 @@ Rollback selects the last successful slot and restores the protected snapshot
 before committing the bootloader selection. Early boot recovery reconciles
 completed and abandoned rollback requests without restoring unrelated user
 data. Debian production images run recovery through
-`aiden-ota-recovery.service` before userdata migration and use the systemd OTA
+`aico-ota-recovery.service` before userdata migration and use the systemd OTA
 health aggregator for service checks.

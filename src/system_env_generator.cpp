@@ -7,7 +7,7 @@
 #include <string>
 #include <vector>
 
-namespace aiden {
+namespace aico {
 namespace {
 
 const char kDefaultNoProxy[] =
@@ -39,8 +39,8 @@ std::string quote_systemd_value(const std::string& value) {
 
 std::string render_minimal_environment() {
     std::ostringstream out;
-    out << "AIDEN_ENVIRONMENT_VALID=\"0\"\n";
-    out << "AIDEN_EXTERNAL_ACCESS_DISABLED=\"1\"\n";
+    out << "AICO_ENVIRONMENT_VALID=\"0\"\n";
+    out << "AICO_EXTERNAL_ACCESS_DISABLED=\"1\"\n";
     out << "NO_PROXY=" << quote_systemd_value(kDefaultNoProxy) << "\n";
     out << "no_proxy=" << quote_systemd_value(kDefaultNoProxy) << "\n";
     return out.str();
@@ -121,7 +121,7 @@ bool generate_systemd_environment(const std::string& input,
     set_pair(&values, "no_proxy", "NO_PROXY", no_proxy);
 
     std::ostringstream out;
-    out << "AIDEN_ENVIRONMENT_VALID=\"1\"\n";
+    out << "AICO_ENVIRONMENT_VALID=\"1\"\n";
     for (std::map<std::string, std::string>::const_iterator it = values.begin();
          it != values.end(); ++it) {
         out << it->first << "=" << quote_systemd_value(it->second) << "\n";
@@ -132,4 +132,4 @@ bool generate_systemd_environment(const std::string& input,
     return true;
 }
 
-}  // namespace aiden
+}  // namespace aico

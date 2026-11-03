@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 	"encoding/json"
 	"fmt"
 	"io"

@@ -9,7 +9,7 @@ const coordinateDebugHTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Coordinate Debug · Aiden Agent</title>
+<title>Coordinate Debug · Aico</title>
 <link rel="stylesheet" href="/web-ui/styles.css">
 <style>
 .debug-layout { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); gap: 1px; min-height: calc(100vh - 64px); background: var(--line); }

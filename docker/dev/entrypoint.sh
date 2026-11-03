@@ -1,11 +1,11 @@
 #!/bin/bash
 set -eu
 
-agent_dir="${AIDEN_AGENT_DIR:-/userdata/agent}"
-system_env="${AIDEN_SYSTEM_ENV:-/userdata/system/env}"
-agent_service="${AIDEN_AGENT_INIT_SCRIPT:-/usr/local/bin/aiden-agent-service}"
-wifi_proxy_service="${AIDEN_WIFI_PROXY_INIT_SCRIPT:-/usr/local/bin/aiden-wifi-proxy-service}"
-env_run_bin="${AIDEN_ENV_RUN_BIN:-/usr/local/bin/aiden-env-run}"
+agent_dir="${AICO_AGENT_DIR:-/userdata/agent}"
+system_env="${AICO_SYSTEM_ENV:-/userdata/system/env}"
+agent_service="${AICO_AGENT_INIT_SCRIPT:-/usr/local/bin/aico-agent-service}"
+wifi_proxy_service="${AICO_WIFI_PROXY_INIT_SCRIPT:-/usr/local/bin/aico-wifi-proxy-service}"
+env_run_bin="${AICO_ENV_RUN_BIN:-/usr/local/bin/aico-env-run}"
 config_web_pid=""
 ttyd_pid=""
 
@@ -22,7 +22,7 @@ mkdir -p \
 chmod 1777 /userdata/tmp
 
 if [ ! -f "$agent_dir/agent.toml" ]; then
-    cp /opt/aiden/defaults/agent.toml "$agent_dir/agent.toml"
+    cp /opt/aico/defaults/agent.toml "$agent_dir/agent.toml"
 fi
 if [ ! -f "$system_env" ]; then
     : > "$system_env"
@@ -54,7 +54,7 @@ trap shutdown INT TERM EXIT
     --port=3000 \
     --base-path=/webtty/ \
     --max-clients="${TTYD_MAX_CLIENTS:-2}" \
-    --client-option "titleFixed=${TTYD_TITLE:-Aiden Shell}" \
+    --client-option "titleFixed=${TTYD_TITLE:-Aico Link Shell}" \
     --client-option "rendererType=${TTYD_RENDERER:-canvas}" \
     --client-option "fontSize=${TTYD_FONT_SIZE:-24}" \
     --client-option "scrollback=${TTYD_SCROLLBACK:-500}" \
@@ -64,7 +64,7 @@ trap shutdown INT TERM EXIT
     >>/userdata/agent/log/ttyd.log 2>&1 &
 ttyd_pid="$!"
 
-"$env_run_bin" "${AIDEN_AGENT_BIN:-/usr/lib/aiden/agent}" config-web \
+"$env_run_bin" "${AICO_AGENT_BIN:-/usr/lib/aico/agent}" config-web \
     --bind=0.0.0.0 \
     --port=80 \
     --config="$agent_dir/agent.toml" \
@@ -72,7 +72,7 @@ ttyd_pid="$!"
     --ota-state=/userdata/ota/state.json \
     --cmdline=/proc/cmdline \
     --system-env="$system_env" \
-    --storage-state=/run/aiden/storage.state &
+    --storage-state=/run/aico/storage.state &
 config_web_pid="$!"
 
 set +e

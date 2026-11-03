@@ -1,0 +1,23 @@
+[Unit]
+Description=Bounded Aico Link Wi-Fi recovery guard
+Requires=aico-wifi-driver.service
+# Recovery restarts supplicant. Requires= would stop this guard in the middle
+# of recovery and discard its cooldown and retry budget.
+Wants=wpa_supplicant@wlan0.service
+After=aico-wifi-driver.service wpa_supplicant@wlan0.service systemd-networkd.service
+StartLimitIntervalSec=120s
+StartLimitBurst=5
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/aico_boot.conf
+ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_WLAN_GUARD
+ExecStart=/usr/lib/aico/aico-wlan-guard
+StandardOutput=append:/var/log/wlan_guard/wlan_guard.log
+StandardError=append:/var/log/wlan_guard/wlan_guard.log
+Restart=on-failure
+RestartSec=10s
+TimeoutStopSec=10s
+
+[Install]
+WantedBy=multi-user.target

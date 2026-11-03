@@ -20,7 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"aiden-agent/internal/netproxy"
+	"aico-agent/internal/netproxy"
 )
 
 const (
@@ -547,7 +547,7 @@ func fetchSkillURL(ctx context.Context, client *http.Client, sourceURL string, l
 		return nil, err
 	}
 	req.Header.Set("Accept", "text/markdown, application/json, application/zip, application/octet-stream;q=0.9, */*;q=0.1")
-	req.Header.Set("User-Agent", "Aiden-skill-installer")
+	req.Header.Set("User-Agent", "Aico-skill-installer")
 	if client == nil {
 		client = http.DefaultClient
 	}

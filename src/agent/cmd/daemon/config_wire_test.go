@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"aiden-agent/internal/agent"
+	"aico-agent/internal/agent"
 )
 
 // These tests exercise the real config_web <-> agent wire contract: the JSON

@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"aiden-agent/internal/agent/screen"
+	"aico-agent/internal/agent/screen"
 
 	"github.com/tmc/langchaingo/llms"
 )

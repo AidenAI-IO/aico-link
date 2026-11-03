@@ -47,7 +47,7 @@ sandbox-start:
 	./scripts/start_docker_sandbox.sh
 
 sandbox-logs:
-	docker compose logs -f aiden
+	docker compose logs -f aico
 
 sandbox-stop:
 	docker compose down

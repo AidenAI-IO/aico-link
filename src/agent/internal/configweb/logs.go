@@ -338,13 +338,13 @@ func (s *Server) supportServiceLogs() []struct {
 		{"services/ota.log", s.options.OTAHealthLogPath},
 		{"services/ota-recovery.log", "/var/log/ota/ota-recovery.log"},
 		{"services/ttyd.log", "/var/log/ttyd/ttyd.log"},
-		{"services/aiden-hciattach.log", "/var/log/aiden-hciattach.log"},
+		{"services/aico-hciattach.log", "/var/log/aico-hciattach.log"},
 		{"services/bluetoothd.log", "/var/log/bluetoothd/bluetoothd.log"},
 		{"services/wifi-driver.log", "/var/log/wifi_driver/wifi_driver.log"},
 		{"services/wpa-supplicant.log", "/var/log/wpa_supplicant/wlan0.log"},
 		{"services/wlan-guard.log", "/var/log/wlan_guard/wlan_guard.log"},
 		{"services/wifi-proxy.log", "/var/log/wifi_proxy/wifi_proxy.log"},
-		{"services/boot-timeline.log", "/var/log/aiden_boot_timeline.log"},
+		{"services/boot-timeline.log", "/var/log/aico_boot_timeline.log"},
 		{"services/ota-update.log", s.options.OTAUpdateLogPath},
 	}
 }

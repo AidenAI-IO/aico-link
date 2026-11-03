@@ -8,7 +8,7 @@ import (
 	"image/jpeg"
 	_ "image/png"
 
-	"aiden-agent/internal/agent/screenprovider"
+	"aico-agent/internal/agent/screenprovider"
 )
 
 func convertFrameToRGB(meta *frameMetadata, frame []byte) ([]byte, error) {

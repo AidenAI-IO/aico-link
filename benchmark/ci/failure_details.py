@@ -117,7 +117,7 @@ def fetch_failure_details(client: Any, experiment: Any) -> dict[str, Any]:
             if not input.get("task_id"):
                 unavailable("Task identity unavailable")
                 continue
-            trace_url = _object(output).get("aiden_trace_url")
+            trace_url = _object(output).get("aico_trace_url")
             if not trace_url:
                 get_url = getattr(client, "get_trace_url", None)
                 if callable(get_url):

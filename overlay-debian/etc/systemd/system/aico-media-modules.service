@@ -1,0 +1,15 @@
+[Unit]
+Description=Load Luckfox media, audio, RGA and RKNN modules
+After=systemd-udevd.service
+Before=aico-frame.service aico-audio.service aico-agent.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-media-modules
+RemainAfterExit=yes
+TimeoutStartSec=30s
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target

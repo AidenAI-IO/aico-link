@@ -155,8 +155,8 @@ def test_execute_mnk_request_stops_on_tool_error():
 
 
 def test_keyboard_text_and_persistent_drag_dispatch():
-    assert mnk_tool_calls({"operation": "keyboard_text", "keyboard_text": {"text": "Aiden test!"}}) == [
-        ("keyboard_text", {"text": "Aiden test!"})
+    assert mnk_tool_calls({"operation": "keyboard_text", "keyboard_text": {"text": "Aico test!"}}) == [
+        ("keyboard_text", {"text": "Aico test!"})
     ]
     for operation in ("drag_start", "drag_release"):
         assert mnk_tool_calls({"operation": operation, operation: {"x": 148, "y": 114}}) == [

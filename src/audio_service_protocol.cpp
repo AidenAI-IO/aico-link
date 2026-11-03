@@ -3,7 +3,7 @@
 #include <errno.h>
 #include <stdlib.h>
 
-namespace aiden {
+namespace aico {
 
 // -----------------------------------------------------------------------
 // AudioFormat
@@ -48,7 +48,7 @@ std::string audio_request_json(const char* op, const std::string& extra_fields) 
     return json;
 }
 
-std::string audio_response_json(AidenServiceStatus status,
+std::string audio_response_json(AicoServiceStatus status,
                                 const std::string& extra_fields) {
     std::string json = "{\"status\":\"";
     json += service_status_to_string(status);
@@ -65,12 +65,12 @@ std::string audio_response_json(AidenServiceStatus status,
 // Response parsers
 // -----------------------------------------------------------------------
 
-AidenServiceStatus audio_response_status(const char* json) {
-    if (!json) return AidenServiceStatus::INTERNAL_ERROR;
+AicoServiceStatus audio_response_status(const char* json) {
+    if (!json) return AicoServiceStatus::INTERNAL_ERROR;
     cJSON* root = cJSON_Parse(json);
-    if (!root) return AidenServiceStatus::TRANSPORT_ERROR;
+    if (!root) return AicoServiceStatus::TRANSPORT_ERROR;
 
-    AidenServiceStatus status = AidenServiceStatus::INTERNAL_ERROR;
+    AicoServiceStatus status = AicoServiceStatus::INTERNAL_ERROR;
     cJSON* s = cJSON_GetObjectItem(root, "status");
     if (s && s->type == cJSON_String && s->valuestring) {
         service_status_from_string(s->valuestring, &status);
@@ -123,4 +123,4 @@ uint32_t audio_json_u32(const char* json, const char* key) {
     return value;
 }
 
-}  // namespace aiden
+}  // namespace aico

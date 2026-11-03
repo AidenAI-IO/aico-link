@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Agent Context Lifecycle
 
-This document gives the end-to-end view of what enters an Aiden Agent run, where each context layer comes from, and when it is refreshed. It complements [Session Memory Compaction](session-memory.md), which focuses on conversation-window compression, and [Memory Plane](memory-plane.md), which focuses on device, long-term, and task-episode memory.
+This document gives the end-to-end view of what enters an Aico Agent run, where each context layer comes from, and when it is refreshed. It complements [Session Memory Compaction](session-memory.md), which focuses on conversation-window compression, and [Memory Plane](memory-plane.md), which focuses on device, long-term, and task-episode memory.
 
 ## Context Layers
 
@@ -227,6 +227,40 @@ memory/lifecycle/
 Success and failure do not gate learning. The worker independently assesses goal completion, then can create or update procedure, navigation, calibration, failure, or fact Device Memory when direct evidence supports it.
 
 Deterministic device and app profiles remain separate from LLM-generated lessons. Automatic Episode learning does not write user profile, preference, or rule entries to Long-Term Memory.
+
+## Conversation History API
+
+The Agent Web UI on port 8080 and the companion App read the displayed
+context through `GET /api/history`. Converting and serializing a long context
+competes with the running task on the single-core board, so clients read it in
+pages.
+
+| Query | Response |
+|---|---|
+| none | Legacy: the full history as a JSON array, for older clients |
+| `limit=N` | The newest `N` messages (default 50, at most 200) |
+| `before=I&session_id=S&limit=N` | Up to `N` messages ending at index `I`, for scrolling back |
+| `after=I&session_id=S&limit=N` | Messages from index `I` to the end, for incremental refresh |
+
+A paged response is an object:
+
+```json
+{"session_id": "…", "total": 120, "start": 70, "end": 120, "has_more": true, "reset": false, "messages": [ … ]}
+```
+
+`start`, `end`, and `total` count raw context messages, including hidden ones
+such as the system prompt, so they stay valid cursors while `session_id` is
+unchanged. Each message's `request_id` is `context-<role>-<index>` with the
+same absolute index, so a message keeps one identity across pages. When the
+cursor cannot be honored (another `session_id` after a clear or rewrite, an
+index past the end, or an `after` refresh more than `limit` messages behind),
+the response is the newest page with `reset: true`, and the client replaces
+what it holds.
+
+Chat responses (`/api/chat` `done` and `error` events, and
+`/api/chat/result`) carry only the latest turn in `history`: the messages from
+the last user message on, at most 200. Clients read older messages through
+`/api/history`.
 
 ## Storage Map
 

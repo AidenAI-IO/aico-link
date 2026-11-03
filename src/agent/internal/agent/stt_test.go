@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -86,5 +87,68 @@ func TestTencentASRLanguageMapping(t *testing.T) {
 				t.Fatalf("engineModelType = %q, want %q", client.engineModelType, tt.wantEngine)
 			}
 		})
+	}
+}
+
+type contextAwareSTTTestClient struct {
+	inputs       [][]byte
+	legacyCalls  int
+	contextCalls int
+}
+
+func (c *contextAwareSTTTestClient) Capabilities() STTCapabilities { return STTCapabilities{} }
+func (c *contextAwareSTTTestClient) NewStreamingUploader(context.Context, STTStreamConfig) (STTStreamUploader, error) {
+	return nil, fmt.Errorf("streaming unsupported")
+}
+func (c *contextAwareSTTTestClient) TranscribeWAV(wavData []byte) (string, error) {
+	c.legacyCalls++
+	return "legacy", nil
+}
+func (c *contextAwareSTTTestClient) TranscribeWAVWithContext(ctx context.Context, wavData []byte) (string, error) {
+	c.contextCalls++
+	c.inputs = append(c.inputs, append([]byte(nil), wavData...))
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return string(wavData), nil
+}
+
+func TestTranscribeWAVWithContextPreservesLegacyClient(t *testing.T) {
+	client := &stubSTTClient{}
+	got, err := TranscribeWAVWithContext(context.Background(), client, []byte("wav"))
+	if err != nil {
+		t.Fatalf("TranscribeWAVWithContext() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("transcript = %q, want stub result", got)
+	}
+	if len(client.inputs) != 1 {
+		t.Fatalf("legacy TranscribeWAV calls = %d, want 1", len(client.inputs))
+	}
+}
+
+func TestTranscribeBatchUsesContextAwareProviderInOrder(t *testing.T) {
+	client := &contextAwareSTTTestClient{}
+	got, err := TranscribeBatch(context.Background(), client, [][]byte{[]byte("one"), []byte("two")})
+	if err != nil {
+		t.Fatalf("TranscribeBatch() error = %v", err)
+	}
+	if fmt.Sprint(got) != "[one two]" {
+		t.Fatalf("transcripts = %#v, want [one two]", got)
+	}
+	if client.contextCalls != 2 || client.legacyCalls != 0 {
+		t.Fatalf("context calls = %d, legacy calls = %d", client.contextCalls, client.legacyCalls)
+	}
+}
+
+func TestTranscribeBatchStopsBeforeCanceledItem(t *testing.T) {
+	client := &contextAwareSTTTestClient{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := TranscribeBatch(ctx, client, [][]byte{[]byte("one")}); err == nil {
+		t.Fatal("TranscribeBatch() error = nil, want cancellation error")
+	}
+	if client.contextCalls != 0 {
+		t.Fatalf("context calls = %d, want 0", client.contextCalls)
 	}
 }

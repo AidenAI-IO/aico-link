@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "scripts/release"))
 from plan import command, github_history, validate_history, version_tuple
 from release import business
 
-PUBLIC_KEY = ROOT / "overlay-debian/usr/share/keyrings/aiden-archive-keyring.asc"
+PUBLIC_KEY = ROOT / "overlay-debian/usr/share/keyrings/aico-archive-keyring.asc"
 PAGES_LIMIT = 900 * 1024 * 1024
 
 
@@ -37,14 +37,24 @@ def suite_for(record):
 def select_records(records, repo, keep=3):
     if keep < 2:
         raise ValueError("Retain at least two versions per contract for cached APT indexes")
+    history = validate_history(records, repo)
+    # A contract inherits its package identity from the OTA that established it.
+    # Aiden-era contracts cannot provide upgrades for the Aico-only APT repository.
+    legacy_bases = {
+        record["tag"] for record in history if record["kind"] == "ota"
+        and f"aiden-business_{record['version']}-1_armhf.deb" in record["assets"]
+        and f"aico-business_{record['version']}-1_armhf.deb" not in record["assets"]
+    }
     suites = {}
-    for record in validate_history(records, repo):
+    for record in history:
+        if record["platform"]["base_release"] in legacy_bases:
+            continue
         suites.setdefault(suite_for(record), []).append(record)
     return {suite: items[-keep:] for suite, items in sorted(suites.items())}
 
 
 def fetch_package(record, cache):
-    name = f"aiden-business_{record['version']}-1_armhf.deb"
+    name = f"aico-business_{record['version']}-1_armhf.deb"
     expected = record["assets"][name]
     directory = cache / record["tag"]
     directory.mkdir(parents=True, exist_ok=True)
@@ -69,7 +79,7 @@ def verify_asset(path, expected):
 def package_control(package, record):
     control = command("dpkg-deb", "--field", str(package))
     fields = Parser().parsestr(control)
-    for field, expected in (("Package", "aiden-business"), ("Version", record["version"] + "-1"),
+    for field, expected in (("Package", "aico-business"), ("Version", record["version"] + "-1"),
                             ("Architecture", "armhf")):
         if fields.get_all(field) != [expected]:
             raise ValueError(f"Published package {field} differs from release record")
@@ -81,7 +91,7 @@ def package_control(package, record):
     business.verify_runtime_config(package, record.get("runtime_config", 0))
     platform = manifest.get("platform", {})
     expected_platform = {
-        "format": 1, "product": "aiden", "platform_id": "luckfox-rv1106", "architecture": "armhf",
+        "format": 1, "product": "aico", "platform_id": "luckfox-rv1106", "architecture": "armhf",
         "os_release": "debian-13", "libc": "glibc", "channel": record["channel"],
         "platform_contract": record["platform"]["contract"],
         "base_release": record["platform"]["base_release"],
@@ -129,7 +139,7 @@ def write_suite(directory, packages, records, now, key, keyring):
     metadata.write_text(json.dumps({"channel": records[-1]["channel"], "platform": records[-1]["platform"],
                                     "system_fingerprint": records[-1]["fingerprints"]["system"]}, indent=2) + "\n")
     files = [metadata, binary / "Packages", binary / "Packages.gz"]
-    text = (f"Origin: Aiden\nLabel: Aiden business packages\nSuite: {directory.name}\nCodename: {directory.name}\n"
+    text = (f"Origin: Aico\nLabel: Aico business packages\nSuite: {directory.name}\nCodename: {directory.name}\n"
             f"Date: {format_datetime(now, usegmt=True)}\n"
             "Architectures: armhf\nComponents: main\nAcquire-By-Hash: yes\nSHA256:\n")
     for path in files:
@@ -146,7 +156,7 @@ def write_suite(directory, packages, records, now, key, keyring):
 def build_site(records, repo, output, cache, public_key=PUBLIC_KEY, keep=3, now=None):
     suites = select_records(records, repo, keep)
     if not suites:
-        raise ValueError("No published managed releases to index")
+        raise ValueError("No supported Aico releases to index")
     if output.exists():
         raise ValueError(f"Output already exists; choose a fresh staging directory: {output}")
     key = fingerprint(public_key)
@@ -172,14 +182,14 @@ def build_site(records, repo, output, cache, public_key=PUBLIC_KEY, keep=3, now=
                 packages.append(control + f"Filename: {relative.as_posix()}\nSize: {package.stat().st_size}\nSHA256: {sha256(package)}\n")
             write_suite(apt / "dists" / suite, packages, items, now, key, keyring)
             published[suite] = [r["tag"] for r in items]
-        shutil.copyfile(public_key, apt / "aiden-archive-keyring.asc")
+        shutil.copyfile(public_key, apt / "aico-archive-keyring.asc")
         (site / ".nojekyll").touch()
         (apt / "repository.json").write_text(json.dumps({"repo": repo, "signing_key": key, "suites": published}, indent=2) + "\n")
         links = "".join(f'<li><a href="apt/dists/{suite}/Release">{suite}</a>: {html.escape(", ".join(tags))}</li>' for suite, tags in published.items())
-        (site / "index.html").write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>Aiden APT</title>'
-                                       '<h1>Aiden business packages</h1><p>Signed updates for each channel and platform contract.</p>'
+        (site / "index.html").write_text('<!doctype html><html lang="en"><meta charset="utf-8"><title>Aico Link APT</title>'
+                                       '<h1>Aico Link business packages</h1><p>Signed updates for Aico Link firmware and the Aico AI Agent.</p><p><a href="https://aico.link">aico.link</a></p>'
                                        f'<ul>{links}</ul><p>Signing key: <code>{key}</code></p>'
-                                       '<a href="apt/aiden-archive-keyring.asc">Repository public key</a></html>\n')
+                                       '<a href="apt/aico-archive-keyring.asc">Repository public key</a></html>\n')
         if sum(p.stat().st_size for p in site.rglob("*") if p.is_file()) > PAGES_LIMIT:
             raise ValueError("APT site exceeds the 900 MiB budget; archive obsolete platform contracts before deploying")
         os.replace(site, output)

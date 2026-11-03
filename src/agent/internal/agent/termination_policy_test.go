@@ -31,8 +31,10 @@ func TestTerminationPolicyRepeatWithoutProgressTerminates(t *testing.T) {
 func TestTerminationPolicyRestrictsActionToolsAndRecoversAfterProgress(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	sameScreen := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
-	for i := 0; i < 2; i++ {
-		if decision := policy.AfterToolCall("touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`, sameScreen, false); decision.Stop {
+	// Different gestures that leave the screen unchanged reach the restrict
+	// tier on the third call; the first has no earlier screen to compare.
+	for i, direction := range []string{"up", "down", "left"} {
+		if decision := policy.AfterToolCall("touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"`+direction+`"}`, sameScreen, false); decision.Stop {
 			t.Fatalf("iteration %d: unexpected stop: %#v", i+1, decision)
 		}
 	}

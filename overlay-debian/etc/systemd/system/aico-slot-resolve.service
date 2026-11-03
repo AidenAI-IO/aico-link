@@ -1,0 +1,15 @@
+[Unit]
+Description=Resolve the active Aico Link A/B slot
+DefaultDependencies=no
+After=systemd-udevd.service systemd-remount-fs.service
+Wants=systemd-udev-settle.service
+Before=aico-rootfs-grow.service userdata.mount userdata-ota.mount local-fs-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/aico/aico-slot-resolve
+RemainAfterExit=yes
+TimeoutStartSec=30s
+
+[Install]
+WantedBy=local-fs-pre.target
