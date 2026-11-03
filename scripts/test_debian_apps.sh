@@ -30,6 +30,8 @@ grep -Fq 'aico@192.168.76.153' "${APPS_DIR}/run-board-g0.sh"
 grep -Fq '/home/aico/debian-apps-g0' "${APPS_DIR}/g0-remote-dir.sh"
 grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/prepare-board-g0.sh"
 grep -Fq 'resolve_g0_remote_dir' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq 'require_g0_bundle_remote_dir' "${APPS_DIR}/run-board-g0.sh"
+grep -Fq 'install_root=' "${APPS_DIR}/prepare-board-g0.sh"
 grep -Fq 'volatile sig_atomic_t quit' "${REPO_ROOT}/src/example_audio_capture.cpp"
 grep -Fq 'signal(SIGTERM, signal_handler)' "${REPO_ROOT}/src/example_audio_capture.cpp"
 
@@ -495,6 +497,10 @@ printf '%s\n' "${speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/home/ai
     fail "G0 speaker model dir snippet is wrong"
 printf '%s\n' "${speaker_paths}" | grep -Fq 'copy only the two key lines' ||
     fail "G0 speaker paths snippet missing merge guidance"
+default_metadata=$(tar -xOf "${bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/bundle-metadata.txt) ||
+    fail "G0 bundle missing bundle-metadata.txt"
+printf '%s\n' "${default_metadata}" | grep -Fxq 'install_root=/home/aico/debian-apps-g0' ||
+    fail "G0 metadata install_root is wrong"
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
 DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
     "${APPS_DIR}/prepare-board-g0.sh" verify >/dev/null
@@ -512,6 +518,8 @@ printf '%s\n' "${custom_speaker_paths}" | grep -Fq 'voice_speaker_model_dir = "/
     fail "custom-remote G0 speaker model dir snippet is wrong"
 custom_metadata=$(tar -xOf "${custom_bundle_dir}/debian-apps-g0.tar.gz" debian-apps-g0/bundle-metadata.txt) ||
     fail "custom-remote G0 bundle missing bundle-metadata.txt"
+printf '%s\n' "${custom_metadata}" | grep -Fxq 'install_root=/tmp/debian-apps-g0' ||
+    fail "custom-remote G0 metadata install_root is wrong"
 printf '%s\n' "${custom_metadata}" | grep -Fxq 'voice_speaker_tools_dir=/tmp/debian-apps-g0/bin' ||
     fail "custom-remote G0 metadata tools dir is wrong"
 
@@ -573,6 +581,20 @@ AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
     "${APPS_DIR}/run-board-g0.sh" deploy >/dev/null
 grep -q '^scp' "${TEST_ROOT}/board-command-log"
 grep -q '^ssh' "${TEST_ROOT}/board-command-log"
+
+: >"${TEST_ROOT}/board-command-log"
+if BOARD_COMMAND_LOG="${TEST_ROOT}/board-command-log" \
+    SSH_BIN="${TEST_ROOT}/board-mock-bin/ssh" \
+    SCP_BIN="${TEST_ROOT}/board-mock-bin/scp" \
+    DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \
+    DEBIAN_APPS_G0_OUTPUT_DIR="${bundle_dir}" \
+    AICO_G0_REMOTE_DIR=/tmp/debian-apps-g0 \
+    AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1 \
+        "${APPS_DIR}/run-board-g0.sh" deploy >/dev/null 2>&1; then
+    fail "board deploy accepted a bundle built for a different install root"
+fi
+[ ! -s "${TEST_ROOT}/board-command-log" ] ||
+    fail "board transfer ran despite an install-root mismatch"
 
 : >"${TEST_ROOT}/board-command-log"
 if BOARD_COMMAND_LOG="${TEST_ROOT}/board-command-log" \

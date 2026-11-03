@@ -45,7 +45,8 @@ Required explicit gates:
 Connection/configuration:
   AICO_G0_BOARD_TARGET       SSH target (default: aico@192.168.76.153).
   AICO_G0_SSH_PORT           SSH port (default: 22).
-  AICO_G0_REMOTE_DIR         Must be /home/*/debian-apps-g0 or /tmp/debian-apps-g0.
+  AICO_G0_REMOTE_DIR         Must be /home/*/debian-apps-g0 or /tmp/debian-apps-g0
+                             and must match install_root recorded in the bundle.
   AICO_G0_RKNN_FRAMES        Benchmark frames passed to the remote runner.
   AICO_G0_CAMERA_FRAMES      Camera frames passed to the remote runner.
   AICO_G0_AUDIO_SECONDS      Audio duration passed to the remote runner.
@@ -113,6 +114,8 @@ run_deploy() {
     [ "${AICO_G0_ALLOW_PROPRIETARY_TRANSFER:-0}" = 1 ] ||
         fail "deploy requires AICO_G0_ALLOW_PROPRIETARY_TRANSFER=1"
     "${SCRIPT_DIR}/prepare-board-g0.sh" verify
+    require_g0_bundle_remote_dir "${ARCHIVE}" "${REMOTE_DIR}" ||
+        fail "rebuild the bundle with the same AICO_G0_REMOTE_DIR before deploy"
     expected=$(awk '{print $1}' "${ARCHIVE}.sha256")
     remote_archive=${REMOTE_DIR}.tar.gz
     "${SCP_BIN}" "${SCP_OPTIONS[@]}" "${ARCHIVE}" \

@@ -70,11 +70,11 @@ Environment:
   DEBIAN_APPS_OUTPUT_DIR     apps-stage build output.
   DEBIAN_APPS_G0_OUTPUT_DIR  Bundle output directory.
   SOURCE_DATE_EPOCH          Reproducible archive timestamp.
-  AICO_G0_REMOTE_DIR         Install root encoded into agent-speaker-paths.toml
-                             and bundle-metadata.txt. Must be
-                             /home/*/debian-apps-g0 or /tmp/debian-apps-g0
-                             (default: /home/aico/debian-apps-g0). Keep the same
-                             value when calling run-board-g0.sh.
+  AICO_G0_REMOTE_DIR         Install root encoded as install_root in
+                             bundle-metadata.txt and into agent-speaker-paths.toml.
+                             Must be /home/*/debian-apps-g0 or /tmp/debian-apps-g0
+                             (default: /home/aico/debian-apps-g0). run-board-g0.sh
+                             deploy rejects a mismatch against this recorded root.
 EOF
 }
 
@@ -144,6 +144,7 @@ write_bundle_metadata() {
         printf 'smart_turn_model_sha256=%s\n' "${MODEL_SMART_TURN_SHA256}"
         printf 'speaker_backbone_sha256=%s\n' "${MODEL_SPEAKER_BACKBONE_SHA256}"
         printf 'speaker_tail_sha256=%s\n' "${MODEL_SPEAKER_TAIL_SHA256}"
+        printf 'install_root=%s\n' "${G0_REMOTE_DIR}"
         printf 'voice_speaker_tools_dir=%s/bin\n' "${G0_REMOTE_DIR}"
         printf 'voice_speaker_model_dir=%s/model\n' "${G0_REMOTE_DIR}"
     } >"${root}/bundle-metadata.txt"
