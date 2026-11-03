@@ -7,12 +7,18 @@ import (
 )
 
 func TestPCM16FromWAVRejectsOverflowingChunkSize(t *testing.T) {
-	// Minimal RIFF/WAVE header plus one chunk whose size would wrap int on arm.
-	data := make([]byte, 20)
+	// RIFF/WAVE with a data chunk size that would wrap int addition on 32-bit ARM.
+	data := make([]byte, 44)
 	copy(data[0:4], "RIFF")
 	copy(data[8:12], "WAVE")
-	copy(data[12:16], "data")
-	binary.LittleEndian.PutUint32(data[16:20], 0x7FFFFFF8)
+	copy(data[12:16], "fmt ")
+	binary.LittleEndian.PutUint32(data[16:20], 16)
+	binary.LittleEndian.PutUint16(data[20:22], 1)
+	binary.LittleEndian.PutUint16(data[22:24], 1)
+	binary.LittleEndian.PutUint32(data[24:28], speakerSampleRate)
+	binary.LittleEndian.PutUint16(data[34:36], 16)
+	copy(data[36:40], "data")
+	binary.LittleEndian.PutUint32(data[40:44], 0x7FFFFFF8)
 
 	_, err := pcm16FromWAV(data)
 	if err == nil || !strings.Contains(err.Error(), "invalid wav chunk") {
