@@ -543,7 +543,6 @@ enabled = true
 max_seconds = 0
 repeat_action_limit = 3
 same_result_limit = 3
-screen_unchanged_limit = 5
 soft_notice_stall_score = 2
 restrict_tools_stall_score = 4
 terminate_stall_score = 6
@@ -554,30 +553,33 @@ parse_failure_limit = 3
 | ---------------------------- | ------- | ----------------------------------------------------------------------------------------------------------- |
 | `enabled`                    | `true`  | Enable tiered loop detection and graceful termination                                                       |
 | `max_seconds`                | `0`     | Wall-clock budget per instruction; `0` disables the time budget, and a consumed steer starts a fresh budget |
-| `repeat_action_limit`        | `3`     | Stop after this many identical tool calls with identical results                                            |
+| `repeat_action_limit`        | `3`     | Stop after this many identical tool calls with identical results, including the same UI action on an identical screen |
 | `same_result_limit`          | `3`     | Number of repeated identical results considered stalled                                                     |
-| `screen_unchanged_limit`     | `5`     | Stop after this many UI actions without a screen change                                                     |
 | `soft_notice_stall_score`    | `2`     | Stall score that injects a one-shot strategy-change notice                                                  |
-| `restrict_tools_stall_score` | `4`     | Stall score that temporarily blocks repeated UI action tools                                                |
+| `restrict_tools_stall_score` | `4`     | Stall score that adds a final warning before the run ends                                                   |
 | `terminate_stall_score`      | `6`     | Stall score that ends the run gracefully                                                                    |
 | `parse_failure_limit`        | `3`     | Stop after this many consecutive unparseable model outputs                                                  |
 
 The three stall-score thresholds must satisfy
 `soft_notice_stall_score < restrict_tools_stall_score < terminate_stall_score`.
 
-For UI actions, a call whose post-action screenshot shows no change adds 2 to
-the stall score, repeating the previous call exactly without progress adds 1,
-and an action that returns no screenshot adds 1; any observed progress resets
-the score. A post-action observation's own `screen_changed` (baseline taken
-just before the action, with the absolute-mode pointer excluded) decides
-whether the screen changed; observation tools are compared with the previous
-screenshot instead. Screenshot results never count toward `same_result_limit`,
-because every screenshot shares one result identity and the screen comparison
-already decides whether they carry new information. While actions are
-restricted, one successful `screenshot` or `wait_for_stable_screen` call lowers
-the score to just below `restrict_tools_stall_score`, which allows one more
-action; another stall without progress restricts again, and further
-observations do not lift it until progress is observed.
+The loop guard only catches obvious loops; whether an action worked is for the
+model to judge from its screenshot. A UI action (tap, swipe, key press, text
+entry, app launch) counts toward a loop only when it repeats the previous UI
+action exactly and leaves the screen identical to what that action left, with
+no progress-grid block changed. Tools called in between, such as `screenshot`
+or `shell`, neither hide nor reset that count. The second such repeat adds a
+notice telling the model not to repeat it again, and `repeat_action_limit`
+ends the run. A different action on an unchanged screen, or a repeated action
+that keeps changing the screen, is never counted, and the guard never blocks a
+tool; a loop on a screen that keeps moving is left to `max_iterations` and
+`max_seconds`.
+
+The stall score covers everything else: repeating the same non-UI call adds 1,
+and getting the same result again adds 2, with identical screenshots treated
+as the same result. A new result resets the score. The notice tiers add a
+warning at `soft_notice_stall_score`, a final warning at
+`restrict_tools_stall_score`, and end the run at `terminate_stall_score`.
 
 ## `[model_settings.providers.<name>]`
 

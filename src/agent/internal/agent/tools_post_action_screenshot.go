@@ -265,10 +265,19 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		}
 		if ratio, comparable := screenshotProgressChangeRatio(baselineImage, finalImage, excluded); comparable {
 			changed := ratio > screenshotProgressChangedBlockThreshold
+			// The pointer exclusion also hides feedback drawn at the touch
+			// point, so a tap is checked there separately.
+			tapDiff := -1.0
+			if len(excluded) > 0 {
+				if diff, ok := tapFeedbackDiff(baselineImage, finalImage, pointerTapPoint(t.inner.Name(), input)); ok {
+					tapDiff = diff
+					changed = changed || diff > tapFeedbackLumaThreshold
+				}
+			}
 			payload.ScreenChanged = &changed
 			// The changed-block share near the threshold is what decides
 			// whether small UI changes count; keep it for later tuning.
-			logging.Infof("agent", "tools_post_action_screenshot", "progress_compare: tool=%s screen_changed=%v changed_ratio=%.4f changed_blocks=%.0f pointer_excluded=%d", t.inner.Name(), changed, ratio, ratio*screenshotProgressGridColumns*screenshotProgressGridRows, len(excluded))
+			logging.Infof("agent", "tools_post_action_screenshot", "progress_compare: tool=%s screen_changed=%v changed_ratio=%.4f changed_blocks=%.0f pointer_excluded=%d tap_feedback_diff=%.1f", t.inner.Name(), changed, ratio, ratio*screenshotProgressGridColumns*screenshotProgressGridRows, len(excluded), tapDiff)
 		}
 	}
 	timing.mark(&timing.compareMs)

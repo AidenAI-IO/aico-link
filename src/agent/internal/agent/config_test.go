@@ -377,7 +377,6 @@ enabled = false
 max_seconds = 12.5
 repeat_action_limit = 7
 same_result_limit = 8
-screen_unchanged_limit = 9
 soft_notice_stall_score = 10
 restrict_tools_stall_score = 11
 terminate_stall_score = 12
@@ -396,7 +395,7 @@ parse_failure_limit = 13
 		t.Fatalf("termination policy enabled = %#v, want false", policy.Enabled)
 	}
 	if policy.MaxSeconds != 12.5 || policy.RepeatActionLimit != 7 || policy.SameResultLimit != 8 ||
-		policy.ScreenUnchangedLimit != 9 || policy.SoftNoticeStallScore != 10 ||
+		policy.SoftNoticeStallScore != 10 ||
 		policy.RestrictToolsStallScore != 11 || policy.TerminateStallScore != 12 ||
 		policy.ParseFailureLimit != 13 {
 		t.Fatalf("termination policy overrides = %#v", policy)

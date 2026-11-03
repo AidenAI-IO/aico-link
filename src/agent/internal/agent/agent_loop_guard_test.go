@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"image"
 	"strings"
 	"testing"
 
@@ -66,7 +67,6 @@ func TestAgentLoopCombinesTerminationPolicyWithToolExecutionHooks(t *testing.T) 
 	loop.TerminationPolicy = NewTerminationPolicy(TerminationPolicyConfig{
 		RepeatActionLimit:       100,
 		SameResultLimit:         100,
-		ScreenUnchangedLimit:    100,
 		SoftNoticeStallScore:    100,
 		RestrictToolsStallScore: 100,
 		TerminateStallScore:     100,
@@ -90,60 +90,11 @@ func TestAgentLoopCombinesTerminationPolicyWithToolExecutionHooks(t *testing.T) 
 func TestAgentLoopPersistsSoftNoticeInContext(t *testing.T) {
 	t.Parallel()
 
+	screen := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
 	model := &scriptedModel{responses: []*llms.ContentResponse{
 		toolCallResponse("call-1", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
 		toolCallResponse("call-2", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
 		contentResponse("I will change strategy."),
-	}}
-	manager, err := freshNewContextManager("system", "swipe until done", nil, t.TempDir())
-	if err != nil {
-		t.Fatalf("freshNewContextManager() error = %v", err)
-	}
-	loop := NewAgentLoop(
-		model,
-		RoleProfile{Tools: []langtools.Tool{&loopGuardEchoTool{output: "same"}}},
-		10,
-		nil,
-		nil,
-		manager,
-	)
-	loop.TerminationPolicy = NewTerminationPolicy(TerminationPolicyConfig{
-		RepeatActionLimit:       100,
-		SameResultLimit:         100,
-		ScreenUnchangedLimit:    100,
-		SoftNoticeStallScore:    1,
-		RestrictToolsStallScore: 100,
-		TerminateStallScore:     100,
-	})
-
-	output, err := loop.Run(context.Background(), "swipe until done")
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if output != "I will change strategy." {
-		t.Fatalf("output = %q", output)
-	}
-	if got := countLoopGuardNotices(model.messages[1]); got != 1 {
-		t.Fatalf("soft notice count in deciding prompt = %d, want 1", got)
-	}
-	notices := collectMessagesByRole(manager.MessageListDump().Messages, messages.MessageRoleNotice)
-	if len(notices) != 1 {
-		t.Fatalf("persisted notice count = %d, want 1; messages=%#v", len(notices), manager.MessageListDump().Messages)
-	}
-	if strings.Contains(notices[0].Content, "<notice>") || !strings.Contains(notices[0].Content, "Loop guard: recent tool calls are repeating or not changing the screen.") {
-		t.Fatalf("persisted notice = %#v", notices[0])
-	}
-}
-
-func TestAgentLoopEscalatesFromPersistedNoticeToRestrictionAndTermination(t *testing.T) {
-	t.Parallel()
-
-	screen := `{"width":100,"height":100,"format":"jpeg","data":"same-screen"}`
-	model := &scriptedModel{responses: []*llms.ContentResponse{
-		toolCallResponse("call-1", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
-		toolCallResponse("call-2", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
-		toolCallResponse("call-3", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
-		toolCallResponse("call-4", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
 	}}
 	manager, err := freshNewContextManager("system", "swipe until done", nil, t.TempDir())
 	if err != nil {
@@ -163,29 +114,60 @@ func TestAgentLoopEscalatesFromPersistedNoticeToRestrictionAndTermination(t *tes
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+	if output != "I will change strategy." {
+		t.Fatalf("output = %q", output)
+	}
+	if got := countLoopGuardNotices(model.messages[2]); got != 1 {
+		t.Fatalf("loop-guard notice count in deciding prompt = %d, want 1", got)
+	}
+	notices := collectMessagesByRole(manager.MessageListDump().Messages, messages.MessageRoleNotice)
+	if len(notices) != 1 {
+		t.Fatalf("persisted notice count = %d, want 1; messages=%#v", len(notices), manager.MessageListDump().Messages)
+	}
+	if strings.Contains(notices[0].Content, "<notice>") || !strings.Contains(notices[0].Content, "Loop guard: the same UI action was repeated and the screen stayed identical.") {
+		t.Fatalf("persisted notice = %#v", notices[0])
+	}
+}
+
+// The same UI action on an identical screen gets a notice on its second run
+// and ends the run on its third; the guard never blocks the action itself.
+func TestAgentLoopStopsRepeatedIdenticalUIAction(t *testing.T) {
+	t.Parallel()
+
+	screen := terminationPolicyScreenshotObservation(t, 200, 400, image.Rectangle{})
+	model := &scriptedModel{responses: []*llms.ContentResponse{
+		toolCallResponse("call-1", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
+		toolCallResponse("call-2", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
+		toolCallResponse("call-3", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
+		toolCallResponse("call-4", "touch_gesture", `{"type":"swipe","start":{"x":500,"y":800},"direction":"up"}`),
+	}}
+	manager, err := freshNewContextManager("system", "swipe until done", nil, t.TempDir())
+	if err != nil {
+		t.Fatalf("freshNewContextManager() error = %v", err)
+	}
+	tool := &loopGuardEchoTool{output: screen}
+	loop := NewAgentLoop(model, RoleProfile{Tools: []langtools.Tool{tool}}, 10, nil, nil, manager)
+	loop.TerminationPolicy = NewTerminationPolicy(DefaultTerminationPolicyConfig())
+
+	output, err := loop.Run(context.Background(), "swipe until done")
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
 	if !strings.Contains(output, "not making measurable progress") {
 		t.Fatalf("output = %q, want loop-guard stop message", output)
 	}
-	// Undecodable screenshots never count as progress: the second repeat
-	// notices, the third restricts, and the fourth terminates.
-	if model.callCount != 4 {
-		t.Fatalf("model call count = %d, want termination after the fourth response", model.callCount)
-	}
-	if got := countLoopGuardNotices(model.messages[3]); got != 2 {
-		t.Fatalf("loop-guard notice count in deciding prompt = %d, want soft notice and restriction", got)
+	if model.callCount != 3 {
+		t.Fatalf("model call count = %d, want termination after the third response", model.callCount)
 	}
 	notices := collectMessagesByRole(manager.MessageListDump().Messages, messages.MessageRoleNotice)
-	if len(notices) != 3 {
-		t.Fatalf("persisted notices = %d, want soft notice, restriction and termination", len(notices))
+	if len(notices) != 2 {
+		t.Fatalf("persisted notices = %d, want one warning and the termination", len(notices))
 	}
-	if !strings.HasPrefix(notices[2].Content, "Interrupt [loop_detected]:") {
-		t.Fatalf("termination notice = %q", notices[2].Content)
+	if !strings.Contains(notices[0].Content, "Loop guard: the same UI action was repeated and the screen stayed identical.") {
+		t.Fatalf("warning notice = %#v", notices[0])
 	}
-	if !strings.Contains(notices[0].Content, "Loop guard: recent tool calls are repeating or not changing the screen.") {
-		t.Fatalf("soft notice = %#v", notices[0])
-	}
-	if strings.Contains(notices[1].Content, "<notice>") || !strings.Contains(notices[1].Content, "Loop guard: UI action tools are temporarily restricted because repeated actions produced no progress.") {
-		t.Fatalf("persisted restriction notice = %#v", notices[1])
+	if !strings.HasPrefix(notices[1].Content, "Interrupt [loop_detected]:") {
+		t.Fatalf("termination notice = %q", notices[1].Content)
 	}
 }
 

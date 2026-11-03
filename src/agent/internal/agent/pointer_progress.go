@@ -133,3 +133,89 @@ func pointerExclusionRects(bounds image.Rectangle, points ...*normalizedPoint) [
 	}
 	return rects
 }
+
+// A tap's own feedback (a selection ring, a placed piece, a checkbox mark,
+// a popover anchored at the touch) usually fits inside the pointer exclusion
+// square, so the block grid cannot see it once the pointer is excluded. The
+// iOS pointer, however, is a small disc: on the board it changes luminance
+// only within about 12 pixels of its centre, by under 1 in mean absolute
+// difference outside that, including while hovering over buttons. So the
+// ring around the tap point, outside the pointer disc and inside the
+// exclusion square, is compared directly.
+//
+// Measured on 498x1080 iPhone screenshots: pointer-only moves and hovers,
+// over flat backgrounds, a textured board and buttons, changed this ring by
+// at most 0.4. Taps with feedback around the touch changed it by 7.7 for a
+// thin touch-indicator ring, 20 to 46 for a piece preview, confirm bubble or
+// placed piece, and 60 or more for a new page or sheet.
+const (
+	// tapFeedbackInnerFraction is the pointer disc left out of the ring,
+	// as a share of the screenshot width (15 px at 498 px).
+	tapFeedbackInnerFraction = 0.03
+	// tapFeedbackOuterFraction is the outer edge of the ring (25 px at
+	// 498 px), inside the 5% pointer exclusion square.
+	tapFeedbackOuterFraction = 0.05
+	// tapFeedbackLumaThreshold is the mean absolute luminance difference
+	// (0-255) in the ring that counts as feedback at the tap point, ten
+	// times the pointer's own and half the faintest feedback measured.
+	tapFeedbackLumaThreshold = 4.0
+)
+
+// pointerTapPoint returns the single point a tap-like gesture touched, or nil
+// for gestures whose feedback is not centred on one point (swipes, drags,
+// tap sequences) and for mouse_move, which touches nothing.
+func pointerTapPoint(toolName, input string) *normalizedPoint {
+	if !strings.EqualFold(strings.TrimSpace(toolName), "touch_gesture") {
+		return nil
+	}
+	var args struct {
+		Type  string        `json:"type"`
+		Point *pointerPoint `json:"point"`
+	}
+	if json.Unmarshal([]byte(input), &args) != nil || args.Point == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(args.Type)) {
+	case "tap", "double_tap", "long_press":
+		return finiteNormalizedPoint(args.Point.X.Float64(), args.Point.Y.Float64())
+	}
+	return nil
+}
+
+// tapFeedbackDiff returns the mean absolute luminance difference between
+// before and after in the ring around point that the pointer disc does not
+// reach. ok is false when the frames cannot be compared there.
+func tapFeedbackDiff(before, after image.Image, point *normalizedPoint) (float64, bool) {
+	if before == nil || after == nil || point == nil || before.Bounds() != after.Bounds() {
+		return 0, false
+	}
+	bounds := after.Bounds()
+	inner := int(math.Round(float64(bounds.Dx()) * tapFeedbackInnerFraction))
+	outer := int(math.Round(float64(bounds.Dx()) * tapFeedbackOuterFraction))
+	if inner <= 0 || outer <= inner {
+		return 0, false
+	}
+	b, a := imageLuma(before), imageLuma(after)
+	if !b.valid() || !a.valid() {
+		return 0, false
+	}
+	cx := int(math.Round(point.X / 1000 * float64(max(bounds.Dx()-1, 0))))
+	cy := int(math.Round(point.Y / 1000 * float64(max(bounds.Dy()-1, 0))))
+	sum, count := 0, 0
+	for y := cy - outer; y <= cy+outer; y++ {
+		if y < 0 || y >= b.height {
+			continue
+		}
+		for x := cx - outer; x <= cx+outer; x++ {
+			if x < 0 || x >= b.width || max(absInt(x-cx), absInt(y-cy)) <= inner {
+				continue
+			}
+			sum += absInt(int(b.y[y*b.stride+x]) - int(a.y[y*a.stride+x]))
+			count++
+		}
+	}
+	if count == 0 {
+		return 0, false
+	}
+	return float64(sum) / float64(count), true
+}
