@@ -19,6 +19,42 @@ func (u *blockingFinalizeSTTUploader) Finalize() (string, error) {
 }
 func (u *blockingFinalizeSTTUploader) Close() error { return nil }
 
+func TestAudioDialogDiscardAndRotateSTTClearsTranscript(t *testing.T) {
+	previous := &blockingFinalizeSTTUploader{started: make(chan struct{}), release: make(chan struct{})}
+	next := &stubSTTStreamUploader{}
+	dialog := &AudioDialog{
+		sttClient:           &stubSTTClient{supportsStreaming: true, streamUploader: next},
+		recordActive:        true,
+		sessionID:           7,
+		recordText:          "should be cleared",
+		pendingSTTTelemetry: &sttTurnTelemetry{transcript: "old"},
+		recordSTT:           &streamingSTTSession{uploader: previous},
+		recordSTTSessionID:  7,
+	}
+	done := make(chan error, 1)
+	go func() { done <- dialog.DiscardAndRotateSTT() }()
+	select {
+	case <-previous.started:
+	case <-time.After(time.Second):
+		t.Fatal("discard finalization did not start")
+	}
+	close(previous.release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("DiscardAndRotateSTT() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("DiscardAndRotateSTT did not complete")
+	}
+	if dialog.recordText != "" {
+		t.Fatalf("recordText = %q, want empty after discard", dialog.recordText)
+	}
+	if dialog.pendingSTTTelemetry != nil {
+		t.Fatalf("pendingSTTTelemetry = %#v, want nil after discard", dialog.pendingSTTTelemetry)
+	}
+}
+
 func TestAudioDialogRotateSTTBuffersNewTurnBeforeOldFinalize(t *testing.T) {
 	previous := &blockingFinalizeSTTUploader{started: make(chan struct{}), release: make(chan struct{})}
 	next := &stubSTTStreamUploader{}

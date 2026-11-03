@@ -149,7 +149,7 @@ for go_executable in "${GO_EXECUTABLES[@]}"; do
         || fail "missing static Go executable: bin/${go_executable}"
 done
 
-for rknn_bin in rknn_vad smart_turn_helper; do
+for rknn_bin in rknn_vad smart_turn_helper speaker_verify_rknn; do
     rknn_needed=$(${READELF} -dW "${APPS_DIR}/bin/${rknn_bin}" \
         | sed -n 's/.*(NEEDED).*\[\([^]]*\)\].*/\1/p')
     if grep -Eq '^librknn(rt|mrt)\.so$' <<<"${rknn_needed}"; then

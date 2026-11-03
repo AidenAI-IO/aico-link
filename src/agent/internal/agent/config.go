@@ -324,26 +324,33 @@ type Config struct {
 	SilenceMs           int                           `toml:"silence_ms,omitempty"`
 	MinSpeechMs         int                           `toml:"min_speech_ms,omitempty"`
 	// Classic Smart Turn endpointing (replaces silence-only commit).
-	TurnDetectionModelPath         string                  `toml:"turn_detection_model_path,omitempty"`
-	TurnDetectionHelperPath        string                  `toml:"turn_detection_helper_path,omitempty"`
-	TurnDetectionThreshold         float64                 `toml:"turn_detection_threshold,omitempty"`
-	TurnDetectionAnalyzeSilenceMs  int                     `toml:"turn_detection_analyze_silence_ms,omitempty"`
-	TurnDetectionSilenceFallbackMs int                     `toml:"turn_detection_silence_fallback_ms,omitempty"`
-	VoiceFollowupEnabled           *bool                   `toml:"voice_followup_enabled,omitempty"`
-	VoiceFollowupTimeoutMs         int                     `toml:"voice_followup_timeout_ms,omitempty"`
-	VoiceFirstTurnTimeoutMs        int                     `toml:"voice_first_turn_timeout_ms,omitempty"`
-	VoiceMaxTurns                  int                     `toml:"voice_max_turns,omitempty"`
-	VoiceInterruptOnWakeup         *bool                   `toml:"voice_interrupt_on_wakeup,omitempty"`
-	TapWakeupEnabled               *bool                   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
-	MCPEnabled                     *bool                   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
-	MCPShellEnabled                *bool                   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
-	MCPConfigWebBaseURL            string                  `toml:"mcp_config_web_base_url,omitempty"`
-	VoiceStreamingTTSEnabled       *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
-	VoiceToolCallSpeech            *bool                   `toml:"voice_tool_call_speech,omitempty"`
-	VoiceProgressSpeechEnabled     *bool                   `toml:"voice_progress_speech_enabled,omitempty"`
-	MaxIterations                  int                     `toml:"max_iterations,omitempty"`
-	TerminationPolicy              TerminationPolicyConfig `toml:"termination_policy,omitempty"`
-	ForceSimpleLoop                bool                    `toml:"-"`
+	TurnDetectionModelPath         string  `toml:"turn_detection_model_path,omitempty"`
+	TurnDetectionHelperPath        string  `toml:"turn_detection_helper_path,omitempty"`
+	TurnDetectionThreshold         float64 `toml:"turn_detection_threshold,omitempty"`
+	TurnDetectionAnalyzeSilenceMs  int     `toml:"turn_detection_analyze_silence_ms,omitempty"`
+	TurnDetectionSilenceFallbackMs int     `toml:"turn_detection_silence_fallback_ms,omitempty"`
+	VoiceFollowupEnabled           *bool   `toml:"voice_followup_enabled,omitempty"`
+	VoiceFollowupTimeoutMs         int     `toml:"voice_followup_timeout_ms,omitempty"`
+	VoiceFirstTurnTimeoutMs        int     `toml:"voice_first_turn_timeout_ms,omitempty"`
+	VoiceMaxTurns                  int     `toml:"voice_max_turns,omitempty"`
+	VoiceInterruptOnWakeup         *bool   `toml:"voice_interrupt_on_wakeup,omitempty"`
+	// Classic owner-only speaker gate (ERes2Net). Default off: no enrollment required.
+	VoiceSpeakerGateEnabled    *bool                   `toml:"voice_speaker_gate_enabled,omitempty"`
+	VoiceSpeakerThreshold      float64                 `toml:"voice_speaker_threshold,omitempty"`
+	VoiceSpeakerToolsDir       string                  `toml:"voice_speaker_tools_dir,omitempty"`
+	VoiceSpeakerModelDir       string                  `toml:"voice_speaker_model_dir,omitempty"`
+	VoiceSpeakerStoreDir       string                  `toml:"voice_speaker_store_dir,omitempty"`
+	VoiceSpeakerMaxProfiles    int                     `toml:"voice_speaker_max_profiles,omitempty"`
+	TapWakeupEnabled           *bool                   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled                 *bool                   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	MCPShellEnabled            *bool                   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	MCPConfigWebBaseURL        string                  `toml:"mcp_config_web_base_url,omitempty"`
+	VoiceStreamingTTSEnabled   *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
+	VoiceToolCallSpeech        *bool                   `toml:"voice_tool_call_speech,omitempty"`
+	VoiceProgressSpeechEnabled *bool                   `toml:"voice_progress_speech_enabled,omitempty"`
+	MaxIterations              int                     `toml:"max_iterations,omitempty"`
+	TerminationPolicy          TerminationPolicyConfig `toml:"termination_policy,omitempty"`
+	ForceSimpleLoop            bool                    `toml:"-"`
 	// ContextPruneThreshold is the fraction of the usable model input budget at
 	// which deterministic cleanup of stale state and older tool exchanges runs,
 	// including during a long-running tool loop. Zero uses
@@ -1896,6 +1903,12 @@ func (c Config) Validate() error {
 	if c.VoiceFollowupTimeoutMs < 0 {
 		return fmt.Errorf("voice_followup_timeout_ms must be >= 0, got %d", c.VoiceFollowupTimeoutMs)
 	}
+	if c.VoiceSpeakerThreshold < 0 || c.VoiceSpeakerThreshold > 1 {
+		return fmt.Errorf("voice_speaker_threshold must be between 0 and 1, got %g", c.VoiceSpeakerThreshold)
+	}
+	if c.VoiceSpeakerMaxProfiles < 0 {
+		return fmt.Errorf("voice_speaker_max_profiles must be >= 0, got %d", c.VoiceSpeakerMaxProfiles)
+	}
 	if c.VoiceFirstTurnTimeoutMs < 0 {
 		return fmt.Errorf("voice_first_turn_timeout_ms must be >= 0, got %d", c.VoiceFirstTurnTimeoutMs)
 	}
@@ -2271,6 +2284,27 @@ func (c Config) VoiceInterruptOnWakeupOrDefault() bool {
 		return *c.VoiceInterruptOnWakeup
 	}
 	return true
+}
+
+func (c Config) VoiceSpeakerGateEnabledOrDefault() bool {
+	if c.VoiceSpeakerGateEnabled != nil {
+		return *c.VoiceSpeakerGateEnabled
+	}
+	return false
+}
+
+func (c Config) VoiceSpeakerThresholdOrDefault() float64 {
+	if c.VoiceSpeakerThreshold > 0 {
+		return c.VoiceSpeakerThreshold
+	}
+	return defaultSpeakerThreshold
+}
+
+func (c Config) VoiceSpeakerMaxProfilesOrDefault() int {
+	if c.VoiceSpeakerMaxProfiles > 0 {
+		return c.VoiceSpeakerMaxProfiles
+	}
+	return defaultSpeakerMaxProfiles
 }
 
 func (c Config) TapWakeupEnabledOrDefault() bool {

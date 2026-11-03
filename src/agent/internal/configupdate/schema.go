@@ -478,6 +478,12 @@ type Agent struct {
 	VoiceFirstTurnTimeoutMs        int     `json:"voice_first_turn_timeout_ms"`
 	VoiceMaxTurns                  int     `json:"voice_max_turns"`
 	VoiceInterruptOnWakeup         bool    `json:"voice_interrupt_on_wakeup"`
+	VoiceSpeakerGateEnabled        bool    `json:"voice_speaker_gate_enabled"`
+	VoiceSpeakerThreshold          float64 `json:"voice_speaker_threshold"`
+	VoiceSpeakerToolsDir           string  `json:"voice_speaker_tools_dir"`
+	VoiceSpeakerModelDir           string  `json:"voice_speaker_model_dir"`
+	VoiceSpeakerStoreDir           string  `json:"voice_speaker_store_dir"`
+	VoiceSpeakerMaxProfiles        int     `json:"voice_speaker_max_profiles"`
 	TapWakeupEnabled               bool    `json:"tap_wakeup_enabled"`
 	MCPEnabled                     bool    `json:"mcp_enabled"`
 	VoiceStreamingTTSEnabled       bool    `json:"voice_streaming_tts_enabled"`
@@ -715,6 +721,12 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceFirstTurnTimeoutMs:        d.Agent.VoiceFirstTurnTimeoutMs,
 		VoiceMaxTurns:                  d.Agent.VoiceMaxTurns,
 		VoiceInterruptOnWakeup:         boolPtr(d.Agent.VoiceInterruptOnWakeup),
+		VoiceSpeakerGateEnabled:        boolPtr(d.Agent.VoiceSpeakerGateEnabled),
+		VoiceSpeakerThreshold:          d.Agent.VoiceSpeakerThreshold,
+		VoiceSpeakerToolsDir:           d.Agent.VoiceSpeakerToolsDir,
+		VoiceSpeakerModelDir:           d.Agent.VoiceSpeakerModelDir,
+		VoiceSpeakerStoreDir:           d.Agent.VoiceSpeakerStoreDir,
+		VoiceSpeakerMaxProfiles:        d.Agent.VoiceSpeakerMaxProfiles,
 		TapWakeupEnabled:               boolPtr(d.Agent.TapWakeupEnabled),
 		MCPEnabled:                     boolPtr(d.Agent.MCPEnabled),
 		VoiceStreamingTTSEnabled:       boolPtr(d.Agent.VoiceStreamingTTSEnabled),
@@ -729,6 +741,13 @@ func (d Config) ToAgentConfig() agent.Config {
 
 func boolPtr(b bool) *bool {
 	return &b
+}
+
+func speakerPathOrDefault(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 func modelProvidersFromConfig(providers map[string]agent.ModelProvider) map[string]ModelProvider {
@@ -1123,6 +1142,12 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceFirstTurnTimeoutMs:        int(cfg.VoiceFirstTurnTimeoutOrDefault().Milliseconds()),
 			VoiceMaxTurns:                  cfg.VoiceMaxTurns,
 			VoiceInterruptOnWakeup:         cfg.VoiceInterruptOnWakeupOrDefault(),
+			VoiceSpeakerGateEnabled:        cfg.VoiceSpeakerGateEnabledOrDefault(),
+			VoiceSpeakerThreshold:          cfg.VoiceSpeakerThresholdOrDefault(),
+			VoiceSpeakerToolsDir:           speakerPathOrDefault(cfg.VoiceSpeakerToolsDir, agent.DefaultSpeakerToolsDir()),
+			VoiceSpeakerModelDir:           speakerPathOrDefault(cfg.VoiceSpeakerModelDir, agent.DefaultSpeakerModelDir()),
+			VoiceSpeakerStoreDir:           speakerPathOrDefault(cfg.VoiceSpeakerStoreDir, agent.DefaultSpeakerStoreDir()),
+			VoiceSpeakerMaxProfiles:        cfg.VoiceSpeakerMaxProfilesOrDefault(),
 			TapWakeupEnabled:               cfg.TapWakeupEnabledOrDefault(),
 			MCPEnabled:                     cfg.MCPEnabledOrDefault(),
 			VoiceStreamingTTSEnabled:       cfg.VoiceStreamingTTSEnabledOrDefault(),

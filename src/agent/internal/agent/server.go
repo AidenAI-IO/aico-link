@@ -79,6 +79,7 @@ type Server struct {
 	quickCapture            *QuickCaptureController
 	recordMu                sync.Mutex
 	sttConfigTestSession    *sttConfigTestLiveSession
+	speakerCaptureActive    bool
 	bridge                  *PhoneBridge
 	bleSocketPath           string
 	mcuRequest              func(context.Context, mcu.Request) (mcu.Response, error)
@@ -578,6 +579,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/tool-skills", s.handleToolSkills)
 	mux.HandleFunc("/api/internal/config/reload", s.handleInternalConfigReload)
+	mux.HandleFunc("/api/speaker/", s.handleSpeakerAPI)
+	mux.HandleFunc("/api/speaker", s.handleSpeakerAPI)
 	mux.HandleFunc("/api/audio/", s.handleAudioFile)
 	mux.HandleFunc("/api/settings/tts", s.handleTTSSettings)
 	mux.HandleFunc("/api/tts/providers", s.handleTTSProviders)

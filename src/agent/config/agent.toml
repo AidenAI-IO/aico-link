@@ -266,6 +266,15 @@ input_mode = "stt"
 # voice_followup_enabled = true
 # voice_followup_timeout_ms = 5000
 # voice_first_turn_timeout_ms = 10000
+
+# Classic owner-only speaker gate (ERes2Net). Default off — enroll via
+# POST /api/speaker/enroll before enabling so the device stays usable.
+# voice_speaker_gate_enabled = false
+# voice_speaker_threshold = 0.50
+# voice_speaker_tools_dir = "/usr/lib/aico"
+# voice_speaker_model_dir = "/usr/lib/aico/models"
+# voice_speaker_store_dir = "/userdata/aico/speaker_profiles"
+# voice_speaker_max_profiles = 5
 # voice_max_turns = 0
 # voice_interrupt_on_wakeup = true
 # voice_streaming_tts_enabled = true

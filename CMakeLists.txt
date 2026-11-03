@@ -225,11 +225,32 @@ if(AICO_RKNN_COMPAT_SOURCES)
     target_compile_definitions(smart_turn_helper PRIVATE AICO_RKNN_GLIBC_COMPAT=1)
 endif()
 
+# Classic speaker verification toolchain (ERes2Net), matching aico-speaker-verification.
+add_executable(speaker_verify_fbank src/speaker_verify/fbank.c)
+target_link_libraries(speaker_verify_fbank PRIVATE m)
+
+add_executable(speaker_verify_tail src/speaker_verify/eres2net_tail.c)
+target_link_libraries(speaker_verify_tail PRIVATE m)
+
+add_executable(speaker_verify_rknn
+    src/speaker_verify/rv1106_bench.c
+    ${AICO_RKNN_COMPAT_SOURCES}
+)
+target_include_directories(speaker_verify_rknn PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+    ${AICO_RKNN_INCLUDE_DIR}
+)
+target_compile_definitions(speaker_verify_rknn PRIVATE ${AICO_RKNN_COMPILE_DEFINITIONS})
+target_link_libraries(speaker_verify_rknn PRIVATE ${AICO_RKNN_TARGET} pthread dl m)
+if(AICO_RKNN_COMPAT_SOURCES)
+    target_compile_definitions(speaker_verify_rknn PRIVATE AICO_RKNN_GLIBC_COMPAT=1)
+endif()
+
 add_executable(cpu_vad src/cpu_vad.cpp src/aico_log.cpp)
 target_include_directories(cpu_vad PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cpu_vad PRIVATE pthread m)
 
-foreach(_vad_target rknn_vad cpu_vad smart_turn_helper)
+foreach(_vad_target rknn_vad cpu_vad smart_turn_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail)
     target_compile_options(${_vad_target} PRIVATE -O3)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|ARM)")
         target_compile_options(${_vad_target} PRIVATE
@@ -267,6 +288,9 @@ if(AICO_ENABLE_LINK_MAPS)
             rknn_vad
             cpu_vad
             smart_turn_helper
+            speaker_verify_fbank
+            speaker_verify_rknn
+            speaker_verify_tail
             aico_environment)
         target_link_options(${_aico_executable} PRIVATE
             "LINKER:-Map,${CMAKE_BINARY_DIR}/maps/${_aico_executable}.map")
