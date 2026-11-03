@@ -71,8 +71,8 @@ def test_experiment_http_rejects_bad_config_and_artifact_traversal(experiment_se
         assert error.value.code == 404
 
 
-@pytest.mark.parametrize("kind", ["pi", "openclaw", "claude-code", "codex", " pi "])
-def test_external_agent_experiment_can_only_be_started_over_loopback(experiment_server, kind):
+@pytest.mark.parametrize("kind", ["aiden", "pi", "openclaw", "claude-code", "codex", " pi "])
+def test_experiment_can_only_be_started_over_loopback(experiment_server, kind):
     app, _ = experiment_server
     class Handler:
         client_address = ("192.0.2.5", 1234)
@@ -99,8 +99,10 @@ def test_malformed_agents_return_json_error(experiment_server, payload):
     assert app.experiments._active is None
 
 
-@pytest.mark.parametrize("path", ["/api/experiments", "/api/experiments/settings",
-                                  "/api/experiments/exp-old/rejudge"])
+@pytest.mark.parametrize("path,kind", [("/api/experiments", " pi "), ("/api/experiments", "aiden"),
+                                       ("/api/experiments/settings", "pi"),
+                                       ("/api/experiments/exp-old/rejudge", "aiden"),
+                                       ("/api/experiments/exp-old/stop", "aiden")])
 @pytest.mark.parametrize("headers", [
     {"Origin": "https://attacker.example", "Content-Type": "text/plain"},
     {"Origin": "null"},
@@ -114,17 +116,28 @@ def test_malformed_agents_return_json_error(experiment_server, payload):
     {"Host": "[::1]attacker.example"},
     {"Host": "127.0.0.1:invalid"},
 ])
-def test_local_mutations_reject_cross_site_requests(experiment_server, monkeypatch, path, headers):
+def test_local_mutations_reject_cross_site_requests(experiment_server, monkeypatch, path, kind, headers):
     app, base = experiment_server
     def unexpected(*args):
         pytest.fail("Blocked requests must not mutate settings or start work")
-    for method in ("start", "save_settings", "retry_judge"):
+    for method in ("start", "save_settings", "retry_judge", "stop"):
         monkeypatch.setattr(app.experiments, method, unexpected)
     with pytest.raises(urllib.error.HTTPError) as error:
-        request(base, path, {"agents": [{"kind": " pi ", "provider": "test", "model": "test"}],
+        request(base, path, {"agents": [{"kind": kind, "provider": "test", "model": "test"}],
                              "environment_url": "http://env"}, headers=headers)
     assert error.value.code == 403
     assert json.loads(error.value.read())["error"]
+
+
+@pytest.mark.parametrize("browser", [False, True])
+def test_stop_accepts_local_cli_and_same_origin_browser(experiment_server, monkeypatch, browser):
+    app, base = experiment_server
+    stopped = []
+    monkeypatch.setattr(app.experiments, "stop", lambda experiment_id: stopped.append(experiment_id) or True)
+    status, body = request(base, "/api/experiments/exp-running/stop", {}, headers={"Origin": base} if browser else {})
+    assert status == 200
+    assert json.loads(body) == {"stopping": True}
+    assert stopped == ["exp-running"]
 
 
 @pytest.mark.parametrize("address,host", [("127.0.0.1", "localhost:8080"),

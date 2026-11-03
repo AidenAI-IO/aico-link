@@ -5,7 +5,6 @@ import ipaddress
 from http import HTTPStatus
 from urllib.parse import urlsplit
 from runner.experiment import SAFE_ID
-from runner.harnesses import HARNESSES
 
 
 def _is_loopback(address: str) -> bool:
@@ -53,14 +52,15 @@ def _require_local_request(handler, action: str) -> bool:
 
 def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool:
     manager = handler.server.app.experiments
+    if post and (path == "/api/experiments" or path.startswith("/api/experiments/")):
+        if not _require_local_request(handler, "Changing experiments"):
+            return True
     if path == "/experiments" and not post:
         handler._send_html(EXPERIMENT_HTML)
         return True
     if path == "/api/experiments/settings":
         try:
             if post:
-                if not _require_local_request(handler, "Saving experiment settings"):
-                    return True
                 settings = manager.save_settings(handler._read_json())
             else:
                 settings = manager.settings()
@@ -77,9 +77,6 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
                     raise ValueError("agents must contain between 1 and 8 configurations")
                 if any(not isinstance(agent, dict) or not isinstance(agent.get("kind"), str) for agent in agents):
                     raise ValueError("Each agent must be an object with a string kind")
-                if any(getattr(HARNESSES.get(agent["kind"].strip()), "external", False) for agent in agents):
-                    if not _require_local_request(handler, "Starting external agent experiments"):
-                        return True
                 environment_id = str(payload.pop("environment_id", "") or "").strip()
                 if environment_id:
                     if payload.get("environment_url"):
@@ -102,8 +99,6 @@ def handle_experiment_request(handler, path: str, *, post: bool = False) -> bool
     if path.startswith("/api/experiments/") and post:
         parts = path.strip("/").split("/")
         if len(parts) == 4 and parts[3] == "rejudge":
-            if not _require_local_request(handler, "Judge retry"):
-                return True
             try:
                 handler._send_json(manager.retry_judge(parts[2]), status=HTTPStatus.ACCEPTED)
             except (ValueError, OSError) as exc:

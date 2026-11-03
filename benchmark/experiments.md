@@ -5,8 +5,9 @@ Claude Code, and Codex runs.
 Use **Agent experiments** in the WebUI header, or open `/experiments`. Existing
 device benchmark jobs and Aiden regression suites keep their existing workflow.
 
-Saving model settings, starting external agents, and retrying Judge require a
-local connection. Open the WebUI through `localhost` or a loopback IP address;
+All experiment changes (saving settings, starting any agent, stopping runs,
+and retrying Judge) require a local connection. Open the WebUI through
+`localhost` or a loopback IP address;
 browser requests must have the same origin as the WebUI. Local CLI HTTP clients
 may omit `Origin`, but must still send a loopback `Host`.
 
