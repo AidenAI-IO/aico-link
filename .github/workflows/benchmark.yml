@@ -414,10 +414,13 @@ jobs:
       - name: Publish completed runs to Langfuse
         if: ${{ always() }}
         # Observability is a side channel: a publish failure must not mask the
-        # benchmark verdict this job exists to report. Runs are independent, so
-        # ci.publish_langfuse fans them out; publishing them back to back made
-        # this step the second longest in a scheduled run after the cases.
+        # benchmark verdict this job exists to report. ci.publish_langfuse runs
+        # each run in its own process (the Langfuse SDK shares one client per
+        # process, which deadlocks concurrent in-process publishes), four at a
+        # time, and kills any run that exceeds its limit. The step limit is a
+        # backstop so publication can never hold the shared runner.
         continue-on-error: true
+        timeout-minutes: 30
         working-directory: benchmark
         env:
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
@@ -425,6 +428,7 @@ jobs:
           uv run python -m ci.publish_langfuse
           --runs-dir runs
           --run-id-prefix "$RUN_ID_PREFIX"
+          --run-timeout-sec 300
           --summary-path "$GITHUB_STEP_SUMMARY"
       - name: Generate benchmark dashboard
         if: ${{ always() }}
