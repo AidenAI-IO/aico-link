@@ -770,7 +770,7 @@ func runVoiceSession(cfg agent.Config, dialog audioDialogRunner, runtime *agent.
 				return true
 			}
 			if len(utterance) == 0 {
-				logging.Infof("agent", "session", "listen timeout, closing voice session")
+				logging.Infof("agent", "session", "no utterance, closing voice session")
 				return false
 			}
 
@@ -1318,6 +1318,19 @@ func ignoreWakeupWhileListening() {
 	logging.Warnf("agent", "listen", "duplicate wakeup received while listening, ignoring")
 }
 
+func endListenOnWakeup(dialog audioDialogRunner, vadPending, captured []int16, speechDetected bool) ([]int16, bool) {
+	if speechDetected && len(captured) > 0 {
+		utterance := dialog.FinishPendingUtterance(vadPending)
+		if len(utterance) == 0 {
+			utterance = captured
+		}
+		logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
+		return utterance, false
+	}
+	logging.Infof("agent", "session", "wakeup pressed while idle listening, closing voice session")
+	return nil, false
+}
+
 func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signal, events <-chan voiceEvent, listenTimeout time.Duration) ([]int16, bool) {
 	frameSamples := dialog.VADFrameSamples()
 	if frameSamples <= 0 {
@@ -1339,16 +1352,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		case <-sigChan:
 			return nil, true
 		case <-events:
-			if speechDetected && len(captured) > 0 {
-				logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
-				utterance := dialog.FinishPendingUtterance(vadPending)
-				if len(utterance) > 0 {
-					return utterance, false
-				}
-				return captured, false
-			}
-			ignoreWakeupWhileListening()
-			continue
+			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
 		default:
 		}
 
@@ -1384,15 +1388,7 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 		case <-sigChan:
 			return nil, true
 		case <-events:
-			if speechDetected && len(captured) > 0 {
-				logging.Infof("agent", "listen", "wakeup pressed during recording, returning captured audio")
-				utterance := dialog.FinishPendingUtterance(vadPending)
-				if len(utterance) > 0 {
-					return utterance, false
-				}
-				return captured, false
-			}
-			ignoreWakeupWhileListening()
+			return endListenOnWakeup(dialog, vadPending, captured, speechDetected)
 		default:
 		}
 
@@ -1427,6 +1423,9 @@ func captureUtteranceWithTimeout(dialog audioDialogRunner, sigChan chan os.Signa
 				hasPendingByte = false
 				pendingByte = 0
 				break
+			}
+			if dialog.VADSpeaking() {
+				speechDetected = true
 			}
 			if reporter, ok := dialog.(vadDebugReporter); ok {
 				state := reporter.VADDebugState()
