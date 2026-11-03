@@ -211,6 +211,7 @@ def test_every_ci_suite_has_a_capability():
     ("vphone_ios_basic", "UI operation"), ("app_workflow_v1", "UI operation"),
     ("quick_action_v1", "UI operation"), ("phone_control_v1", "UI operation"),
     ("mobilegym_basic", "UI operation"),
+    ("mobilegym_touch_v1", "UI operation"),
     ("aico_app_connection_capabilities_v1", "Device integration"),
     ("aico_app_phone_bridge_data_policy_v1", "Device integration"),
     ("aico_app_notes_entry_policy_v1", "Device integration"),

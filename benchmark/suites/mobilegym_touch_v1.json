@@ -1,0 +1,179 @@
+{
+  "name": "mobilegym_touch_v1",
+  "suite_category": "MobileGym",
+  "version": "1.0",
+  "description": "Touch-control regression on built-in MobileGym apps: repeated taps on the same key whose visible effect is small, repeated delete taps, and actions on a screen with continuous motion.",
+  "prompt_prefix": "",
+  "global_reset": {},
+  "trace_observations": [],
+  "tasks": [
+    {
+      "id": "calc_repeated_digits",
+      "category": "device_operation",
+      "prompt": "在当前的计算器里计算 7000005 + 66，按等号，然后告诉我结果。",
+      "description_for_judge": "Calculator 2 is already open. The agent enters 7000005+66 (the 0 key and the 6 key are each pressed several times in a row, and each press only adds one character), presses equals, and reports 7000071.",
+      "rubric": [
+        {
+          "id": "reported_result",
+          "check": "The final response states the result 7000071."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 240,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "app_ids": [
+        "calculator2"
+      ],
+      "foreground_app_id": "calculator2",
+      "environment_assertions": {
+        "route.app": "calculator2",
+        "apps.calculator2.state": "RESULT",
+        "apps.calculator2.formula": "7000071"
+      },
+      "repeats": 1
+    },
+    {
+      "id": "calc_delete_repeated",
+      "category": "device_operation",
+      "prompt": "在当前的计算器里先输入 30000，再用删除键把末尾的三个 0 删掉，然后乘以 7 并按等号，告诉我结果。",
+      "description_for_judge": "Calculator 2 is already open. The agent types 30000, presses the delete key three times (each press removes one character), enters ×7, presses equals, and reports 210. Entering 30×7 directly, or clearing everything and retyping, skips the repeated-delete step this task measures. In Calculator 2 the delete key is the top key of the operator column on the right (normalized x about 700-920, y about 395-510).",
+      "rubric": [
+        {
+          "id": "deleted_after_entering_30000",
+          "check": "The tool trace shows the agent first entering five digits for 30000 and then three taps on the delete key (top of the right operator column) before entering ×7. Fail if the agent enters 30 and ×7 without those three deletes in between."
+        },
+        {
+          "id": "reported_result",
+          "check": "The final response states the result 210."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 240,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "app_ids": [
+        "calculator2"
+      ],
+      "foreground_app_id": "calculator2",
+      "environment_assertions": {
+        "route.app": "calculator2",
+        "apps.calculator2.state": "RESULT",
+        "apps.calculator2.formula": "210"
+      },
+      "repeats": 1
+    },
+    {
+      "id": "dial_repeated_digits",
+      "category": "device_operation",
+      "prompt": "打开拨号盘，输入号码 4008800011，先不要拨出。",
+      "description_for_judge": "The Phone app is already open on the call log. The agent opens the dial pad and enters 4008800011; several digits repeat in a row, so consecutive presses of the same key only add one character each. The agent must not place the call.",
+      "rubric": [
+        {
+          "id": "dialed_exact_number",
+          "check": "The post-screenshot shows the Phone dial pad with exactly 4008800011 in the number field: no missing, extra, or reordered digits."
+        },
+        {
+          "id": "did_not_call",
+          "check": "No call was placed: the post-screenshot still shows the dial pad and no simulated-call toast is visible."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 240,
+        "response_required": false,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "app_ids": [
+        "contacts"
+      ],
+      "foreground_app_id": "contacts",
+      "environment_assertions": {
+        "route.app": "contacts",
+        "route.path": "/?dialpad=true"
+      },
+      "repeats": 1
+    },
+    {
+      "id": "dial_delete_extra_digits",
+      "category": "device_operation",
+      "prompt": "打开拨号盘，输入 13900007777，然后用删除键删掉最后两位，先不要拨出。",
+      "description_for_judge": "The Phone app is already open on the call log. The agent opens the dial pad, enters 13900007777, then presses delete twice so the number becomes 139000077. Repeated digits and repeated delete presses each change only one character. Typing 139000077 directly skips the repeated-delete step this task measures. The dial-pad delete control is the small round icon button at the right end of the number field (normalized x about 815-925, y about 390-440). The agent must not place the call.",
+      "rubric": [
+        {
+          "id": "deleted_after_entering_full_number",
+          "check": "The tool trace shows the agent entering all eleven digits of 13900007777 and then two taps on the dial-pad delete control at the right end of the number field. Fail if the agent types 139000077 directly without entering the two trailing digits and deleting them."
+        },
+        {
+          "id": "dialed_exact_number",
+          "check": "The post-screenshot shows the Phone dial pad with exactly 139000077 in the number field: no missing, extra, or reordered digits."
+        },
+        {
+          "id": "did_not_call",
+          "check": "No call was placed: the post-screenshot still shows the dial pad and no simulated-call toast is visible."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 40,
+        "must_complete_within_sec": 240,
+        "response_required": false,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "app_ids": [
+        "contacts"
+      ],
+      "foreground_app_id": "contacts",
+      "environment_assertions": {
+        "route.app": "contacts",
+        "route.path": "/?dialpad=true"
+      },
+      "repeats": 1
+    },
+    {
+      "id": "stopwatch_two_laps",
+      "category": "device_operation",
+      "prompt": "打开时钟的秒表，开始计时，记两次计次，然后暂停，告诉我两次计次各是多少。",
+      "description_for_judge": "The agent opens the Clock app from the home screen, switches to the stopwatch, starts it, records two laps while the time display keeps changing, pauses it, and reports both lap times shown on screen.",
+      "rubric": [
+        {
+          "id": "paused_with_two_laps",
+          "check": "The post-screenshot shows the Clock stopwatch paused (a start or resume control is visible) with exactly two lap rows."
+        },
+        {
+          "id": "reported_lap_times",
+          "check": "The final response reports two lap times that match the lap rows in the post-screenshot."
+        }
+      ],
+      "hard_assertions": {
+        "min_tool_calls": 1,
+        "max_tool_calls": 30,
+        "must_complete_within_sec": 240,
+        "required_tools": [
+          "touch_gesture"
+        ]
+      },
+      "app_ids": [
+        "clock"
+      ],
+      "environment_assertions": {
+        "route.app": "clock",
+        "route.path": "/stopwatch"
+      },
+      "repeats": 1
+    }
+  ]
+}

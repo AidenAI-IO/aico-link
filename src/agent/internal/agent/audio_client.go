@@ -164,6 +164,58 @@ func (r *AudioRecordChunkReader) Close() error {
 	return err
 }
 
+// RecordChunkStream reads a recording session for a long-running consumer that
+// must not fail on a dropped connection, such as a realtime voice session.
+//
+// It reads through one persistent connection while that works. audio_service
+// closes client connections that stay idle for a few seconds, so after the
+// first persistent read error the stream closes that connection and retries the
+// read through the per-request path, which dials for each read and cannot hold
+// a dropped connection. It stays on that path for the rest of the session. This
+// is the same fallback AudioDialog applies to its persistent reader. The
+// recording session lives in audio_service by session ID, so either path reads
+// the same session.
+type RecordChunkStream struct {
+	client    *AudioServiceClient
+	reader    *AudioRecordChunkReader
+	sessionID uint64
+}
+
+// OpenRecordChunkStream opens a stream for sessionID. When the persistent
+// connection cannot be opened, the stream starts on the per-request path.
+func (c *AudioServiceClient) OpenRecordChunkStream(sessionID uint64) *RecordChunkStream {
+	stream := &RecordChunkStream{client: c, sessionID: sessionID}
+	if reader, err := c.OpenRecordChunkReader(sessionID); err == nil {
+		stream.reader = reader
+	}
+	return stream
+}
+
+// Read returns the next chunk. A persistent-connection error moves the stream to
+// per-request reads and retries this read there; an error on that path means the
+// service itself is unavailable and is returned.
+func (s *RecordChunkStream) Read(timeoutMs uint32) (*AudioChunkResult, error) {
+	if s.reader != nil {
+		chunk, err := s.reader.Read(timeoutMs)
+		if err == nil {
+			return chunk, nil
+		}
+		_ = s.reader.Close()
+		s.reader = nil
+	}
+	return s.client.ReadRecordChunk(s.sessionID, timeoutMs)
+}
+
+// Close releases the persistent connection, if one is still open.
+func (s *RecordChunkStream) Close() error {
+	if s.reader == nil {
+		return nil
+	}
+	err := s.reader.Close()
+	s.reader = nil
+	return err
+}
+
 func isTransientAudioServiceError(err error) bool {
 	if err == nil {
 		return false

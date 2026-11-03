@@ -3291,23 +3291,19 @@ type realtimeRecordChunkReader interface {
 	Close() error
 }
 
-type realtimeRecordChunkReaderOpener interface {
-	OpenRecordChunkReader(uint64) (*agent.AudioRecordChunkReader, error)
+type realtimeRecordChunkStreamOpener interface {
+	OpenRecordChunkStream(uint64) *agent.RecordChunkStream
 }
 
+// streamRealtimeAudio forwards microphone chunks to the realtime session. For
+// audio_service it reads through a RecordChunkStream, which falls back to
+// per-request reads when audio_service drops the persistent connection instead
+// of ending the conversation.
 func streamRealtimeAudio(ctx context.Context, audio realtimeRecordingAudio, sessionID uint64, chunks chan<- []byte, errs chan<- error) {
 	defer close(chunks)
 	var reader realtimeRecordChunkReader = realtimeRecordingBackendReader{audio: audio, sessionID: sessionID}
-	if opener, ok := audio.(realtimeRecordChunkReaderOpener); ok {
-		serviceReader, err := opener.OpenRecordChunkReader(sessionID)
-		if err != nil {
-			select {
-			case errs <- err:
-			case <-ctx.Done():
-			}
-			return
-		}
-		reader = serviceReader
+	if opener, ok := audio.(realtimeRecordChunkStreamOpener); ok {
+		reader = opener.OpenRecordChunkStream(sessionID)
 	}
 	defer reader.Close()
 	for {
