@@ -25,10 +25,10 @@ var (
 	errMemoryMergeModelCall = errors.New("memory merge model call")
 )
 
-// isMemoryMergeTruncatedStopReason reports whether a finish reason means the
+// isOutputTruncatedStopReason reports whether a finish reason means the
 // model hit its output ceiling. OpenAI-compatible APIs report "length",
 // Anthropic reports "max_tokens", and the Responses API reports "incomplete".
-func isMemoryMergeTruncatedStopReason(reason string) bool {
+func isOutputTruncatedStopReason(reason string) bool {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
 	case "length", "max_tokens", "max_output_tokens", "incomplete":
 		return true
@@ -154,7 +154,7 @@ func memoryMergeResponseContent(response *llms.ContentResponse, maxTokens int) (
 	// A budget-exhausted response is syntactically incomplete, so parsing it
 	// would only report a confusing "unexpected end of JSON input". Report the
 	// real cause instead, and hand back the partial content for diagnostics.
-	if isMemoryMergeTruncatedStopReason(choice.StopReason) {
+	if isOutputTruncatedStopReason(choice.StopReason) {
 		return content, fmt.Errorf("%w: stop_reason=%s max_tokens=%d output_bytes=%d",
 			errMemoryMergeTruncated, strings.TrimSpace(choice.StopReason), maxTokens, len(choice.Content))
 	}
