@@ -857,8 +857,9 @@ func ConfigMeta() ConfigMetadata {
 						Help:        "When on, Classic only admits utterances that match an enrolled speaker profile. Default off so devices remain usable without enrollment.",
 						VisibleWhen: all(eq("agent.input_mode", "stt"))},
 					{Key: "voice_speaker_threshold", Widget: WidgetNumber, Default: defaults.VoiceSpeakerThreshold,
-						Help:        "Cosine similarity threshold for owner-only Classic gating (typical board range ~0.35–0.50).",
+						Help:        "Cosine similarity threshold for owner-only Classic gating. Default 0.50; not shown on Config Web.",
 						Range:       &Range{Min: 0.05, Max: 0.95, Step: 0.01, Precision: 2},
+						Advanced:    true,
 						VisibleWhen: all(eq("agent.input_mode", "stt"), truthy("agent.voice_speaker_gate_enabled"))},
 					// tools/model/store dirs stay Advanced for TOML / schema consumers;
 					// Config Web Classic voice page uses board defaults and enroll APIs.

@@ -42,7 +42,6 @@ import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 
 /** Practical Classic gate range; denser than the old four-step picker. */
-const SPEAKER_THRESHOLD_OPTIONS = [0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7];
 const SPEAKER_PROFILE_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
 
 /** Next free default id: speaker, speaker2, speaker3, … */
@@ -377,52 +376,6 @@ function speakerAgent(snapshot) {
   return (snapshot && snapshot.config && snapshot.config.agent) || {};
 }
 
-function formatSpeakerThreshold(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return '0.40';
-  return number.toFixed(2);
-}
-
-/** Snap an arbitrary saved value onto the nearest listed option for the sheet. */
-function nearestSpeakerThresholdOption(value) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return 0.4;
-  let best = SPEAKER_THRESHOLD_OPTIONS[0];
-  let bestDelta = Math.abs(number - best);
-  for (const option of SPEAKER_THRESHOLD_OPTIONS) {
-    const delta = Math.abs(number - option);
-    if (delta < bestDelta) {
-      best = option;
-      bestDelta = delta;
-    }
-  }
-  return best;
-}
-
-/**
- * Pick a similarity threshold from the standard choice sheet. Cancel returns null.
- * @param {number} current
- * @returns {Promise<number|null>}
- */
-function askSpeakerThreshold(current) {
-  return new Promise(resolvePromise => {
-    let chosen = null;
-    const selected = formatSpeakerThreshold(nearestSpeakerThresholdOption(current));
-    const view = choiceSheet({
-      title: msg('voice.speaker_threshold', '相似度阈值'),
-      options: SPEAKER_THRESHOLD_OPTIONS.map(value => ({
-        value: formatSpeakerThreshold(value),
-        label: formatSpeakerThreshold(value),
-      })),
-      selected,
-      onSelect: value => {
-        chosen = Number(value);
-      },
-    });
-    view.onAfterClose(() => resolvePromise(chosen));
-  });
-}
-
 async function loadSpeakerProfiles() {
   const [statusPayload, profilesPayload] = await Promise.all([
     request('/api/speaker/status'),
@@ -503,10 +456,6 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
 
   const agent = speakerAgent(snapshot);
   let gateOn = agent.voice_speaker_gate_enabled === true || status.gate_enabled === true;
-  let threshold = Number(agent.voice_speaker_threshold);
-  if (!Number.isFinite(threshold) || threshold <= 0) {
-    threshold = Number(status.threshold) > 0 ? Number(status.threshold) : 0.4;
-  }
   let busy = false;
 
   const paint = () => {
@@ -545,27 +494,6 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
         description: msg('voice.speaker_gate_help', '开启后，Classic 只接受已录入声纹的说话。建议先录入再打开。'),
       }),
     ];
-    if (gateOn) {
-      rows.push(row({
-        label: msg('voice.speaker_threshold', '相似度阈值'),
-        value: formatSpeakerThreshold(threshold),
-        chevron: true,
-        action: 'speaker-threshold',
-        onPress: async () => {
-          const next = await askSpeakerThreshold(threshold);
-          if (next == null || next === threshold) return;
-          const outcome = await saver.change('agent.voice_speaker_threshold', {
-            agent: {voice_speaker_threshold: next},
-          });
-          if (outcome === 'invalid' || outcome === 'failed') return;
-          threshold = next;
-          if (snapshot.config && snapshot.config.agent) {
-            snapshot.config.agent.voice_speaker_threshold = next;
-          }
-          paint();
-        },
-      }));
-    }
 
     const hasProfiles = profiles.length > 0;
     rows.push(row({

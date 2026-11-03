@@ -271,7 +271,7 @@ input_mode = "stt"
 # Classic owner-only speaker gate (ERes2Net). Default off — enroll via
 # POST /api/speaker/enroll before enabling so the device stays usable.
 # voice_speaker_gate_enabled = false
-# voice_speaker_threshold = 0.40
+# voice_speaker_threshold = 0.50
 # voice_speaker_tools_dir = "/usr/lib/aico"
 # voice_speaker_model_dir = "/usr/lib/aico/models"
 # voice_speaker_store_dir = "/userdata/aico/speaker_profiles"

@@ -22,7 +22,7 @@ const (
 	defaultSpeakerModelDir    = "/usr/lib/aico/models"
 	defaultSpeakerStoreDir    = "/userdata/aico/speaker_profiles"
 	defaultSpeakerMaxProfiles = 5
-	defaultSpeakerThreshold   = 0.40
+	defaultSpeakerThreshold   = 0.50
 	speakerMinRMS             = 0.005
 )
 
