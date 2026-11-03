@@ -591,8 +591,11 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 }
 
 func wakeupReadyLabel(cfg agent.Config) string {
-	if !mcuServiceSocketAvailable(resolveMCUServiceSocket()) {
+	if usesLegacyGPIOVoiceWakeup() {
 		return "GPIO 33/32"
+	}
+	if !mcuServiceSocketAvailable(resolveMCUServiceSocket()) {
+		return "MCU ASR (socket unavailable)"
 	}
 	if cfg.TapWakeupEnabledOrDefault() {
 		return "MCU ASR or touch key"

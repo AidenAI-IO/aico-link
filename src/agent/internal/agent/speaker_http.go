@@ -164,14 +164,16 @@ func pcm16FromWAV(data []byte) ([]int16, error) {
 	var pcmData []byte
 	for offset+8 <= len(data) {
 		chunkID := string(data[offset : offset+4])
-		chunkSize := int(binary.LittleEndian.Uint32(data[offset+4 : offset+8]))
+		chunkSize := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
 		offset += 8
-		if chunkSize < 0 || offset+chunkSize > len(data) {
+		// Use uint64 so large chunk sizes cannot wrap int addition on 32-bit ARM.
+		if uint64(offset)+uint64(chunkSize) > uint64(len(data)) {
 			return nil, fmt.Errorf("invalid wav chunk")
 		}
+		size := int(chunkSize)
 		switch chunkID {
 		case "fmt ":
-			if chunkSize < 16 {
+			if size < 16 {
 				return nil, fmt.Errorf("invalid fmt chunk")
 			}
 			audioFormat := binary.LittleEndian.Uint16(data[offset:])
@@ -182,9 +184,9 @@ func pcm16FromWAV(data []byte) ([]int16, error) {
 				return nil, fmt.Errorf("wav must be PCM16 mono %d Hz", speakerSampleRate)
 			}
 		case "data":
-			pcmData = data[offset : offset+chunkSize]
+			pcmData = data[offset : offset+size]
 		}
-		offset += chunkSize + (chunkSize & 1)
+		offset += size + (size & 1)
 	}
 	if len(pcmData) < 2 {
 		return nil, fmt.Errorf("wav has no PCM data")
