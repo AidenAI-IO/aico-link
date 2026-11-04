@@ -17,6 +17,7 @@ from runner.android_phone_bridge import (
     android_bridge_fixture,
     clipboard_write_ids,
     connected_android_phone_bridge,
+    emulator_board_network,
     foreground_android_phone_bridge,
     verify_android_bridge_input,
     wait_for_android_phone_bridge,
@@ -874,7 +875,8 @@ def _cmd_run_auto_agent_setup_inner(
                     after_setup=(
                         (lambda: foreground_android_phone_bridge(bridge_serial, client)
                          if unit.task.foreground_app_id == ANDROID_BRIDGE_PACKAGE
-                         else wait_for_android_phone_bridge(client))
+                         else wait_for_android_phone_bridge(
+                             client, require_background_bridge=True))
                         if bridge_serial else None
                     ),
                 )
@@ -950,7 +952,15 @@ def _cmd_run_auto_agent_setup_inner(
         f"environment={display_environment_url}",
         flush=True,
     )
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
+    # Tasks that leave the companion App in the background can reach Phone
+    # Bridge only through its FGS poller, which needs a board-like network.
+    background_bridge = bool(bridge_serial) and any(
+        unit.task.foreground_app_id != ANDROID_BRIDGE_PACKAGE for unit in units
+    )
+    board_network = (
+        emulator_board_network(bridge_serial) if background_bridge else nullcontext()
+    )
+    with board_network, concurrent.futures.ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix=f"bench-cli-{run_id}") as executor:
         future_to_unit = {
             executor.submit(run_unit, unit): unit
             for unit in units
