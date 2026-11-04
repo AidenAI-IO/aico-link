@@ -49,6 +49,21 @@ func normalizeTaggedThinkingText(source string) (visible, reasoning string, foun
 	return strings.TrimSpace(strings.Join(visibleParts, "")), strings.TrimSpace(strings.Join(reasoningParts, "\n")), found
 }
 
+// splitUnclosedThinking splits content at an opening think tag that has no
+// closing tag after it. It returns the text before the tag and the text after
+// it; ok is false when content has no such tag.
+func splitUnclosedThinking(content string) (visible, reasoning string, ok bool) {
+	openAt, openTag := indexFoldAny(content, thinkingOpenTags)
+	if openAt < 0 {
+		return "", "", false
+	}
+	rest := content[openAt+len(openTag):]
+	if closeAt, _ := indexFoldAny(rest, thinkingCloseTags); closeAt >= 0 {
+		return "", "", false
+	}
+	return strings.TrimSpace(content[:openAt]), strings.TrimSpace(rest), true
+}
+
 func indexFoldAny(source string, tags []string) (index int, tag string) {
 	index = -1
 	for _, candidate := range tags {
@@ -95,12 +110,23 @@ func (s *taggedThinkingStream) Write(chunk []byte) error {
 	return s.process(previousPendingLen)
 }
 
-func (s *taggedThinkingStream) Finish() error {
+// Finish flushes held-back text once the response ends. stopReason is the
+// provider's finish reason for the response.
+func (s *taggedThinkingStream) Finish(stopReason string) error {
 	if s == nil || (s.downstream == nil && s.reasoningStream == nil) {
 		return nil
 	}
+	if s.inThinking && isOutputTruncatedStopReason(stopReason) {
+		// The model hit its output limit while thinking: the block is reasoning
+		// that never closed, not an answer.
+		err := s.emitReasoning(s.pending.Bytes())
+		s.pending.Reset()
+		s.inThinking = false
+		s.openingTag = ""
+		return err
+	}
 	if s.inThinking {
-		// A missing close means the response may be truncated. The complete
+		// A missing close without an output limit is ambiguous. The complete
 		// block was deliberately held back so it can remain visible rather than
 		// being emitted as reasoning.
 		if err := s.emit([]byte(s.openingTag)); err != nil {

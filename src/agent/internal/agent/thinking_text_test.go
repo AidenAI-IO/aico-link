@@ -51,7 +51,7 @@ func TestTaggedThinkingStreamPreservesUnclosedThinking(t *testing.T) {
 	if visible.Len() != 7 || reasoning.Len() != 0 {
 		t.Fatalf("before Finish: visible=%q reasoning=%q", visible.String(), reasoning.String())
 	}
-	if err := stream.Finish(); err != nil {
+	if err := stream.Finish(""); err != nil {
 		t.Fatalf("Finish failed: %v", err)
 	}
 	if got := visible.String(); got != "before <think>unfinished" {
@@ -59,6 +59,29 @@ func TestTaggedThinkingStreamPreservesUnclosedThinking(t *testing.T) {
 	}
 	if reasoning.Len() != 0 {
 		t.Fatalf("reasoning = %q, want empty", reasoning.String())
+	}
+}
+
+func TestTaggedThinkingStreamRoutesTruncatedThinkingToReasoning(t *testing.T) {
+	var visible, reasoning strings.Builder
+	stream := newTaggedThinkingStream(func(chunk []byte) error {
+		visible.Write(chunk)
+		return nil
+	}, func(chunk []byte) error {
+		reasoning.Write(chunk)
+		return nil
+	})
+	if err := stream.Write([]byte("before <think>unfinished")); err != nil {
+		t.Fatalf("Write failed: %v", err)
+	}
+	if err := stream.Finish("length"); err != nil {
+		t.Fatalf("Finish failed: %v", err)
+	}
+	if got := visible.String(); got != "before " {
+		t.Fatalf("visible = %q, want only text before the unclosed block", got)
+	}
+	if got := reasoning.String(); got != "unfinished" {
+		t.Fatalf("reasoning = %q, want the unclosed block", got)
 	}
 }
 
@@ -76,7 +99,7 @@ func TestTaggedThinkingStreamForwardsVisibleTextWithConfiguredEffort(t *testing.
 	if got := visible.String(); got != "Hello there" {
 		t.Fatalf("visible before Finish = %q, want incremental visible text", got)
 	}
-	if err := stream.Finish(); err != nil {
+	if err := stream.Finish(""); err != nil {
 		t.Fatalf("Finish failed: %v", err)
 	}
 	if got := visible.String(); got != "Hello there!" {
@@ -108,7 +131,7 @@ func TestTaggedThinkingStreamDoesNotFlushOpenThinkingAsVisible(t *testing.T) {
 	if err := stream.Write([]byte("nk>visible")); err != nil {
 		t.Fatalf("Write close failed: %v", err)
 	}
-	if err := stream.Finish(); err != nil {
+	if err := stream.Finish(""); err != nil {
 		t.Fatalf("Finish failed: %v", err)
 	}
 	if got := reasoning.String(); got != "secret plan" {

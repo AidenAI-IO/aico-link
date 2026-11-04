@@ -195,7 +195,8 @@ delivery retain their own lifecycle.
 | Update a running task or submit chat steer | `Interrupt [steer]` immediately before the replacement user instruction; the same run continues. |
 | A model/tool call was interrupted but its steer was withdrawn or yielded no text | `Interrupt [steer_resumed]`; continue the original task from its last confirmed state. |
 | Unrecovered model request failure | `Interrupt [model_error]`. |
-| Context budget, compaction, or other execution failure | `Interrupt [execution_error]`. |
+| Model reached its output token limit, usually while reasoning, before a reply or tool call | `Interrupt [output_truncated]`. The empty model turn is not stored, so the next request can resume the conversation. |
+| Context budget, compaction, or other execution failure | `Interrupt [execution_error]`. A model turn with no reply and no tool call is not stored in history. |
 | Iteration/time budget, repeated actions, no progress, or repeated parsing failures | `Interrupt` with the loop guard's stop reason. Existing guard warnings and stop results remain available. |
 | Incompatible device touch mode | `Interrupt [device_mode_mismatch]`. |
 | Runtime panic | `Interrupt [panic]`, when persistence remains possible; the panic is rethrown. |
