@@ -450,7 +450,6 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
         rows,
       }),
       el('div', {class: 'ds-group'}, [enrollButton]),
-      text(msg('voice.speaker_note', '只保留一个主人声纹。先录入再打开开关；重新录入会覆盖旧声纹。'), 'page__note page__note--below'),
     ]);
   };
 
