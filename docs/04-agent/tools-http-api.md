@@ -62,7 +62,9 @@ Use `raw_input` when you need to pass a raw string. Most tools (including skill 
     "http": {
       "method": "POST",
       "path": "/api/tools/shell"
-    }
+    },
+    "agent_exposed": true,
+    "ui_operation": false
   },
   "raw_input": "{\"command\":\"pwd\"}",
   "output": "...",
@@ -114,6 +116,14 @@ Separate HTTP invocations each manage their own isolation scope. Other HTTP
 tools retain normal client-cancellation behavior.
 
 The HTTP catalog is a separate policy. It exposes registered operational and specialized tools together with their `args_schema`, but internal maintenance tools such as `skill_manage` and `skill_mark_used` are never listed or callable through the default HTTP Tool API.
+
+Each descriptor also reports how the conversational model sees the tool:
+`agent_exposed` tells whether the model can call it, `agent_platforms` lists the
+device platforms where it is shown (omitted when it is shown on all platforms),
+and `ui_operation` marks tools that observe or operate the visible device UI,
+such as `screenshot`, `touch_gesture`, and `quick_action`. Clients that need the
+model's UI surface for a platform, such as benchmark harness comparisons,
+select tools with all three fields instead of maintaining their own list.
 
 For app launch requests, inspect the latest screenshot first. If the requested app icon or card is clearly visible, unique, and unobscured, use `touch_gesture` on its visible non-overlapping center instead of `open_app`; use `open_app` only when the target is not clearly tappable or a direct tap did not produce a verified result. Both `open_app` and `open_url` return a post-action screenshot; always inspect it before answering or continuing. `ok:true` only means that the OS accepted the launch request, not that the requested app or page is visible.
 

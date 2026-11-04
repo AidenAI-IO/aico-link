@@ -29,11 +29,13 @@ Use this skill when the task requires operating a visible connected device UI. T
 
 Always operate through a visual feedback loop:
 
-1. Observe the current screen with `screenshot` or `wait_for_stable_screen`.
-2. Decide the smallest next UI action that could make progress.
-3. Act with one input or semantic tool.
+1. Observe the current screen in an attached screenshot, or use `screenshot` or `wait_for_stable_screen` when no current image is available.
+2. Compare the observed state with the requested final state. If it is already satisfied, stop and report that no input action was needed.
+3. Otherwise, decide the smallest next UI action that could make progress and act with one input or semantic tool.
 4. Inspect the resulting screen.
 5. Continue only after confirming what changed.
+
+An attached current screenshot is a screen observation. Reading this skill and seeing a task description are not. Before changing a visible field, confirm that its contents differ from the requested state; if they already match, report that no input action was needed. If the contents are unclear, observe again before acting. This applies to other state-change requests whose goal may already be satisfied.
 
 Do not perform multiple blind UI actions in a row. Base every coordinate, tap, swipe, and typed input on the latest visual state.
 

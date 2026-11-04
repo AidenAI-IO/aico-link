@@ -353,12 +353,19 @@
     {
       "id": "select_all_and_delete",
       "category": "multi_step",
+      "platforms": [
+        "android"
+      ],
+      "environment_bridge_types": ["mobilegym"],
       "description_for_judge": "Agent must clear the populated input field using any supported editing operation and leave the empty field visible.",
       "setup": {
-        "type": "agent_prompt",
-        "prompt": "先打开一个简单的记事类应用，新建一条笔记，在输入框里输入 hello-aico，保持文字可见。",
-        "timeout_sec": 120,
-        "clear_history_after": true
+        "type": "environment_tools",
+        "tools": [
+          {"name": "touch_gesture", "input": {"type": "tap", "point": {"x": 615, "y": 575}}},
+          {"name": "touch_gesture", "input": {"type": "tap", "point": {"x": 824, "y": 821}}},
+          {"name": "enter_text", "input": {"focus": {"x": 250, "y": 319}, "text": "hello-aiden"}}
+        ],
+        "expected_state": {"apps.notes.notes.0.content": "hello-aiden"}
       },
       "prompt": "把输入框里已有的文字全部清空。",
       "rubric": [

@@ -1,0 +1,21 @@
+{
+  "suite": "mobilegym_basic.json",
+  "environment_url": "http://127.0.0.1:9090",
+  "agents": [
+    {"id": "aiden", "kind": "aiden"},
+    {
+      "id": "pi",
+      "kind": "pi",
+      "provider": "benchmark-custom",
+      "model": "replace-with-exact-backend-model-id",
+      "thinking": "off",
+      "base_url": "https://gateway.example.com/v1",
+      "api": "openai-completions",
+      "api_key_env": "AIDEN_BENCHMARK_PI_API_KEY",
+      "context_window": 128000,
+      "max_tokens": 16384
+    }
+  ],
+  "repeats": 1,
+  "seed": 0
+}

@@ -11,6 +11,8 @@ are:
 
 - WebUI for day-to-day runs, MobileGym concurrency, task-level logs/screens, and reports.
 - CLI for scripted runs, single-suite debugging, rejudge, and compare.
+- Agent experiments for comparing Aiden, pi, OpenClaw, Claude Code, and Codex on the same operation
+  suites; see [`benchmark/experiments.md`](../../benchmark/experiments.md).
 
 For the full manual, see [`benchmark/manual.md`](../../benchmark/manual.md).
 For field definitions, units, denominators, and missing-value semantics, see the
@@ -228,9 +230,16 @@ benchmark/
 │   ├── suite.py         # Suite loading
 │   ├── runtask.py       # Task execution
 │   ├── judge.py         # OpenAI-compatible LLM judge
+│   ├── experiment.py    # Agent experiment orchestration and comparison reports
+│   ├── harness.py       # Aiden and external agent execution adapters
+│   ├── harnesses.py     # Registry of comparable agent harness kinds
+│   ├── operations.py    # Shared business tools and environment preparation
+│   ├── tool_gateway.py  # Allowlisted business tool endpoint for external agents
+│   ├── raw_tools.py     # Neutral raw UI tools on the environment bridge
 │   └── html_report.py   # HTML report generation
 ├── suites/              # Benchmark suites
 ├── environment_bridge.md
+├── experiments.md
 ├── manual.md
 └── runs/<run_id>/       # CLI run results
     ├── manifest.json
@@ -310,6 +319,22 @@ uv run python -m runner compare --runs runs/<run_a> runs/<run_b>
 ```
 
 Compare task status flips, latency, and pass-rate changes between two runs.
+
+### `experiment`
+
+```bash
+uv run python -m runner experiment --config experiments.example.json \
+  --agent-config /absolute/path/to/agent.toml
+```
+
+Run one agent experiment that compares Aiden and external agents on an
+existing operation suite against a MobileGym environment. Results are written
+below `<out>/experiments/<experiment-id>/`. Options include `--suites-dir`,
+`--out`, `--daemon-image`, `--no-build-daemon-image`, `--judge-model`, and
+`--judge-base-url`. See [`benchmark/experiments.md`](../../benchmark/experiments.md)
+for configuration, fairness boundaries, and report semantics. The manually
+dispatched **Agent Experiment** workflow runs the same command on the benchmark
+runner.
 
 ### Publish a completed run to Langfuse
 
@@ -606,6 +631,12 @@ credentials.
 - `AICO_AGENT_URL` - Default `--agent-url`.
 - `AICO_ENVIRONMENT_URL` - Default `--environment-url`.
 - `AICO_DAEMON_IMAGE` - Default daemon worker image for auto agent setup.
+- `AIDEN_BENCHMARK_PI_EXECUTABLE` - pi executable for agent experiments.
+- `AIDEN_BENCHMARK_PI_API_KEY` - Default credential variable for external agent custom endpoints.
+- `AIDEN_BENCHMARK_OPENCLAW_EXECUTABLE` - OpenClaw CLI for agent experiments.
+- `AIDEN_BENCHMARK_OPENCLAW_NODE` - Node runtime used to run OpenClaw.
+- `AIDEN_BENCHMARK_CLAUDE_CODE_EXECUTABLE` - Claude Code CLI for agent experiments.
+- `AIDEN_BENCHMARK_CODEX_EXECUTABLE` - Codex CLI for agent experiments.
 - `LANGFUSE_PUBLISH_VERIFY_TIMEOUT_SECONDS` - Maximum publication read-back wait; defaults to 660 seconds to cover Langfuse asynchronous ingestion lag.
 
 ## Execution Modes

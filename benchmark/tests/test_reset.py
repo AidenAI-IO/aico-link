@@ -9,6 +9,7 @@ from runner.reset import (
     SetupAssertionError,
     call_environment_release,
     call_environment_setup,
+    prepare_environment_tools,
     clear_stale_adb_android_owner,
     per_task_setup,
 )
@@ -95,6 +96,45 @@ def test_agent_prompt_setup_wraps_chat_errors_as_reset_error():
 
     with pytest.raises(ResetError, match="setup agent_prompt failed"):
         per_task_setup(FailingChatClient(), setup)
+
+
+def test_environment_preparation_rejects_unseeded_state(monkeypatch):
+    from runner import reset
+    calls = []
+    monkeypatch.setattr(reset, "call_environment_tool", lambda *a, **kw: calls.append(a[1]) or {"ok": True})
+    monkeypatch.setattr(reset, "read_environment_state", lambda *a, **kw: {
+        "apps": {"notes": {"notes": [{"content": ""}]}}
+    })
+    setup = {"type": "environment_tools", "tools": [
+        {"name": "enter_text", "input": {"text": "hello-aiden", "focus": {"x": 250, "y": 319}}},
+    ], "expected_state": {"apps.notes.notes.0.content": "hello-aiden"}}
+    with pytest.raises(ResetError, match="apps.notes.notes.0.content: expected 'hello-aiden', found ''"):
+        prepare_environment_tools("http://env", "task", setup, settle_sec=0)
+    assert calls == ["enter_text"]
+
+
+def test_environment_preparation_requires_state_before_tapping(monkeypatch):
+    from runner import reset
+    calls = []
+    monkeypatch.setattr(reset, "call_environment_tool", lambda *a, **kw: calls.append(a[1]))
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("state endpoint not found")
+    monkeypatch.setattr(reset, "read_environment_state", unavailable)
+    setup = {"type": "environment_tools", "tools": [
+        {"name": "touch_gesture", "input": {"type": "tap", "point": {"x": 1, "y": 2}}},
+    ], "expected_state": {"apps.notes.notes.0.content": "hello-aiden"}}
+    with pytest.raises(ResetError, match="requires readable environment state"):
+        prepare_environment_tools("http://env", "task", setup)
+    assert calls == []
+
+
+def test_environment_preparation_rejects_semantic_tool_failure(monkeypatch):
+    from runner import reset
+    monkeypatch.setattr(reset, "_post_environment", lambda *a, **kw: {
+        "output": '{"ok":false,"suggestion":"refocus"}', "is_error": False,
+    })
+    with pytest.raises(ResetError, match="environment preparation enter_text failed"):
+        reset.call_environment_tool("http://env", "enter_text", {"text": "hello"}, task_id="task")
 
 
 def test_notification_setup_seeds_and_processes_fixture():

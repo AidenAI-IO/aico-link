@@ -4,6 +4,7 @@ from pathlib import Path
 import signal
 import subprocess
 import tempfile
+import textwrap
 import threading
 import time
 import unittest
@@ -53,6 +54,54 @@ class DockerSandboxContractTest(unittest.TestCase):
         self.assertIn('/api/device/status', smoke_script)
         self.assertIn('/api/system/environment', smoke_script)
         self.assertNotIn('/api/system/env"', smoke_script)
+
+    def test_bridge_smoke_waits_for_a_new_ready_process_before_counting_agents(self):
+        smoke = read_repo_file("scripts/test_docker_sandbox.sh")
+        helper_start = smoke.index("wait_for_agent_restart() {")
+        helper = smoke[helper_start:smoke.index("\n}", helper_start) + 2]
+        bridge_start = smoke.index("# Exercise restart after the bridge session is ready.")
+        restart_start = smoke.index('before_pid="$(agent_pid)"', bridge_start)
+        restart = smoke[restart_start:smoke.index('release_count=', restart_start)]
+        for completes in (True, False):
+            with self.subTest(completes=completes), tempfile.TemporaryDirectory() as scratch:
+                poll_file = Path(scratch) / "polls"
+                count_file = Path(scratch) / "counted"
+                script = textwrap.dedent("""\
+                    set -eu
+                    config_port=8000
+                    agent_port=8080
+                    agent_pid() {
+                        n=$(cat "$POLL_FILE" 2>/dev/null || printf 0)
+                        n=$((n + 1))
+                        printf '%s' "$n" > "$POLL_FILE"
+                        if [ "$COMPLETES" = 0 ] || [ "$n" -le 2 ]; then
+                            printf '101\n'
+                        elif [ "$n" -ge 4 ]; then
+                            printf '202\n'
+                        fi
+                    }
+                    request() { printf '{"agent_restart_scheduled":true}\n'; }
+                    # An old process can remain healthy before shutdown begins.
+                    wait_for_agent() { return 0; }
+                    curl() { [ "$(cat "$POLL_FILE")" -ge 5 ]; }
+                    sleep() { :; }
+                    compose() {
+                        [ "$(cat "$POLL_FILE")" -ge 5 ]
+                        printf 'counted\n' > "$COUNT_FILE"
+                    }
+                    """)
+                result = subprocess.run(["sh", "-c", script + helper + "\n" + restart],
+                                        env={**os.environ, "POLL_FILE": str(poll_file),
+                                             "COUNT_FILE": str(count_file), "COMPLETES": str(int(completes))},
+                                        capture_output=True, text=True, timeout=10)
+                if completes:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(poll_file.read_text(), "5")
+                    self.assertTrue(count_file.exists())
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Agent restart did not become ready", result.stderr)
+                    self.assertFalse(count_file.exists())
 
     def test_sandbox_image_builds_real_agent_with_config_web_subcommand(self):
         dockerfile = read_repo_file("docker/dev/Dockerfile")

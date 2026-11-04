@@ -35,8 +35,25 @@ def _post_screenshot_path(attempt_dir: Path) -> Path:
     return legacy_steps[-1] if legacy_steps else post
 
 
-def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
-    cfg = JudgeConfig(model=judge_model, base_url=judge_base_url)
+def execution_gate_blocks_rejudge(row: dict) -> bool:
+    """Rejudging changes semantic verdicts, never recorded execution gates."""
+    metrics = row.get("metrics") or {}
+    return bool(
+        row.get("status") == "timeout"
+        or (row.get("status") == "skipped" and not metrics.get("judging_disabled"))
+        or row.get("hard_assertion_failures")
+        or any(value is False for value in (row.get("hard_assertions") or {}).values())
+        or metrics.get("agent_error")
+        or metrics.get("first_failure_stage") == "setup"
+        # Unreadable final state is unverified, not a passed state assertion.
+        or metrics.get("environment_state_error")
+    )
+
+
+def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
+                judge_api_key_env: str = "AICO_BENCHMARK_JUDGE_API_KEY",
+                only_judge_errors: bool = False) -> int:
+    cfg = JudgeConfig(model=judge_model, base_url=judge_base_url, api_key_env=judge_api_key_env)
     cache = run_dir / "_judge_cache"
     new_results = []
     suite_path = run_dir / "suite.json"
@@ -44,16 +61,11 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str) -> int:
     prompts = {t.id: f"{suite.prompt_prefix.rstrip()}\n\n{t.prompt}".strip() for t in suite.tasks} if suite else {}
     for line in (run_dir / "results.jsonl").read_text("utf-8").splitlines():
         row = json.loads(line)
+        if only_judge_errors and row.get("status") != "judge_error":
+            new_results.append(row)
+            continue
         metrics = row.setdefault("metrics", {})
-        # Rejudging changes semantic verdicts, never recorded execution gates.
-        if (
-            row.get("status") == "timeout"
-            or (row.get("status") == "skipped" and not metrics.get("judging_disabled"))
-            or row.get("hard_assertion_failures")
-            or any(value is False for value in (row.get("hard_assertions") or {}).values())
-            or metrics.get("agent_error")
-            or metrics.get("first_failure_stage") == "setup"
-        ):
+        if execution_gate_blocks_rejudge(row):
             new_results.append(row)
             continue
         # Judge-free tasks are decided by recorded assertions; keep them as-is.
