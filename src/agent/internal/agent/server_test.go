@@ -24,6 +24,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -4653,7 +4654,7 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 				for {
 					msg, err := readUdsMessage(conn)
 					if err != nil {
-						if errors.Is(err, io.EOF) {
+						if errors.Is(err, io.EOF) || fakeAudioPeerClosed(err) {
 							return
 						}
 						t.Errorf("fake audio read request: %v", err)
@@ -4673,6 +4674,13 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 						return
 					}
 					if err := writeUdsMessage(conn, udsMessage{HeaderJSON: string(respHeader), Payload: payload}); err != nil {
+						// A client that gives up, such as a recording drain
+						// hitting its deadline, closes while a response is
+						// being written; that is the client's behavior under
+						// test, not a fake-service failure.
+						if fakeAudioPeerClosed(err) {
+							return
+						}
 						t.Errorf("fake audio write response: %v", err)
 						return
 					}
@@ -4685,6 +4693,13 @@ func startFakeAudioServiceSocket(t *testing.T, handler func(audioRequest) (audio
 	}()
 
 	return socketPath
+}
+
+// fakeAudioPeerClosed reports whether err means the client closed its end
+// of a fake audio connection.
+func fakeAudioPeerClosed(err error) bool {
+	return errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.ENOTCONN)
 }
 
 func startFakeFrameServiceSocket(t *testing.T, handler func(map[string]any) (string, []byte)) string {

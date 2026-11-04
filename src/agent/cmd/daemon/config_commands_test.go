@@ -651,7 +651,6 @@ func TestWebConfigDTOMapsTerminationPolicy(t *testing.T) {
 		MaxSeconds:              12.5,
 		RepeatActionLimit:       7,
 		SameResultLimit:         8,
-		ScreenUnchangedLimit:    9,
 		SoftNoticeStallScore:    10,
 		RestrictToolsStallScore: 11,
 		TerminateStallScore:     12,

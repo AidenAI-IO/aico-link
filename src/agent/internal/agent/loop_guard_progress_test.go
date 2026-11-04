@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
@@ -34,6 +35,11 @@ func progressTestObservation(t *testing.T, rects ...image.Rectangle) string {
 
 func runPostActionWithScreens(t *testing.T, pointer *pointerTracker, input, before, after string) postActionScreenshotResult {
 	t.Helper()
+	return runPostActionToolWithScreens(t, "touch_gesture", pointer, input, before, after)
+}
+
+func runPostActionToolWithScreens(t *testing.T, toolName string, pointer *pointerTracker, input, before, after string) postActionScreenshotResult {
+	t.Helper()
 	screenshot := &stubTool{name: "screenshot"}
 	screenshot.callFn = func(context.Context, string) (string, error) {
 		if len(screenshot.inputs) == 1 {
@@ -41,7 +47,7 @@ func runPostActionWithScreens(t *testing.T, pointer *pointerTracker, input, befo
 		}
 		return after, nil
 	}
-	tool := newPostActionScreenshotTool(&stubTool{name: "touch_gesture", output: "ok"}, screenshot, 0).(*postActionScreenshotTool).withPointerTracker(pointer)
+	tool := newPostActionScreenshotTool(&stubTool{name: toolName, output: "ok"}, screenshot, 0).(*postActionScreenshotTool).withPointerTracker(pointer)
 	out, err := tool.Call(context.Background(), input)
 	if err != nil {
 		t.Fatal(err)
@@ -54,29 +60,67 @@ func runPostActionWithScreens(t *testing.T, pointer *pointerTracker, input, befo
 }
 
 // An absolute pointer leaving one spot and arriving at another changes the
-// screen even when the tap hit nothing; that alone is not progress.
+// screen even when nothing was hit; that alone is not progress. The squares
+// are larger than the real pointer so that, untracked, they exceed the
+// progress threshold.
 func TestPostActionScreenChangedIgnoresAbsolutePointerMovement(t *testing.T) {
 	before := progressTestObservation(t, image.Rect(40, 90, 60, 110))   // pointer at (250,250)
 	after := progressTestObservation(t, image.Rect(139, 229, 159, 249)) // pointer at (750,600)
-	tap := `{"type":"tap","point":{"x":750,"y":600}}`
+	move := `{"x":750,"y":600}`
 
-	if result := runPostActionWithScreens(t, nil, tap, before, after); !*result.ScreenChanged {
+	if result := runPostActionToolWithScreens(t, "mouse_move", nil, move, before, after); !*result.ScreenChanged {
 		t.Fatal("without pointer tracking the fixture must exceed the progress threshold")
 	}
 
 	pointer := &pointerTracker{}
 	pointer.set(&normalizedPoint{X: 250, Y: 250})
-	if result := runPostActionWithScreens(t, pointer, tap, before, after); *result.ScreenChanged {
+	if result := runPostActionToolWithScreens(t, "mouse_move", pointer, move, before, after); *result.ScreenChanged {
 		t.Fatal("pointer movement alone was reported as a screen change")
 	}
 	if last := pointer.current(); last == nil || last.X != 750 || last.Y != 600 {
-		t.Fatalf("pointer = %#v, want the tap point", last)
+		t.Fatalf("pointer = %#v, want the move target", last)
 	}
 
 	// A change away from the pointer is still progress.
 	changed := progressTestObservation(t, image.Rect(139, 229, 159, 249), image.Rect(20, 300, 180, 340))
 	if result := runPostActionWithScreens(t, pointer, `{"type":"tap","point":{"x":750,"y":600}}`, after, changed); !*result.ScreenChanged {
 		t.Fatal("a change outside the pointer areas was not reported")
+	}
+}
+
+// Feedback drawn around the touch point (a selection ring, a placed piece,
+// a confirm mark) falls inside the pointer exclusion square. The pointer disc
+// itself stays near the centre, so a tap is still credited when the ring
+// around it changes, while the pointer arriving alone is not.
+func TestPostActionScreenChangedSeesTapFeedbackAtThePointer(t *testing.T) {
+	// 200x400 fixture: the tap at (500,500) lands on pixel (100,200); the
+	// ring is 6 to 10 pixels out, the pointer disc fits inside 5.
+	pointerDisc := image.Rect(96, 196, 105, 205)
+	feedback := image.Rect(90, 190, 111, 211)
+	tap := `{"type":"tap","point":{"x":500,"y":500}}`
+
+	pointer := &pointerTracker{}
+	pointer.set(&normalizedPoint{X: 500, Y: 500})
+	before := progressTestObservation(t, pointerDisc)
+	if result := runPostActionWithScreens(t, pointer, tap, before, progressTestObservation(t, pointerDisc)); *result.ScreenChanged {
+		t.Fatal("a tap that changed nothing was reported as a screen change")
+	}
+
+	pointer.set(&normalizedPoint{X: 250, Y: 250})
+	if result := runPostActionWithScreens(t, pointer, tap, progressTestObservation(t), before); *result.ScreenChanged {
+		t.Fatal("the pointer arriving at the tap point was reported as a screen change")
+	}
+
+	pointer.set(&normalizedPoint{X: 500, Y: 500})
+	if result := runPostActionWithScreens(t, pointer, tap, before, progressTestObservation(t, feedback)); !*result.ScreenChanged {
+		t.Fatal("feedback around the tap point was not reported")
+	}
+
+	// mouse_move touches nothing, and a swipe's feedback is not centred on
+	// one point, so neither gets the tap-point check.
+	pointer.set(&normalizedPoint{X: 500, Y: 500})
+	if result := runPostActionWithScreens(t, pointer, `{"type":"swipe","start":{"x":500,"y":500},"end":{"x":500,"y":500}}`, before, progressTestObservation(t, feedback)); *result.ScreenChanged {
+		t.Fatal("a swipe was credited by the tap-point check")
 	}
 }
 
@@ -101,147 +145,86 @@ func TestPointerFinalPointFollowsPointerActions(t *testing.T) {
 	}
 }
 
-// Repeating a tap whose effect is too small to register (one more digit in a
-// field) must not restrict actions on the second attempt: screenshot results
-// share one hash, so "same result" would only repeat the signature check.
-func TestTerminationPolicyRepeatedTapWithoutVisibleChangeOnlyNotices(t *testing.T) {
+// The guard only catches obvious loops: the same UI action repeated while the
+// screen stays identical. Different actions on an unchanged screen, such as
+// placing pieces or filling a form whose small changes a block grid can miss,
+// are left to the model.
+func TestTerminationPolicyIgnoresDifferentActionsOnUnchangedScreen(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
-	first := progressTestObservation(t)
-	second := progressTestObservation(t, image.Rect(20, 100, 120, 200))
-	policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":250,"y":320}}`, first, false)
-	policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":750,"y":320}}`, second, false)
-	decision := policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":750,"y":320}}`, second, false)
-
-	if decision.Stop || policy.tier != TierSoftNotice {
-		t.Fatalf("decision=%#v tier=%d score=%d, want a soft notice", decision, policy.tier, policy.stallScore)
-	}
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":250,"y":440}}`); !allowed {
-		t.Fatal("next action was blocked after one unchanged repeat")
-	}
-}
-
-func restrictWithUnchangedActions(t *testing.T, policy *TerminationPolicy, screen string) {
-	t.Helper()
-	for _, direction := range []string{"up", "down", "left", "right"} {
-		if policy.tier >= TierRestrictTools {
-			return
+	screen := progressTestObservation(t)
+	for i := 0; i < 20; i++ {
+		input := fmt.Sprintf(`{"type":"tap","point":{"x":%d,"y":500}}`, 100+i*10)
+		if decision := policy.AfterToolCall("touch_gesture", input, screen, false); decision.Stop || decision.Notice != "" {
+			t.Fatalf("tap %d: decision=%#v, want no intervention", i+1, decision)
 		}
-		policy.AfterToolCall("touch_gesture", `{"type":"swipe","start":{"x":500,"y":500},"direction":"`+direction+`"}`, screen, false)
-	}
-	if policy.tier != TierRestrictTools {
-		t.Fatalf("tier = %d score=%d, want restrict tier", policy.tier, policy.stallScore)
+		if _, allowed := policy.BeforeToolCall("touch_gesture", input); !allowed {
+			t.Fatalf("tap %d was blocked", i+1)
+		}
 	}
 }
 
-// The restriction tells the model to diagnose with a fresh observation; doing
-// so allows one more action, and a second stall without progress keeps the
-// restriction until something changes.
-func TestTerminationPolicyObservationAllowsOneActionUnderRestriction(t *testing.T) {
+func TestTerminationPolicyStopsIdenticalUIActionOnIdenticalScreen(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	screen := progressTestObservation(t)
-	restrictWithUnchangedActions(t, policy, screen)
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); allowed {
-		t.Fatal("restricted policy allowed an action")
+	tap := `{"type":"tap","point":{"x":500,"y":500}}`
+	if decision := policy.AfterToolCall("touch_gesture", tap, screen, false); decision.Stop || decision.Notice != "" {
+		t.Fatalf("first tap: %#v", decision)
 	}
-
-	if decision := policy.AfterToolCall("screenshot", `{}`, screen, false); decision.Stop {
-		t.Fatalf("observation stopped the run: %#v", decision)
-	}
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); !allowed {
-		t.Fatal("action still blocked after a fresh observation")
-	}
-
-	policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`, screen, false)
+	// Observations and other tools between the repeats do not hide the loop.
 	policy.AfterToolCall("screenshot", `{}`, screen, false)
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":2,"y":2}}`); allowed {
-		t.Fatal("a second observation lifted the restriction again without progress")
+	policy.AfterToolCall("shell", `{"command":"sleep 5; echo ok"}`, "ok", false)
+	decision := policy.AfterToolCall("touch_gesture", tap, screen, false)
+	if decision.Stop || decision.Notice == "" {
+		t.Fatalf("second identical tap: %#v, want a notice", decision)
 	}
-
-	// Progress restores the allowance for a later stall.
-	policy.AfterToolCall("screenshot", `{}`, progressTestObservation(t, image.Rect(20, 100, 120, 200)), false)
-	restrictWithUnchangedActions(t, policy, progressTestObservation(t, image.Rect(20, 100, 120, 200)))
-	policy.AfterToolCall("screenshot", `{}`, progressTestObservation(t, image.Rect(20, 100, 120, 200)), false)
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":3,"y":3}}`); !allowed {
-		t.Fatal("observation did not lift a restriction after progress reset it")
-	}
-}
-
-func TestTerminationPolicyPrefersReportedScreenChanged(t *testing.T) {
-	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
-	screen := progressTestObservation(t)
-	restrictWithUnchangedActions(t, policy, screen)
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(screen), &payload); err != nil {
-		t.Fatal(err)
-	}
-	payload["screen_changed"] = true
-	reported, _ := json.Marshal(payload)
-	policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":9,"y":9}}`, string(reported), false)
-	if policy.tier != TierNone || policy.stallScore != 0 {
-		t.Fatalf("tier=%d score=%d, want progress from screen_changed=true on an identical image", policy.tier, policy.stallScore)
+	policy.AfterToolCall("wait_for_stable_screen", `{}`, screen, false)
+	decision = policy.AfterToolCall("touch_gesture", tap, screen, false)
+	if !decision.Stop || decision.Reason != StopReasonLoopDetected {
+		t.Fatalf("third identical tap: %#v, want a loop stop", decision)
 	}
 }
 
-// wait_for_stable_screen reports screen_changed when any frame differed while
-// waiting, which is not progress; under restriction it only earns the single
-// probation an observation gives.
-func TestTerminationPolicyIgnoresScreenChangedFromObservationTools(t *testing.T) {
+// A repeated action that keeps changing the screen (incrementing a counter,
+// deleting characters) is not a loop.
+func TestTerminationPolicyAllowsRepeatedActionThatChangesScreen(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
-	screen := progressTestObservation(t)
-	restrictWithUnchangedActions(t, policy, screen)
-
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(screen), &payload); err != nil {
-		t.Fatal(err)
-	}
-	payload["screen_changed"] = true
-	waitResult, _ := json.Marshal(payload)
-	policy.AfterToolCall("wait_for_stable_screen", `{}`, string(waitResult), false)
-	if policy.stallScore == 0 || policy.tier != TierSoftNotice {
-		t.Fatalf("tier=%d score=%d, want only the observation allowance, not progress", policy.tier, policy.stallScore)
-	}
-	policy.AfterToolCall("touch_gesture", `{"type":"tap","point":{"x":7,"y":7}}`, screen, false)
-	policy.AfterToolCall("wait_for_stable_screen", `{}`, string(waitResult), false)
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":8,"y":8}}`); allowed {
-		t.Fatal("a second wait_for_stable_screen lifted the restriction")
+	tap := `{"type":"tap","point":{"x":500,"y":500}}`
+	for i := 0; i < 10; i++ {
+		screen := progressTestObservation(t, image.Rect(10, 100, 20+i*8, 110))
+		if decision := policy.AfterToolCall("touch_gesture", tap, screen, false); decision.Stop || decision.Notice != "" {
+			t.Fatalf("tap %d: decision=%#v, want no intervention", i+1, decision)
+		}
 	}
 }
 
-// Repeated screenshots reach the restriction on their own; the observation
-// that earns the allowance repeats the previous call too, and its repeat
-// score must not take the allowance back.
-func TestTerminationPolicyRepeatedObservationKeepsItsAllowance(t *testing.T) {
+// The guard never blocks UI tools, so a model can always act on what it sees.
+func TestTerminationPolicyNeverRestrictsUITools(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	screen := progressTestObservation(t)
-	for i := 0; i < 10 && policy.tier < TierRestrictTools; i++ {
+	for i := 0; i < 5; i++ {
 		policy.AfterToolCall("screenshot", `{}`, screen, false)
 	}
-	if policy.tier != TierRestrictTools {
-		t.Fatalf("tier = %d score=%d, want repeated screenshots to restrict", policy.tier, policy.stallScore)
-	}
-	policy.AfterToolCall("screenshot", `{}`, screen, false)
 	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); !allowed {
-		t.Fatalf("tier=%d score=%d: the observation did not allow one action", policy.tier, policy.stallScore)
+		t.Fatal("a UI action was blocked")
 	}
 }
 
-// Under restriction at score 5, a failed screenshot followed by an identical
-// successful retry pushes the repeat score to the termination threshold; the
-// retry is still the first observation made under restriction and must allow
-// one action instead of ending the run.
-func TestTerminationPolicyObservationRetryKeepsItsAllowance(t *testing.T) {
+// Identical screenshots repeated with nothing in between are still a loop.
+func TestTerminationPolicyStopsRepeatedIdenticalObservations(t *testing.T) {
 	policy := NewTerminationPolicy(DefaultTerminationPolicyConfig())
 	screen := progressTestObservation(t)
-	restrictWithUnchangedActions(t, policy, screen)
-	policy.stallScore = policy.cfg.TerminateStallScore - 1
-	policy.refreshTier()
-	policy.AfterToolCall("screenshot", `{}`, "frame capture failed", true)
-	decision := policy.AfterToolCall("screenshot", `{}`, screen, false)
-	if decision.Stop {
-		t.Fatalf("decision = %#v, want the retry to earn the allowance", decision)
+	var decision TerminationDecision
+	for i := 0; i < 10 && !decision.Stop; i++ {
+		decision = policy.AfterToolCall("screenshot", `{}`, screen, false)
 	}
-	if _, allowed := policy.BeforeToolCall("touch_gesture", `{"type":"tap","point":{"x":1,"y":1}}`); !allowed {
-		t.Fatalf("tier=%d score=%d: the successful retry did not allow one action", policy.tier, policy.stallScore)
+	if !decision.Stop {
+		t.Fatal("repeated identical screenshots never stopped the run")
+	}
+	fresh := NewTerminationPolicy(DefaultTerminationPolicyConfig())
+	for i := 0; i < 10; i++ {
+		changed := progressTestObservation(t, image.Rect(10, 100, 20+i*8, 110))
+		if d := fresh.AfterToolCall("screenshot", `{}`, changed, false); d.Stop {
+			t.Fatalf("screenshot %d of a changing screen stopped the run", i+1)
+		}
 	}
 }
