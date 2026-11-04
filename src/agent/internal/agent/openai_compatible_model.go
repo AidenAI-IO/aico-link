@@ -932,7 +932,7 @@ func (m *openAICompatibleModel) decodeStreamingResponse(ctx context.Context, bod
 	generationInfo["llm_stream_reasoning_chunks"] = reasoningChunks
 	generationInfo["llm_stream_comment_count"] = commentCount
 	if taggedStream != nil {
-		if err := taggedStream.Finish(); err != nil {
+		if err := taggedStream.Finish(stopReason); err != nil {
 			scanErr = err
 			return nil, err
 		}
