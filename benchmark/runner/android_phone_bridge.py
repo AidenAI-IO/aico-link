@@ -241,34 +241,42 @@ def ensure_emulator_ethernet(serial: str) -> bool:
     to load it together with the static configuration.
     """
     features = _adb(serial, "shell", "pm", "list", "features")
-    if f"feature:{ETHERNET_FEATURE}" in features.splitlines():
-        return False
+    feature_present = f"feature:{ETHERNET_FEATURE}" in features.splitlines()
     with tempfile.NamedTemporaryFile(suffix="ipconfig.txt") as ipconfig:
         ipconfig.write(_ethernet_ipconfig())
         ipconfig.flush()
         _adb(serial, "push", ipconfig.name, "/data/local/tmp/aico-ipconfig.txt")
-    feature_xml = (
-        '<?xml version="1.0" encoding="utf-8"?>\n'
-        f'<permissions><feature name="{ETHERNET_FEATURE}" /></permissions>\n'
-    )
-    install = " && ".join([
-        f"rm -rf {ETHERNET_PERMISSIONS_COPY}",
-        f"mkdir -p {ETHERNET_PERMISSIONS_COPY}",
-        f"cp -a {ETHERNET_PERMISSIONS_DIR}/. {ETHERNET_PERMISSIONS_COPY}/",
-        f"printf %s {shlex.quote(feature_xml)} > {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
-        # Images may ship dangling symlinks here (e.g. extra_feature.xml), so
-        # touch only the new file's mode and never follow links when relabeling.
-        f"chmod 644 {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
-        f"chcon -hR u:object_r:vendor_configs_file:s0 {ETHERNET_PERMISSIONS_COPY}",
-        f"mount -o bind {ETHERNET_PERMISSIONS_COPY} {ETHERNET_PERMISSIONS_DIR}",
-        *(
+    config_present = _adb(serial, "shell", " && ".join(
+        f"cmp -s /data/local/tmp/aico-ipconfig.txt {path}/ipconfig.txt"
+        for path in ETHERNET_IPCONFIG_DIRS
+    ) + " && echo present || echo missing") == "present"
+    if feature_present and config_present:
+        return False
+    install = []
+    if not feature_present:
+        feature_xml = (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            f'<permissions><feature name="{ETHERNET_FEATURE}" /></permissions>\n'
+        )
+        install.extend([
+            f"rm -rf {ETHERNET_PERMISSIONS_COPY}",
+            f"mkdir -p {ETHERNET_PERMISSIONS_COPY}",
+            f"cp -a {ETHERNET_PERMISSIONS_DIR}/. {ETHERNET_PERMISSIONS_COPY}/",
+            f"printf %s {shlex.quote(feature_xml)} > {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
+            # Images may ship dangling symlinks here (e.g. extra_feature.xml), so
+            # touch only the new file's mode and never follow links when relabeling.
+            f"chmod 644 {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
+            f"chcon -hR u:object_r:vendor_configs_file:s0 {ETHERNET_PERMISSIONS_COPY}",
+            f"mount -o bind {ETHERNET_PERMISSIONS_COPY} {ETHERNET_PERMISSIONS_DIR}",
+        ])
+    if not config_present:
+        install.extend([
             f"mkdir -p {path} && cp /data/local/tmp/aico-ipconfig.txt {path}/ipconfig.txt"
             f" && chown system:system {path} {path}/ipconfig.txt && chmod 600 {path}/ipconfig.txt"
             for path in ETHERNET_IPCONFIG_DIRS
-        ),
-        f"restorecon -R {ETHERNET_IPCONFIG_DIRS[0]}",
-    ])
-    _adb(serial, "shell", install)
+        ])
+        install.append(f"restorecon -R {ETHERNET_IPCONFIG_DIRS[0]}")
+    _adb(serial, "shell", " && ".join(install))
     _adb(serial, "shell", "stop")
     _adb(serial, "shell", "start")
     time.sleep(10)

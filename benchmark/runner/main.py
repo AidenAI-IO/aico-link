@@ -955,7 +955,8 @@ def _cmd_run_auto_agent_setup_inner(
     # Tasks that leave the companion App in the background can reach Phone
     # Bridge only through its FGS poller, which needs a board-like network.
     background_bridge = bool(bridge_serial) and any(
-        unit.task.foreground_app_id != ANDROID_BRIDGE_PACKAGE for unit in units
+        not unit.skip_reason and unit.task.foreground_app_id != ANDROID_BRIDGE_PACKAGE
+        for unit in units
     )
     board_network = (
         emulator_board_network(bridge_serial) if background_bridge else nullcontext()

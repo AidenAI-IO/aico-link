@@ -113,12 +113,31 @@ def test_run_cases_emits_an_annotation_for_an_interrupted_run(
     )
 
 
+@pytest.mark.parametrize("bridge_enabled", [False, True])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_run_case_terminates_the_runner_process_group_on_timeout(
     monkeypatch,
     tmp_path: Path,
+    bridge_enabled: bool,
+    cleanup_fails: bool,
 ) -> None:
-    case = _case("isolated", "isolated")
+    case = SuiteCase(
+        id="timeout", suite="suites/timeout.json",
+        environment="adb" if bridge_enabled else "isolated",
+        android_phone_bridge=bridge_enabled,
+    )
     captured: dict[str, object] = {}
+    cleanup_events = []
+
+    def remove_network(serial):
+        assert captured.get("terminated") is not None
+        cleanup_events.append(("network", serial))
+        if cleanup_fails:
+            raise RuntimeError("emulator unavailable")
+
+    monkeypatch.setattr(run_case_module, "remove_board_network", remove_network)
+    monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("", None))
+    monkeypatch.setattr(run_case_module, "_stop_service", lambda service: cleanup_events.append("service"))
     worker_dir = tmp_path / "runs" / "ci-timeout" / "workers" / "worker-token"
     worker_dir.mkdir(parents=True)
 
@@ -154,7 +173,7 @@ def test_run_case_terminates_the_runner_process_group_on_timeout(
     returncode = run_case_module.run_case(
         case,
         run_id="ci-timeout",
-        environment={},
+        environment={"ANDROID_SERIAL": "emulator-5554"},
         log_path=tmp_path / "case.log",
         timeout_seconds=1,
     )
@@ -162,6 +181,9 @@ def test_run_case_terminates_the_runner_process_group_on_timeout(
     assert returncode == 1
     assert captured["kwargs"]["start_new_session"] is True
     assert captured["terminated"] is not None
+    assert cleanup_events == (
+        [("network", "emulator-5554"), "service"] if bridge_enabled else ["service"]
+    )
     assert captured["cleanup_command"] == [
         "docker",
         "compose",

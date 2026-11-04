@@ -391,6 +391,8 @@ jobs:
               -d 192.168.42.1/32 -p tcp --dport 8080 \
               -j DNAT --to-destination 127.0.0.1:8080 >/dev/null 2>&1 || true
             adb -s "$ANDROID_SERIAL" reverse --remove tcp:8080 >/dev/null 2>&1 || true
+            # A terminated runner cannot execute its board-network context cleanup.
+            adb -s "$ANDROID_SERIAL" shell ip link del eth1 >/dev/null 2>&1 || true
           fi
           # Every run id in this job starts with the prefix, so one prefix sweep
           # covers all the cases the fan-out started.

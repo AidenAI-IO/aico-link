@@ -105,35 +105,40 @@ def test_ethernet_ipconfig_is_static_board_address() -> None:
     assert data[prefix_at:prefix_at + 4] == b"\x00\x00\x00\x18"
 
 
-def test_emulator_ethernet_skips_restart_when_feature_present(monkeypatch) -> None:
+@pytest.mark.parametrize("feature_present", [False, True])
+@pytest.mark.parametrize("config_present", [False, True])
+def test_emulator_ethernet_checks_feature_and_config_independently(
+    monkeypatch, feature_present, config_present,
+) -> None:
     calls = []
-    monkeypatch.setattr(android_phone_bridge, "_adb", lambda serial, *args: calls.append(args)
-                        or "feature:android.hardware.touchscreen\nfeature:android.hardware.ethernet")
-
-    assert android_phone_bridge.ensure_emulator_ethernet("emulator-5554") is False
-    assert calls == [("shell", "pm", "list", "features")]
-
-
-def test_emulator_ethernet_enables_feature_and_restarts_framework(monkeypatch) -> None:
-    calls = []
-    features = iter(["feature:android.hardware.touchscreen", "feature:android.hardware.ethernet"])
+    features = iter([
+        "feature:android.hardware.ethernet" if feature_present else "feature:android.hardware.touchscreen",
+        "feature:android.hardware.ethernet",
+    ])
 
     def fake_adb(serial, *args):
         calls.append(args)
         if args == ("shell", "pm", "list", "features"):
             return next(features)
+        if args[0] == "shell" and args[1].startswith("cmp -s"):
+            for path in android_phone_bridge.ETHERNET_IPCONFIG_DIRS:
+                assert f"{path}/ipconfig.txt" in args[1]
+            return "present" if config_present else "missing"
         return "1" if args[-1] == "sys.boot_completed" else ""
 
     monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
     monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
 
-    assert android_phone_bridge.ensure_emulator_ethernet("emulator-5554") is True
+    restart = not (feature_present and config_present)
+    assert android_phone_bridge.ensure_emulator_ethernet("emulator-5554") is restart
     assert calls[1][0] == "push" and calls[1][2] == "/data/local/tmp/aico-ipconfig.txt"
-    install = calls[2][1]
-    assert "mount -o bind /data/local/tmp/aico-ethernet-permissions /vendor/etc/permissions" in install
-    assert "android.hardware.ethernet" in install
-    assert "/data/misc/apexdata/com.android.tethering/misc/ethernet/ipconfig.txt" in install
-    assert calls[3:5] == [("shell", "stop"), ("shell", "start")]
+    if not restart:
+        assert len(calls) == 3
+        return
+    install = calls[3][1]
+    assert ("mount -o bind" in install) is (not feature_present)
+    assert ("cp /data/local/tmp/aico-ipconfig.txt" in install) is (not config_present)
+    assert calls[4:6] == [("shell", "stop"), ("shell", "start")]
 
 
 def test_emulator_board_network_adds_and_always_removes_veth(monkeypatch) -> None:

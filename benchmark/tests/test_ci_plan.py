@@ -278,6 +278,8 @@ def test_android_cases_use_run_completeness_not_task_pass_rate(
     monkeypatch.setattr(run_case_module, "_environment_url", lambda *args, **kwargs: ("http://bridge.test", None))
     monkeypatch.setattr(run_case_module, "_stop_daemon_projects_by_run_id", lambda run_id: None)
     monkeypatch.setattr(run_case_module, "_stop_service", lambda service: None)
+    network_cleanup = []
+    monkeypatch.setattr(run_case_module, "remove_board_network", network_cleanup.append)
     commands = []
     def run(command, **kwargs):
         commands.append(command)
@@ -288,6 +290,7 @@ def test_android_cases_use_run_completeness_not_task_pass_rate(
         case, run_id="ci-test", environment={"ANDROID_SERIAL": "emulator-5554"},
     ) == (0 if complete else 1)
     assert ("--android-phone-bridge-serial" in commands[0]) == case.android_phone_bridge
+    assert network_cleanup == (["emulator-5554"] if case.android_phone_bridge else [])
 
 
 @pytest.mark.parametrize(

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ci.plan import BENCHMARK_ROOT, CatalogError, SuiteCase, load_catalog
-from runner.android_phone_bridge import ANDROID_BRIDGE_PACKAGE
+from runner.android_phone_bridge import ANDROID_BRIDGE_PACKAGE, remove_board_network
 from runner.process import terminate_process_tree
 
 
@@ -492,6 +492,13 @@ def run_case(
         manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
         return _effective_exit_code(returncode, manifest_path)
     finally:
+        # The runner's context manager cannot unwind after SIGTERM/SIGKILL.
+        # Restore the shared emulator before the next case can acquire it.
+        if case.android_phone_bridge and runtime_environment.get("ANDROID_SERIAL"):
+            try:
+                remove_board_network(runtime_environment["ANDROID_SERIAL"])
+            except (RuntimeError, OSError, subprocess.TimeoutExpired) as exc:
+                print(f"Warning: failed to remove emulator board network: {exc}", file=sys.stderr)
         _stop_daemon_projects_by_run_id(run_id)
         _stop_service(service)
         if case.environment == "mobilegym" and service is None:

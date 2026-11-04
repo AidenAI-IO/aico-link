@@ -581,21 +581,26 @@ With the companion App in the background, Phone Bridge reaches the Agent only
 through the App's foreground service (FGS), which polls the HTTP command queue.
 That service polls only over a USB or Ethernet Android Network that routes to
 the board subnet, and the emulator has neither. For runs that contain
-background Bridge tasks, the runner therefore gives the rooted emulator a
-board-like link:
+runnable background Bridge tasks, the runner therefore gives the rooted emulator
+a board-like link; skipped tasks do not trigger this setup:
 
-1. If the emulator lacks the `android.hardware.ethernet` feature, the runner
-   bind-mounts a copy of `/vendor/etc/permissions` that adds it, writes a
-   static `eth1` configuration (`192.168.42.2/24`), and restarts the Android
-   framework once so that EthernetService starts. The bind mount is lost on
-   reboot, so the check runs on every bridge run.
+1. The runner checks the `android.hardware.ethernet` feature and its static
+   `eth1` configuration (`192.168.42.2/24`) independently. If the feature is
+   missing, it bind-mounts a copy of `/vendor/etc/permissions` that adds it.
+   If the stored configuration differs, it installs the benchmark configuration.
+   Either change triggers one Android framework restart so EthernetService
+   loads the configuration. The bind mount is lost on reboot, so both checks
+   run on every background Bridge run.
 2. It adds a veth pair, `eth1` with peer `aicobd` (`192.168.42.1/24`), which
    Android provisions as an Ethernet network. The App binds its FGS client to
    that network. Requests to `192.168.42.1:8080` still reach the task Agent
    through the existing iptables DNAT rule and `adb reverse`.
 3. Background tasks wait for the Agent to report `fgs_bridge_enabled=true`
    and fail setup otherwise, instead of silently falling back to ADB text
-   input. The veth pair is removed when the run ends.
+   input. The runner removes the veth pair when the run ends. CI also removes
+   it in the parent case's cleanup after terminating a timed-out runner, before
+   another case can use the shared emulator. The workflow's always-run cleanup
+   provides a further backstop for job cancellation.
 
 While `eth1` exists, Android prefers it as the default network, so the
 emulator has no internet access. Settings text editing does not need it, and
