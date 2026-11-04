@@ -210,12 +210,16 @@ func InitializeContextManager(
 	hooks []contextmanager.AppendMessageHook,
 ) (*contextmanager.ContextManager, error) {
 	manager, err := contextmanager.LoadContextManagerFromCurrentSession(sessionFolder)
-	if err != nil || !contextManagerHasSystemPrompt(manager, systemPrompt) {
-		// Create a new append-only session when there is no current session or
-		// when configuration changes require a different system prompt.
+	if err != nil || !sessionHasSystemMessage(manager) {
 		manager, err = contextmanager.NewContextManager(sessionFolder, systemPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create context manager: %w", err)
+		}
+	} else if !contextManagerHasSystemPrompt(manager, systemPrompt) {
+		// A configuration change, such as the response locale or time zone,
+		// rewrites the system message and keeps the conversation.
+		if err := replaceSessionSystemPrompt(manager, systemPrompt); err != nil {
+			return nil, fmt.Errorf("refresh session system prompt: %w", err)
 		}
 	} else if strings.TrimSpace(withUserProfileSection(manager.MessageListDump().Messages[0].Content, "")) != strings.TrimSpace(withUserProfileSection(systemPrompt, "")) {
 		// The generated date is runtime context, not a configuration change.
@@ -236,6 +240,52 @@ func InitializeContextManager(
 	manager.AddAppendMessageHooks(hooks)
 
 	return manager, nil
+}
+
+func sessionHasSystemMessage(manager *contextmanager.ContextManager) bool {
+	if manager == nil {
+		return false
+	}
+	messageList := manager.MessageListDump().Messages
+	return len(messageList) > 0 && messageList[0].Role == messages.MessageRoleSystem
+}
+
+// syncSessionSystemPrompt brings an existing session up to the current system
+// prompt. Only the generated date and the user profile section may differ
+// without a rewrite: the date has its own state refresh and the profile has
+// refreshUserProfileSection.
+func syncSessionSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) error {
+	if !sessionHasSystemMessage(manager) || contextManagerHasSystemPrompt(manager, systemPrompt) {
+		return nil
+	}
+	return replaceSessionSystemPrompt(manager, systemPrompt)
+}
+
+// replaceSessionSystemPrompt rewrites the system message in a new revision, the
+// same way context compaction and refreshUserProfileSection do. The old
+// transcript stays on disk, the conversation continues, and scheduled tasks keep
+// following the session lineage. When systemPrompt carries no user profile, the
+// session's section is kept so a failed profile read cannot drop it.
+func replaceSessionSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) error {
+	messageList, version := manager.MessageSnapshot()
+	if len(messageList) == 0 || messageList[0].Role != messages.MessageRoleSystem {
+		return nil
+	}
+	profile := userProfileSection(systemPrompt)
+	if strings.TrimSpace(profile) == "" {
+		profile = userProfileSection(messageList[0].Content)
+	}
+	messageList[0].Content = withUserProfileSection(systemPrompt, profile)
+	// A revision starts a fresh provider conversation; a Responses ID would
+	// chain the rewritten transcript onto stale provider state.
+	for i := range messageList {
+		messageList[i].ResponsesResponseID = ""
+	}
+	candidate, err := contextmanager.NewContextManagerRevisionFromMessageListAtVersion(manager, messageList, version)
+	if err != nil {
+		return err
+	}
+	return manager.Activate(candidate)
 }
 
 func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) bool {

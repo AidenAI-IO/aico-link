@@ -61,6 +61,7 @@ type Runtime struct {
 	configPrepare           ConfigPrepareFunc
 	configContextRotate     atomic.Bool
 	configUserContextRotate atomic.Bool
+	configPromptRefresh     atomic.Bool
 	configStatusMu          sync.Mutex
 	configStatus            ConfigApplyStatus
 	configPending           *Config
@@ -1234,8 +1235,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		r.contextManager = recoveredManager
 	}
 
-	// Configuration changes rotate at the next task boundary, preserving the
-	// complete old transcript and provider-specific continuation metadata.
+	// A model or provider change starts a new conversation at the next task
+	// boundary, preserving the complete old transcript and its
+	// provider-specific continuation metadata.
 	// setup context manager if not initialized
 	hadContextManager := r.contextManager != nil
 	if r.contextManager == nil {
@@ -1252,9 +1254,19 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if resetErr = r.contextManager.Activate(candidate); resetErr != nil {
 			return RunResult{}, resetErr
 		}
+	} else if r.configPromptRefresh.Load() && hadContextManager {
+		// A prompt setting saved since the last task, such as the response
+		// locale or time zone, rewrites the system message and keeps the
+		// conversation.
+		if err := syncSessionSystemPrompt(r.contextManager, profile.SystemPrompt); err != nil {
+			return RunResult{}, fmt.Errorf("refresh session system prompt: %w", err)
+		}
 	}
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
+	}
+	if r.configPromptRefresh.Load() {
+		r.configPromptRefresh.Store(false)
 	}
 	// The profile only enriches the prompt, so a read or refresh failure keeps
 	// the section the session already carries instead of failing the run.

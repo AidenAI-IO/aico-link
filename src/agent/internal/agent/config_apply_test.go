@@ -14,6 +14,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"aico-agent/internal/agent/model"
+
+	langtools "github.com/tmc/langchaingo/tools"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 func waitForConfigApplied(t *testing.T, r *Runtime) ConfigApplyStatus {
@@ -468,5 +474,63 @@ func TestConfigApplyLogsRebootStatusPerRevision(t *testing.T) {
 	secondEvent := eventFor(2)
 	if !strings.Contains(secondEvent, "reboot_required=false") {
 		t.Fatalf("revision 2 event = %q, want its own reboot status", secondEvent)
+	}
+}
+
+func TestConfigApplyPromptSettingKeepsConversation(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		change       func(*Config)
+		keepsHistory bool
+	}{
+		{"locale", func(c *Config) { c.Locale = "en-US" }, true},
+		{"timezone", func(c *Config) { c.Timezone = "Asia/Tokyo" }, true},
+		{"model", func(c *Config) { c.Model.Model = "other-model" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := ensureTestConfigDir(t, t.TempDir())
+			llmModel := &scriptedModel{responses: []*llms.ContentResponse{contentResponse("first answer"), contentResponse("second answer")}}
+			cfg := Config{
+				ConfigDir:     configDir,
+				Model:         ModelConfig{Provider: "fake", Model: "test-model"},
+				Locale:        "zh-CN",
+				Timezone:      "UTC",
+				Instruction:   "Answer directly.",
+				MaxIterations: 1,
+			}
+			runtime := NewRuntimeWithDeps(cfg, &testModelResolver{model: llmModel, spec: model.ModelSpec{ContextWindow: 1_000_000}}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+			defer runtime.Close()
+			runtime.logger = nil
+
+			if _, err := runtime.Run(context.Background(), RunRequest{Input: "first question"}); err != nil {
+				t.Fatalf("first Run() error = %v", err)
+			}
+			firstSessionID := runtime.contextManager.GetSessionID()
+			next := runtime.ConfigSnapshot()
+			tc.change(&next)
+			if err := runtime.ApplyConfigSnapshot(next); err != nil {
+				t.Fatalf("ApplyConfigSnapshot() error = %v", err)
+			}
+			if _, err := runtime.Run(context.Background(), RunRequest{Input: "second question"}); err != nil {
+				t.Fatalf("second Run() error = %v", err)
+			}
+
+			sent := messageText(llmModel.messages[len(llmModel.messages)-1])
+			if got := strings.Contains(sent, "first question") && strings.Contains(sent, "first answer"); got != tc.keepsHistory {
+				t.Fatalf("second request carries first turn = %t, want %t:\n%s", got, tc.keepsHistory, sent)
+			}
+			system := runtime.contextManager.MessageListDump().Messages[0].Content
+			want := runtime.buildAgentProfile(runtime.skills, nil, "").SystemPrompt
+			if systemPromptIdentity(system) != systemPromptIdentity(want) {
+				t.Fatalf("session system prompt was not updated:\n%s", system)
+			}
+			ancestor, err := runtime.contextManager.HasSessionAncestor(firstSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ancestor != tc.keepsHistory {
+				t.Fatalf("new session descends from the first = %t, want %t", ancestor, tc.keepsHistory)
+			}
+		})
 	}
 }

@@ -148,7 +148,9 @@ A save goes through the same validation and atomic write as Config Web, then
 queues the new revision for live application like a Config Web save. The
 running task holds the run lock, so the change takes effect when the current
 task or voice conversation ends. Each save logs `config_self_update` with the
-changed settings and revision.
+changed settings and revision. Changing `agent.locale` or `agent.timezone`
+updates the system prompt and keeps the conversation, so the Agent still
+remembers the request that changed it.
 
 A saved setting can still have no effect, and the result says so instead of
 letting the reply claim it changed. `ignored` lists, with a reason, a setting
@@ -228,7 +230,7 @@ The firmware starts `agent config-web` on port 80.
 
 ### What the page can configure
 
-The page renders the following config sections. The Language & Time Zone controls persist the device-level `locale` and `timezone` and apply them online. Changing either value rotates the context at the next task boundary instead of rewriting the previous session. The selected time zone is included in Agent state and controls the current-date context and controller shell commands.
+The page renders the following config sections. The Language & Time Zone controls persist the device-level `locale` and `timezone` and apply them online. Changing either value, or the Agent prompt, rewrites the session's system message in a new session revision at the next task boundary: the conversation continues, the previous revision stays on disk, and provider continuation IDs are dropped. Changing the model, provider, API mode, or base URL starts a new conversation instead, because the transcript carries provider-specific reasoning and continuation data. The selected time zone is included in Agent state and controls the current-date context and controller shell commands.
 
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
