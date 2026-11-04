@@ -202,6 +202,16 @@ def cli(argv: list[str] | None = None) -> int:
     )
     p_compare = sub.add_parser("compare")
     p_compare.add_argument("--runs", nargs=2, required=True)
+    p_experiment = sub.add_parser("experiment", help="Compare native agents on an existing operation suite")
+    p_experiment.add_argument("--config", required=True, help="Experiment JSON (suite, agents, repeats, seed)")
+    p_experiment.add_argument("--suites-dir", default=str(REPO_ROOT / "benchmark" / "suites"))
+    p_experiment.add_argument("--out", default=str(REPO_ROOT / "benchmark" / "runs"))
+    p_experiment.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
+    p_experiment.add_argument("--agent-config", default="")
+    p_experiment.add_argument("--daemon-image", default="aico-agent-daemon:local")
+    p_experiment.add_argument("--no-build-daemon-image", action="store_true")
+    p_experiment.add_argument("--judge-model", default=JudgeConfig().model)
+    p_experiment.add_argument("--judge-base-url", default=JudgeConfig().base_url)
     p_publish = sub.add_parser("publish-langfuse")
     p_publish.add_argument("--run-dir", required=True)
     p_publish.add_argument("--dataset-prefix", default="aico-benchmark")
@@ -219,6 +229,9 @@ def cli(argv: list[str] | None = None) -> int:
     from runner.services import add_service_parsers
     add_service_parsers(sub)
     args = parser.parse_args(argv)
+    if args.cmd == "experiment":
+        from runner.experiment import experiment_cli
+        return experiment_cli(args)
     if args.cmd == "run":
         return _cmd_run(args)
     if args.cmd == "rejudge":
@@ -480,9 +493,11 @@ def _build_task_units(
     args: argparse.Namespace,
     suite: Suite,
     target_platform: str,
+    environment_health: dict | None = None,
 ) -> list[TaskRunUnit]:
     units: list[TaskRunUnit] = []
     uses_mock_environment = _suite_has_mock_environment(suite)
+    bridge_type = str((environment_health or {}).get("bridge_type") or "") if not uses_mock_environment else ""
     for task in suite.tasks:
         repeats = _task_repeats(args, task)
         task_target_platform = target_platform
@@ -498,6 +513,9 @@ def _build_task_units(
                 skip_reason = str(exc)
         if not skip_reason:
             skip_reason = _task_platform_skip_reason(task, task_target_platform)
+        if not skip_reason and task.environment_bridge_types and bridge_type not in task.environment_bridge_types:
+            skip_reason = (f"task requires environment bridges {', '.join(task.environment_bridge_types)}; "
+                           f"current bridge is {bridge_type or 'unavailable'}")
         for attempt in range(1, repeats + 1):
             units.append(
                 TaskRunUnit(
@@ -555,6 +573,7 @@ def _cmd_run_auto_agent_setup(
     target_platform: str,
     run_id: str,
     run_dir: Path,
+    environment_health: dict | None = None,
 ) -> int:
     mock_server = None
     if _suite_has_mock_environment(suite):
@@ -592,6 +611,7 @@ def _cmd_run_auto_agent_setup(
             run_id,
             run_dir,
             mock_server=mock_server,
+            environment_health=environment_health,
         )
     finally:
         if mock_server is not None:
@@ -606,6 +626,7 @@ def _cmd_run_auto_agent_setup_inner(
     run_id: str,
     run_dir: Path,
     mock_server=None,
+    environment_health: dict | None = None,
 ) -> int:
     if args.repeats is not None and args.repeats <= 0:
         print(f"Error: --repeats must be positive, got {args.repeats}", file=sys.stderr)
@@ -638,7 +659,7 @@ def _cmd_run_auto_agent_setup_inner(
     workers_dir.mkdir(parents=True, exist_ok=True)
     setup_log = run_dir / "auto-agent-setup.log"
 
-    units = _build_task_units(args, suite, target_platform)
+    units = _build_task_units(args, suite, target_platform, environment_health)
     mock_platform_fallback = target_platform
     if not mock_platform_fallback and suite.mock_environment is not None:
         mock_platform_fallback = suite.mock_environment.platform.value
@@ -1102,8 +1123,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
             target_platform,
             run_id,
             run_dir,
+            environment_health=environment_health,
         )
-    units = _build_task_units(args, suite, target_platform)
+    units = _build_task_units(args, suite, target_platform, environment_health)
     has_runnable_units = any(not unit.skip_reason for unit in units)
     if args.environment_url:
         clear_stale_adb_android_owner(args.environment_url)
@@ -1131,7 +1153,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 2
     if not args.environment_url:
         target_platform = daemon_platform.value
-        units = _build_task_units(args, suite, target_platform)
+        units = _build_task_units(args, suite, target_platform, environment_health)
         has_runnable_units = any(not unit.skip_reason for unit in units)
     if (
         has_runnable_units

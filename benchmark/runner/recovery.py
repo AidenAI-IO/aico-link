@@ -92,6 +92,8 @@ def prepare_task_isolation(
                     task.setup,
                     prompt_prefix=suite.prompt_prefix,
                     consolidation_expectation=task.consolidation_expectation,
+                    environment_url=environment_url,
+                    benchmark_task_id=benchmark_task_id or task.id,
                 )
             return setup_result
         except (ResetError, AgentTimeoutError, AgentRequestError) as e:

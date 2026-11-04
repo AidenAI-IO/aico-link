@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -17,6 +18,51 @@ import runner.langfuse_reporter as langfuse_reporter
 import runner.preflight as preflight_module
 import runner.suite as suite_module
 import runner.webui as webui
+
+
+@pytest.mark.parametrize("bridge_type,skipped", [("mobilegym", False), ("adb_android", True), ("", True)])
+def test_mobilegym_seeded_task_is_skipped_on_other_bridges(monkeypatch, bridge_type, skipped):
+    suite = suite_module.load_suite(Path(__file__).resolve().parents[1] / "suites/phone_control_v1.json")
+    suite.tasks = [task for task in suite.tasks if task.id == "select_all_and_delete"]
+    args = SimpleNamespace(environment_url="http://env" if bridge_type else "", repeats=None)
+    monkeypatch.setattr(main, "_read_environment_health", lambda _: pytest.fail("Task planning must not fetch health"))
+    units = main._build_task_units(args, suite, "android", {"bridge_type": bridge_type})
+    assert len(units) == 1
+    assert bool(units[0].skip_reason) is skipped
+    if skipped:
+        assert "mobilegym" in units[0].skip_reason
+
+
+@pytest.mark.parametrize("auto_setup", [False, True])
+def test_task_planning_reuses_preflight_health_in_both_run_paths(tmp_path, monkeypatch, auto_setup):
+    suite_path = tmp_path / "suite.json"
+    suite_path.write_text(json.dumps({"name": "test", "tasks": [{
+        "id": "t1", "category": "diagnostic", "prompt": "test", "description_for_judge": "test",
+        "environment_bridge_types": ["mobilegym"], "rubric": [{"id": "ok", "check": "ok"}],
+    }]}))
+    health = {"bridge_type": "mobilegym", "platform": "android"}
+    health_calls = []
+    def read_health(url):
+        health_calls.append(url)
+        assert len(health_calls) == 1
+        return health
+    class Planned(Exception):
+        pass
+    build_units = main._build_task_units
+    def inspect_units(args, suite, target, environment_health=None):
+        assert environment_health is health
+        assert not build_units(args, suite, target, environment_health)[0].skip_reason
+        raise Planned
+    monkeypatch.setattr(main, "_read_environment_health", read_health)
+    monkeypatch.setattr(main, "_preflight_mobilegym_environment", lambda *args, **kwargs: None)
+    monkeypatch.setattr(main, "_build_task_units", inspect_units)
+    argv = ["run", "--suite", str(suite_path), "--out", str(tmp_path / "runs"),
+            "--environment-url", "http://env", "--no-judge"]
+    if auto_setup:
+        argv.append("--auto-agent-setup")
+    with pytest.raises(Planned):
+        main.cli(argv)
+    assert health_calls == ["http://env"]
 
 
 def test_execution_environment_uses_selected_tasks_and_explicit_run_context(monkeypatch):

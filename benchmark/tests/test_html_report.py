@@ -353,6 +353,7 @@ def test_generate_report_includes_full_trace_with_screenshots(tmp_path: Path):
     (task_dir / "pre.jpg").write_bytes(pre)
     (task_dir / "post.jpg").write_bytes(post)
     (steps_dir / "step_01_screenshot.jpg").write_bytes(step)
+    (task_dir / "step_1.jpg").write_bytes(step)
     image_payload = base64.b64encode(b"history-shot").decode("ascii")
     (task_dir / "history.json").write_text(
         json.dumps(
@@ -414,7 +415,7 @@ def test_generate_report_includes_full_trace_with_screenshots(tmp_path: Path):
     assert "<base64 image data" in html
     assert f"data:image/png;base64,{base64.b64encode(pre).decode('ascii')}" in html
     assert f"data:image/jpeg;base64,{base64.b64encode(post).decode('ascii')}" in html
-    assert f"data:image/jpeg;base64,{base64.b64encode(step).decode('ascii')}" not in html
+    assert f"data:image/jpeg;base64,{base64.b64encode(step).decode('ascii')}" in html
     assert image_payload not in html
 
 
@@ -535,3 +536,31 @@ def test_upload_report_uploads_analysis_artifacts(tmp_path: Path):
     command = client.calls[0][1]["command"]
     assert "llm_analysis.md" in command
     assert "llm_analysis.json" in command
+
+
+def test_generate_report_finds_first_attempt_dir_and_falls_back_to_task_prompt(tmp_path: Path):
+    run_dir = tmp_path / "runs" / "codex"
+    attempt_dir = run_dir / "tasks" / "task-1" / "attempt_1"
+    attempt_dir.mkdir(parents=True)
+    pre, step = b"\xff\xd8pre", b"\xff\xd8step"
+    (attempt_dir / "pre.jpg").write_bytes(pre)
+    (attempt_dir / "step_1.jpg").write_bytes(step)
+    # External harness history is rebuilt from tool evidence and has no user turn.
+    (attempt_dir / "history.json").write_text(json.dumps([
+        {"type": "tool_call", "tool_name": "screenshot", "tool_input": "{}"},
+        {"type": "tool_result", "tool_name": "screenshot", "content": "screenshot observation"},
+    ]), encoding="utf-8")
+    (attempt_dir / "trace.json").write_text(json.dumps({"tool_calls": [], "final_response": "Done"}), encoding="utf-8")
+    (run_dir / "manifest.json").write_text(json.dumps({"run_id": "codex", "totals": {"tasks": 1}}), encoding="utf-8")
+    (run_dir / "results.jsonl").write_text(json.dumps({
+        "task_id": "task-1", "category": "single_step", "attempt": 1, "status": "passed",
+        "task_prompt": "Open settings.", "rubric_pass_count": 1, "rubric_total": 1, "metrics": {"wall_ms": 9},
+        # A path recorded relative to another working directory no longer resolves.
+        "artifact_dir": "runs/webui/experiments/exp/runs/codex/tasks/task-1/attempt_1",
+    }) + "\n", encoding="utf-8")
+
+    task = _report_tasks(generate_report_html(run_dir))[0]
+
+    assert task["prompt"] == "Open settings."
+    assert task["full_trace"]["pre_screenshot"] == f"data:image/jpeg;base64,{base64.b64encode(pre).decode('ascii')}"
+    assert base64.b64encode(step).decode("ascii") in json.dumps(task["full_trace"])

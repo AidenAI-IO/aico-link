@@ -30,6 +30,16 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+@pytest.mark.parametrize("value", ["mobilegym", None, [""], ["MobileGym"], [1]])
+def test_invalid_environment_bridge_allowlist_is_rejected(tmp_path, value):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["environment_bridge_types"] = value
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps(fixture))
+    with pytest.raises(SuiteValidationError, match="environment_bridge_types"):
+        load_suite(path)
+
+
 def test_android_bridge_input_text_requires_non_empty_string(tmp_path: Path):
     fixture = json.loads(json.dumps(FIXTURE))
     fixture["tasks"][0]["android_bridge_input_text"] = "Aiden 输入验证 #42"
@@ -1243,11 +1253,16 @@ def test_phone_control_text_editing_tasks_have_input_setup():
     suite = load_suite(suite_path)
     task_by_id = {task.id: task for task in suite.tasks}
 
-    for task_id in ("type_long_mixed_text", "select_all_and_delete", "copy_paste_text"):
+    for task_id in ("type_long_mixed_text", "copy_paste_text"):
         setup = task_by_id[task_id].setup
         assert setup is not None
         assert setup["type"] == "agent_prompt"
         assert setup["clear_history_after"] is True
+
+    seeded = task_by_id["select_all_and_delete"].setup
+    assert seeded["type"] == "environment_tools"
+    assert seeded["expected_state"] == {"apps.notes.notes.0.content": "hello-aiden"}
+    assert task_by_id["select_all_and_delete"].environment_bridge_types == ["mobilegym"]
 
 
 def test_phone_control_drag_icon_excludes_adb_android():

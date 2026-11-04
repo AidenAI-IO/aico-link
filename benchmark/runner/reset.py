@@ -1,6 +1,7 @@
 from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -11,6 +12,8 @@ from runner.agent_client import (
     AgentTimeoutError,
 )
 from runner.environment_endpoint import EnvironmentEndpoint
+from runner.environment_state import read_environment_state
+from runner.assertions import evaluate_environment_state_assertions
 from runner.suite import SETUP_KEYS, SuiteValidationError, validate_assert_memory_setup, validate_setup_evaluation
 
 
@@ -106,6 +109,62 @@ def call_environment_release(environment_url: str, timeout: int = 30, task_id: s
     )
 
 
+def call_environment_tool(
+    environment_url: str, name: str, tool_input: dict[str, Any],
+    *, task_id: str, timeout: int = 90,
+) -> dict[str, Any]:
+    if name not in {"touch_gesture", "keyboard_tap", "enter_text", "quick_action"}:
+        raise ResetError(f"unsupported environment preparation tool: {name}")
+    endpoint = _environment_endpoint(environment_url).base + "/api/tools/" + name
+    result = _post_environment(
+        endpoint, timeout=timeout, headers=_environment_headers(task_id),
+        action=name, payload={"input": tool_input},
+    )
+    output = result.get("output")
+    if result.get("is_error"):
+        raise ResetError(f"environment preparation {name} failed: {str(output)[:200]}")
+    if isinstance(output, str):
+        try:
+            parsed = json.loads(output)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("ok") is False:
+            raise ResetError(f"environment preparation {name} failed: {str(parsed)[:200]}")
+    return {"name": name, "duration_ms": result.get("duration_ms"), "ok": True}
+
+
+# Bridge tools return before app launches and screen transitions finish; fixed
+# coordinates in the next tool assume the previous screen has settled.
+ENVIRONMENT_TOOL_SETTLE_SEC = 1.0
+
+
+def prepare_environment_tools(
+    environment_url: str, task_id: str, setup: dict[str, Any],
+    *, settle_sec: float = ENVIRONMENT_TOOL_SETTLE_SEC,
+) -> dict[str, Any]:
+    if setup.get("expected_state"):
+        # Fixed coordinates only make sense in a simulator that reports state;
+        # fail before tapping a device that cannot verify the seeded result.
+        try:
+            read_environment_state(environment_url, benchmark_task_id=task_id)
+        except Exception as exc:
+            raise ResetError(f"environment preparation requires readable environment state: {exc}") from exc
+    actions = []
+    for tool in setup["tools"]:
+        actions.append(call_environment_tool(environment_url, tool["name"], tool["input"], task_id=task_id))
+        time.sleep(settle_sec)
+    result: dict[str, Any] = {"actions": actions}
+    if setup.get("expected_state"):
+        state = read_environment_state(environment_url, benchmark_task_id=task_id)
+        checks = evaluate_environment_state_assertions(state, setup["expected_state"])
+        result["state_checks"] = [check.__dict__ for check in checks]
+        mismatches = [f"{check.path}: expected {check.expected!r}, found {check.actual!r}"
+                      for check in checks if not check.passed]
+        if mismatches:
+            raise ResetError("environment preparation state did not match expected_state: " + "; ".join(mismatches))
+    return result
+
+
 def clear_stale_adb_android_owner(environment_url: str, timeout: float = 2.0) -> str:
     """Release a leftover ADB Android bridge owner before a fresh benchmark run."""
     req = urllib.request.Request(_environment_endpoint(environment_url).health, method="GET")
@@ -146,6 +205,8 @@ def per_task_setup(
     *,
     prompt_prefix: str = "",
     consolidation_expectation: Any = None,
+    environment_url: str | None = None,
+    benchmark_task_id: str | None = None,
 ) -> dict[str, Any] | None:
     if isinstance(setup, dict):
         try:
@@ -156,6 +217,7 @@ def per_task_setup(
         return _per_task_setup(
             client, setup, prompt_prefix=prompt_prefix,
             consolidation_expectation=consolidation_expectation,
+            environment_url=environment_url, benchmark_task_id=benchmark_task_id,
         )
     except SetupAssertionError as e:
         # Only explicit behavior assertions are scoreable. Seeding, transport,
@@ -172,6 +234,8 @@ def _per_task_setup(
     *,
     prompt_prefix: str = "",
     consolidation_expectation: Any = None,
+    environment_url: str | None = None,
+    benchmark_task_id: str | None = None,
 ) -> dict[str, Any] | None:
     if setup is None:
         return
@@ -211,6 +275,8 @@ def _per_task_setup(
                         if index == expectation_index
                         else None
                     ),
+                    environment_url=environment_url,
+                    benchmark_task_id=benchmark_task_id,
                 )
                 if item_result is not None and (
                     result is None or index == expectation_index
@@ -232,6 +298,10 @@ def _per_task_setup(
     unknown_keys = sorted(set(setup) - allowed_keys)
     if unknown_keys:
         raise ResetError(f"unsupported {setup_type} setup keys: {', '.join(unknown_keys)}")
+    if setup_type == "environment_tools":
+        if not environment_url:
+            raise ResetError("environment_tools requires environment_url")
+        return prepare_environment_tools(environment_url, benchmark_task_id or "", setup)
     if setup_type == "agent_prompt":
         _per_task_setup_agent_prompt(client, setup, prompt_prefix=prompt_prefix)
         return

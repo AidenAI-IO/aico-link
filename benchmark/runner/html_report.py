@@ -130,10 +130,11 @@ def _result_artifact_dir(run_dir: Path, row: dict[str, Any], task_dir: Path | No
             attempt = int(row.get("attempt") or 1)
         except (TypeError, ValueError):
             attempt = 1
-        if attempt > 1:
-            attempt_dir = task_dir / f"attempt_{attempt}"
-            if attempt_dir.is_dir():
-                return attempt_dir
+        # Repeated and experiment runs keep every attempt, including the first,
+        # in its own attempt directory.
+        attempt_dir = task_dir / f"attempt_{attempt}"
+        if attempt_dir.is_dir():
+            return attempt_dir
         if task_dir.is_dir():
             return task_dir
     return None
@@ -500,11 +501,18 @@ def _full_trace_payload(task_dir: Path | None, history: list[dict[str, Any]]) ->
             })
         elif mtype == "tool_result":
             raw = str(msg.get("content") or "")
+            step_image = ""
+            if task_dir is not None:
+                for suffix in (".jpg", ".png"):
+                    shot = task_dir / f"step_{tool_step}{suffix}"
+                    if shot.is_file():
+                        step_image = _image_data_uri(shot)
+                        break
             events.append({
                 "kind": "tool-result",
                 "title": f"Tool result: {msg.get('tool_name') or last_tool}",
                 "detail": _compact_tool_result(raw),
-                "image": "",
+                "image": step_image,
             })
         elif mtype == "assistant":
             events.append({
@@ -592,6 +600,8 @@ def generate_report_html(run_dir: Path) -> str:
             except Exception:
                 history = []
                 pass
+        # External harness histories are rebuilt from tool evidence without the user turn.
+        prompt = prompt or r.get("task_prompt", "")
 
         tool_calls = trace_data.get("tool_calls", [])
         tool_calls_str = ""

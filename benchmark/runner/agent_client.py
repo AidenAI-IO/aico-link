@@ -275,6 +275,14 @@ class AgentClient:
         body = json.loads(body_bytes)
         return body if isinstance(body, list) else []
 
+    def list_tools(self) -> list[dict[str, Any]]:
+        status, body_bytes = self._get("/api/tools", timeout=5)
+        if status != 200:
+            raise AgentRequestError(f"tools returned {status}")
+        body = json.loads(body_bytes)
+        tools = body.get("tools") if isinstance(body, dict) else None
+        return tools if isinstance(tools, list) else []
+
     def get_episode(self, episode_id: str) -> dict[str, Any]:
         encoded_id = urllib.parse.quote(str(episode_id), safe="")
         status, body_bytes = self._get(f"/api/episodes/{encoded_id}", timeout=5)

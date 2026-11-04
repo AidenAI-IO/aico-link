@@ -42,13 +42,14 @@ const (
 	StopReasonParseFailure   StopReason = "parse_failure"
 )
 
-// InterventionTier escalates from notice to tool restriction to termination.
+// InterventionTier escalates from a notice to a stronger notice to
+// termination. No tier blocks a tool.
 type InterventionTier int
 
 const (
 	TierNone InterventionTier = iota
 	TierSoftNotice
-	TierRestrictTools
+	TierFinalWarning
 	TierTerminate
 )
 
@@ -58,7 +59,6 @@ type TerminationPolicyConfig struct {
 	MaxSeconds              float64 `toml:"max_seconds,omitempty" json:"max_seconds,omitempty"`
 	RepeatActionLimit       int     `toml:"repeat_action_limit,omitempty" json:"repeat_action_limit,omitempty"`
 	SameResultLimit         int     `toml:"same_result_limit,omitempty" json:"same_result_limit,omitempty"`
-	ScreenUnchangedLimit    int     `toml:"screen_unchanged_limit,omitempty" json:"screen_unchanged_limit,omitempty"`
 	SoftNoticeStallScore    int     `toml:"soft_notice_stall_score,omitempty" json:"soft_notice_stall_score,omitempty"`
 	RestrictToolsStallScore int     `toml:"restrict_tools_stall_score,omitempty" json:"restrict_tools_stall_score,omitempty"`
 	TerminateStallScore     int     `toml:"terminate_stall_score,omitempty" json:"terminate_stall_score,omitempty"`
@@ -71,7 +71,6 @@ func DefaultTerminationPolicyConfig() TerminationPolicyConfig {
 		MaxSeconds:              0,
 		RepeatActionLimit:       3,
 		SameResultLimit:         3,
-		ScreenUnchangedLimit:    5,
 		SoftNoticeStallScore:    2,
 		RestrictToolsStallScore: 4,
 		TerminateStallScore:     6,
@@ -89,9 +88,6 @@ func (c TerminationPolicyConfig) resolved() TerminationPolicyConfig {
 	}
 	if c.SameResultLimit <= 0 {
 		c.SameResultLimit = defaults.SameResultLimit
-	}
-	if c.ScreenUnchangedLimit <= 0 {
-		c.ScreenUnchangedLimit = defaults.ScreenUnchangedLimit
 	}
 	if c.SoftNoticeStallScore <= 0 {
 		c.SoftNoticeStallScore = defaults.SoftNoticeStallScore
@@ -125,7 +121,6 @@ func (c TerminationPolicyConfig) Validate() error {
 	}{
 		{"repeat_action_limit", c.RepeatActionLimit},
 		{"same_result_limit", c.SameResultLimit},
-		{"screen_unchanged_limit", c.ScreenUnchangedLimit},
 		{"soft_notice_stall_score", c.SoftNoticeStallScore},
 		{"restrict_tools_stall_score", c.RestrictToolsStallScore},
 		{"terminate_stall_score", c.TerminateStallScore},
@@ -155,12 +150,11 @@ func terminationPolicyBoolPtr(value bool) *bool {
 
 // TerminationDecision is returned by the policy before/after each loop step.
 type TerminationDecision struct {
-	Stop          bool
-	Reason        StopReason
-	Message       string
-	Tier          InterventionTier
-	Notice        string
-	RestrictTools bool
+	Stop    bool
+	Reason  StopReason
+	Message string
+	Tier    InterventionTier
+	Notice  string
 }
 
 // TerminationPolicy implements budget, repeat, and progress-aware loop guards.
@@ -173,8 +167,16 @@ type TerminationPolicy struct {
 	lastResultHash   string
 	sameResultStreak int
 
-	lastScreen                 image.Image
-	screenUnchangedAfterAction int
+	// lastScreen is the previous screenshot returned by a tool that is not
+	// a UI action, for the identical-result check on observations.
+	lastScreen image.Image
+	screenSeq  int
+
+	// The UI loop check follows UI actions only, so screenshots, shell
+	// calls or other tools in between neither hide nor reset a loop.
+	lastUIActionSig    string
+	lastUIActionScreen image.Image
+	uiRepeatStreak     int
 
 	parseFailures  int
 	stallScore     int
@@ -183,10 +185,6 @@ type TerminationPolicy struct {
 
 	artifactResultHash   string
 	artifactResultStreak int
-
-	// probationUsed records that a fresh observation already lifted the
-	// tool restriction once since the last progress.
-	probationUsed bool
 
 	lastToolName string
 }
@@ -208,7 +206,9 @@ func (p *TerminationPolicy) ResetForSteer() {
 	p.lastResultHash = ""
 	p.sameResultStreak = 0
 	p.lastScreen = nil
-	p.screenUnchangedAfterAction = 0
+	p.lastUIActionSig = ""
+	p.lastUIActionScreen = nil
+	p.uiRepeatStreak = 0
 	p.parseFailures = 0
 	p.stallScore = 0
 	p.tier = TierNone
@@ -216,7 +216,6 @@ func (p *TerminationPolicy) ResetForSteer() {
 	p.lastToolName = ""
 	p.artifactResultHash = ""
 	p.artifactResultStreak = 0
-	p.probationUsed = false
 }
 
 func (p *TerminationPolicy) CheckBeforeIteration(ctx context.Context, iteration, maxIterations int) TerminationDecision {
@@ -253,21 +252,11 @@ func (p *TerminationPolicy) RecordParseFailure() TerminationDecision {
 	return p.interventionDecision()
 }
 
+// BeforeToolCall never blocks a tool: the guard warns about an obvious loop
+// and then ends the run, and in between the model stays free to act on
+// what it sees.
 func (p *TerminationPolicy) BeforeToolCall(toolName, input string) (ToolResult, bool) {
-	if p == nil || !p.cfg.enabled() || p.tier < TierRestrictTools {
-		return ToolResult{}, true
-	}
-	if !isLoopRestrictedActionTool(toolName) {
-		return ToolResult{}, true
-	}
-	message := fmt.Sprintf(
-		"Loop guard blocked %q: repeated actions produced no progress. Use observation tools, request_user_action, or explain the blocker to the user instead of repeating UI actions.",
-		strings.TrimSpace(toolName),
-	)
-	return ToolResult{
-		Output: message,
-		Error:  NewToolError(CodeToolExecutionFailed, message),
-	}, false
+	return ToolResult{}, true
 }
 
 func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, isError bool) TerminationDecision {
@@ -275,9 +264,6 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		return TerminationDecision{}
 	}
 	p.lastToolName = strings.TrimSpace(toolName)
-	// An observation earns the restriction allowance only when the
-	// restriction was already in effect, not by causing it.
-	restrictedBefore := p.tier == TierRestrictTools
 	signature := toolCallSignature(toolName, input)
 	resultHash := observationProgressHash(toolName, observation)
 	// Artifact recovery often alternates a query with reading its saved output.
@@ -298,9 +284,26 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		p.artifactResultStreak = 0
 	}
 	screen, hasScreenshot := extractScreenshotImage(observation)
+	// The guard only catches obvious loops; whether an action worked is for
+	// the model to judge from the screenshot. A UI action with a screenshot
+	// is therefore judged by the UI loop check alone and never adds to the
+	// stall score.
+	if hasScreenshot && screen != nil && isLoopRestrictedActionTool(toolName) {
+		return p.afterUIAction(signature, screen, isError)
+	}
+	// Any other screenshot is new information unless it is identical to the
+	// previous one.
+	if hasScreenshot && screen != nil {
+		if p.lastScreen != nil && screenshotsIdentical(p.lastScreen, screen) {
+			resultHash = "screen:same"
+		} else {
+			p.screenSeq++
+			resultHash = fmt.Sprintf("screen:%d", p.screenSeq)
+		}
+		p.lastScreen = screen
+	}
 	previousSignature := p.lastToolSig
 	previousResultHash := p.lastResultHash
-	previousScreen := p.lastScreen
 	sameSignature := signature != "" && signature == previousSignature
 	madeProgress := false
 
@@ -310,45 +313,16 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 		p.lastToolSig = signature
 		p.sameSigStreak = 1
 	}
-
-	// A screenshot observation hashes to a constant, so "same result" would
-	// only repeat the signature check; the screen comparison below decides
-	// whether a visual result is new.
-	if !hasScreenshot && resultHash != "" && resultHash == previousResultHash && sameSignature {
+	sameResult := resultHash != "" && sameSignature &&
+		(resultHash == previousResultHash || resultHash == "screen:same")
+	if sameResult {
 		p.sameResultStreak++
 	} else {
 		p.lastResultHash = resultHash
 		p.sameResultStreak = 1
 	}
-	if !hasScreenshot && resultHash != "" && previousResultHash != "" && resultHash != previousResultHash && !isError {
+	if resultHash != "" && previousResultHash != "" && !sameResult && resultHash != previousResultHash && !isError {
 		madeProgress = true
-	}
-
-	if screen != nil {
-		changed, comparable := screenshotProgressChanged(previousScreen, screen)
-		// A post-action observation reports screen_changed against a baseline
-		// taken just before the action, with the pointer's own movement
-		// excluded; prefer it over comparing with an older observation.
-		// Observation tools report a different screen_changed (any frame
-		// difference while waiting), so only action results qualify.
-		if reported, ok := observationScreenChanged(observation); ok && isLoopRestrictedActionTool(toolName) {
-			changed, comparable = reported, true
-		}
-		if comparable {
-			if changed && !isError {
-				madeProgress = true
-			}
-			if isLoopRestrictedActionTool(toolName) && !changed {
-				p.screenUnchangedAfterAction++
-				p.bumpStall(2)
-			} else if isLoopRestrictedActionTool(toolName) {
-				p.screenUnchangedAfterAction = 0
-			}
-		}
-		p.lastScreen = screen
-	} else if isLoopRestrictedActionTool(toolName) && !isError {
-		p.screenUnchangedAfterAction++
-		p.bumpStall(1)
 	}
 
 	if madeProgress {
@@ -360,28 +334,53 @@ func (p *TerminationPolicy) AfterToolCall(toolName, input, observation string, i
 	if !madeProgress && p.sameResultStreak >= 2 {
 		p.bumpStall(2)
 	}
-	// The restriction asks the model to diagnose with a fresh observation.
-	// Once it has, allow one more action instead of blocking every action
-	// until the screen changes on its own; another stall restricts again.
-	// This runs after the repeat scoring so a repeated observation cannot
-	// take the allowance back.
-	if !madeProgress && restrictedBefore && !p.probationUsed && !isError && isLoopProbationObservationTool(toolName) {
-		p.probationUsed = true
-		p.stallScore = p.cfg.RestrictToolsStallScore - 1
-		p.refreshTier()
-		p.lastNoticeTier = p.tier
-	}
-
 	if p.sameSigStreak >= p.cfg.RepeatActionLimit && p.sameResultStreak >= p.cfg.SameResultLimit {
 		return p.terminate(StopReasonLoopDetected, "same tool call repeated without new information")
-	}
-	if p.screenUnchangedAfterAction >= p.cfg.ScreenUnchangedLimit {
-		return p.terminate(StopReasonNoProgress, "screen state unchanged after repeated UI actions")
 	}
 	if p.shouldTerminate() {
 		return p.terminateFromStall()
 	}
 	return p.interventionDecision()
+}
+
+// afterUIAction counts a UI action that repeats the previous UI action
+// exactly and leaves the screen identical to what that action left. The
+// second such repeat gets a notice and repeat_action_limit ends the run.
+// Anything else, including a different action on an unchanged screen, is
+// left to the model.
+func (p *TerminationPolicy) afterUIAction(signature string, screen image.Image, isError bool) TerminationDecision {
+	repeated := signature != "" && signature == p.lastUIActionSig &&
+		p.lastUIActionScreen != nil && screenshotsIdentical(p.lastUIActionScreen, screen)
+	p.lastUIActionSig = signature
+	p.lastUIActionScreen = screen
+	if !repeated {
+		p.uiRepeatStreak = 1
+		if !isError {
+			p.recordProgress()
+		}
+		return p.interventionDecision()
+	}
+	p.uiRepeatStreak++
+	if p.uiRepeatStreak >= p.cfg.RepeatActionLimit {
+		return p.terminate(StopReasonLoopDetected, "the same UI action was repeated and the screen stayed identical")
+	}
+	if p.uiRepeatStreak == 2 {
+		return TerminationDecision{
+			Tier:   p.tier,
+			Notice: "Loop guard: the same UI action was repeated and the screen stayed identical. Do not repeat it again; inspect the screenshot, try a different target or approach, or call request_user_action if blocked.",
+		}
+	}
+	return p.interventionDecision()
+}
+
+// screenshotsIdentical reports whether no progress-grid block differs between
+// two screenshots. On the board, captures of a static iPhone screen differ in
+// no block, while the smallest real change seen (a pointer moving, one digit
+// added) changed six or more; anything that keeps moving on screen therefore
+// reads as different, and such loops are left to the iteration budget.
+func screenshotsIdentical(before, after image.Image) bool {
+	ratio, comparable := screenshotProgressChangeRatio(before, after, nil)
+	return comparable && ratio == 0
 }
 
 func (p *TerminationPolicy) BudgetExhausted(reason string) TerminationDecision {
@@ -405,13 +404,11 @@ func (p *TerminationPolicy) bumpStall(delta int) {
 }
 
 func (p *TerminationPolicy) recordProgress() {
-	p.probationUsed = false
 	p.stallScore = 0
 	p.tier = TierNone
 	p.lastNoticeTier = TierNone
 	p.sameSigStreak = 1
 	p.sameResultStreak = 1
-	p.screenUnchangedAfterAction = 0
 }
 
 func (p *TerminationPolicy) refreshTier() {
@@ -419,7 +416,7 @@ func (p *TerminationPolicy) refreshTier() {
 	case p.stallScore >= p.cfg.TerminateStallScore:
 		p.tier = TierTerminate
 	case p.stallScore >= p.cfg.RestrictToolsStallScore:
-		p.tier = TierRestrictTools
+		p.tier = TierFinalWarning
 	case p.stallScore >= p.cfg.SoftNoticeStallScore:
 		p.tier = TierSoftNotice
 	default:
@@ -433,23 +430,22 @@ func (p *TerminationPolicy) shouldTerminate() bool {
 
 func (p *TerminationPolicy) interventionDecision() TerminationDecision {
 	if p.tier <= p.lastNoticeTier {
-		return TerminationDecision{Tier: p.tier, RestrictTools: p.tier >= TierRestrictTools}
+		return TerminationDecision{Tier: p.tier}
 	}
 	notice := p.noticeForTier(p.tier)
 	p.lastNoticeTier = p.tier
 	return TerminationDecision{
-		Tier:          p.tier,
-		Notice:        notice,
-		RestrictTools: p.tier >= TierRestrictTools,
+		Tier:   p.tier,
+		Notice: notice,
 	}
 }
 
 func (p *TerminationPolicy) noticeForTier(tier InterventionTier) string {
 	switch tier {
 	case TierSoftNotice:
-		return "Loop guard: recent tool calls are repeating or not changing the screen. Change strategy, verify with observation tools, or call request_user_action if blocked."
-	case TierRestrictTools:
-		return "Loop guard: UI action tools are temporarily restricted because repeated actions produced no progress. Diagnose with a fresh screenshot or wait_for_stable_screen, or ask the user to intervene."
+		return "Loop guard: recent tool calls are repeating without new results. Change strategy, verify with observation tools, or call request_user_action if blocked."
+	case TierFinalWarning:
+		return "Loop guard: tool calls are still repeating without new results, and the run will stop if this continues. Change strategy now, or call request_user_action if blocked."
 	default:
 		return ""
 	}
@@ -580,18 +576,6 @@ func extractScreenshotImage(observation string) (image.Image, bool) {
 		return nil, true
 	}
 	return img, true
-}
-
-func screenshotProgressChanged(before, after image.Image) (changed, comparable bool) {
-	return screenshotProgressChangedExcluding(before, after, nil)
-}
-
-// screenshotProgressChangedExcluding is screenshotProgressChanged with grid
-// blocks that intersect any excluded rectangle never counted as changed. The
-// total block count is unchanged, so the threshold keeps its meaning.
-func screenshotProgressChangedExcluding(before, after image.Image, excluded []image.Rectangle) (changed, comparable bool) {
-	ratio, comparable := screenshotProgressChangeRatio(before, after, excluded)
-	return comparable && ratio > screenshotProgressChangedBlockThreshold, comparable
 }
 
 // screenshotProgressChangeRatio returns the share of progress-grid blocks
@@ -731,29 +715,6 @@ func absDiffUint64(a, b uint64) uint64 {
 		return a - b
 	}
 	return b - a
-}
-
-// isLoopProbationObservationTool reports whether a tool returns a fresh view
-// of the screen that can lift a loop-guard restriction once.
-func isLoopProbationObservationTool(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "screenshot", "wait_for_stable_screen":
-		return true
-	default:
-		return false
-	}
-}
-
-// observationScreenChanged returns the screen_changed field of a post-action
-// observation when it is present.
-func observationScreenChanged(observation string) (bool, bool) {
-	var payload struct {
-		ScreenChanged *bool `json:"screen_changed"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(observation)), &payload); err != nil || payload.ScreenChanged == nil {
-		return false, false
-	}
-	return *payload.ScreenChanged, true
 }
 
 func isLoopRestrictedActionTool(name string) bool {

@@ -25,6 +25,16 @@ def take_environment_screenshot(
     timeout: int = DEFAULT_SCREENSHOT_TIMEOUT_SEC,
 ) -> tuple[int, int]:
     """Read the environment bridge screenshot provider and write bytes to out_path."""
+    screenshot = read_environment_frame(environment_url, benchmark_task_id, timeout)
+    return _write_screenshot_payload(screenshot, out_path, context="screen")
+
+
+def read_environment_frame(
+    environment_url: str,
+    benchmark_task_id: str | None = None,
+    timeout: int = DEFAULT_SCREENSHOT_TIMEOUT_SEC,
+) -> dict[str, Any]:
+    """Return the bridge frame as base64 `data`, `width`, `height`, and `format`."""
     try:
         endpoint = EnvironmentEndpoint(environment_url).screen
     except ValueError as exc:
@@ -59,8 +69,7 @@ def take_environment_screenshot(
         raise CaptureError(
             f"screen request returned invalid JSON: {raw[:200]!r}"
         ) from e
-    screenshot = _extract_provider_frame(payload)
-    return _write_screenshot_payload(screenshot, out_path, context="screen")
+    return _extract_provider_frame(payload)
 
 
 def _extract_provider_frame(payload: Any) -> dict[str, Any]:

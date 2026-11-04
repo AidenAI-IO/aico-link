@@ -16,6 +16,7 @@ from runner.platform import (
 VALID_CATEGORIES = {"diagnostic", "single_step", "multi_step", "memory", "perception", "device_operation"}
 SETUP_KEYS = {
     "agent_prompt": {"type", "prompt", "timeout_sec", "clear_history_after", "expected_response"},
+    "environment_tools": {"type", "tools", "expected_state"},
     "seed_memory": {"type", "memories", "timeout_sec", "clear_history_after"},
     "seed_episode": {"type", "episode", "consolidate", "timeout_sec", "consolidation_expectation", "evaluate"},
     "seed_session_chunk": {"type", "session_id", "summary", "messages", "timeout_sec", "clear_history_after"},
@@ -119,6 +120,7 @@ class TaskSpec:
     expected_answer: str | None = None
     answer_format: str | None = None
     platforms: list[str] = dc.field(default_factory=list)
+    environment_bridge_types: list[str] = dc.field(default_factory=list)
     expected_recalled_memory_ids: list[str] = dc.field(default_factory=list)
     expected_recalled_memory_tool: str = "recall_memory"
     expected_recall_from_consolidation: bool = False
@@ -297,6 +299,12 @@ def load_suite(path: Path) -> Suite:
         if android_bridge_fixture not in (None, "calendar", "contacts"):
             raise SuiteValidationError(f"task {tid}: android_bridge_fixture must be calendar or contacts")
         platforms = _platform_list(raw.get("platforms", []), tid)
+        environment_bridge_types = raw.get("environment_bridge_types", [])
+        if not isinstance(environment_bridge_types, list) or any(
+            not isinstance(kind, str) or not re.fullmatch(r"[a-z][a-z0-9_]*", kind)
+            for kind in environment_bridge_types
+        ):
+            raise SuiteValidationError(f"task {tid}: environment_bridge_types must be a list of bridge type names")
         task_mock_environment = _parse_mock_environment(
             raw.get("mock_environment"),
             path=f"task {tid}.mock_environment",
@@ -327,6 +335,17 @@ def load_suite(path: Path) -> Suite:
                         f"task {tid}: unsupported {setup_type} setup keys: {', '.join(unknown_setup_keys)}"
                     )
                 validate_setup_evaluation(setup_item)
+                if setup_type == "environment_tools":
+                    tools = setup_item.get("tools")
+                    if not isinstance(tools, list) or not tools:
+                        raise SuiteValidationError(f"task {tid}: environment_tools requires a non-empty tools list")
+                    for tool in tools:
+                        if (not isinstance(tool, dict) or set(tool) != {"name", "input"}
+                                or not isinstance(tool["name"], str) or not tool["name"].strip()
+                                or not isinstance(tool["input"], dict)):
+                            raise SuiteValidationError(f"task {tid}: invalid environment_tools entry")
+                    if "expected_state" in setup_item:
+                        _parse_environment_assertions(setup_item["expected_state"], tid)
                 if setup_type == "assert_memory":
                     validate_assert_memory_setup(
                         setup_item,
@@ -385,6 +404,7 @@ def load_suite(path: Path) -> Suite:
             expected_answer=expected_answer,
             answer_format=answer_format,
             platforms=platforms,
+            environment_bridge_types=environment_bridge_types,
             expected_recalled_memory_ids=expected_recalled_memory_ids,
             expected_recalled_memory_tool=expected_recalled_memory_tool,
             expected_recall_from_consolidation=expected_recall_from_consolidation,
