@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from runner import android_phone_bridge
@@ -62,6 +64,99 @@ def test_foreground_app_waits_for_active_bridge(monkeypatch) -> None:
         ("shell", "am", "start", "-n", "link.aico.app/.MainActivity"),
     )
     assert calls[1] == {"timeout_sec": 30, "require_active": True}
+
+
+def _status_client(*statuses):
+    class Client:
+        def __init__(self):
+            self.remaining = list(statuses)
+
+        def _get(self, path, timeout):
+            assert path == "/api/phone-bridge/status"
+            status = self.remaining.pop(0) if len(self.remaining) > 1 else self.remaining[0]
+            return 200, json.dumps(status)
+
+    return Client()
+
+
+def test_background_bridge_wait_requires_fgs_poller(monkeypatch) -> None:
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(android_phone_bridge.time, "monotonic", lambda: next(clock))
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+    websocket_only = {"connected": True, "platform": "android", "app_state": "background"}
+
+    with pytest.raises(RuntimeError, match="did not become ready"):
+        android_phone_bridge.wait_for_android_phone_bridge(
+            _status_client(websocket_only), timeout_sec=30, require_background_bridge=True,
+        )
+    android_phone_bridge.wait_for_android_phone_bridge(
+        _status_client(websocket_only, {**websocket_only, "fgs_bridge_enabled": True}),
+        timeout_sec=60, require_background_bridge=True,
+    )
+
+
+def test_ethernet_ipconfig_is_static_board_address() -> None:
+    data = android_phone_bridge._ethernet_ipconfig()
+
+    assert data[:4] == b"\x00\x00\x00\x03"
+    for token in (b"ipAssignment", b"STATIC", b"192.168.42.2", b"eth1", b"eos"):
+        assert token in data
+    prefix_at = data.index(b"192.168.42.2") + len(b"192.168.42.2")
+    assert data[prefix_at:prefix_at + 4] == b"\x00\x00\x00\x18"
+
+
+@pytest.mark.parametrize("feature_present", [False, True])
+@pytest.mark.parametrize("config_present", [False, True])
+def test_emulator_ethernet_checks_feature_and_config_independently(
+    monkeypatch, feature_present, config_present,
+) -> None:
+    calls = []
+    features = iter([
+        "feature:android.hardware.ethernet" if feature_present else "feature:android.hardware.touchscreen",
+        "feature:android.hardware.ethernet",
+    ])
+
+    def fake_adb(serial, *args):
+        calls.append(args)
+        if args == ("shell", "pm", "list", "features"):
+            return next(features)
+        if args[0] == "shell" and args[1].startswith("cmp -s"):
+            for path in android_phone_bridge.ETHERNET_IPCONFIG_DIRS:
+                assert f"{path}/ipconfig.txt" in args[1]
+            return "present" if config_present else "missing"
+        return "1" if args[-1] == "sys.boot_completed" else ""
+
+    monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+
+    restart = not (feature_present and config_present)
+    assert android_phone_bridge.ensure_emulator_ethernet("emulator-5554") is restart
+    assert calls[1][0] == "push" and calls[1][2] == "/data/local/tmp/aico-ipconfig.txt"
+    if not restart:
+        assert len(calls) == 3
+        return
+    install = calls[3][1]
+    assert ("mount -o bind" in install) is (not feature_present)
+    assert ("cp /data/local/tmp/aico-ipconfig.txt" in install) is (not config_present)
+    assert calls[4:6] == [("shell", "stop"), ("shell", "start")]
+
+
+def test_emulator_board_network_adds_and_always_removes_veth(monkeypatch) -> None:
+    calls = []
+    monkeypatch.setattr(android_phone_bridge, "ensure_emulator_ethernet", lambda serial: False)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        android_phone_bridge, "_adb",
+        lambda serial, *args: calls.append(args) or "eth1@aicobd UP 192.168.42.2/24",
+    )
+
+    with pytest.raises(RuntimeError, match="task failed"):
+        with android_phone_bridge.emulator_board_network("emulator-5554"):
+            assert "ip link add name eth1 type veth peer name aicobd" in calls[1][1]
+            assert calls[2] == ("shell", "ip", "-4", "-br", "addr", "show", "eth1")
+            raise RuntimeError("task failed")
+
+    assert calls[0] == calls[-1] == ("shell", "ip link del eth1 2>/dev/null; true")
 
 
 def test_clipboard_write_events_ignores_other_diagnostics(monkeypatch) -> None:

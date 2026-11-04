@@ -5,7 +5,9 @@ from __future__ import annotations
 import json
 import re
 import shlex
+import struct
 import subprocess
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from contextlib import contextmanager
@@ -24,6 +26,23 @@ NAT_RULE = [
     "-j", "DNAT", "--to-destination", "127.0.0.1:8080",
 ]
 
+# The App's background (FGS) bridge polls only through a USB or Ethernet
+# Network that routes to the board subnet. The emulator has neither, so a veth
+# pair stands in for the board's USB ECM link: EthernetService provisions the
+# App-facing end with the address a phone gets from the board.
+BOARD_NET_INTERFACE = "eth1"
+BOARD_NET_PEER = "aicobd"
+BOARD_NET_PHONE_ADDRESS = "192.168.42.2"
+BOARD_NET_BOARD_ADDRESS = "192.168.42.1/24"
+ETHERNET_FEATURE = "android.hardware.ethernet"
+ETHERNET_PERMISSIONS_DIR = "/vendor/etc/permissions"
+ETHERNET_PERMISSIONS_COPY = "/data/local/tmp/aico-ethernet-permissions"
+# Android 13+ keeps Ethernet IP configuration in the Tethering APEX data dir.
+ETHERNET_IPCONFIG_DIRS = (
+    "/data/misc/apexdata/com.android.tethering/misc/ethernet",
+    "/data/misc/ethernet",
+)
+
 
 def _adb(serial: str, *args: str) -> str:
     command = ["adb", "-s", serial, *args]
@@ -36,7 +55,11 @@ def _adb(serial: str, *args: str) -> str:
 
 
 def wait_for_android_phone_bridge(
-    client: AgentClient, timeout_sec: int = 60, *, require_active: bool = False
+    client: AgentClient,
+    timeout_sec: int = 60,
+    *,
+    require_active: bool = False,
+    require_background_bridge: bool = False,
 ) -> None:
     deadline = time.monotonic() + timeout_sec
     last_status: dict = {}
@@ -50,6 +73,8 @@ def wait_for_android_phone_bridge(
                     status.get("connected") is True
                     and status.get("platform") == "android"
                     and (not require_active or status.get("app_state") == "active")
+                    and (not require_background_bridge
+                         or status.get("fgs_bridge_enabled") is True)
                 ):
                     return
         except (AgentRequestError, AgentTimeoutError, ValueError):
@@ -177,6 +202,122 @@ def android_bridge_fixture(serial: str, fixture: str | None) -> Iterator[None]:
             cleanup()
     else:
         raise ValueError(f"Unsupported Android Bridge fixture: {fixture}")
+
+
+def _ethernet_ipconfig() -> bytes:
+    """Serialize a static eth1 configuration in Android's IpConfigStore v3 format."""
+    def utf(value: str) -> bytes:
+        encoded = value.encode()
+        return struct.pack(">H", len(encoded)) + encoded
+
+    return b"".join([
+        struct.pack(">i", 3),
+        utf("ipAssignment"), utf("STATIC"),
+        utf("linkAddress"), utf(BOARD_NET_PHONE_ADDRESS), struct.pack(">i", 24),
+        utf("proxySettings"), utf("NONE"),
+        utf("id"), utf(BOARD_NET_INTERFACE),
+        utf("eos"),
+    ])
+
+
+def _wait_for_boot(serial: str, timeout_sec: int = 180) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            if _adb(serial, "shell", "getprop", "sys.boot_completed") == "1":
+                return
+        except (RuntimeError, subprocess.TimeoutExpired):
+            pass
+        time.sleep(2)
+    raise RuntimeError("Android framework did not finish restarting")
+
+
+def ensure_emulator_ethernet(serial: str) -> bool:
+    """Enable EthernetService with a static eth1 config; returns True if it restarted.
+
+    Emulator images omit the Ethernet feature, so system_server never starts
+    EthernetService. The feature file is added through a bind mount (lost on
+    reboot, so this check repeats every run), and the framework restarts once
+    to load it together with the static configuration.
+    """
+    features = _adb(serial, "shell", "pm", "list", "features")
+    feature_present = f"feature:{ETHERNET_FEATURE}" in features.splitlines()
+    with tempfile.NamedTemporaryFile(suffix="ipconfig.txt") as ipconfig:
+        ipconfig.write(_ethernet_ipconfig())
+        ipconfig.flush()
+        _adb(serial, "push", ipconfig.name, "/data/local/tmp/aico-ipconfig.txt")
+    config_present = _adb(serial, "shell", " && ".join(
+        f"cmp -s /data/local/tmp/aico-ipconfig.txt {path}/ipconfig.txt"
+        for path in ETHERNET_IPCONFIG_DIRS
+    ) + " && echo present || echo missing") == "present"
+    if feature_present and config_present:
+        return False
+    install = []
+    if not feature_present:
+        feature_xml = (
+            '<?xml version="1.0" encoding="utf-8"?>\n'
+            f'<permissions><feature name="{ETHERNET_FEATURE}" /></permissions>\n'
+        )
+        install.extend([
+            f"rm -rf {ETHERNET_PERMISSIONS_COPY}",
+            f"mkdir -p {ETHERNET_PERMISSIONS_COPY}",
+            f"cp -a {ETHERNET_PERMISSIONS_DIR}/. {ETHERNET_PERMISSIONS_COPY}/",
+            f"printf %s {shlex.quote(feature_xml)} > {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
+            # Images may ship dangling symlinks here (e.g. extra_feature.xml), so
+            # touch only the new file's mode and never follow links when relabeling.
+            f"chmod 644 {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
+            f"chcon -hR u:object_r:vendor_configs_file:s0 {ETHERNET_PERMISSIONS_COPY}",
+            f"mount -o bind {ETHERNET_PERMISSIONS_COPY} {ETHERNET_PERMISSIONS_DIR}",
+        ])
+    if not config_present:
+        install.extend([
+            f"mkdir -p {path} && cp /data/local/tmp/aico-ipconfig.txt {path}/ipconfig.txt"
+            f" && chown system:system {path} {path}/ipconfig.txt && chmod 600 {path}/ipconfig.txt"
+            for path in ETHERNET_IPCONFIG_DIRS
+        ])
+        install.append(f"restorecon -R {ETHERNET_IPCONFIG_DIRS[0]}")
+    _adb(serial, "shell", " && ".join(install))
+    _adb(serial, "shell", "stop")
+    _adb(serial, "shell", "start")
+    time.sleep(10)
+    _wait_for_boot(serial)
+    features = _adb(serial, "shell", "pm", "list", "features")
+    if f"feature:{ETHERNET_FEATURE}" not in features.splitlines():
+        raise RuntimeError("Android EthernetService did not start after enabling its feature")
+    return True
+
+
+def remove_board_network(serial: str) -> None:
+    """Delete the board veth; deleting one end removes its peer. Missing is fine."""
+    _adb(serial, "shell", f"ip link del {BOARD_NET_INTERFACE} 2>/dev/null; true")
+
+
+@contextmanager
+def emulator_board_network(serial: str, timeout_sec: int = 90) -> Iterator[None]:
+    """Give the emulator a board-like Ethernet link for the App's FGS Bridge.
+
+    While the link is up, Android prefers it as the default network, which
+    has no internet route, so the emulator is offline until it is removed.
+    """
+    ensure_emulator_ethernet(serial)
+    remove_board_network(serial)
+    try:
+        _adb(serial, "shell", " && ".join([
+            f"ip link add name {BOARD_NET_INTERFACE} type veth peer name {BOARD_NET_PEER}",
+            f"ip addr add {BOARD_NET_BOARD_ADDRESS} dev {BOARD_NET_PEER}",
+            f"ip link set {BOARD_NET_PEER} up",
+            f"ip link set {BOARD_NET_INTERFACE} up",
+        ]))
+        deadline = time.monotonic() + timeout_sec
+        while BOARD_NET_PHONE_ADDRESS + "/" not in _adb(
+            serial, "shell", "ip", "-4", "-br", "addr", "show", BOARD_NET_INTERFACE,
+        ):
+            if time.monotonic() > deadline:
+                raise RuntimeError("Android did not provision the emulator board network")
+            time.sleep(2)
+        yield
+    finally:
+        remove_board_network(serial)
 
 
 @contextmanager

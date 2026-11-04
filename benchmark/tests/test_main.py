@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 import urllib.parse
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from types import SimpleNamespace
 
 import pytest
@@ -1218,7 +1218,10 @@ def test_android_bridge_serial_requires_auto_setup_and_environment(monkeypatch, 
 
 
 @pytest.mark.parametrize("bridge_mode", ["none", "background", "foreground"])
-def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch, tmp_path, bridge_mode):
+@pytest.mark.parametrize("skip_mode", ["none", "background_only", "all"])
+def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
+    monkeypatch, tmp_path, bridge_mode, skip_mode,
+):
     suite_path = tmp_path / "suite.json"
     suite_path.write_text(
         json.dumps(
@@ -1239,6 +1242,18 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
         encoding="utf-8",
     )
 
+    if skip_mode != "none":
+        suite_data = json.loads(suite_path.read_text())
+        suite_data["tasks"].append({
+            **suite_data["tasks"][0],
+            "id": "skipped_background",
+            "foreground_app_id": None,
+            "platforms": ["ios"],
+        })
+        if skip_mode == "all":
+            suite_data["tasks"][0]["platforms"] = ["ios"]
+        suite_path.write_text(json.dumps(suite_data), encoding="utf-8")
+
     captured = {}
     stale_clears = []
     bridge_actions = []
@@ -1248,8 +1263,17 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     def connected_bridge(*args):
         yield
 
+    @contextmanager
+    def board_network(serial):
+        bridge_actions.append("board_network")
+        yield
+
     monkeypatch.setattr(main, "connected_android_phone_bridge", connected_bridge)
-    monkeypatch.setattr(main, "wait_for_android_phone_bridge", lambda client: bridge_actions.append("wait"))
+    monkeypatch.setattr(main, "emulator_board_network", board_network)
+    monkeypatch.setattr(
+        main, "wait_for_android_phone_bridge",
+        lambda client, **kwargs: bridge_actions.append(("wait", kwargs)),
+    )
     monkeypatch.setattr(main, "foreground_android_phone_bridge", lambda *args: bridge_actions.append("foreground"))
 
     class FakeClient:
@@ -1330,6 +1354,13 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     )
 
     assert rc == 0
+    manifest = json.loads((tmp_path / "runs/auto-run/manifest.json").read_text())
+    assert manifest["totals"]["skipped"] == {"none": 0, "background_only": 1, "all": 2}[skip_mode]
+    if skip_mode == "all":
+        assert captured == {}
+        assert stale_clears == []
+        assert bridge_actions == []
+        return
     assert captured["job"].endpoint == "http://127.0.0.1:19090"
     assert captured["job"].docker_endpoint == "http://host.docker.internal:19090"
     assert captured["job"].agent_url == "http://127.0.0.1:18081"
@@ -1343,7 +1374,11 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(monkeypatch
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]
     assert captured["kwargs"]["benchmark_local_phone_bridge"] == (bridge_mode != "none")
-    assert bridge_actions == {"none": [], "background": ["wait"], "foreground": ["foreground"]}[bridge_mode]
+    assert bridge_actions == {
+        "none": [],
+        "background": ["board_network", ("wait", {"require_background_bridge": True})],
+        "foreground": ["foreground"],
+    }[bridge_mode]
     manifest = json.loads((tmp_path / "runs/auto-run/manifest.json").read_text())
     assert manifest["execution_environment"] == ("adb" if bridge_mode == "none" else "adb_aidenbridge")
 
@@ -1402,6 +1437,7 @@ def test_android_bridge_preserves_completed_results_and_unknown_evidence(
                 raise RuntimeError("fixture_cleanup failed")
 
     monkeypatch.setattr(main, "connected_android_phone_bridge", bridge)
+    monkeypatch.setattr(main, "emulator_board_network", lambda serial: nullcontext())
     monkeypatch.setattr(main, "android_bridge_fixture", fixture)
     monkeypatch.setattr(main, "clipboard_write_ids", lambda serial: set())
 
