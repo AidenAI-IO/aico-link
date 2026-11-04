@@ -397,6 +397,25 @@ def test_mnk_provider_executes_click_and_drag(bridge):
     assert ("swipe", 108, 384, 972, 1536, 700) in device.calls
 
 
+def test_mnk_provider_skips_the_post_action_screenshot(bridge):
+    """MNK returns a flat body, so a captured frame would only be dropped."""
+    _, device, base_url = bridge
+    assert _request(base_url, "/api/setup", method="POST", task_id="suite:mnk-noshot")[0] == 200
+    device.calls.clear()
+
+    status, _ = _request(
+        base_url,
+        "/api/providers/mnk",
+        method="POST",
+        task_id="suite:mnk-noshot",
+        payload={"operation": "click", "click": {"x": 500, "y": 250, "button": "left", "hold_ms": 0}},
+    )
+
+    assert status == 200
+    assert ("tap", 540, 480) in device.calls
+    assert ("screenshot_jpeg",) not in device.calls
+
+
 def test_mnk_provider_returns_flat_error_for_adb_failure(bridge):
     _, device, base_url = bridge
     status, _ = _request(base_url, "/api/setup", method="POST", task_id="suite:mnk-error")
