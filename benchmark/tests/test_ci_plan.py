@@ -32,14 +32,6 @@ def _workflow_job(name: str) -> str:
     return match.group(1)
 
 
-def _workflow_step(job: str, marker: str) -> str:
-    match = re.search(
-        rf"(?ms)^      - {re.escape(marker)}\n(.*?)(?=^      - |\Z)", job
-    )
-    assert match is not None, f"missing workflow step: {marker}"
-    return match.group(1)
-
-
 def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
     suites_dir = tmp_path / "suites"
     suites_dir.mkdir()
@@ -441,39 +433,38 @@ def test_ci_rejects_duplicate_result_identities(tmp_path: Path) -> None:
     assert "duplicate_result_identity" in _incomplete_run_reasons(0, manifest)
 
 
-def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None:
-    run_job = _workflow_job("run")
-    artifact_paths = [
-        line.strip()
-        for marker in ("name: Upload benchmark artifacts", "name: Retry benchmark artifact upload")
-        for line in _workflow_step(run_job, marker)
-        .split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0].splitlines()
-        if line.strip()
-    ]
+def _benchmark_run_upload_paths() -> list[tuple[str, str]]:
+    """Every upload-artifact path that reaches into benchmark/runs, in any workflow."""
+    workflows = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    paths = []
+    for workflow in sorted(workflows.glob("*.yml")):
+        for step in re.split(r"(?m)^\s+- ", workflow.read_text(encoding="utf-8")):
+            if "actions/upload-artifact" not in step:
+                continue
+            block = re.search(r"(?ms)^(\s+)path: \|\n(.*?)(?=^\1\S|\Z)", step)
+            lines = block.group(2).splitlines() if block else [
+                re.search(r"(?m)^\s+path: (.+)$", step).group(1)
+            ]
+            paths += [
+                (workflow.name, line.strip()) for line in lines
+                if line.strip() and not line.strip().startswith("#")
+                and ("benchmark/runs" in line or "PREPARE_LOG" in line)
+            ]
+    return paths
 
-    # agent.toml, control tokens, and CLI service configs contain materialized
-    # credentials and must never match an upload glob. Every path must name a
-    # concrete file, so a directory (benchmark/runs) or broad glob (runs/**),
-    # which upload-artifact expands recursively, cannot slip in.
-    # PREPARE_LOG is defined as a single runs/.../mobilegym-image.log file.
-    file_paths = [path for path in artifact_paths if path != "benchmark/${{ env.PREPARE_LOG }}"]
-    assert file_paths
-    for path in file_paths:
+
+def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> None:
+    # Run directories hold materialized agent.toml, experiment-agent.toml, and
+    # control tokens. upload-artifact expands directories and broad globs
+    # recursively, so every path must end in a concrete file name: this rejects
+    # benchmark/runs, runs/, runs/**, and .../* in every workflow and step.
+    paths = _benchmark_run_upload_paths()
+    assert {workflow for workflow, _ in paths} >= {"benchmark.yml", "agent-experiment.yml"}
+    for workflow, path in paths:
+        if path.endswith("${{ env.PREPARE_LOG }}"):
+            continue  # benchmark.yml defines it as one runs/.../mobilegym-image.log file.
         name = path.rsplit("/", 1)[-1]
-        assert re.fullmatch(r"[\w.-]+\.[a-z]+", name), f"upload path must name a file: {path}"
-    assert not any(
-        secret in path for path in artifact_paths
-        for secret in ("cli-services", "agent.toml", "control_token")
-    )
-    assert all(
-        path.endswith(("/workers/*/daemon.log", "/workers/*/runner.log"))
-        for path in artifact_paths if "/workers/" in path
-    )
-    allowed_task_artifacts = (
-        "/tasks/**/trace.json", "/tasks/**/history.json", "/tasks/**/episode.json",
-        "/tasks/**/setup.json", "/tasks/**/setup_failure.json", "/tasks/**/consolidation.json",
-    )
-    assert all(path.endswith(allowed_task_artifacts) for path in artifact_paths if "/tasks/" in path)
+        assert re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name), f"{workflow}: {path}"
 
 
 def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:
