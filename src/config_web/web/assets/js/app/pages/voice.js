@@ -2,7 +2,6 @@
  * Voice routes.
  *
  *   /voice                                   mode switch, then the providers the mode uses
- *   /voice/speakers                          enrolled speaker profiles (Classic)
  *   /voice/providers?kind=<kind>             configured records, then unconfigured types
  *   /voice/providers/edit?kind=&name=|type=  a record's connection settings
  *   /voice/model?kind=<kind>                 the record's model
@@ -274,7 +273,7 @@ export async function voicePage(context) {
       kindGroup('tts', KINDS.tts.title, mode),
       speakerHost,
     ]);
-    renderSpeakerPanel(speakerHost, saver, snapshot, context);
+    renderSpeakerPanel(speakerHost, saver, snapshot);
     return root;
   }
 
@@ -312,8 +311,8 @@ async function enrollSpeakerProfile(profiles, enrollButton) {
   const confirmed = await confirmSheet({
     title: msg('voice.speaker_enroll_title', '靠近设备说话'),
     body: replacing
-      ? msg('voice.speaker_reenroll_body', '点确认后，对着 Aico 正常说话约 4 秒。新声纹会覆盖当前唯一声纹。用 Aico 麦克风，不是手机麦克风。')
-      : msg('voice.speaker_enroll_body', '点确认后，对着 Aico 正常说话约 4 秒。内容随意，用 Aico 麦克风录入，不是手机麦克风。'),
+      ? msg('voice.speaker_reenroll_body', '确认后请用 Aico 麦克风正常说话约 4 秒。新声纹会覆盖当前声纹。')
+      : msg('voice.speaker_enroll_body', '确认后请用 Aico 麦克风正常说话约 4 秒，内容随意。'),
     confirmLabel: replacing
       ? msg('voice.speaker_reenroll_confirm', '重新录入')
       : msg('voice.speaker_enroll_confirm', '开始录入'),
@@ -321,7 +320,7 @@ async function enrollSpeakerProfile(profiles, enrollButton) {
   });
   if (!confirmed) return false;
   if (enrollButton) setDisabled(enrollButton, true);
-  toast(msg('voice.speaker_enrolling', '正在录入，请说话…'));
+  toast(msg('voice.speaker_enrolling', '正在录入，请对着 Aico 说话…'), {durationMs: 0});
   try {
     await request(`/api/speaker/enroll/capture?id=${encodeURIComponent(SPEAKER_PROFILE_ID)}`, {method: 'POST'});
     toast(msg('voice.speaker_enrolled', '声纹已录入'));
@@ -335,7 +334,7 @@ async function enrollSpeakerProfile(profiles, enrollButton) {
 
 async function deleteSpeakerProfile(profile) {
   const confirmed = await confirmSheet({
-    title: t('voice.speaker_delete_title', {id: profile.id, defaultValue: '删除声纹 {{id}}？'}),
+    title: msg('voice.speaker_delete_title', '删除当前声纹？'),
     body: msg('voice.speaker_delete_body', '删除后该声音将无法通过声纹校验。'),
     confirmLabel: msg('action.delete', '删除'),
     danger: true,
@@ -352,8 +351,8 @@ async function deleteSpeakerProfile(profile) {
   }
 }
 
-/** Classic speaker gate summary on the voice page; profiles open a manage page. */
-async function renderSpeakerPanel(host, saver, snapshot, context) {
+/** Classic speaker gate + single owner enroll/delete on the voice page. */
+async function renderSpeakerPanel(host, saver, snapshot) {
   if (!host) return;
   replace(host, [text(msg('voice.speaker_loading', '正在读取声纹…'), 'page__note')]);
 
@@ -374,6 +373,8 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
   const agent = speakerAgent(snapshot);
   let gateOn = agent.voice_speaker_gate_enabled === true || status.gate_enabled === true;
   let busy = false;
+
+  const reload = () => renderSpeakerPanel(host, saver, snapshot);
 
   const paint = () => {
     const gateToggle = switchControl({
@@ -404,25 +405,42 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
       },
     });
 
+    const profile = profiles[0];
+    const hasProfiles = Boolean(profile);
+    const statusRow = row({
+      label: msg('voice.speaker_profiles', '当前声纹'),
+      value: hasProfiles ? null : msg('voice.speaker_empty', '还没有声纹'),
+      tone: hasProfiles ? null : 'muted',
+      accessory: hasProfiles
+        ? el('div', {class: 'ds-row__accessory-group'}, [
+          icon('check', {class: 'ds-choice-row__check', size: 22}),
+          text(msg('voice.speaker_enrolled_status', '已录入'), 'ds-row__value'),
+        ])
+        : null,
+      action: hasProfiles ? 'speaker-status' : 'speaker-profiles-empty',
+    });
+
     const rows = [
       row({
         label: msg('voice.speaker_gate', '声纹校验'),
         accessory: gateToggle,
         description: msg('voice.speaker_gate_help', '开启后，Classic 只接受已录入声纹的说话。建议先录入再打开。'),
       }),
+      hasProfiles
+        ? swipeRow(statusRow, {
+          action: `delete-speaker-${profile.id}`,
+          onDelete: async () => {
+            if (busy) return;
+            busy = true;
+            try {
+              if (await deleteSpeakerProfile(profile)) reload();
+            } finally {
+              busy = false;
+            }
+          },
+        })
+        : statusRow,
     ];
-
-    const hasProfiles = profiles.length > 0;
-    rows.push(row({
-      label: msg('voice.speaker_profiles', '当前声纹'),
-      value: hasProfiles
-        ? msg('voice.speaker_enrolled_status', '已录入')
-        : msg('voice.speaker_empty', '还没有声纹'),
-      tone: hasProfiles ? null : 'muted',
-      chevron: hasProfiles,
-      action: hasProfiles ? 'open-speaker-profiles' : 'speaker-profiles-empty',
-      onPress: hasProfiles ? () => context.navigate('/voice/speakers') : undefined,
-    }));
 
     const enrollButton = button({
       label: hasProfiles
@@ -435,9 +453,7 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
         if (busy) return;
         busy = true;
         try {
-          if (await enrollSpeakerProfile(profiles, enrollButton)) {
-            renderSpeakerPanel(host, saver, snapshot, context);
-          }
+          if (await enrollSpeakerProfile(profiles, enrollButton)) reload();
         } finally {
           busy = false;
         }
@@ -447,80 +463,15 @@ async function renderSpeakerPanel(host, saver, snapshot, context) {
     replace(host, [
       group({
         caption: msg('voice.speaker_caption', '声纹'),
-        rows,
+        rows: [
+          ...rows,
+          el('div', {class: 'ds-card__actions'}, [enrollButton]),
+        ],
       }),
-      el('div', {class: 'ds-group'}, [enrollButton]),
     ]);
   };
 
   paint();
-}
-
-/** Manage enrolled speaker profiles: list, delete, board-mic enroll. */
-export async function voiceSpeakersPage(context) {
-  const body = el('div', {});
-  const saver = createSaver(context, {
-    title: msg('voice.speaker_manage', '管理声纹'),
-    back: '/voice',
-    root: body,
-  });
-
-  async function paint() {
-    replace(body, [text(msg('voice.speaker_loading', '正在读取声纹…'), 'page__note')]);
-    saver.refreshChrome();
-    let profiles = [];
-    try {
-      ({profiles} = await loadSpeakerProfiles());
-    } catch (error) {
-      replace(body, [text(
-        error && error.message
-          ? error.message
-          : resolve(msg('voice.speaker_unavailable', '声纹服务暂不可用')),
-        'page__note',
-      )]);
-      saver.refreshChrome();
-      return;
-    }
-
-    const profile = profiles[0];
-    const profileRows = profile
-      ? [swipeRow(row({
-        label: msg('voice.speaker_owner', '主人声纹'),
-        value: profile.created_at ? String(profile.created_at).slice(0, 10) : msg('voice.speaker_enrolled_status', '已录入'),
-        tone: 'muted',
-      }), {
-        action: `delete-speaker-${profile.id}`,
-        onDelete: async () => {
-          if (await deleteSpeakerProfile(profile)) paint();
-        },
-      })]
-      : [row({
-        label: msg('voice.speaker_empty', '还没有声纹'),
-        tone: 'muted',
-      })];
-
-    const enrollButton = button({
-      label: profile
-        ? msg('voice.speaker_reenroll', '重新录入')
-        : msg('voice.speaker_enroll', '在设备上录入'),
-      variant: 'accent',
-      block: true,
-      action: 'speaker-enroll',
-      onPress: async () => {
-        if (await enrollSpeakerProfile(profiles, enrollButton)) paint();
-      },
-    });
-
-    replace(body, [
-      group({rows: profileRows}),
-      el('div', {class: 'ds-group'}, [enrollButton]),
-      text(msg('voice.speaker_manage_note', '只保留一个声纹。左滑可删除；重新录入会覆盖。用 Aico 麦克风，不是手机麦克风。'), 'page__note page__note--below'),
-    ]);
-    saver.refreshChrome();
-  }
-
-  await paint();
-  return screen([body]);
 }
 
 /* ------------------------------------------------------------- providers --- */

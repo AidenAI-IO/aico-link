@@ -15,7 +15,7 @@ import {
   websearchPage,
 } from './pages/conversation.js';
 import {decisionPage, mainModelPage, modelPage, modelsPage, providerEditPage, providersPage} from './pages/model.js';
-import {voiceExtraPage, voiceModelPage, voicePage, voiceProviderEditPage, voiceProvidersPage, voiceSpeakersPage} from './pages/voice.js';
+import {voiceExtraPage, voiceModelPage, voicePage, voiceProviderEditPage, voiceProvidersPage} from './pages/voice.js';
 import {memoryPage} from './pages/memory.js';
 import {storagePage} from './pages/storage.js';
 import {advancedPage, agentLogPage, logLevelPage, logsPage, manualConfigPage} from './pages/advanced.js';
@@ -39,7 +39,6 @@ export const routes = [
   {path: '/model/providers/edit', name: 'model-provider-edit', page: providerEditPage},
   {path: '/model/models', name: 'model-models', page: modelsPage},
   {path: '/voice', name: 'voice', page: voicePage},
-  {path: '/voice/speakers', name: 'voice-speakers', page: voiceSpeakersPage},
   {path: '/voice/providers', name: 'voice-providers', page: voiceProvidersPage},
   {path: '/voice/providers/edit', name: 'voice-provider-edit', page: voiceProviderEditPage},
   {path: '/voice/model', name: 'voice-model', page: voiceModelPage},
