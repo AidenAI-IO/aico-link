@@ -68,13 +68,13 @@ def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> 
     assert runnable
     assert hardware
     assert all_cases == catalog.cases
-    assert len(runnable) == 19
-    assert len(hardware) == 17
-    assert len(all_cases) == 34
+    assert len(runnable) == 18
+    assert len(hardware) == 16
+    assert len(all_cases) == 33
     assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
     assert {case.environment for case in hardware} <= {"adb", "external"}
     assert {case.id for case in runnable if case.environment == "adb"} == {
-        "adb_android_basic", "adb_android_basic-aidenbridge",
+        "adb_android_basic",
         "adb_android_text_editing", "adb_android_text_editing-aidenbridge",
         "adb_android_builtin_apps",
     }
@@ -162,11 +162,10 @@ def test_phone_control_selection_uses_only_the_requested_environment_profile() -
     }
 
 
-@pytest.mark.parametrize("suite", ["adb_android_basic", "adb_android_text_editing"])
 @pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
-def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite, profile):
+def test_adb_text_editing_selects_matching_bridge_and_no_bridge_cases(profile):
     catalog = load_catalog()
-    selected = select_cases(catalog, profile=profile, suite=f"suites/{suite}.json")
+    selected = select_cases(catalog, profile=profile, suite="suites/adb_android_text_editing.json")
 
     assert len(selected) == 2
     baseline, connected = selected
@@ -179,11 +178,17 @@ def test_adb_suites_select_matching_bridge_and_no_bridge_cases(suite, profile):
     assert baseline.timeout_minutes == connected.timeout_minutes
 
 
+@pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
+def test_adb_basic_selects_only_the_no_bridge_case(profile):
+    selected = select_cases(load_catalog(), profile=profile, suite="suites/adb_android_basic.json")
+
+    assert [(case.id, case.android_phone_bridge) for case in selected] == [("adb_android_basic", False)]
+
 @pytest.mark.parametrize("bridge_enabled", [False, True])
 @pytest.mark.parametrize("app_installed", [False, True])
 def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, app_installed):
     case = next(case for case in load_catalog().cases
-                if case.suite == "suites/adb_android_basic.json"
+                if case.suite == "suites/adb_android_text_editing.json"
                 and case.android_phone_bridge == bridge_enabled)
     commands = []
     def run(command, **kwargs):
@@ -397,7 +402,7 @@ def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None
     assert _effective_exit_code(0, manifest) == 0
 
 
-@pytest.mark.parametrize("case_id", ["adb_android_basic", "adb_android_basic-aidenbridge", "aidenbridge-capabilities-android"])
+@pytest.mark.parametrize("case_id", ["adb_android_basic", "adb_android_text_editing-aidenbridge", "aidenbridge-capabilities-android"])
 @pytest.mark.parametrize("complete", [True, False])
 def test_android_cases_use_run_completeness_not_task_pass_rate(
     monkeypatch, tmp_path: Path, case_id: str, complete: bool,

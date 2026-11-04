@@ -423,9 +423,9 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (19 cases) |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (18 cases) |
 | Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select one or more suites |
-| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (17 cases) |
+| Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
 | Manual dispatch | `all` | Every catalog case; requires all configured environments |
 
@@ -522,13 +522,20 @@ release filename, installed `versionCode`, and whether installation was reused; 
 downloaded, it also records its SHA-256. A republished APK with the same
 `versionCode` is treated as the same release.
 
-The general Android suites run as matched pairs using the same JSON tasks,
+The text-editing suite runs as a matched pair using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:
 
 | Suite | Without AidenBridge | With AidenBridge |
 | --- | --- | --- |
-| `adb_android_basic.json` (16 tasks) | `adb_android_basic` | `adb_android_basic-aidenbridge` |
 | `adb_android_text_editing.json` (4 tasks) | `adb_android_text_editing` | `adb_android_text_editing-aidenbridge` |
+
+`adb_android_basic.json` (16 tasks) runs only without AidenBridge. Its
+navigation, back, recents, and scroll tasks use ADB screenshots and input in
+both variants, and its `open_app` calls fall back to visible search whenever
+the companion App is in the background, so a connected variant measured the
+same execution path. Text entry is the general Android workload whose route
+depends on Phone Bridge: a background-safe clipboard write followed by paste,
+instead of ADB key input.
 
 These task definitions are synced from main commit
 `16ab57b50c68a91a05915a4112f8bc2a896170af`. Basic tasks cover general UI navigation
@@ -536,7 +543,7 @@ and state recovery; text-editing tasks cover ASCII spaces, punctuation,
 replacement, and clearing. The `phone_control_v1.json` suite remains registered
 for MobileGym and iOS, without an additional ADB case.
 
-Both Android pairs run in the daily `runnable` sweep. Selecting either suite
+The text-editing pair runs in the daily `runnable` sweep. Selecting that suite
 manually with `runnable`, `hardware`, `adb`, or `all` also runs both variants.
 The baseline stops any retained companion App before starting and uses the ADB
 environment without a Phone Bridge connection. The connected variant establishes
