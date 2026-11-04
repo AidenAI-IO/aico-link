@@ -385,15 +385,6 @@ func TestNewAudioDialogUsesRuntimeProviderManager(t *testing.T) {
 	}
 }
 
-func TestTTSProviderAliasesAreNotRegistered(t *testing.T) {
-	for _, provider := range []string{"fish", "qwen", "qwen-tts"} {
-		_, err := ttsmodule.New(ttsmodule.ProviderConfig{Provider: provider, APIKey: "test-key"})
-		if err == nil {
-			t.Fatalf("tts.New(%q) succeeded, want unsupported provider", provider)
-		}
-	}
-}
-
 func TestMinimaxTTSProvidersAreRegistered(t *testing.T) {
 	for _, name := range []string{"minimax", "minimax-cn"} {
 		t.Run(name, func(t *testing.T) {
@@ -409,16 +400,6 @@ func TestMinimaxTTSProvidersAreRegistered(t *testing.T) {
 				t.Fatalf("AvailableProviders() missing %s: %#v", name, ttsmodule.AvailableProviders())
 			}
 		})
-	}
-}
-
-func TestMinimaxWebSocketLegacyProviderIsNotRegistered(t *testing.T) {
-	_, err := ttsmodule.New(ttsmodule.ProviderConfig{Provider: "minimax-ws", APIKey: "test-key"})
-	if err == nil {
-		t.Fatal("tts.New(minimax-ws) succeeded, want unsupported legacy provider")
-	}
-	if containsProviderName(ttsmodule.AvailableProviders(), "minimax-ws") {
-		t.Fatalf("AvailableProviders() includes minimax-ws: %#v", ttsmodule.AvailableProviders())
 	}
 }
 

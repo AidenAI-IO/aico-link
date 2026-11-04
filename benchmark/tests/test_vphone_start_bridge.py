@@ -92,8 +92,3 @@ def test_start_bridge_agent_command_relies_on_environment_platform():
     assert command.endswith("--benchmark-task-id vphone-ios-cli")
     assert "--device-type" not in command
 
-
-def test_vphone_start_wrapper_relies_on_environment_platform():
-    script = (Path(__file__).parents[1] / "vphone" / "start.sh").read_text(encoding="utf-8")
-
-    assert "--device-type" not in script

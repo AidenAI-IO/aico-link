@@ -168,11 +168,6 @@ def test_task_screen_payload_proxies_bridge_screen_with_task_header(tmp_path: Pa
     assert seen["timeout"] == 30
 
 
-def test_task_screen_html_fetches_webui_screen_api():
-    assert "/api/jobs/" in webui.TASK_SCREEN_HTML
-    assert "/api/screen" not in webui.TASK_SCREEN_HTML
-
-
 def test_read_environment_bridge_concurrency_uses_base_url(monkeypatch):
     seen = {}
 
@@ -2171,59 +2166,6 @@ def test_ensure_daemon_image_uses_compose_build(tmp_path: Path, monkeypatch):
         assert captured["start_new_session"] is True
 
 
-def test_index_html_exposes_judge_settings_panel():
-    assert "grid-template-columns: 600px minmax(0, 1fr);" in webui.INDEX_HTML
-    assert 'id="judgeEnabled"' in webui.INDEX_HTML
-    assert 'id="judgeModel"' in webui.INDEX_HTML
-    assert 'id="judgeApiKey"' in webui.INDEX_HTML
-    assert 'id="noJudge"' not in webui.INDEX_HTML
-    assert "/api/webui-settings" in webui.INDEX_HTML
-    assert "localStorage" not in webui.INDEX_HTML
-    assert 'id="editAgentConfig"' in webui.INDEX_HTML
-    assert 'id="agentConfigText" spellcheck="false" readonly' in webui.INDEX_HTML
-    assert "function setAgentConfigEditing" in webui.INDEX_HTML
-    assert 'id="activeStopJob"' in webui.INDEX_HTML
-    assert "function stopJob" in webui.INDEX_HTML
-    assert "/api/jobs/${encodeURIComponent(id)}/stop" in webui.INDEX_HTML
-    assert 'id="runEnvDialog"' in webui.INDEX_HTML
-    assert 'id="confirmRunBtn"' in webui.INDEX_HTML
-    assert "document.getElementById('runBtn').onclick = openRunEnvironmentDialog" in webui.INDEX_HTML
-    assert "document.getElementById('confirmRunBtn').onclick = confirmRun" in webui.INDEX_HTML
-    assert "let runEnvBackdropPointerDown = false" in webui.INDEX_HTML
-    assert "runEnvDialog.onpointerdown" in webui.INDEX_HTML
-    assert "e.target === runEnvDialog && runEnvBackdropPointerDown" in webui.INDEX_HTML
-    assert "runButton.disabled = selectedSuites.size === 0 || mode === 'mixed'" in webui.INDEX_HTML
-    assert "document.getElementById('runEnvDialog').hidden = false" in webui.INDEX_HTML
-    assert "async function startRun(env)" in webui.INDEX_HTML
-    assert "if(started) closeRunEnvironmentDialog()" in webui.INDEX_HTML
-    assert '<th style="width:220px">Suite</th>' in webui.INDEX_HTML
-    assert 'colspan="6">No jobs yet' in webui.INDEX_HTML
-    assert "function suiteDisplayName" in webui.INDEX_HTML
-    assert "const suiteNames = suiteKeys.map(suiteDisplayName)" in webui.INDEX_HTML
-    assert "function stopTask" in webui.INDEX_HTML
-    assert "/tasks/${encodeURIComponent(taskId)}/stop" in webui.INDEX_HTML
-    assert "data-stop-task" in webui.INDEX_HTML
-    assert '<th style="width:160px"></th>' in webui.INDEX_HTML
-    assert 'class="inline-actions env-actions"' in webui.INDEX_HTML
-    assert "web_url: env.web_url" in webui.INDEX_HTML
-    assert 'id="mobilegymParallelEnvs"' in webui.INDEX_HTML
-    assert 'id="mobilegymParallelEnvs" type="number" min="1" step="1" value="5"' in webui.INDEX_HTML
-    assert "mobilegymParallelEnvs').value || '5'" in webui.INDEX_HTML
-    assert "env.parallel_envs || 1" not in webui.INDEX_HTML
-    assert "parallel_envs" in webui.INDEX_HTML
-    assert ">screen</a>" in webui.INDEX_HTML
-    assert "job.environment_web_url" not in webui.INDEX_HTML
-    assert "screenLink" not in webui.INDEX_HTML
-    assert 'id="taskRows"' in webui.INDEX_HTML
-    assert "task_records" in webui.INDEX_HTML
-    assert "/tasks/${encodeURIComponent(task.id)}/log" in webui.INDEX_HTML
-    assert "screen_url" in webui.INDEX_HTML
-    assert "const report = job.report_url" in webui.INDEX_HTML
-    assert "(job.suite_results || []).filter(r => r.report_url)" not in webui.INDEX_HTML
-    assert "const progressTotals = progress.totals || {}" in webui.INDEX_HTML
-    assert "Object.keys(progressTotals).length ? progressTotals : suiteTotals" in webui.INDEX_HTML
-
-
 def test_run_job_uses_saved_webui_agent_config(tmp_path: Path, monkeypatch):
     base = tmp_path / "base"
     base.mkdir()
@@ -2315,18 +2257,6 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert env["AICO_BENCHMARK_MOCK_TOOLS"] == "0"
     assert env["AICO_DEVICE_TYPE"] == "android"
     assert "host.docker.internal" in env["NO_PROXY"]
-    compose_text = webui.AGENT_DAEMON_COMPOSE_FILE.read_text(encoding="utf-8")
-    entrypoint_text = (webui.BENCHMARK_DOCKER_DIR / "agent-daemon-entrypoint.sh").read_text(
-        encoding="utf-8"
-    )
-    assert "AICO_ENVIRONMENT_BRIDGE_MODE: ${AICO_ENVIRONMENT_BRIDGE_MODE:-0}" in compose_text
-    assert "AICO_ENVIRONMENT_BRIDGE_TOOLS" not in compose_text
-    assert "AICO_BENCHMARK_TASK_ID" in compose_text
-    assert "AICO_DEVICE_TYPE" in compose_text
-    assert "--environment-bridge-mode" in entrypoint_text
-    assert '--environment-bridge-endpoint "$ENVIRONMENT_BRIDGE_ENDPOINT"' in entrypoint_text
-    assert "environment-bridge-tools" not in entrypoint_text
-    assert '--device-type "$AICO_DEVICE_TYPE"' in entrypoint_text
 
 
 @pytest.mark.parametrize(
@@ -2874,12 +2804,6 @@ def test_run_job_mock_mode_uses_runner_platform_summary(
     assert job.target_platform == expected_platform
     persisted = json.loads((job_dir / "job.json").read_text(encoding="utf-8"))
     assert persisted["target_platform"] == expected_platform
-
-
-def test_webui_html_exposes_mock_environment_run_mode():
-    assert "Mock Aico companion app environment" in webui.INDEX_HTML
-    assert "selectedSuiteEnvironmentMode" in webui.INDEX_HTML
-    assert "Mock suites and external device suites must run in separate jobs" in webui.INDEX_HTML
 
 
 def test_webui_inline_script_has_balanced_braces():

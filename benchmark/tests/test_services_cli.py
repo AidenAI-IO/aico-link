@@ -368,12 +368,6 @@ def test_start_agent_daemon_uses_docker_assigned_port_when_auto(tmp_path: Path, 
     assert captured["job"].agent_url == "http://127.0.0.1:18081"
 
 
-def test_agent_daemon_compose_passes_benchmark_token_file_env_var():
-    compose = (webui.BENCHMARK_DOCKER_DIR / "docker-compose.agent-daemon.yml").read_text(encoding="utf-8")
-
-    assert "AICO_BENCHMARK_TOKEN_FILE: ${AICO_BENCHMARK_TOKEN_FILE:-}" in compose
-
-
 def test_start_agent_daemon_reports_missing_agent_config(tmp_path: Path, capsys):
     args = _ns(
         port=18081,

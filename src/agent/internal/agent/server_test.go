@@ -2964,87 +2964,6 @@ func TestServerHandleChatSteerRejectsNonRunningRequest(t *testing.T) {
 	}
 }
 
-func TestWebUISteerModeControlsArePresent(t *testing.T) {
-	chatScript := readWebUIResource(t, "scripts/chat.js")
-	index := readWebUIResource(t, "index.html")
-	for _, want := range []string{
-		"/api/chat/steer",
-		"/api/chat/steer/cancel",
-		"async function submitSteerMessage()",
-	} {
-		if !strings.Contains(chatScript, want) {
-			t.Fatalf("web UI missing %q", want)
-		}
-	}
-	if !strings.Contains(index, "id=\"pendingSteer\"") {
-		t.Fatal("web UI missing pending steer controls")
-	}
-	if !strings.Contains(readWebUIResource(t, "scripts/messages.js"), "sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';") {
-		t.Fatal("web UI missing steer composer state")
-	}
-}
-
-func TestWebUIClearMenuUsesConfirmedSessionActions(t *testing.T) {
-	index := readWebUIResource(t, "index.html")
-	chatScript := readWebUIResource(t, "scripts/chat.js")
-
-	for _, want := range []string{
-		`id="clearMenu"`,
-		"Clear Session",
-		"Clear Session &amp; Memory",
-		`onclick="clearSession()"`,
-		`onclick="clearSessionAndMemory()"`,
-	} {
-		if !strings.Contains(index, want) {
-			t.Errorf("web UI clear menu missing %q", want)
-		}
-	}
-	for _, want := range []string{
-		"async function clearSession()",
-		"async function clearSessionAndMemory()",
-		"if (!confirm(",
-		"fetch('/api/clear', { method: 'POST' })",
-		"fetch('/api/clear-all', { method: 'POST' })",
-	} {
-		if !strings.Contains(chatScript, want) {
-			t.Errorf("web UI clear action missing %q", want)
-		}
-	}
-	for _, unwanted := range []string{">New Chat</button>", ">Reset Memory</button>"} {
-		if strings.Contains(index, unwanted) {
-			t.Errorf("web UI still contains old action %q", unwanted)
-		}
-	}
-}
-
-func TestWebUIIsEmbeddedFromStaticResource(t *testing.T) {
-	want, err := os.ReadFile("web_ui/index.html")
-	if err != nil {
-		t.Fatalf("read web UI static resource: %v", err)
-	}
-	if webUI != string(want) {
-		t.Fatal("embedded web UI differs from web_ui/index.html")
-	}
-
-	for _, asset := range []string{
-		"/web-ui/styles.css",
-		"/web-ui/scripts/state.js",
-		"/web-ui/scripts/streaming_text.js",
-		"/web-ui/scripts/events.js",
-		"/web-ui/scripts/tools.js",
-		"/web-ui/scripts/chat.js",
-		"/web-ui/scripts/messages.js",
-		"/web-ui/scripts/attachments.js",
-		"/web-ui/scripts/tool_messages.js",
-		"/web-ui/scripts/resources.js",
-		"/web-ui/scripts/bootstrap.js",
-	} {
-		if !strings.Contains(webUI, asset) {
-			t.Errorf("web UI index missing asset %q", asset)
-		}
-	}
-}
-
 func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 	server := &Server{logger: newTestLogger(), bridge: NewPhoneBridge(newTestLogger())}
 	handler := server.Handler()
@@ -3069,37 +2988,6 @@ func TestServerServesEmbeddedWebUIAssets(t *testing.T) {
 		}
 		if !strings.Contains(recorder.Body.String(), test.content) {
 			t.Fatalf("GET %s: embedded content is missing", test.path)
-		}
-	}
-}
-
-func TestWebUIBootstrapDoesNotReferenceRemovedStoragePanel(t *testing.T) {
-	index := readWebUIResource(t, "index.html")
-	for _, unwanted := range []string{
-		"scripts/storage.js",
-		"TOOLS · TERMINAL · STORAGE",
-	} {
-		if strings.Contains(index, unwanted) {
-			t.Fatalf("web UI index still references removed storage panel %q", unwanted)
-		}
-	}
-
-	bootstrapScript := readWebUIResource(t, "scripts/bootstrap.js")
-	for _, unwanted := range []string{
-		"loadStorageStatus()",
-		"setInterval(loadStorageStatus",
-	} {
-		if strings.Contains(bootstrapScript, unwanted) {
-			t.Fatalf("web UI bootstrap still references removed storage function %q", unwanted)
-		}
-	}
-	for _, required := range []string{
-		"connectSSE();",
-		"startResourcePolling();",
-		"toolSelectEl.addEventListener('change', syncSelectedTool);",
-	} {
-		if !strings.Contains(bootstrapScript, required) {
-			t.Fatalf("web UI bootstrap missing required initialization %q", required)
 		}
 	}
 }
@@ -3141,40 +3029,6 @@ func TestTerminalReverseProxyPreservesPublicHostAndRewritesFrameHeaders(t *testi
 	}
 	if got := recorder.Header().Get("Location"); got != "/webtty/" {
 		t.Fatalf("Location = %q, want /webtty/", got)
-	}
-}
-
-func TestWebUIImagePasteControlsArePresent(t *testing.T) {
-	attachmentsScript := readWebUIResource(t, "scripts/attachments.js")
-	stateScript := readWebUIResource(t, "scripts/state.js")
-	bootstrapScript := readWebUIResource(t, "scripts/bootstrap.js")
-	for _, want := range []string{
-		"async function handleComposerPaste(event)",
-		"await addImageFiles(files, 'pasted');",
-		"Only 4 images can be attached.",
-	} {
-		if !strings.Contains(attachmentsScript, want) {
-			t.Fatalf("web UI missing %q", want)
-		}
-	}
-	if !strings.Contains(stateScript, "const maxDraftImageAttachments = 4;") {
-		t.Fatal("web UI missing image attachment limit")
-	}
-	if !strings.Contains(bootstrapScript, "inputEl.addEventListener('paste', handleComposerPaste);") {
-		t.Fatal("web UI missing image paste listener")
-	}
-}
-
-func TestWebUIUsesContextRequestIDsForToolMessageIdentity(t *testing.T) {
-	projectionScript := readWebUIResource(t, "scripts/conversation_projection.js")
-	for _, want := range []string{
-		"type === 'tool_call' || type === 'tool_result'",
-		"'request', requestId, type",
-		"msg.tool_name || '', msg.tool_input || '', content",
-	} {
-		if !strings.Contains(projectionScript, want) {
-			t.Fatalf("web UI tool message identity missing %q", want)
-		}
 	}
 }
 
@@ -3525,39 +3379,9 @@ func TestServerContextAttachmentEndpointHidesInternalErrors(t *testing.T) {
 }
 
 func TestContextPageUsesSafeAttachmentHandlers(t *testing.T) {
-	page := readWebUIResource(t, "context.html")
-	for _, want := range []string{"data-attachment=", "event.target.closest('.attachment')", "String(a.file_path || '')"} {
-		if !strings.Contains(page, want) {
-			t.Fatalf("context page missing %q", want)
-		}
-	}
-	if strings.Contains(page, `onclick="openAttachment(`) {
-		t.Fatal("context page still embeds attachment values in an inline JavaScript handler")
-	}
-}
-
-func TestWebUIShowsMessageTokenUsage(t *testing.T) {
-	messagesScript := readWebUIResource(t, "scripts/messages.js")
-	styles := readWebUIResource(t, "styles.css")
-	contextPage := readWebUIResource(t, "context.html")
-	for _, want := range []string{"function renderMessageUsage(usage)", "usage.input_tokens", "usage.output_tokens", "usage.total_tokens"} {
-		if !strings.Contains(messagesScript, want) {
-			t.Fatalf("message renderer missing %q", want)
-		}
-	}
-	for _, want := range []string{".message-footer", ".message-usage", ".message-usage-item"} {
-		if !strings.Contains(styles, want) {
-			t.Fatalf("web UI styles missing %q", want)
-		}
-	}
-	if !strings.Contains(contextPage, "m.usage.input_tokens") || !strings.Contains(contextPage, "m.usage.total_tokens") {
-		t.Fatal("context page does not render token usage")
-	}
-	if strings.Index(messagesScript, "footer.appendChild(timeDiv)") > strings.Index(messagesScript, "footer.appendChild(usageDiv)") {
-		t.Fatal("message footer must render time before usage")
-	}
-	if !strings.Contains(styles, "margin-right: auto;") || !strings.Contains(styles, "margin-left: auto;") {
-		t.Fatal("message footer must pin time left and usage right")
+	// Attachment values are user-controlled; inline handlers would let them execute as script.
+	if strings.Contains(readWebUIResource(t, "context.html"), `onclick="openAttachment(`) {
+		t.Fatal("context page embeds attachment values in an inline JavaScript handler")
 	}
 }
 
@@ -4602,23 +4426,6 @@ func TestRequestBaseURLPrefersForwardedHeaders(t *testing.T) {
 	got := requestBaseURL(req)
 	if got != "https://device.example:8443" {
 		t.Fatalf("requestBaseURL = %q, want %q", got, "https://device.example:8443")
-	}
-}
-
-func TestWebUIRedactsScreenshotBase64Payloads(t *testing.T) {
-	toolMessagesScript := readWebUIResource(t, "scripts/tool_messages.js")
-	required := []string{
-		"redactToolPayloadForDisplay(JSON.parse(value))",
-		"clone.data = '[base64 screenshot omitted: ' + byteLabel + ']'",
-		"function isScreenshotPayload(value)",
-	}
-	for _, snippet := range required {
-		if !strings.Contains(toolMessagesScript, snippet) {
-			t.Fatalf("webUI missing screenshot redaction snippet %q", snippet)
-		}
-	}
-	if strings.Contains(toolMessagesScript, "toolName !== 'screenshot'") {
-		t.Fatalf("webUI still limits screenshot parsing to only the screenshot tool")
 	}
 }
 

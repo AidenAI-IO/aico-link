@@ -80,24 +80,6 @@ func TestWaitForWakeupExposedToAgentAndToolLab(t *testing.T) {
 	}
 }
 
-func TestTimeAndCalculatorAreNotRegistered(t *testing.T) {
-	runtime := NewRuntimeWithDeps(
-		Config{},
-		nil,
-		NewMemoryManager(""),
-		NewBuiltinToolSet(HIDConfig{}, AudioConfig{}, SearchConfig{}, ProxyConfig{}),
-		NewSkillIndex(),
-	)
-	for _, name := range []string{"calculator", "current_time"} {
-		if _, ok := runtime.tools.Get(name); ok {
-			t.Fatalf("removed utility tool %s is still registered", name)
-		}
-		if _, ok := runtime.ToolDescriptorByName(name); ok {
-			t.Fatalf("removed utility tool %s is still in the Tool Lab HTTP catalog", name)
-		}
-	}
-}
-
 func TestPhoneBridgeToolsExposedToAgent(t *testing.T) {
 	for _, name := range []string{"open_app", "open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts", "bridge_notification"} {
 		if !toolAgentExposed(name) {

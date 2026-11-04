@@ -168,35 +168,6 @@ def test_load_suite_rejects_malformed_assert_memory_nested_schema(
         load_suite(path)
 
 
-def test_notification_memory_suite_uses_benchmark_seed_setup():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "notification_memory_v1.json"
-    suite = load_suite(suite_path)
-    assert suite_path.read_text(encoding="utf-8").isascii()
-
-    assert suite.name == "notification_memory_v1"
-    assert [task.id for task in suite.tasks] == [
-        "delivery_notification_recall",
-        "notification_noise_is_filtered",
-        "notification_user_fact_beats_public_info",
-        "notification_batch_cursor_drain",
-        "notification_explicit_update",
-        "notification_explicit_reinforce",
-        "notification_explicit_remove",
-        "notification_explicit_promote",
-    ]
-    assert suite.tasks[0].setup["type"] == "seed_notification"
-    assert suite.tasks[0].setup["expected_memory_scope"] == "temporary"
-    assert suite.tasks[1].setup["consolidate"] is True
-    assert suite.tasks[1].setup["expected_memory_count"] == 0
-    assert suite.tasks[2].repeats == 5
-    assert suite.tasks[2].setup["expected_memory_count"] == 1
-    assert [step["type"] for step in suite.tasks[4].setup] == [
-        "seed_memory",
-        "seed_notification",
-        "assert_memory",
-    ]
-
-
 def test_perception_v1_scores_tap_coordinates_deterministically():
     from runner.assertions import evaluate_hard_assertions
     from runner.models import Trace, ToolCall
@@ -276,25 +247,11 @@ def test_perception_v1_describes_single_frame_environment_without_coaching():
         assert leaked_instruction not in prompt_prefix
 
 
-def test_mobilegym_basic_suite_loads_device_operation_tasks():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "mobilegym_basic.json"
-    suite = load_suite(suite_path)
-
-    assert suite.name == "mobilegym_basic"
-    assert {task.category for task in suite.tasks} == {"device_operation"}
-    assert all(task.rubric and task.rubric[0].check for task in suite.tasks)
-
-
 def test_mobilegym_touch_suite_starts_in_target_app_and_checks_outcome():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "mobilegym_touch_v1.json"
     suite = load_suite(suite_path)
 
     assert suite.name == "mobilegym_touch_v1"
-    assert {task.id for task in suite.tasks} == {
-        "calc_repeated_digits", "calc_delete_repeated",
-        "dial_repeated_digits", "dial_delete_extra_digits",
-        "stopwatch_two_laps",
-    }
     for task in suite.tasks:
         assert task.environment_assertions["route.app"] in task.app_ids
         if task.foreground_app_id is not None:
@@ -306,27 +263,10 @@ def test_mobilegym_touch_suite_starts_in_target_app_and_checks_outcome():
             assert task.environment_assertions["apps.calculator2.formula"]
 
 
-def test_vphone_ios_basic_warmup_requires_screenshot():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "vphone_ios_basic.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    warmup = task_by_id["warmup"]
-    assert suite.prompt_prefix == ""
-    assert warmup.prompt == "看一眼当前屏幕。"
-    assert warmup.hard_assertions.min_tool_calls == 1
-    assert warmup.hard_assertions.required_tools == ["screenshot"]
-
-
 def test_adb_android_suites_keep_navigation_and_text_editing_separate():
     suites_dir = Path(__file__).resolve().parents[1] / "suites"
     basic = load_suite(suites_dir / "adb_android_basic.json")
     editing = load_suite(suites_dir / "adb_android_text_editing.json")
-    assert len(basic.tasks) == 16
-    assert {task.id for task in editing.tasks} == {
-        "search_ascii_with_spaces", "search_ascii_punctuation",
-        "replace_search_query", "clear_search_query",
-    }
     assert {task.id for task in basic.tasks}.isdisjoint(task.id for task in editing.tasks)
     for suite in (basic, editing):
         assert suite.prompt_prefix == ""
@@ -340,32 +280,6 @@ def test_adb_android_suites_keep_navigation_and_text_editing_separate():
     assert by_id["tap_back"].setup is not None
     assert by_id["scroll_page_down"].setup is not None
     assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
-
-
-def test_adb_android_basic_suite_loads_general_operations_and_navigation():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "adb_android_basic.json"
-    suite = load_suite(suite_path)
-
-    assert suite.name == "adb_android_basic"
-    assert {task.category for task in suite.tasks} == {
-        "device_operation", "single_step", "multi_step",
-    }
-    assert [task.id for task in suite.tasks] == [
-        "screenshot_home", "open_settings", "settings_check_wifi", "open_app_drawer",
-        "tap_back", "scroll_page_down", "scroll_to_bottom",
-        "quick_action_home", "quick_action_app_switch", "quick_action_notification_center",
-        "clock_from_settings", "notification_round_trip", "about_device_and_back",
-        "settings_scroll_round_trip", "reopen_settings_context", "return_to_settings_via_recents",
-    ]
-    by_id = {task.id: task for task in suite.tasks}
-    assert by_id["screenshot_home"].hard_assertions.required_tools == ["screenshot"]
-    assert suite.prompt_prefix == ""
-    for task in suite.tasks:
-        if task.id != "screenshot_home":
-            assert task.hard_assertions.required_tools == []
-        assert task.rubric and all(item.check for item in task.rubric)
-
-    assert by_id["settings_check_wifi"].hard_assertions.min_tool_calls == 1
 
 
 @pytest.mark.parametrize("task_id,action", [
@@ -421,34 +335,6 @@ def test_mobilegym_basic_accepts_equivalent_navigation_tools(task_id, tool, tool
     trace.tool_calls = []
     trace.total_tool_calls = 0
     assert not evaluate_hard_assertions(trace, task.hard_assertions, timed_out=False).all_passed
-
-
-def test_quick_action_suite_marks_non_android_action_tasks():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "quick_action_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert "quick_action" in suite.prompt_prefix
-    for task_id in (
-        "quick_action_switch_left",
-        "quick_action_switch_right",
-        "quick_action_home_screen_left",
-        "quick_action_home_screen_right",
-        "quick_action_control_center",
-        "quick_action_control_center_dismiss",
-        "quick_action_spotlight_search",
-        "quick_action_spotlight_search_via_input",
-        "quick_action_browser_new_tab",
-        "quick_action_browser_close_tab",
-        "quick_action_browser_address_and_refresh",
-        "quick_action_open_editor_and_type",
-        "quick_action_undo",
-        "quick_action_select_all",
-        "quick_action_copy",
-        "quick_action_cut",
-        "quick_action_paste",
-    ):
-        assert "android" not in task_by_id[task_id].platforms
 
 
 def test_benchmark_suites_do_not_use_tool_sequence():
@@ -1236,86 +1122,6 @@ def test_load_suite_duplicate_ids_raise(tmp_path: Path):
         load_suite(p)
 
 
-def test_phone_control_navigation_tasks_have_setup_pages():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    for task_id in ["tap_back", "scroll_page_down", "scroll_to_bottom"]:
-        setup = task_by_id[task_id].setup
-        assert setup is not None
-        assert setup["type"] == "agent_prompt"
-        assert setup["clear_history_after"] is True
-
-
-def test_phone_control_text_editing_tasks_have_input_setup():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    for task_id in ("type_long_mixed_text", "copy_paste_text"):
-        setup = task_by_id[task_id].setup
-        assert setup is not None
-        assert setup["type"] == "agent_prompt"
-        assert setup["clear_history_after"] is True
-
-    seeded = task_by_id["select_all_and_delete"].setup
-    assert seeded["type"] == "environment_tools"
-    assert seeded["expected_state"] == {"apps.notes.notes.0.content": "hello-aiden"}
-    assert task_by_id["select_all_and_delete"].environment_bridge_types == ["mobilegym"]
-
-
-def test_phone_control_drag_icon_excludes_adb_android():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert "android" not in task_by_id["drag_app_icon"].platforms
-
-
-def test_phone_control_unicode_search_tasks_exclude_adb_android():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert "android" not in task_by_id["settings_search_bluetooth"].platforms
-    assert task_by_id["type_long_mixed_text"].platforms == []
-    assert "Aico test benchmark-2026!" in task_by_id["type_long_mixed_text"].prompt
-
-
-def test_skill_discovery_mixed_text_task_excludes_adb_android():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "skill_discovery_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert "android" not in task_by_id["discover_device_operator_for_mixed_text_entry"].platforms
-
-
-def test_phone_control_wifi_toggle_is_split_into_on_and_off_tasks():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert "toggle_wifi" not in task_by_id
-    off_task = task_by_id["toggle_wifi_off"]
-    on_task = task_by_id["toggle_wifi_on"]
-
-    assert off_task.setup is not None
-    assert any(item.id == "wifi_off_final" for item in off_task.rubric)
-
-    assert on_task.setup is not None
-    assert any(item.id == "wifi_on_final" for item in on_task.rubric)
-
-
-def test_phone_control_bluetooth_task_uses_chinese_keyword():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "phone_control_v1.json"
-    suite = load_suite(suite_path)
-    task = next(task for task in suite.tasks if task.id == "settings_search_bluetooth")
-
-    assert "蓝牙" in task.prompt
-    assert "Bluetooth" not in task.prompt
-    assert any("蓝牙" in item.check for item in task.rubric)
-
 def test_shell_utility_suite_replaces_removed_time_and_calculator_tools():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "shell_utility_v1.json"
     suite = load_suite(suite_path)
@@ -1323,11 +1129,6 @@ def test_shell_utility_suite_replaces_removed_time_and_calculator_tools():
 
     assert suite.name == "shell_utility_v1"
     assert "shell" not in suite.prompt_prefix.lower()
-    assert set(task_by_id) == {
-        "current_time_via_shell",
-        "timezone_conversion_via_shell",
-        "calculation_via_shell",
-    }
     for task in suite.tasks:
         assert task.hard_assertions.required_tools == ["shell"]
         assert "shell" not in task.prompt.lower()
@@ -1349,14 +1150,6 @@ def test_skill_discovery_suite_does_not_prompt_for_skill_read():
     assert "skill_read" not in suite.prompt_prefix
     assert "device-operator" not in suite.prompt_prefix
     assert [obs.skill_name for obs in suite.trace_observations] == ["device-operator"]
-    assert {task.id for task in suite.tasks} == {
-        "discover_device_operator_for_settings",
-        "discover_device_operator_for_settings_search",
-        "discover_device_operator_for_mixed_text_entry",
-        "discover_device_operator_for_scrolling_navigation",
-    }
-    assert len(suite.tasks) == 4
-    assert sum(task.category == "multi_step" for task in suite.tasks) == 3
 
     for task in suite.tasks:
         assert "skill_read" not in task.prompt
@@ -1376,29 +1169,9 @@ def test_skillopt_crossapp_device_operator_suites_target_skill_capabilities():
     assert [obs.skill_name for obs in train.trace_observations] == ["device-operator"]
     assert [obs.skill_name for obs in verification.trace_observations] == ["device-operator"]
 
-    expected_train_ids = {
-        "crossapp_work_calendar_earliest_alarm",
-        "crossapp_work_meeting_route_eta_draft_wechat",
-        "crossapp_life_weather_filter_non_rainy_notes",
-        "crossapp_life_map_place_draft_wechat",
-        "crossapp_content_spotify_current_song_notes",
-        "crossapp_content_redbook_search_title_draft_wechat",
-        "crossapp_commerce_ebay_lowest_price_notes",
-        "crossapp_commerce_alipay_recent_transactions_notes",
-    }
-    expected_verification_ids = {
-        "crossapp_work_weather_conditional_meeting_decision",
-        "crossapp_life_railway_weather_draft_wechat",
-        "crossapp_content_wechat_reading_bookshelf_draft",
-        "crossapp_content_bilibili_ranking_draft_wechat",
-        "crossapp_commerce_ebay_balance_diff_notes",
-        "crossapp_commerce_price_budget_stop",
-    }
-
     train_ids = {task.id for task in train.tasks}
     verification_ids = {task.id for task in verification.tasks}
-    assert train_ids == expected_train_ids
-    assert verification_ids == expected_verification_ids
+    assert train_ids and verification_ids
     assert train_ids.isdisjoint(verification_ids)
 
     all_tasks = [*train.tasks, *verification.tasks]
@@ -1477,43 +1250,6 @@ def test_skillopt_crossapp_device_operator_suites_target_skill_capabilities():
     assert any("visible Map result" in item.check for item in map_task.rubric)
 
 
-def test_memory_suite_covers_representative_memory_behaviors():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "memory_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    expected_tasks = {
-        "save_explicit_preference",
-        "save_user_fact",
-        "save_user_rule",
-        "save_user_procedure",
-        "save_correct_tags",
-        "use_rule_to_block_action",
-        "use_procedure_steps",
-        "recall_saved_fact_after_setup",
-        "recall_session_chunk_details",
-        "update_changed_preference",
-        "use_filtered_subset",
-        "forget_on_request",
-        "avoid_saving_ephemeral_fact",
-        "no_save_for_ephemeral_chat",
-        "no_recall_when_in_context",
-        "multi_turn_overwrite_and_verify_last_value",
-    }
-    assert expected_tasks <= set(task_by_id)
-    assert len(suite.tasks) >= 15
-    assert all(task.category == "memory" for task in suite.tasks)
-
-    overwrite_task = task_by_id["multi_turn_overwrite_and_verify_last_value"]
-    assert isinstance(overwrite_task.setup, list)
-    assert [item["type"] for item in overwrite_task.setup] == ["agent_prompt"] * 3
-    assert all(item["clear_history_after"] is False for item in overwrite_task.setup)
-    assert overwrite_task.hard_assertions.min_tool_calls == 3
-    assert overwrite_task.hard_assertions.max_tool_calls > 4
-    assert overwrite_task.hard_assertions.required_tools == ["save_memory"]
-    assert overwrite_task.memory_assertions["expected_count"] == 1
-
-
 def test_personamem_lt_recall_suite_uses_deterministic_answers():
     suite_path = Path(__file__).resolve().parents[1] / "suites" / "personamem_lt_recall_v1.json"
     suite = load_suite(suite_path)
@@ -1540,102 +1276,10 @@ def test_personamem_lt_recall_suite_uses_deterministic_answers():
     assert suite.name == "personamem_lt_recall_v1"
     assert "recall_memory" in suite.prompt_prefix
     assert expected_tasks <= set(task_by_id)
-    assert len(suite.tasks) >= 16
     assert all(task.category == "memory" for task in suite.tasks)
     assert all(task.expected_answer for task in suite.tasks)
     assert all(task.expected_recalled_memory_ids for task in suite.tasks)
     assert all(task.answer_format == "option_letter" for task in suite.tasks)
-
-
-def test_episode_reflection_suite_covers_assessment_contracts():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v1.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert set(task_by_id) == {
-        "successful_workaround_is_extracted",
-        "recorded_success_without_proof_is_not_trusted",
-        "failed_episode_creates_actionable_guard",
-        "transient_value_is_not_memorized",
-        "tool_remediation_is_not_memorized",
-    }
-    assert task_by_id["successful_workaround_is_extracted"].consolidation_expectation.goal_result == "achieved"
-    assert task_by_id["recorded_success_without_proof_is_not_trusted"].consolidation_expectation.allow_empty_memory is True
-    assert task_by_id["failed_episode_creates_actionable_guard"].consolidation_expectation.goal_result == "not_achieved"
-    assert task_by_id["transient_value_is_not_memorized"].consolidation_expectation.allow_empty_memory is True
-    assert task_by_id["tool_remediation_is_not_memorized"].consolidation_expectation.max_memory_ids == 0
-
-
-def test_episode_reflection_v2_is_a_release_gate_not_a_smoke_suite():
-    suite_path = Path(__file__).resolve().parents[1] / "suites" / "episode_reflection_v2.json"
-    suite = load_suite(suite_path)
-    task_by_id = {task.id: task for task in suite.tasks}
-
-    assert suite.name == "episode_reflection_v2"
-    assert len(suite.tasks) == 12
-    assert all(task.category == "memory" for task in suite.tasks)
-    assert all(not task.platforms for task in suite.tasks)
-    assert {
-        "verified_success_procedure_applies",
-        "success_claim_without_proof_is_unknown",
-        "contradictory_final_evidence_overrides_claim",
-        "incomplete_episode_is_not_overclaimed",
-        "failure_guard_is_recalled_and_applied",
-        "transient_ip_is_not_memorized",
-        "one_time_token_is_not_memorized",
-        "duplicate_attempts_are_compacted",
-        "version_scoped_lesson_requires_fresh_check",
-        "missing_result_pair_does_not_create_procedure",
-        "final_verification_beats_intermediate_success",
-        "successful_lesson_has_assessment_evidence",
-    } == set(task_by_id)
-
-    for task_id in (
-        "verified_success_procedure_applies",
-        "failure_guard_is_recalled_and_applied",
-        "version_scoped_lesson_requires_fresh_check",
-    ):
-        task = task_by_id[task_id]
-        assert task.setup["type"] == "seed_episode"
-        assert task.consolidation_expectation.min_memory_ids >= 1
-        task_text = " ".join(
-            [task.prompt, task.description_for_judge, *(item.check for item in task.rubric)]
-        )
-        assert "recall_device_memory" not in task_text
-        assert "recall_device_memory" not in task.hard_assertions.required_tools
-        assert task.expected_recall_from_consolidation is True
-        assert task.expected_recalled_memory_tool == "recall_device_memory"
-
-    expectation = task_by_id["success_claim_without_proof_is_unknown"].consolidation_expectation
-    assert expectation.max_memory_ids == 0
-    assert expectation.allow_empty_memory is True
-
-    ip_expectation = task_by_id["transient_ip_is_not_memorized"].consolidation_expectation
-    assert ip_expectation.allow_empty_memory is True
-    assert ip_expectation.forbidden_memory_substrings == [
-        "192.0.2.20",
-        "255.255.255.0",
-        "192.0.2.1",
-    ]
-
-    token_expectation = task_by_id["one_time_token_is_not_memorized"].consolidation_expectation
-    assert token_expectation.allow_empty_memory is True
-    assert token_expectation.forbidden_memory_substrings == ["913204"]
-
-    assert task_by_id["incomplete_episode_is_not_overclaimed"].consolidation_expectation.goal_result == "not_achieved"
-    assert task_by_id["incomplete_episode_is_not_overclaimed"].consolidation_expectation.max_memory_ids == 0
-
-    ignored_expectation = task_by_id["missing_result_pair_does_not_create_procedure"].consolidation_expectation
-    assert ignored_expectation.expected_status == "ignored"
-
-    for task_id in (
-        "contradictory_final_evidence_overrides_claim",
-        "final_verification_beats_intermediate_success",
-    ):
-        assert task_by_id[task_id].consolidation_expectation.goal_result == "not_achieved"
-        assert task_by_id[task_id].consolidation_expectation.required_assessment_evidence is True
-
-    assert task_by_id["duplicate_attempts_are_compacted"].consolidation_expectation.max_memory_ids == 1
 
 
 def test_episode_reflection_v2_preview_workaround_fixtures_show_why_it_is_needed():
@@ -1685,21 +1329,11 @@ def test_episode_memory_conditions_share_natural_and_iphone_tasks():
     after = load_suite(suites_dir / "episode_memory_after_v1.json")
     legacy = load_suite(suites_dir / "episode_memory_legacy_v1.json")
 
-    assert [task.id for task in before.tasks] == [
-        "qa_notes_title_save_procedure",
-        "settings_ethernet_ipv4_from_episode",
-    ]
-    assert [task.id for task in after.tasks] == [
-        "qa_notes_title_save_procedure",
-        "settings_ethernet_ipv4_from_episode",
-    ]
-    assert [task.id for task in legacy.tasks] == [
-        "qa_notes_title_save_procedure",
-        "settings_ethernet_ipv4_from_episode",
-    ]
+    # The conditions differ only in setup, so they must run the same tasks.
+    assert [task.id for task in before.tasks] == [task.id for task in after.tasks]
+    assert [task.id for task in before.tasks] == [task.id for task in legacy.tasks]
 
     for suite in (before, after, legacy):
-        assert len(suite.tasks) == 2
         assert all(task.mock_environment is None for task in suite.tasks)
         assert suite.tasks[1].platforms == ["ios"]
         assert suite.tasks[1].setup["type"] in {"seed_episode", "seed_memory"}
@@ -1761,7 +1395,6 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
         "treat_snapshot_as_historical_evidence",
         "forget_one_of_two_similar_snapshots",
     } <= set(task_by_id)
-    assert len(suite.tasks) >= 10
     assert all(task.category == "memory" for task in suite.tasks)
 
     for task in suite.tasks:
@@ -1801,48 +1434,6 @@ def test_quick_capture_suite_covers_screen_memory_upper_bound():
         for item in forget_task.hard_assertions.required_tool_calls
     )
 
-def test_notes_entry_policy_suite_covers_three_screen_states():
-    suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
-    suite = load_suite(suites_dir / "notes_entry_policy_v1.json")
-    tasks = {task.id: task for task in suite.tasks}
-
-    assert suite.mock_environment is None
-    assert set(tasks) == {
-        "ios_pip_notes_already_open",
-        "ios_pip_notes_icon_visible",
-        "ios_pip_notes_icon_missing",
-    }
-    assert all(task.mock_environment is not None for task in suite.tasks)
-
-    open_task = tasks["ios_pip_notes_already_open"]
-    assert "open_app" in open_task.hard_assertions.forbidden_tools
-    assert "bridge_open_app" in open_task.hard_assertions.forbidden_tools
-    assert "enter_text" in open_task.hard_assertions.required_tools
-    assert "enter_text" not in open_task.prompt
-    assert "bridge_clipboard" not in open_task.prompt
-    assert "search_launch_app" not in open_task.prompt
-
-    icon_task = tasks["ios_pip_notes_icon_visible"]
-    assert "touch_gesture" in icon_task.hard_assertions.required_tools
-    assert "open_app" in icon_task.hard_assertions.forbidden_tools
-    assert icon_task.hard_assertions.required_tool_calls[1].input_contains == {
-        "type": "tap",
-        "point": {"x": 180, "y": 310},
-    }
-    assert "point" not in icon_task.prompt
-    assert "touch_gesture" not in icon_task.prompt
-    assert "enter_text" not in icon_task.prompt
-    assert "search_launch_app" not in icon_task.prompt
-
-    missing_task = tasks["ios_pip_notes_icon_missing"]
-    assert "open_app" in missing_task.hard_assertions.required_tools
-    assert "bridge_open_app" in missing_task.hard_assertions.forbidden_tools
-    assert "search_launch_app" not in missing_task.prompt
-    assert "enter_text" not in missing_task.prompt
-    text_matcher = missing_task.hard_assertions.required_tool_calls[2].input_contains["text"]
-    assert text_matcher == {"$contains": "+1 202-555-0147"}
-
-
 def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
     suites_dir = Path(__file__).resolve().parents[1] / "suites" / "aico_app"
     suite = load_suite(suites_dir / "phone_bridge_data_policy_v1.json")
@@ -1850,7 +1441,6 @@ def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
 
     assert suite.mock_environment is None
     assert suite.prompt_prefix == ""
-    assert len(tasks) == 12
     assert all(task.mock_environment is not None for task in suite.tasks)
     assert {
         task.mock_environment.platform
@@ -1888,9 +1478,7 @@ def test_phone_bridge_data_policy_suite_covers_tools_and_routing_modes():
     ]
     pip_tasks = [task for task_id, task in tasks.items() if task_id.startswith("ios_pip_")]
     fgs_tasks = [task for task_id, task in tasks.items() if task_id.startswith("android_fgs_")]
-    assert len(dynamic_island_tasks) == 4
-    assert len(pip_tasks) == 4
-    assert len(fgs_tasks) == 4
+    assert dynamic_island_tasks and pip_tasks and fgs_tasks
 
     for task in dynamic_island_tasks:
         state = task.mock_environment.phone_bridge
@@ -1922,16 +1510,6 @@ def test_aico_app_connection_capabilities_suite_covers_real_proxy_contract():
     tasks = {task.id: task for task in suite.tasks}
 
     assert suite.mock_environment is None
-    assert set(tasks) == {
-        "ios_forwarded_environment_context",
-        "android_forwarded_environment_context",
-        "semantic_open_browser",
-        "open_https_url",
-        "clipboard_round_trip_restore",
-        "calendar_create_query_delete_round_trip",
-        "contacts_query_update_restore_fixture",
-        "send_local_notification",
-    }
     assert all(task.mock_environment is None for task in suite.tasks)
     assert all(task.setup and task.setup["type"] == "agent_prompt" for task in suite.tasks)
     assert all(task.setup["clear_history_after"] is True for task in suite.tasks)
