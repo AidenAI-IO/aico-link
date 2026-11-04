@@ -438,7 +438,8 @@ def _benchmark_run_upload_paths() -> list[tuple[str, str]]:
     workflows = Path(__file__).resolve().parents[2] / ".github" / "workflows"
     paths = []
     for workflow in sorted(workflows.glob("*.yml")):
-        for step in re.split(r"(?m)^\s+- ", workflow.read_text(encoding="utf-8")):
+        text = workflow.read_text(encoding="utf-8")
+        for step in re.split(r"(?m)^\s+- ", text):
             if "actions/upload-artifact" not in step:
                 continue
             block = re.search(r"(?ms)^(\s+)path: \|\n(.*?)(?=^\1\S|\Z)", step)
@@ -446,11 +447,19 @@ def _benchmark_run_upload_paths() -> list[tuple[str, str]]:
                 re.search(r"(?m)^\s+path: (.+)$", step).group(1)
             ]
             paths += [
-                (workflow.name, line.strip()) for line in lines
+                (workflow.name, _expand_workflow_env(text, line.strip())) for line in lines
                 if line.strip() and not line.strip().startswith("#")
-                and ("benchmark/runs" in line or "PREPARE_LOG" in line)
             ]
-    return paths
+    return [(workflow, path) for workflow, path in paths if "benchmark/runs" in path]
+
+
+def _expand_workflow_env(workflow_text: str, path: str) -> str:
+    """Substitute ${{ env.NAME }} with its value from the workflow's env blocks."""
+    def value(match: re.Match[str]) -> str:
+        definition = re.search(rf"(?m)^\s+{match.group(1)}: (.+)$", workflow_text)
+        assert definition, f"undefined workflow env {match.group(1)} in {path}"
+        return definition.group(1).strip()
+    return re.sub(r"\$\{\{ env\.(\w+) \}\}", value, path)
 
 
 def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> None:
@@ -458,11 +467,10 @@ def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> Non
     # control tokens. upload-artifact expands directories and broad globs
     # recursively, so every path must end in a concrete file name: this rejects
     # benchmark/runs, runs/, runs/**, and .../* in every workflow and step.
+    # ${{ env.NAME }} paths are checked after substituting their values.
     paths = _benchmark_run_upload_paths()
     assert {workflow for workflow, _ in paths} >= {"benchmark.yml", "agent-experiment.yml"}
     for workflow, path in paths:
-        if path.endswith("${{ env.PREPARE_LOG }}"):
-            continue  # benchmark.yml defines it as one runs/.../mobilegym-image.log file.
         name = path.rsplit("/", 1)[-1]
         assert re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name), f"{workflow}: {path}"
 
