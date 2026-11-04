@@ -191,37 +191,6 @@ def test_capability_table_labels_first_attempt_denominator_when_k_exceeds_one():
     assert "| Memory | memory_v1 | 8 | 1 | 8 | 50.0% |" in markdown
 
 
-def test_every_ci_suite_has_a_capability():
-    import json
-    from pathlib import Path
-    from ci.weekly_report import OTHER_CAPABILITY, capability_of
-
-    root = Path(__file__).resolve().parents[1]
-    for case in json.loads((root / "ci" / "suites.json").read_text())["cases"]:
-        name = json.loads((root / case["suite"]).read_text())["name"]
-        assert capability_of(name) != OTHER_CAPABILITY, case["id"]
-
-
-@pytest.mark.parametrize("suite,area", [
-    ("shell_utility_v1", "Shell utilities"),
-    ("episode_memory_before_v1", "Memory"), ("episode_memory_after_v1", "Memory"),
-    ("episode_memory_legacy_v1", "Memory"), ("adb_android_basic", "UI operation"),
-    ("adb_android_builtin_apps", "UI operation"),
-    ("adb_android_text_editing", "UI operation"),
-    ("vphone_ios_basic", "UI operation"), ("app_workflow_v1", "UI operation"),
-    ("quick_action_v1", "UI operation"), ("phone_control_v1", "UI operation"),
-    ("mobilegym_basic", "UI operation"),
-    ("mobilegym_touch_v1", "UI operation"),
-    ("aico_app_connection_capabilities_v1", "Device integration"),
-    ("aico_app_phone_bridge_data_policy_v1", "Device integration"),
-    ("aico_app_notes_entry_policy_v1", "Device integration"),
-    ("skill_discovery_v1", "Diagnostics"),
-])
-def test_areas_follow_test_objectives_instead_of_tools_or_environments(suite, area):
-    from ci.weekly_report import capability_of
-    assert capability_of(suite) == area
-
-
 def test_all_suite_files_are_classified_once():
     import json
     from pathlib import Path

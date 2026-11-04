@@ -80,6 +80,23 @@ dependencies reproduce CI.
 - Prefer small, reviewable changes that follow the existing source of truth.
   Update tests and relevant documentation when behavior, configuration,
   protocols, deployment, or operator workflows change.
+- Add a test only when it is necessary. A change does not need a new test by
+  default; add one when it protects a behavior or invariant that existing
+  tests do not cover and whose breakage would be a real bug. Extend an
+  existing test before adding a near-duplicate, and prefer one parametrized
+  test over several copies. When an existing test is redundant or low value,
+  delete it rather than updating it.
+- Do not add tests that only restate data, configuration, or source text.
+  This includes, for example:
+  - counts of cases, tasks, suites, or other entries;
+  - full copies of ID lists, catalog entries, or committed fixture values;
+  - strings, element IDs, or function names copied from workflow YAML,
+    embedded HTML/JS, shell scripts, or other source files;
+  - per-entry checks that a committed config value equals what the file
+    already says, or that a name or attribute exists.
+  Such tests change with every routine edit and catch nothing. Test selection
+  and validation logic on small synthetic fixtures, and limit checks against
+  committed data to invariants that must hold for every entry.
 - C and C++ code follows the C11/C++11 settings in `CMakeLists.txt`. Preserve
   existing formatting and public headers/interfaces. Put host-native tests in
   `tests/` and use the existing CMake test structure.

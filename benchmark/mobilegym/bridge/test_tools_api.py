@@ -423,18 +423,15 @@ def test_timed_out_mobilegym_step_is_cancelled_before_later_actions():
         loop.close()
 
 
-def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server):
+@pytest.mark.parametrize("text,focus", [
+    ("微信读书", {"x": 500, "y": 120}),
+    ("Trip report", {"x": 250, "y": 800}),
+])
+def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server, text, focus):
     server, base_url, state = bridge_server
     state.active_episode_id = "test-episode-enter-text"
 
-    request_body = json.dumps(
-        {
-            "input": {
-                "text": "微信读书",
-                "focus": {"x": 500, "y": 120},
-            }
-        }
-    ).encode()
+    request_body = json.dumps({"input": {"text": text, "focus": focus}}).encode()
     req = Request(
         f"{base_url}/api/tools/enter_text",
         data=request_body,
@@ -447,45 +444,11 @@ def test_invoke_enter_text_maps_to_mobilegym_type_action(bridge_server):
         data = json.loads(resp.read().decode())
 
     assert data["is_error"] is False
-    output = json.loads(data["output"])
-    assert output["ok"] is True
+    assert json.loads(data["output"]) == {"ok": True}
     assert action_to_dict(state.env.last_action) == {
         "action_type": "TYPE",
-        "data": {"value": "微信读书", "point": [500.0, 120.0]},
+        "data": {"value": text, "point": [float(focus["x"]), float(focus["y"])]},
     }
-
-
-def test_invoke_enter_text_supports_ascii(bridge_server):
-    server, base_url, state = bridge_server
-    state.active_episode_id = "test-episode-enter-text-bridge"
-
-    request_body = json.dumps(
-        {
-            "input": {
-                "text": "Trip report",
-                "focus": {"x": 250, "y": 800},
-            }
-        }
-    ).encode()
-    req = Request(
-        f"{base_url}/api/tools/enter_text",
-        data=request_body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-
-    with urlopen(req, timeout=5) as resp:
-        assert resp.status == 200
-        data = json.loads(resp.read().decode())
-
-    assert data["is_error"] is False
-    output = json.loads(data["output"])
-    assert output["ok"] is True
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "Trip report", "point": [250.0, 800.0]},
-    }
-
 
 def test_invoke_enter_text_preserves_exact_whitespace(bridge_server):
     server, base_url, state = bridge_server
@@ -642,38 +605,6 @@ def test_invoke_keyboard_text_accepts_plain_text_fallback(bridge_server):
     assert data["is_error"] is False
     assert state.env.page.keyboard.typed == ["plain text"]
     assert state.env.actions == []
-
-
-def test_invoke_enter_text_focuses_and_types_unicode(bridge_server):
-    _server, base_url, state = bridge_server
-    state.active_episode_id = "test-episode-enter-text"
-
-    request_body = json.dumps(
-        {
-            "input": {
-                "text": "隐私",
-                "focus": {"x": 500, "y": 80},
-            }
-        }
-    ).encode()
-    req = Request(
-        f"{base_url}/api/tools/enter_text",
-        data=request_body,
-        method="POST",
-        headers={"Content-Type": "application/json"},
-    )
-
-    with urlopen(req, timeout=5) as resp:
-        assert resp.status == 200
-        data = json.loads(resp.read().decode())
-
-    assert data["is_error"] is False
-    output = json.loads(data["output"])
-    assert output == {"ok": True}
-    assert action_to_dict(state.env.last_action) == {
-        "action_type": "TYPE",
-        "data": {"value": "隐私", "point": [500.0, 80.0]},
-    }
 
 
 def test_invoke_enter_text_rejects_removed_or_missing_arguments(bridge_server):

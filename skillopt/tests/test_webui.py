@@ -57,13 +57,6 @@ def test_default_webui_budget_is_five(tmp_path: Path):
     assert cmd[cmd.index("--budget") + 1] == "5"
     assert webui._default_webui_settings()["skillopt"]["budget"] == 5
     assert webui._normalize_webui_settings({})["skillopt"]["budget"] == 5
-    assert 'id="budget" type="number" min="1" step="1" value="5"' in INDEX_HTML
-    assert '<label for="budget">Max iterations</label>' in INDEX_HTML
-    assert '<span class="muted">Max iterations</span><strong id="mBudget">10</strong>' in INDEX_HTML
-    assert '<label for="budget">Budget</label>' not in INDEX_HTML
-    assert '<label for="editBudget">Max edits / iteration</label>' in INDEX_HTML
-    assert '<span class="muted">Max edits / iteration</span><strong id="mEditBudget">4</strong>' in INDEX_HTML
-    assert '<label for="editBudget">Edit budget</label>' not in INDEX_HTML
 
 
 def test_webui_model_settings_default_to_agent_config_fallback():
@@ -939,70 +932,5 @@ def test_webui_settings_use_agent_config_key_as_judge_key_fallback(tmp_path: Pat
     assert settings["judge"]["has_api_key"] is True
 
 
-def test_index_html_reuses_benchmark_webui_shell():
-    assert '<header class="topbar">' in INDEX_HTML
-    assert 'class="brand-title">Aico SkillOpt' in INDEX_HTML
-    assert 'class="tile"' in INDEX_HTML
-    assert 'id="suiteRows"' in INDEX_HTML
-    assert 'id="runBtn"' in INDEX_HTML
-    assert 'id="agentConfigStatus"' in INDEX_HTML
-    assert 'id="envRows"' in INDEX_HTML
-    assert 'id="startMobileGym"' in INDEX_HTML
-    assert 'id="mobilegymParallelEnvs"' in INDEX_HTML
-    assert 'id="activeStopJob"' in INDEX_HTML
-    assert 'id="jobRows"' in INDEX_HTML
-    assert 'id="phaseTaskRows"' in INDEX_HTML
-    assert 'id="logBox"' in INDEX_HTML
-    assert 'id="judgeEnabled"' in INDEX_HTML
-    assert 'id="judgeModel"' in INDEX_HTML
-    assert 'id="judgeApiKey"' in INDEX_HTML
-    assert 'placeholder="AICO_BENCHMARK_JUDGE_API_KEY"' in INDEX_HTML
-    assert 'id="optimizerModel"' in INDEX_HTML
-    assert 'id="runEnvDialog"' in INDEX_HTML
-    assert 'id="skill"' not in INDEX_HTML
-    assert 'id="environmentUrl"' not in INDEX_HTML
-    assert 'id="agentUrl"' not in INDEX_HTML
-
-
-def test_index_html_renders_skillopt_phase_task_records():
-    assert "function renderPhaseTasks" in INDEX_HTML
-    assert "const progress = job && job.progress" in INDEX_HTML
-    assert "progress.tasks" in INDEX_HTML
-    assert "phaseTaskRows" in INDEX_HTML
-    assert "renderJobsTable" not in INDEX_HTML
-
-
-def test_index_html_omits_stage_prefix_from_job_rows():
-    assert "stageLabel" not in INDEX_HTML
-    assert "`${stageLabel} ${suitesLabel}`" not in INDEX_HTML
-    assert "const targetInfo = suitesLabel || targetLabel;" in INDEX_HTML
-
-
-def test_index_html_syncs_progress_bar_to_phase_task_progress():
-    assert "progressWidth(job)" in INDEX_HTML
-    assert "job.progress.completed_tasks" in INDEX_HTML
-    assert "job.progress.total_tasks" in INDEX_HTML
-    assert "return '62%'" not in INDEX_HTML
-
-
-def test_index_html_syncs_iterations_to_phase_progress():
-    assert "job.progress.iteration" in INDEX_HTML
-
-
-def test_index_html_progress_metrics_use_score_and_report_not_exit_counts():
-    assert "Best score" in INDEX_HTML
-    assert "formatBestScore(job.best_score)" in INDEX_HTML
-    assert '<span class="muted">Report</span>' in INDEX_HTML
-    assert "mReportLink" in INDEX_HTML
-    assert '<span class="muted">Exit</span>' not in INDEX_HTML
-    assert '<span class="muted">Reports</span>' not in INDEX_HTML
-    assert "mIterations" in INDEX_HTML
-
-
 def test_index_html_does_not_skip_daemon_image_build_by_default():
     assert "no_build_daemon_image: true" not in INDEX_HTML
-
-
-def test_index_html_labels_phase_task_turns_as_tool_calls():
-    assert "Tool calls" in INDEX_HTML
-    assert ">Turns<" not in INDEX_HTML

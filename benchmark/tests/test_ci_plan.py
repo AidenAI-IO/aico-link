@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from ci import run_case as run_case_module
-from ci.plan import CatalogError, load_catalog, select_cases
+from ci.plan import Catalog, CatalogError, SuiteCase, load_catalog, select_cases
 from ci.run_case import (
     _effective_exit_code,
     _incomplete_run_reasons,
@@ -32,14 +32,6 @@ def _workflow_job(name: str) -> str:
     return match.group(1)
 
 
-def _workflow_step(job: str, marker: str) -> str:
-    match = re.search(
-        rf"(?ms)^      - {re.escape(marker)}\n(.*?)(?=^      - |\Z)", job
-    )
-    assert match is not None, f"missing workflow step: {marker}"
-    return match.group(1)
-
-
 def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
     suites_dir = tmp_path / "suites"
     suites_dir.mkdir()
@@ -58,131 +50,67 @@ def test_catalog_rejects_an_unclassified_suite(tmp_path: Path) -> None:
         load_catalog(catalog_path=catalog_path, suites_dir=suites_dir)
 
 
-def test_runnable_profile_includes_adb_pairs_but_excludes_external_devices() -> None:
-    catalog = load_catalog()
-
-    runnable = select_cases(catalog, profile="runnable")
-    hardware = select_cases(catalog, profile="hardware")
-    all_cases = select_cases(catalog, profile="all")
-
-    assert runnable
-    assert hardware
-    assert all_cases == catalog.cases
-    assert len(runnable) == 18
-    assert len(hardware) == 16
-    assert len(all_cases) == 33
-    assert {case.environment for case in runnable} <= {"isolated", "mobilegym", "adb"}
-    assert {case.environment for case in hardware} <= {"adb", "external"}
-    assert {case.id for case in runnable if case.environment == "adb"} == {
-        "adb_android_basic",
-        "adb_android_text_editing", "adb_android_text_editing-aidenbridge",
-        "adb_android_builtin_apps",
-    }
-    assert len({case.id for case in all_cases}) == len(all_cases)
-    assert {case.suite for case in runnable} | {case.suite for case in hardware} == (
-        {case.suite for case in catalog.cases}
-        - {"suites/mobilegym_scroll_sweep.json", "suites/tool_recovery_v1.json"}
-    )
+# Selection rules are tested on a synthetic catalog so adding, retiring, or
+# reclassifying a real suite does not require editing these tests.
+CATALOG = Catalog(cases=(
+    SuiteCase(id="isolated", suite="suites/isolated.json", environment="isolated"),
+    SuiteCase(id="manual", suite="suites/manual.json", environment="isolated", runnable=False),
+    SuiteCase(id="adb", suite="suites/shared.json", environment="adb", target_platform="android"),
+    SuiteCase(id="external", suite="suites/shared.json", environment="external",
+              environment_variable="DEVICE_URL", target_platform="ios"),
+    SuiteCase(id="device", suite="suites/device.json", environment="external",
+              environment_variable="DEVICE_URL"),
+))
 
 
-@pytest.mark.parametrize("case_id,suite", [
-    ("mobilegym-scroll-sweep", "suites/mobilegym_scroll_sweep.json"),
-    ("tool-recovery", "suites/tool_recovery_v1.json"),
+def _ids(cases) -> list[str]:
+    return [case.id for case in cases]
+
+
+@pytest.mark.parametrize("profile,expected", [
+    ("runnable", ["isolated", "adb"]),
+    ("hardware", ["adb", "external", "device"]),
+    ("adb", ["adb"]),
+    ("all", ["isolated", "manual", "adb", "external", "device"]),
 ])
-def test_manual_suite_stays_out_of_runnable_but_is_explicitly_selectable(case_id, suite) -> None:
-    catalog = load_catalog()
-
-    runnable = select_cases(catalog, profile="runnable")
-    assert case_id not in {case.id for case in runnable}
-
-    selected = select_cases(
-        catalog,
-        profile="runnable",
-        suite=suite,
-    )
-    assert [case.id for case in selected] == [case_id]
-    assert selected[0].runnable is False
+def test_profile_selects_its_environments_and_skips_manual_cases(profile, expected) -> None:
+    assert _ids(select_cases(CATALOG, profile=profile)) == expected
 
 
-def test_selecting_a_suite_preserves_platform_specific_cases() -> None:
-    catalog = load_catalog()
+@pytest.mark.parametrize("profile,suite,expected", [
+    ("runnable", "suites/manual.json", ["manual"]),
+    ("runnable", "suites/shared.json", ["adb"]),
+    ("hardware", "suites/shared.json", ["adb", "external"]),
+    ("all", "suites/shared.json", ["adb", "external"]),
+])
+def test_explicit_suite_selects_matching_cases_within_profile(profile, suite, expected) -> None:
+    assert _ids(select_cases(CATALOG, profile=profile, suite=suite)) == expected
 
-    selected = select_cases(
-        catalog,
-        profile="all",
-        suite="suites/aico_app/connection_capabilities_v1.json",
-    )
 
-    assert {case.target_platform for case in selected} == {"ios", "android"}
+def test_explicit_suite_outside_profile_or_catalog_is_rejected() -> None:
+    with pytest.raises(CatalogError, match="outside the runnable profile"):
+        select_cases(CATALOG, profile="runnable", suite="suites/device.json")
+    with pytest.raises(CatalogError, match="not in the CI catalog"):
+        select_cases(CATALOG, profile="all", suite="suites/missing.json")
 
 
 def test_comma_separated_suites_select_each_suite_in_request_order() -> None:
-    catalog = load_catalog()
-    first = "suites/quick_capture_v1.json"
-    second = "suites/adb_android_basic.json"
-
     selected = select_cases(
-        catalog,
-        profile="runnable",
-        suite=f" {first} , {second},{first},",
+        CATALOG,
+        profile="all",
+        suite=" suites/shared.json , suites/isolated.json,suites/shared.json,",
     )
 
-    expected = select_cases(catalog, profile="runnable", suite=first) + select_cases(
-        catalog, profile="runnable", suite=second
-    )
-    assert selected == expected
+    assert _ids(selected) == ["adb", "external", "isolated"]
     with pytest.raises(CatalogError, match="not in the CI catalog"):
-        select_cases(catalog, profile="runnable", suite=f"{first},suites/missing.json")
+        select_cases(CATALOG, profile="all", suite="suites/isolated.json,suites/missing.json")
     for empty_list in (",", " , ,"):
         with pytest.raises(CatalogError, match="no suite paths"):
-            select_cases(catalog, profile="runnable", suite=empty_list)
-    assert select_cases(catalog, profile="runnable", suite="") == select_cases(
-        catalog, profile="runnable"
+            select_cases(CATALOG, profile="all", suite=empty_list)
+    assert select_cases(CATALOG, profile="runnable", suite="") == select_cases(
+        CATALOG, profile="runnable"
     )
 
-
-def test_phone_control_selection_uses_only_the_requested_environment_profile() -> None:
-    catalog = load_catalog()
-    suite = "suites/phone_control_v1.json"
-
-    mobilegym = select_cases(catalog, profile="runnable", suite=suite)
-    hardware = select_cases(catalog, profile="hardware", suite=suite)
-    both = select_cases(catalog, profile="all", suite=suite)
-
-    assert [case.id for case in mobilegym] == ["phone-control-mobilegym"]
-    assert mobilegym[0].environment == "mobilegym"
-    assert mobilegym[0].target_platform == "android"
-    assert mobilegym[0].runnable is False
-    assert mobilegym[0] not in select_cases(catalog, profile="runnable")
-    assert {case.id for case in hardware} == {"phone-control-ios"}
-    with pytest.raises(CatalogError, match="outside the adb profile"):
-        select_cases(catalog, profile="adb", suite=suite)
-    assert {case.id for case in both} == {
-        "phone-control-mobilegym", "phone-control-ios"
-    }
-
-
-@pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
-def test_adb_text_editing_selects_matching_bridge_and_no_bridge_cases(profile):
-    catalog = load_catalog()
-    selected = select_cases(catalog, profile=profile, suite="suites/adb_android_text_editing.json")
-
-    assert len(selected) == 2
-    baseline, connected = selected
-    assert baseline.android_phone_bridge is False
-    assert connected.android_phone_bridge is True
-    assert baseline.suite == connected.suite
-    assert baseline.environment == connected.environment == "adb"
-    assert baseline.target_platform == connected.target_platform == "android"
-    assert baseline.max_concurrency == connected.max_concurrency == 1
-    assert baseline.timeout_minutes == connected.timeout_minutes
-
-
-@pytest.mark.parametrize("profile", ["runnable", "hardware", "adb", "all"])
-def test_adb_basic_selects_only_the_no_bridge_case(profile):
-    selected = select_cases(load_catalog(), profile=profile, suite="suites/adb_android_basic.json")
-
-    assert [(case.id, case.android_phone_bridge) for case in selected] == [("adb_android_basic", False)]
 
 @pytest.mark.parametrize("bridge_enabled", [False, True])
 @pytest.mark.parametrize("app_installed", [False, True])
@@ -215,34 +143,6 @@ def test_adb_baseline_stops_retained_companion_app(monkeypatch, bridge_enabled, 
         assert len(commands) == 1
         assert commands[0][0][-3:] == ["list", "packages", "link.aico.app"]
         assert commands[0][1]["check"] is True
-
-
-def test_aidenbridge_capabilities_selects_rooted_android_routing() -> None:
-    catalog = load_catalog()
-    selected = select_cases(
-        catalog,
-        profile="hardware",
-        suite="suites/aico_app/android_bridge_capabilities_v1.json",
-    )
-
-    assert len(selected) == 1
-    assert selected[0].android_phone_bridge is True
-    assert selected[0].environment == "adb"
-    assert selected[0].target_platform == "android"
-    assert selected[0].max_concurrency == 1
-    assert selected[0] not in select_cases(catalog, profile="runnable")
-    assert not any(case.id in {"aidenbridge-data-android", "aidenbridge-input-android"} for case in catalog.cases)
-
-
-def test_suite_selection_must_match_profile_unless_all() -> None:
-    catalog = load_catalog()
-
-    with pytest.raises(CatalogError, match="outside the runnable profile"):
-        select_cases(
-            catalog,
-            profile="runnable",
-            suite="suites/vphone_ios_basic.json",
-        )
 
 
 def test_external_case_reads_its_named_environment_variable() -> None:
@@ -331,70 +231,24 @@ def test_benchmark_case_reuses_prepared_daemon_image(monkeypatch, tmp_path: Path
     assert "--no-build-daemon-image" in captured["command"]
 
 
-def test_ci_allows_a_complete_run_where_every_task_was_skipped(tmp_path: Path) -> None:
+@pytest.mark.parametrize("statuses", [
+    ["skipped", "skipped"],
+    ["passed", "skipped"],
+    ["passed", "failed"],
+])
+def test_ci_accepts_a_complete_run_regardless_of_task_outcomes(
+    tmp_path: Path, statuses: list[str],
+) -> None:
+    totals = {"tasks": len(statuses), "judge_error": 0, "timeout": 0}
+    for status in ("passed", "failed", "skipped"):
+        totals[status] = statuses.count(status)
     manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        '{"totals":{"tasks":3,"passed":0,"failed":0,"skipped":3,'
-        '"judge_error":0,"timeout":0}}',
-        encoding="utf-8",
-    )
+    manifest.write_text(json.dumps({"totals": totals}), encoding="utf-8")
     (tmp_path / "results.jsonl").write_text(
         "".join(
-            '{"task_id":"task-%s","attempt":1,"status":"skipped","metrics":{"error":"setup failed"}}\n'
-            % i
-            for i in range(3)
+            json.dumps({"task_id": f"task-{i}", "attempt": 1, "status": status, "metrics": {}}) + "\n"
+            for i, status in enumerate(statuses)
         ),
-        encoding="utf-8",
-    )
-    _write_generated_reports(tmp_path)
-
-    assert _effective_exit_code(0, manifest) == 0
-
-
-def test_ci_allows_a_complete_run_with_an_infrastructure_skip(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        '{"totals":{"tasks":2,"passed":1,"failed":0,"skipped":1,'
-        '"judge_error":0,"timeout":0}}',
-        encoding="utf-8",
-    )
-    (tmp_path / "results.jsonl").write_text(
-        '{"task_id":"passed","attempt":1,"status":"passed","metrics":{}}\n'
-        '{"task_id":"skipped","attempt":1,"status":"skipped","metrics":{"error":"agent not ready"}}\n',
-        encoding="utf-8",
-    )
-    _write_generated_reports(tmp_path)
-
-    assert _effective_exit_code(0, manifest) == 0
-
-
-def test_ci_allows_platform_ineligible_skips(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        '{"totals":{"tasks":2,"passed":1,"failed":0,"skipped":1,'
-        '"judge_error":0,"timeout":0}}',
-        encoding="utf-8",
-    )
-    (tmp_path / "results.jsonl").write_text(
-        '{"task_id":"passed","attempt":1,"status":"passed","metrics":{}}\n'
-        '{"task_id":"skipped","attempt":1,"status":"skipped","metrics":{"error":"task platforms ios do not include target platform android"}}\n',
-        encoding="utf-8",
-    )
-    _write_generated_reports(tmp_path)
-
-    assert _effective_exit_code(0, manifest) == 0
-
-
-def test_ci_allows_completed_run_with_benchmark_failures(tmp_path: Path) -> None:
-    manifest = tmp_path / "manifest.json"
-    manifest.write_text(
-        '{"totals":{"tasks":2,"passed":1,"failed":1,"skipped":0,'
-        '"judge_error":0,"timeout":0}}',
-        encoding="utf-8",
-    )
-    (tmp_path / "results.jsonl").write_text(
-        '{"task_id":"passed","attempt":1,"status":"passed","metrics":{}}\n'
-        '{"task_id":"failed","attempt":1,"status":"failed","metrics":{}}\n',
         encoding="utf-8",
     )
     _write_generated_reports(tmp_path)
@@ -579,151 +433,53 @@ def test_ci_rejects_duplicate_result_identities(tmp_path: Path) -> None:
     assert "duplicate_result_identity" in _incomplete_run_reasons(0, manifest)
 
 
-def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None:
+def _benchmark_run_upload_paths() -> list[tuple[str, str]]:
+    """Every upload-artifact path that reaches into benchmark/runs, in any workflow."""
+    workflows = Path(__file__).resolve().parents[2] / ".github" / "workflows"
+    paths = []
+    for workflow in sorted(workflows.glob("*.yml")):
+        text = workflow.read_text(encoding="utf-8")
+        for step in re.split(r"(?m)^\s+- ", text):
+            if "actions/upload-artifact" not in step:
+                continue
+            block = re.search(r"(?ms)^(\s+)path: \|\n(.*?)(?=^\1\S|\Z)", step)
+            lines = block.group(2).splitlines() if block else [
+                re.search(r"(?m)^\s+path: (.+)$", step).group(1)
+            ]
+            paths += [
+                (workflow.name, _expand_workflow_env(text, line.strip())) for line in lines
+                if line.strip() and not line.strip().startswith("#")
+            ]
+    return [(workflow, path) for workflow, path in paths if "benchmark/runs" in path]
+
+
+def _expand_workflow_env(workflow_text: str, path: str) -> str:
+    """Substitute ${{ env.NAME }} with its value from the workflow's env blocks."""
+    def value(match: re.Match[str]) -> str:
+        definition = re.search(rf"(?m)^\s+{match.group(1)}: (.+)$", workflow_text)
+        assert definition, f"undefined workflow env {match.group(1)} in {path}"
+        return definition.group(1).strip()
+    return re.sub(r"\$\{\{ env\.(\w+) \}\}", value, path)
+
+
+def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> None:
+    # Run directories hold materialized agent.toml, experiment-agent.toml, and
+    # control tokens. upload-artifact expands directories and broad globs
+    # recursively, so every path must end in a concrete file name: this rejects
+    # benchmark/runs, runs/, runs/**, and .../* in every workflow and step.
+    # ${{ env.NAME }} paths are checked after substituting their values.
+    paths = _benchmark_run_upload_paths()
+    assert {workflow for workflow, _ in paths} >= {"benchmark.yml", "agent-experiment.yml"}
+    for workflow, path in paths:
+        name = path.rsplit("/", 1)[-1]
+        assert re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name), f"{workflow}: {path}"
+
+
+def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:
     run_job = _workflow_job("run")
-    primary = _workflow_step(run_job, "name: Upload benchmark artifacts")
-    retry = _workflow_step(run_job, "name: Retry benchmark artifact upload")
-    artifact_paths = "\n".join(
-        step.split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0]
-        for step in (primary, retry)
-    )
 
-    assert "cli-services" not in artifact_paths
-    # Only diagnostic logs may leave worker directories: agent.toml and control
-    # tokens contain materialized credentials and must never match an upload glob.
-    worker_paths = [path for path in artifact_paths.splitlines() if "/workers/" in path]
-    assert worker_paths
-    assert all(path.endswith(("/workers/*/daemon.log", "/workers/*/runner.log")) for path in worker_paths)
-    assert "auto-agent-setup.log" in artifact_paths
-    task_paths = [path for path in artifact_paths.splitlines() if "/tasks/" in path]
-    assert task_paths
-    allowed_task_artifacts = (
-        "/tasks/**/trace.json", "/tasks/**/history.json", "/tasks/**/episode.json",
-        "/tasks/**/setup.json", "/tasks/**/setup_failure.json", "/tasks/**/consolidation.json",
-    )
-    assert all(path.endswith(allowed_task_artifacts) for path in task_paths)
-    for artifact in allowed_task_artifacts:
-        assert sum(path.endswith(artifact) for path in task_paths) == 2  # primary and retry upload
-    assert "        id: upload_benchmark_artifacts" in primary.splitlines()
-    assert "        if: ${{ always() && steps.upload_benchmark_artifacts.outcome == 'failure' }}" in retry.splitlines()
-    assert "          overwrite: true" in retry.splitlines()
-
-
-def test_workflow_links_exact_interactive_reports_from_static_host_or_artifact() -> None:
-    step = _workflow_step(_workflow_job("run"), "name: Link benchmark reports")
-    lines = step.splitlines()
-
-    assert "          BENCHMARK_REPORT_PUBLISH_DIR: ${{ vars.BENCHMARK_REPORT_PUBLISH_DIR }}" in lines
-    assert "          BENCHMARK_REPORT_BASE_URL: ${{ vars.BENCHMARK_REPORT_BASE_URL }}" in lines
-    assert "          PRIMARY_ARTIFACT_URL: ${{ steps.upload_benchmark_artifacts.outputs.artifact-url }}" in lines
-    assert "          RETRY_ARTIFACT_URL: ${{ steps.retry_benchmark_artifacts.outputs.artifact-url }}" in lines
-    assert '          uv run python -m ci.publish_reports "${args[@]}"' in lines
-
-
-def test_workflow_checks_docker_and_surfaces_setup_failures() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
-
-    assert "docker version" in workflow
-    assert "docker compose version" in workflow
-    assert "docker info" in workflow
-    assert "runnable) timeout_minutes=1440" in workflow
-    assert "hardware) timeout_minutes=4320" in workflow
-    assert "all) timeout_minutes=5760" in workflow
-    assert "timeout-minutes: ${{ fromJSON(needs.plan.outputs.timeout_minutes) }}" in workflow
-    assert "docker network ls" in workflow
-    # The fan-out driver replaced the per-case setup-log step: it tails each
-    # failing case's log into the job output so a failure is triageable without
-    # downloading the artifact.
-    assert "ci.run_cases" in workflow
-    assert '--max-parallel "$BENCHMARK_CI_MAX_PARALLEL"' in workflow
-    driver = (
-        Path(__file__).resolve().parents[1] / "ci" / "run_cases.py"
-    ).read_text(encoding="utf-8")
-    assert "log tail" in driver
-    assert "auto-agent-setup.log" in workflow
-
-
-def test_workflow_schedules_all_runnable_cases_daily() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
-
-    triggers = workflow.split("\njobs:\n", 1)[0]
-    assert "  push:" not in triggers
-    assert re.search(
-        r"(?m)^on:\n  schedule:\n(?:    #.*\n)*    - cron: '7 18 \* \* \*'$",
-        triggers,
-    )
-    self_hosted_guard = (
-        "if: ${{ startsWith(github.ref, 'refs/heads/') "
+    assert (
+        "    if: ${{ startsWith(github.ref, 'refs/heads/') "
         "&& github.event_name != 'pull_request' "
         "&& github.event_name != 'pull_request_target' }}"
-    )
-    run_job = _workflow_job("run")
-    assert f"    {self_hosted_guard}" in run_job.splitlines()
-    assert "github.ref == 'refs/heads/main'" not in run_job
-    profile_step = _workflow_step(_workflow_job("plan"), "id: profile")
-    assert 'elif [[ "$EVENT_NAME" == "schedule" ]]; then\n            profile="runnable"' in profile_step
-
-
-def test_workflow_maps_unprefixed_github_configuration_to_runner_environment() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
-
-    assert re.search(r"(?m)^\s+AICO_[A-Z0-9_]+:", workflow) is None
-    assert "BENCHMARK_TELEMETRY: '1'" in workflow
-    expected_mappings = {
-        "BENCHMARK_AGENT_PROVIDER": "vars.BENCHMARK_AGENT_PROVIDER",
-        "BENCHMARK_AGENT_MODEL": "vars.BENCHMARK_AGENT_MODEL",
-        "BENCHMARK_AGENT_BASE_URL": "vars.BENCHMARK_AGENT_BASE_URL",
-        "BENCHMARK_AGENT_API_KEY": "secrets.BENCHMARK_AGENT_API_KEY",
-        "BENCHMARK_JUDGE_MODEL": "vars.BENCHMARK_JUDGE_MODEL",
-        "BENCHMARK_JUDGE_BASE_URL": "vars.BENCHMARK_JUDGE_BASE_URL",
-        "BENCHMARK_JUDGE_API_KEY": "secrets.BENCHMARK_JUDGE_API_KEY",
-        "LANGFUSE_HTTPS_PROXY": "secrets.BENCHMARK_HTTPS_PROXY",
-        "DAEMON_IMAGE": "vars.DAEMON_IMAGE",
-        "BENCHMARK_PHONE_ENVIRONMENT_URL": "vars.BENCHMARK_PHONE_ENVIRONMENT_URL",
-        "BENCHMARK_IOS_ENVIRONMENT_URL": "vars.BENCHMARK_IOS_ENVIRONMENT_URL",
-        "BENCHMARK_MAC_ENVIRONMENT_URL": "vars.BENCHMARK_MAC_ENVIRONMENT_URL",
-        "BENCHMARK_VPHONE_ENVIRONMENT_URL": "vars.BENCHMARK_VPHONE_ENVIRONMENT_URL",
-        "BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AICO_APP_IOS_ENVIRONMENT_URL"
-        ),
-        "BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL": (
-            "vars.BENCHMARK_AICO_APP_ANDROID_ENVIRONMENT_URL"
-        ),
-    }
-    for environment_name, github_expression in expected_mappings.items():
-        assert f"{environment_name}: ${{{{ {github_expression}" in workflow
-
-
-def test_workflow_uses_mirrored_container_sources() -> None:
-    workflow = (
-        Path(__file__).resolve().parents[2] / ".github" / "workflows" / "benchmark.yml"
-    ).read_text(encoding="utf-8")
-    compose = (
-        Path(__file__).resolve().parents[1]
-        / "docker"
-        / "docker-compose.agent-daemon.yml"
-    ).read_text(encoding="utf-8")
-
-    assert (
-        "DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn" in workflow
-    )
-    assert "MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/" in workflow
-    assert (
-        "dockerfile: ${DAEMON_DOCKERFILE:-benchmark/docker/Dockerfile.agent-daemon}"
-        in compose
-    )
-    assert "  prepare-images:" not in workflow
-    assert "- prepare-images" not in workflow
-    assert workflow.count("astral-sh/setup-uv@v6") == 1
-    assert workflow.count("Install Python and benchmark dependencies") == 1
-    assert workflow.count("Install Docker Compose V2") == 1
-    assert workflow.count("Set up Docker Buildx") == 1
-    assert workflow.count("Validate Docker runtime") == 1
-    assert workflow.count("uv run python -m ci.prepare_images") == 1
-    assert "BENCHMARK_CI_IMAGES_PREPARED: '1'" in workflow
+    ) in run_job.splitlines()

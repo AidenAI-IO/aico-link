@@ -30,47 +30,32 @@ func waitForModelSpec(t *testing.T, mgr *ModelManager, want model.ModelSpec) mod
 	}
 }
 
-func TestLookupModelSpecKnownModels(t *testing.T) {
+// Registry values are data; these cases cover only the name forms the lookup
+// must normalize to the same entry.
+func TestLookupModelSpecResolvesEquivalentModelNames(t *testing.T) {
 	tests := []struct {
-		name          string
-		provider      string
-		model         string
-		wantContext   int
-		wantMaxOutput int
+		name      string
+		canonical [2]string
+		variants  [][2]string
 	}{
-		{"openrouter gemini flash", "openrouter", "google/gemini-3.5-flash", 1_048_576, 65_536},
-		{"claude sonnet 3.5", "openrouter", "anthropic/claude-3.5-sonnet", 200_000, 8_192},
-		{"bytedance seed lite", "openrouter", "bytedance-seed/seed-2.0-lite", 128_000, 8_192},
-		{"gpt-4o", "openai", "openai/gpt-4o", 128_000, 16_384},
-		{"gpt-5.5 prefixed", "openai", "openai/gpt-5.5", 1_050_000, 128_000},
-		{"gpt-5.5 bare", "openai", "gpt-5.5", 1_050_000, 128_000},
-		{"gpt-5.5 pro bare", "openai", "gpt-5.5-pro", 1_050_000, 128_000},
-		{"gpt-5.4 prefixed", "openai", "openai/gpt-5.4", 1_050_000, 128_000},
-		{"gpt-5.4 bare", "openai", "gpt-5.4", 1_050_000, 128_000},
-		{"gpt-5.4 mini bare", "openai", "gpt-5.4-mini", 400_000, 128_000},
-		{"gpt-5.4 nano bare", "openai", "gpt-5.4-nano", 400_000, 128_000},
-		{"claude fable 5 bare", "anthropic", "claude-fable-5", 1_000_000, 128_000},
-		{"claude opus 5 prefixed", "openrouter", "anthropic/claude-opus-5", 1_000_000, 128_000},
-		{"claude opus 4.8 bare", "anthropic", "claude-opus-4-8", 1_000_000, 128_000},
-		{"claude sonnet 4.6 prefixed", "openrouter", "anthropic/claude-sonnet-4-6", 1_000_000, 128_000},
-		{"claude haiku 4.5 bare", "anthropic", "claude-haiku-4-5", 200_000, 64_000},
-		{"gemini 3.5 pro bare", "google", "gemini-3.5-pro", 1_048_576, 65_536},
-		{"kimi k3 bare", "openai", "kimi-k3", 1_048_576, 131_072},
-		{"kimi k3 prefixed", "openrouter", "moonshotai/kimi-k3", 1_048_576, 131_072},
-		{"doubao seed 2.1 pro", "volcengine", "doubao-seed-2-1-pro-260628", 262_144, 131_072},
-		{"deepseek flash", "deepseek", "deepseek-flash", 1_000_000, 393_216},
+		{"provider prefix", [2]string{"openai", "gpt-5.5"}, [][2]string{{"openai", "openai/gpt-5.5"}}},
+		{"case", [2]string{"openrouter", "google/gemini-3.5-flash"}, [][2]string{{"OpenRouter", "GOOGLE/Gemini-3.5-Flash"}}},
+		{"claude 4 version separator", [2]string{"anthropic", "claude-opus-4-8"}, [][2]string{
+			{"anthropic", "claude-opus-4.8"},
+			{"anthropic", "anthropic/claude-opus-4.8"},
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			spec, ok := LookupModelSpec(tt.provider, tt.model)
-			if !ok {
-				t.Fatalf("LookupModelSpec(%q, %q): expected ok, got !ok", tt.provider, tt.model)
+			want, ok := LookupModelSpec(tt.canonical[0], tt.canonical[1])
+			if !ok || want.ContextWindow == 0 {
+				t.Fatalf("LookupModelSpec(%q, %q) = %+v, %v; want a registered spec", tt.canonical[0], tt.canonical[1], want, ok)
 			}
-			if spec.ContextWindow != tt.wantContext {
-				t.Errorf("ContextWindow = %d, want %d", spec.ContextWindow, tt.wantContext)
-			}
-			if spec.MaxOutput != tt.wantMaxOutput {
-				t.Errorf("MaxOutput = %d, want %d", spec.MaxOutput, tt.wantMaxOutput)
+			for _, variant := range tt.variants {
+				got, ok := LookupModelSpec(variant[0], variant[1])
+				if !ok || got.ContextWindow != want.ContextWindow || got.MaxOutput != want.MaxOutput {
+					t.Errorf("LookupModelSpec(%q, %q) = %+v, %v; want same limits as %q", variant[0], variant[1], got, ok, tt.canonical[1])
+				}
 			}
 		})
 	}
@@ -130,41 +115,6 @@ func TestLookupModelSpecMarksNonReasoningModelsExplicitly(t *testing.T) {
 	}
 }
 
-func TestLookupModelSpecClaude4VersionSeparators(t *testing.T) {
-	tests := []struct {
-		name        string
-		provider    string
-		model       string
-		wantContext int
-		wantOutput  int
-	}{
-		{"opus dotted bare", "anthropic", "claude-opus-4.8", 1_000_000, 128_000},
-		{"opus dotted provider-prefixed", "openrouter", "anthropic/claude-opus-4.8", 1_000_000, 128_000},
-		{"sonnet dotted bare", "anthropic", "claude-sonnet-4.6", 1_000_000, 128_000},
-		{"sonnet dotted provider-prefixed", "openrouter", "anthropic/claude-sonnet-4.6", 1_000_000, 128_000},
-		{"haiku dotted bare", "anthropic", "claude-haiku-4.5", 200_000, 64_000},
-		{"haiku dotted provider-prefixed", "openrouter", "anthropic/claude-haiku-4.5", 200_000, 64_000},
-		{"opus hyphenated bare", "anthropic", "claude-opus-4-8", 1_000_000, 128_000},
-		{"sonnet hyphenated provider-prefixed", "openrouter", "anthropic/claude-sonnet-4-6", 1_000_000, 128_000},
-		{"haiku hyphenated bare", "anthropic", "claude-haiku-4-5", 200_000, 64_000},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			spec, ok := LookupModelSpec(tt.provider, tt.model)
-			if !ok {
-				t.Fatalf("LookupModelSpec(%q, %q): expected ok, got !ok", tt.provider, tt.model)
-			}
-			if spec.ContextWindow != tt.wantContext {
-				t.Errorf("ContextWindow = %d, want %d", spec.ContextWindow, tt.wantContext)
-			}
-			if spec.MaxOutput != tt.wantOutput {
-				t.Errorf("MaxOutput = %d, want %d", spec.MaxOutput, tt.wantOutput)
-			}
-		})
-	}
-}
-
 func TestLookupModelSpecDoubaoSeedDefaults(t *testing.T) {
 	spec, ok := LookupModelSpec("volcengine", "doubao-seed-2-1-pro-260628")
 	if !ok {
@@ -216,16 +166,6 @@ func TestLookupModelSpecGeminiTemperatureDefaults(t *testing.T) {
 				t.Errorf("DefaultTemperature = %v, want %v", formatFloatPtr(spec.DefaultTemperature), formatFloatPtr(tt.want))
 			}
 		})
-	}
-}
-
-func TestLookupModelSpecCaseInsensitive(t *testing.T) {
-	spec, ok := LookupModelSpec("OpenRouter", "GOOGLE/Gemini-3.5-Flash")
-	if !ok {
-		t.Fatalf("expected case-insensitive lookup to succeed")
-	}
-	if spec.ContextWindow != 1_048_576 {
-		t.Errorf("ContextWindow = %d, want 1_048_576", spec.ContextWindow)
 	}
 }
 

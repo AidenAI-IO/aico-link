@@ -1055,15 +1055,26 @@ def test_compressed_recall_with_episode_continues_to_judge_and_persists_evidence
     assert trace["expected_recalled_memory_match"] is True
 
 
-def test_episode_missing_expected_memory_is_real_failure(tmp_path: Path):
+@pytest.mark.parametrize("history,episode,expected_ids,recalled", [
+    (_compressed_recall_history, {"id": "ep-1", "retrieved_memory_refs": ["other-memory"]}, None, ["other-memory"]),
+    (_compressed_recall_history, {"id": "ep-1"}, None, []),
+    (_compressed_recall_and_device_history, {"id": "ep-1", "retrieved_memory_refs": []}, None, []),
+    (_compressed_recall_and_device_history, {"id": "ep-1", "retrieved_memory_refs": ["memory-a"]},
+     ["memory-a", "memory-b"], ["memory-a"]),
+], ids=["unrelated", "missing_refs", "empty_refs_with_device_recall", "partial"])
+def test_episode_without_every_expected_memory_is_real_failure(
+    tmp_path: Path, history, episode, expected_ids, recalled,
+):
     from runner.runtask import evaluate_task_history
 
     suite, task = _memory_suite_and_task(tmp_path)
+    if expected_ids:
+        task.expected_recalled_memory_ids = expected_ids
     result = evaluate_task_history(
         suite=suite,
         task=task,
-        history=_compressed_recall_history(),
-        episode={"id": "ep-1", "retrieved_memory_refs": ["other-memory"]},
+        history=history(),
+        episode=episode,
         attempt=1,
         artifact_dir=tmp_path / "artifacts",
         judge_cfg=None,
@@ -1073,76 +1084,7 @@ def test_episode_missing_expected_memory_is_real_failure(tmp_path: Path):
     )
 
     assert result.status == "failed"
-    assert result.metrics["memory_recall_evidence_source"] == "episode"
-    assert result.metrics["expected_recalled_memory_match"] is False
-
-
-def test_episode_authoritative_empty_memory_refs_is_real_failure(tmp_path: Path):
-    from runner.runtask import evaluate_task_history
-
-    suite, task = _memory_suite_and_task(tmp_path)
-    result = evaluate_task_history(
-        suite=suite,
-        task=task,
-        history=_compressed_recall_history(),
-        episode={"id": "ep-1"},
-        attempt=1,
-        artifact_dir=tmp_path / "artifacts",
-        judge_cfg=None,
-        judge_cache_dir=None,
-        run_id="run-1",
-        timed_out=False,
-    )
-
-    assert result.status == "failed"
-    assert result.metrics["recalled_memory_ids"] == []
-    assert result.metrics["memory_recall_evidence_source"] == "episode"
-    assert result.metrics["expected_recalled_memory_match"] is False
-
-
-def test_ambiguous_episode_empty_memory_refs_is_real_failure(tmp_path: Path):
-    from runner.runtask import evaluate_task_history
-
-    suite, task = _memory_suite_and_task(tmp_path)
-    result = evaluate_task_history(
-        suite=suite,
-        task=task,
-        history=_compressed_recall_and_device_history(),
-        episode={"id": "ep-1", "retrieved_memory_refs": []},
-        attempt=1,
-        artifact_dir=tmp_path / "artifacts",
-        judge_cfg=None,
-        judge_cache_dir=None,
-        run_id="run-1",
-        timed_out=False,
-    )
-
-    assert result.status == "failed"
-    assert result.metrics["recalled_memory_ids"] == []
-    assert result.metrics["memory_recall_evidence_source"] == "episode"
-    assert result.metrics["expected_recalled_memory_match"] is False
-
-
-def test_episode_missing_one_expected_memory_reports_attributable_recall(tmp_path: Path):
-    from runner.runtask import evaluate_task_history
-
-    suite, task = _memory_suite_and_task(tmp_path)
-    task.expected_recalled_memory_ids = ["memory-a", "memory-b"]
-    result = evaluate_task_history(
-        suite=suite,
-        task=task,
-        history=_compressed_recall_and_device_history(),
-        episode={"id": "ep-1", "retrieved_memory_refs": ["memory-a"]},
-        attempt=1,
-        artifact_dir=tmp_path / "artifacts",
-        judge_cfg=None,
-        judge_cache_dir=None,
-        run_id="run-1",
-        timed_out=False,
-    )
-
-    assert result.status == "failed"
-    assert result.metrics["recalled_memory_ids"] == ["memory-a"]
+    assert result.metrics["recalled_memory_ids"] == recalled
     assert result.metrics["memory_recall_evidence_source"] == "episode"
     assert result.metrics["expected_recalled_memory_match"] is False
 

@@ -14,29 +14,6 @@ from runner.agent_config import (
 )
 
 
-def test_benchmark_agent_template_omits_legacy_instruction():
-    template = (
-        Path(__file__).resolve().parents[1]
-        / "config"
-        / "agent.toml.template"
-    )
-    config = tomllib.loads(template.read_text(encoding="utf-8"))
-
-    assert "instruction" not in config
-
-
-def test_benchmark_agent_template_uses_benchmark_agent_environment_placeholders():
-    template = Path(__file__).resolve().parents[1] / "config" / "agent.toml.template"
-    config = tomllib.loads(template.read_text(encoding="utf-8"))
-
-    assert config["model_settings"]["providers"]["benchmark"] == {
-        "type": "{{AICO_BENCHMARK_AGENT_PROVIDER}}",
-        "base_url": "{{AICO_BENCHMARK_AGENT_BASE_URL}}",
-        "api_key": "{{AICO_BENCHMARK_AGENT_API_KEY}}",
-    }
-    assert config["model_settings"]["model"]["model"] == "{{AICO_BENCHMARK_AGENT_MODEL}}"
-
-
 def test_render_agent_template_escapes_complete_toml_string_content(monkeypatch):
     api_key = 'secret\\path\nnext\t"quoted"'
     monkeypatch.setenv(runner_config.BENCHMARK_AGENT_API_KEY_ENV, api_key)

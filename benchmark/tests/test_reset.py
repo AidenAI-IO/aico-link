@@ -1028,15 +1028,17 @@ def test_clear_stale_adb_android_owner_releases_expired_owner(monkeypatch):
     ]
 
 
-def test_clear_stale_adb_android_owner_preserves_active_owner(monkeypatch):
+@pytest.mark.parametrize("health", [
+    {"bridge_type": "adb_android", "active_task_id": "suite:running", "active_task_lease_state": "active"},
+    {"bridge_type": "adb_android", "active_task_id": "suite:running"},
+    {"bridge_type": "mobilegym", "active_task_id": "suite:old"},
+], ids=["active_lease", "no_lease_state", "non_adb_bridge"])
+def test_clear_stale_adb_android_owner_leaves_owner_unless_lease_expired(monkeypatch, health):
     calls = []
 
     class FakeResponse:
         def read(self):
-            return (
-                b'{"ok": true, "data": {"bridge_type": "adb_android", '
-                b'"active_task_id": "suite:running", "active_task_lease_state": "active"}}'
-            )
+            return json.dumps({"ok": True, "data": health}).encode()
 
         def __enter__(self):
             return self
@@ -1052,52 +1054,6 @@ def test_clear_stale_adb_android_owner_preserves_active_owner(monkeypatch):
 
     assert clear_stale_adb_android_owner("http://127.0.0.1:9090") == ""
     assert calls == [("http://127.0.0.1:9090/health", "GET", None, 2.0)]
-
-
-def test_clear_stale_adb_android_owner_preserves_owner_without_lease_state(monkeypatch):
-    calls = []
-
-    class FakeResponse:
-        def read(self):
-            return b'{"ok": true, "data": {"bridge_type": "adb_android", "active_task_id": "suite:running"}}'
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    def fake_urlopen(req, timeout=None):
-        calls.append((req.full_url, req.get_method(), req.headers.get("Benchmark-task-id"), timeout))
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-
-    assert clear_stale_adb_android_owner("http://127.0.0.1:9090") == ""
-    assert calls == [("http://127.0.0.1:9090/health", "GET", None, 2.0)]
-
-
-def test_clear_stale_adb_android_owner_ignores_non_adb_bridge(monkeypatch):
-    calls = []
-
-    class FakeResponse:
-        def read(self):
-            return b'{"ok": true, "data": {"bridge_type": "mobilegym", "active_task_id": "suite:old"}}'
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    def fake_urlopen(req, timeout=None):
-        calls.append((req.full_url, req.get_method()))
-        return FakeResponse()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-
-    assert clear_stale_adb_android_owner("http://127.0.0.1:9090") == ""
-    assert calls == [("http://127.0.0.1:9090/health", "GET")]
 
 
 def test_seed_memory_relative_expiry_is_fresh_for_each_attempt_without_mutating_fixture():
