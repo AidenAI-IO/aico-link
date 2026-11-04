@@ -147,17 +147,36 @@ func (s *SpeakerProfileStore) Delete(id string) error {
 	if err != nil {
 		return err
 	}
-	// Allow deleting the logical owner even when the caller still holds a
-	// legacy id from before consolidate-on-save.
-	if owner, ok := selectOwnerMeta(metas); ok && id != owner.ID && id == speakerOwnerProfileID {
-		id = owner.ID
-	}
-	_ = os.Remove(s.metaPath(id))
-	err = os.Remove(s.embedPath(id))
-	if os.IsNotExist(err) {
+	owner, ok := selectOwnerMeta(metas)
+	if !ok {
 		return fmt.Errorf("speaker profile %q not found", id)
 	}
-	return err
+	// Single-owner product: deleting the logical owner (by canonical id or the
+	// id List currently surfaces) clears every on-disk profile so a stale
+	// legacy file cannot resurrect on the next List/LoadOwner.
+	if id != owner.ID && id != speakerOwnerProfileID {
+		return fmt.Errorf("speaker profile %q not found", id)
+	}
+	var first error
+	foundEmbed := false
+	for _, meta := range metas {
+		_ = os.Remove(s.metaPath(meta.ID))
+		removeErr := os.Remove(s.embedPath(meta.ID))
+		if removeErr == nil {
+			foundEmbed = true
+			continue
+		}
+		if os.IsNotExist(removeErr) {
+			continue
+		}
+		if first == nil {
+			first = fmt.Errorf("remove embed %s: %w", meta.ID, removeErr)
+		}
+	}
+	if !foundEmbed {
+		return fmt.Errorf("speaker profile %q not found", id)
+	}
+	return first
 }
 
 // LoadOwner returns the single enrolled owner embedding, if any.

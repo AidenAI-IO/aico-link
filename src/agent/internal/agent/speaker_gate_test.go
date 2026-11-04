@@ -248,6 +248,28 @@ func TestSpeakerProfileStoreSaveFailureKeepsExisting(t *testing.T) {
 	}
 }
 
+func TestSpeakerProfileStoreDeleteOwnerClearsLegacyExtras(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"), time.Now().UTC().Add(-time.Hour))
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC())
+
+	if err := store.Delete("speaker3"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List()
+	if err != nil || len(list) != 0 {
+		t.Fatalf("after owner delete expected empty list, got %#v err=%v", list, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("legacy files should be gone, got %v", entries)
+	}
+}
+
 func TestSharedSpeakerProfileStoreReusesInstance(t *testing.T) {
 	dir := t.TempDir()
 	a := SharedSpeakerProfileStore(dir, 1)
