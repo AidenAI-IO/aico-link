@@ -577,6 +577,30 @@ input. Both variants retain the task's prepared screen; the connected variant
 does not bring the companion App to the foreground after task setup.
 ADB cases run exclusively on the shared emulator, including scheduled runs.
 
+With the companion App in the background, Phone Bridge reaches the Agent only
+through the App's foreground service (FGS), which polls the HTTP command queue.
+That service polls only over a USB or Ethernet Android Network that routes to
+the board subnet, and the emulator has neither. For runs that contain
+background Bridge tasks, the runner therefore gives the rooted emulator a
+board-like link:
+
+1. If the emulator lacks the `android.hardware.ethernet` feature, the runner
+   bind-mounts a copy of `/vendor/etc/permissions` that adds it, writes a
+   static `eth1` configuration (`192.168.42.2/24`), and restarts the Android
+   framework once so that EthernetService starts. The bind mount is lost on
+   reboot, so the check runs on every bridge run.
+2. It adds a veth pair, `eth1` with peer `aicobd` (`192.168.42.1/24`), which
+   Android provisions as an Ethernet network. The App binds its FGS client to
+   that network. Requests to `192.168.42.1:8080` still reach the task Agent
+   through the existing iptables DNAT rule and `adb reverse`.
+3. Background tasks wait for the Agent to report `fgs_bridge_enabled=true`
+   and fail setup otherwise, instead of silently falling back to ADB text
+   input. The veth pair is removed when the run ends.
+
+While `eth1` exists, Android prefers it as the default network, so the
+emulator has no internet access. Settings text editing does not need it, and
+runs without background Bridge tasks never create the link.
+
 Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
 `execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
 **ADB device** and **ADB + AidenBridge** in its configuration comparison and
