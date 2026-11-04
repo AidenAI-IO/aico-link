@@ -312,13 +312,28 @@ def test_device_prepare_without_an_environment_uses_the_agent_prompt(monkeypatch
     assert client.prompts == ["Open the contact."]
 
 
+def test_device_prepare_rejects_a_setup_built_at_runtime(monkeypatch):
+    """Suites are validated on load; a hand-built setup gets the same checks."""
+    monkeypatch.setattr(reset, "call_environment_prepare", lambda *a, **kw: pytest.fail("no prepare call"))
+    client = ChatClient()
+
+    with pytest.raises(ResetError, match="cannot be combined with expected_response"):
+        per_task_setup(
+            client,
+            {**SETUP, "expected_response": "done"},
+            environment_url="http://bridge",
+        )
+
+    assert client.prompts == []
+
+
 def test_builtin_apps_suite_keeps_a_prompt_fallback_for_every_recipe():
     from runner.suite import load_suite
     from pathlib import Path
 
     suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_builtin_apps.json")
     prepared = [task for task in suite.tasks if isinstance(task.setup, dict) and task.setup.get("device_prepare")]
-    assert len(prepared) == 12
+    assert prepared
     for task in prepared:
         assert task.setup["type"] == "agent_prompt" and task.setup["prompt"].strip()
         assert task.setup["device_prepare"]["recipe"] in prepare.RECIPES

@@ -168,6 +168,75 @@ def test_load_suite_rejects_malformed_assert_memory_nested_schema(
         load_suite(path)
 
 
+def test_load_suite_accepts_a_device_prepare_recipe(tmp_path: Path):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["setup"] = {
+        "type": "agent_prompt",
+        "prompt": "Open the contact.",
+        "device_prepare": {"recipe": "contact_detail", "params": {"name": "x"}},
+    }
+    path = tmp_path / "prepare.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    assert load_suite(path).tasks[0].setup["device_prepare"]["recipe"] == "contact_detail"
+
+
+@pytest.mark.parametrize(
+    "spec, message",
+    [
+        ("contact_detail", "device_prepare must be an object"),
+        ({"recipe": "contact_detail", "recipe2": "x"}, "only recipe and params"),
+        ({"params": {}}, "requires a non-empty recipe"),
+        ({"recipe": "  "}, "requires a non-empty recipe"),
+        ({"recipe": "contact_detail", "params": []}, "params must be an object"),
+    ],
+)
+def test_load_suite_rejects_malformed_device_prepare(tmp_path: Path, spec, message):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["setup"] = {
+        "type": "agent_prompt",
+        "prompt": "Open the contact.",
+        "device_prepare": spec,
+    }
+    path = tmp_path / "bad_prepare.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with pytest.raises(SuiteValidationError, match=message):
+        load_suite(path)
+
+
+def test_load_suite_rejects_device_prepare_next_to_expected_response(tmp_path: Path):
+    """A confirmed recipe never sends the prompt, so the assertion cannot run."""
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["setup"] = {
+        "type": "agent_prompt",
+        "prompt": "Open the contact.",
+        "expected_response": "done",
+        "device_prepare": {"recipe": "contact_detail"},
+    }
+    path = tmp_path / "prepare_expected.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with pytest.raises(SuiteValidationError, match="cannot be combined with expected_response"):
+        load_suite(path)
+
+
+def test_load_suite_rejects_device_prepare_with_retained_history(tmp_path: Path):
+    """A recipe leaves no setup conversation, so retained context would vary by path."""
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["setup"] = {
+        "type": "agent_prompt",
+        "prompt": "Open the contact.",
+        "clear_history_after": False,
+        "device_prepare": {"recipe": "contact_detail"},
+    }
+    path = tmp_path / "prepare_history.json"
+    path.write_text(json.dumps(fixture), encoding="utf-8")
+
+    with pytest.raises(SuiteValidationError, match="clear_history_after=false"):
+        load_suite(path)
+
+
 def test_perception_v1_scores_tap_coordinates_deterministically():
     from runner.assertions import evaluate_hard_assertions
     from runner.models import Trace, ToolCall

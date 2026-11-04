@@ -335,6 +335,7 @@ def load_suite(path: Path) -> Suite:
                         f"task {tid}: unsupported {setup_type} setup keys: {', '.join(unknown_setup_keys)}"
                     )
                 validate_setup_evaluation(setup_item)
+                validate_setup_device_prepare(setup_item)
                 if setup_type == "environment_tools":
                     tools = setup_item.get("tools")
                     if not isinstance(tools, list) or not tools:
@@ -469,6 +470,38 @@ def load_suite(path: Path) -> Suite:
         mock_environment=mock_environment,
         status=status.strip().lower(),
     )
+
+
+def validate_setup_device_prepare(setup: dict[str, Any]) -> None:
+    """Reject device_prepare settings that the recipe path cannot honor.
+
+    A confirmed recipe replaces the agent prompt, so every key that describes the
+    prompt run itself would silently stop taking effect: nothing reads the
+    response, and no conversation is left behind for the task.
+    """
+    if "device_prepare" not in setup:
+        return
+    spec = setup["device_prepare"]
+    if not isinstance(spec, dict) or set(spec) - {"recipe", "params"}:
+        raise SuiteValidationError(
+            "device_prepare must be an object with only recipe and params"
+        )
+    if not isinstance(spec.get("recipe"), str) or not spec["recipe"].strip():
+        raise SuiteValidationError("device_prepare requires a non-empty recipe")
+    params = spec.get("params", {})
+    if params is not None and not isinstance(params, dict):
+        raise SuiteValidationError("device_prepare params must be an object")
+    if "expected_response" in setup:
+        raise SuiteValidationError(
+            "device_prepare cannot be combined with expected_response: a confirmed "
+            "recipe replaces the agent prompt, so the expected response is never produced"
+        )
+    if setup.get("clear_history_after") is False:
+        raise SuiteValidationError(
+            "device_prepare cannot be combined with clear_history_after=false: a "
+            "confirmed recipe leaves no setup conversation for the task, so the "
+            "retained context would depend on whether preparation succeeded"
+        )
 
 
 def validate_setup_evaluation(setup: dict[str, Any]) -> None:

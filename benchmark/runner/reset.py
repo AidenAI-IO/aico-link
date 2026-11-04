@@ -14,7 +14,13 @@ from runner.agent_client import (
 from runner.environment_endpoint import EnvironmentEndpoint
 from runner.environment_state import read_environment_state
 from runner.assertions import evaluate_environment_state_assertions
-from runner.suite import SETUP_KEYS, SuiteValidationError, validate_assert_memory_setup, validate_setup_evaluation
+from runner.suite import (
+    SETUP_KEYS,
+    SuiteValidationError,
+    validate_assert_memory_setup,
+    validate_setup_device_prepare,
+    validate_setup_evaluation,
+)
 
 
 class ResetError(RuntimeError):
@@ -316,6 +322,8 @@ def _per_task_setup(
     unknown_keys = sorted(set(setup) - allowed_keys)
     if unknown_keys:
         raise ResetError(f"unsupported {setup_type} setup keys: {', '.join(unknown_keys)}")
+    if setup_type == "agent_prompt":
+        _validate_device_prepare(setup)
     if setup_type == "environment_tools":
         if not environment_url:
             raise ResetError("environment_tools requires environment_url")
@@ -352,6 +360,18 @@ def _per_task_setup(
     raise ResetError(f"unsupported setup form: {setup!r}")
 
 
+def _validate_device_prepare(setup: dict[str, Any]) -> None:
+    """Check a device_prepare spec before any of it is acted on.
+
+    Suite loading runs the same checks and reports them as SuiteValidationError;
+    this repeat covers setups built at runtime.
+    """
+    try:
+        validate_setup_device_prepare(setup)
+    except SuiteValidationError as e:
+        raise ResetError(str(e)) from e
+
+
 def _try_device_prepare(
     setup: dict[str, Any], environment_url: str | None, benchmark_task_id: str | None,
 ) -> dict[str, Any] | None:
@@ -365,8 +385,6 @@ def _try_device_prepare(
     spec = setup.get("device_prepare")
     if spec is None:
         return None
-    if not isinstance(spec, dict) or not isinstance(spec.get("recipe"), str):
-        raise ResetError(f"device_prepare must be an object with a recipe: {spec!r}")
     if not environment_url:
         return None
     params = spec.get("params") or {}
