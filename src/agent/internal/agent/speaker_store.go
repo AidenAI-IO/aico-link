@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"aico-agent/internal/logging"
 )
 
 var speakerProfileIDPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$`)
@@ -25,6 +27,28 @@ type SpeakerProfileStore struct {
 	dir         string
 	maxProfiles int
 	mu          sync.Mutex
+}
+
+var (
+	sharedSpeakerStoresMu sync.Mutex
+	sharedSpeakerStores   = map[string]*SpeakerProfileStore{}
+)
+
+// SharedSpeakerProfileStore returns the process-wide store for dir so HTTP and
+// the Classic voice session share one lock over the same on-disk profiles.
+func SharedSpeakerProfileStore(dir string, maxProfiles int) *SpeakerProfileStore {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = defaultSpeakerStoreDir
+	}
+	sharedSpeakerStoresMu.Lock()
+	defer sharedSpeakerStoresMu.Unlock()
+	if existing, ok := sharedSpeakerStores[dir]; ok {
+		return existing
+	}
+	store := NewSpeakerProfileStore(dir, maxProfiles)
+	sharedSpeakerStores[dir] = store
+	return store
 }
 
 func NewSpeakerProfileStore(dir string, maxProfiles int) *SpeakerProfileStore {
@@ -48,10 +72,16 @@ func (s *SpeakerProfileStore) EnsureReady() error {
 func (s *SpeakerProfileStore) List() ([]SpeakerProfileMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.pruneToSingleLocked(""); err != nil {
+	metas, err := s.listLocked()
+	if err != nil {
 		return nil, err
 	}
-	return s.listLocked()
+	owner, ok := selectOwnerMeta(metas)
+	if !ok {
+		return nil, nil
+	}
+	// Read path never deletes: surface the single logical owner only.
+	return []SpeakerProfileMeta{owner}, nil
 }
 
 func (s *SpeakerProfileStore) Count() (int, error) {
@@ -72,10 +102,6 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 	if err := s.EnsureReady(); err != nil {
 		return err
 	}
-	// Single owner: drop every prior profile before writing the new one.
-	if err := s.deleteAllLocked(); err != nil {
-		return err
-	}
 
 	raw := make([]byte, speakerEmbeddingDim*4)
 	for i, v := range embedding {
@@ -91,8 +117,22 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 		return err
 	}
 	meta := SpeakerProfileMeta{ID: id, CreatedAt: time.Now().UTC()}
-	metaRaw, _ := json.Marshal(meta)
-	_ = os.WriteFile(s.metaPath(id), metaRaw, 0o600)
+	metaRaw, err := json.Marshal(meta)
+	if err != nil {
+		return fmt.Errorf("marshal speaker meta: %w", err)
+	}
+	metaTmp := s.metaPath(id) + ".tmp"
+	if err := os.WriteFile(metaTmp, metaRaw, 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(metaTmp, s.metaPath(id)); err != nil {
+		_ = os.Remove(metaTmp)
+		return err
+	}
+	// Only after the canonical owner is durable, drop legacy extras.
+	if err := s.removeOthersLocked(id); err != nil {
+		logging.Warnf("agent", "speaker", "cleanup legacy profiles after save: %v", err)
+	}
 	return nil
 }
 
@@ -103,8 +143,17 @@ func (s *SpeakerProfileStore) Delete(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	metas, err := s.listLocked()
+	if err != nil {
+		return err
+	}
+	// Allow deleting the logical owner even when the caller still holds a
+	// legacy id from before consolidate-on-save.
+	if owner, ok := selectOwnerMeta(metas); ok && id != owner.ID && id == speakerOwnerProfileID {
+		id = owner.ID
+	}
 	_ = os.Remove(s.metaPath(id))
-	err := os.Remove(s.embedPath(id))
+	err = os.Remove(s.embedPath(id))
 	if os.IsNotExist(err) {
 		return fmt.Errorf("speaker profile %q not found", id)
 	}
@@ -112,20 +161,19 @@ func (s *SpeakerProfileStore) Delete(id string) error {
 }
 
 // LoadOwner returns the single enrolled owner embedding, if any.
+// It never deletes on-disk profiles; Save consolidates to the canonical id.
 func (s *SpeakerProfileStore) LoadOwner() ([]float32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.pruneToSingleLocked(""); err != nil {
-		return nil, err
-	}
 	metas, err := s.listLocked()
 	if err != nil {
 		return nil, err
 	}
-	if len(metas) == 0 {
+	owner, ok := selectOwnerMeta(metas)
+	if !ok {
 		return nil, nil
 	}
-	return s.readEmbeddingLocked(metas[0].ID)
+	return s.readEmbeddingLocked(owner.ID)
 }
 
 func (s *SpeakerProfileStore) LoadAll() ([][]float32, error) {
@@ -162,6 +210,9 @@ func (s *SpeakerProfileStore) listLocked() ([]SpeakerProfileMeta, error) {
 		meta := SpeakerProfileMeta{ID: id, CreatedAt: created}
 		if raw, err := os.ReadFile(s.metaPath(id)); err == nil {
 			_ = json.Unmarshal(raw, &meta)
+			if meta.ID == "" {
+				meta.ID = id
+			}
 		}
 		out = append(out, meta)
 	}
@@ -174,58 +225,34 @@ func (s *SpeakerProfileStore) listLocked() ([]SpeakerProfileMeta, error) {
 	return out, nil
 }
 
-// pruneToSingleLocked keeps at most one profile. Prefer keepID, then the
-// canonical owner id, then the newest profile. Used so boards that previously
-// enrolled multiple speakers collapse to single-owner matching.
-func (s *SpeakerProfileStore) pruneToSingleLocked(keepID string) error {
-	metas, err := s.listLocked()
-	if err != nil {
-		return err
+// selectOwnerMeta picks the single logical owner without mutating disk.
+// Prefer the newest profile by CreatedAt so a later re-enroll under a legacy
+// id (speaker3) wins over a stale canonical speaker trial recording.
+func selectOwnerMeta(metas []SpeakerProfileMeta) (SpeakerProfileMeta, bool) {
+	if len(metas) == 0 {
+		return SpeakerProfileMeta{}, false
 	}
-	if len(metas) <= 1 {
-		return nil
-	}
-	keepID = strings.TrimSpace(keepID)
-	keepIdx := -1
-	if keepID != "" {
-		for i, meta := range metas {
-			if meta.ID == keepID {
-				keepIdx = i
-				break
-			}
-		}
-	}
-	if keepIdx < 0 {
-		for i, meta := range metas {
-			if meta.ID == speakerOwnerProfileID {
-				keepIdx = i
-				break
-			}
-		}
-	}
-	if keepIdx < 0 {
-		keepIdx = len(metas) - 1 // newest after CreatedAt ascending sort
-	}
-	for i, meta := range metas {
-		if i == keepIdx {
-			continue
-		}
-		_ = os.Remove(s.metaPath(meta.ID))
-		_ = os.Remove(s.embedPath(meta.ID))
-	}
-	return nil
+	return metas[len(metas)-1], true
 }
 
-func (s *SpeakerProfileStore) deleteAllLocked() error {
+func (s *SpeakerProfileStore) removeOthersLocked(keepID string) error {
 	metas, err := s.listLocked()
 	if err != nil {
 		return err
 	}
+	var first error
 	for _, meta := range metas {
-		_ = os.Remove(s.metaPath(meta.ID))
-		_ = os.Remove(s.embedPath(meta.ID))
+		if meta.ID == keepID {
+			continue
+		}
+		if err := os.Remove(s.metaPath(meta.ID)); err != nil && !os.IsNotExist(err) && first == nil {
+			first = fmt.Errorf("remove meta %s: %w", meta.ID, err)
+		}
+		if err := os.Remove(s.embedPath(meta.ID)); err != nil && !os.IsNotExist(err) && first == nil {
+			first = fmt.Errorf("remove embed %s: %w", meta.ID, err)
+		}
 	}
-	return nil
+	return first
 }
 
 func (s *SpeakerProfileStore) readEmbeddingLocked(id string) ([]float32, error) {

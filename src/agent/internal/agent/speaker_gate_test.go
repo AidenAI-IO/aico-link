@@ -177,37 +177,114 @@ func TestSpeakerProfileStoreLimitAndReplace(t *testing.T) {
 	_ = filepath.Join(dir, "a.f32")
 }
 
-func TestSpeakerProfileStorePrunesLegacyExtras(t *testing.T) {
+func TestSpeakerProfileStoreListSelectsNewestWithoutDeleting(t *testing.T) {
 	dir := t.TempDir()
 	store := NewSpeakerProfileStore(dir, 5)
-	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"))
-	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"))
-	writeLegacySpeakerProfile(t, dir, "guest", unitSpeakerStub("other"))
+	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"), time.Now().UTC().Add(-time.Hour))
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC())
 
 	list, err := store.List()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].ID != speakerOwnerProfileID {
-		t.Fatalf("pruned list = %#v", list)
+	if len(list) != 1 || list[0].ID != "speaker3" {
+		t.Fatalf("list should surface newest legacy owner, got %#v", list)
+	}
+	// Read path must not delete extras.
+	if _, err := os.Stat(filepath.Join(dir, speakerOwnerProfileID+".f32")); err != nil {
+		t.Fatalf("stale canonical profile should remain until Save: %v", err)
 	}
 	owner, err := store.LoadOwner()
-	if err != nil || owner == nil || owner[0] != 1 {
-		t.Fatalf("LoadOwner after prune = %v err=%v", owner, err)
+	if err != nil || owner == nil || owner[1] != 1 {
+		t.Fatalf("LoadOwner should use newest (other) vector, got %v err=%v", owner, err)
 	}
 }
 
-func writeLegacySpeakerProfile(t *testing.T, dir, id string, embedding []float32) {
+func TestSpeakerProfileStoreSaveConsolidatesLegacyExtras(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC().Add(-time.Minute))
+	writeLegacySpeakerProfile(t, dir, "guest", unitSpeakerStub("other"), time.Now().UTC().Add(-2*time.Minute))
+
+	if err := store.Save("anything", unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 2 {
+		t.Fatalf("after Save expected only speaker.{f32,json}, got %v", names)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("LoadOwner after consolidate = %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreSaveFailureKeepsExisting(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	// Make the store directory read-only so the next Save cannot write the tmp file.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err == nil {
+		t.Fatal("expected Save to fail on read-only dir")
+	}
+	_ = os.Chmod(dir, 0o755)
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("existing owner must survive failed Save, got %v err=%v", owner, err)
+	}
+}
+
+func TestSharedSpeakerProfileStoreReusesInstance(t *testing.T) {
+	dir := t.TempDir()
+	a := SharedSpeakerProfileStore(dir, 1)
+	b := SharedSpeakerProfileStore(dir, 9)
+	if a != b {
+		t.Fatal("expected shared store instance for same dir")
+	}
+	if a.MaxProfiles() != 1 {
+		t.Fatalf("MaxProfiles() = %d", a.MaxProfiles())
+	}
+}
+
+func TestNormalizeSpeakerProfileIDAlwaysOwner(t *testing.T) {
+	if got := NormalizeSpeakerProfileID("speaker3"); got != speakerOwnerProfileID {
+		t.Fatalf("NormalizeSpeakerProfileID = %q", got)
+	}
+	if got := NormalizeSpeakerProfileID(""); got != speakerOwnerProfileID {
+		t.Fatalf("NormalizeSpeakerProfileID empty = %q", got)
+	}
+}
+
+func writeLegacySpeakerProfile(t *testing.T, dir, id string, embedding []float32, created time.Time) {
 	t.Helper()
 	raw := make([]byte, speakerEmbeddingDim*4)
 	for i, v := range embedding {
 		binary.LittleEndian.PutUint32(raw[i*4:], math.Float32bits(v))
 	}
-	if err := os.WriteFile(filepath.Join(dir, id+".f32"), raw, 0o600); err != nil {
+	embedPath := filepath.Join(dir, id+".f32")
+	if err := os.WriteFile(embedPath, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	meta, _ := json.Marshal(SpeakerProfileMeta{ID: id, CreatedAt: time.Now().UTC()})
+	meta, _ := json.Marshal(SpeakerProfileMeta{ID: id, CreatedAt: created.UTC()})
 	if err := os.WriteFile(filepath.Join(dir, id+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	atime := created.UTC()
+	if err := os.Chtimes(embedPath, atime, atime); err != nil {
 		t.Fatal(err)
 	}
 }

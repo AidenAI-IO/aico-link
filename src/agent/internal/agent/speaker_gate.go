@@ -43,7 +43,7 @@ func NewSpeakerGateFromConfig(cfg Config) *SpeakerGate {
 		Enabled:   cfg.VoiceSpeakerGateEnabledOrDefault(),
 		Threshold: cfg.VoiceSpeakerThresholdOrDefault(),
 		Embedder:  NewNativeSpeakerEmbedder(toolsDir, modelDir),
-		Store:     NewSpeakerProfileStore(storeDir, cfg.VoiceSpeakerMaxProfilesOrDefault()),
+		Store:     SharedSpeakerProfileStore(storeDir, cfg.VoiceSpeakerMaxProfilesOrDefault()),
 	}
 }
 
