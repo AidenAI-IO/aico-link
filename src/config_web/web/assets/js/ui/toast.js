@@ -18,14 +18,16 @@ let timer = null;
  *
  * @param {import('./text.js').TextSpec} message
  * @param {object} [options]
- * @param {number} [options.durationMs]
+ * @param {number} [options.durationMs] - auto-dismiss delay; `0` keeps it until
+ *   the next toast or an explicit `dismiss()`.
  */
 export function toast(message, options = {}) {
   dismiss();
   const node = el('div', {class: 'ds-toast', attrs: {role: 'status'}, text: resolve(message)});
   document.body.appendChild(node);
   currentNode = node;
-  timer = setTimeout(dismiss, options.durationMs ?? VISIBLE_MS);
+  const duration = options.durationMs ?? VISIBLE_MS;
+  if (duration > 0) timer = setTimeout(dismiss, duration);
   return node;
 }
 

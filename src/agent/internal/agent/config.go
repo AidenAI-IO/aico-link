@@ -1909,6 +1909,7 @@ func (c Config) Validate() error {
 	if c.VoiceSpeakerMaxProfiles < 0 {
 		return fmt.Errorf("voice_speaker_max_profiles must be >= 0, got %d", c.VoiceSpeakerMaxProfiles)
 	}
+	// Values above 1 are ignored at runtime; Classic is single-owner only.
 	if c.VoiceFirstTurnTimeoutMs < 0 {
 		return fmt.Errorf("voice_first_turn_timeout_ms must be >= 0, got %d", c.VoiceFirstTurnTimeoutMs)
 	}
@@ -2301,9 +2302,8 @@ func (c Config) VoiceSpeakerThresholdOrDefault() float64 {
 }
 
 func (c Config) VoiceSpeakerMaxProfilesOrDefault() int {
-	if c.VoiceSpeakerMaxProfiles > 0 {
-		return c.VoiceSpeakerMaxProfiles
-	}
+	// Classic is single-owner; any configured value collapses to 1.
+	_ = c.VoiceSpeakerMaxProfiles
 	return defaultSpeakerMaxProfiles
 }
 

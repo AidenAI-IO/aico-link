@@ -1,8 +1,14 @@
 package agent
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"math"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
+	"time"
 )
 
 type stubSpeakerEmbedder struct {
@@ -138,33 +144,236 @@ func TestSpeakerGateMatchesOwnerRejectsOther(t *testing.T) {
 
 func TestSpeakerProfileStoreLimitAndReplace(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSpeakerProfileStore(dir, 2)
+	store := NewSpeakerProfileStore(dir, 1)
+	if store.MaxProfiles() != 1 {
+		t.Fatalf("MaxProfiles() = %d, want 1", store.MaxProfiles())
+	}
 	if err := store.Save("a", unitSpeakerStub("owner")); err != nil {
 		t.Fatal(err)
 	}
+	// Any enroll id collapses onto the canonical owner slot.
 	if err := store.Save("b", unitSpeakerStub("owner")); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save("c", unitSpeakerStub("owner")); err == nil {
-		t.Fatal("expected profile limit error")
-	}
-	if err := store.Save("a", unitSpeakerStub("other")); err != nil {
-		t.Fatalf("replace existing should succeed: %v", err)
+		t.Fatalf("single-profile replace should succeed: %v", err)
 	}
 	list, err := store.List()
-	if err != nil || len(list) != 2 {
+	if err != nil || len(list) != 1 || list[0].ID != speakerOwnerProfileID {
 		t.Fatalf("list = %#v err=%v", list, err)
 	}
-	if _, err := store.LoadAll(); err != nil {
-		t.Fatal(err)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err != nil {
+		t.Fatalf("overwrite same id should succeed: %v", err)
 	}
-	if err := store.Delete("a"); err != nil {
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil {
+		t.Fatalf("LoadOwner = %v err=%v", owner, err)
+	}
+	if err := store.Delete(speakerOwnerProfileID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Delete("missing"); err == nil {
 		t.Fatal("expected missing delete error")
 	}
+	if clamped := NewSpeakerProfileStore(dir, 5); clamped.MaxProfiles() != 1 {
+		t.Fatalf("clamped MaxProfiles() = %d, want 1", clamped.MaxProfiles())
+	}
 	_ = filepath.Join(dir, "a.f32")
+}
+
+func TestSpeakerProfileStoreListSelectsNewestWithoutDeleting(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"), time.Now().UTC().Add(-time.Hour))
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC())
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != "speaker3" {
+		t.Fatalf("list should surface newest legacy owner, got %#v", list)
+	}
+	// Read path must not delete extras.
+	if _, err := os.Stat(filepath.Join(dir, speakerOwnerProfileID+".f32")); err != nil {
+		t.Fatalf("stale canonical profile should remain until Save: %v", err)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[1] != 1 {
+		t.Fatalf("LoadOwner should use newest (other) vector, got %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreSaveConsolidatesLegacyExtras(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC().Add(-time.Minute))
+	writeLegacySpeakerProfile(t, dir, "guest", unitSpeakerStub("other"), time.Now().UTC().Add(-2*time.Minute))
+
+	if err := store.Save("anything", unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	if len(names) != 2 {
+		t.Fatalf("after Save expected only speaker.{f32,json}, got %v", names)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("LoadOwner after consolidate = %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreSaveFailureKeepsExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions are not enforced the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory mode bits")
+	}
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	// Make the store directory read-only so the next Save cannot write the tmp file.
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err == nil {
+		t.Fatal("expected Save to fail on read-only dir")
+	}
+	_ = os.Chmod(dir, 0o755)
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("existing owner must survive failed Save, got %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreSaveMetaFailureRestoresEmbed(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(dir, speakerOwnerProfileID+".json")
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatal(err)
+	}
+	// Occupy the meta path with a non-empty directory so the final rename fails
+	// after the embedding has already been replaced.
+	if err := os.Mkdir(metaPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metaPath, "blocker"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(metaPath)
+	})
+
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err == nil {
+		t.Fatal("expected Save to fail when meta rename is blocked")
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("previous owner embedding must be restored, got %v err=%v", owner, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, speakerOwnerProfileID+".f32.bak")); !os.IsNotExist(err) {
+		t.Fatalf("successful restore should consume the backup, stat err=%v", err)
+	}
+}
+
+func TestSpeakerProfileStoreLoadOwnerUsesEmbedBackup(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	embedPath := filepath.Join(dir, speakerOwnerProfileID+".f32")
+	bakPath := embedPath + ".bak"
+	prev, err := os.ReadFile(embedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bakPath, prev, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(embedPath, []byte("truncated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("LoadOwner should recover from .f32.bak, got %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreDeleteOwnerClearsLegacyExtras(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"), time.Now().UTC().Add(-time.Hour))
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"), time.Now().UTC())
+
+	if err := store.Delete("speaker3"); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List()
+	if err != nil || len(list) != 0 {
+		t.Fatalf("after owner delete expected empty list, got %#v err=%v", list, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("legacy files should be gone, got %v", entries)
+	}
+}
+
+func TestSharedSpeakerProfileStoreReusesInstance(t *testing.T) {
+	dir := t.TempDir()
+	a := SharedSpeakerProfileStore(dir, 1)
+	b := SharedSpeakerProfileStore(dir, 9)
+	if a != b {
+		t.Fatal("expected shared store instance for same dir")
+	}
+	if a.MaxProfiles() != 1 {
+		t.Fatalf("MaxProfiles() = %d", a.MaxProfiles())
+	}
+}
+
+func TestNormalizeSpeakerProfileIDAlwaysOwner(t *testing.T) {
+	if got := NormalizeSpeakerProfileID("speaker3"); got != speakerOwnerProfileID {
+		t.Fatalf("NormalizeSpeakerProfileID = %q", got)
+	}
+	if got := NormalizeSpeakerProfileID(""); got != speakerOwnerProfileID {
+		t.Fatalf("NormalizeSpeakerProfileID empty = %q", got)
+	}
+}
+
+func writeLegacySpeakerProfile(t *testing.T, dir, id string, embedding []float32, created time.Time) {
+	t.Helper()
+	raw := make([]byte, speakerEmbeddingDim*4)
+	for i, v := range embedding {
+		binary.LittleEndian.PutUint32(raw[i*4:], math.Float32bits(v))
+	}
+	embedPath := filepath.Join(dir, id+".f32")
+	if err := os.WriteFile(embedPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(SpeakerProfileMeta{ID: id, CreatedAt: created.UTC()})
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	atime := created.UTC()
+	if err := os.Chtimes(embedPath, atime, atime); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestEnrollmentWindowsSkipQuiet(t *testing.T) {

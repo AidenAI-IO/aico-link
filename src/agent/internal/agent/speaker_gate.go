@@ -43,7 +43,7 @@ func NewSpeakerGateFromConfig(cfg Config) *SpeakerGate {
 		Enabled:   cfg.VoiceSpeakerGateEnabledOrDefault(),
 		Threshold: cfg.VoiceSpeakerThresholdOrDefault(),
 		Embedder:  NewNativeSpeakerEmbedder(toolsDir, modelDir),
-		Store:     NewSpeakerProfileStore(storeDir, cfg.VoiceSpeakerMaxProfilesOrDefault()),
+		Store:     SharedSpeakerProfileStore(storeDir, cfg.VoiceSpeakerMaxProfilesOrDefault()),
 	}
 }
 
@@ -110,12 +110,12 @@ func (g *SpeakerGate) AllowUtterance(pcm []int16) SpeakerGateDecision {
 	defer g.mu.Unlock()
 	threshold := g.Threshold
 
-	profiles, err := g.Store.LoadAll()
+	owner, err := g.Store.LoadOwner()
 	if err != nil {
-		logging.Warnf("agent", "speaker", "load profiles failed: %v", err)
+		logging.Warnf("agent", "speaker", "load owner profile failed: %v", err)
 		return SpeakerGateDecision{Allowed: false, Threshold: threshold, Reason: "store_error"}
 	}
-	if len(profiles) == 0 {
+	if owner == nil {
 		return SpeakerGateDecision{Allowed: false, Threshold: threshold, Reason: "no_profiles"}
 	}
 	if g.Embedder == nil {
@@ -126,23 +126,15 @@ func (g *SpeakerGate) AllowUtterance(pcm []int16) SpeakerGateDecision {
 		logging.Warnf("agent", "speaker", "embed failed: %v", err)
 		return SpeakerGateDecision{Allowed: false, Threshold: threshold, Reason: "embed_error"}
 	}
-	best := -1.0
-	for _, profile := range profiles {
-		score := cosineSpeakerSimilarity(vec, profile)
-		if score > best {
-			best = score
-		}
+	score := cosineSpeakerSimilarity(vec, owner)
+	if score >= threshold {
+		return SpeakerGateDecision{Allowed: true, Score: score, Threshold: threshold, Reason: "matched"}
 	}
-	if best >= threshold {
-		return SpeakerGateDecision{Allowed: true, Score: best, Threshold: threshold, Reason: "matched"}
-	}
-	return SpeakerGateDecision{Allowed: false, Score: best, Threshold: threshold, Reason: "below_threshold"}
+	return SpeakerGateDecision{Allowed: false, Score: score, Threshold: threshold, Reason: "below_threshold"}
 }
 
+// NormalizeSpeakerProfileID maps any enroll id onto the single Classic owner slot.
 func NormalizeSpeakerProfileID(id string) string {
-	id = strings.TrimSpace(id)
-	if id == "" {
-		return "speaker"
-	}
-	return id
+	_ = id
+	return speakerOwnerProfileID
 }

@@ -13,15 +13,17 @@ import (
 )
 
 const (
-	speakerSampleRate         = 16000
-	speakerWindowSamples      = 32240 // 2.015 s — native Fbank contract
-	speakerEnrollSamples      = speakerSampleRate * 4
-	speakerEmbeddingDim       = 512
-	speakerEmbedTimeout       = 15 * time.Second
-	defaultSpeakerToolsDir    = "/usr/lib/aico"
-	defaultSpeakerModelDir    = "/usr/lib/aico/models"
-	defaultSpeakerStoreDir    = "/userdata/aico/speaker_profiles"
-	defaultSpeakerMaxProfiles = 5
+	speakerSampleRate      = 16000
+	speakerWindowSamples   = 32240 // 2.015 s — native Fbank contract
+	speakerEnrollSamples   = speakerSampleRate * 4
+	speakerEmbeddingDim    = 512
+	speakerEmbedTimeout    = 15 * time.Second
+	defaultSpeakerToolsDir = "/usr/lib/aico"
+	defaultSpeakerModelDir = "/usr/lib/aico/models"
+	defaultSpeakerStoreDir = "/userdata/aico/speaker_profiles"
+	// Classic is single-owner only: one enrolled profile, re-enrollment replaces it.
+	speakerOwnerProfileID     = "speaker"
+	defaultSpeakerMaxProfiles = 1
 	defaultSpeakerThreshold   = 0.50
 	speakerMinRMS             = 0.005
 )

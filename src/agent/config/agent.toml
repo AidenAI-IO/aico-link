@@ -274,7 +274,7 @@ input_mode = "stt"
 # voice_speaker_tools_dir = "/usr/lib/aico"
 # voice_speaker_model_dir = "/usr/lib/aico/models"
 # voice_speaker_store_dir = "/userdata/aico/speaker_profiles"
-# voice_speaker_max_profiles = 5
+# voice_speaker_max_profiles = 1  # single owner only; Save consolidates to id=speaker
 # voice_max_turns = 0
 # voice_interrupt_on_wakeup = true
 # voice_streaming_tts_enabled = true
