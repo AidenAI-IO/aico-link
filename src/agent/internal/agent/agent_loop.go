@@ -26,6 +26,40 @@ const agentLoopOutputKey = "output"
 
 var errSteerInterruptToolCancel = errors.New("steer interrupt tool cancel")
 
+// errModelOutputTruncated marks a model turn that hit its output token ceiling
+// (typically while reasoning) before producing a reply or a tool call.
+var errModelOutputTruncated = errors.New("model output truncated before a reply or action")
+
+// isEmptyModelTurn reports a response choice with neither visible text nor a
+// tool call. Such a turn must never enter the conversation history: providers
+// such as DeepSeek reject a replayed assistant message that has neither content
+// nor tool_calls, which would fail every later request in the conversation.
+func isEmptyModelTurn(choice llms.ContentChoice) bool {
+	return strings.TrimSpace(choice.Content) == "" && len(choice.ToolCalls) == 0 && choice.FuncCall == nil
+}
+
+// absorbTruncatedThinkingBlock moves a trailing unclosed thinking block into
+// ReasoningContent when the model hit its output limit, keeping any visible
+// text before it. normalizeTaggedThinkingText keeps such a block visible because
+// it cannot tell truncation apart from a stray tag; the stop reason can. This
+// matches taggedThinkingStream.Finish, so streamed and final output agree.
+func absorbTruncatedThinkingBlock(choice *llms.ContentChoice) {
+	if choice == nil || len(choice.ToolCalls) > 0 || choice.FuncCall != nil || !isOutputTruncatedStopReason(choice.StopReason) {
+		return
+	}
+	visible, reasoning, ok := splitUnclosedThinking(choice.Content)
+	if !ok {
+		return
+	}
+	choice.Content = visible
+	if reasoning != "" {
+		if choice.ReasoningContent != "" {
+			choice.ReasoningContent += "\n"
+		}
+		choice.ReasoningContent += reasoning
+	}
+}
+
 type ContextBudgetGuard func(context.Context, *contextmanager.ContextManager, llms.CallOptions) (*contextmanager.ContextManager, bool, error)
 
 type iterationOutcome uint8
@@ -318,6 +352,12 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return "", iterationContinue, err
 	}
 	l.finishStreamingResponse(ctx)
+	if len(contentResp.Choices) > 0 && contentResp.Choices[0] != nil {
+		// Classify on visible text before publishing it: a turn whose content
+		// is only tagged reasoning is empty once the tags are stripped.
+		normalizeChoiceThinking(contentResp.Choices[0])
+		absorbTruncatedThinkingBlock(contentResp.Choices[0])
+	}
 	l.emitRoleOutputWithReasoning(ctx, contentResp)
 	if answer := l.touchPointerModeMismatchContentFinalAnswer(contentResp); answer != "" {
 		if err := l.notices.stop("device_mode_mismatch", "Execution stopped because the touch mode appears incompatible with the connected device."); err != nil {
@@ -328,6 +368,18 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		}
 		answer, err = l.finishRun(ctx, answer)
 		return answer, iterationDone, err
+	}
+
+	if len(contentResp.Choices) > 0 && contentResp.Choices[0] != nil && isEmptyModelTurn(*contentResp.Choices[0]) {
+		choice := contentResp.Choices[0]
+		if isOutputTruncatedStopReason(choice.StopReason) {
+			if err := l.notices.stop("output_truncated", "The model used its whole output token budget, mostly on reasoning, and was cut off before giving a reply or action; task completion is not confirmed. Plan in shorter steps and act sooner when resuming."); err != nil {
+				return "", iterationContinue, err
+			}
+			return "", iterationContinue, fmt.Errorf("%w: finish_reason=%s reasoning_chars=%d",
+				errModelOutputTruncated, strings.TrimSpace(choice.StopReason), len(choice.ReasoningContent))
+		}
+		return "", iterationContinue, agents.ErrAgentNoReturn
 	}
 
 	actions, finish, err := parser.ParseOutput(contentResp)
@@ -361,13 +413,13 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 	if finish != nil {
 		// Don't check steer after finish - let this turn complete normally.
 		// Steer will be processed as a new turn.
-		if err := llmExecutor.AppendMessage(messages.ConvertChoiceToContextManagerMessage(*contentResp.Choices[0])); err != nil {
-			return "", iterationContinue, err
-		}
 		answer, _ := finish.ReturnValues[agentLoopOutputKey].(string)
 		answer = strings.TrimSpace(answer)
 		if answer == "" {
 			return "", iterationContinue, agents.ErrAgentNoReturn
+		}
+		if err := llmExecutor.AppendMessage(messages.ConvertChoiceToContextManagerMessage(*contentResp.Choices[0])); err != nil {
+			return "", iterationContinue, err
 		}
 		if l.Recorder != nil {
 			l.Recorder.RecordDefaultFinish(answer)
