@@ -443,17 +443,24 @@ def test_ci_rejects_duplicate_result_identities(tmp_path: Path) -> None:
 
 def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None:
     run_job = _workflow_job("run")
-    artifact_paths = "\n".join(
-        _workflow_step(run_job, marker).split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0]
+    artifact_paths = [
+        line.strip()
         for marker in ("name: Upload benchmark artifacts", "name: Retry benchmark artifact upload")
-    ).splitlines()
+        for line in _workflow_step(run_job, marker)
+        .split("          path: |\n", 1)[1].split("          if-no-files-found:", 1)[0].splitlines()
+        if line.strip()
+    ]
 
     # agent.toml, control tokens, and CLI service configs contain materialized
-    # credentials and must never match an upload glob. Every run path must name
-    # a concrete file, so a broad pattern such as runs/** cannot slip in.
-    run_paths = [path for path in artifact_paths if "/runs/" in path]
-    assert run_paths
-    assert all("*" not in path.rsplit("/", 1)[1] for path in run_paths)
+    # credentials and must never match an upload glob. Every path must name a
+    # concrete file, so a directory (benchmark/runs) or broad glob (runs/**),
+    # which upload-artifact expands recursively, cannot slip in.
+    # PREPARE_LOG is defined as a single runs/.../mobilegym-image.log file.
+    file_paths = [path for path in artifact_paths if path != "benchmark/${{ env.PREPARE_LOG }}"]
+    assert file_paths
+    for path in file_paths:
+        name = path.rsplit("/", 1)[-1]
+        assert re.fullmatch(r"[\w.-]+\.[a-z]+", name), f"upload path must name a file: {path}"
     assert not any(
         secret in path for path in artifact_paths
         for secret in ("cli-services", "agent.toml", "control_token")
