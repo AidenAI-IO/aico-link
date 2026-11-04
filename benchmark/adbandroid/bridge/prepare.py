@@ -116,6 +116,15 @@ def _string_param(params: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def _sql_string(value: str) -> str:
+    """Quote a value as a SQL string literal for a content provider where clause.
+
+    Shell quoting protects only the adb shell layer; the provider still parses
+    the clause as SQL, so an embedded quote would otherwise widen a delete.
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
 def _timeout_param(params: dict[str, Any]) -> float:
     value = params.get("wait_sec", DEFAULT_WAIT_SEC)
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= 120:
@@ -205,7 +214,7 @@ def prepare_contact_detail(device: Any, params: dict[str, Any]) -> dict[str, Any
     # sync that a local, account-less contact never gets.
     device.content_delete(
         f"{CONTACTS_RAW_URI}?caller_is_syncadapter=true",
-        where=f"display_name='{name}'",
+        where=f"display_name={_sql_string(name)}",
     )
     before = {row.get("_id") for row in device.content_query(CONTACTS_RAW_URI, projection="_id")}
     device.content_insert(CONTACTS_RAW_URI, [("account_type", "n", ""), ("account_name", "n", "")])

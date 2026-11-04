@@ -126,6 +126,15 @@ def test_contact_detail_replaces_the_contact_and_opens_it():
     assert intent["data"].endswith(f"/contacts/{result['contact_id']}")
 
 
+def test_contact_detail_delete_cannot_be_widened_by_a_quote_in_the_name():
+    device = RecipeDevice(screen_texts=["x' OR '1'='1"])
+
+    run_recipe(device, "contact_detail", {"name": "x' OR '1'='1", "phone": "5550102026"})
+
+    delete = next(call for call in device.calls if call[0] == "content_delete")
+    assert delete[2] == "display_name='x'' OR ''1''=''1'"
+
+
 @pytest.mark.parametrize("then, expect_intent", [("home", False), ("photos", True), ("files", True)])
 def test_camera_photo_waits_for_a_new_image(then, expect_intent):
     device = RecipeDevice(
