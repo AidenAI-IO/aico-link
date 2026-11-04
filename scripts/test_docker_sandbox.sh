@@ -27,7 +27,15 @@ compose() {
 }
 
 cleanup() {
+    result=$?
     trap - INT TERM EXIT
+    if [ "$result" -ne 0 ]; then
+        printf 'Docker sandbox smoke test failed; collecting service and bridge logs.\n' >&2
+        compose logs --tail 100 >&2 || true
+        if [ -n "$bridge_log" ] && [ -f "$bridge_log" ]; then
+            cat "$bridge_log" >&2
+        fi
+    fi
     compose down -v --remove-orphans >/dev/null 2>&1 || true
     if [ -n "$bridge_pid" ]; then
         kill "$bridge_pid" 2>/dev/null || true
@@ -67,6 +75,24 @@ wait_for_agent() {
         attempt="$((attempt + 1))"
     done
     compose logs
+    return 1
+}
+
+wait_for_agent_restart() {
+    previous_pid="$1"
+    attempt=1
+    after_pid=""
+    while [ "$attempt" -le 45 ]; do
+        after_pid="$(agent_pid)"
+        if [ -n "$after_pid" ] && [ "$after_pid" != "$previous_pid" ] \
+            && curl -fsS --max-time 5 "http://127.0.0.1:$agent_port/api/tools" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+        attempt="$((attempt + 1))"
+    done
+    printf 'Agent restart did not become ready (previous pid %s, current pid %s).\n' \
+        "$previous_pid" "${after_pid:-none}" >&2
     return 1
 }
 
@@ -176,19 +202,7 @@ curl -fsS --max-time 15 -X POST \
     "http://127.0.0.1:$config_port/api/system/environment/apply" \
     | grep -q '"agent_restart_scheduled":true'
 
-attempt=1
-after_pid=""
-while [ "$attempt" -le 45 ]; do
-    after_pid="$(agent_pid)"
-    if [ -n "$after_pid" ] && [ "$after_pid" != "$before_pid" ] \
-        && curl -fsS --max-time 5 "http://127.0.0.1:$agent_port/api/tools" >/dev/null 2>&1; then
-        break
-    fi
-    sleep 1
-    attempt="$((attempt + 1))"
-done
-test -n "$after_pid"
-test "$after_pid" != "$before_pid"
+wait_for_agent_restart "$before_pid"
 
 compose down
 compose up -d
@@ -264,15 +278,20 @@ grep -q 'POST /api/setup docker-sandbox-smoke' "$bridge_log"
 setup_count="$(grep -c 'POST /api/setup docker-sandbox-smoke' "$bridge_log" || true)"
 test "$setup_count" -eq 1
 
+before_pid="$(agent_pid)"
+test -n "$before_pid"
 request 'PUT config web /api/system/environment (restart race)' \
     -fsS --max-time 15 -X PUT \
     -H 'Content-Type: application/json' \
     --data '{"system_env":"no_proxy=aico-docker-sandbox-race\n"}' \
     "http://127.0.0.1:$config_port/api/system/environment" >/dev/null
-curl -fsS --max-time 15 -X POST \
+request 'POST config web /api/system/environment/apply (restart race)' \
+    -fsS --max-time 15 -X POST \
     "http://127.0.0.1:$config_port/api/system/environment/apply" \
-    >/dev/null
-wait_for_agent
+    | grep -q '"agent_restart_scheduled":true'
+# The old process can still serve HTTP after the asynchronous apply response.
+# Wait for its replacement before asserting process and bridge-session counts.
+wait_for_agent_restart "$before_pid"
 
 compose exec -T aico sh -c '
 count=0
