@@ -115,15 +115,27 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 
 	embedPath := s.embedPath(id)
 	metaPath := s.metaPath(id)
+	bakPath := s.embedBackupPath(id)
 	embedTmp := embedPath + ".tmp"
 	metaTmp := metaPath + ".tmp"
+	bakTmp := bakPath + ".tmp"
 
-	// Keep the previous embedding so a failed meta commit can roll the voice back.
+	// Snapshot the current embedding to a sidecar backup before replacing it.
+	// Restore uses rename so a failed WriteFile cannot leave a truncated owner.
 	prevEmbed, prevErr := os.ReadFile(embedPath)
 	if prevErr != nil && !os.IsNotExist(prevErr) {
 		return prevErr
 	}
-	hadPrev := prevErr == nil
+	hadPrev := prevErr == nil && len(prevEmbed) == speakerEmbeddingDim*4
+	if hadPrev {
+		if err := os.WriteFile(bakTmp, prevEmbed, 0o600); err != nil {
+			return err
+		}
+		if err := os.Rename(bakTmp, bakPath); err != nil {
+			_ = os.Remove(bakTmp)
+			return err
+		}
+	}
 
 	if err := os.WriteFile(embedTmp, raw, 0o600); err != nil {
 		return err
@@ -140,7 +152,8 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 	if err := os.Rename(metaTmp, metaPath); err != nil {
 		_ = os.Remove(metaTmp)
 		if hadPrev {
-			if restoreErr := os.WriteFile(embedPath, prevEmbed, 0o600); restoreErr != nil {
+			if restoreErr := os.Rename(bakPath, embedPath); restoreErr != nil {
+				// Leave bakPath in place so LoadOwner can still recover the owner.
 				return fmt.Errorf("commit speaker meta: %w (restore embed: %v)", err, restoreErr)
 			}
 		} else if restoreErr := os.Remove(embedPath); restoreErr != nil && !os.IsNotExist(restoreErr) {
@@ -148,6 +161,7 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 		}
 		return fmt.Errorf("commit speaker meta: %w", err)
 	}
+	_ = os.Remove(bakPath)
 	// Only after the canonical owner is durable, drop legacy extras.
 	if err := s.removeOthersLocked(id); err != nil {
 		logging.Warnf("agent", "speaker", "cleanup legacy profiles after save: %v", err)
@@ -180,6 +194,7 @@ func (s *SpeakerProfileStore) Delete(id string) error {
 	foundEmbed := false
 	for _, meta := range metas {
 		_ = os.Remove(s.metaPath(meta.ID))
+		_ = os.Remove(s.embedBackupPath(meta.ID))
 		removeErr := os.Remove(s.embedPath(meta.ID))
 		if removeErr == nil {
 			foundEmbed = true
@@ -286,6 +301,9 @@ func (s *SpeakerProfileStore) removeOthersLocked(keepID string) error {
 		if err := os.Remove(s.metaPath(meta.ID)); err != nil && !os.IsNotExist(err) && first == nil {
 			first = fmt.Errorf("remove meta %s: %w", meta.ID, err)
 		}
+		if err := os.Remove(s.embedBackupPath(meta.ID)); err != nil && !os.IsNotExist(err) && first == nil {
+			first = fmt.Errorf("remove embed backup %s: %w", meta.ID, err)
+		}
 		if err := os.Remove(s.embedPath(meta.ID)); err != nil && !os.IsNotExist(err) && first == nil {
 			first = fmt.Errorf("remove embed %s: %w", meta.ID, err)
 		}
@@ -294,7 +312,19 @@ func (s *SpeakerProfileStore) removeOthersLocked(keepID string) error {
 }
 
 func (s *SpeakerProfileStore) readEmbeddingLocked(id string) ([]float32, error) {
-	raw, err := os.ReadFile(s.embedPath(id))
+	vec, err := s.readEmbeddingFile(s.embedPath(id))
+	if err != nil {
+		return nil, err
+	}
+	if vec != nil {
+		return vec, nil
+	}
+	// Recover from a failed Save restore that left a truncated primary embed.
+	return s.readEmbeddingFile(s.embedBackupPath(id))
+}
+
+func (s *SpeakerProfileStore) readEmbeddingFile(path string) ([]float32, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -313,6 +343,10 @@ func (s *SpeakerProfileStore) readEmbeddingLocked(id string) ([]float32, error) 
 
 func (s *SpeakerProfileStore) embedPath(id string) string {
 	return filepath.Join(s.dir, id+".f32")
+}
+
+func (s *SpeakerProfileStore) embedBackupPath(id string) string {
+	return s.embedPath(id) + ".bak"
 }
 
 func (s *SpeakerProfileStore) metaPath(id string) string {

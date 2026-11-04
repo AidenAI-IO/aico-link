@@ -284,6 +284,33 @@ func TestSpeakerProfileStoreSaveMetaFailureRestoresEmbed(t *testing.T) {
 	if err != nil || owner == nil || owner[0] != 1 {
 		t.Fatalf("previous owner embedding must be restored, got %v err=%v", owner, err)
 	}
+	if _, err := os.Stat(filepath.Join(dir, speakerOwnerProfileID+".f32.bak")); !os.IsNotExist(err) {
+		t.Fatalf("successful restore should consume the backup, stat err=%v", err)
+	}
+}
+
+func TestSpeakerProfileStoreLoadOwnerUsesEmbedBackup(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	embedPath := filepath.Join(dir, speakerOwnerProfileID+".f32")
+	bakPath := embedPath + ".bak"
+	prev, err := os.ReadFile(embedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bakPath, prev, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(embedPath, []byte("truncated"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("LoadOwner should recover from .f32.bak, got %v err=%v", owner, err)
+	}
 }
 
 func TestSpeakerProfileStoreDeleteOwnerClearsLegacyExtras(t *testing.T) {
