@@ -312,8 +312,8 @@ async function enrollSpeakerProfile(profiles, enrollButton) {
   const confirmed = await confirmSheet({
     title: msg('voice.speaker_enroll_title', '靠近设备说话'),
     body: replacing
-      ? msg('voice.speaker_reenroll_body', '点确认后，对着板子正常说话约 4 秒。新声纹会覆盖当前唯一声纹。用板子麦克风，不是手机麦克风。')
-      : msg('voice.speaker_enroll_body', '点确认后，对着板子正常说话约 4 秒。内容随意，用板子麦克风录入，不是手机麦克风。'),
+      ? msg('voice.speaker_reenroll_body', '点确认后，对着 Aico 正常说话约 4 秒。新声纹会覆盖当前唯一声纹。用 Aico 麦克风，不是手机麦克风。')
+      : msg('voice.speaker_enroll_body', '点确认后，对着 Aico 正常说话约 4 秒。内容随意，用 Aico 麦克风录入，不是手机麦克风。'),
     confirmLabel: replacing
       ? msg('voice.speaker_reenroll_confirm', '重新录入')
       : msg('voice.speaker_enroll_confirm', '开始录入'),
@@ -514,7 +514,7 @@ export async function voiceSpeakersPage(context) {
     replace(body, [
       group({rows: profileRows}),
       el('div', {class: 'ds-group'}, [enrollButton]),
-      text(msg('voice.speaker_manage_note', '只保留一个声纹。左滑可删除；重新录入会覆盖。用板子麦克风，不是手机麦克风。'), 'page__note page__note--below'),
+      text(msg('voice.speaker_manage_note', '只保留一个声纹。左滑可删除；重新录入会覆盖。用 Aico 麦克风，不是手机麦克风。'), 'page__note page__note--below'),
     ]);
     saver.refreshChrome();
   }
