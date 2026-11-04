@@ -49,6 +49,21 @@ func normalizeTaggedThinkingText(source string) (visible, reasoning string, foun
 	return strings.TrimSpace(strings.Join(visibleParts, "")), strings.TrimSpace(strings.Join(reasoningParts, "\n")), found
 }
 
+// unclosedThinkingBlock reports content that is nothing but an opening think
+// tag followed by text without a closing tag, and returns that text.
+func unclosedThinkingBlock(content string) (reasoning string, ok bool) {
+	trimmed := strings.TrimSpace(content)
+	openAt, openTag := indexFoldAny(trimmed, thinkingOpenTags)
+	if openAt != 0 {
+		return "", false
+	}
+	rest := trimmed[len(openTag):]
+	if closeAt, _ := indexFoldAny(rest, thinkingCloseTags); closeAt >= 0 {
+		return "", false
+	}
+	return strings.TrimSpace(rest), true
+}
+
 func indexFoldAny(source string, tags []string) (index int, tag string) {
 	index = -1
 	for _, candidate := range tags {

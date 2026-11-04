@@ -36,6 +36,30 @@ func taggedReasoningOnlyResponse(stopReason string) *llms.ContentResponse {
 	}}}
 }
 
+func unclosedTaggedReasoningResponse(stopReason string) *llms.ContentResponse {
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{
+		Content:    "<think>weighing every candidate move before",
+		StopReason: stopReason,
+	}}}
+}
+
+// An unclosed thinking block is kept as the answer when the model did not hit
+// its output limit, matching normalizeTaggedThinkingText.
+func TestAgentLoopUnclosedThinkingWithoutTruncationIsAnswer(t *testing.T) {
+	model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
+		return unclosedTaggedReasoningResponse("stop"), nil
+	}}
+	loop := newInterruptTestLoop(t, model)
+
+	answer, err := loop.Run(context.Background(), "task")
+	if err != nil {
+		t.Fatalf("run failed: %v", err)
+	}
+	if answer != "<think>weighing every candidate move before" {
+		t.Fatalf("answer = %q, want the unclosed block kept visible", answer)
+	}
+}
+
 func TestAgentLoopTruncatedReasoningStopsWithNoticeAndKeepsHistoryReplayable(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -46,6 +70,7 @@ func TestAgentLoopTruncatedReasoningStopsWithNoticeAndKeepsHistoryReplayable(t *
 		{"max_tokens", reasoningOnlyResponse, "max_tokens"},
 		{"incomplete", reasoningOnlyResponse, "incomplete"},
 		{"tagged_reasoning_length", taggedReasoningOnlyResponse, "length"},
+		{"unclosed_tagged_reasoning_length", unclosedTaggedReasoningResponse, "length"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

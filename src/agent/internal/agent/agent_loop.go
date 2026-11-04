@@ -38,6 +38,27 @@ func isEmptyModelTurn(choice llms.ContentChoice) bool {
 	return strings.TrimSpace(choice.Content) == "" && len(choice.ToolCalls) == 0 && choice.FuncCall == nil
 }
 
+// absorbTruncatedThinkingBlock moves an unclosed thinking block into
+// ReasoningContent when the model hit its output limit before writing any
+// visible text. normalizeTaggedThinkingText keeps such a block visible because
+// it cannot tell truncation apart from a stray tag; the stop reason can.
+func absorbTruncatedThinkingBlock(choice *llms.ContentChoice) {
+	if choice == nil || len(choice.ToolCalls) > 0 || choice.FuncCall != nil || !isOutputTruncatedStopReason(choice.StopReason) {
+		return
+	}
+	reasoning, ok := unclosedThinkingBlock(choice.Content)
+	if !ok {
+		return
+	}
+	choice.Content = ""
+	if reasoning != "" {
+		if choice.ReasoningContent != "" {
+			choice.ReasoningContent += "\n"
+		}
+		choice.ReasoningContent += reasoning
+	}
+}
+
 type ContextBudgetGuard func(context.Context, *contextmanager.ContextManager, llms.CallOptions) (*contextmanager.ContextManager, bool, error)
 
 type iterationOutcome uint8
@@ -346,6 +367,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		// Classify on visible text: a turn whose content is only tagged reasoning
 		// is empty once ParseOutput strips the tags.
 		normalizeChoiceThinking(contentResp.Choices[0])
+		absorbTruncatedThinkingBlock(contentResp.Choices[0])
 	}
 	if len(contentResp.Choices) > 0 && contentResp.Choices[0] != nil && isEmptyModelTurn(*contentResp.Choices[0]) {
 		choice := contentResp.Choices[0]
