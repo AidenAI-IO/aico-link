@@ -256,8 +256,10 @@ def ensure_emulator_ethernet(serial: str) -> bool:
         f"mkdir -p {ETHERNET_PERMISSIONS_COPY}",
         f"cp -a {ETHERNET_PERMISSIONS_DIR}/. {ETHERNET_PERMISSIONS_COPY}/",
         f"printf %s {shlex.quote(feature_xml)} > {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
-        f"chmod 644 {ETHERNET_PERMISSIONS_COPY}/*",
-        f"chcon -R u:object_r:vendor_configs_file:s0 {ETHERNET_PERMISSIONS_COPY}",
+        # Images may ship dangling symlinks here (e.g. extra_feature.xml), so
+        # touch only the new file's mode and never follow links when relabeling.
+        f"chmod 644 {ETHERNET_PERMISSIONS_COPY}/{ETHERNET_FEATURE}.xml",
+        f"chcon -hR u:object_r:vendor_configs_file:s0 {ETHERNET_PERMISSIONS_COPY}",
         f"mount -o bind {ETHERNET_PERMISSIONS_COPY} {ETHERNET_PERMISSIONS_DIR}",
         *(
             f"mkdir -p {path} && cp /data/local/tmp/aico-ipconfig.txt {path}/ipconfig.txt"
