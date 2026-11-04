@@ -52,17 +52,7 @@ func (a *FunctionAgent) ParseOutput(contentResp *llms.ContentResponse) ([]schema
 	if choice == nil {
 		return nil, nil, fmt.Errorf("nil choice in response")
 	}
-	if len(choice.ToolCalls) == 0 && choice.FuncCall == nil {
-		if visible, reasoning, found := normalizeTaggedThinkingText(choice.Content); found {
-			choice.Content = visible
-			if reasoning != "" {
-				if choice.ReasoningContent != "" {
-					choice.ReasoningContent += "\n"
-				}
-				choice.ReasoningContent += reasoning
-			}
-		}
-	}
+	normalizeChoiceThinking(choice)
 
 	if len(choice.ToolCalls) > 0 {
 		for _, toolCall := range choice.ToolCalls {
@@ -423,4 +413,24 @@ func toolContentFromAction(action schema.AgentAction) string {
 		return ""
 	}
 	return strings.TrimSpace(metadata.ToolContent)
+}
+
+// normalizeChoiceThinking moves tagged reasoning (for example <think>...</think>)
+// out of the visible content of a text-only choice into ReasoningContent. It is
+// idempotent, so callers may run it before ParseOutput.
+func normalizeChoiceThinking(choice *llms.ContentChoice) {
+	if choice == nil || len(choice.ToolCalls) > 0 || choice.FuncCall != nil {
+		return
+	}
+	visible, reasoning, found := normalizeTaggedThinkingText(choice.Content)
+	if !found {
+		return
+	}
+	choice.Content = visible
+	if reasoning != "" {
+		if choice.ReasoningContent != "" {
+			choice.ReasoningContent += "\n"
+		}
+		choice.ReasoningContent += reasoning
+	}
 }

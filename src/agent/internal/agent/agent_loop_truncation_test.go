@@ -29,15 +29,32 @@ func requireNoEmptyAssistantTurns(t *testing.T, input []llms.MessageContent) {
 	}
 }
 
+func taggedReasoningOnlyResponse(stopReason string) *llms.ContentResponse {
+	return &llms.ContentResponse{Choices: []*llms.ContentChoice{{
+		Content:    "<think>weighing every candidate move before acting</think>",
+		StopReason: stopReason,
+	}}}
+}
+
 func TestAgentLoopTruncatedReasoningStopsWithNoticeAndKeepsHistoryReplayable(t *testing.T) {
-	for _, stopReason := range []string{"length", "max_tokens", "incomplete"} {
-		t.Run(stopReason, func(t *testing.T) {
+	cases := []struct {
+		name     string
+		response func(string) *llms.ContentResponse
+		reason   string
+	}{
+		{"length", reasoningOnlyResponse, "length"},
+		{"max_tokens", reasoningOnlyResponse, "max_tokens"},
+		{"incomplete", reasoningOnlyResponse, "incomplete"},
+		{"tagged_reasoning_length", taggedReasoningOnlyResponse, "length"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
 			model := &interruptTestModel{generate: func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
 				calls++
 				requireNoEmptyAssistantTurns(t, input)
 				if calls == 1 {
-					return reasoningOnlyResponse(stopReason), nil
+					return tc.response(tc.reason), nil
 				}
 				if !runtimeModelCallContains(input, "Interrupt [output_truncated]") {
 					t.Fatal("follow-up model call did not receive the truncation notice")

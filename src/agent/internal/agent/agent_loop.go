@@ -342,6 +342,11 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 		return answer, iterationDone, err
 	}
 
+	if len(contentResp.Choices) > 0 && contentResp.Choices[0] != nil {
+		// Classify on visible text: a turn whose content is only tagged reasoning
+		// is empty once ParseOutput strips the tags.
+		normalizeChoiceThinking(contentResp.Choices[0])
+	}
 	if len(contentResp.Choices) > 0 && contentResp.Choices[0] != nil && isEmptyModelTurn(*contentResp.Choices[0]) {
 		choice := contentResp.Choices[0]
 		if isOutputTruncatedStopReason(choice.StopReason) {
