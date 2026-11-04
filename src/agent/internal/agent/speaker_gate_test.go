@@ -1,8 +1,13 @@
 package agent
 
 import (
+	"encoding/binary"
+	"encoding/json"
+	"math"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 type stubSpeakerEmbedder struct {
@@ -138,33 +143,73 @@ func TestSpeakerGateMatchesOwnerRejectsOther(t *testing.T) {
 
 func TestSpeakerProfileStoreLimitAndReplace(t *testing.T) {
 	dir := t.TempDir()
-	store := NewSpeakerProfileStore(dir, 2)
+	store := NewSpeakerProfileStore(dir, 1)
+	if store.MaxProfiles() != 1 {
+		t.Fatalf("MaxProfiles() = %d, want 1", store.MaxProfiles())
+	}
 	if err := store.Save("a", unitSpeakerStub("owner")); err != nil {
 		t.Fatal(err)
 	}
+	// Any enroll id collapses onto the canonical owner slot.
 	if err := store.Save("b", unitSpeakerStub("owner")); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Save("c", unitSpeakerStub("owner")); err == nil {
-		t.Fatal("expected profile limit error")
-	}
-	if err := store.Save("a", unitSpeakerStub("other")); err != nil {
-		t.Fatalf("replace existing should succeed: %v", err)
+		t.Fatalf("single-profile replace should succeed: %v", err)
 	}
 	list, err := store.List()
-	if err != nil || len(list) != 2 {
+	if err != nil || len(list) != 1 || list[0].ID != speakerOwnerProfileID {
 		t.Fatalf("list = %#v err=%v", list, err)
 	}
-	if _, err := store.LoadAll(); err != nil {
-		t.Fatal(err)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err != nil {
+		t.Fatalf("overwrite same id should succeed: %v", err)
 	}
-	if err := store.Delete("a"); err != nil {
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil {
+		t.Fatalf("LoadOwner = %v err=%v", owner, err)
+	}
+	if err := store.Delete(speakerOwnerProfileID); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Delete("missing"); err == nil {
 		t.Fatal("expected missing delete error")
 	}
+	if clamped := NewSpeakerProfileStore(dir, 5); clamped.MaxProfiles() != 1 {
+		t.Fatalf("clamped MaxProfiles() = %d, want 1", clamped.MaxProfiles())
+	}
 	_ = filepath.Join(dir, "a.f32")
+}
+
+func TestSpeakerProfileStorePrunesLegacyExtras(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 5)
+	writeLegacySpeakerProfile(t, dir, "speaker3", unitSpeakerStub("other"))
+	writeLegacySpeakerProfile(t, dir, speakerOwnerProfileID, unitSpeakerStub("owner"))
+	writeLegacySpeakerProfile(t, dir, "guest", unitSpeakerStub("other"))
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != speakerOwnerProfileID {
+		t.Fatalf("pruned list = %#v", list)
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("LoadOwner after prune = %v err=%v", owner, err)
+	}
+}
+
+func writeLegacySpeakerProfile(t *testing.T, dir, id string, embedding []float32) {
+	t.Helper()
+	raw := make([]byte, speakerEmbeddingDim*4)
+	for i, v := range embedding {
+		binary.LittleEndian.PutUint32(raw[i*4:], math.Float32bits(v))
+	}
+	if err := os.WriteFile(filepath.Join(dir, id+".f32"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	meta, _ := json.Marshal(SpeakerProfileMeta{ID: id, CreatedAt: time.Now().UTC()})
+	if err := os.WriteFile(filepath.Join(dir, id+".json"), meta, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestEnrollmentWindowsSkipQuiet(t *testing.T) {

@@ -335,15 +335,15 @@ type Config struct {
 	VoiceMaxTurns                  int     `toml:"voice_max_turns,omitempty"`
 	VoiceInterruptOnWakeup         *bool   `toml:"voice_interrupt_on_wakeup,omitempty"`
 	// Classic owner-only speaker gate (ERes2Net). Default off: no enrollment required.
-	VoiceSpeakerGateEnabled    *bool                   `toml:"voice_speaker_gate_enabled,omitempty"`
-	VoiceSpeakerThreshold      float64                 `toml:"voice_speaker_threshold,omitempty"`
-	VoiceSpeakerToolsDir       string                  `toml:"voice_speaker_tools_dir,omitempty"`
-	VoiceSpeakerModelDir       string                  `toml:"voice_speaker_model_dir,omitempty"`
-	VoiceSpeakerStoreDir       string                  `toml:"voice_speaker_store_dir,omitempty"`
-	VoiceSpeakerMaxProfiles    int                     `toml:"voice_speaker_max_profiles,omitempty"`
-	TapWakeupEnabled           *bool                   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
-	MCPEnabled                 *bool                   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
-	MCPShellEnabled            *bool                   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	VoiceSpeakerGateEnabled *bool   `toml:"voice_speaker_gate_enabled,omitempty"`
+	VoiceSpeakerThreshold   float64 `toml:"voice_speaker_threshold,omitempty"`
+	VoiceSpeakerToolsDir    string  `toml:"voice_speaker_tools_dir,omitempty"`
+	VoiceSpeakerModelDir    string  `toml:"voice_speaker_model_dir,omitempty"`
+	VoiceSpeakerStoreDir    string  `toml:"voice_speaker_store_dir,omitempty"`
+	VoiceSpeakerMaxProfiles int     `toml:"voice_speaker_max_profiles,omitempty"`
+	TapWakeupEnabled        *bool   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled              *bool   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	MCPShellEnabled         *bool   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
 	MCPConfigWebBaseURL        string                  `toml:"mcp_config_web_base_url,omitempty"`
 	VoiceStreamingTTSEnabled   *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                   `toml:"voice_tool_call_speech,omitempty"`
@@ -1909,6 +1909,7 @@ func (c Config) Validate() error {
 	if c.VoiceSpeakerMaxProfiles < 0 {
 		return fmt.Errorf("voice_speaker_max_profiles must be >= 0, got %d", c.VoiceSpeakerMaxProfiles)
 	}
+	// Values above 1 are ignored at runtime; Classic is single-owner only.
 	if c.VoiceFirstTurnTimeoutMs < 0 {
 		return fmt.Errorf("voice_first_turn_timeout_ms must be >= 0, got %d", c.VoiceFirstTurnTimeoutMs)
 	}
@@ -2301,9 +2302,8 @@ func (c Config) VoiceSpeakerThresholdOrDefault() float64 {
 }
 
 func (c Config) VoiceSpeakerMaxProfilesOrDefault() int {
-	if c.VoiceSpeakerMaxProfiles > 0 {
-		return c.VoiceSpeakerMaxProfiles
-	}
+	// Classic is single-owner; any configured value collapses to 1.
+	_ = c.VoiceSpeakerMaxProfiles
 	return defaultSpeakerMaxProfiles
 }
 

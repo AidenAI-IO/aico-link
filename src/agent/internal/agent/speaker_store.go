@@ -32,15 +32,14 @@ func NewSpeakerProfileStore(dir string, maxProfiles int) *SpeakerProfileStore {
 	if dir == "" {
 		dir = defaultSpeakerStoreDir
 	}
-	if maxProfiles <= 0 {
-		maxProfiles = defaultSpeakerMaxProfiles
-	}
-	return &SpeakerProfileStore{dir: dir, maxProfiles: maxProfiles}
+	// Classic is single-owner: ignore any requested multi-profile budget.
+	_ = maxProfiles
+	return &SpeakerProfileStore{dir: dir, maxProfiles: defaultSpeakerMaxProfiles}
 }
 
 func (s *SpeakerProfileStore) Dir() string { return s.dir }
 
-func (s *SpeakerProfileStore) MaxProfiles() int { return s.maxProfiles }
+func (s *SpeakerProfileStore) MaxProfiles() int { return defaultSpeakerMaxProfiles }
 
 func (s *SpeakerProfileStore) EnsureReady() error {
 	return os.MkdirAll(s.dir, 0o700)
@@ -49,6 +48,9 @@ func (s *SpeakerProfileStore) EnsureReady() error {
 func (s *SpeakerProfileStore) List() ([]SpeakerProfileMeta, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.pruneToSingleLocked(""); err != nil {
+		return nil, err
+	}
 	return s.listLocked()
 }
 
@@ -58,7 +60,7 @@ func (s *SpeakerProfileStore) Count() (int, error) {
 }
 
 func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
-	id = strings.TrimSpace(id)
+	id = NormalizeSpeakerProfileID(id)
 	if !speakerProfileIDPattern.MatchString(id) {
 		return fmt.Errorf("invalid speaker profile id %q", id)
 	}
@@ -70,19 +72,9 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 	if err := s.EnsureReady(); err != nil {
 		return err
 	}
-	existing, err := s.listLocked()
-	if err != nil {
+	// Single owner: drop every prior profile before writing the new one.
+	if err := s.deleteAllLocked(); err != nil {
 		return err
-	}
-	replacing := false
-	for _, meta := range existing {
-		if meta.ID == id {
-			replacing = true
-			break
-		}
-	}
-	if !replacing && len(existing) >= s.maxProfiles {
-		return fmt.Errorf("speaker profile limit reached (%d)", s.maxProfiles)
 	}
 
 	raw := make([]byte, speakerEmbeddingDim*4)
@@ -119,33 +111,32 @@ func (s *SpeakerProfileStore) Delete(id string) error {
 	return err
 }
 
-func (s *SpeakerProfileStore) LoadAll() ([][]float32, error) {
+// LoadOwner returns the single enrolled owner embedding, if any.
+func (s *SpeakerProfileStore) LoadOwner() ([]float32, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.pruneToSingleLocked(""); err != nil {
+		return nil, err
+	}
 	metas, err := s.listLocked()
 	if err != nil {
 		return nil, err
 	}
-	var out [][]float32
-	for _, meta := range metas {
-		raw, err := os.ReadFile(s.embedPath(meta.ID))
-		if err != nil {
-			continue
-		}
-		if len(raw) != speakerEmbeddingDim*4 {
-			continue
-		}
-		vec := make([]float32, speakerEmbeddingDim)
-		for i := range vec {
-			vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
-		}
-		normed, err := normalizeSpeakerEmbedding(vec)
-		if err != nil {
-			continue
-		}
-		out = append(out, normed)
+	if len(metas) == 0 {
+		return nil, nil
 	}
-	return out, nil
+	return s.readEmbeddingLocked(metas[0].ID)
+}
+
+func (s *SpeakerProfileStore) LoadAll() ([][]float32, error) {
+	owner, err := s.LoadOwner()
+	if err != nil {
+		return nil, err
+	}
+	if owner == nil {
+		return nil, nil
+	}
+	return [][]float32{owner}, nil
 }
 
 func (s *SpeakerProfileStore) listLocked() ([]SpeakerProfileMeta, error) {
@@ -181,6 +172,78 @@ func (s *SpeakerProfileStore) listLocked() ([]SpeakerProfileMeta, error) {
 		return out[i].CreatedAt.Before(out[j].CreatedAt)
 	})
 	return out, nil
+}
+
+// pruneToSingleLocked keeps at most one profile. Prefer keepID, then the
+// canonical owner id, then the newest profile. Used so boards that previously
+// enrolled multiple speakers collapse to single-owner matching.
+func (s *SpeakerProfileStore) pruneToSingleLocked(keepID string) error {
+	metas, err := s.listLocked()
+	if err != nil {
+		return err
+	}
+	if len(metas) <= 1 {
+		return nil
+	}
+	keepID = strings.TrimSpace(keepID)
+	keepIdx := -1
+	if keepID != "" {
+		for i, meta := range metas {
+			if meta.ID == keepID {
+				keepIdx = i
+				break
+			}
+		}
+	}
+	if keepIdx < 0 {
+		for i, meta := range metas {
+			if meta.ID == speakerOwnerProfileID {
+				keepIdx = i
+				break
+			}
+		}
+	}
+	if keepIdx < 0 {
+		keepIdx = len(metas) - 1 // newest after CreatedAt ascending sort
+	}
+	for i, meta := range metas {
+		if i == keepIdx {
+			continue
+		}
+		_ = os.Remove(s.metaPath(meta.ID))
+		_ = os.Remove(s.embedPath(meta.ID))
+	}
+	return nil
+}
+
+func (s *SpeakerProfileStore) deleteAllLocked() error {
+	metas, err := s.listLocked()
+	if err != nil {
+		return err
+	}
+	for _, meta := range metas {
+		_ = os.Remove(s.metaPath(meta.ID))
+		_ = os.Remove(s.embedPath(meta.ID))
+	}
+	return nil
+}
+
+func (s *SpeakerProfileStore) readEmbeddingLocked(id string) ([]float32, error) {
+	raw, err := os.ReadFile(s.embedPath(id))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if len(raw) != speakerEmbeddingDim*4 {
+		return nil, nil
+	}
+	vec := make([]float32, speakerEmbeddingDim)
+	for i := range vec {
+		vec[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[i*4:]))
+	}
+	return normalizeSpeakerEmbedding(vec)
 }
 
 func (s *SpeakerProfileStore) embedPath(id string) string {
