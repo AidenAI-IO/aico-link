@@ -19,6 +19,7 @@ def test_adb_profile_selects_only_serial_native_android_cases():
     assert all(case.environment == "adb" and case.target_platform == "android"
                and case.max_concurrency == 1 for case in cases)
     automatic_cases = [case for case in cases if case.runnable]
+    assert automatic_cases  # Scheduled runs use the runnable profile.
     assert {case.id for case in automatic_cases} <= {
         case.id for case in select_cases(catalog, profile="runnable")
     }

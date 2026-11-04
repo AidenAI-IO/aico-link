@@ -449,8 +449,15 @@ def test_workflow_artifacts_do_not_include_materialized_worker_configs() -> None
     ).splitlines()
 
     # agent.toml, control tokens, and CLI service configs contain materialized
-    # credentials and must never match an upload glob.
-    assert not any("cli-services" in path for path in artifact_paths)
+    # credentials and must never match an upload glob. Every run path must name
+    # a concrete file, so a broad pattern such as runs/** cannot slip in.
+    run_paths = [path for path in artifact_paths if "/runs/" in path]
+    assert run_paths
+    assert all("*" not in path.rsplit("/", 1)[1] for path in run_paths)
+    assert not any(
+        secret in path for path in artifact_paths
+        for secret in ("cli-services", "agent.toml", "control_token")
+    )
     assert all(
         path.endswith(("/workers/*/daemon.log", "/workers/*/runner.log"))
         for path in artifact_paths if "/workers/" in path
