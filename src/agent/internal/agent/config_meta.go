@@ -876,7 +876,7 @@ func ConfigMeta() ConfigMetadata {
 						Help:        "Directory for enrolled speaker embeddings.",
 						VisibleWhen: all(eq("agent.input_mode", "stt"), truthy("agent.voice_speaker_gate_enabled"))},
 					{Key: "voice_speaker_max_profiles", Widget: WidgetNumber, Default: defaults.VoiceSpeakerMaxProfiles,
-						Help: "Classic is single-owner only (1). Re-enrollment replaces the owner; legacy extras are pruned on load.", Range: &Range{Min: 1, Max: 1, Step: 1}, Advanced: true,
+						Help: "Classic is single-owner only (1). Re-enrollment replaces the owner; Save then removes legacy extras.", Range: &Range{Min: 1, Max: 1, Step: 1}, Advanced: true,
 						VisibleWhen: all(eq("agent.input_mode", "stt"), truthy("agent.voice_speaker_gate_enabled"))},
 					{Key: "voice_followup_timeout_ms", Widget: WidgetNumber, Default: defaults.VoiceFollowupTimeoutMs,
 						VisibleWhen: all(eq("agent.input_mode", "stt"), truthy("agent.voice_followup_enabled"))},

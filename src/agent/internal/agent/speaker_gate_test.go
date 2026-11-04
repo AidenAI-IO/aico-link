@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -227,6 +228,12 @@ func TestSpeakerProfileStoreSaveConsolidatesLegacyExtras(t *testing.T) {
 }
 
 func TestSpeakerProfileStoreSaveFailureKeepsExisting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory write permissions are not enforced the same way on Windows")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory mode bits")
+	}
 	dir := t.TempDir()
 	store := NewSpeakerProfileStore(dir, 1)
 	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
@@ -245,6 +252,37 @@ func TestSpeakerProfileStoreSaveFailureKeepsExisting(t *testing.T) {
 	owner, err := store.LoadOwner()
 	if err != nil || owner == nil || owner[0] != 1 {
 		t.Fatalf("existing owner must survive failed Save, got %v err=%v", owner, err)
+	}
+}
+
+func TestSpeakerProfileStoreSaveMetaFailureRestoresEmbed(t *testing.T) {
+	dir := t.TempDir()
+	store := NewSpeakerProfileStore(dir, 1)
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("owner")); err != nil {
+		t.Fatal(err)
+	}
+	metaPath := filepath.Join(dir, speakerOwnerProfileID+".json")
+	if err := os.Remove(metaPath); err != nil {
+		t.Fatal(err)
+	}
+	// Occupy the meta path with a non-empty directory so the final rename fails
+	// after the embedding has already been replaced.
+	if err := os.Mkdir(metaPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(metaPath, "blocker"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = os.RemoveAll(metaPath)
+	})
+
+	if err := store.Save(speakerOwnerProfileID, unitSpeakerStub("other")); err == nil {
+		t.Fatal("expected Save to fail when meta rename is blocked")
+	}
+	owner, err := store.LoadOwner()
+	if err != nil || owner == nil || owner[0] != 1 {
+		t.Fatalf("previous owner embedding must be restored, got %v err=%v", owner, err)
 	}
 }
 

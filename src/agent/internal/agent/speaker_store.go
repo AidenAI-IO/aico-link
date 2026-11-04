@@ -107,27 +107,46 @@ func (s *SpeakerProfileStore) Save(id string, embedding []float32) error {
 	for i, v := range embedding {
 		binary.LittleEndian.PutUint32(raw[i*4:], math.Float32bits(v))
 	}
-	embedPath := s.embedPath(id)
-	tmp := embedPath + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, embedPath); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
 	meta := SpeakerProfileMeta{ID: id, CreatedAt: time.Now().UTC()}
 	metaRaw, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("marshal speaker meta: %w", err)
 	}
-	metaTmp := s.metaPath(id) + ".tmp"
-	if err := os.WriteFile(metaTmp, metaRaw, 0o600); err != nil {
+
+	embedPath := s.embedPath(id)
+	metaPath := s.metaPath(id)
+	embedTmp := embedPath + ".tmp"
+	metaTmp := metaPath + ".tmp"
+
+	// Keep the previous embedding so a failed meta commit can roll the voice back.
+	prevEmbed, prevErr := os.ReadFile(embedPath)
+	if prevErr != nil && !os.IsNotExist(prevErr) {
+		return prevErr
+	}
+	hadPrev := prevErr == nil
+
+	if err := os.WriteFile(embedTmp, raw, 0o600); err != nil {
 		return err
 	}
-	if err := os.Rename(metaTmp, s.metaPath(id)); err != nil {
+	if err := os.WriteFile(metaTmp, metaRaw, 0o600); err != nil {
+		_ = os.Remove(embedTmp)
+		return err
+	}
+	if err := os.Rename(embedTmp, embedPath); err != nil {
+		_ = os.Remove(embedTmp)
 		_ = os.Remove(metaTmp)
 		return err
+	}
+	if err := os.Rename(metaTmp, metaPath); err != nil {
+		_ = os.Remove(metaTmp)
+		if hadPrev {
+			if restoreErr := os.WriteFile(embedPath, prevEmbed, 0o600); restoreErr != nil {
+				return fmt.Errorf("commit speaker meta: %w (restore embed: %v)", err, restoreErr)
+			}
+		} else if restoreErr := os.Remove(embedPath); restoreErr != nil && !os.IsNotExist(restoreErr) {
+			return fmt.Errorf("commit speaker meta: %w (remove embed: %v)", err, restoreErr)
+		}
+		return fmt.Errorf("commit speaker meta: %w", err)
 	}
 	// Only after the canonical owner is durable, drop legacy extras.
 	if err := s.removeOthersLocked(id); err != nil {
