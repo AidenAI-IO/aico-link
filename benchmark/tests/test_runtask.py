@@ -648,6 +648,29 @@ def test_run_one_task_writes_consolidation_artifact_from_setup(
     assert not (artifact_dir / "setup.json").exists()
 
 
+@pytest.mark.parametrize("setup_result, setup_path", [
+    ({"device_prepare": {"recipe": "settings_page"}}, "device_prepare"),
+    ({"device_prepare_fallback": {"recipe": "settings_page", "error": "HTTP 422"}}, "agent_fallback"),
+    (None, None),
+])
+def test_run_one_task_records_how_the_start_state_was_built(tmp_path: Path, monkeypatch, setup_result, setup_path):
+    suite = Suite(name="adb", global_reset={}, tasks=[], sha256="sha", source_path=tmp_path / "suite.json")
+    task = TaskSpec(
+        id="scroll", category="single_step", description_for_judge="Scroll.", prompt="scroll",
+        rubric=[RubricItem(id="ok", check="responds")],
+        hard_assertions=HardAssertions(min_tool_calls=0, max_tool_calls=0),
+        setup={"type": "agent_prompt", "prompt": "Open Settings."},
+    )
+    monkeypatch.setattr(runtask_mod, "prepare_task_isolation", lambda *args, **kwargs: setup_result)
+
+    artifact_dir = tmp_path / "artifacts"
+    result = run_one_task(FakeClient("done"), suite, task, 1, artifact_dir, None, None, "run-1")
+
+    assert result.metrics.get("setup_path") == setup_path
+    if setup_result is not None:
+        assert json.loads((artifact_dir / "setup.json").read_text()) == setup_result
+
+
 def test_run_one_task_preserves_empty_consolidation_artifact_before_recall_failure(
     tmp_path: Path, monkeypatch
 ):

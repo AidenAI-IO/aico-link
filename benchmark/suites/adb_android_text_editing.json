@@ -96,7 +96,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings search, clear any existing query, and enter exactly: alpha beta. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_search", "params": {"query": "alpha beta"}}
       }
     },
     {
@@ -131,7 +132,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings search, clear any existing query, and enter exactly: ClearMe-2026. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_search", "params": {"query": "ClearMe-2026"}}
       }
     }
   ]

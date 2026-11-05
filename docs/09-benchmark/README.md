@@ -545,7 +545,10 @@ with the `link.aico.app` package already installed on the emulator. It downloads
 and installs the APK only when the versions differ. The job summary records the
 release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
-`versionCode` is treated as the same release.
+`versionCode` is treated as the same release. Installation runs once per job.
+When installation or emulator routing fails, only the AidenBridge cases fail
+with `aidenbridge_setup_failed`; every other case still runs and publishes,
+and the job still fails.
 
 The text-editing suite runs as a matched pair using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:

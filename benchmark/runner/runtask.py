@@ -582,6 +582,10 @@ def run_one_task(
                 json.dumps(setup_result, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            if "device_prepare" in setup_result:
+                base.metrics["setup_path"] = "device_prepare"
+            elif "device_prepare_fallback" in setup_result:
+                base.metrics["setup_path"] = "agent_fallback"
     effective_task = task
     if task.expected_recall_from_consolidation:
         consolidation = setup_result.get("consolidation") if isinstance(setup_result, dict) else None

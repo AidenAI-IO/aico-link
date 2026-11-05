@@ -34,6 +34,8 @@ from ci.run_case import _incomplete_run_reasons, run_case
 
 DEFAULT_MAX_PARALLEL = 2
 LOG_TAIL_LINES = 40
+# Set to "0" by the workflow when the shared AidenBridge install failed.
+AIDENBRIDGE_READY_ENV = "AIDENBRIDGE_READY"
 
 
 @dc.dataclass(frozen=True)
@@ -100,6 +102,21 @@ def run_cases(
 
     def execute(case: SuiteCase) -> CaseOutcome:
         run_id = f"{run_id_prefix}-{case.id}"
+        if case.android_phone_bridge and environment.get(AIDENBRIDGE_READY_ENV) == "0":
+            # The workflow installs AidenBridge once for every case that needs it.
+            # When that fails, only those cases are lost; the rest still run.
+            summary = "aidenbridge_setup_failed"
+            with print_lock:
+                print(f"::error title=Benchmark case {case.id}::{summary}", flush=True)
+            emit(f"SKIP    {case.id}: AidenBridge device setup failed")
+            return CaseOutcome(
+                case_id=case.id,
+                run_id=run_id,
+                returncode=2,
+                duration_seconds=0.0,
+                log_path=BENCHMARK_ROOT / "runs" / run_id / "ci-case.log",
+                error_summary=summary,
+            )
         # Keep each case's staging directory private.  Cases execute in parallel,
         # so sharing a parent and removing it from each worker creates a race
         # between another worker's mkdir/open and rmdir.

@@ -34,6 +34,15 @@ class RecipeDevice:
     def keyevent(self, key):
         self.calls.append(("keyevent", key))
 
+    def expand_notifications(self):
+        self.calls.append(("expand_notifications",))
+
+    def input_text(self, text):
+        self.calls.append(("input_text", text))
+
+    def reset_home(self):
+        self.calls.append(("reset_home",))
+
     def content_delete(self, uri, *, where):
         self.calls.append(("content_delete", uri, where))
 
@@ -152,6 +161,58 @@ def test_camera_photo_waits_for_a_new_image(then, expect_intent):
 def test_unknown_recipe_is_rejected():
     with pytest.raises(PrepareError, match="unknown prepare recipe"):
         run_recipe(RecipeDevice(), "factory_reset", {})
+
+
+@pytest.mark.parametrize("params, screen, intents, expands", [
+    ({"page": "main"}, ["Network & internet"], ["android.settings.SETTINGS"], False),
+    ({"page": "device_info", "wait_for_text": ["Model"]}, ["Network & internet", "Model"],
+     ["android.settings.SETTINGS", "android.settings.DEVICE_INFO_SETTINGS"], False),
+    ({"panel": "notifications", "wait_for_text": ["Manage"]}, ["Network & internet", "Manage"],
+     ["android.settings.SETTINGS"], True),
+])
+def test_settings_page_restarts_settings_on_its_main_list(params, screen, intents, expands):
+    device = RecipeDevice(screen_texts=screen)
+
+    run_recipe(device, "settings_page", params)
+
+    # A stopped Settings reopens at the top of the main list; a subpage is opened
+    # from there, so Back returns to the main list.
+    assert device.calls[0] == ("force_stop", prepare.SETTINGS_PACKAGE)
+    assert [call[1]["action"] for call in device.calls if call[0] == "start_intent"] == intents
+    assert (("expand_notifications",) in device.calls) is expands
+
+
+@pytest.mark.parametrize("params", [{"page": "bluetooth"}, {"page": "wifi", "panel": "notifications"}])
+def test_settings_page_rejects_states_it_cannot_build(params):
+    with pytest.raises(PrepareError):
+        run_recipe(RecipeDevice(screen_texts=["Network & internet"]), "settings_page", params)
+
+
+def test_settings_search_types_only_into_a_focused_field():
+    focused = '<node class="android.widget.EditText" focused="true" text="" />'
+
+    class SearchDevice(RecipeDevice):
+        def dump_window_xml(self):
+            typed = [call[1] for call in self.calls if call[0] == "input_text"]
+            nodes = '<node text="Network &amp; internet" />' + focused + "".join(f'<node text="{t}" />' for t in typed)
+            return f"<?xml version='1.0'?><hierarchy>{nodes}</hierarchy>"
+
+    device = SearchDevice()
+    result = run_recipe(device, "settings_search", {"query": "alpha beta"})
+
+    assert result["confirmed_by"] == "alpha beta"
+    kinds = [call[0] for call in device.calls]
+    assert kinds.index("start_intent") < kinds.index("input_text")
+
+
+def test_settings_search_does_not_type_without_a_focused_field(monkeypatch):
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(prepare.time, "monotonic", lambda: next(clock))
+    device = RecipeDevice(screen_texts=["Network & internet"])
+
+    with pytest.raises(PrepareError, match="no focused text field"):
+        run_recipe(device, "settings_search", {"query": "alpha beta"})
+    assert not any(call[0] == "input_text" for call in device.calls)
 
 
 def test_a_page_can_extend_its_own_wait(monkeypatch):
@@ -300,7 +361,9 @@ def test_device_prepare_failure_falls_back_to_the_agent_prompt(monkeypatch):
     result = per_task_setup(client, SETUP, environment_url="http://bridge", benchmark_task_id="suite:task")
 
     assert client.prompts == ["Open the contact."]
-    assert result is None
+    # The fallback is recorded, so results can tell an Agent-built start state
+    # from a recipe-built one.
+    assert result == {"device_prepare_fallback": {"recipe": "contact_detail", "error": "prepare endpoint failed HTTP 422"}}
 
 
 def test_device_prepare_without_an_environment_uses_the_agent_prompt(monkeypatch):
@@ -327,11 +390,12 @@ def test_device_prepare_rejects_a_setup_built_at_runtime(monkeypatch):
     assert client.prompts == []
 
 
-def test_builtin_apps_suite_keeps_a_prompt_fallback_for_every_recipe():
+@pytest.mark.parametrize("suite_file", ["adb_android_builtin_apps.json", "adb_android_basic.json", "adb_android_text_editing.json"])
+def test_every_recipe_keeps_a_prompt_fallback(suite_file):
     from runner.suite import load_suite
     from pathlib import Path
 
-    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / "adb_android_builtin_apps.json")
+    suite = load_suite(Path(__file__).resolve().parents[1] / "suites" / suite_file)
     prepared = [task for task in suite.tasks if isinstance(task.setup, dict) and task.setup.get("device_prepare")]
     assert prepared
     for task in prepared:

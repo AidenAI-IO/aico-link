@@ -222,6 +222,7 @@ and retries instead use the `reliability.` prefix.
 | --- | --- |
 | `task_wall_ms` | Elapsed time around the task's Agent chat request. Excludes setup, judge time, post-run artifact collection, and timeout recovery. Legacy `wall_ms` mirrors it in current results. |
 | `setup_ms` | Task isolation/setup work. Report separately from task execution. |
+| `setup_path` | How an `agent_prompt` start state with `device_prepare` was built: `device_prepare` (recipe confirmed it) or `agent_fallback` (recipe failed; the Agent built it). Absent for other setups. |
 | `llm_time_ms` | Episode sum of elapsed time around wrapped model calls, including failed calls and compaction. Older episodes fall back to recorded durations on usage-bearing assistant/tool-call messages; unavailable when those durations are incomplete. Provider-internal retries are included in elapsed time, not separately counted. |
 | `vision_llm_calls`, `vision_llm_time_ms` | Calls inferred from image/screenshot observations preceding model messages. This is an instrumentation heuristic, not an exact provider billing category. |
 | `time_to_first_token_ms` | Episode's reported first-token timing, when available. |

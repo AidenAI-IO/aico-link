@@ -330,10 +330,12 @@ def _per_task_setup(
         return prepare_environment_tools(environment_url, benchmark_task_id or "", setup)
     if setup_type == "agent_prompt":
         prepared = _try_device_prepare(setup, environment_url, benchmark_task_id)
-        if prepared is not None:
+        if prepared is not None and "device_prepare" in prepared:
             return prepared
         _per_task_setup_agent_prompt(client, setup, prompt_prefix=prompt_prefix)
-        return None
+        # A recipe that could not confirm its state hands the start state back
+        # to the Agent; report it so results can tell the two setups apart.
+        return prepared
     if setup_type == "seed_memory":
         _per_task_setup_seed_memory(client, setup)
         return
@@ -380,7 +382,9 @@ def _try_device_prepare(
     ``device_prepare`` names a bridge recipe that reaches the same state the
     prompt describes. It is an optimization, not a different contract: when the
     bridge has no recipe support or cannot confirm the state, the caller runs the
-    agent prompt as before. The returned record lands in the task's setup.json.
+    agent prompt as before. Returns ``{"device_prepare": ...}`` on success,
+    ``{"device_prepare_fallback": ...}`` when a recipe ran but failed, and None
+    when no recipe applies. The record lands in the task's setup.json.
     """
     spec = setup.get("device_prepare")
     if spec is None:
@@ -401,7 +405,7 @@ def _try_device_prepare(
             f"device_prepare {spec['recipe']} unavailable, falling back to agent setup: {e}",
             flush=True,
         )
-        return None
+        return {"device_prepare_fallback": {"recipe": spec["recipe"], "error": str(e)[:500]}}
     data = result.get("data") if isinstance(result.get("data"), dict) else result
     return {"device_prepare": data}
 

@@ -146,7 +146,8 @@
         "type": "agent_prompt",
         "prompt": "Open system Settings, navigate to a subpage with a Back button (such as Wi-Fi, Bluetooth, or About phone), and leave that subpage open.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "device_info", "wait_for_text": ["Model", "Device name", "Android version"]}}
       },
       "prompt": "Go back one level.",
       "rubric": [
@@ -176,7 +177,8 @@
         "type": "agent_prompt",
         "prompt": "Open system Settings and stay near the top of the main Settings list. Do not open an individual settings page.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
       "prompt": "Scroll down by one screen.",
       "rubric": [
@@ -206,7 +208,8 @@
         "type": "agent_prompt",
         "prompt": "Open system Settings and stay near the top of the main Settings list. Do not open an individual settings page.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
       "prompt": "Scroll the current Settings list down until its bottom is reached. Stop when further scrolling reveals no additional entries, and leave the last entries visible. Do not change settings.",
       "rubric": [
@@ -248,7 +251,8 @@
         "type": "agent_prompt",
         "prompt": "Open the main Settings page and leave it visible without a panel or dialog.",
         "timeout_sec": 90,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
       "prompt": "Use quick_action with action=home to return from Settings to Home. Leave Home visible.",
       "rubric": [
@@ -290,7 +294,8 @@
         "type": "agent_prompt",
         "prompt": "Open the main Settings page and leave it visible without a panel or dialog.",
         "timeout_sec": 90,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       },
       "prompt": "Use quick_action with action=app_switch to open recent apps. Leave recent apps open with the Settings card visible. Do not dismiss any app cards.",
       "rubric": [
@@ -332,7 +337,8 @@
         "type": "agent_prompt",
         "prompt": "Return to the launcher Home screen and dismiss any notification or quick-settings panel.",
         "timeout_sec": 90,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "home", "params": {"wait_for_text": ["Phone", "Chrome", "Messages", "Gmail"]}}
       },
       "prompt": "Use quick_action with action=notification_center to open notifications. Describe the visible notifications, or explicitly report that there are none. Leave the notification panel open and do not clear notifications.",
       "rubric": [
@@ -406,7 +412,8 @@
         "type": "agent_prompt",
         "prompt": "Open the main Settings page and leave it visible without changing settings.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main"}}
       }
     },
     {
@@ -445,7 +452,8 @@
         "type": "agent_prompt",
         "prompt": "Open the main Settings page, then open the notification panel over it. Leave the notification panel open without clearing notifications.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "main", "panel": "notifications", "wait_for_text": ["Manage", "No notifications", "Clear all"]}}
       }
     },
     {
@@ -484,7 +492,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings and navigate to About phone or the equivalent device-information page. Make the device model visible if the page lists one. Leave this page open without changing settings.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "device_info", "wait_for_text": ["Model", "Device name", "Android version"]}}
       }
     },
     {
@@ -556,7 +565,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings and navigate to About phone or equivalent device information. Leave that page visible without changing settings.",
         "timeout_sec": 120,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_page", "params": {"page": "device_info", "wait_for_text": ["Model", "Device name", "Android version"]}}
       }
     },
     {
