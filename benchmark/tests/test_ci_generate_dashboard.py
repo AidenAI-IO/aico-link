@@ -370,7 +370,7 @@ def test_workflow_attempts_are_separate():
 
 
 @pytest.mark.parametrize("field", ["agent_model", "suite_sha256", "workload_sha256",
-    "metrics_k", "judge_model", "git_branch", "target_platform", "active_skills"])
+    "metrics_k", "judge_model", "git_branch", "target_platform", "skills_fingerprint"])
 def test_configuration_changes_keep_inline_deltas(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
                _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]

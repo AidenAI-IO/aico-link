@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
+from runner.skills_fingerprint import digest_of
 from runner.suite import Suite, TaskSpec, load_suite
 
 
@@ -1214,6 +1215,7 @@ def _nested(value: Mapping[str, Any], *path: str) -> Any:
 def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
     manifest = artifacts.manifest
     judge = manifest.get("judge_config") if isinstance(manifest.get("judge_config"), dict) else {}
+    skills_fingerprint = digest_of(manifest)
     ci_run = re.fullmatch(r"ci-(\d+)-(\d+)-.+", str(manifest.get("run_id") or ""))
     values = {
         "benchmark_run_id": manifest.get("run_id"),
@@ -1239,7 +1241,7 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "target_platform": manifest.get("target_platform"),
         "execution_environment": manifest.get("execution_environment"),
         "selected_task_ids": manifest.get("selected_task_ids"),
-        "active_skills": manifest.get("active_skills"),
+        "skills_fingerprint": skills_fingerprint or None,
     }
     metadata = {}
     for key, value in values.items():
