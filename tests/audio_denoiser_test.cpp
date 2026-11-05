@@ -122,3 +122,13 @@ TEST_CASE("Missing DTLN runtime reports a recoverable initialization error") {
     CHECK_FALSE(aico::create_dtln_denoiser("/nonexistent/aico-dtln-test", &error));
     CHECK_FALSE(error.empty());
 }
+
+TEST_CASE("A failed DTLN runtime load is retried by the next session") {
+    // The runtime is shared and never unloaded, but a failed load must not be
+    // cached: every later session reports the error again instead of crashing.
+    for (int session = 0; session < 3; ++session) {
+        std::string error;
+        CHECK_FALSE(aico::create_dtln_denoiser("/nonexistent/aico-dtln-retry", &error));
+        CHECK(error.find("librknnmrt.so") != std::string::npos);
+    }
+}

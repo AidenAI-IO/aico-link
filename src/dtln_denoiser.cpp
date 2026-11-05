@@ -8,6 +8,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #if defined(__ARM_NEON)
@@ -48,7 +49,13 @@ struct Runtime {
     decltype(&rknn_destroy) destroy = nullptr;
 
     explicit Runtime(const std::string& path) {
-        library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
+        // RTLD_NODELETE keeps the library mapped even after another owner
+        // closes it. The RV1106 VQE library (libaec_bf_process.so) dlopens
+        // "librknnmrt.so" by soname on every recording session, binds to this
+        // already-loaded copy, and dlcloses it when the session stops. Without
+        // NODELETE that close unmaps the runtime on the second session and
+        // audio_service crashes with SIGSEGV.
+        library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
         if (!library) throw std::runtime_error(dlerror());
         try {
 #define LOAD(name) name = reinterpret_cast<decltype(name)>(dlsym(library, "rknn_" #name)); \
@@ -58,9 +65,25 @@ struct Runtime {
 #undef LOAD
         } catch (...) { dlclose(library); library = nullptr; throw; }
     }
-    ~Runtime() { if (library) dlclose(library); }
+    // The library is loaded once per process (see shared()) and stays
+    // resident: the 2.5.0 runtime does not survive being unloaded and loaded
+    // again, so neither this owner nor the VQE library may unmap it.
+    ~Runtime() = default;
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
+
+    // shared returns the process-wide runtime for path, loading it on first
+    // use. A failed load is not cached, so a later session can retry.
+    static Runtime& shared(const std::string& path) {
+        static std::mutex mutex;
+        static std::map<std::string, Runtime*>* loaded = new std::map<std::string, Runtime*>();
+        std::lock_guard<std::mutex> lock(mutex);
+        auto found = loaded->find(path);
+        if (found != loaded->end()) return *found->second;
+        Runtime* runtime = new Runtime(path);  // intentionally never freed
+        loaded->emplace(path, runtime);
+        return *runtime;
+    }
 };
 
 struct Model {
@@ -313,7 +336,7 @@ static void cpu_stage2(const float* weights, const float* block, float* state,
 class DtlnDenoiser : public DenoiseHop {
 public:
     explicit DtlnDenoiser(const std::string& directory)
-        : runtime_(directory + "/librknnmrt.so"),
+        : runtime_(Runtime::shared(directory + "/librknnmrt.so")),
           g0_(runtime_), g1_(runtime_), g2_(runtime_), g3_(runtime_) {
         const auto data = read_file(directory + "/weights.f32", DTLN_WEIGHT_COUNT * sizeof(float));
         if (data.size() != DTLN_WEIGHT_COUNT * sizeof(float))
@@ -356,7 +379,7 @@ public:
     }
 
 private:
-    Runtime runtime_;
+    Runtime& runtime_;
     Model g0_, g1_, g2_, g3_;
     std::vector<float> weights_;
     float inbuf_[BLOCK] = {}, outbuf_[BLOCK] = {}, s1_[512] = {}, s2_[512] = {};
