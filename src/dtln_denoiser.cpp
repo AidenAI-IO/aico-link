@@ -49,13 +49,7 @@ struct Runtime {
     decltype(&rknn_destroy) destroy = nullptr;
 
     explicit Runtime(const std::string& path) {
-        // RTLD_NODELETE keeps the library mapped even after another owner
-        // closes it. The RV1106 VQE library (libaec_bf_process.so) dlopens
-        // "librknnmrt.so" by soname on every recording session, binds to this
-        // already-loaded copy, and dlcloses it when the session stops. Without
-        // NODELETE that close unmaps the runtime on the second session and
-        // audio_service crashes with SIGSEGV.
-        library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NODELETE);
+        library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!library) throw std::runtime_error(dlerror());
         try {
 #define LOAD(name) name = reinterpret_cast<decltype(name)>(dlsym(library, "rknn_" #name)); \
@@ -64,6 +58,24 @@ struct Runtime {
             LOAD(set_io_mem); LOAD(run); LOAD(destroy);
 #undef LOAD
         } catch (...) { dlclose(library); library = nullptr; throw; }
+        // Pin only a runtime whose symbols all resolved, so a rejected library
+        // is still unloaded above. RTLD_NODELETE keeps it mapped after any
+        // owner closes it: the RV1106 VQE library (libaec_bf_process.so)
+        // dlopens "librknnmrt.so" by soname on every recording session, binds
+        // to this already-loaded copy, and dlcloses it when the session stops.
+        // Without NODELETE that close unmaps the runtime on the second session
+        // and audio_service crashes with SIGSEGV.
+        void* pinned = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD | RTLD_NODELETE);
+        if (!pinned) {
+            const char* reason = dlerror();
+            dlclose(library);
+            library = nullptr;
+            throw std::runtime_error(std::string("pin RKNN runtime ") + path + ": " +
+                                     (reason ? reason : "unknown error"));
+        }
+        // dlopen returns the same handle; drop the extra reference. The
+        // library stays mapped because the handle is now NODELETE.
+        dlclose(pinned);
     }
     // The library is loaded once per process (see shared()) and stays
     // resident: the 2.5.0 runtime does not survive being unloaded and loaded
