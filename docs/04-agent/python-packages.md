@@ -73,8 +73,10 @@ AICO_SCREENSHOT_HEIGHT=<height>
 
 `<dir>` is `aico-agent-screenshot` under the Agent's system temp directory
 (`/tmp`, a tmpfs, on the controller), so the export never writes to flash. The
-files are rewritten, each by a single rename, only when a newer screenshot was
-captured before the command starts. Their pixel coordinates are the
+directory and files are readable only by the Agent's user, because screenshots
+can show private content. The files are rewritten, each by a single rename,
+only when a newer screenshot was captured before the command starts, and are
+removed when no current screenshot exists. Their pixel coordinates are the
 screenshot's own: the image is already cropped to the phone screen, so a point
 measured there converts to touch coordinates with the width and height the
 model was given, without locating the phone inside the raw capture frame.

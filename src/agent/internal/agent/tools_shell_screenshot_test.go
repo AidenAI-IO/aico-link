@@ -72,10 +72,20 @@ func TestShellScreenshotExportWritesLatestScreenshot(t *testing.T) {
 		t.Fatal("jpeg file was not replaced by the new screenshot")
 	}
 
-	// A retired capture backend leaves no screenshot to point at.
+	if info, err := os.Stat(env[shellScreenshotPPMEnv]); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("ppm mode = %v err %v, want 0600: screenshots can show private content", info.Mode().Perm(), err)
+	}
+
+	// A retired capture backend leaves no screenshot to point at, and no
+	// stale file at the old path.
 	state.InvalidateCapture()
 	if env := export.env(); env != nil {
 		t.Fatalf("env after capture invalidation = %v, want none", env)
+	}
+	for _, p := range []string{export.jpegPath(), export.ppmPath()} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists after capture invalidation (err %v)", p, err)
+		}
 	}
 }
 

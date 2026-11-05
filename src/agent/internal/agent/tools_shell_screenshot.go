@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"image"
+	"image/color"
 	"image/jpeg"
 	"os"
 	"path/filepath"
@@ -65,6 +66,10 @@ func (e *shellScreenshotExport) env() []string {
 	if !e.exported || generation != e.generation {
 		data, width, height, _, ok := e.screen.LatestScreenshot(0)
 		if !ok {
+			// No current screenshot, e.g. after a capture backend was
+			// retired: drop the files, so nothing reads a stale screen.
+			os.Remove(e.jpegPath())
+			os.Remove(e.ppmPath())
 			e.exported = false
 			e.generation = generation
 			return nil
@@ -89,12 +94,17 @@ func (e *shellScreenshotExport) write(jpegData []byte) error {
 	if err != nil {
 		return fmt.Errorf("decode screenshot: %w", err)
 	}
-	// Each file is replaced in one rename, so a command reading it while the
-	// next screenshot is exported never sees a partial image.
-	if err := writeFileAtomic(e.jpegPath(), jpegData, 0o644); err != nil {
+	// Screenshots can show private content, so only the Agent's own user
+	// may read them. Each file is replaced in one rename, so a command
+	// reading it while the next screenshot is exported never sees a partial
+	// image.
+	if err := os.MkdirAll(e.dir, 0o700); err != nil {
 		return err
 	}
-	return writeFileAtomic(e.ppmPath(), encodePPM(img), 0o644)
+	if err := writeFileAtomic(e.jpegPath(), jpegData, 0o600); err != nil {
+		return err
+	}
+	return writeFileAtomic(e.ppmPath(), encodePPM(img), 0o600)
 }
 
 // encodePPM returns img as binary PPM (P6): a text header "P6\n<w> <h>\n255\n"
@@ -104,6 +114,18 @@ func encodePPM(img image.Image) []byte {
 	header := fmt.Sprintf("P6\n%d %d\n255\n", bounds.Dx(), bounds.Dy())
 	out := make([]byte, 0, len(header)+bounds.Dx()*bounds.Dy()*3)
 	out = append(out, header...)
+	// Screenshots decode as YCbCr; converting its planes directly avoids an
+	// interface call per pixel, which matters on the controller's slow CPU.
+	if ycc, ok := img.(*image.YCbCr); ok {
+		for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				yi, ci := ycc.YOffset(x, y), ycc.COffset(x, y)
+				r, g, b := color.YCbCrToRGB(ycc.Y[yi], ycc.Cb[ci], ycc.Cr[ci])
+				out = append(out, r, g, b)
+			}
+		}
+		return out
+	}
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {
 		for x := bounds.Min.X; x < bounds.Max.X; x++ {
 			r, g, b, _ := img.At(x, y).RGBA()
