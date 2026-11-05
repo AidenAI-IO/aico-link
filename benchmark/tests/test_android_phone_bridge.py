@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 import pytest
 
@@ -186,22 +187,82 @@ def test_emulator_ethernet_fails_when_root_is_unavailable(monkeypatch) -> None:
         android_phone_bridge._ensure_root("emulator-5554")
 
 
+def test_ensure_root_keeps_polling_while_adbd_is_offline(monkeypatch) -> None:
+    """A restarting adbd can time out; that is not a reason to give up."""
+    polls = iter([
+        "2000",
+        subprocess.TimeoutExpired("adb", 30),
+        "2000",
+        "0",
+    ])
+    calls = []
+
+    def fake_adb(serial, *args):
+        calls.append(args)
+        if args == ("shell", "id", "-u"):
+            value = next(polls)
+            if isinstance(value, Exception):
+                raise value
+            return value
+        return ""
+
+    monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+
+    android_phone_bridge._ensure_root("emulator-5554")
+
+    assert calls.count(("root",)) == 1
+    assert calls[-1] == ("shell", "id", "-u")
+
+
 def test_emulator_board_network_adds_and_always_removes_veth(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(android_phone_bridge, "ensure_emulator_ethernet", lambda serial: False)
     monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
-    monkeypatch.setattr(
-        android_phone_bridge, "_adb",
-        lambda serial, *args: calls.append(args) or "eth1@aicobd UP 192.168.42.2/24",
-    )
+
+    def fake_adb(serial, *args):
+        calls.append(args)
+        if args == ("shell", "id", "-u"):
+            return "0"
+        return "eth1@aicobd UP 192.168.42.2/24"
+
+    monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
 
     with pytest.raises(RuntimeError, match="task failed"):
         with android_phone_bridge.emulator_board_network("emulator-5554"):
-            assert "ip link add name eth1 type veth peer name aicobd" in calls[1][1]
-            assert calls[2] == ("shell", "ip", "-4", "-br", "addr", "show", "eth1")
+            assert "ip link add name eth1 type veth peer name aicobd" in calls[-2][1]
+            assert calls[-1] == ("shell", "ip", "-4", "-br", "addr", "show", "eth1")
             raise RuntimeError("task failed")
 
-    assert calls[0] == calls[-1] == ("shell", "ip link del eth1 2>/dev/null; true")
+    # Root is established first; the cleanup is still the last call.
+    assert calls[0] == ("shell", "id", "-u")
+    assert calls[-1] == ("shell", "ip link del eth1 2>/dev/null; true")
+
+
+def test_board_network_restores_root_before_veth_when_ethernet_is_current(
+    monkeypatch,
+) -> None:
+    """The Ethernet fast path returns early, so the veth step needs its own root."""
+    calls = []
+    # Ethernet is already installed, so ensure_emulator_ethernet adds no root check.
+    monkeypatch.setattr(android_phone_bridge, "ensure_emulator_ethernet", lambda serial: False)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+    uid = iter(["2000", "0"])
+
+    def fake_adb(serial, *args):
+        calls.append(args)
+        if args == ("shell", "id", "-u"):
+            return next(uid)
+        return "eth1@aicobd UP 192.168.42.2/24"
+
+    monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
+
+    with android_phone_bridge.emulator_board_network("emulator-5554") as _:
+        pass
+
+    root_index = calls.index(("root",)) if ("root",) in calls else -1
+    veth_index = next(i for i, call in enumerate(calls) if "ip link add" in str(call))
+    assert 0 <= root_index < veth_index, calls
 
 
 def test_clipboard_write_events_ignores_other_diagnostics(monkeypatch) -> None:
