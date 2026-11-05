@@ -31,6 +31,7 @@ type ShellTool struct {
 type shellExecutionConfig struct {
 	proxy              ProxyConfig
 	temporaryDirectory string
+	screenshot         *shellScreenshotExport
 }
 
 func (t *ShellTool) Name() string { return "shell" }
@@ -38,6 +39,7 @@ func (t *ShellTool) Name() string { return "shell" }
 func (t *ShellTool) Description() string {
 	return `Execute a shell command or manage a running shell session on the Aico Link hardware controller. ` +
 		`For one-shot commands, pass "command" and read the returned output. Shell can also inspect the controller's precise clock or timezone and perform deterministic calculations with available command-line utilities; these results describe the controller, not the target device shown in screenshots. ` +
+		`When a screenshot has been taken, commands get the latest one the model saw: $AICO_SCREENSHOT_JPEG, and $AICO_SCREENSHOT_PPM as uncompressed binary PPM (header "P6\n<width> <height>\n255\n", then RGB bytes row by row from the top left; readable with the Python standard library), with $AICO_SCREENSHOT_WIDTH and $AICO_SCREENSHOT_HEIGHT. Their pixel coordinates are the screenshot's own, so a point measured in them converts to touch coordinates with the same size. ` +
 		`Original phone-notification records are stored as date-sharded JSONL files under "/userdata/agent/memory/notifications/events/". Each UTC "YYYY-MM-DD.jsonl" file contains one record per line; inspect these files with normal read-only shell utilities and do not modify them. ` +
 		`For interactive or long-running programs, set "background" (or an "action") to start a session that returns a session_id, then drive it with follow-up "action" calls ("poll", "write", "submit", "send_keys", "resize", "stop") carrying that session_id.`
 }
