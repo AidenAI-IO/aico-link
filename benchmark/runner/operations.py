@@ -58,9 +58,17 @@ def preparation_steps(setup) -> list[dict]:
             if not step.get("tools") or set(step) - SETUP_KEYS["environment_tools"]:
                 raise ValueError("Comparison environment_tools requires tools and optional expected_state")
             continue
+        if step.get("type") == "agent_prompt" and step.get("device_prepare"):
+            # Every harness here is driven by the daemon, which never calls the
+            # bridge's prepare recipe; keeping the key would silently give the
+            # comparison a different starting state than a normal run.
+            raise ValueError(
+                "Comparison preparation does not support device_prepare: it is a bridge "
+                "recipe, and comparison preparation runs every harness through the agent"
+            )
         if (step.get("type") != "agent_prompt" or not step.get("prompt")
                 or step.get("clear_history_after", True) is not True or step.get("evaluate")
-                or set(step) - {"type", "prompt", "timeout_sec", "clear_history_after", "expected_response", "evaluate"}):
+                or set(step) - (SETUP_KEYS["agent_prompt"] | {"evaluate"})):
             raise ValueError("Comparison preparation supports only unevaluated agent_prompt steps with clear_history_after=true; memory seeding and retained context are agent-specific")
     return steps
 

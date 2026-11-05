@@ -423,6 +423,24 @@ report state fails setup before any input is sent. Coordinates are specific to
 one screen layout, so restrict such tasks with `platforms` and `environment_bridge_types` and run them against
 the environment they were recorded for. Setup failures are not agent scores.
 
+An `agent_prompt` can also carry `device_prepare: {"recipe": ..., "params": ...}`.
+On an ADB Android environment the runner first asks the bridge's
+`POST /api/prepare` to build the same starting state directly with intents and
+content providers (`chrome_pages`, `maps_directions`, `messages_draft`,
+`contact_detail`, `camera_photo`; see `adbandroid/bridge/prepare.py`). Each
+recipe confirms its expected text through UIAutomator before returning. When the
+bridge has no recipe support or cannot confirm the state, the runner runs the
+agent prompt as before, so the prompt must keep describing the full state. A
+prepared task records the recipe result in its `setup.json`.
+
+A confirmed recipe replaces the prompt, so `device_prepare` cannot be combined
+with `expected_response` or `clear_history_after: false`; suite loading rejects
+those pairs. A confirmed recipe produces no response and leaves no setup
+conversation, so the assertion would be dropped and the retained context would
+depend on whether preparation succeeded. Comparison experiments reject
+`device_prepare` too: every harness in a comparison is driven by the agent,
+which never calls the recipe.
+
 A unit suite is a different format with `kind` set to `unit`; it tests a tool's
 input/output directly without going through agent chat.
 

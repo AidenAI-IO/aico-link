@@ -1,6 +1,6 @@
 {
   "name": "adb_android_builtin_apps",
-  "version": "1.2",
+  "version": "1.3",
   "description": "Real workflows in preinstalled Android apps: Chrome browsing, Maps discovery and directions, device-local Contacts, Camera and Photos, Files, Messages drafts, and Clock timers.",
   "prompt_prefix": "",
   "global_reset": {},
@@ -33,7 +33,8 @@
         "type": "agent_prompt",
         "prompt": "Open Chrome at https://www.iana.org/domains/reserved and leave the page visible. Dismiss any open browser menu or Find in page bar.",
         "timeout_sec": 150,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}]}}
       },
       "prompt": "Use Chrome's Find in page to find exactly example.org on this page. Leave the search bar and matching text visible, then report what you found.",
       "description_for_judge": "The pre-screenshot must show the IANA page. The final screenshot must show Chrome's in-page search for example.org with a visible match on the same page; an address-bar search or a different site does not count.",
@@ -58,7 +59,8 @@
         "type": "agent_prompt",
         "prompt": "Open Chrome at https://www.iana.org/domains/reserved and leave that page visible in a normal tab, with no browser menu or tab switcher open.",
         "timeout_sec": 150,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}]}}
       },
       "prompt": "Open a new Chrome tab and visit https://www.iana.org/domains/root/db. Open the tab switcher and leave the IANA-managed Reserved Domains and Top-Level Domains tabs visible. Tell me which two IANA pages are open.",
       "description_for_judge": "Evaluate tab creation and switching in native Chrome. The final screenshot must show separate tab previews for the two IANA pages; pre-existing tabs and truncated tab titles are allowed. Do not count two pages opened sequentially in one tab.",
@@ -83,7 +85,8 @@
         "type": "agent_prompt",
         "prompt": "In one normal Chrome tab, open https://www.iana.org/domains/reserved, then navigate in that same tab to https://www.iana.org/domains/root/db. Leave the Top-Level Domains page visible with no browser menu open.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "history", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "history", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Top-Level Domains", "Root Zone Database"], "wait_sec": 40}]}}
       },
       "prompt": "Go back one page in this Chrome tab to the IANA-managed Reserved Domains page. Leave that page visible and tell me its heading. Do not open another tab or type a new URL.",
       "description_for_judge": "The pre-screenshot must show IANA Top-Level Domains in Chrome. A successful Back action should restore the earlier IANA-managed Reserved Domains page in the same tab; opening the URL afresh does not count.",
@@ -108,7 +111,8 @@
         "type": "agent_prompt",
         "prompt": "In Chrome, open https://www.iana.org/domains/reserved in one normal tab and https://www.iana.org/domains/root/db in another. Leave the Top-Level Domains page visible, with the tab switcher closed.",
         "timeout_sec": 210,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "chrome_pages", "params": {"pages": [{"tab": "reserved", "url": "https://www.iana.org/domains/reserved", "wait_for_text": ["IANA-managed Reserved Domains"]}, {"tab": "root", "url": "https://www.iana.org/domains/root/db", "wait_for_text": ["Top-Level Domains", "Root Zone Database"], "wait_sec": 40}]}}
       },
       "prompt": "Use Chrome's tab switcher to return to the already open IANA-managed Reserved Domains tab. Leave that page visible and tell me its heading. Do not open a new tab or enter either URL again.",
       "description_for_judge": "Measure selection of an existing tab rather than navigation by URL. The pre-screenshot should show Top-Level Domains; accept successful taps that restore Reserved Domains when the trace contains no URL entry or new-tab action.",
@@ -171,7 +175,8 @@
         "type": "agent_prompt",
         "prompt": "In Google Maps, open a walking route preview from Louvre Museum to Eiffel Tower in Paris. Leave the walking preview visible without starting navigation or opening its step list.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "maps_directions", "params": {"origin": "Louvre Museum, Paris", "destination": "Eiffel Tower, Paris", "travelmode": "walking", "wait_for_text": ["Eiffel Tower"], "wait_sec": 30}}
       },
       "prompt": "Open the step-by-step walking directions for this route. Tell me the first visible instruction and leave the steps list open. Do not start turn-by-turn navigation.",
       "description_for_judge": "Measure navigation from a route preview into its instruction list. The pre-screenshot must show the walking route from Louvre Museum to Eiffel Tower; the final answer must reflect a step visible in the post-screenshot.",
@@ -196,7 +201,8 @@
         "type": "agent_prompt",
         "prompt": "In Google Maps, show a walking route preview from Louvre Museum to Eiffel Tower in Paris, with both endpoints entered explicitly. Do not start navigation.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "maps_directions", "params": {"origin": "Louvre Museum, Paris", "destination": "Eiffel Tower, Paris", "travelmode": "walking", "wait_for_text": ["Eiffel Tower"], "wait_sec": 30}}
       },
       "prompt": "Switch this route to driving directions. Leave the driving route preview open, tell me which travel mode is selected, and do not start navigation or change either endpoint.",
       "description_for_judge": "Measure changing the travel mode on an existing route. Route duration may vary; judge the selected mode and unchanged landmarks, not the duration.",
@@ -240,7 +246,8 @@
         "type": "agent_prompt",
         "prompt": "Take one photo in Camera, then open that newest local photo in Google Photos. Leave it visible without opening its details or enabling cloud backup.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "camera_photo", "params": {"then": "photos", "wait_sec": 30}}
       },
       "prompt": "Open this photo's information or details panel in Google Photos. Tell me the filename shown there and leave the details visible. Do not edit, share, or delete the photo.",
       "description_for_judge": "Measure metadata inspection for a newly captured local image. The camera filename changes per run; only credit a filename read from the visible Photos details panel.",
@@ -265,7 +272,8 @@
         "type": "agent_prompt",
         "prompt": "Open Camera, take one photo, then return to the launcher Home screen. Do not open the photo or delete any image.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "camera_photo", "params": {"then": "home", "wait_sec": 30}}
       },
       "prompt": "Open the system Files app, go to Images and its Pictures folder, then find the most recent camera JPEG. Leave its filename visible and tell me that filename. Do not rename, move, share, or delete the file.",
       "description_for_judge": "Verify native Files navigation to a locally captured image. The Camera app on this emulator saves JPEGs under Pictures; the exact timestamped filename varies across attempts. Judge the visible file and reported filename, not a hardcoded name.",
@@ -290,7 +298,8 @@
         "type": "agent_prompt",
         "prompt": "Take one photo in Camera. Open the system Files app and navigate to the Pictures folder containing the newest camera JPEG. Leave the file list visible without opening any image.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "camera_photo", "params": {"then": "files", "wait_sec": 30}}
       },
       "prompt": "Open the newest camera JPEG from this Files list and leave its image preview visible. Do not rename, move, share, or delete it.",
       "description_for_judge": "Measure opening a local file from Files after locating it. The filename and image content vary across runs; do not require a particular scene.",
@@ -334,7 +343,8 @@
         "type": "agent_prompt",
         "prompt": "In Messages, compose an unsent SMS draft for 5550104040 containing exactly Aiden benchmark draft 2026. Leave the composer open with that text visible. Do not send it.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "messages_draft", "params": {"recipient": "5550104040", "body": "Aiden benchmark draft 2026"}}
       },
       "prompt": "Replace the entire unsent message with exactly Aiden revised draft 2026. Leave the same recipient and the revised text visible in the composer. Do not send the message.",
       "description_for_judge": "Measure in-place text replacement in an SMS draft without sending. The initial text must be visible before the task; the final composer must contain only the revised text.",
@@ -416,7 +426,8 @@
         "type": "agent_prompt",
         "prompt": "In Contacts, find the exact contact Aiden Benchmark Contact. If it is absent, create it on Device. Set its phone number to 5550102026, save it, and leave its saved detail page visible.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "contact_detail", "params": {"name": "Aiden Benchmark Contact", "given_name": "Aiden", "family_name": "Benchmark Contact", "phone": "5550102026"}}
       },
       "prompt": "Change this contact's phone number from 5550102026 to 5550103030. Save the change and leave the updated details visible. Do not call or message anyone.",
       "description_for_judge": "The pre-screenshot must show the synthetic contact with phone digits 5550102026. The post-screenshot must show the same contact saved with phone digits 5550103030 and without the old number. Ignore Android phone-number formatting separators.",
@@ -441,7 +452,8 @@
         "type": "agent_prompt",
         "prompt": "In Contacts, find the exact contact Aiden Benchmark Contact. If it is absent, create it on Device with phone number 5550103030. Leave its saved detail page visible without deleting it.",
         "timeout_sec": 240,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "contact_detail", "params": {"name": "Aiden Benchmark Contact", "given_name": "Aiden", "family_name": "Benchmark Contact", "phone": "5550103030"}}
       },
       "prompt": "Delete this Aiden Benchmark Contact, then search Contacts for that exact name to verify it is gone. Leave the search result or empty state visible. Do not delete any other contact.",
       "description_for_judge": "The pre-screenshot must show the synthetic contact. The final screenshot must show a search for that exact name with no matching contact. Judge deletion from the successful trace and final UI, not the final claim alone.",

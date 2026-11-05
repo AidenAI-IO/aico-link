@@ -271,6 +271,21 @@ def test_comparison_suite_rejects_agent_specific_requirements(tmp_path, change):
         comparison_suite(path)
 
 
+def test_comparison_suite_names_device_prepare_as_the_unsupported_preparation(tmp_path):
+    """The recipe only runs on the bridge, which comparison preparation bypasses."""
+    data = json.loads(SUITE_PATH.read_text())
+    data["tasks"][0]["setup"] = {
+        "type": "agent_prompt",
+        "prompt": "Open the contact.",
+        "device_prepare": {"recipe": "contact_detail"},
+    }
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps(data))
+
+    with pytest.raises(ValueError, match="does not support device_prepare"):
+        comparison_suite(path)
+
+
 def test_suite_requiring_unshared_tools_is_not_accepted():
     with pytest.raises(ValueError, match="shared business tools"):
         comparison_suite(SUITE_PATH.parent / "shell_utility_v1.json")

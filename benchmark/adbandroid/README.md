@@ -241,6 +241,7 @@ against this):
 | `POST /api/providers/screenshot` | Current screenshot (no setup required; used by the runner for pre/post capture) |
 | `POST /api/providers/mnk` | Mouse/keyboard primitives used by the Go agent |
 | `POST /api/setup` | Reset to home + create an episode; single-device ownership keyed on the `benchmark-task-id` header |
+| `POST /api/prepare` | Run a deterministic starting-state recipe after `/api/setup`; `422 prepare_failed` when it cannot confirm the state |
 | `POST /api/release` | Release the task id's ownership |
 | `GET /api/tools` | Tool catalog |
 | `POST /api/tools/{tool}` | Legacy tool endpoint for bridge clients and debugging |

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -16,6 +17,7 @@ from mnk_provider import execute_mnk_request
 from setup_token_registry import SetupTokenRegistry, setup_token_from_payload
 
 from .adb import ADBAndroidDevice, ADBCommandError
+from .prepare import PrepareError, run_recipe
 from .protocol import bridge_error, bridge_ok, encode_provider_frame
 from .state import (
     ADBBridgeState,
@@ -109,6 +111,8 @@ def _handler_for(bridge: ADBBridgeServer):
             try:
                 if path == "api/setup":
                     self._handle_setup(payload)
+                elif path == "api/prepare":
+                    self._handle_prepare(payload)
                 elif path == "api/providers/screenshot":
                     self._handle_provider_screenshot(payload)
                 elif path == "api/providers/mnk":
@@ -171,6 +175,29 @@ def _handler_for(bridge: ADBBridgeServer):
             bridge.setup_tokens.clear_completed_for_task(task_id)
             self._send_json(200, bridge_ok({"released": released}))
 
+        def _handle_prepare(self, payload: dict[str, Any]) -> None:
+            """Build a task's starting state deterministically after /api/setup."""
+            task_id = benchmark_task_id_from_headers(self.headers)
+            bridge.state.check_task_access(task_id)
+            bridge.state.renew_task_if_owner(task_id)
+            if not bridge.state.active_episode_id:
+                self._send_error(409, "no_active_episode", "call /api/setup before /api/prepare")
+                return
+            recipe = payload.get("recipe")
+            if not isinstance(recipe, str) or not recipe.strip():
+                self._send_error(400, "bad_request", "recipe is required")
+                return
+            params = payload.get("params") or {}
+            started = time.monotonic()
+            try:
+                with bridge.state.lock:
+                    result = run_recipe(bridge.state.device, recipe.strip(), params)
+            except PrepareError as exc:
+                self._send_error(422, "prepare_failed", str(exc))
+                return
+            result["duration_ms"] = int((time.monotonic() - started) * 1000)
+            self._send_json(200, bridge_ok(result))
+
         def _handle_provider_screenshot(self, payload: dict[str, Any]) -> None:
             task_id = benchmark_task_id_from_headers(self.headers)
             bridge.state.check_task_access(task_id)
@@ -206,7 +233,14 @@ def _handler_for(bridge: ADBBridgeServer):
                 self._send_json(409, {"error": "no active episode; call /api/setup first"})
                 return
             try:
-                status, response = execute_mnk_request(payload, bridge.tools_api._submit_tool_call)
+                # The MNK transport returns only a flat success/error body, so a
+                # post-action frame would be encoded, sent and dropped.
+                status, response = execute_mnk_request(
+                    payload,
+                    lambda name, tool_input: bridge.tools_api._submit_tool_call(
+                        name, tool_input, capture_screenshot=False
+                    ),
+                )
             except ADBCommandError as exc:
                 status, response = 500, {"error": str(exc)}
             self._send_json(status, response)
@@ -261,7 +295,7 @@ def _health_payload(bridge: ADBBridgeServer, device_info: dict[str, Any]) -> dic
         "active_episode_id": bridge.state.active_episode_id,
         "active_task_id": bridge.state.active_task_id,
         "active_task_lease_state": bridge.state.active_task_lease_state(),
-        "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/release", "/api/concurrent"],
+        "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/prepare", "/api/release", "/api/concurrent"],
     }
 
 
