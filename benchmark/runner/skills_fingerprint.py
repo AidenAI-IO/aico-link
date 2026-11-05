@@ -90,42 +90,33 @@ def fingerprint_worker_configs(config_dirs: Iterable[Path]) -> dict[str, Any]:
     config after `prepare_run_config` returns, so a fingerprint captured at
     prepare time would describe a superseded skill text.
 
-    Workers can also legitimately disagree, because SkillOpt prepares one
-    config per phase. A single digest is reported only when every worker
-    agreed; otherwise the per-worker map is kept so the difference stays
-    inspectable.
+    Workers can legitimately disagree, because SkillOpt prepares one config
+    per phase. A run-level digest is reported only when every worker agreed;
+    otherwise `sha256` is null and each skill maps to every digest seen, so
+    the diverging skill is still identifiable.
     """
-    seen: dict[str, dict[str, Any]] = {}
-    for config_dir in config_dirs:
-        config_dir = Path(config_dir)
-        skills_dir = config_dir / "skills"
-        if not skills_dir.is_dir():
-            continue
-        seen[str(config_dir)] = fingerprint_skills(skills_dir)
-    if not seen:
+    fingerprints = [
+        fingerprint_skills(skills_dir)
+        for config_dir in config_dirs
+        if (skills_dir := Path(config_dir) / "skills").is_dir()
+    ]
+    if not fingerprints:
         return {"sha256": None, "skills": {}, "source": SOURCE_UNAVAILABLE}
-    digests = {fingerprint["sha256"] for fingerprint in seen.values()}
+    digests = {fingerprint["sha256"] for fingerprint in fingerprints}
     if len(digests) == 1:
-        only = next(iter(seen.values()))
         return {
-            "sha256": only["sha256"],
-            "skills": dict(only.get("skills") or {}),
+            "sha256": fingerprints[0]["sha256"],
+            "skills": fingerprints[0]["skills"],
             "source": SOURCE_WORKER,
         }
-    merged: dict[str, list[str]] = {}
-    for fingerprint in seen.values():
-        for name, digest in (fingerprint.get("skills") or {}).items():
-            merged.setdefault(name, [])
-            if digest not in merged[name]:
-                merged[name].append(digest)
+    merged: dict[str, set[str]] = {}
+    for fingerprint in fingerprints:
+        for name, digest in fingerprint["skills"].items():
+            merged.setdefault(name, set()).add(digest)
     return {
         "sha256": None,
         "skills": {name: ",".join(sorted(values)) for name, values in sorted(merged.items())},
         "source": "mixed",
-        "per_worker": {
-            path: {"sha256": fingerprint["sha256"], "skills": fingerprint.get("skills") or {}}
-            for path, fingerprint in sorted(seen.items())
-        },
     }
 
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from runner.skills_fingerprint import (
     SOURCE_EXTERNAL,
     SOURCE_UNAVAILABLE,
@@ -94,7 +96,7 @@ def test_disagreeing_workers_report_mixed_instead_of_a_single_digest(tmp_path: P
 
     assert combined["sha256"] is None
     assert combined["source"] == "mixed"
-    assert len(combined["per_worker"]) == 2
+    # Both digests stay attached to the diverging skill name.
     assert "," in combined["skills"]["alpha"]
 
 
@@ -102,25 +104,14 @@ def test_no_worker_skill_tree_is_unavailable_not_empty(tmp_path: Path):
     assert fingerprint_worker_configs([tmp_path / "nothing"])["source"] == SOURCE_UNAVAILABLE
 
 
-def test_an_agent_url_run_is_reported_as_external(tmp_path: Path):
-    """A daemon this process never configured has an unobservable skill tree."""
-    config = tmp_path / "config"
-    config.mkdir()
-    fingerprint = fingerprint_worker_configs([])
-    assert digest_of({"skills_fingerprint": {**fingerprint, "source": SOURCE_EXTERNAL}}) == SOURCE_EXTERNAL
-
-
-def test_digest_of_flattens_a_manifest_for_telemetry():
-    manifest = {"skills_fingerprint": {"sha256": "abc", "skills": {"alpha": "def"}}}
-    assert digest_of(manifest) == "abc"
-
-
-def test_digest_of_falls_back_to_source_when_no_single_digest_exists():
-    mixed = {"skills_fingerprint": {"sha256": None, "source": "mixed"}}
-    assert digest_of(mixed) == "mixed"
-
-
-def test_digest_of_handles_absent_metadata():
-    assert digest_of({}) == ""
-    assert digest_of(None) == ""
-    assert digest_of({"skills_fingerprint": {"source": SOURCE_EXTERNAL}}) == SOURCE_EXTERNAL
+@pytest.mark.parametrize("manifest, expected", [
+    ({"skills_fingerprint": {"sha256": "abc", "skills": {"alpha": "def"}}}, "abc"),
+    ({"skills_fingerprint": {"sha256": None, "source": "mixed"}}, "mixed"),
+    ({"skills_fingerprint": {"source": SOURCE_EXTERNAL}}, SOURCE_EXTERNAL),
+    ({}, ""),
+    (None, ""),
+])
+def test_digest_of_flattens_a_manifest_for_telemetry(manifest, expected):
+    """Telemetry needs one comparable string: the digest when workers agreed,
+    otherwise the source label, and empty when nothing was recorded."""
+    assert digest_of(manifest) == expected

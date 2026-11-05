@@ -315,8 +315,9 @@ Because skill text changes Agent behavior, every run records a
 The digest is computed from each worker's copied skill tree when the run
 finishes, so an `--agent-config` or a SkillOpt candidate that replaced a
 `SKILL.md` is what gets recorded, not the repository checkout. `source` is
-`worker-config` when every worker agreed, `mixed` when phases disagreed (with
-`per_worker` detail), and `external-daemon` for `--agent-url` runs, whose skill
+`worker-config` when every worker agreed, `mixed` when workers disagreed (the
+null run digest keeps every per-skill digest seen, naming the diverging
+skill), and `external-daemon` for `--agent-url` runs, whose skill
 tree this process never configured and therefore cannot observe. An
 `external-daemon` run is not a like-for-like capability comparison.
 
