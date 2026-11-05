@@ -534,3 +534,61 @@ func TestConfigApplyPromptSettingKeepsConversation(t *testing.T) {
 		})
 	}
 }
+
+func TestRestartAfterOfflineConfigChange(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		change       func(*Config)
+		keepsHistory bool
+	}{
+		{"locale", func(c *Config) { c.Locale = "en-US" }, true},
+		{"model", func(c *Config) { c.Model.Model = "other-model" }, false},
+		{"model and locale", func(c *Config) { c.Model.Model = "other-model"; c.Locale = "en-US" }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			configDir := ensureTestConfigDir(t, t.TempDir())
+			cfg := Config{
+				ConfigDir:     configDir,
+				Model:         ModelConfig{Provider: "fake", Model: "test-model"},
+				Locale:        "zh-CN",
+				Timezone:      "UTC",
+				Instruction:   "Answer directly.",
+				MaxIterations: 1,
+			}
+			start := func(cfg Config, llmModel *scriptedModel) *Runtime {
+				runtime := NewRuntimeWithDeps(cfg, &testModelResolver{model: llmModel, spec: model.ModelSpec{ContextWindow: 1_000_000}}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+				runtime.logger = nil
+				return runtime
+			}
+
+			first := start(cfg, &scriptedModel{responses: []*llms.ContentResponse{contentResponse("first answer")}})
+			if _, err := first.Run(context.Background(), RunRequest{Input: "first question"}); err != nil {
+				t.Fatalf("first Run() error = %v", err)
+			}
+			firstSessionID := first.contextManager.GetSessionID()
+			first.Close()
+
+			// The change is saved while the Agent is stopped, so no live config
+			// apply sees it.
+			tc.change(&cfg)
+			llmModel := &scriptedModel{responses: []*llms.ContentResponse{contentResponse("second answer")}}
+			second := start(cfg, llmModel)
+			defer second.Close()
+			if _, err := second.Run(context.Background(), RunRequest{Input: "second question"}); err != nil {
+				t.Fatalf("second Run() error = %v", err)
+			}
+
+			sent := messageText(llmModel.messages[len(llmModel.messages)-1])
+			if got := strings.Contains(sent, "first question") && strings.Contains(sent, "first answer"); got != tc.keepsHistory {
+				t.Fatalf("second request carries first turn = %t, want %t:\n%s", got, tc.keepsHistory, sent)
+			}
+			ancestor, err := second.contextManager.HasSessionAncestor(firstSessionID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ancestor != tc.keepsHistory {
+				t.Fatalf("session descends from the first = %t, want %t", ancestor, tc.keepsHistory)
+			}
+		})
+	}
+}

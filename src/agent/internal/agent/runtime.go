@@ -1241,7 +1241,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// setup context manager if not initialized
 	hadContextManager := r.contextManager != nil
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(profile.SystemPrompt, agentpath.ContextManagerSessionFolder(cfg.ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(cfg, profile.SystemPrompt)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -1264,6 +1264,9 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	}
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
+	}
+	if err := recordConversationIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model)); err != nil {
+		return RunResult{}, err
 	}
 	if r.configPromptRefresh.Load() {
 		r.configPromptRefresh.Store(false)
@@ -1718,7 +1721,7 @@ func (r *Runtime) rotateUserContext(systemPrompt string) error {
 	if _, err := contextmanager.NewContextManager(folder, systemPrompt); err != nil {
 		return fmt.Errorf("create user context session: %w", err)
 	}
-	return nil
+	return recordConversationIdentity(folder, userConversationIdentity(r.ConfigSnapshot()))
 }
 
 func (r *Runtime) MarkSkillsDirty() {
@@ -1868,10 +1871,21 @@ func (r *Runtime) ReadContextAttachment(role, attachmentID string) ([]byte, stri
 	return data, mimeType, nil
 }
 
+// initializeContextManager loads the backend conversation, starting a new one
+// when the model changed since it was recorded, for example while the Agent
+// was stopped. A live model change rotates at the next task boundary instead.
+func (r *Runtime) initializeContextManager(cfg Config, systemPrompt string) (*contextmanager.ContextManager, error) {
+	folder := agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	if err := startConversationForIdentity(folder, modelConversationIdentity(cfg.Model), systemPrompt); err != nil {
+		return nil, err
+	}
+	return InitializeContextManager(systemPrompt, folder, []contextmanager.AppendMessageHook{r.getStateHook()})
+}
+
 func (r *Runtime) rotateContext() error {
 	var err error
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(r.getSystemPrompt(), agentpath.ContextManagerSessionFolder(r.ConfigSnapshot().ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(r.ConfigSnapshot(), r.getSystemPrompt())
 		if err != nil {
 			return err
 		}

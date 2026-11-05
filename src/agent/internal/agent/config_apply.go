@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
+
+	"aico-agent/internal/agent/agentpath"
 )
 
 // ConfigPrepareFunc drains input sessions and prepares replacement components.
@@ -382,9 +385,19 @@ func (r *Runtime) StopConfigReloads() {
 // voice provider changes and prevents replaying incompatible continuation data.
 // A system prompt change alone keeps the conversation; InitializeContextManager
 // rewrites the session's system message.
+//
+// A model or voice model change made while the Agent was stopped also starts a
+// new user context, because applyConfig never saw it.
 func (r *Runtime) PrepareUserContext(systemPrompt string) error {
-	if r == nil || !r.configUserContextRotate.Load() {
+	if r == nil {
 		return nil
+	}
+	if !r.configUserContextRotate.Load() {
+		cfg := r.ConfigSnapshot()
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return nil
+		}
+		return startConversationForIdentity(agentpath.UserContextManagerSessionFolder(cfg.ConfigDir), userConversationIdentity(cfg), systemPrompt)
 	}
 	if err := r.rotateUserContext(systemPrompt); err != nil {
 		return err

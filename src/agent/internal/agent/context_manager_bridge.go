@@ -1,7 +1,13 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -240,6 +246,80 @@ func InitializeContextManager(
 	manager.AddAppendMessageHooks(hooks)
 
 	return manager, nil
+}
+
+// conversationIdentityFile records, inside a session folder, a fingerprint of
+// the model settings the current conversation runs under. A live config apply
+// rotates the conversation when these settings change; this record lets a
+// start after an offline change (for example, a config edited while the Agent
+// was stopped) do the same instead of replaying another model's transcript.
+const conversationIdentityFile = ".conversation_identity"
+
+// modelConversationIdentity fingerprints the settings whose change must start
+// a new backend conversation: the transcript carries provider-specific
+// reasoning items, thinking signatures, and continuation data.
+func modelConversationIdentity(model ModelConfig) string {
+	return conversationIdentity(model.Provider, model.Model, model.APIMode, model.BaseURL)
+}
+
+// userConversationIdentity fingerprints the settings whose change must start a
+// new realtime user context: the backend model and the whole voice model
+// configuration, matching the live rotation in applyConfig. Only a hash is
+// stored, so credentials in the voice model configuration never reach disk.
+func userConversationIdentity(cfg Config) string {
+	voiceModel, err := json.Marshal(cfg.VoiceModel)
+	if err != nil {
+		voiceModel = []byte(fmt.Sprintf("%#v", cfg.VoiceModel))
+	}
+	return conversationIdentity(modelConversationIdentity(cfg.Model), string(voiceModel))
+}
+
+func conversationIdentity(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+// startConversationForIdentity starts a new conversation in sessionFolder when
+// its current conversation was recorded under a different identity, then
+// records identity. A folder without a record keeps its conversation.
+func startConversationForIdentity(sessionFolder, identity, systemPrompt string) error {
+	stored, err := os.ReadFile(filepath.Join(sessionFolder, conversationIdentityFile))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read conversation identity: %w", err)
+	}
+	if recorded := strings.TrimSpace(string(stored)); recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
+		if _, err := contextmanager.NewContextManager(sessionFolder, systemPrompt); err != nil {
+			return fmt.Errorf("start conversation for changed model: %w", err)
+		}
+	}
+	return recordConversationIdentity(sessionFolder, identity)
+}
+
+// recordConversationIdentity stores identity as the one the current
+// conversation in sessionFolder runs under.
+func recordConversationIdentity(sessionFolder, identity string) error {
+	path := filepath.Join(sessionFolder, conversationIdentityFile)
+	if stored, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(stored)) == identity {
+		return nil
+	}
+	if err := os.MkdirAll(sessionFolder, 0o755); err != nil {
+		return fmt.Errorf("create session folder: %w", err)
+	}
+	file, err := os.CreateTemp(sessionFolder, conversationIdentityFile+"-*")
+	if err != nil {
+		return fmt.Errorf("record conversation identity: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	_, writeErr := file.WriteString(identity)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return fmt.Errorf("record conversation identity: %w", errors.Join(writeErr, closeErr))
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("record conversation identity: %w", err)
+	}
+	return nil
 }
 
 func sessionHasSystemMessage(manager *contextmanager.ContextManager) bool {
