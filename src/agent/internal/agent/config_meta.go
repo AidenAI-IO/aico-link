@@ -623,8 +623,9 @@ func ConfigMeta() ConfigMetadata {
 						Help: "Optional Qwen server_vad silence duration before completing a turn. Leave empty to use the provider default.", Placeholder: "Default: 800", Advanced: true,
 						VisibleWhen: all(eq("voice_model_providers.type", "qwen"), eq("voice_model_providers.turn_detection", "server_vad"))},
 					{Key: "voice", Label: "Voice", Widget: WidgetText, Default: defaults.VoiceModel.Voice,
-						Help:            "Realtime system voice name or voice-clone ID (provider-specific).",
-						PlaceholderWhen: realtimeProviderPlaceholders("voice")},
+						Help:            "Realtime system voice name or voice-clone ID (provider-specific). Moss Live ignores this field and uses its default persona.",
+						PlaceholderWhen: realtimeProviderPlaceholders("voice"),
+						VisibleWhen:     all(ne("voice_model_providers.type", "moss"))},
 				},
 			},
 			{

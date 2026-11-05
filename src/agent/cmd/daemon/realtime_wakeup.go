@@ -737,6 +737,13 @@ func realtimeProviderType(cfg agent.Config) string {
 	return provider
 }
 
+func errIfMossBackendAgentUnsupported(cfg agent.Config) error {
+	if cfg.VoiceModel.UseBackendAgent && realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
+		return fmt.Errorf("moss live does not support use_backend_agent: task updates require text injection")
+	}
+	return nil
+}
+
 func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) realtimevoice.SessionConfig {
 	return realtimeProviderSessionConfigWithTools(cfg, runtime, nil)
 }
@@ -1377,6 +1384,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	var chatBridge *realtimeChatBridge
 	if len(chatBridges) > 0 {
 		chatBridge = chatBridges[0]
+	}
+	if err := errIfMossBackendAgentUnsupported(cfg); err != nil {
+		return err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

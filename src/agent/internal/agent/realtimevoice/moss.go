@@ -73,15 +73,19 @@ func (p MossProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 	}
 	writeGate := make(chan struct{}, 1)
 	writeGate <- struct{}{}
+	// Build the session.update payload and alias map before readLoop so tool
+	// call frames cannot observe a nil toolNameLocal without synchronization.
+	update, aliases := buildMossSessionUpdate(cfg)
 	s := &mossSession{
-		conn:      conn,
-		label:     "moss live",
-		events:    make(chan Event, buffer),
-		errs:      make(chan error, 1),
-		done:      make(chan struct{}),
-		writeGate: writeGate,
-		ready:     make(chan struct{}),
-		updated:   make(chan struct{}),
+		conn:          conn,
+		label:         "moss live",
+		events:        make(chan Event, buffer),
+		errs:          make(chan error, 1),
+		done:          make(chan struct{}),
+		writeGate:     writeGate,
+		ready:         make(chan struct{}),
+		updated:       make(chan struct{}),
+		toolNameLocal: aliases,
 		info: newPCM16SessionInfo(cfg.SessionID, inputRate, outputRate, Capabilities{
 			EmitsSpeechEvents:                true,
 			ServerAuthoritativeInterruption:  true,
@@ -105,8 +109,6 @@ func (p MossProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 		_ = s.Close()
 		return nil, err
 	}
-	update, aliases := buildMossSessionUpdate(cfg)
-	s.toolNameLocal = aliases
 	if err := s.writeJSON(ctx, update); err != nil {
 		_ = s.Close()
 		return nil, err
@@ -871,9 +873,9 @@ func (s *mossSession) rememberRun(runID, turnID string) {
 }
 
 func (s *mossSession) resetResponseTurn() {
+	s.ctxMu.Lock()
 	s.responseStarted = false
 	s.lastOutputText = ""
-	s.ctxMu.Lock()
 	s.audioContexts = nil
 	s.audioDone = false
 	s.playbackCompletedSent = false
@@ -887,13 +889,12 @@ func (s *mossSession) resetResponseTurn() {
 // clear suppressChunkAcks and re-ack after playback.stopped.
 func (s *mossSession) beginNewResponse(runID string) bool {
 	s.ctxMu.Lock()
+	defer s.ctxMu.Unlock()
 	interrupted := s.interruptedRunID
 	if runID != "" && runID == interrupted {
-		s.ctxMu.Unlock()
 		return false
 	}
 	if s.suppressChunkAcks && runID == "" {
-		s.ctxMu.Unlock()
 		return false
 	}
 	s.suppressChunkAcks = false
@@ -901,10 +902,9 @@ func (s *mossSession) beginNewResponse(runID string) bool {
 	// after the next turn starts.
 	s.playbackCompletedSent = false
 	s.audioDone = false
-	s.ctxMu.Unlock()
 	s.responseStarted = true
 	if runID != "" {
-		s.rememberRun(runID, "")
+		s.runID = runID
 	}
 	return true
 }
