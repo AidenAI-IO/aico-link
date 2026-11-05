@@ -1230,7 +1230,8 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// recovery loads the previous conversation. Recovery then sees the new
 	// conversation as current and only marks the interruption in the old
 	// transcript, as it does after history is cleared.
-	if r.contextManager == nil {
+	startup := r.contextManager == nil
+	if startup {
 		if err := startConversationForIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model), profile.SystemPrompt); err != nil {
 			return RunResult{}, err
 		}
@@ -1263,10 +1264,12 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if resetErr = r.contextManager.Activate(candidate); resetErr != nil {
 			return RunResult{}, resetErr
 		}
-	} else if r.configPromptRefresh.Load() && hadContextManager {
+	} else if (r.configPromptRefresh.Load() || startup) && hadContextManager {
 		// A prompt setting saved since the last task, such as the response
 		// locale or time zone, rewrites the system message and keeps the
-		// conversation.
+		// conversation. At startup, a conversation supplied by interrupted-run
+		// recovery skipped InitializeContextManager, and no live flag reports a
+		// change saved while the Agent was stopped, so compare it here.
 		if err := syncSessionSystemPrompt(r.contextManager, profile.SystemPrompt); err != nil {
 			return RunResult{}, fmt.Errorf("refresh session system prompt: %w", err)
 		}

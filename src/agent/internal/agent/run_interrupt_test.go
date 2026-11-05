@@ -581,3 +581,45 @@ func TestRuntimeInterruptRecoveryStartsNewConversationAfterOfflineModelChange(t 
 		t.Fatalf("pending run journal was not resolved: %v", err)
 	}
 }
+
+func TestRuntimeInterruptRecoveryRefreshesPromptAfterOfflinePromptChange(t *testing.T) {
+	cfg := withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake", Model: "model-a"}, Instruction: "test", Locale: "zh-CN"})
+	model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
+		return contentResponse("done"), nil
+	}}
+	newRuntime := func(cfg Config) *Runtime {
+		runtime := NewRuntimeWithDeps(cfg, &testModelResolver{model: model}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+		t.Cleanup(func() { _ = runtime.Close() })
+		return runtime
+	}
+	first := newRuntime(cfg)
+	if _, err := first.Run(context.Background(), RunRequest{Input: "first task"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startRunNotices(func() *contextmanager.ContextManager { return first.contextManager }, "run_abrupt_exit"); err != nil {
+		t.Fatal(err)
+	}
+	firstSessionID := first.contextManager.GetSessionID()
+
+	// The locale changes while the Agent is stopped, leaving the run journal.
+	cfg.Locale = "en-US"
+	restarted := newRuntime(cfg)
+	want := restarted.getSystemPrompt()
+	model.generate = func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
+		if !runtimeModelCallContains(input, "first task") || !runtimeModelCallContains(input, "Interrupt [agent_restart]:") {
+			t.Fatal("the recovered conversation was not kept")
+		}
+		return contentResponse("recovered"), nil
+	}
+	if _, err := restarted.Run(context.Background(), RunRequest{Input: "next task"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := restarted.contextManager.MessageListDump().Messages[0].Content; systemPromptIdentity(got) != systemPromptIdentity(want) {
+		t.Fatalf("recovered session kept the old system prompt:\n%s", got)
+	}
+	if ancestor, err := restarted.contextManager.HasSessionAncestor(firstSessionID); err != nil {
+		t.Fatal(err)
+	} else if !ancestor {
+		t.Fatal("the refreshed session does not descend from the recovered one")
+	}
+}
