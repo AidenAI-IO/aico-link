@@ -120,6 +120,8 @@ def test_emulator_ethernet_checks_feature_and_config_independently(
         calls.append(args)
         if args == ("shell", "pm", "list", "features"):
             return next(features)
+        if args == ("shell", "id", "-u"):
+            return "0"
         if args[0] == "shell" and args[1].startswith("cmp -s"):
             for path in android_phone_bridge.ETHERNET_IPCONFIG_DIRS:
                 assert f"{path}/ipconfig.txt" in args[1]
@@ -135,10 +137,53 @@ def test_emulator_ethernet_checks_feature_and_config_independently(
     if not restart:
         assert len(calls) == 3
         return
-    install = calls[3][1]
+    # The root check comes before the install; adbd is already root here.
+    assert calls[3] == ("shell", "id", "-u")
+    install = calls[4][1]
     assert ("mount -o bind" in install) is (not feature_present)
     assert ("cp /data/local/tmp/aico-ipconfig.txt" in install) is (not config_present)
-    assert calls[4:6] == [("shell", "stop"), ("shell", "start")]
+    assert calls[5:7] == [("shell", "stop"), ("shell", "start")]
+
+
+def test_emulator_ethernet_starts_adbd_as_root_before_installing(monkeypatch) -> None:
+    """A restarted emulator leaves shell-user adbd, which cannot replace the copy."""
+    calls = []
+    features = iter(["feature:android.hardware.touchscreen", "feature:android.hardware.ethernet"])
+    uid = iter(["2000", "0"])
+
+    def fake_adb(serial, *args):
+        calls.append(args)
+        if args == ("shell", "pm", "list", "features"):
+            return next(features)
+        if args == ("shell", "id", "-u"):
+            return next(uid)
+        if args[0] == "shell" and args[1].startswith("cmp -s"):
+            return "missing"
+        return "1" if args[-1] == "sys.boot_completed" else ""
+
+    monkeypatch.setattr(android_phone_bridge, "_adb", fake_adb)
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+
+    android_phone_bridge.ensure_emulator_ethernet("emulator-5554")
+
+    # `adb root` must come before the install shell that deletes the root-owned copy.
+    assert ("root",) in calls
+    install_index = next(i for i, call in enumerate(calls) if "rm -rf" in str(call))
+    assert calls.index(("root",)) < install_index
+    # and the install only runs once adbd reports root
+    assert calls[install_index - 1] == ("shell", "id", "-u")
+
+
+def test_emulator_ethernet_fails_when_root_is_unavailable(monkeypatch) -> None:
+    monkeypatch.setattr(
+        android_phone_bridge, "_adb",
+        lambda serial, *args: "2000" if args == ("shell", "id", "-u") else "",
+    )
+    monkeypatch.setattr(android_phone_bridge.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(android_phone_bridge.time, "monotonic", iter(range(0, 1000, 10)).__next__)
+
+    with pytest.raises(RuntimeError, match="did not start as root"):
+        android_phone_bridge._ensure_root("emulator-5554")
 
 
 def test_emulator_board_network_adds_and_always_removes_veth(monkeypatch) -> None:

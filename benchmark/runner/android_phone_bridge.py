@@ -232,6 +232,30 @@ def _wait_for_boot(serial: str, timeout_sec: int = 180) -> None:
     raise RuntimeError("Android framework did not finish restarting")
 
 
+def _ensure_root(serial: str, timeout_sec: int = 60) -> None:
+    """Restart adbd as root so the permission bind mount can be installed.
+
+    adbd returns to the shell user when the emulator restarts, and the copy that
+    holds the Ethernet feature file is created by root. A shell-user adbd can
+    neither delete that leftover copy nor bind-mount over /vendor/etc/permissions,
+    so the install has to restore root first.
+    """
+    if _adb(serial, "shell", "id", "-u") == "0":
+        return
+    _adb(serial, "root")
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            if _adb(serial, "shell", "id", "-u") == "0":
+                return
+        except RuntimeError:
+            pass  # adbd is still restarting
+        time.sleep(2)
+    raise RuntimeError(
+        "adbd did not start as root; the emulator board network requires a rooted emulator"
+    )
+
+
 def ensure_emulator_ethernet(serial: str) -> bool:
     """Enable EthernetService with a static eth1 config; returns True if it restarted.
 
@@ -252,6 +276,7 @@ def ensure_emulator_ethernet(serial: str) -> bool:
     ) + " && echo present || echo missing") == "present"
     if feature_present and config_present:
         return False
+    _ensure_root(serial)
     install = []
     if not feature_present:
         feature_xml = (
