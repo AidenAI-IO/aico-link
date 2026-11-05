@@ -89,6 +89,7 @@ them:
 | xAI | JSON WebSocket | xAI realtime event aliases are normalized to the shared event model |
 | Gemini | Gemini Live WebSocket | `setup`/`serverContent` protocol; input/output transcription and function responses; server VAD does not expose Aico speech boundary events |
 | Speko S2S | HTTP mint + delegated provider WebSocket | Mints a short-lived provider credential, then uses the selected Gemini or xAI adapter; OpenAI/WebRTC routing is intentionally rejected |
+| Moss | JSON + binary WebSocket | MOSS-LIVE (`moss-live-1.0`); 16 kHz PCM uplink / 48 kHz PCM downlink; immediate playback chunk acks; client tools via `delegation=client` + OpenAI-style `function_call_output` / deferred `session.continue` (`ResponseContinuer`, not text injection); reserved names such as `web_search` are exported under an `aico_` alias; client tools are capped at 32; voice-only (no `/api/chat` text inject or camera/screen frames yet) |
 
 Speko is a control-plane adapter, not another PCM relay. Its lease wrapper
 emits `ErrSessionRotated` before expiry so the daemon can reconnect and replay

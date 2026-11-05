@@ -1431,6 +1431,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
@@ -1900,7 +1901,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(call.ResponseID) {
 				requestResponse()
-				if err := textSession.CreateResponse(ctx); err != nil {
+				if responseContinuer == nil {
+					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+				}
+				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
 			}
@@ -2299,7 +2303,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				// discard other tools that the provider is still waiting for.
 				if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(tool.responseID) {
 					requestResponse()
-					if err := textSession.CreateResponse(ctx); err != nil {
+					if responseContinuer == nil {
+						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+					}
+					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
 				}
@@ -2361,10 +2368,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 							continue
 						}
 						requestResponse()
-						if !supportsText {
+						if responseContinuer == nil {
 							continue
 						}
-						if err := textSession.CreateResponse(ctx); err != nil {
+						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
 						continue

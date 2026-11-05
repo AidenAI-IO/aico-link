@@ -900,7 +900,7 @@ base instruction; it does not replace it.
 
 | Field | Default | Description |
 | ----- | ------- | ----------- |
-| `provider` | `qwen` | Named `[voice_settings.realtime.providers.<name>]` record. Bare `qwen`, `speko`, `openai`, `gemini`, or `xai` values remain accepted for compatibility. |
+| `provider` | `qwen` | Named `[voice_settings.realtime.providers.<name>]` record. Bare `qwen`, `speko`, `openai`, `gemini`, `xai`, or `moss` values remain accepted for compatibility. |
 | `enable_speech_emotion` | `true` | Enable realtime speech emotion. |
 | `input_audio_format` / `output_audio_format` | `pcm` | Audio formats accepted by the realtime API. |
 
@@ -947,13 +947,18 @@ endpoint = "wss://gateway.example/v1/realtime"
 realtime_protocol = "legacy"
 voice = "alloy"
 
+[voice_settings.realtime.providers.moss-main]
+type = "moss"
+api_key = "$MOSS_API_KEY"
+model = "moss-live-1.0"
+
 [voice_settings.realtime]
 provider = "speko-main"
 ```
 
 | Field | Providers | Description |
 | ----- | --------- | ----------- |
-| `type` | all | Adapter type: `qwen`, `speko`, `openai`, `gemini`, or `xai`. |
+| `type` | all | Adapter type: `qwen`, `speko`, `openai`, `gemini`, `xai`, or `moss`. |
 | `api_key` | all | Provider credential; supports `$ENV_VAR` expansion. For Gemini Vertex, this is an OAuth access token. |
 | `model` / `voice` | all | Provider-specific model and voice. Speko requires an explicit model; voice may stay empty for the selected upstream default. |
 | `workspace_id` / `region` | Qwen | Optional DashScope routing settings. |

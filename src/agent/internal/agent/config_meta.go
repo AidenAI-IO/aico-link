@@ -578,7 +578,7 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "endpoint", Label: "WebSocket Endpoint", Widget: WidgetText, Layout: "wide",
 						Help:        "Optional provider WebSocket endpoint override. Leave empty to use the provider default.",
 						Advanced:    true,
-						VisibleWhen: all(in("voice_model_providers.type", "qwen", "openai", "gemini", "xai"))},
+						VisibleWhen: all(in("voice_model_providers.type", "qwen", "openai", "gemini", "xai", "moss"))},
 					{Key: "thinking_level", Label: "Thinking Level", Widget: WidgetSelect,
 						Enum: []EnumOption{
 							{Value: "", Label: "LOW (default)"},
