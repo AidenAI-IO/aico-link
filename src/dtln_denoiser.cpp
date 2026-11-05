@@ -48,6 +48,9 @@ struct Runtime {
     decltype(&rknn_run) run = nullptr;
     decltype(&rknn_destroy) destroy = nullptr;
 
+    // Runtime opens the RKNN runtime at path, resolves every rknn_ entry point,
+    // and pins the library in the process. It throws if the library cannot be
+    // opened, lacks a symbol, or cannot be pinned; a rejected library is closed.
     explicit Runtime(const std::string& path) {
         library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!library) throw std::runtime_error(dlerror());
