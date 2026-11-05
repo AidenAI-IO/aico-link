@@ -83,6 +83,9 @@ images and audio selected there.
 Uploads stream to a hidden temporary file and become visible only after the
 complete request is persisted. A duplicate filename receives a random suffix;
 existing files are never overwritten. Failed uploads remove temporary files.
+At boot, shared-storage preparation removes regular `.upload-*` files older than
+one hour from the shared root to recover space after crashes or power loss.
+Newer files, subdirectories, symbolic links, and published files are left intact.
 Oversized uploads return `413`; invalid multipart data or filenames return `400`;
 storage failures return `503` or `507`. Filenames must not be hidden, contain
 path separators or control characters, or exceed 240 UTF-8 bytes.

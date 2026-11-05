@@ -7,4 +7,6 @@ Before=share.mount
 [Service]
 Type=oneshot
 ExecStart=/bin/mkdir -p /userdata/share /share
+# Only stale regular upload temporaries at the shared root are disposable.
+ExecStart=/usr/bin/find /userdata/share -mindepth 1 -maxdepth 1 -type f -name .upload-* -mmin +60 -delete
 RemainAfterExit=yes
