@@ -1226,6 +1226,15 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		steerRecorder = tracker
 	}
 
+	// At startup, settle an offline model change before interrupted-run
+	// recovery loads the previous conversation. Recovery then sees the new
+	// conversation as current and only marks the interruption in the old
+	// transcript, as it does after history is cleared.
+	if r.contextManager == nil {
+		if err := startConversationForIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model), profile.SystemPrompt); err != nil {
+			return RunResult{}, err
+		}
+	}
 	if recoveredManager, err := recoverPendingBackendRunManager(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), r.contextManager); err != nil {
 		return RunResult{}, err
 	} else if recoveredManager != nil {
