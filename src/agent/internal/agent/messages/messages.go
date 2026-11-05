@@ -42,7 +42,17 @@ func (r MessageRole) ToStandardRole() llms.ChatMessageType {
 	}
 }
 
+// SharedFile references controller-local user files. It is persisted for chat
+// history; only the textual path is sent to providers, never the file bytes.
+type SharedFile struct {
+	Name     string `json:"name"`
+	MIMEType string `json:"mime_type"`
+	Path     string `json:"path"`
+	Size     int64  `json:"size"`
+}
+
 type Message struct {
+	SharedFiles            []SharedFile            `json:"shared_files,omitempty"`
 	Role                   MessageRole             `json:"role"`
 	Content                string                  `json:"content"`
 	ReasoningContent       string                  `json:"reasoning_content,omitempty"`
@@ -95,6 +105,7 @@ type Usage struct {
 
 func (msg Message) Clone() Message {
 	cloned := msg
+	cloned.SharedFiles = append([]SharedFile(nil), msg.SharedFiles...)
 	if msg.Usage != nil {
 		usage := *msg.Usage
 		cloned.Usage = &usage
