@@ -116,6 +116,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
         if preconditions and preconditions["preconditions_passed"] is not True:
             unavailable = preconditions["preconditions_passed"] is None
             row["status"] = "judge_error" if unavailable else "skipped"
+            if unavailable:
+                metrics["judge_error"] = preconditions["precondition_error"]
             row["rubric"] = []
             row["rubric_pass_count"] = 0
             row["rubric_total"] = sum(item.scope == "outcome" for item in rubric)

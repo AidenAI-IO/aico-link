@@ -57,7 +57,7 @@ def test_rejudge_scores_no_judge_attempts_but_preserves_execution_gates(tmp_path
         assert "error" not in scored["metrics"]
 
 
-@pytest.mark.parametrize("initial", ["yes", "no"])
+@pytest.mark.parametrize("initial", ["yes", "no", "unavailable"])
 def test_rejudge_keeps_preconditions_out_of_agent_score(tmp_path, monkeypatch, initial):
     from PIL import Image
     from runner.judge import JudgeOutput
@@ -67,12 +67,15 @@ def test_rejudge_keeps_preconditions_out_of_agent_score(tmp_path, monkeypatch, i
     (attempt / "trace.json").write_text(json.dumps({"final_response": "Done"}))
     row = {"task_id": "task", "attempt": 1, "status": "failed", "rubric_total": 1,
            "rubric_spec": [{"id": "start", "check": "Field populated", "scope": "precondition"},
-                           {"id": "empty", "check": "Field empty"}], "metrics": {}}
+                           {"id": "empty", "check": "Field empty"}],
+           "metrics": {"judge_error": "old judge failure"}}
     (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
     outcomes = []
 
     def precondition(**kwargs):
         assert kwargs["trace"] == {} and kwargs["post_screenshot"] is None
+        if initial == "unavailable":
+            raise RuntimeError("current precondition service unavailable")
         return JudgeOutput([RubricVerdict("start", initial, "Initial state")], "", "key", "")
 
     def outcome(**kwargs):
@@ -89,6 +92,10 @@ def test_rejudge_keeps_preconditions_out_of_agent_score(tmp_path, monkeypatch, i
     assert len(outcomes) == int(initial == "yes")
     if initial == "no":
         assert result["metrics"]["failure_class"] == "environment"
+    elif initial == "unavailable":
+        assert result["status"] == "judge_error"
+        assert result["metrics"]["judge_error"] == "current precondition service unavailable"
+        assert result["metrics"]["judge_error"] == result["metrics"]["precondition_error"]
 
 
 def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
