@@ -30,9 +30,12 @@ const (
 // library, since the controller has no image libraries.
 type shellScreenshotExport struct {
 	screen *screen.ScreenState
-	dir    string
+	// dir is a caller-chosen directory; empty means the process's private
+	// directory, created on first export.
+	dir string
 
 	mu         sync.Mutex
+	current    string // directory holding the exported files, once written
 	generation uint64
 	width      int
 	height     int
@@ -43,41 +46,69 @@ func newShellScreenshotExport(state *screen.ScreenState, dir string) *shellScree
 	if state == nil {
 		return nil
 	}
-	if dir == "" {
-		dir = defaultShellScreenshotDir()
-	}
 	e := &shellScreenshotExport{screen: state, dir: dir}
 	// Drop the files as soon as the screenshot is retired, not at the next
 	// shell command. A rebuilt tool set replaces this hook with its own
-	// exporter, which uses the same directory.
+	// exporter, which uses the same process directory.
 	state.SetCaptureInvalidatedHook(e.clear)
 	return e
 }
 
-// defaultShellScreenshotDir is private to this process, so two Agent
-// processes sharing a temp directory never read or remove each other's
-// screenshot.
-func defaultShellScreenshotDir() string {
-	return filepath.Join(os.TempDir(), fmt.Sprintf("aico-agent-screenshot-%d", os.Getpid()))
+// processScreenshotDir is the process's private export directory. The
+// system temp directory is shared, so the name is random and the directory
+// is created by os.MkdirTemp (owned by the Agent, mode 0700): no other user
+// can create it first and later swap the files shell commands read. The path
+// is kept for the life of the process, across tool-set rebuilds, and removed
+// at shutdown.
+var processScreenshotDir struct {
+	sync.Mutex
+	path string
 }
 
-// removeShellScreenshotExports deletes this process's default export
-// directory, for Agent shutdown.
+func shellScreenshotProcessDir() (string, error) {
+	processScreenshotDir.Lock()
+	defer processScreenshotDir.Unlock()
+	if processScreenshotDir.path != "" {
+		if info, err := os.Lstat(processScreenshotDir.path); err == nil && info.IsDir() {
+			return processScreenshotDir.path, nil
+		}
+	}
+	dir, err := os.MkdirTemp("", "aico-agent-screenshot-")
+	if err != nil {
+		return "", err
+	}
+	processScreenshotDir.path = dir
+	return dir, nil
+}
+
+// removeShellScreenshotExports deletes the process's export directory, for
+// Agent shutdown.
 func removeShellScreenshotExports() {
-	os.RemoveAll(defaultShellScreenshotDir())
+	processScreenshotDir.Lock()
+	defer processScreenshotDir.Unlock()
+	if processScreenshotDir.path != "" {
+		os.RemoveAll(processScreenshotDir.path)
+		processScreenshotDir.path = ""
+	}
 }
 
 // clear removes the exported files and forgets them.
 func (e *shellScreenshotExport) clear() {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	os.Remove(e.jpegPath())
-	os.Remove(e.ppmPath())
+	e.removeFiles()
+}
+
+func (e *shellScreenshotExport) removeFiles() {
+	if e.current != "" {
+		os.Remove(e.jpegPath())
+		os.Remove(e.ppmPath())
+	}
 	e.exported = false
 }
 
-func (e *shellScreenshotExport) jpegPath() string { return filepath.Join(e.dir, "screen.jpg") }
-func (e *shellScreenshotExport) ppmPath() string  { return filepath.Join(e.dir, "screen.ppm") }
+func (e *shellScreenshotExport) jpegPath() string { return filepath.Join(e.current, "screen.jpg") }
+func (e *shellScreenshotExport) ppmPath() string  { return filepath.Join(e.current, "screen.ppm") }
 
 // env exports the latest screenshot when it changed since the last export and
 // returns the variables naming it. It returns nil when there is no
@@ -94,9 +125,7 @@ func (e *shellScreenshotExport) env() []string {
 		data, width, height, _, ok := e.screen.LatestScreenshot(0)
 		if !ok {
 			// No current screenshot: make sure nothing reads a stale screen.
-			os.Remove(e.jpegPath())
-			os.Remove(e.ppmPath())
-			e.exported = false
+			e.removeFiles()
 			e.generation = generation
 			return nil
 		}
@@ -121,14 +150,23 @@ func (e *shellScreenshotExport) write(jpegData []byte) error {
 		return fmt.Errorf("decode screenshot: %w", err)
 	}
 	// Screenshots can show private content, so only the Agent's own user
-	// may read them. MkdirAll keeps the mode of a directory that already
-	// exists, so tighten it explicitly.
-	if err := os.MkdirAll(e.dir, 0o700); err != nil {
-		return err
+	// may read them.
+	dir := e.dir
+	if dir == "" {
+		if dir, err = shellScreenshotProcessDir(); err != nil {
+			return err
+		}
+	} else {
+		// A caller-chosen directory: MkdirAll keeps the mode of one that
+		// already exists, so tighten it explicitly.
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
+		}
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return err
+		}
 	}
-	if err := os.Chmod(e.dir, 0o700); err != nil {
-		return err
-	}
+	e.current = dir
 	if err := writeScreenshotFile(e.jpegPath(), jpegData); err != nil {
 		return err
 	}

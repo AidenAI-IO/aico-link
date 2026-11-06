@@ -71,11 +71,13 @@ AICO_SCREENSHOT_WIDTH=<width>
 AICO_SCREENSHOT_HEIGHT=<height>
 ```
 
-`<dir>` is `aico-agent-screenshot-<pid>` under the Agent's system temp
-directory (`/tmp`, a tmpfs, on the controller), so the export never writes to
-flash and two Agent processes never share it. The directory and files are
-readable only by the Agent's user, because screenshots can show private
-content. The files are rewritten, each by a single rename, only when a newer
+`<dir>` is a randomly named `aico-agent-screenshot-*` directory that the Agent
+creates in its system temp directory (`/tmp`, a tmpfs, on the controller) on
+the first export, so the export never writes to flash, two Agent processes
+never share it, and no other user can create it in advance. The directory
+(`0700`) and files (`0600`) are readable only by the Agent's user, because
+screenshots can show private content. The directory is kept for the life of
+the process. The files are rewritten, each by a single rename, only when a newer
 screenshot was captured before a command or background session starts. A
 background session keeps the variables of its start, so each new screenshot is
 read with a new one-shot command. The files are removed as soon as the capture

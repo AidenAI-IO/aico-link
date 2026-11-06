@@ -91,10 +91,43 @@ func TestShellScreenshotExportWritesLatestScreenshot(t *testing.T) {
 	}
 }
 
-func TestShellScreenshotDefaultDirIsPerProcess(t *testing.T) {
-	dir := defaultShellScreenshotDir()
-	if !strings.HasSuffix(dir, fmt.Sprintf("aico-agent-screenshot-%d", os.Getpid())) {
-		t.Fatalf("default dir = %q, want one named for this process", dir)
+func TestShellScreenshotProcessDirIsPrivateStableAndRemoved(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	removeShellScreenshotExports()
+	t.Cleanup(removeShellScreenshotExports)
+
+	// A predictable name planted by someone else in the shared temp
+	// directory is never used: the directory is created fresh, randomly named.
+	planted := filepath.Join(os.TempDir(), fmt.Sprintf("aico-agent-screenshot-%d", os.Getpid()))
+	if err := os.Mkdir(planted, 0o777); err != nil {
+		t.Fatal(err)
+	}
+
+	state := &screen.ScreenState{}
+	state.UpdateScreenshot(solidJPEG(t, 6, 4, color.RGBA{A: 255}), 6, 4)
+	first := newShellScreenshotExport(state, "")
+	env := shellScreenshotEnvMap(first.env())
+	dir := filepath.Dir(env[shellScreenshotPPMEnv])
+	if dir == planted || !strings.HasPrefix(filepath.Base(dir), "aico-agent-screenshot-") {
+		t.Fatalf("export dir = %q, want a fresh randomly named directory (planted %q)", dir, planted)
+	}
+	if info, err := os.Lstat(dir); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("export dir mode = %v err %v, want a 0700 directory", info.Mode(), err)
+	}
+
+	// A rebuilt tool set keeps the same directory.
+	second := newShellScreenshotExport(state, "")
+	if got := filepath.Dir(shellScreenshotEnvMap(second.env())[shellScreenshotPPMEnv]); got != dir {
+		t.Fatalf("rebuilt exporter dir = %q, want %q", got, dir)
+	}
+
+	// Shutdown removes exactly that directory.
+	removeShellScreenshotExports()
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("%s still exists after shutdown cleanup (err %v)", dir, err)
+	}
+	if _, err := os.Stat(planted); err != nil {
+		t.Fatalf("cleanup touched a directory it did not create: %v", err)
 	}
 }
 
