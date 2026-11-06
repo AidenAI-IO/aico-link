@@ -236,9 +236,14 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
 - Publication independently recomputes the gate and validates the patch against
   the tested base. If `main` advanced, publication stops and requires
   a fresh run. This conservative first version does not rebase automatically.
-- Reports go to the Actions job summary and artifacts. Environment/evaluator
-  findings remain report-only initially; automatic issue creation and Lark
-  delivery are not yet implemented.
+- Reports go to the Actions job summary and artifacts. The summary explicitly
+  states execution status and validated-candidate count. A checkout/build/task
+  execution error marks the run `blocked` and returns a nonzero exit code;
+  successful diagnosis alone cannot hide a blocked improve attempt. A completed
+  run with no accepted candidate still does not mean that a fix was validated.
+  Large checkout operations have a deadline-bounded 15-minute allowance and
+  individual retained logs. Environment/evaluator findings remain report-only
+  initially; automatic issue creation and Lark delivery are not yet implemented.
 - The first implementation uses the existing single self-hosted benchmark runner
   to serialize jobs, plus workflow concurrency to serialize auto-improve. Adding
   multiple runners to that label requires a shared resource/scheduling policy.

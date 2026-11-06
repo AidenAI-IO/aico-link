@@ -158,6 +158,53 @@ def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypat
     assert values == {"value": "diagnose", "publish": "false", "artifact_prefix": "auto-improve-test-source-"}
 
 
+def test_checkout_uses_logged_deadline_bounded_commands(tmp_path, monkeypatch):
+    import time
+    commands = []
+    monkeypatch.setattr(driver.execution, "command", lambda args, **kwargs: commands.append((args, kwargs)))
+    driver.checkout(tmp_path, tmp_path / "baseline", "base", deadline=time.monotonic() + 1200)
+    assert len(commands) == 3
+    assert all(120 < kwargs["timeout"] <= 900 for _, kwargs in commands)
+    assert [kwargs["log"].name for _, kwargs in commands] == [
+        "baseline-clone.log", "baseline-checkout.log", "baseline-submodule.log"]
+    commands.clear()
+    with pytest.raises(TimeoutError):
+        driver.checkout(tmp_path, tmp_path / "candidate", "base", deadline=time.monotonic() - 1)
+    assert not commands
+
+
+@pytest.mark.parametrize("branch_test", [False, True])
+def test_driver_reports_checkout_timeout_as_blocked(tmp_path, monkeypatch, branch_test):
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/auto-improve-test/improve/initial" if branch_test else "refs/heads/main")
+    repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
+    repo.mkdir(); source.mkdir()
+    target = "src/agent/config/skills/test/SKILL.md"
+    file = repo / target
+    file.parent.mkdir(parents=True)
+    file.write_text("Existing source path\n")
+    (source / "source.json").write_text(json.dumps({"run": {"id": 42, "run_attempt": 1, "head_sha": "old", "head_branch": "main"}}))
+    tasks = {k: {"case_id": k.split(':')[0], "environment": "isolated", "runnable": True,
+                 "task": {"category": "task"}} for k in ("a:target", "a:neighbor", "b:held")}
+    cluster = {"title": "issue", "category": "task", "cause": "cause", "judge_review": "supported",
+               "fix_target": "skill", "targets": ["a:target"], "neighbors": [],
+               "source_paths": [target], "evidence": ["failure-001"]}
+    monkeypatch.setattr(driver, "git", lambda *args: "base")
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
+    monkeypatch.setattr(driver.evidence, "source_failures", lambda *args: ([{"key": "a:target", "agent_eligible": True}], []))
+    monkeypatch.setattr(driver, "ask", lambda _out, name, *args, **kwargs:
+                        {"summary": "one failure", "clusters": [cluster]} if name == "diagnosis" else {})
+    monkeypatch.setattr(driver, "validated_source_paths", lambda *args: [target])
+    monkeypatch.setattr(driver, "checkout", lambda *args, **kwargs: (_ for _ in ()).throw(
+                        subprocess.TimeoutExpired("git clone", 900)))
+    state = driver.run(repo, source, out, mode="improve")
+    assert state["status"] == "blocked"
+    assert state["attempts"][0]["status"] == "inconclusive"
+    assert "timed out" in state["attempts"][0]["error"].lower()
+
+
 def test_driver_rejects_non_main_source_even_when_given_local_artifacts(tmp_path):
     source = tmp_path / "source"
     source.mkdir()
@@ -388,7 +435,7 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
         if name == "diagnosis":
             return {"summary": "One observed failure", "clusters": [cluster]}
         return {"summary": "Verify first", "edits": [{"path": path, "old": before, "new": after}]}
-    def fake_checkout(_, dest, base):
+    def fake_checkout(_, dest, base, *, deadline):
         (dest / path).parent.mkdir(parents=True)
         (dest / path).write_text(original.read_text())
     def fake_run(root, key, repeat, *args, **kwargs):

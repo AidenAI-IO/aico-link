@@ -109,15 +109,21 @@ def ask(out: Path, name: str, repo: Path, payload: dict, prompt: str, schema: di
 
 
 
-def checkout(repo: Path, destination: Path, base: str) -> None:
-    # A local clone is owned by this workflow. Submodules are not modified here.
-    subprocess.run(["git", "clone", "--shared", "--no-checkout", str(repo), str(destination)], check=True,
-                   stdout=subprocess.DEVNULL, timeout=120)
-    git(destination, "checkout", "--detach", base)
-    # Clone has no submodule worktree until initialized. Resolve the commit
-    # from this checkout, never from the mutable source checkout.
-    subprocess.run(["git", "submodule", "update", "--init", "--depth", "1",
-                    "benchmark/mobilegym/vendor/mobilegym"], cwd=destination, check=True, timeout=600)
+def checkout(repo: Path, destination: Path, base: str, *, deadline: float) -> None:
+    """Materialize the pinned large repository within the overall attempt budget."""
+    steps = [
+        (["git", "clone", "--shared", "--no-checkout", str(repo), str(destination)], repo, "clone"),
+        (["git", "checkout", "--detach", base], destination, "checkout"),
+        (["git", "submodule", "update", "--init", "--depth", "1",
+          "benchmark/mobilegym/vendor/mobilegym"], destination, "submodule"),
+    ]
+    for args, cwd, label in steps:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Execution budget exhausted while preparing checkout")
+        execution.command(args, cwd=cwd, timeout=min(900, remaining),
+                          log=destination.parent / f"{destination.name}-{label}.log",
+                          env=execution.benchmark_environment())
 
 
 def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
@@ -231,8 +237,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 attempt["plan"] = plan
                 baseline_repo = cluster_dir / "baseline"
                 candidate_repo = cluster_dir / "candidate"
-                checkout(repo, baseline_repo, base)
-                checkout(repo, candidate_repo, base)
+                checkout(repo, baseline_repo, base, deadline=deadline)
+                checkout(repo, candidate_repo, base, deadline=deadline)
                 environments = {tasks[k]["environment"] for keys in plan.values() for k in keys}
                 image_prefix = f"aico-auto-improve:{identity}-{count}"
                 reproduction_started = time.monotonic()
@@ -319,7 +325,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     owned = cluster_dir / name
                     if owned.exists():
                         shutil.rmtree(owned)
-        state["status"] = "completed"
+        state["status"] = ("blocked" if any(a["status"] == "inconclusive" for a in state["attempts"])
+                           else "completed")
         return state
     except BaseException as exc:
         state.update({"status": "interrupted" if isinstance(exc, (InterruptedError, KeyboardInterrupt)) else "error",
@@ -333,7 +340,9 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         state["review_usage"] = usage
         state["review_cost"] = policy.review_cost_summary(usage)
         write(out / "manifest.json", state)
-        lines = ["# Benchmark auto-improve", "", f"Source: `{identity}`; base: `{base}`; mode: `{mode}`.", ""]
+        lines = ["# Benchmark auto-improve", "", f"Source: `{identity}`; base: `{base}`; mode: `{mode}`.",
+                 "", f"Execution status: **{state['status']}**. "
+                 f"Validated candidates: {sum(a['status'] == 'ready' for a in state['attempts'])}.", ""]
         if usage:
             cost = state["review_cost"]
             estimate = (f"${cost['estimated_cost_usd']:.3f}" if cost["estimated_cost_usd"] is not None
@@ -361,8 +370,8 @@ def cli() -> int:
     def interrupted(signum, frame):
         raise InterruptedError(f"Workflow interrupted by signal {signum}")
     signal.signal(signal.SIGTERM, interrupted)
-    run(args.repo.resolve(), args.source.resolve(), args.out.resolve(), mode=args.mode)
-    return 0
+    state = run(args.repo.resolve(), args.source.resolve(), args.out.resolve(), mode=args.mode)
+    return 1 if state["status"] in {"blocked", "error", "interrupted", "insufficient_evidence"} else 0
 
 
 if __name__ == "__main__":
