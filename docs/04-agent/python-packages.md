@@ -78,8 +78,10 @@ can show private content. The files are rewritten, each by a single rename,
 only when a newer screenshot was captured before the command starts, and are
 removed when no current screenshot exists. Their pixel coordinates are the
 screenshot's own: the image is already cropped to the phone screen, so a point
-measured there converts to touch coordinates with the width and height the
-model was given, without locating the phone inside the raw capture frame.
+measured there needs no offset into the raw capture frame. It is passed in the
+units the coordinate tool declares: as measured under the visual coordinate
+protocol, otherwise normalized to 0-1000 with the width and height the model
+was given.
 
 ## Installing and Using Packages
 
