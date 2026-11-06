@@ -269,7 +269,7 @@ def evaluate_task_history(
             attempt=attempt, artifact_dir=artifact_dir, judge_cfg=None, judge_cache_dir=judge_cache_dir,
             run_id=run_id, timed_out=timed_out, metrics=metrics, pre_screenshot=pre_screenshot,
             post_screenshot=post_screenshot, started_at=started, started_mono=started_mono,
-            active_skills=active_skills, episode=episode, memory_state=memory_state,
+            episode=episode, memory_state=memory_state,
             memory_state_error=memory_state_error,
         )
         # Ordinary scoring can stop at an earlier hard gate. Record the remaining
