@@ -7,6 +7,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -85,6 +86,42 @@ func TestShellScreenshotExportWritesLatestScreenshot(t *testing.T) {
 	for _, p := range []string{export.jpegPath(), export.ppmPath()} {
 		if _, err := os.Stat(p); !os.IsNotExist(err) {
 			t.Fatalf("%s still exists after capture invalidation (err %v)", p, err)
+		}
+	}
+}
+
+func TestShellScreenshotExportStaysPrivateOverAWiderDirectory(t *testing.T) {
+	// A directory and a temporary file left by an earlier build with wider
+	// modes must not expose the next screenshot.
+	dir := filepath.Join(t.TempDir(), "shots")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(dir, "screen.ppm.tmp")
+	if err := os.WriteFile(leftover, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	state := &screen.ScreenState{}
+	state.UpdateScreenshot(solidJPEG(t, 6, 4, color.RGBA{A: 255}), 6, 4)
+	export := newShellScreenshotExport(state, dir)
+	if env := export.env(); env == nil {
+		t.Fatal("no screenshot exported")
+	}
+	if info, err := os.Stat(dir); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("directory mode = %v err %v, want 0700", info.Mode().Perm(), err)
+	}
+	for _, p := range []string{export.jpegPath(), export.ppmPath()} {
+		if info, err := os.Stat(p); err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatalf("%s mode = %v err %v, want 0600", p, info.Mode().Perm(), err)
+		}
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if name := e.Name(); name != "screen.jpg" && name != "screen.ppm" && name != "screen.ppm.tmp" {
+			t.Fatalf("export left %q behind", name)
 		}
 	}
 }

@@ -95,16 +95,39 @@ func (e *shellScreenshotExport) write(jpegData []byte) error {
 		return fmt.Errorf("decode screenshot: %w", err)
 	}
 	// Screenshots can show private content, so only the Agent's own user
-	// may read them. Each file is replaced in one rename, so a command
-	// reading it while the next screenshot is exported never sees a partial
-	// image.
+	// may read them. MkdirAll keeps the mode of a directory that already
+	// exists, so tighten it explicitly.
 	if err := os.MkdirAll(e.dir, 0o700); err != nil {
 		return err
 	}
-	if err := writeFileAtomic(e.jpegPath(), jpegData, 0o600); err != nil {
+	if err := os.Chmod(e.dir, 0o700); err != nil {
 		return err
 	}
-	return writeFileAtomic(e.ppmPath(), encodePPM(img), 0o600)
+	if err := writeScreenshotFile(e.jpegPath(), jpegData); err != nil {
+		return err
+	}
+	return writeScreenshotFile(e.ppmPath(), encodePPM(img))
+}
+
+// writeScreenshotFile replaces path in one rename, so a command reading it
+// while the next screenshot is exported never sees a partial image. The
+// temporary file is unique and created 0600, so neither a leftover from an
+// interrupted write nor a concurrent export can widen its permissions.
+func writeScreenshotFile(path string, data []byte) error {
+	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
+	if err != nil {
+		return err
+	}
+	tmp := f.Name()
+	defer os.Remove(tmp)
+	if _, err := f.Write(data); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // encodePPM returns img as binary PPM (P6): a text header "P6\n<w> <h>\n255\n"
