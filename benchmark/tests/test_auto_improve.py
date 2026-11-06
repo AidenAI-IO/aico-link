@@ -14,6 +14,21 @@ import pytest
 from ci.auto_improve import control, driver, emulator, evidence, execution, github, policy, review
 
 
+def test_remove_checkout_handles_read_only_module_cache_without_following_symlinks(tmp_path):
+    checkout = tmp_path / "candidate"
+    module = checkout / ".cache" / "go-mod" / "example.org" / "module@v1"
+    module.mkdir(parents=True)
+    (module / "go.mod").write_text("module example.org/module\n")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "keep").write_text("retained")
+    (checkout / "external").symlink_to(outside, target_is_directory=True)
+    module.chmod(0o555)
+    driver.remove_checkout(checkout)
+    assert not checkout.exists()
+    assert (outside / "keep").read_text() == "retained"
+
+
 def row(repeat, success=True, **metrics):
     return {"repeat": repeat, "status": "passed" if success else "failed", "metrics": {
         "agent_eligible": True, "success": success, "tool_calls": 3, "total_tokens": 100, **metrics}}

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import stat
 import subprocess
 import time
 
@@ -23,6 +24,15 @@ def write(path: Path, value) -> None:
     temp = path.with_suffix(".tmp")
     temp.write_text(json.dumps(evidence.sanitize(value), indent=2, ensure_ascii=False) + "\n")
     temp.replace(path)
+
+
+def remove_checkout(path: Path) -> None:
+    """Go module caches contain owner-readable but non-writable directories."""
+    for root, dirs, _ in os.walk(path, followlinks=False):
+        directory = Path(root)
+        if not directory.is_symlink():
+            directory.chmod(stat.S_IMODE(directory.stat().st_mode) | stat.S_IWUSR | stat.S_IXUSR)
+    shutil.rmtree(path)
 
 
 def git(root: Path, *args: str) -> str:
@@ -306,9 +316,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 checks = policy.verification_commands(changed)
                 for index, check in enumerate(checks):
                     progress(f"cluster {count}: check {' '.join(check)}")
-                    execution.command(check, cwd=candidate_repo,
-                                      log=cluster_dir / ("check.log" if index == 0 else "go-unit-check.log"),
-                                      timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                    try:
+                        execution.command(check, cwd=candidate_repo,
+                                          log=cluster_dir / ("check.log" if index == 0 else "go-unit-check.log"),
+                                          timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                    except RuntimeError:
+                        # Keep the candidate failure as a gate, and collect the same
+                        # check on unmodified code to distinguish existing failures.
+                        progress(f"cluster {count}: diagnose failed check on baseline")
+                        baseline_log = cluster_dir / ("baseline-check.log" if index == 0 else "baseline-go-unit-check.log")
+                        attempt["failed_check"] = check
+                        try:
+                            execution.command(check, cwd=baseline_repo, log=baseline_log,
+                                              timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                            attempt["baseline_check_passed"] = True
+                        except (RuntimeError, OSError, subprocess.SubprocessError) as baseline_error:
+                            attempt["baseline_check_passed"] = False
+                            attempt["baseline_check_error"] = str(baseline_error)
+                        raise
                 progress(f"cluster {count}: build candidate")
                 execution.prepare(candidate_repo, image_prefix + "-candidate", environments,
                                   cluster_dir / "candidate-build", deadline - time.monotonic())
@@ -358,7 +383,12 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 for name in ("baseline", "candidate"):
                     owned = cluster_dir / name
                     if owned.exists():
-                        shutil.rmtree(owned)
+                        try:
+                            remove_checkout(owned)
+                        except OSError as cleanup_error:
+                            state.setdefault("warnings", []).append(f"Cleanup failed for {owned.name}: {cleanup_error}")
+                            attempt.update({"status": "inconclusive", "cleanup_error": str(cleanup_error)})
+                            progress(f"cluster {count}: cleanup failed for {owned.name}")
         state["status"] = ("blocked" if any(a["status"] == "inconclusive" for a in state["attempts"])
                            else "completed")
         return state

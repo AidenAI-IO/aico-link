@@ -232,6 +232,11 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   `bash scripts/run_tests_in_docker.sh --suite go-unit`, because the quick
   profile does not exercise the full Go unit suite. The publisher independently
   checks that the required checks were recorded along with the benchmark results.
+  A failed candidate check remains blocking; the same command also runs on the
+  unmodified baseline and retains a separate log to diagnose pre-existing failures.
+  Baseline success or failure never overrides the failed candidate gate. Checkout
+  cleanup makes owner-owned Go module cache directories writable before deletion;
+  cleanup errors are recorded separately without replacing the original check error.
 - Neighbor coverage includes the target suite's related tasks and any explicitly
   justified neighbors. Up to ten additional same-environment tasks are selected
   deterministically, excluding failures exposed during diagnosis. If independent
