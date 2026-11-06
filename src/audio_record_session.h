@@ -45,6 +45,8 @@ public:
 
 private:
     void capture_loop();
+    void start_denoiser();
+    void finish_denoiser();
     void enqueue_pcm(std::vector<uint8_t> chunk);
     AudioConfig hardware_capture_config() const;
     void maybe_update_hw_sample_rate(uint64_t timestamp_us, size_t frame_samples_per_channel);

@@ -1,12 +1,22 @@
 package agent
 
 import (
-	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
+
+func TestGPIOWatcherWithEdgeRejectsInvalidConfiguration(t *testing.T) {
+	if _, err := NewGPIOWatcherWithEdge(-1, GPIOEdgeRising, nil); err == nil {
+		t.Fatal("negative GPIO pin was accepted")
+	}
+	if _, err := NewGPIOWatcherWithEdge(36, GPIOEdge("sideways"), nil); err == nil {
+		t.Fatal("unsupported GPIO edge was accepted")
+	}
+}
 
 func TestGPIOWatcherStopJoinsBeforeClosingDescriptor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "value")

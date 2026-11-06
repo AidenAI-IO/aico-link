@@ -119,7 +119,8 @@ AudioConfig AudioRecordSession::hardware_capture_config() const {
     return cfg;
 }
 
-bool AudioRecordSession::start() {
+void AudioRecordSession::start_denoiser() {
+    denoise_failure_logged_ = false;
     const char* enabled = std::getenv("AUDIO_SERVICE_DENOISE");
     if (!enabled || std::strcmp(enabled, "0") != 0) {
         if (fmt_.channels == 1 && fmt_.bit_width == 16 &&
@@ -139,6 +140,15 @@ bool AudioRecordSession::start() {
                           fmt_.sample_rate, fmt_.channels, fmt_.bit_width);
         }
     }
+}
+
+void AudioRecordSession::finish_denoiser() {
+    if (!denoiser_) return;
+    enqueue_pcm(denoiser_->finish());
+    denoiser_.reset();
+}
+
+bool AudioRecordSession::start() {
     AudioConfig cfg = hardware_capture_config();
     if (cfg.sample_rate != static_cast<int>(fmt_.sample_rate)) {
         AICO_LOG_INFO("recording", "capture_rate_resampled",
@@ -150,6 +160,10 @@ bool AudioRecordSession::start() {
                         static_cast<unsigned long long>(session_id_));
         return false;
     }
+
+    // Keep the RKNN model lifetime inside the Rockit capture lifetime. SYS
+    // teardown can unload runtime code still used by DTLN tail processing.
+    start_denoiser();
 
     // RV1106 capture path typically delivers stereo even in mono mode.
     hw_sample_rate_ = cfg.sample_rate;
@@ -255,14 +269,15 @@ void AudioRecordSession::capture_loop() {
                                "session_id=%llu consecutive_failures=%d",
                                static_cast<unsigned long long>(session_id_),
                                consecutive_failures);
+                finish_denoiser();
                 capture_.stop();
-                if (denoiser_) enqueue_pcm(denoiser_->finish());
                 AudioConfig cfg = hardware_capture_config();
                 if (!capture_.init(cfg)) {
                     AICO_LOG_ERROR("recording", "capture_reinit_failed", "session_id=%llu",
                                     static_cast<unsigned long long>(session_id_));
                     usleep(20000);
                 } else {
+                    start_denoiser();
                     consecutive_failures = 0;
                     prev_timestamp_us_ = 0;
                 }
@@ -308,8 +323,9 @@ void AudioRecordSession::capture_loop() {
         capture_.release_frame();
     }
 
+    // Flush and destroy RKNN contexts before releasing the final Rockit user.
+    finish_denoiser();
     capture_.stop();
-    if (denoiser_) enqueue_pcm(denoiser_->finish());
     // EOF is visible only after the delayed DTLN tail has been queued.
     {
         std::lock_guard<std::mutex> lock(mutex_);

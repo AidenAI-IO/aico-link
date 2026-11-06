@@ -55,8 +55,65 @@ func TestWakeupReadyLabelUsesGatedGPIOFallback(t *testing.T) {
 	}
 
 	readDeviceTreeModel = func() string { return "Aico Link SCH v1" }
-	if got := wakeupReadyLabel(agent.Config{}); got != "MCU ASR (socket unavailable)" {
-		t.Fatalf("wakeupReadyLabel() = %q, want MCU ASR (socket unavailable)", got)
+	if got := wakeupReadyLabel(agent.Config{}); got != "GX8002 GPIO0 (J17-10)" {
+		t.Fatalf("wakeupReadyLabel() = %q, want GX8002 GPIO0 (J17-10)", got)
+	}
+}
+
+func TestAddGX8002GPIOWakeupUsesJ17InputOnlyOnAicoBoard(t *testing.T) {
+	primary := &fakeWakeupWatcher{}
+	gpio := &fakeWakeupWatcher{}
+	var gpioCallback func()
+	callbackCount := 0
+	base := func(callback func()) (wakeupWatcher, error) {
+		primary.callback = callback
+		return primary, nil
+	}
+	newGPIO := func(pin int, edge agent.GPIOEdge, callback func()) (wakeupWatcher, error) {
+		if pin != gx8002WakeupLinuxGPIO || edge != agent.GPIOEdgeRising {
+			t.Fatalf("GPIO watcher configured for pin=%d edge=%q", pin, edge)
+		}
+		gpioCallback = callback
+		return gpio, nil
+	}
+
+	watcher, err := addGX8002GPIOWakeup("Aico Link SCH v1", base, newGPIO)(func() { callbackCount++ })
+	if err != nil {
+		t.Fatal(err)
+	}
+	combined, ok := watcher.(*multiWakeupWatcher)
+	if !ok || len(combined.watchers) != 2 {
+		t.Fatalf("combined watcher = %#v", watcher)
+	}
+	if err := watcher.Start(); err != nil {
+		t.Fatal(err)
+	}
+	gpioCallback()
+	if !primary.started || !gpio.started || callbackCount != 1 {
+		t.Fatalf("primary started=%v GPIO started=%v callback count=%d", primary.started, gpio.started, callbackCount)
+	}
+	watcher.Stop()
+
+	called := false
+	watcher, err = addGX8002GPIOWakeup("Luckfox Pico Zero", base, func(int, agent.GPIOEdge, func()) (wakeupWatcher, error) {
+		called = true
+		return gpio, nil
+	})(func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if watcher != primary || called {
+		t.Fatalf("non-Aico watcher = %#v, GPIO factory called=%v", watcher, called)
+	}
+
+	watcher, err = addGX8002GPIOWakeup("Aico Link SCH v1", base, func(int, agent.GPIOEdge, func()) (wakeupWatcher, error) {
+		return nil, os.ErrPermission
+	})(func() {})
+	if err != nil {
+		t.Fatalf("optional GPIO setup error = %v", err)
+	}
+	if watcher != primary {
+		t.Fatalf("watcher after optional GPIO setup failure = %#v, want primary watcher", watcher)
 	}
 }
 

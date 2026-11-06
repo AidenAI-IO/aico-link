@@ -130,6 +130,21 @@ plug and unknown events advance the cursor without activating voice. Quick
 Capture's configured GPIO3 input is independent. Text mode does not start this
 consumer.
 
+The [GX8002 integration guide](../07-operations/gx8002-wakeup.md) covers wiring,
+firmware tools, microphone ownership and board validation.
+
+On Aico Link SCH v1, an external GX8002 wake output can also enter the same
+voice loop directly: connect its 3.3 V active-high GPIO0 pulse to interface
+header J17-10 (`UART1_RX`, RV1106 `GPIO1_A4`) and connect grounds. The custom
+device tree disables UART1 and configures this pin as a GPIO input with a
+pull-down; the Agent watches Linux GPIO 36 on rising edges. The direct signal
+uses the same debounce and recording/interruption logic, while MCU touch and
+other MCU events continue through UDS. This path triggers the Agent locally;
+it does not create an MCU `source: "asr"` event and cannot wake the RV1106 from
+poweroff or a suspend mode that does not accept this GPIO as a wake source.
+Keep the GX8002 output low while idle and share ground. Do not connect the
+module's power output to J17-10.
+
 The consumer uses `AICO_MCU_SERVICE_SOCKET`, or the default service socket.
 It long-polls with a 25-second wait, retries service failures every second,
 and handles pagination, generation resets and truncated history. Stopping or

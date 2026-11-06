@@ -12,6 +12,7 @@ namespace aico {
 namespace {
 
 const size_t kAudioPlayerOperationCount = 3;
+std::atomic<int> capture_users{0};
 
 size_t operation_index(test::AudioPlayerOperation operation) {
     return static_cast<size_t>(operation);
@@ -61,6 +62,8 @@ private:
 
 namespace test {
 
+int active_audio_captures() { return capture_users.load(); }
+
 void reset_audio_player_test_state() {
     AudioPlayerTestState& state = audio_player_test_state();
     std::lock_guard<std::mutex> lock(state.mutex);
@@ -104,7 +107,10 @@ int max_concurrent_audio_player_operations() {
 
 }  // namespace test
 
-class AudioCaptureImpl {};
+class AudioCaptureImpl {
+public:
+    bool initialized = false;
+};
 class AudioPlayerImpl {
 public:
     std::atomic<int> volume{100};
@@ -112,11 +118,19 @@ public:
 };
 
 AudioCapture::AudioCapture() : impl_(new AudioCaptureImpl()) {}
-AudioCapture::~AudioCapture() {}
+AudioCapture::~AudioCapture() { stop(); }
 
-bool AudioCapture::init(const AudioConfig&) { return true; }
+bool AudioCapture::init(const AudioConfig&) {
+    if (!impl_->initialized) ++capture_users;
+    impl_->initialized = true;
+    return true;
+}
 bool AudioCapture::start(AudioStreamCallback) { return true; }
-void AudioCapture::stop() {}
+void AudioCapture::stop() {
+    if (!impl_->initialized) return;
+    impl_->initialized = false;
+    --capture_users;
+}
 bool AudioCapture::get_frame(AudioFrame&) { return false; }
 void AudioCapture::release_frame() {}
 bool AudioCapture::is_running() const { return false; }
