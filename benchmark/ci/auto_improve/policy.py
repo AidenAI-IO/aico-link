@@ -150,6 +150,38 @@ def select_tasks(cluster: dict, tasks: dict[str, dict], *, max_tasks: int = 32,
     return plan
 
 
+def prune_reproduction(plan: dict[str, list[str]], audit: dict,
+                       baseline: dict[str, list[dict]]) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Keep only individually supported, reproducible targets; quarantine uncertain targets as regression cases."""
+    tasks = audit.get("tasks")
+    if not isinstance(tasks, list):
+        raise ValueError("Reproduction audit must give a per-task disposition")
+    indexed = {item.get("task"): item for item in tasks if isinstance(item, dict)}
+    expected = set(plan["targets"])
+    if len(indexed) != len(tasks) or set(indexed) != expected:
+        raise ValueError("Reproduction audit omitted, duplicated, or invented task IDs")
+    kept_targets, uncertain_targets = [], []
+    for key in plan["targets"]:
+        result = indexed[key]
+        rows = baseline.get(key, [])
+        reproduced = (len(rows) == REPEATS and
+                      {r.get("repeat") for r in rows} == set(range(1, REPEATS + 1)) and
+                      all(status_fields(r)[2] and status_fields(r)[0] is not None for r in rows) and
+                      sum(status_fields(r)[0] is False for r in rows) >= 2)
+        if result["disposition"] == "agent_failure" and reproduced:
+            kept_targets.append(key)
+        else:
+            uncertain_targets.append(key)
+    if not kept_targets:
+        raise ValueError("No target task has individually supported, reproducible agent failure evidence")
+    pruned = dict(plan)
+    pruned["targets"] = kept_targets
+    pruned["neighbors"] = sorted(set(plan["neighbors"] + uncertain_targets))
+    if not pruned["neighbors"] or not plan["held_out"]:
+        raise ValueError("Pruned verification lacks neighbor or held-out task coverage")
+    return pruned, {"targets": uncertain_targets}
+
+
 def compare(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
             candidate: dict[str, list[dict]]) -> dict:
     """Fail closed on missing, duplicate, ineligible, or unmeasured outcomes."""

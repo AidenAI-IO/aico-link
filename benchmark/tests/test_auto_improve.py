@@ -377,6 +377,22 @@ def test_cost_reporting_distinguishes_missing_prices_from_zero(costs, total, mea
                       "total_sessions": len(costs), "complete": complete}
 
 
+def test_reproduction_filters_targets_independently_without_discarding_regression_coverage():
+    plan = {"targets": ["a:broken", "a:recovered", "a:environment"], "neighbors": ["a:neighbor"], "held_out": ["b:held"]}
+    baseline = {key: [row(i, key == "a:recovered") for i in range(1, 4)] for key in plan["targets"]}
+    audit = {"tasks": [{"task": key, "disposition": disposition, "reason": "evidence", "evidence": ["trace"]}
+                       for key, disposition in [("a:broken", "agent_failure"), ("a:recovered", "agent_failure"),
+                                                ("a:environment", "environment_or_evaluation")]]}
+    filtered, removed = policy.prune_reproduction(plan, audit, baseline)
+    assert filtered["targets"] == ["a:broken"]
+    assert set(filtered["neighbors"]) == {"a:neighbor", "a:recovered", "a:environment"}
+    assert removed["targets"] == ["a:recovered", "a:environment"]
+    assert plan["targets"] == ["a:broken", "a:recovered", "a:environment"]
+    audit["tasks"].pop()
+    with pytest.raises(ValueError, match="task IDs"):
+        policy.prune_reproduction(plan, audit, baseline)
+
+
 def test_diagnosis_rejects_evidence_paths_as_edit_targets(tmp_path):
     cluster = {"targets": ["memory:task"], "category": "memory", "cause": "unknown",
                "judge_review": "supported", "fix_target": "go_code",
@@ -434,6 +450,9 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
         events.append(name)
         if name == "diagnosis":
             return {"summary": "One observed failure", "clusters": [cluster]}
+        if name == "reproduction-review":
+            return {"summary": "Reproduced", "tasks": [{"task": "a:target", "disposition": "agent_failure",
+                                                          "reason": "Failed deterministic assertion", "evidence": ["fresh trace"]}]}
         return {"summary": "Verify first", "edits": [{"path": path, "old": before, "new": after}]}
     def fake_checkout(_, dest, base, *, deadline):
         (dest / path).parent.mkdir(parents=True)

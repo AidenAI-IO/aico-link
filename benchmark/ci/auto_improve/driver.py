@@ -14,6 +14,10 @@ from ci.auto_improve import evidence, execution, policy, review
 from runner.metrics import status_fields
 
 
+def progress(stage: str) -> None:
+    print(f"[auto-improve] {stage}", flush=True)
+
+
 def write(path: Path, value) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_suffix(".tmp")
@@ -90,11 +94,13 @@ def ask(out: Path, name: str, repo: Path, payload: dict, prompt: str, schema: di
     remaining = deadline - time.monotonic()
     if remaining < 30:
         raise TimeoutError("Budget exhausted before review")
+    progress(f"review start: {name}")
     stage = workspace(out, name, repo, payload, image_root=image_root)
     try:
-        result = review.ask(stage, "Read input.json and relevant source/evidence files. " + prompt, schema,
+        result = review.ask(stage, "Read input.json and source-files.json (exact available code paths), then relevant source/evidence files. " + prompt, schema,
                             timeout=min(900, remaining))
         write(out / f"{name}.json", result)
+        progress(f"review completed: {name}")
         return result
     finally:
         error_log = stage / "session-error.log"
@@ -121,6 +127,7 @@ def checkout(repo: Path, destination: Path, base: str, *, deadline: float) -> No
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("Execution budget exhausted while preparing checkout")
+        progress(f"prepare {destination.name}: {label}")
         execution.command(args, cwd=cwd, timeout=min(900, remaining),
                           log=destination.parent / f"{destination.name}-{label}.log",
                           env=execution.benchmark_environment())
@@ -242,9 +249,11 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 environments = {tasks[k]["environment"] for keys in plan.values() for k in keys}
                 image_prefix = f"aico-auto-improve:{identity}-{count}"
                 reproduction_started = time.monotonic()
+                progress(f"cluster {count}: build baseline")
                 execution.prepare(baseline_repo, image_prefix + "-base", environments, cluster_dir / "base-build", deadline - time.monotonic())
                 baseline, candidate = {}, {}
                 for key in plan["targets"]:
+                    progress(f"cluster {count}: reproduce {key} (3 attempts)")
                     baseline[key] = [execution.run_task(baseline_repo, key, repeat, image_prefix + "-base",
                                      cluster_dir / "baseline-runs" / policy.digest(key)[:12] / str(repeat), deadline=deadline)
                                      for repeat in range(1, 4)]
@@ -254,13 +263,34 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     continue
                 if any(not status_fields(r)[2] or status_fields(r)[0] is None for rows in baseline.values() for r in rows):
                     raise ValueError("Reproduction has unevaluable attempts")
-                reproduction_audit = audit(cluster_dir, "reproduction-review", repo, {"cluster": cluster,
-                                             "tasks": {k: tasks[k] for k in plan["targets"]}, "baseline": baseline}, deadline)
+                reproduction_audit = ask(cluster_dir, "reproduction-review", repo,
+                    {"historical_hypothesis": cluster, "tasks": {k: tasks[k] for k in plan["targets"]},
+                     "baseline": baseline},
+                    "Assess EACH target independently using the NEW baseline evidence and current task assertions. "
+                    "The historical hypothesis describes a different run; changed outcomes do not invalidate other tasks. "
+                    "Classify each task as agent_failure, not_reproduced, environment_or_evaluation, or insufficient_evidence. "
+                    "A deterministic assertion failure does not require an LLM rubric or screenshot unless the assertion itself "
+                    "needs visual evidence. Old details/failure references are historical and not expected in this workspace. "
+                    "Inspect fresh evidence directories and source. Resolve confounding setup/tool failures per task. "
+                    "Return exactly one disposition for each target, with its fresh evidence and corrected causal explanation.",
+                    review.REPRODUCTION_AUDIT, deadline)
                 write(cluster_dir / "reproduction-review.json", reproduction_audit)
-                if not reproduction_audit["supported"]:
-                    attempt["status"] = "grading_disputed"
+                original_targets = list(plan["targets"])
+                try:
+                    plan, removed = policy.prune_reproduction(plan, reproduction_audit, baseline)
+                except ValueError as exc:
+                    attempt.update({"status": "grading_disputed", "reason": str(exc)})
                     continue
-                patch = ask(cluster_dir, "fix", repo, {"cluster": cluster, "baseline": baseline,
+                attempt["reproduction_dispositions"] = reproduction_audit
+                attempt["removed_targets"] = removed["targets"]
+                attempt["plan"] = plan
+                write(cluster_dir / "plan.json", plan)
+                repair_cluster = {**cluster, "targets": plan["targets"],
+                                  "cause": reproduction_audit["summary"],
+                                  "evidence": [item for task in reproduction_audit["tasks"]
+                                               if task["task"] in plan["targets"] for item in task["evidence"]]}
+                patch = ask(cluster_dir, "fix", repo, {"cluster": repair_cluster,
+                            "baseline": {key: baseline[key] for key in plan["targets"]},
                             "audit": reproduction_audit, "allowed_paths": source_paths},
                             "Propose exact old/new replacements for the smallest fix. Only edit allowed_paths. "
                             "Agent Go implementation changes are allowed under src/agent/internal and src/agent/cmd, "
@@ -275,19 +305,22 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 changed = policy.apply_edits(candidate_repo, patch["edits"])
                 checks = policy.verification_commands(changed)
                 for index, check in enumerate(checks):
+                    progress(f"cluster {count}: check {' '.join(check)}")
                     execution.command(check, cwd=candidate_repo,
                                       log=cluster_dir / ("check.log" if index == 0 else "go-unit-check.log"),
                                       timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                progress(f"cluster {count}: build candidate")
                 execution.prepare(candidate_repo, image_prefix + "-candidate", environments,
                                   cluster_dir / "candidate-build", deadline - time.monotonic())
                 if time.monotonic() - reproduction_started > 3600:
                     raise TimeoutError("Target baseline is more than one hour old; rerun instead of comparing stale evidence")
                 for group, keys in plan.items():
                     for key in keys:
+                        progress(f"cluster {count}: verify {group} task {key} (3 attempts per side)")
                         baseline.setdefault(key, [])
                         candidate[key] = []
                         for repeat in range(1, 4):
-                            if group != "targets":
+                            if key not in original_targets:
                                 baseline[key].append(execution.run_task(baseline_repo, key, repeat, image_prefix + "-base",
                                     cluster_dir / "baseline-runs" / policy.digest(key)[:12] / str(repeat), deadline=deadline))
                             candidate[key].append(execution.run_task(candidate_repo, key, repeat, image_prefix + "-candidate",
@@ -320,6 +353,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 attempt.update({"status": "inconclusive", "error": str(exc)})
             finally:
+                progress(f"cluster {count}: {attempt['status']}")
                 write(out / "manifest.json", state)
                 for name in ("baseline", "candidate"):
                     owned = cluster_dir / name

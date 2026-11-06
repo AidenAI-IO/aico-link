@@ -400,6 +400,12 @@ or describe an unverified change as a validated fix.
 - Review the new results and their grading evidence. Record `not_reproduced`,
   `intermittent`, or `insufficient_evidence` when applicable; do not label an
   entire cluster flaky because one task passed twice.
+- Review each task independently against its fresh reproduction evidence. A
+  recovered task or a confounded environment failure must not invalidate a
+  different, independently reproduced agent failure in the same historical cluster.
+  Keep removed targets in neighbor regression coverage and record their individual
+  dispositions. The fix proposal receives the supported targets and corrected
+  evidence, not stale claims about the removed targets.
 - Only reproduced, supported failures proceed to modification. No A/A study or
   change to daily repeats is a prerequisite for starting this workflow.
 
