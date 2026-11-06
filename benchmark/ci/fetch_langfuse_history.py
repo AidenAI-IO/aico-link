@@ -55,6 +55,9 @@ def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
                 "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
         return None
+    # Matching provenance labels do not establish matching skill content.
+    if record.get("skills_fingerprint") in ("mixed", "external-daemon", "unavailable"):
+        return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
 
 

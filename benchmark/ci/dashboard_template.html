@@ -308,7 +308,7 @@ const configValue = (run, field) => {
     return [platform && platform !== "auto" ? platform : "", run?.environment_label || "Unknown"].filter(Boolean).join(" / ");
   }
   let value = run?.[field];
-  if (field === "skills_fingerprint" && typeof value === "string" && value.length > 12) {
+  if (field === "skills_fingerprint" && typeof value === "string" && /^[0-9a-f]{64}$/.test(value)) {
     value = value.slice(0, 12);
   }
   const text = Array.isArray(value) ? value.join(", ") : value == null || value === "" ? "—" : String(value);

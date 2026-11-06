@@ -577,6 +577,10 @@ if (namesForFilter('all').length !== datasets.length) process.exit(39);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
 const assert = require('node:assert/strict');
+for (const value of ['external-daemon', 'mixed', 'unavailable', 'not-a-sha256-digest']) {
+  assert.equal(configValue({skills_fingerprint: value}, 'skills_fingerprint'), value);
+}
+assert.equal(configValue({skills_fingerprint: 'a'.repeat(64)}, 'skills_fingerprint'), 'a'.repeat(12));
 assert(!overviewHTML.includes('Config changed') && !overviewHTML.includes('Config unverified'));
 assert(!elements.has('configuration-context'));
 assert(!elements.has('comparison-note'));
