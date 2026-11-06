@@ -90,6 +90,28 @@ jobs:
             --event "$GITHUB_EVENT_NAME" \
             --ref "$GITHUB_REF" \
             --publish-requested "$PUBLISH_REQUESTED"
+      - name: Prepare and validate improve runner prerequisites
+        if: steps.mode.outputs.value == 'improve'
+        run: |
+          set -euo pipefail
+          if ! command -v make >/dev/null 2>&1; then
+            if ! command -v apt-get >/dev/null 2>&1; then
+              echo 'Install GNU make on this runner before using improve mode' >&2
+              exit 1
+            fi
+            privilege=()
+            if [[ "$(id -u)" != '0' ]]; then
+              privilege=(sudo -n)
+            fi
+            "${privilege[@]}" apt-get update
+            "${privilege[@]}" apt-get install -y --no-install-recommends make
+          fi
+          make --version
+          command -v bash
+          command -v git
+          command -v docker
+          docker info >/dev/null
+          docker compose version
       - id: discover
         name: Find an unprocessed completed main daily run
         working-directory: benchmark

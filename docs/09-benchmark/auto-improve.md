@@ -224,6 +224,10 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   can change. Tests, test fixtures, vendored code, dependency metadata, benchmark
   evaluators, and workflow/build scripts remain excluded. The exact-replacement
   mechanism currently edits existing files only; adding files is not supported.
+- Improve mode checks Bash, Git, GNU make, Docker daemon access, and Docker
+  Compose before source discovery or model calls. On apt-based runners it installs
+  missing make using root or non-interactive sudo; other runners must provision
+  make in advance. Compilers and test dependencies remain in the pinned test image.
 - Every candidate runs `make check`. Any Go file change also requires
   `bash scripts/run_tests_in_docker.sh --suite go-unit`, because the quick
   profile does not exercise the full Go unit suite. The publisher independently
