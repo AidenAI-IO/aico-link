@@ -6,7 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
+
+	"aico-agent/internal/agent/agentpath"
 )
 
 // ConfigPrepareFunc drains input sessions and prepares replacement components.
@@ -343,9 +346,15 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 	if tools != oldTools && oldTools != nil {
 		oldTools.closeInputDevices()
 	}
-	// InitializeContextManager rotates the append-only session when its system
-	// prompt changes. Model/provider changes also drop provider-specific chaining.
-	if current.Locale != cfg.Locale || current.TimezoneOrDefault() != cfg.TimezoneOrDefault() || current.Instruction != cfg.Instruction || current.Prompt != cfg.Prompt || current.Model.Provider != cfg.Model.Provider || current.Model.Model != cfg.Model.Model || current.Model.APIMode != cfg.Model.APIMode || current.Model.BaseURL != cfg.Model.BaseURL {
+	// Prompt settings (locale, time zone, instruction, prompt) need no rotation:
+	// the next task rewrites the session's system message and keeps the
+	// conversation. A model or provider change starts a new conversation
+	// because the transcript carries provider-specific reasoning and
+	// continuation data that another model cannot replay.
+	if current.Locale != cfg.Locale || current.TimezoneOrDefault() != cfg.TimezoneOrDefault() || current.Instruction != cfg.Instruction || current.Prompt != cfg.Prompt {
+		r.configPromptRefresh.Store(true)
+	}
+	if current.Model.Provider != cfg.Model.Provider || current.Model.Model != cfg.Model.Model || current.Model.APIMode != cfg.Model.APIMode || current.Model.BaseURL != cfg.Model.BaseURL {
 		r.configContextRotate.Store(true)
 		r.configUserContextRotate.Store(true)
 	}
@@ -372,11 +381,23 @@ func (r *Runtime) StopConfigReloads() {
 	r.configWorkerWG.Wait()
 }
 
-// PrepareUserContext preserves old realtime transcripts when the provider or
-// system prompt changes and prevents replaying incompatible continuation data.
+// PrepareUserContext preserves old realtime transcripts when the model or
+// voice provider changes and prevents replaying incompatible continuation data.
+// A system prompt change alone keeps the conversation; InitializeContextManager
+// rewrites the session's system message.
+//
+// A model or voice model change made while the Agent was stopped also starts a
+// new user context, because applyConfig never saw it.
 func (r *Runtime) PrepareUserContext(systemPrompt string) error {
-	if r == nil || !r.configUserContextRotate.Load() {
+	if r == nil {
 		return nil
+	}
+	if !r.configUserContextRotate.Load() {
+		cfg := r.ConfigSnapshot()
+		if strings.TrimSpace(cfg.ConfigDir) == "" {
+			return nil
+		}
+		return startConversationForIdentity(agentpath.UserContextManagerSessionFolder(cfg.ConfigDir), userConversationIdentity(cfg), systemPrompt)
 	}
 	if err := r.rotateUserContext(systemPrompt); err != nil {
 		return err

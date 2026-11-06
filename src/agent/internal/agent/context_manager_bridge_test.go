@@ -11,47 +11,66 @@ import (
 	"github.com/tmc/langchaingo/llms"
 )
 
-func TestInitializeContextManagerStartsNewSessionWhenSystemPromptChanges(t *testing.T) {
+func TestInitializeContextManagerRewritesSystemPromptAndKeepsConversation(t *testing.T) {
 	sessionFolder := t.TempDir()
 
 	manager, err := InitializeContextManager("system v1", sessionFolder, nil)
 	if err != nil {
-		t.Fatalf("freshNewContextManager() error = %v", err)
-	}
-	rawMessages := manager.CloneMessageList()
-	messageList := messages.ConvertMessageList(rawMessages)
-	if len(messageList) != 1 {
-		t.Fatalf("messages = %d, want 1", len(messageList))
-	}
-	if text := messageText(messageList); text != "system v1\n" {
-		t.Fatalf("system prompt = %q, want original system v1", text)
+		t.Fatalf("InitializeContextManager() error = %v", err)
 	}
 	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "first request"}); err != nil {
+		t.Fatalf("AppendMessage() error = %v", err)
+	}
+	if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleAssistant, Content: "first answer", ResponsesResponseID: "resp_1"}); err != nil {
 		t.Fatalf("AppendMessage() error = %v", err)
 	}
 	originalSessionID := manager.GetSessionID()
 
 	reloaded, err := InitializeContextManager("system v2", sessionFolder, nil)
 	if err != nil {
-		t.Fatalf("reload freshNewContextManager() error = %v", err)
+		t.Fatalf("reload InitializeContextManager() error = %v", err)
 	}
-	reloadedMessages := messages.ConvertMessageList(reloaded.CloneMessageList())
 	if reloaded.GetSessionID() == originalSessionID {
-		t.Fatal("system prompt change reused the existing session")
+		t.Fatal("system prompt change rewrote the existing session in place")
 	}
-	if len(reloadedMessages) != 1 {
-		t.Fatalf("messages = %d, want only the new system prompt", len(reloadedMessages))
+	if reloaded.GetParentSessionID() != originalSessionID {
+		t.Fatalf("parent session = %q, want %q", reloaded.GetParentSessionID(), originalSessionID)
 	}
-	if text := messageText(reloadedMessages); text != "system v2\n" {
-		t.Fatalf("new session system prompt = %q, want system v2", text)
+	if text := messageText(messages.ConvertMessageList(reloaded.CloneMessageList())); text != "system v2\nfirst request\nfirst answer\n" {
+		t.Fatalf("rewritten session = %q, want new prompt with the conversation", text)
+	}
+	for _, message := range reloaded.MessageListDump().Messages {
+		if message.ResponsesResponseID != "" {
+			t.Fatalf("rewritten session kept provider response ID %q", message.ResponsesResponseID)
+		}
 	}
 
 	original, err := contextmanager.LoadContextManagerFromSessionID(sessionFolder, originalSessionID)
 	if err != nil {
 		t.Fatalf("LoadContextManagerFromSessionID() error = %v", err)
 	}
-	if text := messageText(messages.ConvertMessageList(original.CloneMessageList())); text != "system v1\nfirst request\n" {
+	if text := messageText(messages.ConvertMessageList(original.CloneMessageList())); text != "system v1\nfirst request\nfirst answer\n" {
 		t.Fatalf("original session was modified: %q", text)
+	}
+}
+
+func TestReplaceSessionSystemPromptKeepsUserProfileWhenPromptHasNone(t *testing.T) {
+	folder := t.TempDir()
+	manager, err := InitializeContextManager(withUserProfileSection("system v1", "- Prefers metric units."), folder, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syncSessionSystemPrompt(manager, "system v2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := manager.MessageListDump().Messages[0].Content, withUserProfileSection("system v2", "- Prefers metric units."); got != want {
+		t.Fatalf("system message = %q, want %q", got, want)
+	}
+	if err := syncSessionSystemPrompt(manager, withUserProfileSection("system v3", "- Prefers imperial units.")); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := manager.MessageListDump().Messages[0].Content, withUserProfileSection("system v3", "- Prefers imperial units."); got != want {
+		t.Fatalf("system message = %q, want %q", got, want)
 	}
 }
 

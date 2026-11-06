@@ -532,3 +532,94 @@ func TestRuntimeInterruptRecoveryKeepsRotatedConversation(t *testing.T) {
 		t.Fatal("new input was persisted in the old conversation")
 	}
 }
+
+func TestRuntimeInterruptRecoveryStartsNewConversationAfterOfflineModelChange(t *testing.T) {
+	cfg := withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake", Model: "model-a"}, Instruction: "test"})
+	model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
+		return contentResponse("done"), nil
+	}}
+	newRuntime := func(cfg Config) *Runtime {
+		runtime := NewRuntimeWithDeps(cfg, &testModelResolver{model: model}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+		t.Cleanup(func() { _ = runtime.Close() })
+		return runtime
+	}
+	first := newRuntime(cfg)
+	if _, err := first.Run(context.Background(), RunRequest{Input: "first task"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startRunNotices(func() *contextmanager.ContextManager { return first.contextManager }, "run_abrupt_exit"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.contextManager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "unfinished work"}); err != nil {
+		t.Fatal(err)
+	}
+	firstSessionID := first.contextManager.GetSessionID()
+
+	// The model changes while the Agent is stopped, leaving the run journal.
+	cfg.Model.Model = "model-b"
+	model.generate = func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
+		if runtimeModelCallContains(input, "first task") || runtimeModelCallContains(input, "unfinished work") || runtimeModelCallContains(input, "Interrupt [agent_restart]:") {
+			t.Fatal("the new model received the previous model's conversation")
+		}
+		return contentResponse("fresh"), nil
+	}
+	restarted := newRuntime(cfg)
+	if _, err := restarted.Run(context.Background(), RunRequest{Input: "next task"}); err != nil {
+		t.Fatal(err)
+	}
+	if ancestor, err := restarted.contextManager.HasSessionAncestor(firstSessionID); err != nil {
+		t.Fatal(err)
+	} else if ancestor {
+		t.Fatal("the new conversation descends from the previous model's session")
+	}
+	old, err := contextmanager.LoadContextManagerFromSessionID(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), firstSessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireInterruptNotices(t, old, "agent_restart")
+	if _, err := os.Stat(filepath.Join(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), pendingBackendRunFile)); !os.IsNotExist(err) {
+		t.Fatalf("pending run journal was not resolved: %v", err)
+	}
+}
+
+func TestRuntimeInterruptRecoveryRefreshesPromptAfterOfflinePromptChange(t *testing.T) {
+	cfg := withTestConfigDir(t, Config{Model: ModelConfig{Provider: "fake", Model: "model-a"}, Instruction: "test", Locale: "zh-CN"})
+	model := &interruptTestModel{generate: func(context.Context, []llms.MessageContent) (*llms.ContentResponse, error) {
+		return contentResponse("done"), nil
+	}}
+	newRuntime := func(cfg Config) *Runtime {
+		runtime := NewRuntimeWithDeps(cfg, &testModelResolver{model: model}, NewMemoryManager(""), &ToolSet{tools: map[string]langtools.Tool{}}, NewSkillIndex())
+		t.Cleanup(func() { _ = runtime.Close() })
+		return runtime
+	}
+	first := newRuntime(cfg)
+	if _, err := first.Run(context.Background(), RunRequest{Input: "first task"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := startRunNotices(func() *contextmanager.ContextManager { return first.contextManager }, "run_abrupt_exit"); err != nil {
+		t.Fatal(err)
+	}
+	firstSessionID := first.contextManager.GetSessionID()
+
+	// The locale changes while the Agent is stopped, leaving the run journal.
+	cfg.Locale = "en-US"
+	restarted := newRuntime(cfg)
+	want := restarted.getSystemPrompt()
+	model.generate = func(_ context.Context, input []llms.MessageContent) (*llms.ContentResponse, error) {
+		if !runtimeModelCallContains(input, "first task") || !runtimeModelCallContains(input, "Interrupt [agent_restart]:") {
+			t.Fatal("the recovered conversation was not kept")
+		}
+		return contentResponse("recovered"), nil
+	}
+	if _, err := restarted.Run(context.Background(), RunRequest{Input: "next task"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := restarted.contextManager.MessageListDump().Messages[0].Content; systemPromptIdentity(got) != systemPromptIdentity(want) {
+		t.Fatalf("recovered session kept the old system prompt:\n%s", got)
+	}
+	if ancestor, err := restarted.contextManager.HasSessionAncestor(firstSessionID); err != nil {
+		t.Fatal(err)
+	} else if !ancestor {
+		t.Fatal("the refreshed session does not descend from the recovered one")
+	}
+}

@@ -1,7 +1,13 @@
 package agent
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -210,12 +216,16 @@ func InitializeContextManager(
 	hooks []contextmanager.AppendMessageHook,
 ) (*contextmanager.ContextManager, error) {
 	manager, err := contextmanager.LoadContextManagerFromCurrentSession(sessionFolder)
-	if err != nil || !contextManagerHasSystemPrompt(manager, systemPrompt) {
-		// Create a new append-only session when there is no current session or
-		// when configuration changes require a different system prompt.
+	if err != nil || !sessionHasSystemMessage(manager) {
 		manager, err = contextmanager.NewContextManager(sessionFolder, systemPrompt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create context manager: %w", err)
+		}
+	} else if !contextManagerHasSystemPrompt(manager, systemPrompt) {
+		// A configuration change, such as the response locale or time zone,
+		// rewrites the system message and keeps the conversation.
+		if err := replaceSessionSystemPrompt(manager, systemPrompt); err != nil {
+			return nil, fmt.Errorf("refresh session system prompt: %w", err)
 		}
 	} else if strings.TrimSpace(withUserProfileSection(manager.MessageListDump().Messages[0].Content, "")) != strings.TrimSpace(withUserProfileSection(systemPrompt, "")) {
 		// The generated date is runtime context, not a configuration change.
@@ -236,6 +246,126 @@ func InitializeContextManager(
 	manager.AddAppendMessageHooks(hooks)
 
 	return manager, nil
+}
+
+// conversationIdentityFile records, inside a session folder, a fingerprint of
+// the model settings the current conversation runs under. A live config apply
+// rotates the conversation when these settings change; this record lets a
+// start after an offline change (for example, a config edited while the Agent
+// was stopped) do the same instead of replaying another model's transcript.
+const conversationIdentityFile = ".conversation_identity"
+
+// modelConversationIdentity fingerprints the settings whose change must start
+// a new backend conversation: the transcript carries provider-specific
+// reasoning items, thinking signatures, and continuation data.
+func modelConversationIdentity(model ModelConfig) string {
+	return conversationIdentity(model.Provider, model.Model, model.APIMode, model.BaseURL)
+}
+
+// userConversationIdentity fingerprints the settings whose change must start a
+// new realtime user context: the backend model and the whole voice model
+// configuration, matching the live rotation in applyConfig. Only a hash is
+// stored, so credentials in the voice model configuration never reach disk.
+func userConversationIdentity(cfg Config) string {
+	voiceModel, err := json.Marshal(cfg.VoiceModel)
+	if err != nil {
+		voiceModel = []byte(fmt.Sprintf("%#v", cfg.VoiceModel))
+	}
+	return conversationIdentity(modelConversationIdentity(cfg.Model), string(voiceModel))
+}
+
+func conversationIdentity(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+// startConversationForIdentity starts a new conversation in sessionFolder when
+// its current conversation was recorded under a different identity, then
+// records identity. A folder without a record keeps its conversation.
+func startConversationForIdentity(sessionFolder, identity, systemPrompt string) error {
+	stored, err := os.ReadFile(filepath.Join(sessionFolder, conversationIdentityFile))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read conversation identity: %w", err)
+	}
+	if recorded := strings.TrimSpace(string(stored)); recorded != "" && recorded != identity && contextmanager.CurrentSessionID(sessionFolder) != "" {
+		if _, err := contextmanager.NewContextManager(sessionFolder, systemPrompt); err != nil {
+			return fmt.Errorf("start conversation for changed model: %w", err)
+		}
+	}
+	return recordConversationIdentity(sessionFolder, identity)
+}
+
+// recordConversationIdentity stores identity as the one the current
+// conversation in sessionFolder runs under.
+func recordConversationIdentity(sessionFolder, identity string) error {
+	path := filepath.Join(sessionFolder, conversationIdentityFile)
+	if stored, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(stored)) == identity {
+		return nil
+	}
+	if err := os.MkdirAll(sessionFolder, 0o755); err != nil {
+		return fmt.Errorf("create session folder: %w", err)
+	}
+	file, err := os.CreateTemp(sessionFolder, conversationIdentityFile+"-*")
+	if err != nil {
+		return fmt.Errorf("record conversation identity: %w", err)
+	}
+	tempPath := file.Name()
+	defer os.Remove(tempPath)
+	_, writeErr := file.WriteString(identity)
+	closeErr := file.Close()
+	if writeErr != nil || closeErr != nil {
+		return fmt.Errorf("record conversation identity: %w", errors.Join(writeErr, closeErr))
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return fmt.Errorf("record conversation identity: %w", err)
+	}
+	return nil
+}
+
+func sessionHasSystemMessage(manager *contextmanager.ContextManager) bool {
+	if manager == nil {
+		return false
+	}
+	messageList := manager.MessageListDump().Messages
+	return len(messageList) > 0 && messageList[0].Role == messages.MessageRoleSystem
+}
+
+// syncSessionSystemPrompt brings an existing session up to the current system
+// prompt. Only the generated date and the user profile section may differ
+// without a rewrite: the date has its own state refresh and the profile has
+// refreshUserProfileSection.
+func syncSessionSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) error {
+	if !sessionHasSystemMessage(manager) || contextManagerHasSystemPrompt(manager, systemPrompt) {
+		return nil
+	}
+	return replaceSessionSystemPrompt(manager, systemPrompt)
+}
+
+// replaceSessionSystemPrompt rewrites the system message in a new revision, the
+// same way context compaction and refreshUserProfileSection do. The old
+// transcript stays on disk, the conversation continues, and scheduled tasks keep
+// following the session lineage. When systemPrompt carries no user profile, the
+// session's section is kept so a failed profile read cannot drop it.
+func replaceSessionSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) error {
+	messageList, version := manager.MessageSnapshot()
+	if len(messageList) == 0 || messageList[0].Role != messages.MessageRoleSystem {
+		return nil
+	}
+	profile := userProfileSection(systemPrompt)
+	if strings.TrimSpace(profile) == "" {
+		profile = userProfileSection(messageList[0].Content)
+	}
+	messageList[0].Content = withUserProfileSection(systemPrompt, profile)
+	// A revision starts a fresh provider conversation; a Responses ID would
+	// chain the rewritten transcript onto stale provider state.
+	for i := range messageList {
+		messageList[i].ResponsesResponseID = ""
+	}
+	candidate, err := contextmanager.NewContextManagerRevisionFromMessageListAtVersion(manager, messageList, version)
+	if err != nil {
+		return err
+	}
+	return manager.Activate(candidate)
 }
 
 func contextManagerHasSystemPrompt(manager *contextmanager.ContextManager, systemPrompt string) bool {
