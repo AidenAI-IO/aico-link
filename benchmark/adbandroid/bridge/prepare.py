@@ -268,9 +268,17 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
     previous = device.newest_media_image()
     device.capture_photo()
     photo = _wait_for_new_photo(device, previous, timeout_sec=timeout)
-    device.keyevent("KEYCODE_HOME")
     details: dict[str, Any] = {"photo": photo.get("_display_name", ""), "folder": photo.get("relative_path", "")}
-    if then == "photos":
+    if then == "home":
+        # Sending HOME is not evidence that the transition has finished. Do not
+        # hand the task a camera screenshot while claiming a prepared launcher.
+        device.reset_home()
+        details["confirmed_by"] = wait_for_any_text(
+            device, _texts_param(params, "wait_for_text", ["Phone", "Chrome", "Messages", "Gmail"]),
+            timeout_sec=timeout,
+        )
+    elif then == "photos":
+        device.keyevent("KEYCODE_HOME")
         device.start_intent(
             action="android.intent.action.VIEW",
             data=f"{MEDIA_IMAGES_URI}/{photo['_id']}",
@@ -280,6 +288,7 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
             device, _texts_param(params, "wait_for_text", ["Share", "Edit"]), timeout_sec=timeout
         )
     elif then == "files":
+        device.keyevent("KEYCODE_HOME")
         folder = str(photo.get("relative_path") or "").strip("/")
         if not folder:
             raise PrepareError("the new photo has no relative_path")

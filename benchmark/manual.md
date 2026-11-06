@@ -444,7 +444,9 @@ prepared task records the recipe result in its `setup.json` and sets the
 `setup_path` metric to `device_prepare`; a task whose recipe failed records the
 recipe error as `device_prepare_fallback` and sets `setup_path` to
 `agent_fallback`, so an Agent-built start state is never mistaken for a
-confirmed one.
+confirmed one. For `camera_photo` with `then: "home"`, preparation resets Home
+and waits for launcher text before returning. `wait_for_text` can override the
+launcher labels for the target image; sending a Home key alone is insufficient.
 
 A confirmed recipe replaces the prompt, so `device_prepare` cannot be combined
 with `expected_response` or `clear_history_after: false`; suite loading rejects

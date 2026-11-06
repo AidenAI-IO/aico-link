@@ -147,15 +147,46 @@ def test_contact_detail_delete_cannot_be_widened_by_a_quote_in_the_name():
 @pytest.mark.parametrize("then, expect_intent", [("home", False), ("photos", True), ("files", True)])
 def test_camera_photo_waits_for_a_new_image(then, expect_intent):
     device = RecipeDevice(
-        screen_texts=["Share", "PXL_new.jpg"],
+        screen_texts=["Share", "PXL_new.jpg", "Phone"],
         photos=[{"_id": "5", "_display_name": "old.jpg", "relative_path": "Pictures/", "date_added": "100"}],
     )
 
     result = run_recipe(device, "camera_photo", {"then": then})
 
     assert result["photo"] == "PXL_new.jpg"
-    assert ("keyevent", "KEYCODE_HOME") in device.calls
+    assert (("reset_home",) if then == "home" else ("keyevent", "KEYCODE_HOME")) in device.calls
+    if then == "home":
+        assert result["confirmed_by"] == "Phone"
     assert any(call[0] == "start_intent" for call in device.calls) is expect_intent
+
+
+def test_camera_recipe_rejects_home_action_without_a_confirmed_home_screen(monkeypatch):
+    clock = iter(range(0, 1000, 10))
+    monkeypatch.setattr(prepare.time, "monotonic", lambda: next(clock))
+    device = RecipeDevice(screen_texts=["Camera", "Shutter"])
+    # Home input can complete before the foreground camera has disappeared.
+    with pytest.raises(PrepareError, match="became visible"):
+        run_recipe(device, "camera_photo", {"then": "home", "wait_for_text": ["Search apps"]})
+
+
+def test_camera_recipe_waits_for_launcher_after_home(monkeypatch):
+    clock = iter(range(100))
+    monkeypatch.setattr(prepare.time, "monotonic", lambda: next(clock))
+
+    class TransitioningDevice(RecipeDevice):
+        def __init__(self):
+            super().__init__()
+            self.screens = iter(['<node text="Camera"/>', '<node text="Phone"/>'])
+            self.dumps = 0
+
+        def dump_window_xml(self):
+            self.dumps += 1
+            return next(self.screens)
+
+    device = TransitioningDevice()
+    result = run_recipe(device, "camera_photo", {"then": "home"})
+    assert device.dumps == 2
+    assert result["confirmed_by"] == "Phone"
 
 
 def test_unknown_recipe_is_rejected():
