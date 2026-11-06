@@ -1,7 +1,7 @@
 /**
  * Advanced routes.
  *
- *   /advanced             entries: logs, manual configuration
+ *   /advanced             entries: logs, manual configuration, terminal, LAN access
  *   /advanced/logs        live logs, raw model HTTP logging, log level, retention, export
  *   /advanced/logs/agent  the Agent log, tailed live, with the Agent's run state
  *   /advanced/logs/level  log level choice
@@ -18,6 +18,7 @@ import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
 import {isEmbedded} from '../../ui/environment.js';
 import {postToHost} from '../host.js';
 import {createSaver} from '../saver.js';
+import {fetchLANAccess} from './lan-access.js';
 import {choiceSheet} from '../../ui/choice-sheet.js';
 import {el, replace} from '../../ui/dom.js';
 import {icon} from '../../ui/icon.js';
@@ -96,6 +97,13 @@ export async function advancedPage(context) {
     onSaved: adoptSaved(snapshot, () => render()),
   });
   const mcpSaved = () => snapshot?.config?.agent?.mcp_enabled !== false;
+  // The row still opens its page when the state cannot be read; the page
+  // reports the error itself.
+  let lanAccess = null;
+  fetchLANAccess().then(state => {
+    lanAccess = state;
+    render();
+  }).catch(() => {});
   let mcpDraft = mcpSaved();
   let mcpSaving = false;
 
@@ -146,6 +154,13 @@ export async function advancedPage(context) {
             onPress: () => context.navigate('/advanced/config'),
           }),
           terminalRow(),
+          row({
+            label: msg('lan.title', '局域网访问'),
+            value: lanAccess == null ? null : (lanAccess.enabled ? msg('lan.on', '已开启') : msg('lan.off', '已关闭')),
+            chevron: true,
+            action: 'open-lan-access',
+            onPress: () => context.navigate('/advanced/lan'),
+          }),
         ],
       }),
       group({

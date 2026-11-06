@@ -65,6 +65,8 @@ const (
 	apiRestorePlan
 	apiRestoreValidate
 	apiRestoreApply
+	apiLANAccessGet
+	apiLANAccessPut
 )
 
 type routeVariant struct{ method, path string }
@@ -117,6 +119,8 @@ var apiRoutes = []apiRoute{
 	{apiBackupCapabilities, routeVariant{http.MethodGet, apiPrefix + "/backup/capabilities"}},
 	{apiBackupJobs, routeVariant{http.MethodPost, apiPrefix + "/backup/jobs"}},
 	{apiRestoreJobs, routeVariant{http.MethodPost, apiPrefix + "/restore/jobs"}},
+	{apiLANAccessGet, routeVariant{http.MethodGet, apiPrefix + "/security/lan-access"}},
+	{apiLANAccessPut, routeVariant{http.MethodPut, apiPrefix + "/security/lan-access"}},
 }
 
 type apiMatch struct {
@@ -312,6 +316,10 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleRestoreValidate(w, r, match.suffix)
 	case apiRestoreApply:
 		s.handleRestoreApply(w, r, match.suffix)
+	case apiLANAccessGet:
+		s.handleLANAccessStatus(w, r)
+	case apiLANAccessPut:
+		s.handleLANAccessUpdate(w, r)
 	}
 }
 
@@ -322,7 +330,8 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiConfigBackupImport, apiWiFiScan, apiWiFiConnect, apiWiFiForget,
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
-		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport:
+		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
+		apiLANAccessPut:
 		return true
 	default:
 		return false

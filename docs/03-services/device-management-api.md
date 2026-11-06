@@ -38,6 +38,8 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Device | `GET /api/device/status` | Read the device, firmware/component versions, Agent process, USB/HID, and capability summary |
 | Device | `POST /api/device/reboot` | Reboot the device |
 | Agent | `POST /api/agent/restart` | Restart the Agent process; Config Web and the USB link stay up |
+| Security | `GET /api/security/lan-access` | Read the LAN access switch and whether a device password is set |
+| Security | `PUT /api/security/lan-access` | Turn LAN access on or off and set the device password; USB only |
 | Device | `POST /api/device/usb/reenumerate` | Re-enumerate USB HID/ECM |
 | Network | `POST /api/network/wifi/scan` | Scan for nearby Wi-Fi networks |
 | Network | `PUT /api/network/wifi/connection` | Start a bounded asynchronous connect-and-save task |
@@ -261,6 +263,66 @@ with its Wi-Fi credentials.
 `no_proxy` is accepted only with `proxy_mode=proxy` and defines the bypass
 rules for that SSID's custom proxy. `proxy_mode=system` uses the proxy and
 `NO_PROXY` values from `/userdata/system/env` without a per-Wi-Fi override.
+
+## LAN Access
+
+LAN access decides whether the board answers clients that are not on the USB
+link. It is off by default. While it is off:
+
+- Config Web (port 80), the Agent (port 8080, including `/api/tools/*`, `/mcp`,
+  Phone Bridge, and `/webtty/`) refuse every request that neither arrives
+  through their socket bound to `usb0` nor comes from the board itself. API
+  clients receive `403` with `"error": "lan_access_disabled"`; browsers receive
+  a short page that explains how to turn it on.
+- sshd refuses every source outside `192.168.42.0/24`, `127.0.0.0/8`, and
+  `::1`, for every account including `root`.
+- ttyd listens on loopback only. USB clients use `http://192.168.42.1:3000/webtty/`,
+  which Config Web serves on a `usb0`-bound socket; LAN clients use the Agent's
+  `/webtty/`, which follows the switch.
+
+While it is on, all of these serve LAN clients as before. This release does not
+add a web login; the device password is only the `aico` login password.
+
+`GET /api/security/lan-access` never returns the password or its hash:
+
+```json
+{"ok": true, "enabled": false, "password_set": false, "via_usb": true, "min_length": 8}
+```
+
+`PUT /api/security/lan-access` is accepted only over the USB link (`403`
+otherwise) and only from the same origin. The body contains `enabled`,
+`password`, or both:
+
+```jsonc
+{"enabled": true, "password": "at least 8 characters"} // first switch-on
+{"enabled": true}                                       // a password is already set
+{"password": "new password"}                            // change the password
+{"enabled": false}                                      // turn off, keep the password
+```
+
+Turning LAN access on without a stored or submitted password returns `400`.
+No current password is required: whoever holds the USB cable owns the board,
+and a forgotten password is replaced over USB. The response repeats the status
+and adds `system_synced`, which is `false` when SSH or the login account could
+not be updated; the next boot applies the stored state.
+
+State lives on userdata so it survives OTA:
+
+| File | Content |
+| --- | --- |
+| `/userdata/system/lan-access-enabled` | Present while LAN access is on |
+| `/userdata/system/device-password` | bcrypt hash of the device password (mode 0600) |
+
+`/usr/lib/aico/aico-lan-access-sync` applies the state: it writes
+`/run/aico/sshd/lan.conf` (included last by `/etc/ssh/sshd_config.d/20-aico.conf`),
+reloads sshd, and sets the `aico` password to the device password. Until a
+device password is set, the account keeps the image's default password.
+`aico-lan-access.service` runs it on every boot, because `/run` is volatile and
+OTA resets `/etc/shadow`; `ssh.service` requires that unit so sshd never starts
+without the rule. Config Web runs the helper after every change.
+
+Docker and host runs of the Agent and Config Web do not pass `-lan-guard` /
+`--lan-guard`, so they are not affected.
 
 ## API Boundary
 

@@ -39,6 +39,7 @@ import (
 	_ "aico-agent/internal/agent/tts/adapters/openrouter"
 	_ "aico-agent/internal/agent/tts/adapters/volcengine"
 	"aico-agent/internal/ble"
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/mcu"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -59,6 +60,10 @@ type Server struct {
 	httpMu                  sync.Mutex
 	httpServer              *http.Server
 	httpListener            net.Listener
+	usbListener             net.Listener
+	usbListenStop           chan struct{}
+	lanAccess               *lanaccess.State
+	usbIngress              USBIngress
 	runtime                 *Runtime
 	addr                    string
 	logger                  *Logger
@@ -636,8 +641,18 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
+// TerminalTarget is where ttyd listens. It is bound to loopback on the board,
+// so only the guarded front ends can reach it.
+const TerminalTarget = "http://127.0.0.1:3000"
+
 func newTerminalReverseProxy() *httputil.ReverseProxy {
-	target, _ := url.Parse("http://127.0.0.1:3000")
+	target, _ := url.Parse(TerminalTarget)
+	return newTerminalReverseProxyForTarget(target)
+}
+
+// NewTerminalProxy returns the ttyd reverse proxy for another front end, such
+// as Config Web's USB terminal listener.
+func NewTerminalProxy(target *url.URL) http.Handler {
 	return newTerminalReverseProxyForTarget(target)
 }
 
@@ -693,6 +708,9 @@ func (s *Server) Start() error {
 		return nil
 	}
 	handler := s.Handler()
+	if s.lanAccess != nil {
+		handler = lanaccess.Guard(s.lanAccess, handler)
+	}
 
 	srv := &http.Server{
 		Addr:              s.addr,
@@ -700,13 +718,14 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: agentHTTPReadHeaderTimeout,
 		ReadTimeout:       agentHTTPReadTimeout,
 		IdleTimeout:       agentHTTPIdleTimeout,
+		ConnContext:       lanaccess.ConnContext,
 	}
 
 	// Bind explicitly rather than letting ListenAndServe do it, so the readiness
 	// milestone is recorded only once the port is actually held. Marking before
 	// the bind would report the agent Web UI as listening even when startup
 	// failed on, say, an address already in use.
-	listener, err := net.Listen("tcp", s.addr)
+	listener, err := s.listenMain()
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
@@ -735,6 +754,7 @@ func (s *Server) Start() error {
 	MarkBootTimeline("agent:listening")
 
 	errCh := make(chan error, 1)
+	s.startUSBListener(srv)
 	go func() {
 		err := srv.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
@@ -771,9 +791,17 @@ func (s *Server) Close() {
 		s.httpMu.Lock()
 		srv := s.httpServer
 		listener := s.httpListener
+		usbListener := s.usbListener
+		if s.usbListenStop != nil {
+			close(s.usbListenStop)
+			s.usbListenStop = nil
+		}
 		s.httpMu.Unlock()
 		if listener != nil {
 			_ = listener.Close()
+		}
+		if usbListener != nil {
+			_ = usbListener.Close()
 		}
 
 		s.cancelAllActiveRuns()

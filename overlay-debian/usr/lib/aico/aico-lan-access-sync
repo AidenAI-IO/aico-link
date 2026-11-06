@@ -1,0 +1,68 @@
+#!/bin/sh
+# Apply the LAN access state, set in the Agent settings over USB, to SSH and
+# the aico login account.
+#
+# - While LAN access is off, sshd refuses every source outside the USB link
+#   and the board itself (the HTTP services enforce the same switch).
+# - The device password becomes the aico password, so the web terminal and
+#   SSH use it. Without one the account is left as the image ships it.
+#
+# /run is volatile and /etc/shadow is reset by OTA, so this runs on every boot
+# before sshd, and again from Config Web whenever the state changes.
+set -eu
+
+ENABLED_FILE=${AICO_LAN_ACCESS_FILE:-/userdata/system/lan-access-enabled}
+PASSWORD_FILE=${AICO_DEVICE_PASSWORD_FILE:-/userdata/system/device-password}
+SSHD_RULE_DIR=${AICO_SSHD_RULE_DIR:-/run/aico/sshd}
+ACCOUNT=${AICO_DEVICE_ACCOUNT:-aico}
+USERMOD=${AICO_USERMOD_BIN:-usermod}
+SYSTEMCTL=${AICO_SYSTEMCTL_BIN:-systemctl}
+USB_SUBNET=${AICO_USB_SUBNET:-192.168.42.0/24}
+
+# Exit status 3: SSH is applied but the password could not be. The boot unit
+# treats it as success so sshd still starts with the right rule.
+status=0
+
+mkdir -p "${SSHD_RULE_DIR}"
+rule=${SSHD_RULE_DIR}/lan.conf
+tmp=$(mktemp "${SSHD_RULE_DIR}/.lan.conf.XXXXXX")
+if [ -f "${ENABLED_FILE}" ]; then
+    printf '# LAN access is on; sshd accepts every source.\n' >"${tmp}"
+    echo "LAN access on: SSH open to the local network"
+else
+    printf '%s\n' \
+        '# LAN access is off; only the USB link and the board itself may log in.' \
+        "Match Address *,!${USB_SUBNET},!127.0.0.0/8,!::1" \
+        '	DenyUsers *' >"${tmp}"
+    echo "LAN access off: SSH limited to the USB link"
+fi
+chmod 0644 "${tmp}"
+mv -f "${tmp}" "${rule}"
+# --no-block: when the boot unit runs this, ssh.service is ordered after it,
+# so a blocking reload would wait for this script and deadlock.
+if "${SYSTEMCTL}" is-active --quiet ssh.service 2>/dev/null; then
+    "${SYSTEMCTL}" reload --no-block ssh.service
+fi
+
+hash=
+if [ -s "${PASSWORD_FILE}" ]; then
+    hash=$(head -n 1 "${PASSWORD_FILE}" | tr -d '[:space:]')
+fi
+case "${hash}" in
+    '')
+        echo "no device password; ${ACCOUNT} login unchanged"
+        ;;
+    '$2a$'*|'$2b$'*|'$2y$'*)
+        if "${USERMOD}" -p "${hash}" "${ACCOUNT}"; then
+            echo "device password applied to ${ACCOUNT}"
+        else
+            echo "failed to apply the device password to ${ACCOUNT}" >&2
+            status=3
+        fi
+        ;;
+    *)
+        echo "unrecognised device password hash in ${PASSWORD_FILE}" >&2
+        status=3
+        ;;
+esac
+exit "${status}"
