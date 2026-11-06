@@ -167,7 +167,7 @@ export async function advancedPage(context) {
         rows: [
           row({
             label: msg('advanced.mcp_enabled', 'MCP'),
-            description: msg('advanced.mcp_enabled_help', '开启后可通过 MCP 调用 Agent 工具。'),
+            description: msg('advanced.mcp_enabled_help', '允许电脑上的 Agent 调用设备工具。通过 Wi-Fi 使用需开启局域网访问。'),
             accessory: mcpToggle,
             action: 'toggle-mcp-enabled',
           }),
