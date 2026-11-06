@@ -3,10 +3,50 @@
 #undef private
 
 #include "doctest.h"
+#include "audio_player_test_hooks.h"
 
+#include <algorithm>
 #include <chrono>
 #include <future>
 #include <thread>
+
+TEST_CASE("Recording drains and destroys the denoiser before capture teardown") {
+    struct TailModel : aico::DenoiseHop {
+        bool& invalid_lifetime;
+        bool& destroyed;
+        TailModel(bool& invalid, bool& done) : invalid_lifetime(invalid), destroyed(done) {}
+        ~TailModel() override {
+            invalid_lifetime |= aico::test::active_audio_captures() == 0;
+            destroyed = true;
+        }
+        void process(const float*, float* output) override {
+            invalid_lifetime |= aico::test::active_audio_captures() == 0;
+            std::fill(output, output + 128, 0.f);
+        }
+        void reset() override {}
+    };
+
+    bool invalid_lifetime = false, destroyed = false;
+    aico::AudioFormat fmt;
+    aico::AudioRecordSession session(3, fmt);
+    REQUIRE(session.capture_.init(session.hardware_capture_config()));
+    session.denoiser_.reset(new aico::AudioDenoiser(
+        std::unique_ptr<aico::DenoiseHop>(new TailModel(invalid_lifetime, destroyed))));
+    const std::vector<uint8_t> pcm(256, 0);
+    CHECK(session.denoiser_->process(pcm).empty());
+    session.stop();
+    session.capture_loop();
+
+    CHECK(destroyed);
+    CHECK_FALSE(invalid_lifetime);
+    CHECK(aico::test::active_audio_captures() == 0);
+    aico::AudioChunkResult chunk;
+    REQUIRE(session.pop_chunk(1, &chunk) == aico::AicoServiceStatus::OK);
+    CHECK_FALSE(chunk.end_of_stream);
+    CHECK(chunk.pcm == pcm);
+    REQUIRE(session.pop_chunk(1, &chunk) == aico::AicoServiceStatus::OK);
+    CHECK(chunk.end_of_stream);
+}
 
 TEST_CASE("AudioRecordSession captures at 16 kHz for a 24 kHz target") {
     aico::AudioFormat fmt;

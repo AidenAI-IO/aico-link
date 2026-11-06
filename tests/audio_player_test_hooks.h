@@ -17,6 +17,7 @@ bool wait_for_audio_player_operation(AudioPlayerOperation operation,
                                      std::chrono::milliseconds timeout);
 void unblock_audio_player_operation(AudioPlayerOperation operation);
 int max_concurrent_audio_player_operations();
+int active_audio_captures();
 
 }  // namespace test
 }  // namespace aico
