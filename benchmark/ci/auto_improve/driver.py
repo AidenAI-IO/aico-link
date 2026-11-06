@@ -57,7 +57,31 @@ def workspace(out: Path, name: str, repo: Path, payload: dict, *, include_code: 
         if isinstance(value, list):
             return [materialize(item) for item in value]
         return value
-    write(path / "input.json", materialize(payload))
+    staged = materialize(payload)
+    if name == "diagnosis":
+        details = path / "details"
+        details.mkdir()
+        indexed = []
+        for number, failure in enumerate(staged.get("failures", []), 1):
+            detail_file = f"details/failure-{number:03d}.json"
+            write(path / detail_file, failure)
+            summary = {key: failure.get(key) for key in
+                       ("key", "status", "failure_class", "agent_eligible", "rubric",
+                        "hard_assertion_failures", "final_response") if key in failure}
+            summary["detail_file"] = detail_file
+            indexed.append(summary)
+        staged["failures"] = indexed
+        history = staged.get("history")
+        if history is not None:
+            history_file = "details/history.json"
+            write(path / history_file, history)
+            staged["history"] = {"detail_file": history_file}
+        previous = staged.get("previous_attempts")
+        if previous is not None:
+            previous_file = "details/previous-attempts.json"
+            write(path / previous_file, previous)
+            staged["previous_attempts"] = {"detail_file": previous_file}
+    write(path / "input.json", staged)
     return path
 
 
@@ -136,10 +160,13 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         diagnosis = ask(out, "diagnosis", repo, {"failures": failures, "history": history, "feedback": feedback,
                         "previous_attempts": previous,
                         "configuration": state["configuration"]},
-                        "Review every available failure and its judge evidence. Cluster supported common root causes. "
-                        "Use case_id:task_id keys from input. List neighboring tasks only when known; the driver expands "
-                        "coverage. Suggest minimal source paths. Report evaluator/environment issues and missing evidence. "
-                        "Do not propose code edits yet. No more than two repairable clusters.", review.DIAGNOSIS, deadline,
+                        "Read input.json first. It indexes ALL failures; detail_file points to the full task, "
+                        "trace, judge and image references. Inspect relevant detail files and screenshots when "
+                        "the index alone cannot support a conclusion. Historical data is optional and on demand. "
+                        "Review every failure and its judge evidence, cluster supported common root causes, "
+                        "and cite exact case_id:task_id keys. List neighbors only when known; the driver expands "
+                        "coverage. Report evaluator/environment issues and missing evidence. Do not propose edits. "
+                        "Return no more than two repairable clusters.", review.DIAGNOSIS, deadline,
                         image_root=source_dir / "benchmark/runs")
         write(out / "diagnosis.json", diagnosis)
         if mode == "diagnose":

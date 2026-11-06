@@ -86,12 +86,19 @@ def ask(workspace: Path, prompt: str, schema: dict, *, timeout: float = 900) -> 
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"})
     if os.environ.get("AUTO_IMPROVE_REVIEW_BASE_URL"):
         env["ANTHROPIC_BASE_URL"] = os.environ["AUTO_IMPROVE_REVIEW_BASE_URL"]
+    max_turns = int(os.environ.get("AUTO_IMPROVE_REVIEW_MAX_TURNS", "48"))
+    if not 8 <= max_turns <= 100:
+        raise ValueError("AUTO_IMPROVE_REVIEW_MAX_TURNS must be between 8 and 100")
+    prompt += (f"\nYou have at most {max_turns} turns including tool calls and final output. "
+               "Batch independent reads where possible. Finish with the requested structured output "
+               "before exhausting this budget; mark unresolved cases insufficient_evidence rather "
+               "than continuing an open-ended investigation.")
     command = [executable, "--restricted", "--bare", "-p", "--model", model,
                "--tools", "Read,Grep,Glob", "--allowedTools", "Read,Grep,Glob",
                "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
                "--no-session-persistence", "--permission-mode", "dontAsk",
                "--output-format", "json", "--json-schema", json.dumps(schema),
-               "--max-turns", "24", "--max-budget-usd", os.environ.get("AUTO_IMPROVE_REVIEW_BUDGET_USD", "5"),
+               "--max-turns", str(max_turns), "--max-budget-usd", os.environ.get("AUTO_IMPROVE_REVIEW_BUDGET_USD", "5"),
                "--system-prompt", SYSTEM]
     with (workspace / "session-error.log").open("w") as log:
         proc = subprocess.Popen(command, cwd=workspace, env=env, text=True, stdin=subprocess.PIPE,
@@ -119,6 +126,9 @@ def ask(workspace: Path, prompt: str, schema: dict, *, timeout: float = 900) -> 
         with (workspace / "session-error.log").open("a") as log:
             log.write("\nReview result diagnostics:\n" + json.dumps(sanitize(detail), indent=2)[:16384] + "\n")
         raise RuntimeError(f"Review session did not complete ({proc.returncode}); see session-error.log")
+    usage = {name: response.get(name) for name in ("subtype", "num_turns", "total_cost_usd", "duration_ms")}
+    with (workspace / "session-error.log").open("a") as log:
+        log.write("\nReview session metrics:\n" + json.dumps(usage, indent=2) + "\n")
     result = response["structured_output"]
     validate_output(result, schema)
     (workspace / "response.json").write_text(json.dumps(result, indent=2) + "\n")

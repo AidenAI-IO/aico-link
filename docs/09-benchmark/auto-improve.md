@@ -122,6 +122,7 @@ by the publisher even if its command is invoked separately.
 | `AUTO_IMPROVE_PR_TOKEN` | Optional secret | Optional repository-scoped bot token. Without it, publication uses the built-in `GITHUB_TOKEN` with contents/pull-requests/issues write access only in the publication job |
 | `AUTO_IMPROVE_DELAY_HOURS` | Variable | Minimum age after source completion; default 3 |
 | `AUTO_IMPROVE_REVIEW_BUDGET_USD` | Variable | Claude Code estimated budget per review session; default 5, not a provider billing guarantee |
+| `AUTO_IMPROVE_REVIEW_MAX_TURNS` | Variable | Bounded review turns, default 48, accepted range 8-100; the diagnostic index links to per-task evidence to avoid repeatedly paging a monolithic input |
 | `AUTO_IMPROVE_MAX_TASKS` | Variable | Total selected tasks per cluster, default 32; required coverage is deferred rather than truncated |
 | `AUTO_IMPROVE_AVD_TEMPLATE` | Variable, ADB only | Runner-side path to the offline initial-state copy used for private emulator instances; not needed for diagnosis or isolated/MobileGym tasks |
 | `AUTO_IMPROVE_AVD_SHA256` | Variable, ADB only | Fingerprint of that initial state, preventing an unnoticed fixture change during comparison |
@@ -151,7 +152,7 @@ with contents/pull-requests/issues write access, store it as
 label before publication. Neither credential option is needed for branch tests.
 
 The initial budgets are at most two clusters, three attempts per task/side,
-24 turns and 15 minutes per review session, a five-hour driver budget, and a
+48 turns and 15 minutes per review session, a five-hour driver budget, and a
 six-hour job ceiling. A target baseline older than one hour is treated as stale
 and requires a new attempt. Review calls are bounded separately from measured agent
 calls; provider-level spend limits remain appropriate for a hard billing cap.

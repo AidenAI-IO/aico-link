@@ -315,6 +315,22 @@ def test_review_workspace_does_not_copy_paths_from_untrusted_payload(tmp_path):
     assert not (stage / "attempts").exists()
 
 
+def test_diagnosis_index_keeps_large_evidence_in_addressable_files(tmp_path):
+    payload = {"failures": [{"key": "a:one", "status": "failed", "failure_class": "agent",
+                            "agent_eligible": True, "rubric": [{"id": "saved", "verdict": "no", "reason": "missing"}],
+                            "history": {"messages": ["detail " * 10000]},
+                            "task": {"prompt": "Save the note"}}],
+               "history": {"runs": [{"id": i, "details": "history " * 1000} for i in range(100)]},
+               "feedback": [], "configuration": {"model": "test"}}
+    stage = driver.workspace(tmp_path, "diagnosis", tmp_path, payload, include_code=False)
+    index = json.loads((stage / "input.json").read_text())
+    assert (stage / "input.json").stat().st_size < 10000
+    entry = index["failures"][0]
+    assert entry["key"] == "a:one" and entry["rubric"] == payload["failures"][0]["rubric"]
+    assert json.loads((stage / entry["detail_file"]).read_text()) == payload["failures"][0]
+    assert json.loads((stage / index["history"]["detail_file"]).read_text()) == payload["history"]
+
+
 @pytest.mark.parametrize("go_code", [False, True])
 @pytest.mark.parametrize("ref", ["refs/heads/main", "refs/heads/auto-improve-test/improve/first"])
 def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monkeypatch, go_code, ref):
