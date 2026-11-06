@@ -595,7 +595,7 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		server.SetRealtimeChatHandler(bridge.Handle)
 		defer server.SetRealtimeChatHandler(nil)
 	}
-	logging.Infof("agent", "ready", "Starting realtime MCU wakeup listener...")
+	logging.Infof("agent", "ready", "Starting realtime voice wakeup listener...")
 	watchers, err := startWakeupWatchers(newWatcher, func() {
 		signalWakeupEvent(events)
 	})
