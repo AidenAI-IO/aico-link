@@ -300,7 +300,7 @@ const deltaLabel = d => d == null ? "No comparison" : d === 0 ? "Unchanged" : `$
 const configFields = [
   ["agent_model", "Agent model"], ["judge_model", "Judge model"], ["judge_prompt_version", "Judge prompt"],
   ["metrics_k", "Attempts per task"], ["tasks", "Tasks"], ["total_attempts", "Total attempts"],
-  ["execution_environment", "Environment"], ["active_skills", "Skills"],
+  ["execution_environment", "Environment"], ["skills_fingerprint", "Skills"],
 ];
 const configValue = (run, field) => {
   if (field === "execution_environment") {
@@ -308,8 +308,8 @@ const configValue = (run, field) => {
     return [platform && platform !== "auto" ? platform : "", run?.environment_label || "Unknown"].filter(Boolean).join(" / ");
   }
   let value = run?.[field];
-  if (field === "active_skills" && typeof value === "string") {
-    try { const parsed = JSON.parse(value); if (Array.isArray(parsed)) value = parsed; } catch {}
+  if (field === "skills_fingerprint" && typeof value === "string" && /^[0-9a-f]{64}$/.test(value)) {
+    value = value.slice(0, 12);
   }
   const text = Array.isArray(value) ? value.join(", ") : value == null || value === "" ? "—" : String(value);
   return text;
@@ -446,8 +446,8 @@ function selectDataset(index) {
     const values = detailRuns.map(([, run]) => configValue(run, field));
     return row(label, values.map(esc), values.length === 2 && values[0] !== values[1]);
   }).join("");
-  const visibleFields = configFields.filter(([field]) => field !== "active_skills" || detailRuns.some(([, run]) =>
-    run.active_skills && !["[]", ""].includes(String(run.active_skills))));
+  const visibleFields = configFields.filter(([field]) => field !== "skills_fingerprint" || detailRuns.some(([, run]) =>
+    run.skills_fingerprint && run.skills_fingerprint !== "unavailable"));
   el("run-details").className = "config-diff";
   el("run-details").innerHTML = header + "<tbody>" +
     row("When", detailRuns.map(([, run]) => when(run.timestamp))) +

@@ -56,6 +56,7 @@ from runner.reset import (
     clear_stale_adb_android_owner,
 )
 from runner.runtask import run_one_task, skipped_task_result
+from runner.skills_fingerprint import SOURCE_EXTERNAL, fingerprint_worker_configs
 from runner.suite import (
     Suite,
     TaskSpec,
@@ -149,8 +150,6 @@ def cli(argv: list[str] | None = None) -> int:
                        help="Run only this task id; can be repeated")
     p_run.add_argument("--task-ids", default="",
                         help="Comma-separated task ids to run")
-    p_run.add_argument("--skill", action="append", default=[],
-                       help="Activate this skill for every task chat; can be repeated or comma-separated")
     p_run.add_argument("--run-id", default="",
                        help="Optional run directory name under --out")
     p_run.add_argument("--benchmark-task-id", default="",
@@ -396,16 +395,6 @@ def _selected_task_ids(args: argparse.Namespace) -> list[str]:
             if task_id and task_id not in ids:
                 ids.append(task_id)
     return ids
-
-
-def _selected_skills(args: argparse.Namespace) -> list[str]:
-    skills: list[str] = []
-    for value in args.skill or []:
-        for item in str(value).split(","):
-            name = item.strip()
-            if name and name not in skills:
-                skills.append(name)
-    return skills
 
 
 def _valid_run_id(run_id: str) -> bool:
@@ -694,7 +683,6 @@ def _cmd_run_auto_agent_setup_inner(
         else ""
     )
     judge_cfg = None if args.no_judge else JudgeConfig(model=args.judge_model, base_url=args.judge_base_url)
-    active_skills = _selected_skills(args)
     judge_cache = run_dir / "_judge_cache"
     sha, dirty = git_sha(REPO_ROOT)
     started = now_iso()
@@ -871,7 +859,6 @@ def _cmd_run_auto_agent_setup_inner(
                     run_id,
                     environment_url=args.environment_url or None,
                     benchmark_task_id=route_id,
-                    active_skills=active_skills,
                     after_setup=(
                         (lambda: foreground_android_phone_bridge(bridge_serial, client)
                          if unit.task.foreground_app_id == ANDROID_BRIDGE_PACKAGE
@@ -990,6 +977,13 @@ def _cmd_run_auto_agent_setup_inner(
 
     totals = _result_totals(results, total_runs)
     suite_snapshot_path = _write_suite_snapshot(run_dir, suite)
+    # Each worker prepared its own config directory, so hash the skill trees
+    # those workers actually loaded instead of the repository checkout, which an
+    # --agent-config or a SkillOpt phase may have replaced after preparation.
+    skills_fingerprint = fingerprint_worker_configs(
+        workers_dir / worker_token(str(suite.source_path), f"{unit.task.id}-{unit.attempt}") / "config"
+        for unit in units if not unit.skip_reason
+    )
     manifest = {
         "run_id": run_id, "git_sha": sha, "git_dirty": dirty,
         "suite_path": str(suite.source_path), "suite_sha256": suite.sha256,
@@ -998,7 +992,7 @@ def _cmd_run_auto_agent_setup_inner(
         "agent_url": None,
         "environment_url": display_environment_url or None,
         "agent_model": args.agent_model,
-        "active_skills": active_skills,
+        "skills_fingerprint": skills_fingerprint,
         "judge_config": {"provider": judge_cfg.provider, "model": args.judge_model, "base_url": args.judge_base_url} if judge_cfg else None,
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": manifest_target_platform or None,
@@ -1175,7 +1169,6 @@ def _cmd_run(args: argparse.Namespace) -> int:
         client.close()
         return 2
     judge_cfg = None if args.no_judge else JudgeConfig(model=args.judge_model, base_url=args.judge_base_url)
-    active_skills = _selected_skills(args)
     judge_cache = run_dir / "_judge_cache"
     sha, dirty = git_sha(REPO_ROOT)
     started = now_iso()
@@ -1263,8 +1256,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
                     r = run_one_task(client, suite, task, attempt, art_dir,
                                       judge_cfg, judge_cache, run_id,
                                       environment_url=args.environment_url or None,
-                                      benchmark_task_id=task_benchmark_id,
-                                      active_skills=active_skills)
+                                      benchmark_task_id=task_benchmark_id)
                 except Exception as e:
                     print(f"[{progress}] ERROR      {task.id} attempt={attempt} — {e}", flush=True)
                     r = skipped_task_result(suite, task, attempt, art_dir, run_id, str(e))
@@ -1302,7 +1294,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         "agent_url": args.agent_url,
         "environment_url": args.environment_url or None,
         "agent_model": args.agent_model,
-        "active_skills": active_skills,
+        # An --agent-url run uses a daemon this process never configured, so the
+        # loaded skill text cannot be observed and must not be reported as if it
+        # were known.
+        "skills_fingerprint": {"sha256": None, "skills": {}, "source": SOURCE_EXTERNAL},
         "judge_config": {"provider": judge_cfg.provider, "model": args.judge_model, "base_url": args.judge_base_url} if judge_cfg else None,
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": target_platform or None,
