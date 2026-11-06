@@ -261,6 +261,20 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"
 
 
+@pytest.mark.parametrize("known_environment", [None, "adb"])
+def test_missing_null_and_empty_environments_share_one_dataset(known_environment):
+    records = [_record(passed=8), _record(execution_environment=None, passed=4),
+               _record(execution_environment="", passed=0)]
+    if known_environment:
+        records.append(_record(execution_environment=known_environment, passed=8))
+    report = summarize_weekly(records, end=END)
+    suites = {s["suite"]: s for s in report["suites"]}
+    unknown = "memory [unknown]" if known_environment else "memory"
+    assert suites[unknown]["suite_runs"] == 3
+    assert suites[unknown]["pass_at_1"] == 0.5
+    assert set(suites) == ({unknown, "memory [adb]"} if known_environment else {unknown})
+
+
 def test_a_suite_run_in_two_environments_is_reported_as_two_datasets():
     report = summarize_weekly([
         _record(suite="adb_android_text_editing", execution_environment="adb", passed=8),

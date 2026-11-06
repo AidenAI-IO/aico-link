@@ -80,6 +80,40 @@ def test_memory_state_failure_keeps_observed_records_and_fixture_boundary(tmp_pa
     assert evidence["memory_state"] == [{"id": "learned", "content": "retained"}]
 
 
+@pytest.mark.parametrize("snapshots,failed_step", [
+    (["My office city is Shenzhen."], 1),
+    (["My office city is Hangzhou.", "My office city is Hangzhou."], 3),
+])
+def test_wrong_intermediate_city_stops_before_a_later_update(tmp_path, monkeypatch, snapshots, failed_step):
+    class CityClient:
+        def __init__(self):
+            self.turns = 0
+            self.snapshots = iter(snapshots)
+
+        def chat(self, prompt, timeout_sec=90):
+            self.turns += 1
+
+        def invoke_tool(self, name, args, timeout=90):
+            return ToolInvokeResult(output=json.dumps({"results": [{"content": next(self.snapshots)}]}),
+                                    is_error=False, duration_ms=0)
+
+    setup = []
+    for city, aliases in [("Hangzhou", ["杭州", "Hangzhou"]), ("Shenzhen", ["深圳", "Shenzhen"])]:
+        setup.extend([
+            {"type": "agent_prompt", "prompt": f"Remember my office city is {city}.", "clear_history_after": False},
+            {"type": "assert_memory", "evaluate": True, "expected_count": 1,
+             "expected": [{"content_contains_any": aliases}]},
+        ])
+    setup.append({"type": "agent_prompt", "prompt": "Update my office city to Chengdu.", "clear_history_after": False})
+    client = CityClient()
+    result = run_setup(tmp_path, monkeypatch, setup, client)
+    assert result.status == "failed" and result.metrics["agent_eligible"] is True
+    assert client.turns == (failed_step + 1) // 2
+    evidence = json.loads((tmp_path / "setup_failure.json").read_text())
+    assert evidence["setup_step"] == setup[failed_step]
+    assert evidence["memory_state"][0]["content"] == snapshots[-1]
+
+
 @pytest.mark.parametrize("evaluate,consolidate", [("true", True), (1, True), (True, False)])
 def test_suite_rejects_invalid_evaluation_marker(tmp_path, evaluate, consolidate):
     data = json.loads((SUITES / "episode_reflection_v1.json").read_text())

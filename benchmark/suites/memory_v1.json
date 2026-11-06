@@ -848,7 +848,10 @@
           "query": {
             "limit": 100
           },
-          "expected_count": 1
+          "expected_count": 1,
+          "expected": [
+            {"content_contains_any": ["杭州", "Hangzhou"]}
+          ]
         },
         {
           "type": "agent_prompt",
@@ -862,7 +865,10 @@
           "query": {
             "limit": 100
           },
-          "expected_count": 1
+          "expected_count": 1,
+          "expected": [
+            {"content_contains_any": ["深圳", "Shenzhen"]}
+          ]
         },
         {
           "type": "agent_prompt",

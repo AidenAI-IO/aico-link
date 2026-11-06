@@ -30,7 +30,7 @@ SETUP_KEYS = {
 }
 
 ASSERT_MEMORY_EXPECTED_KEYS = {
-    "id", "memory_scope", "type", "revision", "content_contains",
+    "id", "memory_scope", "type", "revision", "content_contains", "content_contains_any",
     "title_contains", "tags_contains", "entities_contains",
     "source_refs_contain", "evidence_refs_contain", "sensitive",
 }
@@ -560,6 +560,13 @@ def validate_assert_memory_setup(
             ):
                 raise SuiteValidationError(
                     f"{spec_path} {field} must be a non-empty string"
+                )
+        if "content_contains_any" in spec:
+            alternatives = spec["content_contains_any"]
+            if (not isinstance(alternatives, list) or not alternatives
+                    or not all(isinstance(item, str) and item.strip() for item in alternatives)):
+                raise SuiteValidationError(
+                    f"{spec_path} content_contains_any must be a non-empty list of non-empty strings"
                 )
         if "sensitive" in spec and not isinstance(spec["sensitive"], bool):
             raise SuiteValidationError(f"{spec_path} sensitive must be a boolean")

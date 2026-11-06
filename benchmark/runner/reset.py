@@ -946,6 +946,10 @@ def _memory_result_matches(result: dict[str, Any], spec: dict[str, Any]) -> bool
     for field, result_field in (("content_contains", "content"), ("title_contains", "title")):
         if field in spec and str(spec[field]).strip().lower() not in str(result.get(result_field) or "").lower():
             return False
+    if "content_contains_any" in spec:
+        content = str(result.get("content") or "").casefold()
+        if not any(value.casefold() in content for value in spec["content_contains_any"]):
+            return False
     for field, result_field in (("tags_contains", "tags"), ("entities_contains", "entities")):
         if field not in spec:
             continue

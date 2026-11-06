@@ -554,7 +554,10 @@ Run the suite against isolated benchmark daemons because notification cursors
 and memory are durable. Explicit action tasks compose generic setup primitives:
 `seed_memory`, `seed_notification`, then `assert_memory`.
 `assert_memory.expected` supports scalar/content/tag/entity checks plus generic
-`source_refs_contain` and `evidence_refs_contain` entries. Reference entries may
+`source_refs_contain` and `evidence_refs_contain` entries. Use
+`content_contains_any` with a non-empty list of strings to accept equivalent
+content spellings (for example, a Chinese or English city name) in one record.
+Reference entries may
 match `type`, `id`, and `event_ids_contains`, which lets suites verify evidence
 preservation without adding scenario-specific runner logic.
 

@@ -152,6 +152,9 @@ def test_load_suite_rejects_invalid_range_environment_assertions(tmp_path: Path,
         ([{"revision": "2"}], "revision must be a positive integer"),
         ([{"sensitive": "true"}], "sensitive must be a boolean"),
         ([{"sensitive": None}], "sensitive must be a boolean"),
+        ([{"content_contains_any": []}], "content_contains_any must be a non-empty list"),
+        ([{"content_contains_any": [" "]}], "content_contains_any must be a non-empty list"),
+        ([{"content_contains_any": "杭州"}], "content_contains_any must be a non-empty list"),
     ],
 )
 def test_load_suite_rejects_malformed_assert_memory_nested_schema(

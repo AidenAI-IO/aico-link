@@ -86,15 +86,15 @@ def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
 def _label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Name each record's dataset: its suite, plus its environment when the
     same suite also ran in another environment, so those results never merge."""
-    environments: dict[str, set[Any]] = {}
+    environments: dict[str, set[str]] = {}
     for record in history:
-        environments.setdefault(record["suite"], set()).add(record.get("execution_environment"))
+        environments.setdefault(record["suite"], set()).add(record.get("execution_environment") or "unknown")
     labelled = []
     for record in history:
         suite = record["suite"]
-        environment = record.get("execution_environment")
+        environment = record.get("execution_environment") or "unknown"
         split = len(environments[suite]) > 1
-        labelled.append({**record, "dataset": f"{suite} [{environment or 'unknown'}]" if split else suite})
+        labelled.append({**record, "dataset": f"{suite} [{environment}]" if split else suite})
     return labelled
 
 

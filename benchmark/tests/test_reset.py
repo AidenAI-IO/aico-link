@@ -412,6 +412,29 @@ def test_assert_memory_matches_source_reference_evidence():
     )
 
 
+@pytest.mark.parametrize("content,expected,passes", [
+    ("My office city is Hangzhou.", ["杭州", "Hangzhou"], True),
+    ("我的办公城市是杭州。", ["杭州", "Hangzhou"], True),
+    ("My office city is Shenzhen.", ["杭州", "Hangzhou"], False),
+    ("My office city is Hangzhou.", ["深圳", "Shenzhen"], False),
+])
+def test_assert_memory_checks_current_city_in_content(content, expected, passes):
+    class CityClient(RecordingSetupClient):
+        def invoke_tool(self, name, args, timeout=90):
+            return ToolInvokeResult(
+                output=json.dumps({"results": [{"content": content}]}),
+                is_error=False, duration_ms=0,
+            )
+
+    setup = {"type": "assert_memory", "evaluate": True, "expected_count": 1,
+             "expected": [{"content_contains_any": expected}]}
+    if passes:
+        per_task_setup(CityClient(), setup)
+    else:
+        with pytest.raises(SetupAssertionError, match="did not match"):
+            per_task_setup(CityClient(), setup)
+
+
 def test_assert_memory_matches_sensitive_flag():
     class SensitiveClient(RecordingSetupClient):
         def invoke_tool(self, name, args, timeout=90):
