@@ -55,8 +55,9 @@ def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
                 "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
         return None
-    # Matching provenance labels do not establish matching skill content.
-    if record.get("skills_fingerprint") in ("mixed", "external-daemon", "unavailable"):
+    # Only a content digest establishes identity, not missing metadata or source labels.
+    fingerprint = record.get("skills_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
 
