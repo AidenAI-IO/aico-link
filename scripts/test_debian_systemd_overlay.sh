@@ -635,7 +635,7 @@ lan_rule_restricted() {
 }
 run_lan_sync
 lan_rule_restricted || fail "LAN access off does not restrict SSH"
-grep -Fxq 'reload --no-block ssh.service' "${systemctl_log}" || fail "sshd was not reloaded without blocking"
+grep -Fxq 'reload ssh.service' "${systemctl_log}" || fail "sshd was not reloaded"
 [ ! -e "${usermod_args}" ] || fail "LAN sync changed the account without a device password"
 # Switch on without a password: SSH must stay restricted.
 touch "${lan_root}/enabled"
@@ -672,6 +672,37 @@ lan_status=$?
 set -e
 [ "${lan_status}" -eq 3 ] || fail "LAN sync ignored a usermod failure (status ${lan_status})"
 lan_rule_restricted || fail "a usermod failure left SSH open to the LAN"
+# sshd is reloaded on every run, and a reload that fails is retried even
+# though the rule file already says "restricted".
+printf '%s\n' '#!/bin/sh' 'echo "$*" >>"${SYSTEMCTL_LOG}"' \
+    'case "$*" in reload*) [ -e "${SYSTEMCTL_FAIL_RELOAD:-/nonexistent}" ] && exit 1 ;; esac' \
+    'exit 0' >"${systemctl_mock}"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >"${USERMOD_ARGS_OUTPUT}"' >"${usermod_mock}"
+printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
+run_lan_sync
+rm -f "${lan_root}/enabled"
+: >"${systemctl_log}"
+touch "${lan_root}/reload-fails"
+set +e
+SYSTEMCTL_FAIL_RELOAD="${lan_root}/reload-fails" run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync ignored a failed sshd reload (status ${lan_status})"
+lan_rule_restricted || fail "turning LAN access off did not write the restrictive rule"
+rm -f "${lan_root}/reload-fails"
+: >"${systemctl_log}"
+run_lan_sync
+grep -Fxq 'reload ssh.service' "${systemctl_log}" \
+    || fail "a retry skipped the sshd reload because the rule file was already restrictive"
+if grep -Fq -- '--no-block' "${systemctl_log}"; then
+    fail "a runtime sync must wait for sshd to confirm the reload"
+fi
+: >"${systemctl_log}"
+AICO_SSHD_RELOAD=no-block run_lan_sync
+grep -Fxq 'reload --no-block ssh.service' "${systemctl_log}" \
+    || fail "the boot-mode sync must not block on the sshd reload"
+grep -qx 'Environment=AICO_SSHD_RELOAD=no-block' "${UNIT_DIR}/aico-lan-access.service" \
+    || fail "the boot unit would deadlock waiting for the sshd reload"
 grep -qx 'disable dnsmasq.service' \
     "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
 grep -qx 'disable wpa_supplicant.service' \

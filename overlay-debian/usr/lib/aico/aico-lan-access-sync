@@ -21,10 +21,15 @@ ACCOUNT=${AICO_DEVICE_ACCOUNT:-aico}
 USERMOD=${AICO_USERMOD_BIN:-usermod}
 SYSTEMCTL=${AICO_SYSTEMCTL_BIN:-systemctl}
 USB_SUBNET=${AICO_USB_SUBNET:-192.168.42.0/24}
+# The boot unit sets AICO_SSHD_RELOAD=no-block: ssh.service is ordered after
+# it, so a blocking reload would wait for this script and deadlock. Callers
+# at runtime (Config Web) keep the default and wait for sshd to confirm.
+SSHD_RELOAD=${AICO_SSHD_RELOAD:-wait}
 
-# Exit status 3: SSH is left restricted to the USB link because LAN access
-# could not be applied safely. The boot unit treats it as success so sshd
-# still starts, with the restrictive rule.
+# Exit status 3: LAN access could not be applied fully: the password was not
+# applied (SSH is kept to the USB link), or sshd did not confirm the reload
+# (the running sshd may still use its previous rule). The boot unit treats it
+# as success so sshd still starts; sshd reads the rule file when it starts.
 status=0
 
 mkdir -p "${SSHD_RULE_DIR}"
@@ -42,10 +47,19 @@ write_rule() {
     fi
     chmod 0644 "${tmp}"
     mv -f "${tmp}" "${rule}"
-    # --no-block: when the boot unit runs this, ssh.service is ordered after
-    # it, so a blocking reload would wait for this script and deadlock.
-    if "${SYSTEMCTL}" is-active --quiet ssh.service 2>/dev/null; then
+}
+
+# Reload sshd on every run, whether or not the rule file changed: a previous
+# run may have written the file but failed to reload, and the running sshd
+# keeps its old rule until it is told. A reload is idempotent.
+reload_sshd() {
+    if ! "${SYSTEMCTL}" is-active --quiet ssh.service 2>/dev/null; then
+        return 0
+    fi
+    if [ "${SSHD_RELOAD}" = no-block ]; then
         "${SYSTEMCTL}" reload --no-block ssh.service
+    else
+        "${SYSTEMCTL}" reload ssh.service
     fi
 }
 
@@ -53,6 +67,10 @@ write_rule() {
 # final state allows.
 if [ ! -f "${rule}" ] || ! grep -q '^Match ' "${rule}"; then
     write_rule restricted
+    if ! reload_sshd; then
+        echo "sshd did not confirm the reload; the running sshd may still accept LAN sources" >&2
+        status=3
+    fi
 fi
 
 hash=
@@ -87,5 +105,9 @@ elif [ -f "${ENABLED_FILE}" ]; then
     status=3
 else
     echo "LAN access off: SSH limited to the USB link"
+fi
+if ! reload_sshd; then
+    echo "sshd did not confirm the reload; the running sshd may still use its previous rule" >&2
+    status=3
 fi
 exit "${status}"

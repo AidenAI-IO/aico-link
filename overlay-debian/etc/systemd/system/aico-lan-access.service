@@ -6,6 +6,8 @@ Before=ssh.service aico-ttyd.service
 
 [Service]
 Type=oneshot
+# ssh.service is ordered after this unit; waiting for its reload would deadlock.
+Environment=AICO_SSHD_RELOAD=no-block
 ExecStart=/usr/lib/aico/aico-lan-access-sync
 SuccessExitStatus=3
 RemainAfterExit=yes

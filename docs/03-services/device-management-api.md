@@ -304,12 +304,21 @@ Turning LAN access on without a stored or submitted password returns `400`.
 No current password is required: whoever holds the USB cable owns the board,
 and a forgotten password is replaced over USB. The response repeats the status
 and adds `system_synced`, which is `false` when SSH or the login account could
-not be updated. In that case SSH stays restricted to the USB link even if the
-switch is on, so the image's default `aico` password is never exposed to the
-LAN. `aico-lan-access.service` retries on the next boot, but a persistent
-failure (for example a damaged password file) fails again; check
-`systemctl status aico-lan-access` and `/run/aico/sshd/lan.conf`, or set the
-password again over USB.
+not be updated. The HTTP services follow the stored switch immediately either
+way. For SSH:
+
+- If the device password could not be applied, the rule file keeps SSH on the
+  USB link even when the switch is on, so the image's default `aico` password
+  is not opened to the LAN.
+- If sshd did not confirm the reload, the running sshd may still use its
+  previous rule, for example staying open to the LAN after the switch was
+  turned off. Every later sync reloads sshd again, whether or not the rule
+  file changed, and sshd reads the rule file whenever it starts.
+
+When `system_synced` is `false`, check `systemctl status aico-lan-access ssh`
+and `/run/aico/sshd/lan.conf`, then change the switch again over USB or run
+`systemctl restart ssh`. `aico-lan-access.service` also retries on every boot,
+but a persistent failure (for example a damaged password file) fails again.
 
 A device password must be at least 8 characters and at most 72 bytes in UTF-8
 (the bcrypt limit), so a password made of multi-byte characters can be
@@ -324,7 +333,9 @@ State lives on userdata so it survives OTA:
 
 `/usr/lib/aico/aico-lan-access-sync` applies the state: it writes
 `/run/aico/sshd/lan.conf` (included last by `/etc/ssh/sshd_config.d/20-aico.conf`),
-reloads sshd, and sets the `aico` password to the device password. Until a
+sets the `aico` password to the device password, and reloads sshd on every
+run. Config Web waits for the reload to complete; the boot unit does not,
+because `ssh.service` is ordered after it. Until a
 device password is set, the account keeps the image's default password.
 `aico-lan-access.service` runs it on every boot, because `/run` is volatile and
 OTA resets `/etc/shadow`; `ssh.service` requires that unit so sshd never starts
