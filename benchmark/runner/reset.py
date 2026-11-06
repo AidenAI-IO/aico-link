@@ -383,14 +383,14 @@ def _try_device_prepare(
     prompt describes. It is an optimization, not a different contract: when the
     bridge has no recipe support or cannot confirm the state, the caller runs the
     agent prompt as before. Returns ``{"device_prepare": ...}`` on success,
-    ``{"device_prepare_fallback": ...}`` when a recipe ran but failed, and None
-    when no recipe applies. The record lands in the task's setup.json.
+    ``{"device_prepare_fallback": ...}`` when preparation is unavailable or fails,
+    and None when no recipe is configured. The record lands in the task's setup.json.
     """
     spec = setup.get("device_prepare")
     if spec is None:
         return None
     if not environment_url:
-        return None
+        return {"device_prepare_fallback": {"recipe": spec["recipe"], "error": "no environment_url"}}
     params = spec.get("params") or {}
     try:
         result = call_environment_prepare(

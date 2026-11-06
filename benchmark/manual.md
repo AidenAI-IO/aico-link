@@ -414,7 +414,8 @@ before Agent result scoring. A failed precondition is an ineligible environment
 skip; a missing screenshot or judge error is an ineligible evaluation error.
 Precondition verdicts are recorded in attempt metrics and shown in the report,
 not included in the Agent rubric pass rate. Offline rejudging uses the same
-precondition gate. With `--no-judge`, hard assertion evidence is still recorded,
+precondition gate. With `--no-judge`, deterministic tool, memory-state,
+expected-answer, and recall assertion evidence is still recorded,
 but attempts requiring a visual precondition remain unscored with
 `preconditions_pending=true`. Rejudging verifies that starting state before
 attributing a recorded hard assertion failure to the Agent.
@@ -450,6 +451,10 @@ recipe error as `device_prepare_fallback` and sets `setup_path` to
 confirmed one. For `camera_photo` with `then: "home"`, preparation resets Home
 and waits for launcher text before returning. `wait_for_text` can override the
 launcher labels for the target image; sending a Home key alone is insufficient.
+Subpage, notification-panel, and `home` recipes require non-empty
+`wait_for_text` confirmation labels and validate them before device actions.
+A configured recipe without an environment URL also reports an explicit
+`agent_fallback` with reason `no environment_url`.
 
 A confirmed recipe replaces the prompt, so `device_prepare` cannot be combined
 with `expected_response` or `clear_history_after: false`; suite loading rejects

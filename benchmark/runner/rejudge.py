@@ -87,6 +87,14 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
                 continue
             metrics.pop("preconditions_pending", None)
             preconditions_checked = True
+            deterministic = metrics.pop("deterministic_outcome", None)
+            if deterministic and deterministic["status"] in ("judge_error", "timeout", "failed"):
+                row["status"] = deterministic["status"]
+                metrics.update(deterministic["metrics"])
+                metrics.pop("judging_disabled", None)
+                metrics.pop("error", None)
+                new_results.append(row)
+                continue
             if execution_gate_blocks_rejudge({**row, "status": "failed"}):
                 row["status"] = "timeout" if (row.get("hard_assertions") or {}).get("timeout") is False else "failed"
                 metrics.pop("judging_disabled", None)

@@ -398,7 +398,7 @@
         },
         {
           "id": "copy_executed",
-          "check": "A successful tool result, explicit system copy confirmation, or clipboard readback establishes that copying succeeded. Text merely remaining in the field is not evidence that the clipboard changed."
+          "check": "A tool result that confirms the selected text was copied, explicit system copy confirmation, or clipboard readback matching the selected text establishes that copying succeeded. A successful shortcut result or text merely remaining in the field is not evidence that the clipboard changed."
         }
       ],
       "hard_assertions": {

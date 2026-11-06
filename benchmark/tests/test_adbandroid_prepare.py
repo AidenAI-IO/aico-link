@@ -219,6 +219,21 @@ def test_settings_page_rejects_states_it_cannot_build(params):
         run_recipe(RecipeDevice(screen_texts=["Network & internet"]), "settings_page", params)
 
 
+@pytest.mark.parametrize("recipe,params", [
+    ("settings_page", {"page": "device_info"}),
+    ("settings_page", {"panel": "notifications"}),
+    ("home", {}),
+])
+@pytest.mark.parametrize("value", [None, [], "", [" "]])
+def test_required_confirmation_is_validated_before_device_actions(recipe, params, value):
+    device = RecipeDevice()
+    if value is not None:
+        params = {**params, "wait_for_text": value}
+    with pytest.raises(PrepareError, match="wait_for_text"):
+        run_recipe(device, recipe, params)
+    assert device.calls == []
+
+
 def test_settings_search_types_only_into_a_focused_field():
     focused = '<node class="android.widget.EditText" focused="true" text="" />'
 
@@ -401,9 +416,10 @@ def test_device_prepare_without_an_environment_uses_the_agent_prompt(monkeypatch
     monkeypatch.setattr(reset, "call_environment_prepare", lambda *a, **kw: pytest.fail("no environment"))
     client = ChatClient()
 
-    per_task_setup(client, SETUP)
+    result = per_task_setup(client, SETUP)
 
     assert client.prompts == ["Open the contact."]
+    assert result == {"device_prepare_fallback": {"recipe": "contact_detail", "error": "no environment_url"}}
 
 
 def test_device_prepare_rejects_a_setup_built_at_runtime(monkeypatch):

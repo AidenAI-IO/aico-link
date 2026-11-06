@@ -262,15 +262,41 @@ def evaluate_task_history(
     base.hard_assertions = outcome.results
     base.hard_assertion_failures = list(outcome.failures)
     if judge_cfg is None and any(item.scope == "precondition" for item in task.rubric):
-        # Keep measured assertion evidence, but do not attribute its failure to
-        # the Agent until the starting state has been verified by rejudge.
-        base.status = "skipped"
-        base.metrics.update(judging_disabled=True, preconditions_pending=True,
-                            error="Precondition and outcome judging disabled; run rejudge to score this attempt.",
-                            quality_score=None)
-        _set_outcome_metrics(base, success=None, eligible=False, failure_class="skipped", stage="evaluation")
-        base.finished_at = now_iso()
-        return base
+        # Reuse ordinary deterministic scoring with visual checks removed, then
+        # defer attribution. Persist evaluation errors as well as assertion failures.
+        result = evaluate_task_history(
+            suite=suite, task=dc.replace(task, rubric=outcome_rubric), history=history,
+            attempt=attempt, artifact_dir=artifact_dir, judge_cfg=None, judge_cache_dir=judge_cache_dir,
+            run_id=run_id, timed_out=timed_out, metrics=metrics, pre_screenshot=pre_screenshot,
+            post_screenshot=post_screenshot, started_at=started, started_mono=started_mono,
+            active_skills=active_skills, episode=episode, memory_state=memory_state,
+            memory_state_error=memory_state_error,
+        )
+        # Ordinary scoring can stop at an earlier hard gate. Record the remaining
+        # answer/recall evidence too so offline judging cannot turn it into success.
+        if task.expected_answer is not None:
+            answer = evaluate_expected_answer(trace.final_response, task.expected_answer, task.answer_format or "option_letter")
+            result.hard_assertions.expected_answer = answer.passed
+            result.metrics.update(expected_answer=answer.expected_answer, predicted_answer=answer.predicted_answer,
+                                  expected_answer_match=answer.passed)
+        if recall_outcome is not None:
+            result.hard_assertions.expected_recalled_memory = recall_outcome.passed
+        result.metrics["deterministic_outcome"] = {
+            "status": result.status,
+            "metrics": {k: result.metrics.get(k) for k in
+                        ("success", "agent_eligible", "quality_score", "failure_class", "first_failure_stage")},
+        }
+        if (recall_outcome is not None and recall_outcome.passed is None):
+            result.metrics["deterministic_outcome"].update(status="judge_error", metrics={
+                "success": None, "agent_eligible": False, "quality_score": None,
+                "failure_class": "evaluation", "first_failure_stage": "evaluation"})
+        result.rubric_spec = [dc.asdict(r) for r in task.rubric]
+        result.status = "skipped"
+        result.metrics.update(judging_disabled=True, preconditions_pending=True,
+                              error="Precondition and outcome judging disabled; run rejudge to score this attempt.",
+                              quality_score=None)
+        _set_outcome_metrics(result, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        return result
     preconditions = check_preconditions(task.rubric, pre_screenshot, judge_cfg, judge_cache_dir)
     base.metrics.update(preconditions)
     if preconditions and preconditions["preconditions_passed"] is not True:

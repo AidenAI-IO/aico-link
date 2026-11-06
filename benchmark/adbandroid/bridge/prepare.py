@@ -111,7 +111,7 @@ def _texts_param(params: dict[str, Any], key: str, default: list[str]) -> list[s
     value = params.get(key, default)
     if isinstance(value, str):
         value = [value]
-    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
         raise PrepareError(f"{key} must be a non-empty string or list of strings")
     return value
 
@@ -338,17 +338,18 @@ def prepare_settings_page(device: Any, params: dict[str, Any]) -> dict[str, Any]
         raise PrepareError(f"unsupported panel {panel!r}")
     if panel and page != "main":
         raise PrepareError("a panel can open only over the main Settings page")
+    confirmation = _texts_param(params, "wait_for_text", []) if page != "main" or panel else None
     details: dict[str, Any] = {"page": page, "main_confirmed_by": _start_settings_main(device, params)}
     if page != "main":
         device.start_intent(action=SETTINGS_PAGE_ACTIONS[page], package=SETTINGS_PACKAGE)
         details["confirmed_by"] = wait_for_any_text(
-            device, _texts_param(params, "wait_for_text", []), timeout_sec=_timeout_param(params)
+            device, confirmation, timeout_sec=_timeout_param(params)
         )
     if panel:
         device.expand_notifications()
         details["panel"] = panel
         details["confirmed_by"] = wait_for_any_text(
-            device, _texts_param(params, "wait_for_text", []), timeout_sec=_timeout_param(params)
+            device, confirmation, timeout_sec=_timeout_param(params)
         )
     return details
 
@@ -390,8 +391,9 @@ def _wait_for_focused_edit_text(device: Any, *, timeout_sec: float) -> None:
 
 def prepare_home(device: Any, params: dict[str, Any]) -> dict[str, Any]:
     """Show the launcher Home screen with no panel or keyboard open."""
+    confirmation = _texts_param(params, "wait_for_text", [])
     device.reset_home()
-    matched = wait_for_any_text(device, _texts_param(params, "wait_for_text", []), timeout_sec=_timeout_param(params))
+    matched = wait_for_any_text(device, confirmation, timeout_sec=_timeout_param(params))
     return {"confirmed_by": matched}
 
 
