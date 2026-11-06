@@ -2,9 +2,10 @@
  * Model provider marks.
  *
  * The files under /assets/icons/model/ are LobeHub Icons 1.95.1 static SVGs (MIT,
- * https://github.com/lobehub/lobe-icons), except `speko.svg`, which is Speko's
- * own site icon (https://speko.ai/icon.svg). Single-colour marks are drawn black
- * in `currentColor`, which an <img> cannot recolour, so they sit on a dark disc
+ * https://github.com/lobehub/lobe-icons), except `speko.svg` (Speko site icon,
+ * https://speko.ai/icon.svg) and `moss.svg` (MOSS favicon from
+ * https://www.moss.cn/favicon.svg). Single-colour marks are drawn black in
+ * `currentColor`, which an <img> cannot recolour, so they sit on a dark disc
  * and are inverted by CSS; colour marks sit on a light disc as drawn.
  */
 
@@ -37,6 +38,7 @@ const MARKS = {
   'fish-audio': {file: 'fishaudio', dark: true},
   xai: {file: 'xai', dark: true},
   speko: {file: 'speko', full: true},
+  moss: {file: 'moss', full: true},
 };
 
 /**

@@ -115,6 +115,7 @@ type Capabilities struct {
 	CanCommitInputTurn               bool
 	CanInterruptResponse             bool
 	CanSendToolResult                bool
+	CanContinueResponse              bool
 	CanSendText                      bool
 	CanReplayContext                 bool
 }
@@ -244,10 +245,18 @@ type ToolResultSender interface {
 	SendToolResult(context.Context, string, string) error
 }
 
+// ResponseContinuer is an optional capability for providers that require an
+// explicit follow-up after client tool results (or similar deferred turns).
+// It is independent from text injection: a voice-only adapter may continue
+// tool turns without accepting SendText.
+type ResponseContinuer interface {
+	CreateResponse(context.Context) error
+}
+
 // TextSession is an optional capability for injecting text and explicitly
 // starting a response. Provider-direct brokers may return the native session
 // capability when the selected upstream supports text injection; callers must
-// feature-detect it.
+// feature-detect it. TextSession includes ResponseContinuer.
 type TextSession interface {
 	Session
 	SendText(context.Context, string) error

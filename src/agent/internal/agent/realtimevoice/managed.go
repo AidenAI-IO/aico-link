@@ -86,6 +86,7 @@ type Conversation struct {
 	ResponseInterrupter            ResponseInterrupter
 	InterruptionAckTimeoutProvider InterruptionAckTimeoutProvider
 	ToolResultSender               ToolResultSender
+	ResponseContinuer              ResponseContinuer
 	TextSession                    TextSession
 	ContextReplayer                ContextReplayer
 }
@@ -122,9 +123,9 @@ func (r *ProviderRegistry) Open(
 		_ = conversation.Close()
 		return nil, fmt.Errorf("realtime provider %s cannot send configured tool results", name)
 	}
-	if capabilities.ExplicitToolContinuation && !capabilities.CanSendText {
+	if capabilities.ExplicitToolContinuation && !capabilities.CanContinueResponse {
 		_ = conversation.Close()
-		return nil, fmt.Errorf("realtime provider %s requires explicit response continuation without text response support", name)
+		return nil, fmt.Errorf("realtime provider %s requires explicit response continuation without CreateResponse support", name)
 	}
 	return conversation, nil
 }
@@ -135,6 +136,7 @@ func newConversation(managed *managedSession, raw Session) *Conversation {
 	conversation.ResponseInterrupter, _ = raw.(ResponseInterrupter)
 	conversation.InterruptionAckTimeoutProvider, _ = raw.(InterruptionAckTimeoutProvider)
 	conversation.ToolResultSender, _ = raw.(ToolResultSender)
+	conversation.ResponseContinuer, _ = raw.(ResponseContinuer)
 	conversation.TextSession, _ = raw.(TextSession)
 	conversation.ContextReplayer, _ = raw.(ContextReplayer)
 	return conversation
@@ -181,6 +183,7 @@ func newManagedSession(raw Session, media DeviceMediaConfig) (*managedSession, e
 	_, capabilities.CanCommitInputTurn = raw.(TurnCommitter)
 	_, capabilities.CanInterruptResponse = raw.(ResponseInterrupter)
 	_, capabilities.CanSendToolResult = raw.(ToolResultSender)
+	_, capabilities.CanContinueResponse = raw.(ResponseContinuer)
 	_, capabilities.CanSendText = raw.(TextSession)
 	_, capabilities.CanReplayContext = raw.(ContextReplayer)
 	info := rawInfo

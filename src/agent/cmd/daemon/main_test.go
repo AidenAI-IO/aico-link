@@ -206,6 +206,30 @@ func TestRealtimeSessionConfigTransfersRuntimeToolsWhenBackendDisabled(t *testin
 	}
 }
 
+func TestMossRejectsUseBackendAgent(t *testing.T) {
+	if err := errIfMossBackendAgentUnsupported(agent.Config{
+		VoiceModel: agent.VoiceModelConfig{Provider: "moss", UseBackendAgent: true},
+	}); err == nil {
+		t.Fatal("expected moss + use_backend_agent to be rejected")
+	}
+	if err := errIfMossBackendAgentUnsupported(agent.Config{
+		VoiceModel:          agent.VoiceModelConfig{Provider: "moss-main", UseBackendAgent: true},
+		VoiceModelProviders: map[string]agent.VoiceModelProvider{"moss-main": {Type: "moss"}},
+	}); err == nil {
+		t.Fatal("expected named moss provider + use_backend_agent to be rejected")
+	}
+	if err := errIfMossBackendAgentUnsupported(agent.Config{
+		VoiceModel: agent.VoiceModelConfig{Provider: "moss", UseBackendAgent: false},
+	}); err != nil {
+		t.Fatalf("moss without backend agent should be allowed: %v", err)
+	}
+	if err := errIfMossBackendAgentUnsupported(agent.Config{
+		VoiceModel: agent.VoiceModelConfig{Provider: "gemini", UseBackendAgent: true},
+	}); err != nil {
+		t.Fatalf("non-moss backend agent should remain allowed: %v", err)
+	}
+}
+
 func TestRealtimeAgentTaskManagerFollowsUseBackendAgent(t *testing.T) {
 	for _, cfg := range []agent.Config{
 		{VoiceModel: agent.VoiceModelConfig{Provider: "gemini", Model: "gemini-3.8-live-extended-thinking"}},

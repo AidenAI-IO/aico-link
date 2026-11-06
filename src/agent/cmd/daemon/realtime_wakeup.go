@@ -737,6 +737,13 @@ func realtimeProviderType(cfg agent.Config) string {
 	return provider
 }
 
+func errIfMossBackendAgentUnsupported(cfg agent.Config) error {
+	if cfg.VoiceModel.UseBackendAgent && realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
+		return fmt.Errorf("moss live does not support use_backend_agent: task updates require text injection")
+	}
+	return nil
+}
+
 func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) realtimevoice.SessionConfig {
 	return realtimeProviderSessionConfigWithTools(cfg, runtime, nil)
 }
@@ -1378,6 +1385,9 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if len(chatBridges) > 0 {
 		chatBridge = chatBridges[0]
 	}
+	if err := errIfMossBackendAgentUnsupported(cfg); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var runtimeTools []langtools.Tool
@@ -1431,6 +1441,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
@@ -1900,7 +1911,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(call.ResponseID) {
 				requestResponse()
-				if err := textSession.CreateResponse(ctx); err != nil {
+				if responseContinuer == nil {
+					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+				}
+				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
 			}
@@ -2299,7 +2313,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				// discard other tools that the provider is still waiting for.
 				if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(tool.responseID) {
 					requestResponse()
-					if err := textSession.CreateResponse(ctx); err != nil {
+					if responseContinuer == nil {
+						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+					}
+					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
 				}
@@ -2361,10 +2378,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 							continue
 						}
 						requestResponse()
-						if !supportsText {
+						if responseContinuer == nil {
 							continue
 						}
-						if err := textSession.CreateResponse(ctx); err != nil {
+						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
 						continue
