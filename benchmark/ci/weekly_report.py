@@ -65,7 +65,7 @@ CONFIG_LABELS = {
     "judge_prompt_version": "judge prompt", "judge_provider": "judge provider",
     "suite_sha256": "suite", "workload_sha256": "workload",
     "metrics_schema_version": "metrics schema", "metrics_k": "k",
-    "target_platform": "platform", "active_skills": "skills", "git_branch": "branch",
+    "target_platform": "platform", "skills_fingerprint": "skills", "git_branch": "branch",
     "execution_environment": "environment",
 }
 assert sorted(CONFIG_LABELS) == sorted(COMPARISON_FIELDS)

@@ -1346,8 +1346,6 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
             "--environment-url",
             "http://127.0.0.1:19090",
             "--auto-agent-setup",
-            "--skill",
-            "device-operator",
             "--no-judge",
         ] + (["--android-phone-bridge-serial", "emulator-5554", "--max-concurrency", "1"]
              if bridge_mode != "none" else [])
@@ -1369,7 +1367,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     assert captured["kwargs"]["host_port"] == 0
     assert captured["kwargs"]["environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert captured["kwargs"]["environment_bridge_mode"] is True
-    assert captured["task_kwargs"]["active_skills"] == ["device-operator"]
+    assert "active_skills" not in captured["task_kwargs"]
     assert "device_type" not in captured["prepare_config_kwargs"]
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]
