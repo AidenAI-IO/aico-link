@@ -43,7 +43,7 @@ async function addImageFiles(files, source) {
     let skipped = 0;
     let failed = 0;
     for (const file of imageFiles) {
-        if (getDraftImageCount() >= maxDraftImageAttachments) {
+        if (getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16) {
             skipped++;
             continue;
         }
@@ -54,7 +54,7 @@ async function addImageFiles(files, source) {
                 skipped++;
                 continue;
             }
-            if (getDraftImageCount() >= maxDraftImageAttachments) {
+            if (getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16) {
                 skipped++;
                 continue;
             }
@@ -91,7 +91,7 @@ function getDraftImageCount() {
 }
 
 function canAttachImagesNow() {
-    return !loadingDiv.classList.contains('active');
+    return !fileUploadPending && !loadingDiv.classList.contains('active');
 }
 
 function imageAttachmentName(file, source, id) {
@@ -135,7 +135,7 @@ function imageMIMETypeFromDataURL(dataUrl) {
 
 function reportImageAddResult(accepted, skipped, failed) {
     if (skipped > 0) {
-        setComposerHint('Only 4 images can be attached.', true);
+        setComposerHint('Attach up to 4 images and 16 files/images in total.', true);
         return;
     }
     if (failed > 0) {
@@ -276,6 +276,15 @@ function renderMessageAttachments(attachments) {
         meta.appendChild(name);
         card.appendChild(meta);
 
+        const downloadURL = safeSharedURL(attachment.download_url);
+        if (downloadURL) {
+            const link = document.createElement('a');
+            link.href = downloadURL;
+            link.download = attachment.name || '';
+            link.textContent = 'Download';
+            card.appendChild(link);
+        }
+
         if (attachment.transcript) {
             const transcript = document.createElement('div');
             transcript.className = 'attachment-transcript';
@@ -297,6 +306,8 @@ function cloneAttachmentsForTransport(attachments) {
             mime_type: attachment.mime_type,
             data: attachment.data,
             size: attachment.size,
+            path: attachment.path,
+            download_url: attachment.download_url,
             transcript: attachment.transcript || ''
         };
     });
@@ -310,6 +321,8 @@ function cloneAttachmentsForMessage(attachments) {
             mime_type: attachment.mime_type,
             data: attachment.data,
             size: attachment.size,
+            path: attachment.path,
+            download_url: attachment.download_url,
             preview_url: attachment.preview_url || '',
             transcript: attachment.transcript || ''
         };
@@ -353,4 +366,62 @@ function readFileAsDataURL(file) {
         reader.onerror = function() { reject(reader.error || new Error('Failed to read file.')); };
         reader.readAsDataURL(file);
     });
+}
+
+// Upload binary files separately; chat requests carry only the validated board path.
+async function handleFileSelection(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    if (!canAttachImagesNow() || !files.length) return;
+    fileUploadPending = true;
+    setComposerState(loadingDiv.classList.contains('active'));
+    try {
+        for (const file of files) {
+            if (draftAttachments.length >= 16) throw new Error('Only 16 attachments can be attached.');
+            if (file.size > 100 * 1024 * 1024) throw new Error('File exceeds the 100 MiB limit: ' + file.name);
+            setComposerHint('Uploading ' + file.name + '…');
+            const form = new FormData();
+            form.append('file', file, file.name);
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 300000);
+            try {
+                const response = await fetch('/api/files', {method: 'POST', body: form, signal: controller.signal});
+                if (!response.ok) throw new Error(await response.text() || 'Upload failed');
+                const uploaded = await response.json();
+                draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
+            } finally { clearTimeout(timeout); }
+        }
+        resetComposerHint();
+    } catch (err) {
+        setComposerHint(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message, true);
+    } finally {
+        fileUploadPending = false;
+        renderDraftAttachments();
+    }
+}
+
+function safeSharedURL(value) {
+    if (!value) return '';
+    try {
+        const url = new URL(value, window.location.origin);
+        if (!['http:', 'https:'].includes(url.protocol) || url.hostname !== window.location.hostname || !url.pathname.startsWith('/share/')) return '';
+        // Use the current origin so downloads also work through an Agent reverse proxy.
+        return url.pathname;
+    } catch (_) { return ''; }
+}
+
+function sharedLinksFromText(text) {
+    const result = [];
+    const seen = new Set();
+    const pattern = /\[([^\]\n]+)\]\(([^\s)]+)\)|https?:\/\/[^\s<>"')]+|\/share\/[^\s<>"')\]]+/g;
+    for (const match of String(text || '').matchAll(pattern)) {
+        const target = match[2] || match[0].replace(/[.,;:!?。，；：！？、]+$/, '');
+        const href = safeSharedURL(target);
+        if (!href || seen.has(href) || href.endsWith('/')) continue;
+        seen.add(href);
+        let name = href.split('/').pop();
+        try { name = decodeURIComponent(name); } catch (_) {}
+        result.push({kind: 'file', name: match[1] || name, download_url: href});
+    }
+    return result;
 }

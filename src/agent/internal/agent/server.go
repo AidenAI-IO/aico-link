@@ -58,6 +58,7 @@ type Server struct {
 	closing                 atomic.Bool
 	httpMu                  sync.Mutex
 	httpServer              *http.Server
+	shareServer             *http.Server
 	httpListener            net.Listener
 	runtime                 *Runtime
 	addr                    string
@@ -123,17 +124,18 @@ func (s *Server) RealtimeEventSink() streamcontract.EventSink {
 const maxChatImageAttachments = 4
 
 type MessageAttachment struct {
-	Kind       string `json:"kind"`
-	Name       string `json:"name,omitempty"`
-	MIMEType   string `json:"mime_type,omitempty"`
-	Width      int    `json:"width,omitempty"`
-	Height     int    `json:"height,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Data       string `json:"data,omitempty"`
-	Size       int    `json:"size,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
-	Transcript string `json:"transcript,omitempty"`
-	PreviewURL string `json:"preview_url,omitempty"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name,omitempty"`
+	MIMEType    string `json:"mime_type,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Data        string `json:"data,omitempty"`
+	Size        int    `json:"size,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	Transcript  string `json:"transcript,omitempty"`
+	PreviewURL  string `json:"preview_url,omitempty"`
+	DownloadURL string `json:"download_url,omitempty"`
 }
 
 // Message represents a public chat or tool event.
@@ -545,6 +547,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// API endpoints
+	mux.Handle("/api/files", s.sharedFilesHandler())
+	mux.Handle("/share/", s.sharedFilesHandler())
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/chat/cancel", s.handleChatCancel)
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
@@ -722,6 +726,21 @@ func (s *Server) Start() error {
 		_ = listener.Close()
 		return nil
 	}
+	var shareListener net.Listener
+	if addr := strings.TrimSpace(os.Getenv("AICO_SHARE_ADDR")); addr != "" {
+		shareErr := os.MkdirAll(sharedFilesDir(), 0755)
+		if shareErr == nil {
+			shareListener, shareErr = net.Listen("tcp", addr)
+		}
+		if shareErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("Shared file listener unavailable; use the Agent HTTP port: %v", shareErr)
+			}
+		} else {
+			s.shareServer = &http.Server{Handler: s.sharedFilesHandler(), ReadHeaderTimeout: agentHTTPReadHeaderTimeout, ReadTimeout: 5 * time.Minute, IdleTimeout: agentHTTPIdleTimeout}
+		}
+	}
+	shareServer := s.shareServer
 	s.httpServer = srv
 	s.httpListener = listener
 	s.httpMu.Unlock()
@@ -735,6 +754,15 @@ func (s *Server) Start() error {
 	MarkBootTimeline("agent:listening")
 
 	errCh := make(chan error, 1)
+	defer s.Close()
+	if shareServer != nil {
+		go func() {
+			err := shareServer.Serve(shareListener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
+				s.logger.Warn("Shared file listener stopped; use the Agent HTTP port: %v", err)
+			}
+		}()
+	}
 	go func() {
 		err := srv.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
@@ -770,12 +798,16 @@ func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.httpMu.Lock()
 		srv := s.httpServer
+		shareServer := s.shareServer
 		listener := s.httpListener
 		s.httpMu.Unlock()
 		if listener != nil {
 			_ = listener.Close()
 		}
 
+		if shareServer != nil {
+			_ = shareServer.Close()
+		}
 		s.cancelAllActiveRuns()
 		s.interruptAllActiveOutputs()
 
@@ -3885,6 +3917,9 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		message.Type = "assistant"
 	}
 	message.Role = string(item.Role)
+	for _, file := range item.SharedFiles {
+		message.Attachments = append(message.Attachments, MessageAttachment{Kind: "file", Name: file.Name, MIMEType: file.MIMEType, Path: file.Path, Size: int(file.Size), DownloadURL: sharedDownloadURL(file.Path)})
+	}
 	for _, attachment := range item.Attachments {
 		name := filepath.Base(attachment.FilePath)
 		if name == "." || name == string(filepath.Separator) || name == "" {
@@ -3963,11 +3998,23 @@ func (s *Server) webAudioInputMode() string {
 }
 
 func decodeMessageAttachments(payloads []MessageAttachment) ([]InputAttachment, []MessageAttachment, error) {
+	if len(payloads) > 16 {
+		return nil, nil, fmt.Errorf("at most 16 attachments are supported")
+	}
 	decoded := make([]InputAttachment, 0, len(payloads))
 	history := make([]MessageAttachment, 0, len(payloads))
 	imageCount := 0
 
 	for _, payload := range payloads {
+		if strings.EqualFold(strings.TrimSpace(payload.Kind), "file") && (payload.Path != "" || strings.TrimSpace(payload.Data) == "") {
+			item, err := sharedFileMetadata(payload.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("shared file is unavailable; upload it through /api/files first")
+			}
+			decoded = append(decoded, InputAttachment{Kind: "file", Name: item.Name, MIMEType: item.MIMEType, Path: item.Path, Size: item.Size})
+			history = append(history, MessageAttachment{Kind: "file", Name: item.Name, MIMEType: item.MIMEType, Path: item.Path, Size: int(item.Size), DownloadURL: item.DownloadURL})
+			continue
+		}
 		data := strings.TrimSpace(payload.Data)
 		if data == "" {
 			return nil, nil, fmt.Errorf("attachment %q is missing data", payload.Name)

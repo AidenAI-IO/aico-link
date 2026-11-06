@@ -60,6 +60,11 @@ function createMessageNode(msg) {
         }
     }
 
+    if (msg.type === 'assistant') {
+        const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
+        if (downloads) body.appendChild(downloads);
+    }
+
     // Add audio playback button for voice messages with archived audio
     if (msg.audio_file && msg.audio_file !== '') {
         const audioBtn = document.createElement('button');
@@ -322,11 +327,13 @@ function updateEmptyState() {
 }
 
 function setComposerState(isLoading) {
-    sendBtn.disabled = pendingSteerSubmitting || (isLoading && !currentChatRequestId);
+    sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
     sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
-    const imageSlotsFull = getDraftImageCount() >= maxDraftImageAttachments;
-    imageBtn.disabled = isLoading || imageSlotsFull;
-    imageBtn.title = imageSlotsFull ? 'Maximum 4 images attached' : 'Add image';
+    const imageSlotsFull = getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16;
+    imageBtn.disabled = fileUploadPending || isLoading || imageSlotsFull;
+    const fileBtn = document.getElementById('fileBtn');
+    if (fileBtn) fileBtn.disabled = fileUploadPending || isLoading || draftAttachments.length >= 16;
+    imageBtn.title = imageSlotsFull ? 'Attachment limit reached' : 'Add image';
     stopRunBtn.disabled = !isLoading;
     if (!isLoading) {
         resetStopRunArm();
