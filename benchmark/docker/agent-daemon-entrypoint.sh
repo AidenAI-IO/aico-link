@@ -52,6 +52,9 @@ fi
 if [ "${AICO_BENCHMARK_LOCAL_PHONE_BRIDGE:-0}" = "1" ]; then
     set -- "$@" --benchmark-local-phone-bridge
 fi
+if [ "${AICO_BENCHMARK_REALTIME_TEXT:-0}" = "1" ]; then
+    set -- "$@" --benchmark-realtime-text
+fi
 
 # These containers have no physical device services. Real-device CLI runs do not
 # use this entrypoint; bridged and scripted environments retain their tool catalog.

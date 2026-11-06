@@ -130,6 +130,10 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--no-build-daemon-image", action="store_true")
     p_run.add_argument("--base-config-dir", default=str(REPO_ROOT / "benchmark" / "config"))
     p_run.add_argument("--agent-config", default="")
+    p_run.add_argument("--execution-mode", choices=["backend-text", "realtime-text"], default="backend-text")
+    p_run.add_argument("--realtime-provider", default=os.environ.get("AICO_BENCHMARK_REALTIME_PROVIDER", ""))
+    p_run.add_argument("--realtime-model", default=os.environ.get("AICO_BENCHMARK_REALTIME_MODEL", ""))
+    p_run.add_argument("--realtime-api-key-env", default="AICO_BENCHMARK_REALTIME_API_KEY")
     p_run.add_argument("--benchmark-token-file", default="")
     p_run.add_argument(
         "--judge-model",
@@ -717,6 +721,21 @@ def _cmd_run_auto_agent_setup_inner(
     agent_config_text = None
     if args.agent_config:
         agent_config_text = Path(args.agent_config).read_text(encoding="utf-8")
+    if getattr(args, "execution_mode", "backend-text") == "realtime-text":
+        from runner.config import configure_realtime_text
+        if agent_config_text is None:
+            base = Path(args.base_config_dir)
+            source = base / "agent.toml"
+            if source.is_file():
+                agent_config_text = source.read_text(encoding="utf-8")
+            else:
+                from runner.config import render_agent_template
+                agent_config_text = render_agent_template((base / "agent.toml.template").read_text(encoding="utf-8"))
+        agent_config_text = configure_realtime_text(
+            agent_config_text, provider=args.realtime_provider,
+            model=args.realtime_model, api_key_env=args.realtime_api_key_env,
+        )
+
 
     def run_unit(unit: TaskRunUnit):
         progress = f"{unit.index}/{total_runs}"
@@ -801,6 +820,7 @@ def _cmd_run_auto_agent_setup_inner(
                 environment_bridge_mode=bool(args.environment_url),
                 benchmark_mock_tools=task_mock_environment is not None,
                 benchmark_local_phone_bridge=bool(bridge_serial),
+                benchmark_realtime_text=getattr(args, "execution_mode", "backend-text") == "realtime-text",
                 log_path=runner_log,
             )
             append_log(runner_log, f"container {container_id}")
@@ -872,6 +892,8 @@ def _cmd_run_auto_agent_setup_inner(
                     environment_url=args.environment_url or None,
                     benchmark_task_id=route_id,
                     active_skills=active_skills,
+                    **({"execution_mode": "realtime-text", "fixture_token": mock_server.control_token if mock_server else ""}
+                       if getattr(args, "execution_mode", "backend-text") == "realtime-text" else {}),
                     after_setup=(
                         (lambda: foreground_android_phone_bridge(bridge_serial, client)
                          if unit.task.foreground_app_id == ANDROID_BRIDGE_PACKAGE
@@ -933,6 +955,8 @@ def _cmd_run_auto_agent_setup_inner(
                 str(exc),
             )
         finally:
+            # No worker may keep operating a lease after it is released.
+            stop_daemon_compose(job)
             if args.environment_url:
                 try:
                     call_environment_release(args.environment_url, task_id=route_id)
@@ -940,7 +964,6 @@ def _cmd_run_auto_agent_setup_inner(
                     print(f"warning: failed to release environment task route for {route_id}: {exc}", file=sys.stderr, flush=True)
             if client is not None:
                 client.close()
-            stop_daemon_compose(job)
             if log_proc is not None:
                 log_proc.terminate()
 
@@ -1003,6 +1026,8 @@ def _cmd_run_auto_agent_setup_inner(
         "judge_prompt_version": JUDGE_PROMPT_VERSION,
         "target_platform": manifest_target_platform or None,
         "auto_agent_setup": True,
+        "execution_mode": getattr(args, "execution_mode", "backend-text"),
+        "collaboration_models": [r.metrics.get("collaboration_models") for r in results if r.metrics.get("collaboration_models")],
         "concurrency": max_workers,
         "mock_environment": _mock_environment_manifest(suite),
         "execution_environment": (
@@ -1095,6 +1120,15 @@ def _cmd_run(args: argparse.Namespace) -> int:
         )
     except Exception as exc:
         print(f"Error: failed to resolve target platform: {exc}", file=sys.stderr)
+        return 2
+    if getattr(args, "execution_mode", "backend-text") == "realtime-text" and not args.auto_agent_setup:
+        print("Error: realtime-text requires --auto-agent-setup", file=sys.stderr)
+        return 2
+    if getattr(args, "execution_mode", "backend-text") == "backend-text" and any(t.scenario is not None for t in suite.tasks):
+        print("Error: scenario tasks require --execution-mode realtime-text", file=sys.stderr)
+        return 2
+    if getattr(args, "execution_mode", "backend-text") == "realtime-text" and any(t.scenario is None for t in suite.tasks):
+        print("Error: realtime-text requires scenario tasks", file=sys.stderr)
         return 2
     if _suite_has_mock_environment(suite) and not args.auto_agent_setup:
         print(

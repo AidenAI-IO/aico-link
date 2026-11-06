@@ -257,6 +257,49 @@ def render_agent_template(text: str) -> str:
     return rendered
 
 
+def configure_realtime_text(
+    content: str, *, provider: str, model: str, api_key_env: str,
+) -> str:
+    """Select a foreground provider without changing the existing main model."""
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    config = tomllib.loads(content)
+    voice = config.get("voice_settings", {})
+    realtime = voice.get("realtime", config.get("voice_model", {}))
+    mode = voice.get("mode", {}).get("input_mode", config.get("input_mode"))
+    if realtime:
+        if provider or model:
+            raise ValueError("configure the foreground in agent.toml or via CLI, not both")
+        if mode != "realtime" or realtime.get("use_backend_agent") is not True:
+            raise ValueError("realtime-text requires input_mode=realtime and use_backend_agent=true")
+        return content
+    if mode is not None or "mode" in voice:
+        raise ValueError("configure realtime in agent.toml when an input mode is already declared")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]*", provider):
+        raise ValueError("invalid realtime provider name")
+    if not model.strip():
+        raise ValueError("realtime model is required")
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
+        raise ValueError("invalid realtime API-key environment variable name")
+    if not os.environ.get(api_key_env, "").strip():
+        raise ValueError(f"realtime-text requires {api_key_env}")
+    return content.rstrip() + "\n\n" + "\n".join([
+        "[voice_settings.mode]",
+        'input_mode = "realtime"',
+        "[voice_settings.realtime.providers.benchmark-foreground]",
+        f"type = {json.dumps(provider)}",
+        f"model = {json.dumps(model)}",
+        f"api_key = {json.dumps('$' + api_key_env)}",
+        "[voice_settings.realtime]",
+        'provider = "benchmark-foreground"',
+        "use_backend_agent = true",
+        "",
+    ])
+
+
 def apply_benchmark_telemetry(content: str) -> str:
     """Opt CI workers into execution tracing; explicit Agent settings take precedence."""
     if os.getenv("AICO_BENCHMARK_TELEMETRY", "").strip().lower() not in {"1", "true"}:

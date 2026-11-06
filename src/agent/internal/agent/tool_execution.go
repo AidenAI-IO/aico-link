@@ -63,6 +63,7 @@ type ToolProgress struct {
 }
 
 type toolProgressContextKey struct{}
+type benchmarkToolCallContextKey struct{}
 
 type toolExecutionHookHandler interface {
 	BeforeToolCall(ctx context.Context, call ToolCall) (ToolResult, bool)
@@ -126,6 +127,7 @@ func executeToolCall(ctx context.Context, execution ToolCallExecution) ToolCallE
 	}
 
 	ctx2, _ := WithToolError(ctx)
+	ctx2 = context.WithValue(ctx2, benchmarkToolCallContextKey{}, action.ToolID)
 	if progressHandler, ok := execution.Callback.(toolProgressCallbackHandler); ok {
 		ctx2 = withToolProgressReporter(ctx2, func(progress ToolProgress) {
 			progressHandler.HandleToolProgress(ctx, call, progress)

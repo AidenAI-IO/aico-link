@@ -96,7 +96,7 @@ jobs:
   run:
     needs: plan
     if: ${{ startsWith(github.ref, 'refs/heads/') && github.event_name != 'pull_request' && github.event_name != 'pull_request_target' }}
-    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
+    runs-on: aiden-hosted-01
     # One runner serves this label, so a job matrix could never start a second job:
     # every case ran back to back and repaid the checkout/uv/docker setup 13 times.
     # A single job fans the cases out in-process instead, where the isolation that
@@ -113,6 +113,9 @@ jobs:
       BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
       BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
       BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+      BENCHMARK_REALTIME_PROVIDER: ${{ vars.BENCHMARK_REALTIME_PROVIDER }}
+      BENCHMARK_REALTIME_MODEL: ${{ vars.BENCHMARK_REALTIME_MODEL }}
+      BENCHMARK_REALTIME_API_KEY: ${{ secrets.BENCHMARK_REALTIME_API_KEY }}
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}

@@ -104,6 +104,16 @@ class MockEnvironmentSpec:
     screen: str | None = None
     screen_text: str = ""
     default_tool_response: MockToolResponseSpec | None = None
+    collaboration_fixture: dict[str, Any] | None = None
+
+@dc.dataclass
+class ScenarioSpec:
+    version: int
+    steps: list[dict[str, Any]]
+    completion: dict[str, Any]
+    assertions: list[dict[str, Any]]
+    policies: list[str]
+    timeout_sec: int = 300
 
 @dc.dataclass
 class TaskSpec:
@@ -131,6 +141,7 @@ class TaskSpec:
     android_bridge_fixture: str | None = None
     memory_assertions: dict[str, Any] | None = None
     consolidation_expectation: ConsolidationExpectation | None = None
+    scenario: ScenarioSpec | None = None
 
 @dc.dataclass
 class Suite:
@@ -185,6 +196,7 @@ def load_suite(path: Path) -> Suite:
         cat = raw.get("category")
         if cat not in VALID_CATEGORIES:
             raise SuiteValidationError(f"task {tid}: invalid category {cat!r}")
+        scenario = _parse_scenario(raw.get("scenario"), tid)
         rubric_raw = raw.get("rubric") or []
         rubric: list[RubricItem] = []
         for r in rubric_raw:
@@ -196,7 +208,7 @@ def load_suite(path: Path) -> Suite:
             rubric.append(RubricItem(id=r["id"], check=check))
         ha = raw.get("hard_assertions") or {}
         # A task may omit the judge only when deterministic call checks decide it.
-        if not rubric_raw and not ha.get("required_tool_calls"):
+        if not rubric_raw and not ha.get("required_tool_calls") and scenario is None:
             raise SuiteValidationError(f"task {tid}: empty rubric requires hard_assertions.required_tool_calls")
         # Validate hard_assertions types
         rr = ha.get("response_required", True)
@@ -416,6 +428,7 @@ def load_suite(path: Path) -> Suite:
             android_bridge_fixture=android_bridge_fixture,
             memory_assertions=memory_assertions,
             consolidation_expectation=consolidation_expectation,
+            scenario=scenario,
         ))
     prompt_prefix = data.get("prompt_prefix", "")
     if not isinstance(prompt_prefix, str):
@@ -458,6 +471,19 @@ def load_suite(path: Path) -> Suite:
         )
 
     mock_environment = _parse_mock_environment(data.get("mock_environment"))
+    for task in tasks:
+        if task.scenario is None:
+            continue
+        fixture = (task.mock_environment or mock_environment)
+        if fixture is None or fixture.collaboration_fixture is None:
+            raise SuiteValidationError(f"task {task.id}: scenario requires collaboration_fixture")
+        if task.setup or task.input_screenshot or task.memory_assertions or task.expected_answer or task.environment_assertions:
+            raise SuiteValidationError(f"task {task.id}: unsupported legacy assertions/setup on a scenario")
+        gates = {gate["id"] for gate in fixture.collaboration_fixture.get("gates", [])}
+        for step in task.scenario.steps:
+            gate = step.get("gate") or step.get("match", {}).get("gate")
+            if gate is not None and gate not in gates:
+                raise SuiteValidationError(f"task {task.id}: unknown fixture gate {gate}")
     return Suite(
         name=data.get("name", Path(path).stem),
         global_reset=data.get("global_reset") or {},
@@ -470,6 +496,155 @@ def load_suite(path: Path) -> Suite:
         mock_environment=mock_environment,
         status=status.strip().lower(),
     )
+
+
+def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or type(raw.get("version")) is not int or raw.get("version") != 1 or set(raw) - {
+        "version", "steps", "completion", "assertions", "policies", "timeout_sec",
+    }:
+        raise SuiteValidationError(f"task {task_id}: invalid scenario version or keys")
+    steps = raw.get("steps", [])
+    if not isinstance(steps, list):
+        raise SuiteValidationError(f"task {task_id}: scenario.steps must be a list")
+    known_steps = set()
+    turns = {"initial"}
+    tasks = set()
+    revisions = set()
+    for step in steps:
+        if not isinstance(step, dict) or not isinstance(step.get("id"), str) or not step["id"]:
+            raise SuiteValidationError(f"task {task_id}: scenario step requires id")
+        if step["id"] in known_steps or step["id"] == "initial":
+            raise SuiteValidationError(f"task {task_id}: duplicate scenario step id")
+        known_steps.add(step["id"])
+        kind = step.get("type")
+        allowed = {
+            "send": {"id", "type", "text"},
+            "await": {"id", "type", "match", "bind_task", "bind_revision", "timeout_sec"},
+            "release": {"id", "type", "gate"},
+            "assert": {"id", "type", "check"},
+        }.get(kind)
+        if allowed is None or set(step) - allowed:
+            raise SuiteValidationError(f"task {task_id}: unsupported scenario step {kind!r}")
+        if kind == "send":
+            if not isinstance(step.get("text"), str) or not step["text"].strip():
+                raise SuiteValidationError(f"task {task_id}: send requires text")
+            turns.add(step["id"])
+        if kind == "await":
+            match = step.get("match")
+            if not isinstance(match, dict) or not isinstance(match.get("kind"), str) or not match["kind"] or set(match) - {
+                "kind", "actor", "phase", "status", "turn", "task", "goal_revision", "applied_revision", "gate",
+            }:
+                raise SuiteValidationError(f"task {task_id}: invalid await match")
+            if match["kind"].startswith("fixture.") and set(match) - {"kind", "phase", "gate", "task"}:
+                raise SuiteValidationError(f"task {task_id}: invalid fixture match fields")
+            for key in ("turn", "task", "gate", "actor", "phase", "status"):
+                if key in match and (not isinstance(match[key], str) or not match[key]):
+                    raise SuiteValidationError(f"task {task_id}: match {key} must be nonempty text")
+            if match.get("turn") and match["turn"] not in turns:
+                raise SuiteValidationError(f"task {task_id}: unknown turn alias {match['turn']}")
+            if match.get("task") and match["task"] not in tasks:
+                raise SuiteValidationError(f"task {task_id}: unknown task alias {match['task']}")
+            for field in ("goal_revision", "applied_revision"):
+                ref = match.get(field)
+                if ref is not None and not ((type(ref) is int and ref > 0) or
+                    (isinstance(ref, str) and ref.startswith("$revision.") and ref[10:] in revisions)):
+                    raise SuiteValidationError(f"task {task_id}: invalid revision reference {ref}")
+            if "bind_task" in step:
+                if not isinstance(step["bind_task"], str) or not step["bind_task"] or step["bind_task"] in tasks:
+                    raise SuiteValidationError(f"task {task_id}: invalid or duplicate task alias")
+                if match.get("kind") != "task.updated" or match.get("phase") != "created" or not match.get("turn"):
+                    raise SuiteValidationError(f"task {task_id}: bind_task requires a task-created event from a turn")
+                tasks.add(step["bind_task"])
+            if "bind_revision" in step:
+                if not isinstance(step["bind_revision"], str) or not step["bind_revision"] or step["bind_revision"] in revisions:
+                    raise SuiteValidationError(f"task {task_id}: invalid or duplicate revision alias")
+                if match.get("phase") != "goal_updated" or not match.get("task"):
+                    raise SuiteValidationError(f"task {task_id}: bind_revision requires goal_updated on a task")
+                revisions.add(step["bind_revision"])
+            if "timeout_sec" in step and (type(step["timeout_sec"]) is not int or step["timeout_sec"] <= 0):
+                raise SuiteValidationError(f"task {task_id}: await timeout_sec must be positive")
+        if kind == "release" and not isinstance(step.get("gate"), str):
+            raise SuiteValidationError(f"task {task_id}: release requires a gate id")
+        if kind == "assert":
+            _validate_scenario_check(step.get("check"), tasks, turns, task_id, final=False)
+    completion = raw.get("completion")
+    if not isinstance(completion, dict) or not completion:
+        raise SuiteValidationError(f"task {task_id}: scenario completion is required")
+    if "tasks" in completion:
+        if set(completion) != {"tasks"}:
+            raise SuiteValidationError(f"task {task_id}: conflicting completion forms")
+        if not isinstance(completion["tasks"], list) or not completion["tasks"]:
+            raise SuiteValidationError(f"task {task_id}: completion.tasks must be nonempty")
+        for target in completion["tasks"]:
+            if not isinstance(target, dict) or set(target) - {"task", "status", "goal_revision", "feedback"}:
+                raise SuiteValidationError(f"task {task_id}: invalid completion task")
+            if not isinstance(target.get("task"), str) or target["task"] not in tasks or target.get("status") not in {"completed", "failed", "cancelled"}:
+                raise SuiteValidationError(f"task {task_id}: invalid completion task")
+            if target.get("feedback", "required") != "required":
+                raise SuiteValidationError(f"task {task_id}: delegated completion requires feedback")
+            target["feedback"] = "required"
+            revision = target.get("goal_revision")
+            if revision is not None and not ((type(revision) is int and revision > 0) or
+                (isinstance(revision, str) and revision.startswith("$revision.") and revision[10:] in revisions)):
+                raise SuiteValidationError(f"task {task_id}: invalid completion revision")
+    elif completion != {"turn": "initial", "delegation": "none"}:
+        raise SuiteValidationError(f"task {task_id}: unsupported direct completion")
+    timeout = raw.get("timeout_sec", 300)
+    if type(timeout) is not int or not 0 < timeout <= 1800:
+        raise SuiteValidationError(f"task {task_id}: scenario timeout_sec must be positive")
+    policies = raw.get("policies", ["supported_completion_claims"])
+    if policies != ["supported_completion_claims"]:
+        raise SuiteValidationError(f"task {task_id}: unsupported scenario policy")
+    assertions = raw.get("assertions", [])
+    if not isinstance(assertions, list) or any(not isinstance(check, dict) for check in assertions):
+        raise SuiteValidationError(f"task {task_id}: scenario assertions must be objects")
+    ids = set()
+    for check in assertions:
+        _validate_scenario_check(check, tasks, turns, task_id, final=True)
+        if check["id"] in ids:
+            raise SuiteValidationError(f"task {task_id}: duplicate assertion id")
+        ids.add(check["id"])
+    return ScenarioSpec(version=1, steps=steps, completion=completion, assertions=assertions,
+                        policies=policies, timeout_sec=timeout)
+
+
+def _validate_scenario_check(check: Any, tasks: set[str], turns: set[str], task_id: str, *, final: bool) -> None:
+    fields = {
+        "task_state": ({"kind", "task", "status", "started"}, {"task", "status"}),
+        "tasks_created": ({"kind", "turn", "count"}, {"turn", "count"}),
+        "no_effect": ({"kind", "operation", "input_contains"}, {"operation"}),
+        "effect_count": ({"kind", "operation", "input_contains", "count"}, {"operation", "count"}),
+        "fixture_call_count": ({"kind", "operation", "input_contains", "count"}, {"operation", "count"}),
+        "fixture_failure": ({"kind", "operation", "input_contains"}, {"operation"}),
+        "state_equals": ({"kind", "path", "value"}, {"path", "value"}),
+    }
+    if not isinstance(check, dict) or not isinstance(check.get("kind"), str) or check["kind"] not in fields:
+        raise SuiteValidationError(f"task {task_id}: unsupported scenario assertion")
+    allowed, required = fields[check["kind"]]
+    if set(check) - (allowed | {"id"}) or not required <= set(check):
+        raise SuiteValidationError(f"task {task_id}: invalid scenario assertion fields")
+    if final and (not isinstance(check.get("id"), str) or not check["id"]):
+        raise SuiteValidationError(f"task {task_id}: assertion requires id")
+    for field, aliases in (("task", tasks), ("turn", turns)):
+        if field in check and (not isinstance(check[field], str) or check[field] not in aliases):
+            raise SuiteValidationError(f"task {task_id}: unknown assertion {field} alias")
+    if "count" in check and (type(check["count"]) is not int or check["count"] < 0):
+        raise SuiteValidationError(f"task {task_id}: assertion count must be non-negative")
+    if "started" in check and type(check["started"]) is not bool:
+        raise SuiteValidationError(f"task {task_id}: started must be boolean")
+    if "status" in check and check["status"] not in {"queued", "running", "cancelling", "cancelled", "failed", "completed"}:
+        raise SuiteValidationError(f"task {task_id}: invalid task status")
+    if "operation" in check and check["operation"] not in {"bridge_clipboard", "bridge_notification"}:
+        raise SuiteValidationError(f"task {task_id}: unsupported fixture operation")
+    if "input_contains" in check and not isinstance(check["input_contains"], dict):
+        raise SuiteValidationError(f"task {task_id}: invalid input selector")
+    if "path" in check and (not isinstance(check["path"], str) or not check["path"].startswith("/")):
+        raise SuiteValidationError(f"task {task_id}: state path must be a JSON Pointer")
+    value = check.get("value")
+    if isinstance(value, dict) and (set(value) != {"fixture_value"} or not isinstance(value["fixture_value"], str) or not value["fixture_value"].startswith("/")):
+        raise SuiteValidationError(f"task {task_id}: invalid fixture value reference")
 
 
 def validate_setup_device_prepare(setup: dict[str, Any]) -> None:
@@ -976,10 +1151,56 @@ def _parse_mock_environment(
     screen_text = raw.get("screen_text", "")
     if not isinstance(screen_text, str):
         raise SuiteValidationError(f"{path}.screen_text must be a string")
+    collaboration_fixture = raw.get("collaboration_fixture")
+    if collaboration_fixture is not None:
+        if not isinstance(collaboration_fixture, dict) or collaboration_fixture.get("name") != "phone_data_v1":
+            raise SuiteValidationError(f"{path}.collaboration_fixture requires name=phone_data_v1")
+        if set(collaboration_fixture) - {"name", "state", "gates", "failures"}:
+            raise SuiteValidationError(f"{path}.collaboration_fixture contains unsupported fields")
+        state = collaboration_fixture.get("state", {})
+        if not isinstance(state, dict) or set(state) - {"clipboard", "notifications"}:
+            raise SuiteValidationError(f"{path}.collaboration_fixture.state must contain clipboard/notifications only")
+        clipboard = state.get("clipboard", "")
+        if not (isinstance(clipboard, str) or clipboard == {"generate": "token"}):
+            raise SuiteValidationError(f"{path}.collaboration_fixture.state.clipboard must be text or generate=token")
+        notifications = state.get("notifications", [])
+        if not isinstance(notifications, list) or any(not isinstance(item, dict) for item in notifications):
+            raise SuiteValidationError(f"{path}.collaboration_fixture.state.notifications must be a list of objects")
+        gates = collaboration_fixture.get("gates", [])
+        if not isinstance(gates, list):
+            raise SuiteValidationError(f"{path}.collaboration_fixture.gates must be a list")
+        from runner.phone_data_fixture import PhoneDataFixture
+        gate_ids = set()
+        for gate in gates:
+            if not isinstance(gate, dict) or set(gate) - {"id", "tool", "input_contains", "at", "timeout_sec", "error"}:
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates contain an invalid gate")
+            if not isinstance(gate.get("id"), str) or not gate["id"] or gate["id"] in gate_ids:
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates require unique IDs")
+            if gate.get("tool") not in PhoneDataFixture.tools:
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates name unsupported tools")
+            selector = gate.get("input_contains", {})
+            if not isinstance(selector, dict):
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates.input_contains must be an object")
+            at = gate.get("at", "before_result")
+            if at not in {"before_result", "permission"}:
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates.at must be before_result or permission")
+            if at == "permission" and (not isinstance(gate.get("error"), str) or not gate["error"].strip()):
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates.error is required for permission gates")
+            if at == "before_result" and "error" in gate:
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates.error is only valid for permission gates")
+            if "timeout_sec" in gate and (type(gate["timeout_sec"]) is not int or gate["timeout_sec"] <= 0):
+                raise SuiteValidationError(f"{path}.collaboration_fixture.gates.timeout_sec must be positive")
+            gate_ids.add(gate["id"])
+        failures = collaboration_fixture.get("failures", {})
+        if not isinstance(failures, dict) or set(failures) - PhoneDataFixture.tools or any(
+            not isinstance(message, str) or not message.strip() for message in failures.values()
+        ):
+            raise SuiteValidationError(f"{path}.collaboration_fixture.failures must map fixture tool names to messages")
     return MockEnvironmentSpec(
         platform=platform,
         phone_bridge=phone_bridge,
         tools=tools,
+        collaboration_fixture=collaboration_fixture,
         single_frame=single_frame,
         screen=screen.strip() if isinstance(screen, str) else None,
         screen_text=screen_text,

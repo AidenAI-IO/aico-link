@@ -301,6 +301,19 @@ class AgentClient:
         attachments: list[dict[str, Any]] | None = None,
         skills: list[str] | None = None,
     ) -> ChatResponse:
+        submitted = self.submit_chat(message, timeout_sec, attachments, skills)
+        if isinstance(submitted, ChatResponse):
+            return submitted
+        return self.wait_chat(submitted, timeout_sec)
+
+    def submit_chat(
+        self,
+        message: str,
+        timeout_sec: int | None = None,
+        attachments: list[dict[str, Any]] | None = None,
+        skills: list[str] | None = None,
+    ) -> str | ChatResponse:
+        """Submit without waiting for completion; legacy synchronous servers still work."""
         request_id = f"benchmark-{uuid.uuid4().hex}"
         payload: dict[str, Any] = {"message": message, "request_id": request_id}
         if attachments:
@@ -322,13 +335,49 @@ class AgentClient:
         # Async mode: agent returns request_id, long poll for completion.
         response_request_id = str(body.get("request_id") or "").strip()
         if response_request_id:
-            return self._wait_for_chat_result(response_request_id, timeout_sec)
+            return response_request_id
 
         return ChatResponse(
             response=body.get("response", ""),
             history=body.get("history", []),
             episode_id=_chat_episode_id(body),
         )
+
+    def wait_chat(self, request_id: str, timeout_sec: int | None = None) -> ChatResponse:
+        return self._wait_for_chat_result(request_id, timeout_sec)
+
+    def fixture_state(self, environment_url: str, token: str, *, freeze: bool = False) -> dict[str, Any]:
+        suffix = "/api/collaboration/freeze" if freeze else "/api/collaboration/state"
+        req = urllib.request.Request(environment_url.rstrip("/") + suffix,
+            data=b"{}" if freeze else None,
+            headers={"X-Aico-Fixture-Control": token, "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.load(response)["data"]
+
+    def fixture_release(self, environment_url: str, token: str, gate: str, watermark: dict[str, int]) -> None:
+        payload = json.dumps({"gate": gate, "daemon_watermark": watermark}).encode("utf-8")
+        req = urllib.request.Request(environment_url.rstrip("/") + "/api/collaboration/release",
+            data=payload, headers={"Content-Type": "application/json", "X-Aico-Fixture-Control": token})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            if not json.load(response).get("ok"):
+                raise AgentRequestError("fixture gate was not released")
+
+    def collaboration_status(self, *, barrier: bool = False) -> dict[str, Any]:
+        path = "/api/benchmark/collaboration" + ("?barrier=1" if barrier else "")
+        req = urllib.request.Request(self.base_url + path, headers={
+            "X-Aico-Benchmark-Token": self._benchmark_token,
+        })
+        with urllib.request.urlopen(req, timeout=10) as response:
+            return json.load(response)
+
+    def open_collaboration_events(self, cursor: str = "", timeout: float = 15):
+        headers = {"X-Aico-Benchmark-Token": self._benchmark_token}
+        path = "/api/benchmark/collaboration/events"
+        if cursor:
+            headers["Last-Event-ID"] = cursor
+        else:
+            path += "?since=latest"
+        return urllib.request.urlopen(urllib.request.Request(self.base_url + path, headers=headers), timeout=timeout)
 
     def _wait_for_chat_result(
         self, request_id: str, timeout_sec: int | None = None

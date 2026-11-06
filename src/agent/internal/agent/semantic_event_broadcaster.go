@@ -85,6 +85,12 @@ func (b *semanticEventBroadcaster) Publish(event stream.Event) error {
 	return nil
 }
 
+func (b *semanticEventBroadcaster) Cursor() stream.ReplayCursor {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.replay.Cursor()
+}
+
 // Subscribe registers a subscriber before taking its replay snapshot. The
 // broadcaster lock makes the snapshot watermark and live delivery atomic from
 // the subscriber's perspective, so no event can fall between them.

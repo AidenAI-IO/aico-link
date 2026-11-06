@@ -65,6 +65,36 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             new_results.append(row)
             continue
         metrics = row.setdefault("metrics", {})
+        if metrics.get("execution_mode") == "realtime-text":
+            td = run_dir / "tasks" / row["task_id"]
+            attempt_dir = td / f"attempt_{row['attempt']}" if (td / f"attempt_{row['attempt']}").exists() else td
+            try:
+                from runner.scenario import evaluate_scenario
+                task = next((t for t in suite.tasks if t.id == row["task_id"]), None) if suite else None
+                if task is None or task.scenario is None:
+                    raise ValueError("missing recorded collaboration scenario")
+                evidence = json.loads((attempt_dir / "collaboration.json").read_text("utf-8"))
+                evaluation = evaluate_scenario(evidence, task, cfg, attempt_dir,
+                                               evaluation_name="collaboration-evaluation.rejudged.json")
+                outcome = evaluation["outcome"]
+                row["status"] = {"pass": "passed", "fail": "failed", "unscored": "judge_error"}[outcome]
+                row["rubric"] = evaluation["rubric"]
+                row["rubric_total"] = len(row["rubric"])
+                row["rubric_pass_count"] = sum(v["verdict"] == "yes" for v in row["rubric"])
+                row["hard_assertion_failures"] = [
+                    {"id": c["id"], "label": c["id"], "requirement": "Collaboration contract",
+                     "actual": c.get("reason") or json.dumps(c.get("evidence_refs", []))}
+                    for c in evaluation["checks"] if c["verdict"] == "fail"]
+                metrics.update(success=outcome == "pass" if outcome != "unscored" else None,
+                               agent_eligible=outcome != "unscored",
+                               quality_score=1.0 if outcome == "pass" else 0.0 if outcome == "fail" else None,
+                               failure_class="agent" if outcome == "fail" else "evaluation" if outcome == "unscored" else None)
+                metrics.pop("rejudge_error", None)
+            except Exception as exc:
+                row["status"] = "judge_error"
+                metrics["rejudge_error"] = str(exc)
+            new_results.append(row)
+            continue
         if execution_gate_blocks_rejudge(row):
             new_results.append(row)
             continue

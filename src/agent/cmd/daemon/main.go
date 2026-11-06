@@ -85,6 +85,7 @@ func main() {
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkLocalPhoneBridge = flag.Bool("benchmark-local-phone-bridge", false, "Keep Phone Bridge local while a benchmark environment bridge handles screen and input")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
+		benchmarkRealtimeText     = flag.Bool("benchmark-realtime-text", false, "Run realtime collaboration through text without audio devices (requires benchmark token and realtime backend delegation)")
 	)
 	flag.Parse()
 	environmentPath := os.Getenv("AICO_SYSTEM_ENV")
@@ -148,6 +149,13 @@ func main() {
 			_ = logging.LogEvent(logging.Error, "agent", "startup", "benchmark_token_empty")
 			os.Exit(1)
 		}
+	}
+	if *benchmarkRealtimeText {
+		if cfg.Benchmark.Token == "" || cfg.InputModeOrDefault() != "realtime" || !cfg.VoiceModel.UseBackendAgent {
+			fmt.Fprintln(os.Stderr, "benchmark-realtime-text requires a benchmark token, realtime input mode and use_backend_agent=true")
+			os.Exit(1)
+		}
+		cfg.Benchmark.RealtimeText = true
 	}
 	if *benchmarkHeadless {
 		if cfg.Benchmark.Token == "" || cfg.EnvironmentBridge.Enabled {

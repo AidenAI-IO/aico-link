@@ -147,7 +147,10 @@ def _task_artifact_refs(run_dir: Path, task_id: str, artifact_dir: Path | None =
     artifact_refs: list[str] = []
     artifact_dirs = [artifact_dir] if artifact_dir is not None else _task_artifact_dirs(run_dir, task_id)
     for artifact_dir in artifact_dirs:
-        for name in ("trace.json", "history.json", "judge.json"):
+        for name in ("trace.json", "history.json", "judge.json", "collaboration.json",
+                     "collaboration-evaluation.json", "collaboration-evaluation.rejudged.json",
+                     "collaboration-timeline.json", "collaboration-summary.json",
+                     "fixture-events.jsonl", "scenario-events.jsonl", "collaboration-events.jsonl"):
             path = artifact_dir / name
             if path.exists():
                 artifact_refs.append(str(path.relative_to(run_dir)))
@@ -542,6 +545,31 @@ def _full_trace_payload(task_dir: Path | None, history: list[dict[str, Any]]) ->
     }
 
 
+def _collaboration_html(run_dir: Path, results: list[dict[str, Any]]) -> str:
+    summaries = []
+    for row in results:
+        metrics = row.get("metrics") or {}
+        summary = metrics.get("collaboration")
+        if not isinstance(summary, dict):
+            continue
+        task_id = str(row.get("task_id", ""))
+        artifact_dir = _result_artifact_dir(run_dir, row, _safe_child_path(run_dir / "tasks", task_id))
+        if artifact_dir is None:
+            continue
+        href = lambda name: _esc((artifact_dir / name).relative_to(run_dir).as_posix())
+        summaries.append(
+            f'<li><strong>{_esc(task_id)}</strong>: {_esc(summary.get("outcome"))}; '
+            f'{_safe_int(summary.get("unsupported_claims"))} unsupported claims; '
+            f'{_safe_int(summary.get("delivery_passed"))}/{_safe_int(summary.get("delivery_required"))} deliveries. '
+            f'<a href="{href("collaboration-timeline.json")}">Timeline</a> · '
+            f'<a href="{href("collaboration.json")}">Evidence</a> · '
+            f'<a href="{href("collaboration-evaluation.json")}">Evaluation</a></li>'
+        )
+    if not summaries:
+        return ""
+    return '<section class="analysis"><h2>Realtime collaboration</h2><ul>' + "".join(summaries) + '</ul></section>'
+
+
 def generate_report_html(run_dir: Path) -> str:
     run_dir = run_dir.resolve()
     manifest = json.loads((run_dir / "manifest.json").read_text("utf-8"))
@@ -701,7 +729,7 @@ def generate_report_html(run_dir: Path) -> str:
         completed=completed, timeout=timeout, judge_error=judge_error,
         pass_pct=pass_pct, fail_pct=fail_pct, skip_pct=skip_pct,
         capability_metrics_html=_capability_metrics_html(run_dir),
-        analysis_html=_analysis_html(run_dir),
+        analysis_html=_analysis_html(run_dir) + _collaboration_html(run_dir, results),
     )
 
 

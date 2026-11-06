@@ -6,6 +6,7 @@ import (
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/agenttask"
+	"aico-agent/internal/stream"
 )
 
 // runtimeAgentTaskRunner adapts the legacy agent Runtime to the narrow
@@ -35,6 +36,10 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		Turn:                    agent.NewTextTurnInput(prompt, nil),
 		AsyncEpisodeMaintenance: true,
 		UserActionHandler:       actionHandler,
+	}
+	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok && observation.StreamSink != nil {
+		request.StreamScope = stream.EventScope{TaskID: observation.Task.ID}
+		request.StreamSink = &backendCollaborationSink{sink: observation.StreamSink, taskContext: ctx}
 	}
 	var suppliedMu sync.Mutex
 	var suppliedSteer agenttask.SteerMessage
@@ -70,4 +75,26 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 	request.SteerInterrupt = agenttask.SteerInterruptFromContext(ctx)
 	result, err := r.runtime.Run(ctx, request)
 	return result.Output, err
+}
+
+type backendCollaborationSink struct {
+	sink        stream.EventSink
+	taskContext context.Context
+	mu          sync.Mutex
+	episodeID   string
+}
+
+func (s *backendCollaborationSink) Emit(ctx context.Context, event stream.Event) error {
+	observation, _ := agenttask.TaskObservationFromContext(s.taskContext)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event.Kind == stream.EventRunStarted {
+		if payload, ok := event.Payload.(map[string]string); ok {
+			s.episodeID = payload["episode_id"]
+		}
+	}
+	event.Collaboration = &stream.Collaboration{Version: 1, Actor: "backend",
+		GoalRevision: observation.GoalRevision, AppliedRevision: observation.AppliedRevision,
+		EpisodeID: s.episodeID}
+	return s.sink.Emit(ctx, event)
 }

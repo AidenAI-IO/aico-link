@@ -485,6 +485,11 @@ class BenchmarkWebApp:
         suite_paths = [
             resolve_suite_path(self.config.suites_dir, key) for key in suite_keys
         ]
+        for path in suite_paths:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            if any(isinstance(task, dict) and task.get("scenario") is not None
+                   for task in metadata.get("tasks", [])):
+                raise ValueError("Run realtime-text collaboration suites through CLI/CI with --auto-agent-setup")
         mock_suite_flags = [suite_uses_mock_environment(path) for path in suite_paths]
         if any(mock_suite_flags) and not all(mock_suite_flags):
             raise ValueError(
@@ -2176,6 +2181,7 @@ def daemon_compose_env(
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
     benchmark_local_phone_bridge: bool = False,
+    benchmark_realtime_text: bool = False,
 ) -> dict[str, str]:
     env = dict(os.environ)
     # Strip general host proxies so builds and model/device traffic do not
@@ -2187,6 +2193,7 @@ def daemon_compose_env(
     env["AICO_DAEMON_IMAGE"] = image
     env["AICO_BENCHMARK_MOCK_TOOLS"] = "1" if benchmark_mock_tools else "0"
     env["AICO_BENCHMARK_LOCAL_PHONE_BRIDGE"] = "1" if benchmark_local_phone_bridge else "0"
+    env["AICO_BENCHMARK_REALTIME_TEXT"] = "1" if benchmark_realtime_text else "0"
     bridge_enabled = bool(environment_bridge_endpoint) if environment_bridge_mode is None else bool(environment_bridge_mode)
     env["AICO_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
     if host_port is not None:
@@ -2222,6 +2229,7 @@ def start_daemon_compose(
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
     benchmark_local_phone_bridge: bool = False,
+    benchmark_realtime_text: bool = False,
     stop_requested: Callable[[], bool] | None = None,
 ) -> str:
     project = daemon_compose_project(job)
@@ -2238,6 +2246,7 @@ def start_daemon_compose(
         environment_bridge_mode=environment_bridge_mode,
         benchmark_mock_tools=benchmark_mock_tools,
         benchmark_local_phone_bridge=benchmark_local_phone_bridge,
+        benchmark_realtime_text=benchmark_realtime_text,
     )
     run_logged_command(
         daemon_compose_command(

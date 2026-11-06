@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"aico-agent/internal/stream"
 )
 
 type Status string
@@ -52,6 +54,7 @@ type Task struct {
 	StartedAt         *time.Time  `json:"started_at,omitempty"`
 	CompletedAt       *time.Time  `json:"completed_at,omitempty"`
 	PendingUserAction *UserAction `json:"pending_user_action,omitempty"`
+	GoalRevision      uint64      `json:"-"` // Snapshot identity for observer-side result correlation.
 }
 
 type UserAction struct {
@@ -131,6 +134,55 @@ type Runner interface {
 	Run(context.Context, string) (string, error)
 }
 
+type Observation struct {
+	Task            Task
+	Phase           string
+	GoalRevision    uint64
+	AppliedRevision uint64
+	Sequence        uint64
+	StreamSink      stream.EventSink
+	Cause           Cause
+}
+
+type Cause struct {
+	TurnID     string
+	ResponseID string
+	CallID     string
+}
+
+type causeContextKey struct{}
+
+func WithCause(ctx context.Context, cause Cause) context.Context {
+	return context.WithValue(ctx, causeContextKey{}, cause)
+}
+
+func CauseFromContext(ctx context.Context) Cause {
+	cause, _ := ctx.Value(causeContextKey{}).(Cause)
+	return cause
+}
+
+type taskContextKey struct{}
+
+func TaskObservationFromContext(ctx context.Context) (Observation, bool) {
+	snapshot, ok := ctx.Value(taskContextKey{}).(func() Observation)
+	if !ok {
+		return Observation{}, false
+	}
+	return snapshot(), true
+}
+
+// ObservationSnapshot is read-only and never claims a result notification.
+func (m *Manager) ObservationSnapshot(taskID string) Observation {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	item := m.tasks[taskID]
+	if item == nil {
+		return Observation{}
+	}
+	return Observation{Task: item.task, GoalRevision: item.goalRevision,
+		AppliedRevision: item.appliedRevision, StreamSink: m.streamSink}
+}
+
 type entry struct {
 	task            Task
 	cancel          context.CancelFunc
@@ -170,6 +222,40 @@ type Manager struct {
 	wakeChanged           chan struct{}
 	actionChanged         chan struct{}
 	closed                bool
+	observationSequence   uint64
+	streamSink            stream.EventSink // Optional nonblocking observer; never a network sink.
+}
+
+// SetEventSink installs a nonblocking in-process recorder before tasks are submitted.
+// Emit must only copy/enqueue: it is invoked under the manager lock to preserve
+// the state transition's observation time. The recorder owns overflow reporting.
+func (m *Manager) SetEventSink(sink stream.EventSink) {
+	m.mu.Lock()
+	m.streamSink = sink
+	m.mu.Unlock()
+}
+
+func (m *Manager) observeLocked(item *entry, phase string, cause ...Cause) {
+	m.observationSequence++
+	observation := Observation{Task: item.task, Phase: phase, GoalRevision: item.goalRevision,
+		AppliedRevision: item.appliedRevision, Sequence: m.observationSequence, StreamSink: m.streamSink}
+	if len(cause) > 0 {
+		observation.Cause = cause[0]
+	}
+	if observation.StreamSink == nil {
+		return
+	}
+	payload := map[string]any{"phase": observation.Phase, "status": observation.Task.Status, "task": observation.Task}
+	identity := stream.EventIdentity{ConversationID: "agent", SessionEpoch: 1, TaskID: observation.Task.ID,
+		TurnID: observation.Cause.TurnID, ResponseID: observation.Cause.ResponseID, CallID: observation.Cause.CallID}
+	event := stream.NewEvent(identity, stream.EventTaskUpdated, payload)
+	event.Origin = "task_manager"
+	event.Visibility = stream.VisibilityDiagnostic
+	event.Collaboration = &stream.Collaboration{Version: 1, SourceSequence: observation.Sequence,
+		Actor: "task_manager", GoalRevision: observation.GoalRevision, AppliedRevision: observation.AppliedRevision}
+	// The benchmark recorder only copies/enqueues here. Its queue owns overflow
+	// reporting and draining; no I/O or subscriber callbacks run under this lock.
+	_ = observation.StreamSink.Emit(context.Background(), event)
 }
 
 func NewManager(runner Runner) *Manager {
@@ -201,7 +287,9 @@ func newManager(runner Runner, queueSize int, now func() time.Time) *Manager {
 	return m
 }
 
-func (m *Manager) Create(prompt string) (Task, error) {
+func (m *Manager) Create(prompt string) (Task, error) { return m.CreateWithCause(prompt, Cause{}) }
+
+func (m *Manager) CreateWithCause(prompt string, cause Cause) (Task, error) {
 	if m == nil {
 		return Task{}, errors.New("agent task manager is unavailable")
 	}
@@ -211,11 +299,12 @@ func (m *Manager) Create(prompt string) (Task, error) {
 	}
 	now := m.now().UTC()
 	task := Task{
-		ID:        "task_" + uuid.NewString(),
-		Prompt:    prompt,
-		Status:    StatusCreated,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           "task_" + uuid.NewString(),
+		Prompt:       prompt,
+		Status:       StatusCreated,
+		GoalRevision: 1,
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 
 	m.mu.Lock()
@@ -227,6 +316,8 @@ func (m *Manager) Create(prompt string) (Task, error) {
 	m.tasks[task.ID] = &entry{task: task, goalRevision: 1}
 	select {
 	case m.queue <- task.ID:
+		m.observeLocked(m.tasks[task.ID], "created", cause)
+		m.observeLocked(m.tasks[task.ID], "queued", cause)
 		m.mu.Unlock()
 		return task, nil
 	default:
@@ -302,6 +393,7 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 		}
 		item.task.Status = StatusCancelling
 		item.task.UpdatedAt = m.now().UTC()
+		m.observeLocked(item, "cancelling")
 		cancel = item.cancel
 	case StatusCancelling, StatusCancelled, StatusFailed, StatusCompleted:
 		// Cancellation is idempotent for tasks already stopping or terminal. For a
@@ -320,6 +412,10 @@ func (m *Manager) Cancel(taskID string) (Task, bool, error) {
 }
 
 func (m *Manager) Update(taskID, prompt string) (Task, error) {
+	return m.UpdateWithCause(taskID, prompt, Cause{})
+}
+
+func (m *Manager) UpdateWithCause(taskID, prompt string, cause Cause) (Task, error) {
 	if m == nil {
 		return Task{}, errors.New("agent task manager is unavailable")
 	}
@@ -377,6 +473,7 @@ func (m *Manager) Update(taskID, prompt string) (Task, error) {
 	default:
 		return Task{}, fmt.Errorf("agent task cannot be updated from status %q", item.task.Status)
 	}
+	m.observeLocked(item, "goal_updated", cause)
 	return item.task, nil
 }
 
@@ -405,6 +502,7 @@ func (m *Manager) Continue(taskID, userMessage string) (Task, error) {
 		item.nextPrompt = userMessage
 		item.resumeQueued = true
 		item.task.UpdatedAt = m.now().UTC()
+		m.observeLocked(item, "resumed")
 		task := item.task
 		m.mu.Unlock()
 		return task, nil
@@ -715,14 +813,17 @@ func (m *Manager) runTask(taskID string) {
 		item.appliedRevision = item.goalRevision
 		item.pendingSteer = nil
 		item.steerSignal = make(chan struct{})
+		m.observeLocked(item, "running")
 		m.mu.Unlock()
 
-		runCtx := WithUserActionHandler(taskCtx, func(action UserAction) {
+		runCtx := context.WithValue(taskCtx, taskContextKey{}, func() Observation { return m.ObservationSnapshot(taskID) })
+		runCtx = WithUserActionHandler(runCtx, func(action UserAction) {
 			m.mu.Lock()
 			if current, exists := m.tasks[taskID]; exists && current.task.Status == StatusRunning && !current.resumeQueued {
 				current.task.PendingUserAction = &action
 				current.actionNotified = false
 				current.task.UpdatedAt = m.now().UTC()
+				m.observeLocked(current, "user_action_required")
 				select {
 				case m.actionChanged <- struct{}{}:
 				default:
@@ -800,6 +901,7 @@ func (m *Manager) finishLocked(item *entry, status Status, result, taskError str
 	item.pendingSteer = nil
 	m.terminalSeq++
 	m.terminalNotifications[item.task.ID] = terminalNotificationQueued
+	m.observeLocked(item, "terminal")
 	m.signalTerminalLocked()
 	m.signalWakeLocked()
 }
@@ -823,6 +925,7 @@ func (m *Manager) acknowledgeSteer(taskID string, message SteerMessage) {
 	}
 	if message.Revision > item.appliedRevision {
 		item.appliedRevision = message.Revision
+		m.observeLocked(item, "goal_applied")
 	}
 	if item.pendingSteer != nil && item.pendingSteer.ID == message.ID {
 		item.pendingSteer = nil
@@ -833,6 +936,7 @@ func (m *Manager) acknowledgeSteer(taskID string, message SteerMessage) {
 func (m *Manager) updateGoalLocked(item *entry, prompt string) {
 	item.task.Prompt = prompt
 	item.goalRevision++
+	item.task.GoalRevision = item.goalRevision
 	item.task.UpdatedAt = m.now().UTC()
 }
 

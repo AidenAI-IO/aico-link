@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"aico-agent/internal/stream"
 )
 
 // handleRealtimeChatAsync starts a realtime run and retains its result for
@@ -85,11 +87,20 @@ func (s *Server) handleRealtimeChatAsync(w http.ResponseWriter, req ChatRequest,
 				pending.mu.Unlock()
 			}
 
+			if s.collaboration != nil {
+				s.collaboration.Record("turn.settled", "foreground", "", requestID,
+					map[string]string{"status": "completed", "response_id": event.ResponseID, "text": content},
+					&stream.Collaboration{Version: 1, ProviderSessionID: event.ProviderSessionID})
+			}
 			if s.liveActivity != nil {
 				s.liveActivity.CompleteTask(requestID, content)
 			}
 		}
 		fail := func(message string) {
+			if s.collaboration != nil {
+				s.collaboration.Record("turn.settled", "foreground", "", requestID,
+					map[string]string{"status": "failed", "error": message}, nil)
+			}
 			if strings.TrimSpace(message) == "" {
 				message = "realtime chat failed"
 			}

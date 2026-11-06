@@ -105,6 +105,7 @@ type Server struct {
 	steersMu                sync.Mutex
 	eventBroadcaster        *EventBroadcaster
 	semanticEvents          *semanticEventBroadcaster
+	collaboration           *CollaborationRecorder
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
@@ -323,11 +324,13 @@ type RealtimeChatRequest struct {
 // streamed to clients; done contains the complete response; error terminates
 // the request with an error message.
 type RealtimeChatEvent struct {
-	Type             string
-	Delta            string
-	Response         string
-	ReasoningContent string
-	Error            string
+	Type              string
+	Delta             string
+	Response          string
+	ResponseID        string
+	ProviderSessionID string
+	ReasoningContent  string
+	Error             string
 }
 
 const (
@@ -504,6 +507,9 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		s.sttClient = sttClient
 	}
 
+	if cfg.Benchmark.RealtimeText {
+		s.collaboration = NewCollaborationRecorder("benchmark-daemon")
+	}
 	// Share the process-wide TTS provider manager with every runtime entrypoint.
 	s.ttsManager = runtime.ttsProviderManager()
 	if manager := s.currentTTSManager(); manager != nil {
@@ -566,6 +572,8 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("/api/benchmark/seed_notification", s.handleBenchmarkSeedNotification)
 		mux.HandleFunc("/api/benchmark/notification-memory/process", s.handleBenchmarkProcessNotificationMemory)
 		mux.HandleFunc("/api/benchmark/phone_bridge_state", s.handleBenchmarkPhoneBridgeState)
+		mux.HandleFunc("/api/benchmark/collaboration", s.handleCollaboration)
+		mux.HandleFunc("/api/benchmark/collaboration/events", s.handleCollaboration)
 	}
 	mux.HandleFunc("/api/clear", s.handleClear)
 	mux.HandleFunc("/api/clear-all", s.handleClearAll)
@@ -778,6 +786,9 @@ func (s *Server) Close() {
 
 		s.cancelAllActiveRuns()
 		s.interruptAllActiveOutputs()
+		if s.collaboration != nil {
+			s.collaboration.Close()
+		}
 
 		if srv != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), agentHTTPShutdownTimeout)
@@ -891,6 +902,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleRealtimeChatAsync(w, req, turnInput)
+		return
+	}
+	if s.runtime.ConfigSnapshot().Benchmark.RealtimeText {
+		http.Error(w, "realtime benchmark handler unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	episodeID := s.runtime.NewEpisodeID()
@@ -2762,7 +2777,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
-	if s == nil || s.semanticEvents == nil {
+	serveSemanticEvents(w, r, s.semanticEvents)
+}
+
+func serveSemanticEvents(w http.ResponseWriter, r *http.Request, events *semanticEventBroadcaster) {
+	if events == nil {
 		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -2776,14 +2795,14 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 	var ch <-chan streamcontract.Event
 	var unsubscribe func()
 	if rawSince == "latest" {
-		replay, ch, unsubscribe = s.semanticEvents.SubscribeLatest()
+		replay, ch, unsubscribe = events.SubscribeLatest()
 	} else {
 		cursor, err := parseSemanticEventCursor(rawSince, rawEpoch)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		replay, ch, unsubscribe = s.semanticEvents.Subscribe(cursor)
+		replay, ch, unsubscribe = events.Subscribe(cursor)
 	}
 	defer unsubscribe()
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -2802,7 +2821,9 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		// Keep the session epoch in Last-Event-ID so EventSource reconnects
 		// preserve the complete replay cursor across session rotations.
-		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data)
+		if _, err := fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data); err != nil {
+			return false
+		}
 		flusher.Flush()
 		return true
 	}
