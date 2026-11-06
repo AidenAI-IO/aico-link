@@ -962,7 +962,7 @@ provider = "speko-main"
 | ----- | --------- | ----------- |
 | `type` | all | Adapter type: `qwen`, `speko`, `openai`, `gemini`, `xai`, or `moss`. |
 | `api_key` | all | Provider credential; supports `$ENV_VAR` expansion. For Gemini Vertex, this is an OAuth access token. |
-| `model` / `voice` | all | Provider-specific model and voice. Speko requires an explicit model; voice may stay empty for the selected upstream default. |
+| `model` / `voice` | all | Provider-specific model and voice. Speko requires an explicit model; voice may stay empty for the selected upstream default. Moss Live uses its default persona and ignores `voice`. |
 | `workspace_id` / `region` | Qwen | Optional DashScope routing settings. |
 | `turn_detection` | Qwen | Qwen turn detector: `server_vad` (default) or `smart_turn`. Config Web exposes this under the provider's Advanced Settings. |
 | `turn_detection_threshold` | Qwen `server_vad` | Optional Qwen VAD threshold; leave unset to use the service default. Ignored by `smart_turn`. |
@@ -971,7 +971,7 @@ provider = "speko-main"
 | `project_id` / `location` | Gemini Vertex | Required Google Cloud project and Vertex region, for example `us-central1`. |
 | `endpoint` | Qwen, OpenAI, Gemini, xAI | Optional WebSocket endpoint override, primarily for regional gateways and protocol tests. |
 | `realtime_protocol` | OpenAI | OpenAI Realtime wire schema: empty or `ga` (default) uses the current GA session payload; `legacy` (alias `beta`) uses the older `modalities`, `input_audio_format`, and `output_audio_format` fields required by some compatible gateways. Set this explicitly; the endpoint URL is never used to infer the protocol. |
-| `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`false` (default) disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model; `true` enables the backend agent and exposes its communication tools (`*_agent_task`). This setting does not control provider reasoning, which remains a provider/model capability. Moss Live rejects `true` because it cannot inject task-update text. |
+| `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`false` (default) disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model; `true` enables the backend agent and exposes its communication tools (`*_agent_task`). This setting does not control provider reasoning, which remains a provider/model capability. Moss Live rejects `true` because it cannot inject task-update text, and when backend agent is disabled it still caps client tools at 32 (dropping lower-priority tools when the catalog is larger). |
 | `thinking_level` | Gemini | Thinking depth for Live Extended Thinking models: `LOW` (default), `MINIMAL`, `MEDIUM`, or `HIGH`. Only applies to models that support thinking; other models ignore it. |
 | `upstream_provider` | Speko | Required S2S upstream: `google` (or `gemini`) or `xai`, paired with `model`. Automatic routing is disabled because it may select an unsupported WebRTC route. OpenAI is not a supported Speko route in Aico; use the top-level `openai` provider instead. |
 | `agent_id` / `base_url` | Speko | Optional Speko agent ID and API base URL override. |
