@@ -100,6 +100,11 @@ def ask(out: Path, name: str, repo: Path, payload: dict, prompt: str, schema: di
         error_log = stage / "session-error.log"
         if error_log.is_file():
             (out / f"{name}-error.log").write_text(evidence.sanitize(error_log.read_text(errors="replace")))
+        usage = stage / "session-usage.json"
+        if usage.is_file():
+            write(out / f"{name}-usage.json", evidence.read_json(usage))
+        else:
+            write(out / f"{name}-usage.json", {"total_cost_usd": None, "subtype": "usage_unavailable"})
         shutil.rmtree(stage)
 
 
@@ -113,6 +118,22 @@ def checkout(repo: Path, destination: Path, base: str) -> None:
     # from this checkout, never from the mutable source checkout.
     subprocess.run(["git", "submodule", "update", "--init", "--depth", "1",
                     "benchmark/mobilegym/vendor/mobilegym"], cwd=destination, check=True, timeout=600)
+
+
+def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
+    """Accept existing agent files, not evidence paths, directories, or escaped paths."""
+    paths = cluster.get("source_paths")
+    if not isinstance(paths, list) or not paths or len(paths) > 12:
+        return []
+    checked = []
+    for path in paths:
+        if not policy.edit_target(path):
+            return []
+        target = repo / path
+        if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(repo.resolve()):
+            return []
+        checked.append(path)
+    return sorted(set(checked))
 
 
 def audit(out: Path, name: str, repo: Path, payload: dict, deadline: float) -> dict:
@@ -165,7 +186,12 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                         "the index alone cannot support a conclusion. Historical data is optional and on demand. "
                         "Review every failure and its judge evidence, cluster supported common root causes, "
                         "and cite exact case_id:task_id keys. List neighbors only when known; the driver expands "
-                        "coverage. Report evaluator/environment issues and missing evidence. Do not propose edits. "
+                        "coverage. Inspect source code before claiming a repairable root cause. source_paths must "
+                        "contain exact existing agent Go files or SKILL.md paths, never details/trace/history files. "
+                        "Cite code locations and trace/screenshot locations separately in evidence. Use source_paths=[] "
+                        "and fix_target=unknown if the source cause is not established. Inspect supplied images for visual "
+                        "claims; absent images or unresolved coordinate/fixture alternatives mean insufficient_evidence. "
+                        "Report evaluator/environment issues and missing evidence. Do not propose edits. "
                         "Return no more than two repairable clusters.", review.DIAGNOSIS, deadline,
                         image_root=source_dir / "benchmark/runs")
         write(out / "diagnosis.json", diagnosis)
@@ -189,8 +215,10 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             try:
                 if not cluster["targets"] or not set(cluster["targets"]).issubset(allowed_targets):
                     raise ValueError("Repair targets must be observed eligible failures")
-                if not cluster["paths"] or not all(policy.edit_target(p) for p in cluster["paths"]):
-                    raise ValueError("Root cause requires changes outside the agent implementation/skill scope")
+                source_paths = validated_source_paths(repo, cluster)
+                if not source_paths:
+                    attempt["status"] = "no_verified_source_path"
+                    continue
                 sig = policy.signature(cluster)
                 attempt["signature"] = sig
                 if any(f"auto-improve:{sig}" in (issue.get("body") or "") for issue in feedback):
@@ -227,7 +255,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     attempt["status"] = "grading_disputed"
                     continue
                 patch = ask(cluster_dir, "fix", repo, {"cluster": cluster, "baseline": baseline,
-                            "audit": reproduction_audit, "allowed_paths": cluster["paths"]},
+                            "audit": reproduction_audit, "allowed_paths": source_paths},
                             "Propose exact old/new replacements for the smallest fix. Only edit allowed_paths. "
                             "Agent Go implementation changes are allowed under src/agent/internal and src/agent/cmd, "
                             "along with skills. Preserve public interfaces unless the root cause requires a change. "
@@ -236,7 +264,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 if not patch["edits"]:
                     attempt["status"] = "no_fix"
                     continue
-                if not all(e["path"] in cluster["paths"] for e in patch["edits"]):
+                if not all(e["path"] in source_paths for e in patch["edits"]):
                     raise ValueError("Patch escapes diagnosed paths")
                 changed = policy.apply_edits(candidate_repo, patch["edits"])
                 checks = policy.verification_commands(changed)
@@ -298,8 +326,22 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                       "error": str(exc)})
         raise
     finally:
+        usage = []
+        for path in sorted(out.glob("**/*-usage.json")):
+            record = evidence.read_json(path)
+            usage.append({"stage": path.relative_to(out).as_posix(), **record})
+        state["review_usage"] = usage
+        state["review_cost"] = policy.review_cost_summary(usage)
         write(out / "manifest.json", state)
         lines = ["# Benchmark auto-improve", "", f"Source: `{identity}`; base: `{base}`; mode: `{mode}`.", ""]
+        if usage:
+            cost = state["review_cost"]
+            estimate = (f"${cost['estimated_cost_usd']:.3f}" if cost["estimated_cost_usd"] is not None
+                        else "unavailable")
+            lines.append(f"Review model estimated cost: {estimate}; "
+                         f"reported for {cost['measured_sessions']}/{cost['total_sessions']} sessions. "
+                         "CLI estimate, not a provider invoice; no spending cap is applied.")
+            lines.append("")
         if (out / "diagnosis.json").is_file():
             lines.extend([evidence.read_json(out / "diagnosis.json")["summary"], ""])
         for attempt in state["attempts"]:

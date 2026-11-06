@@ -7,7 +7,7 @@ sidebar_position: 5
 > Status: initial implementation, disabled until configured. Deterministic
 > policy and orchestration tests exist; live model, Docker, GitHub publication,
 > and real-emulator acceptance still require deployment validation. The workflow
-> defaults to diagnosis-only mode and never merges a PR.
+> runs the full improve pipeline on enabled scheduled main runs and never auto-merges.
 
 Auto-improve turns the daily benchmark into a closed improvement loop: a
 separately scheduled worker consumes completed daily runs, diagnoses their
@@ -45,9 +45,10 @@ repository (not pull-request events):
 | `auto-improve-test/improve/` | Diagnose, reproduce, fix and verify using the branch checkout | Never; keep the patch in the artifact |
 
 Each push to one of those branches is an intentional test and may incur model
-costs. Ordinary branches and PR events do not trigger this pipeline. Create or
-push a test branch only when ready to run it. The initial suggested branch is
-`auto-improve-test/diagnose/initial`; the implementation does not push it for you.
+and benchmark costs. Ordinary branches and PR events do not trigger this pipeline.
+Use `auto-improve-test/diagnose/initial` for diagnosis and
+`auto-improve-test/improve/initial` for full-pipeline acceptance. Test branches
+never publish PRs, even when reproduction and verification pass.
 Test artifacts use `auto-improve-test-source-<run_id>-<attempt>` and do not mark
 main's production runs processed. Repeated branch tests may reuse an already
 processed source. Production artifacts use `auto-improve-source-...`.
@@ -60,16 +61,16 @@ processed source. Production artifacts use `auto-improve-source-...`.
    limitation, not a reason to merge untested code. Report affected conclusions
    as inconclusive rather than inventing evidence. Old post-run LLM analysis is
    neither enabled nor required.
-3. When ready, test `improve` on the corresponding test-branch prefix or use
-   manual dispatch after GitHub has registered the workflow. This exercises
-   reproduction, patches, checks and paired verification without opening a PR.
-   Supply Docker and existing benchmark credentials, and prepare the isolated
-   AVD template only for ADB cases.
+3. Run `improve` on the corresponding test-branch prefix for end-to-end
+   acceptance. A single run executes diagnosis, reproduction, patching, checks,
+   and paired verification without opening a PR. Supply Docker and existing
+   benchmark credentials; the isolated AVD fixture is needed only for ADB tasks.
 4. Merge through normal review after the branch tests are satisfactory. Configure
    PR permission before enabling publication, then test on `main` with an
    explicit source ID, `mode=improve`, and `publish_pr=true`.
-5. Enable `AUTO_IMPROVE_ENABLED=true` for daily execution (01:37 UTC), selecting
-   `AUTO_IMPROVE_MODE` deliberately. Nothing in this change enables the schedule,
+5. Enable `AUTO_IMPROVE_ENABLED=true` for daily execution (01:37 UTC). Scheduled
+   main runs default to `improve`; set `AUTO_IMPROVE_MODE=diagnose` only for an
+   explicit read-only run. Nothing in this change enables the schedule,
    alters repository permissions, installs a fixture, or merges automatically.
 
 ### Minimal first run
@@ -115,13 +116,12 @@ by the publisher even if its command is invoked separately.
 | Name | Kind | Purpose |
 | --- | --- | --- |
 | `AUTO_IMPROVE_ENABLED` | Variable | Opt into scheduled execution; default disabled |
-| `AUTO_IMPROVE_MODE` | Variable | `diagnose` (default) or `improve` |
+| `AUTO_IMPROVE_MODE` | Variable | Scheduled main defaults to `improve`; set `diagnose` to pause fixes and only analyze |
 | `AUTO_IMPROVE_REVIEW_MODEL` | Variable | Explicit Claude Code-compatible review model; no implicit judge fallback |
 | `AUTO_IMPROVE_REVIEW_BASE_URL` | Variable | Optional Anthropic Messages-compatible endpoint, not an OpenAI chat-completions URL |
 | `AUTO_IMPROVE_REVIEW_API_KEY` | Secret | Review-model credential; supplied only to review execution |
 | `AUTO_IMPROVE_PR_TOKEN` | Optional secret | Optional repository-scoped bot token. Without it, publication uses the built-in `GITHUB_TOKEN` with contents/pull-requests/issues write access only in the publication job |
 | `AUTO_IMPROVE_DELAY_HOURS` | Variable | Minimum age after source completion; default 3 |
-| `AUTO_IMPROVE_REVIEW_BUDGET_USD` | Variable | Claude Code estimated budget per review session; default 5, not a provider billing guarantee |
 | `AUTO_IMPROVE_REVIEW_MAX_TURNS` | Variable | Bounded review turns, default 48, accepted range 8-100; the diagnostic index links to per-task evidence to avoid repeatedly paging a monolithic input |
 | `AUTO_IMPROVE_MAX_TASKS` | Variable | Total selected tasks per cluster, default 32; required coverage is deferred rather than truncated |
 | `AUTO_IMPROVE_AVD_TEMPLATE` | Variable, ADB only | Runner-side path to the offline initial-state copy used for private emulator instances; not needed for diagnosis or isolated/MobileGym tasks |
@@ -151,11 +151,14 @@ with contents/pull-requests/issues write access, store it as
 `AUTO_IMPROVE_PR_TOKEN`, and apply branch protections. Create the `auto-improve`
 label before publication. Neither credential option is needed for branch tests.
 
-The initial budgets are at most two clusters, three attempts per task/side,
-48 turns and 15 minutes per review session, a five-hour driver budget, and a
-six-hour job ceiling. A target baseline older than one hour is treated as stale
-and requires a new attempt. Review calls are bounded separately from measured agent
-calls; provider-level spend limits remain appropriate for a hard billing cap.
+The initial operational bounds are at most two clusters, three attempts per
+task/side, 48 turns and 15 minutes per review session, a five-hour driver budget,
+and a six-hour job ceiling. There is **no Claude Code model-cost cap**; the CLI's
+`total_cost_usd` estimate is recorded for each session and summarized in the
+job output/PR. A target baseline older than one hour is treated as stale and
+requires a new attempt. These turn/time limits prevent a stuck job; they are not
+spend limits. Configure any provider-side financial alerts or quotas separately
+if needed.
 
 ### Android SDK fixture setup and acceptance
 
@@ -211,7 +214,10 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
 - A review session is restricted, read-only Claude Code with `Read/Grep/Glob`.
   It sees a staged source/evidence tree, not repository credentials, `.git`, shell
   tools, or held-out suites. The fix session returns exact text replacements;
-  trusted Python validates and applies them.
+  trusted Python validates and applies them. Diagnosis uses `source_paths` for
+  verified existing agent files and `evidence` for trace/screenshot/code references.
+  Evidence files are never accepted as modification targets. Missing source
+  grounding or required visual evidence prevents automatic repair.
 - Writable files include existing Go implementation files under
   `src/agent/internal/` and `src/agent/cmd/`, plus existing
   `src/agent/config/skills/*/SKILL.md`. Go logic, prompts, and tool descriptions
@@ -238,6 +244,9 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   multiple runners to that label requires a shared resource/scheduling policy.
 - Fourteen-day artifacts and PR markers supply recent history. No SkillOpt,
   separate history branch, or long-term backup service is required.
+- Production `improve` completes diagnosis, reproduction, modification, and
+  verification in one Actions run. Publication is a separate job within that
+  run solely to isolate write credentials; it is not a second user-triggered run.
 
 The sections below retain the design rationale and future extension points.
 
@@ -624,7 +633,7 @@ not capabilities already verified by this design document.
 | Gaming the benchmark | Exact text replacements and independent publisher validation; evaluator issues are report-only |
 | Fixing one task, breaking another | Neighbor and held-out verification |
 | Optimizing for the judge | Audit rubric, reasons, and actual outcome before editing and after verification; preserve original scores |
-| Runaway time or cost | At most two clusters per run; workflow timeout and spend cap |
+| Stuck execution | At most two clusters per run; finite turn/time limits, with spend reported but no monetary cap |
 | Excess permissions | Keep publication credentials outside the agent; use repository permissions plus branch rules and a separate diff-checked publication step |
 
 ## Engineering prerequisites
@@ -641,7 +650,7 @@ not capabilities already verified by this design document.
   the same device/environment. A shared runner lock or concurrency policy must
   queue work without cancelling an active benchmark. Waiting jobs must not hold
   a runner in a sleep loop. Extra runners are optional capacity, not a prerequisite.
-- Per-attempt time, model-spend, and task budgets. When a budget is exhausted,
+- Per-attempt time and task bounds. When an execution bound is exhausted,
   persist an incomplete/deferred outcome and release the runner; do not publish
   a PR claiming successful validation. A later attempt can refresh stale baselines.
 - Fourteen-day auto-improve artifacts and PR/issue summary markers, with source
@@ -655,7 +664,8 @@ not capabilities already verified by this design document.
 
 ## Rollout
 
-1. Validate diagnosis in report-only mode, including judge-evidence review.
+1. Complete branch-based integration acceptance, including judge-evidence review.
+   Diagnosis-only mode is a troubleshooting option, not the production default.
 2. In the initial delivery, add and validate the isolated ADB emulator lifecycle
    alongside `isolated` and `mobilegym` execution. Enable targeted reproduction,
    agent Go/skill/prompt/tool-description fixes, verification, and draft PRs using
@@ -665,8 +675,8 @@ not capabilities already verified by this design document.
 
 ## Open decisions
 
-- Choose the explicit review model and endpoint for the pinned Claude Code
-  harness; verify its account budget and supported structured output.
+- Verify the configured review model and endpoint's structured output support
+  under production load. Record model spend without a workflow-imposed cost cap.
 - Whether to add Lark delivery or automatic issues beyond Actions summaries.
 - Reviewers for `auto-improve` PRs (CODEOWNERS).
 - Calibrate the initial schedule/budgets and conservative signature (target

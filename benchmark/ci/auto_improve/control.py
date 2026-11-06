@@ -149,7 +149,13 @@ def publish(client: GitHub, repo: Path, artifacts: Path, branch: str) -> list[st
                      "", "## Paired verification", "| Task | Set | Baseline | Candidate |",
                      "| --- | --- | --- | --- |"]
             lines.extend(f"| `{r['task']}` | {r['group']} | {r['baseline']}/3 | {r['candidate']}/3 |" for r in comparison["tasks"])
+            cost = manifest.get("review_cost", {})
+            estimate = (f"${cost['estimated_cost_usd']:.3f}" if cost.get("estimated_cost_usd") is not None
+                        else "unavailable")
             lines.extend(["", "Checks passed: " + ", ".join("`" + " ".join(check) + "`" for check in checks) + ".",
+                          f"Review model estimated cost: {estimate} "
+                          f"({cost.get('measured_sessions', 0)}/{cost.get('total_sessions', 0)} sessions with pricing). "
+                          "CLI estimate, not a provider invoice; no model-cost limit imposed.",
                           "Judge evidence audited before and after the change.",
                           "Three repeats are screening evidence, not statistical proof of improvement.",
                           "", "## Configuration and efficiency", "```json",

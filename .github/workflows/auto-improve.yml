@@ -17,10 +17,10 @@ on:
         type: string
         default: ''
       mode:
-        description: Diagnose only or prepare a verified candidate
+        description: Run the complete improve pipeline, or diagnose only
         type: choice
-        options: [diagnose, improve]
-        default: diagnose
+        options: [improve, diagnose]
+        default: improve
       publish_pr:
         description: Publish a draft PR after a successful main-branch improve run
         type: boolean
@@ -82,7 +82,7 @@ jobs:
       - id: mode
         working-directory: benchmark
         env:
-          REQUESTED_MODE: ${{ inputs.mode || vars.AUTO_IMPROVE_MODE || 'diagnose' }}
+          REQUESTED_MODE: ${{ inputs.mode || vars.AUTO_IMPROVE_MODE || (github.ref_name == 'main' && 'improve' || 'diagnose') }}
           PUBLISH_REQUESTED: ${{ inputs.publish_pr || false }}
         run: |
           uv run python -m ci.auto_improve.control policy \
@@ -131,7 +131,6 @@ jobs:
           AUTO_IMPROVE_REVIEW_MODEL: ${{ vars.AUTO_IMPROVE_REVIEW_MODEL }}
           AUTO_IMPROVE_REVIEW_BASE_URL: ${{ vars.AUTO_IMPROVE_REVIEW_BASE_URL }}
           AUTO_IMPROVE_REVIEW_API_KEY: ${{ secrets.AUTO_IMPROVE_REVIEW_API_KEY }}
-          AUTO_IMPROVE_REVIEW_BUDGET_USD: ${{ vars.AUTO_IMPROVE_REVIEW_BUDGET_USD || '5' }}
           AUTO_IMPROVE_REVIEW_MAX_TURNS: ${{ vars.AUTO_IMPROVE_REVIEW_MAX_TURNS || '48' }}
           AUTO_IMPROVE_TIMEOUT_SECONDS: '18000'
           AUTO_IMPROVE_MAX_TASKS: ${{ vars.AUTO_IMPROVE_MAX_TASKS || '32' }}
@@ -174,6 +173,7 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/summary.md
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis-usage.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/plan.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/comparison.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline.json
@@ -182,6 +182,7 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/candidate.patch
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/fix.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/fix-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-usage.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/reproduction-review-error.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/verification-review-error.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-runs/*/*/evidence/**

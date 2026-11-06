@@ -228,6 +228,7 @@ def test_emulator_failure_terminates_only_owned_process(tmp_path, monkeypatch):
 def test_review_has_no_mutating_tools_or_publication_credentials(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "review-key")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BUDGET_USD", "0.01")
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BASE_URL", "https://gateway.example/anthropic")
     monkeypatch.setenv("GH_TOKEN", "never-forward")
     monkeypatch.setenv("BENCHMARK_AGENT_API_KEY", "never-forward-either")
@@ -236,13 +237,16 @@ def test_review_has_no_mutating_tools_or_publication_credentials(tmp_path, monke
     class Process:
         returncode = 0
         def communicate(self, prompt, timeout):
-            return json.dumps({"structured_output": {"supported": True, "reason": "ok", "evidence": []}}), None
+            return json.dumps({"total_cost_usd": 12.5, "num_turns": 10,
+                               "structured_output": {"supported": True, "reason": "ok", "evidence": []}}), None
     def popen(command, **kwargs):
         captured.update(command=command, **kwargs)
         return Process()
     monkeypatch.setattr(review.subprocess, "Popen", popen)
     assert review.ask(tmp_path, "audit", review.AUDIT)["supported"]
     assert "GH_TOKEN" not in captured["env"] and "BENCHMARK_AGENT_API_KEY" not in captured["env"]
+    assert "--max-budget-usd" not in captured["command"]
+    assert json.loads((tmp_path / "session-usage.json").read_text())["total_cost_usd"] == 12.5
     assert captured["command"][captured["command"].index("--tools") + 1] == "Read,Grep,Glob"
     assert "--restricted" in captured["command"]
     assert captured["env"]["ANTHROPIC_BASE_URL"] == "https://gateway.example/anthropic"
@@ -257,6 +261,7 @@ def test_review_preserves_stdout_errors_without_leaking_secrets(tmp_path, monkey
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
     monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "synthetic-key")
     monkeypatch.setattr(review.shutil, "which", lambda _: "/bin/claude")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_BUDGET_USD", "0.01")
     class Process:
         def communicate(self, *args, **kwargs):
             return json.dumps(payload), None
@@ -315,6 +320,28 @@ def test_review_workspace_does_not_copy_paths_from_untrusted_payload(tmp_path):
     assert not (stage / "attempts").exists()
 
 
+@pytest.mark.parametrize("costs,total,measured,complete", [
+    ([1.25, 2.5], 3.75, 2, True), ([None, 2.5], 2.5, 1, False),
+    ([None], None, 0, False), ([False, -1, float('nan')], None, 0, False),
+])
+def test_cost_reporting_distinguishes_missing_prices_from_zero(costs, total, measured, complete):
+    result = policy.review_cost_summary([{"total_cost_usd": cost} for cost in costs])
+    assert result == {"estimated_cost_usd": total, "measured_sessions": measured,
+                      "total_sessions": len(costs), "complete": complete}
+
+
+def test_diagnosis_rejects_evidence_paths_as_edit_targets(tmp_path):
+    cluster = {"targets": ["memory:task"], "category": "memory", "cause": "unknown",
+               "judge_review": "supported", "fix_target": "go_code",
+               "source_paths": ["details/failure-001.json"], "evidence": ["details/failure-001.json"]}
+    assert not driver.validated_source_paths(tmp_path, cluster)
+    code = tmp_path / "src/agent/internal/agent/memory.go"
+    code.parent.mkdir(parents=True)
+    code.write_text("package agent\n")
+    cluster["source_paths"] = ["src/agent/internal/agent/memory.go"]
+    assert driver.validated_source_paths(tmp_path, cluster) == ["src/agent/internal/agent/memory.go"]
+
+
 def test_diagnosis_index_keeps_large_evidence_in_addressable_files(tmp_path):
     payload = {"failures": [{"key": "a:one", "status": "failed", "failure_class": "agent",
                             "agent_eligible": True, "rubric": [{"id": "saved", "verdict": "no", "reason": "missing"}],
@@ -351,7 +378,7 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
                  "task": {"category": "task"}} for k in ("a:target", "a:neighbor", "b:held")}
     cluster = {"title": "Verify the screen", "category": "verification", "cause": "missing observation",
                "judge_review": "supported", "fix_target": "go_code" if go_code else "skill", "targets": ["a:target"],
-               "neighbors": [], "paths": [path], "evidence": ["trace step 2"]}
+               "neighbors": [], "source_paths": [path], "evidence": ["trace step 2"]}
     monkeypatch.setattr(driver, "git", lambda *a: "base")
     monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
     monkeypatch.setattr(driver.evidence, "source_failures", lambda *a: ([{"key": "a:target", "agent_eligible": True}], []))
@@ -402,7 +429,7 @@ def test_raw_artifact_paths_cannot_escape_run(tmp_path):
 
 def test_publisher_recomputes_gate_before_touching_remote(tmp_path, monkeypatch):
     plan, baseline, candidate = pair()
-    cluster = {"targets": plan["targets"], "paths": ["src/agent/config/skills/test/SKILL.md"], "category": "verification"}
+    cluster = {"targets": plan["targets"], "source_paths": ["src/agent/config/skills/test/SKILL.md"], "category": "verification"}
     patch = tmp_path / "candidate.patch"
     patch.write_text("not a real patch")
     manifest = {"base_sha": "base", "base_branch": "main", "execution_ref": "refs/heads/main", "source": "42-1", "attempts": [{
@@ -507,7 +534,7 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
     patch = subprocess.check_output(["git", "diff", "--", path], cwd=repo, text=True)
     target.write_text(before)
     plan, baseline, candidate = pair()
-    cluster = {"targets": plan["targets"], "paths": [path], "category": "verification", "cause": "Verify actions", "evidence": ["trace step 2"]}
+    cluster = {"targets": plan["targets"], "source_paths": [path], "category": "verification", "cause": "Verify actions", "evidence": ["trace step 2"]}
     out = tmp_path / "artifact"
     out.mkdir()
     (out / "candidate.patch").write_text(patch)

@@ -102,10 +102,20 @@ def apply_edits(root: Path, edits: list[dict]) -> list[str]:
     return sorted(modified)
 
 
+def review_cost_summary(sessions: list[dict]) -> dict:
+    """Unknown provider pricing or interrupted calls are not zero-cost sessions."""
+    costs = [s.get("total_cost_usd") for s in sessions]
+    known = [cost for cost in costs if isinstance(cost, (int, float)) and not isinstance(cost, bool)
+             and math.isfinite(cost) and cost >= 0]
+    return {"estimated_cost_usd": sum(known) if known else None,
+            "measured_sessions": len(known), "total_sessions": len(sessions),
+            "complete": bool(sessions) and len(known) == len(sessions)}
+
+
 def signature(cluster: dict) -> str:
     # Ignore model-authored titles. Include the actual affected identity and location.
     return digest({"targets": sorted(cluster["targets"]),
-                   "paths": sorted(cluster["paths"]), "category": cluster["category"]})[:24]
+                   "paths": sorted(cluster["source_paths"]), "category": cluster["category"]})[:24]
 
 
 def select_tasks(cluster: dict, tasks: dict[str, dict], *, max_tasks: int = 32,
