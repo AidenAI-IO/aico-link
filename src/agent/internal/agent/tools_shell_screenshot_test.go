@@ -4,6 +4,7 @@ import (
 	"aico-agent/internal/agent/screen"
 	"bytes"
 	"context"
+	"fmt"
 	"image/color"
 	"image/jpeg"
 	"os"
@@ -77,16 +78,23 @@ func TestShellScreenshotExportWritesLatestScreenshot(t *testing.T) {
 		t.Fatalf("ppm mode = %v err %v, want 0600: screenshots can show private content", info.Mode().Perm(), err)
 	}
 
-	// A retired capture backend leaves no screenshot to point at, and no
-	// stale file at the old path.
+	// A retired capture backend removes the files at once, before any later
+	// shell command, and leaves no screenshot to point at.
 	state.InvalidateCapture()
+	for _, p := range []string{export.jpegPath(), export.ppmPath()} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("%s still exists right after capture invalidation (err %v)", p, err)
+		}
+	}
 	if env := export.env(); env != nil {
 		t.Fatalf("env after capture invalidation = %v, want none", env)
 	}
-	for _, p := range []string{export.jpegPath(), export.ppmPath()} {
-		if _, err := os.Stat(p); !os.IsNotExist(err) {
-			t.Fatalf("%s still exists after capture invalidation (err %v)", p, err)
-		}
+}
+
+func TestShellScreenshotDefaultDirIsPerProcess(t *testing.T) {
+	dir := defaultShellScreenshotDir()
+	if !strings.HasSuffix(dir, fmt.Sprintf("aico-agent-screenshot-%d", os.Getpid())) {
+		t.Fatalf("default dir = %q, want one named for this process", dir)
 	}
 }
 

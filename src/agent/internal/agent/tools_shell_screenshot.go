@@ -44,9 +44,36 @@ func newShellScreenshotExport(state *screen.ScreenState, dir string) *shellScree
 		return nil
 	}
 	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "aico-agent-screenshot")
+		dir = defaultShellScreenshotDir()
 	}
-	return &shellScreenshotExport{screen: state, dir: dir}
+	e := &shellScreenshotExport{screen: state, dir: dir}
+	// Drop the files as soon as the screenshot is retired, not at the next
+	// shell command. A rebuilt tool set replaces this hook with its own
+	// exporter, which uses the same directory.
+	state.SetCaptureInvalidatedHook(e.clear)
+	return e
+}
+
+// defaultShellScreenshotDir is private to this process, so two Agent
+// processes sharing a temp directory never read or remove each other's
+// screenshot.
+func defaultShellScreenshotDir() string {
+	return filepath.Join(os.TempDir(), fmt.Sprintf("aico-agent-screenshot-%d", os.Getpid()))
+}
+
+// removeShellScreenshotExports deletes this process's default export
+// directory, for Agent shutdown.
+func removeShellScreenshotExports() {
+	os.RemoveAll(defaultShellScreenshotDir())
+}
+
+// clear removes the exported files and forgets them.
+func (e *shellScreenshotExport) clear() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	os.Remove(e.jpegPath())
+	os.Remove(e.ppmPath())
+	e.exported = false
 }
 
 func (e *shellScreenshotExport) jpegPath() string { return filepath.Join(e.dir, "screen.jpg") }
@@ -66,8 +93,7 @@ func (e *shellScreenshotExport) env() []string {
 	if !e.exported || generation != e.generation {
 		data, width, height, _, ok := e.screen.LatestScreenshot(0)
 		if !ok {
-			// No current screenshot, e.g. after a capture backend was
-			// retired: drop the files, so nothing reads a stale screen.
+			// No current screenshot: make sure nothing reads a stale screen.
 			os.Remove(e.jpegPath())
 			os.Remove(e.ppmPath())
 			e.exported = false

@@ -71,12 +71,16 @@ AICO_SCREENSHOT_WIDTH=<width>
 AICO_SCREENSHOT_HEIGHT=<height>
 ```
 
-`<dir>` is `aico-agent-screenshot` under the Agent's system temp directory
-(`/tmp`, a tmpfs, on the controller), so the export never writes to flash. The
-directory and files are readable only by the Agent's user, because screenshots
-can show private content. The files are rewritten, each by a single rename,
-only when a newer screenshot was captured before the command starts, and are
-removed when no current screenshot exists. Their pixel coordinates are the
+`<dir>` is `aico-agent-screenshot-<pid>` under the Agent's system temp
+directory (`/tmp`, a tmpfs, on the controller), so the export never writes to
+flash and two Agent processes never share it. The directory and files are
+readable only by the Agent's user, because screenshots can show private
+content. The files are rewritten, each by a single rename, only when a newer
+screenshot was captured before a command or background session starts. A
+background session keeps the variables of its start, so each new screenshot is
+read with a new one-shot command. The files are removed as soon as the capture
+backend is retired (a HID or device configuration change) and the directory
+when the Agent shuts down. Their pixel coordinates are the
 screenshot's own: the image is already cropped to the phone screen, so a point
 measured there needs no offset into the raw capture frame. It is passed in the
 units the coordinate tool declares: as measured under the visual coordinate
