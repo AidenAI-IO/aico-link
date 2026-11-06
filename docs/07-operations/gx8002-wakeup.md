@@ -35,7 +35,7 @@ implemented or validated for this pin.
 
 The current recognizer is a GX8002B AIOT V1.3.2 board with 512 KiB Flash.
 The private diagnostic preset uses English CTC phoneme paths for `hi, aico`
-and an approximation of `hi, ai4 ke3`, score threshold 900, 30 dB microphone
+and an approximation of `hi, ai4 ke3`, score threshold 930, 30 dB microphone
 PGA, UART0 at 115200, LED feedback and a short audible wake tone. It does not
 distinguish Mandarin tones. Linked-vowel alternatives improve phrase-boundary
 coverage; recognition accuracy still requires labeled acoustic trials.
