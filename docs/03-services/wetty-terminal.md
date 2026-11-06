@@ -5,8 +5,9 @@ sidebar_position: 3
 # ttyd Browser Terminal
 
 The Debian firmware image integrates ttyd as a browser terminal for board-side
-maintenance. The board-side public URL is
-`http://192.168.42.1:3000/webtty/`.
+maintenance. Over USB it is at `http://192.168.42.1:3000/webtty/`; from the
+local network it is at `http://<board-ip>:8080/webtty/` while LAN access is on
+(see [LAN Access](./device-management-api.md#lan-access)).
 
 ## Debian Integration
 
@@ -36,7 +37,7 @@ Default runtime values:
 
 | Parameter | Default |
 | --- | --- |
-| Listen interface | all interfaces |
+| Listen interface | `lo` (fixed, not configurable) |
 | Port | `3000` |
 | Base path | `/webtty/` |
 | Command | `/usr/lib/aico/aico-ttyd-login` |
@@ -44,19 +45,23 @@ Default runtime values:
 
 ## Access
 
-The config web page at `http://192.168.42.1` includes a `Terminal` link. On the
-board it opens ttyd directly:
+ttyd listens on loopback only, so it is never reached from the network
+directly. Two front ends forward to it:
 
-```text
-http://192.168.42.1:3000/webtty/
-```
+- Config Web serves `http://192.168.42.1:3000/webtty/` on a socket bound to
+  `usb0` (`--usb-terminal-port=3000`), so only USB clients can use it. The
+  config web page's `Terminal` link opens this address over USB.
+- The Agent proxies `/webtty/` on port 8080. LAN clients reach it only while
+  LAN access is on; USB clients always can.
 
-Agent Web and the Docker sandbox also proxy `/webtty/` to ttyd on their
-published Agent Web port.
+The Docker sandbox runs ttyd itself and proxies `/webtty/` on its published
+Agent Web port.
 
 The ttyd daemon runs as the unprivileged `aico` user. Its default login helper
 prompts for a local account name, then uses `su --login` to authenticate that
-account's password. This avoids a Debian `login`/PTY interaction that leaves
+account's password. The `aico` password is the device password set in the
+Agent settings, once one has been set. SSH follows the same LAN access switch
+as the web services. This avoids a Debian `login`/PTY interaction that leaves
 ttyd waiting for input without displaying a prompt. A custom `TTYD_COMMAND`
 still runs as `aico`.
 

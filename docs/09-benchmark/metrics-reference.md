@@ -30,7 +30,7 @@ Use these artifacts together:
 
 | Artifact | Question it answers |
 | --- | --- |
-| `manifest.json`, `suite.json` | Which code, suite, model, judge, platform, active skills, and repeat plan were evaluated? |
+| `manifest.json`, `suite.json` | Which code, suite, model, judge, platform, skill text, and repeat plan were evaluated? |
 | `results.jsonl` | What happened in each task attempt, including eligibility, assertions, and scores? |
 | `metrics.json` | What are the aggregate and per-task results? |
 | `tasks/<task>/history.json`, `trace.json`, optional `episode.json` | What did the Agent observe, decide, and execute? Use the row's `artifact_dir` for repeated attempts. |
@@ -278,7 +278,7 @@ serving every user request.
 | `screenshot_capture_source/cost_source` | Source metadata in results, not independent numeric Langfuse scores. |
 | `error/agent_error/judge_error/environment_state_error` | Details needed to interpret coarse failure labels. |
 | `episode_error/pre_screenshot_error/post_screenshot_error` | Artifact acquisition errors; may reduce evidence/metrics without necessarily failing every task. |
-| `episode_id/active_skills` | Telemetry correlation and activated skill names; names alone do not establish content identity. |
+| `episode_id/skills_fingerprint` | Telemetry correlation and the content digest of the skill text each worker loaded. Compare `manifest.skills_fingerprint.sha256` for like-for-like runs; `source` distinguishes an observed tree from an unobservable external daemon. |
 | `started_at/finished_at` | Result timestamps, whose difference is not interchangeable with task-only wall time. |
 | `environment_state_assertions/trace_observations` | Individual configured state checks / behavioral observations. |
 

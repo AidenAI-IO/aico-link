@@ -588,6 +588,121 @@ grep -Fxq -- '/webtty/' "${ttyd_args}"
 grep -Fxq -- '4000' "${ttyd_args}"
 grep -Fxq -- 'fontSize=20' "${ttyd_args}"
 grep -Fxq -- '/usr/lib/aico/aico-ttyd-login' "${ttyd_args}"
+grep -Fxq -- '--interface' "${ttyd_args}"
+grep -Fxq -- 'lo' "${ttyd_args}"
+TTYD_BIN="${ttyd_mock}" TTYD_ARGS_OUTPUT="${ttyd_args}" \
+TTYD_INTERFACE=wlan0 WETTY_HOST=0.0.0.0 \
+    "${OVERLAY}/usr/lib/aico/aico-ttyd-start"
+grep -Fxq -- 'lo' "${ttyd_args}" || fail "ttyd interface must stay on loopback"
+if grep -Fxq -- 'wlan0' "${ttyd_args}" || grep -Fxq -- '0.0.0.0' "${ttyd_args}"; then
+    fail "ttyd interface override must be ignored"
+fi
+
+grep -Fq -- ' -lan-guard' "${UNIT_DIR}/aico-agent.service" \
+    || fail "Agent does not enable the LAN guard"
+grep -Fq -- '--usb-terminal-port=3000' "${UNIT_DIR}/aico-config-web.service" \
+    || fail "Config Web does not serve the terminal on the USB link"
+grep -Fq -- '--lan-guard' "${UNIT_DIR}/aico-config-web.service" \
+    || fail "Config Web does not enable the LAN guard"
+grep -qx 'enable aico-lan-access.service' \
+    "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
+grep -qx 'Before=ssh.service aico-ttyd.service' \
+    "${UNIT_DIR}/aico-lan-access.service"
+grep -qx 'Requires=aico-lan-access.service' \
+    "${UNIT_DIR}/ssh.service.d/20-aico.conf" \
+    || fail "sshd may start without the LAN access rule"
+[ "$(tail -n 1 "${OVERLAY}/etc/ssh/sshd_config.d/20-aico.conf")" = 'Include /run/aico/sshd/*.conf' ] \
+    || fail "the LAN access sshd rule must be included last"
+lan_sync=${OVERLAY}/usr/lib/aico/aico-lan-access-sync
+lan_root=${TEST_ROOT}/lan-access
+mkdir -p "${lan_root}"
+usermod_mock=${lan_root}/usermod-mock
+usermod_args=${lan_root}/usermod-args
+systemctl_mock=${lan_root}/systemctl-mock
+systemctl_log=${lan_root}/systemctl-log
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >"${USERMOD_ARGS_OUTPUT}"' >"${usermod_mock}"
+printf '%s\n' '#!/bin/sh' 'echo "$*" >>"${SYSTEMCTL_LOG}"' 'exit 0' >"${systemctl_mock}"
+chmod +x "${usermod_mock}" "${systemctl_mock}"
+run_lan_sync() {
+    AICO_LAN_ACCESS_FILE="${lan_root}/enabled" AICO_DEVICE_PASSWORD_FILE="${lan_root}/device-password" \
+    AICO_SSHD_RULE_DIR="${lan_root}/sshd" AICO_USERMOD_BIN="${usermod_mock}" \
+    AICO_SYSTEMCTL_BIN="${systemctl_mock}" USERMOD_ARGS_OUTPUT="${usermod_args}" \
+    SYSTEMCTL_LOG="${systemctl_log}" "${lan_sync}" >/dev/null 2>&1
+}
+lan_rule_restricted() {
+    grep -Fxq 'Match Address *,!192.168.42.0/24,!127.0.0.0/8,!::1' "${lan_root}/sshd/lan.conf" \
+        && grep -Fq 'DenyUsers *' "${lan_root}/sshd/lan.conf"
+}
+run_lan_sync
+lan_rule_restricted || fail "LAN access off does not restrict SSH"
+grep -Fxq 'reload ssh.service' "${systemctl_log}" || fail "sshd was not reloaded"
+[ ! -e "${usermod_args}" ] || fail "LAN sync changed the account without a device password"
+# Switch on without a password: SSH must stay restricted.
+touch "${lan_root}/enabled"
+set +e
+run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync without a password returned ${lan_status}"
+lan_rule_restricted || fail "LAN access on without a password opened SSH"
+device_hash='$2a$10$abcdefghijklmnopqrstuuJ2s0yZ1k8m7Y8Y2b6Wm8kQ3xvOQyWm'
+printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
+run_lan_sync
+if grep -q 'Match' "${lan_root}/sshd/lan.conf"; then
+    fail "LAN access on still restricts SSH"
+fi
+grep -Fxq -- '-p' "${usermod_args}"
+grep -Fxq -- "${device_hash}" "${usermod_args}"
+grep -Fxq -- 'aico' "${usermod_args}"
+# A damaged password file must close SSH again even though the switch is on.
+printf '%s\n' 'plaintext' >"${lan_root}/device-password"
+set +e
+run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync accepted a non-bcrypt value (status ${lan_status})"
+lan_rule_restricted || fail "a plaintext password file left SSH open to the LAN"
+# A failing usermod must also leave SSH restricted.
+printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
+run_lan_sync
+printf '%s\n' '#!/bin/sh' 'exit 1' >"${usermod_mock}"
+set +e
+run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync ignored a usermod failure (status ${lan_status})"
+lan_rule_restricted || fail "a usermod failure left SSH open to the LAN"
+# sshd is reloaded on every run, and a reload that fails is retried even
+# though the rule file already says "restricted".
+printf '%s\n' '#!/bin/sh' 'echo "$*" >>"${SYSTEMCTL_LOG}"' \
+    'case "$*" in reload*) [ -e "${SYSTEMCTL_FAIL_RELOAD:-/nonexistent}" ] && exit 1 ;; esac' \
+    'exit 0' >"${systemctl_mock}"
+printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$@" >"${USERMOD_ARGS_OUTPUT}"' >"${usermod_mock}"
+printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
+run_lan_sync
+rm -f "${lan_root}/enabled"
+: >"${systemctl_log}"
+touch "${lan_root}/reload-fails"
+set +e
+SYSTEMCTL_FAIL_RELOAD="${lan_root}/reload-fails" run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync ignored a failed sshd reload (status ${lan_status})"
+lan_rule_restricted || fail "turning LAN access off did not write the restrictive rule"
+rm -f "${lan_root}/reload-fails"
+: >"${systemctl_log}"
+run_lan_sync
+grep -Fxq 'reload ssh.service' "${systemctl_log}" \
+    || fail "a retry skipped the sshd reload because the rule file was already restrictive"
+if grep -Fq -- '--no-block' "${systemctl_log}"; then
+    fail "a runtime sync must wait for sshd to confirm the reload"
+fi
+: >"${systemctl_log}"
+AICO_SSHD_RELOAD=no-block run_lan_sync
+grep -Fxq 'reload --no-block ssh.service' "${systemctl_log}" \
+    || fail "the boot-mode sync must not block on the sshd reload"
+grep -qx 'Environment=AICO_SSHD_RELOAD=no-block' "${UNIT_DIR}/aico-lan-access.service" \
+    || fail "the boot unit would deadlock waiting for the sshd reload"
 grep -qx 'disable dnsmasq.service' \
     "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
 grep -qx 'disable wpa_supplicant.service' \

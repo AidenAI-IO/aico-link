@@ -36,6 +36,19 @@ type ScreenState struct {
 	screenshotUpdatedAt  time.Time
 	screenshotGeneration uint64
 	phoneScreenFallback  PhoneScreenFallback
+	captureInvalidated   func()
+}
+
+// SetCaptureInvalidatedHook sets a function called after InvalidateCapture
+// drops the screenshot, e.g. to remove copies of it kept elsewhere. A later
+// call replaces the previous hook.
+func (s *ScreenState) SetCaptureInvalidatedHook(fn func()) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.captureInvalidated = fn
+	s.mu.Unlock()
 }
 
 // PhoneScreenFallback remembers reported phone screen dimensions across Agent
@@ -92,7 +105,6 @@ func (s *ScreenState) InvalidateCapture() {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.width, s.height = 0, 0
 	s.active = ScreenActiveArea{}
 	s.updatedAt = time.Time{}
@@ -100,6 +112,11 @@ func (s *ScreenState) InvalidateCapture() {
 	s.screenshotWidth, s.screenshotHeight = 0, 0
 	s.screenshotUpdatedAt = time.Time{}
 	s.screenshotGeneration++
+	hook := s.captureInvalidated
+	s.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 // ScreenActiveArea represents the mirrored phone touch region inside the

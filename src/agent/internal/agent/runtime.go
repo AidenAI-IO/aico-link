@@ -61,6 +61,7 @@ type Runtime struct {
 	configPrepare           ConfigPrepareFunc
 	configContextRotate     atomic.Bool
 	configUserContextRotate atomic.Bool
+	configPromptRefresh     atomic.Bool
 	configStatusMu          sync.Mutex
 	configStatus            ConfigApplyStatus
 	configPending           *Config
@@ -1225,6 +1226,16 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		steerRecorder = tracker
 	}
 
+	// At startup, settle an offline model change before interrupted-run
+	// recovery loads the previous conversation. Recovery then sees the new
+	// conversation as current and only marks the interruption in the old
+	// transcript, as it does after history is cleared.
+	startup := r.contextManager == nil
+	if startup {
+		if err := startConversationForIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model), profile.SystemPrompt); err != nil {
+			return RunResult{}, err
+		}
+	}
 	if recoveredManager, err := recoverPendingBackendRunManager(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), r.contextManager); err != nil {
 		return RunResult{}, err
 	} else if recoveredManager != nil {
@@ -1234,12 +1245,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		r.contextManager = recoveredManager
 	}
 
-	// Configuration changes rotate at the next task boundary, preserving the
-	// complete old transcript and provider-specific continuation metadata.
+	// A model or provider change starts a new conversation at the next task
+	// boundary, preserving the complete old transcript and its
+	// provider-specific continuation metadata.
 	// setup context manager if not initialized
 	hadContextManager := r.contextManager != nil
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(profile.SystemPrompt, agentpath.ContextManagerSessionFolder(cfg.ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(cfg, profile.SystemPrompt)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -1252,9 +1264,24 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if resetErr = r.contextManager.Activate(candidate); resetErr != nil {
 			return RunResult{}, resetErr
 		}
+	} else if (r.configPromptRefresh.Load() || startup) && hadContextManager {
+		// A prompt setting saved since the last task, such as the response
+		// locale or time zone, rewrites the system message and keeps the
+		// conversation. At startup, a conversation supplied by interrupted-run
+		// recovery skipped InitializeContextManager, and no live flag reports a
+		// change saved while the Agent was stopped, so compare it here.
+		if err := syncSessionSystemPrompt(r.contextManager, profile.SystemPrompt); err != nil {
+			return RunResult{}, fmt.Errorf("refresh session system prompt: %w", err)
+		}
 	}
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
+	}
+	if err := recordConversationIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model)); err != nil {
+		return RunResult{}, err
+	}
+	if r.configPromptRefresh.Load() {
+		r.configPromptRefresh.Store(false)
 	}
 	// The profile only enriches the prompt, so a read or refresh failure keeps
 	// the section the session already carries instead of failing the run.
@@ -1706,7 +1733,7 @@ func (r *Runtime) rotateUserContext(systemPrompt string) error {
 	if _, err := contextmanager.NewContextManager(folder, systemPrompt); err != nil {
 		return fmt.Errorf("create user context session: %w", err)
 	}
-	return nil
+	return recordConversationIdentity(folder, userConversationIdentity(r.ConfigSnapshot()))
 }
 
 func (r *Runtime) MarkSkillsDirty() {
@@ -1856,10 +1883,21 @@ func (r *Runtime) ReadContextAttachment(role, attachmentID string) ([]byte, stri
 	return data, mimeType, nil
 }
 
+// initializeContextManager loads the backend conversation, starting a new one
+// when the model changed since it was recorded, for example while the Agent
+// was stopped. A live model change rotates at the next task boundary instead.
+func (r *Runtime) initializeContextManager(cfg Config, systemPrompt string) (*contextmanager.ContextManager, error) {
+	folder := agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	if err := startConversationForIdentity(folder, modelConversationIdentity(cfg.Model), systemPrompt); err != nil {
+		return nil, err
+	}
+	return InitializeContextManager(systemPrompt, folder, []contextmanager.AppendMessageHook{r.getStateHook()})
+}
+
 func (r *Runtime) rotateContext() error {
 	var err error
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(r.getSystemPrompt(), agentpath.ContextManagerSessionFolder(r.ConfigSnapshot().ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(r.ConfigSnapshot(), r.getSystemPrompt())
 		if err != nil {
 			return err
 		}
@@ -2917,6 +2955,7 @@ func (r *Runtime) Close() error {
 	if r.routines != nil {
 		r.routines.Close()
 	}
+	defer removeShellScreenshotExports()
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

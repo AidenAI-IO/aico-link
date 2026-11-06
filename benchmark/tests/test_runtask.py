@@ -1529,7 +1529,9 @@ def test_run_one_task_applies_suite_prompt_prefix(tmp_path: Path):
     ]
 
 
-def test_run_one_task_requests_active_skill_without_claiming_it_was_read(tmp_path: Path):
+def test_run_one_task_scores_skill_read_from_the_trace_only(tmp_path: Path):
+    """The requested-skill field is gone, so a skill_read observation must come
+    from the Agent's own tool calls and never from what the runner asked for."""
     suite = Suite(
         name="phone",
         global_reset={},
@@ -1563,11 +1565,9 @@ def test_run_one_task_requests_active_skill_without_claiming_it_was_read(tmp_pat
         None,
         None,
         "run-1",
-        active_skills=["device-operator"],
     )
 
-    assert client.skill_requests == [["device-operator"]]
-    assert result.metrics["active_skills"] == ["device-operator"]
+    assert "active_skills" not in result.metrics
     obs = result.metrics["trace_observations"][0]
     assert obs["id"] == "skill_read_device_operator"
     assert obs["passed"] is False
