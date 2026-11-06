@@ -316,9 +316,12 @@ way. For SSH:
   file changed, and sshd reads the rule file whenever it starts.
 
 When `system_synced` is `false`, check `systemctl status aico-lan-access ssh`
-and `/run/aico/sshd/lan.conf`, then change the switch again over USB or run
-`systemctl restart ssh`. `aico-lan-access.service` also retries on every boot,
-but a persistent failure (for example a damaged password file) fails again.
+and `/run/aico/sshd/lan.conf`, then retry the change over USB and check the new
+`system_synced`. Each retry applies the password and reloads sshd again.
+Restarting sshd only helps when the reload failed: it rereads the rule file but
+does not apply the password, because `aico-lan-access.service` runs once per
+boot. That unit retries on every boot, but a persistent failure (for example a
+damaged password file) fails again.
 
 A device password must be at least 8 characters and at most 72 bytes in UTF-8
 (the bcrypt limit), so a password made of multi-byte characters can be
