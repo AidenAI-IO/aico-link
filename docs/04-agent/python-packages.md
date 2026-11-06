@@ -61,6 +61,34 @@ TMPDIR=/userdata/tmp
 This applies to foreground, background, and PTY commands and keeps pip work out
 of the small `/tmp` tmpfs without redirecting temporary files for every service.
 
+Once a screenshot exists, the Agent Shell also names the latest screenshot the
+model was shown, so a command can read the screen with the standard library:
+
+```text
+AICO_SCREENSHOT_JPEG=<dir>/screen.jpg   # the bytes the model received
+AICO_SCREENSHOT_PPM=<dir>/screen.ppm    # the same image as binary PPM (P6, RGB)
+AICO_SCREENSHOT_WIDTH=<width>
+AICO_SCREENSHOT_HEIGHT=<height>
+```
+
+`<dir>` is a randomly named `aico-agent-screenshot-*` directory that the Agent
+creates in its system temp directory (`/tmp`, a tmpfs, on the controller) on
+the first export, so the export never writes to flash, two Agent processes
+never share it, and no other user can create it in advance. The directory
+(`0700`) and files (`0600`) are readable only by the Agent's user, because
+screenshots can show private content. The directory is kept for the life of
+the process. The files are rewritten, each by a single rename, only when a newer
+screenshot was captured before a command or background session starts. A
+background session keeps the variables of its start, so each new screenshot is
+read with a new one-shot command. The files are removed as soon as the capture
+backend is retired (a HID or device configuration change) and the directory
+when the Agent shuts down. Their pixel coordinates are the
+screenshot's own: the image is already cropped to the phone screen, so a point
+measured there needs no offset into the raw capture frame. It is passed in the
+units the coordinate tool declares: as measured under the visual coordinate
+protocol, otherwise normalized to 0-1000 with the width and height the model
+was given.
+
 ## Installing and Using Packages
 
 The Agent prompt tells the model to prefer the standard library and installed
