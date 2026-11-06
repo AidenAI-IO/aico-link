@@ -377,34 +377,39 @@
       }
     },
     {
-      "id": "quick_action_copy",
+      "id": "quick_action_copy_and_verify",
       "category": "single_step",
       "platforms": [
         "ios",
         "mac"
       ],
-      "description_for_judge": "Agent must use quick_action copy to copy selected text in an editable text field, including SMS/message compose boxes.",
+      "description_for_judge": "Use quick_action copy on the selected source text, then paste into a different initially empty field to verify the clipboard effect. Shortcut success alone cannot prove copying; the final screenshot and successful paste sequence must establish the copied value. Clipboard readback is not required.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」并全选。如果用短信，只输入不要发送。",
-        "timeout_sec": 90,
+        "prompt": "打开备忘录或任何记事应用，准备一个能同时看到两个可编辑输入框的页面（如标题和正文）。第一个输入框输入「你好Aico」并全选，第二个输入框保持为空。如果使用短信，只准备草稿不要发送。",
+        "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "复制当前选中的文字。",
+      "prompt": "用 quick_action 的 copy 复制第一个输入框里当前选中的文字，再切到第二个空输入框，用 quick_action 的 paste 粘贴来验证复制结果。不要重新输入这段文字，也不要发送或发布内容。最后保留两个输入框可见。",
       "rubric": [
         {
-          "id": "used_quick_action_copy",
-          "check": "Trace contains a quick_action call with action=copy or equivalent alias."
+          "id": "source_selected_destination_empty",
+          "scope": "precondition",
+          "check": "The pre-screenshot shows two different editable fields: source text 你好Aico is selected in the first, and the second is empty."
         },
         {
-          "id": "copy_executed",
-          "check": "A tool result that confirms the selected text was copied, explicit system copy confirmation, or clipboard readback matching the selected text establishes that copying succeeded. A successful shortcut result or text merely remaining in the field is not evidence that the clipboard changed."
+          "id": "used_quick_action_copy",
+          "check": "A successful quick_action copy (or equivalent alias) precedes focusing the second field and a successful quick_action paste. No intervening action overwrites the clipboard."
+        },
+        {
+          "id": "copied_text_pasted",
+          "check": "The post-screenshot shows 你好Aico in the second field, matching the selected source in the pre-screenshot. The trace establishes paste into that field; directly typing or setting the destination text does not count. Neither shortcut success alone nor unchanged source text proves copying."
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 1,
-        "max_tool_calls": 8,
-        "must_complete_within_sec": 90
+        "min_tool_calls": 2,
+        "max_tool_calls": 12,
+        "must_complete_within_sec": 120
       }
     },
     {
