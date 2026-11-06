@@ -475,7 +475,8 @@ def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> Non
     assert {workflow for workflow, _ in paths} >= {"benchmark.yml", "agent-experiment.yml"}
     for workflow, path in paths:
         name = path.rsplit("/", 1)[-1]
-        assert re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name), f"{workflow}: {path}"
+        assert (re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name)
+                or name in {"pre.jpg", "post.jpg"}), f"{workflow}: {path}"
 
 
 def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:

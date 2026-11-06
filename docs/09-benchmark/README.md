@@ -689,5 +689,6 @@ runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 
 - [Architecture Design](./architecture.md)
 - [Detailed Guide](./quickstart.md)
+- [Auto-Improve Workflow and Setup](./auto-improve.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)

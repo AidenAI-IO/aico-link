@@ -1,0 +1,232 @@
+name: Benchmark Auto-Improve
+run-name: Auto-improve ${{ inputs.source_run || 'scheduled discovery' }}
+
+on:
+  schedule:
+    # Discovery enforces at least three hours since source completion.
+    - cron: '37 1 * * *'
+  push:
+    branches:
+      # Explicit pre-merge testing; never publishes a PR.
+      - 'auto-improve-test/diagnose/**'
+      - 'auto-improve-test/improve/**'
+  workflow_dispatch:
+    inputs:
+      source_run:
+        description: Optional completed scheduled Benchmark run ID from main only
+        type: string
+        default: ''
+      mode:
+        description: Diagnose only or prepare a verified candidate
+        type: choice
+        options: [diagnose, improve]
+        default: diagnose
+      publish_pr:
+        description: Publish a draft PR after a successful main-branch improve run
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: benchmark-auto-improve
+  cancel-in-progress: false
+
+jobs:
+  improve:
+    if: >-
+      startsWith(github.ref, 'refs/heads/') &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target' &&
+      !(github.ref_name != 'main' && !startsWith(github.ref, 'refs/heads/auto-improve-test/')) &&
+      !(github.event_name != 'workflow_dispatch' &&
+        !(github.event_name == 'schedule' && github.ref_name == 'main' && vars.AUTO_IMPROVE_ENABLED == 'true') &&
+        !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/auto-improve-test/')))
+    runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
+    timeout-minutes: 360
+    env:
+      https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
+      no_proxy: localhost,127.0.0.1,::1,host.docker.internal
+    outputs:
+      identity: ${{ steps.discover.outputs.identity }}
+      base: ${{ steps.base.outputs.sha }}
+      mode: ${{ steps.mode.outputs.value }}
+      publish: ${{ steps.mode.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - id: base
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Set persistent work directory
+        env:
+          AUTO_IMPROVE_WORK_ROOT: ${{ runner.tool_cache }}/aico-auto-improve/${{ github.repository }}
+        run: |
+          mkdir -p "$AUTO_IMPROVE_WORK_ROOT"
+          echo "AUTO_IMPROVE_WORK_ROOT=$AUTO_IMPROVE_WORK_ROOT" >> "$GITHUB_ENV"
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: benchmark/uv.lock
+      - name: Install benchmark dependencies
+        working-directory: benchmark
+        run: uv sync --frozen --python 3.12
+      - name: Recover owned emulators from interrupted runs
+        working-directory: benchmark
+        run: |
+          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans; cleanup_orphans(Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]))'
+      - id: mode
+        working-directory: benchmark
+        env:
+          REQUESTED_MODE: ${{ inputs.mode || vars.AUTO_IMPROVE_MODE || 'diagnose' }}
+          PUBLISH_REQUESTED: ${{ inputs.publish_pr || false }}
+        run: |
+          uv run python -m ci.auto_improve.control policy \
+            --mode "$REQUESTED_MODE" \
+            --event "$GITHUB_EVENT_NAME" \
+            --ref "$GITHUB_REF" \
+            --publish-requested "$PUBLISH_REQUESTED"
+      - id: discover
+        name: Find an unprocessed completed main daily run
+        working-directory: benchmark
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          AUTO_IMPROVE_TEST_RUN: ${{ github.ref_name != 'main' }}
+          AUTO_IMPROVE_DELAY_HOURS: ${{ vars.AUTO_IMPROVE_DELAY_HOURS || '3' }}
+        run: >-
+          uv run python -m ci.auto_improve.control discover
+          --out "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/source"
+          --source-run "$SOURCE_RUN" --branch main
+      - uses: actions/setup-node@v4
+        if: steps.discover.outputs.found == 'true'
+        with:
+          node-version: '24.22.1'
+      - name: Install the read-only review CLI
+        if: steps.discover.outputs.found == 'true'
+        run: |
+          prefix="$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/cli"
+          npm install --global --prefix "$prefix" --no-fund --no-audit '@anthropic-ai/claude-code@2.1.308'
+          echo "AUTO_IMPROVE_CLAUDE=$prefix/bin/claude" >> "$GITHUB_ENV"
+      - name: Locate the Android SDK for isolated ADB runs
+        if: steps.discover.outputs.found == 'true' && steps.mode.outputs.value == 'improve'
+        env:
+          SDK_DIR: ${{ vars.BENCHMARK_ANDROID_SDK_DIR || '~/android-sdk' }}
+        run: |
+          sdk_dir="${SDK_DIR/#\~/$HOME}"
+          if [[ -d "$sdk_dir" ]]; then
+            echo "ANDROID_SDK_ROOT=$sdk_dir" >> "$GITHUB_ENV"
+            echo "$sdk_dir/platform-tools" >> "$GITHUB_PATH"
+            echo "$sdk_dir/emulator" >> "$GITHUB_PATH"
+          fi
+      - name: Diagnose, reproduce and verify
+        if: steps.discover.outputs.found == 'true'
+        working-directory: benchmark
+        env:
+          MODE: ${{ steps.mode.outputs.value }}
+          AUTO_IMPROVE_REVIEW_MODEL: ${{ vars.AUTO_IMPROVE_REVIEW_MODEL }}
+          AUTO_IMPROVE_REVIEW_BASE_URL: ${{ vars.AUTO_IMPROVE_REVIEW_BASE_URL }}
+          AUTO_IMPROVE_REVIEW_API_KEY: ${{ secrets.AUTO_IMPROVE_REVIEW_API_KEY }}
+          AUTO_IMPROVE_REVIEW_BUDGET_USD: ${{ vars.AUTO_IMPROVE_REVIEW_BUDGET_USD || '5' }}
+          AUTO_IMPROVE_TIMEOUT_SECONDS: '18000'
+          AUTO_IMPROVE_MAX_TASKS: ${{ vars.AUTO_IMPROVE_MAX_TASKS || '32' }}
+          AUTO_IMPROVE_AVD_TEMPLATE: ${{ vars.AUTO_IMPROVE_AVD_TEMPLATE }}
+          AUTO_IMPROVE_AVD_SHA256: ${{ vars.AUTO_IMPROVE_AVD_SHA256 }}
+          BENCHMARK_AGENT_PROVIDER: ${{ vars.BENCHMARK_AGENT_PROVIDER }}
+          BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
+          BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
+          BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+          BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
+          BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
+          BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
+          DAEMON_DOCKERFILE: benchmark/docker/Dockerfile.agent-daemon.cn
+          MOBILEGYM_IMAGE: aico-mobilegym-simulator:py311
+          MOBILEGYM_NODE_IMAGE: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/node:22-bookworm
+          MOBILEGYM_DEBIAN_MIRROR: repo.huaweicloud.com
+          https_proxy: ${{ secrets.BENCHMARK_HTTPS_PROXY }}
+          no_proxy: localhost,127.0.0.1,::1,host.docker.internal
+        run: >-
+          uv run python -m ci.auto_improve.driver
+          --repo "$GITHUB_WORKSPACE"
+          --source "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/source"
+          --out "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result"
+          --mode "$MODE"
+      - name: Publish job summary
+        if: always() && steps.discover.outputs.found == 'true'
+        run: |
+          report="$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result/summary.md"
+          if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Retain evidence for fourteen days
+        id: evidence
+        if: always() && steps.discover.outputs.found == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.mode.outputs.artifact_prefix }}${{ steps.discover.outputs.identity }}
+          retention-days: 14
+          # Do not upload clones, daemon configurations, CLI sessions, or emulator disks.
+          path: |
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/manifest.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/summary.md
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/plan.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/comparison.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/candidate.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-review.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/candidate.patch
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/fix.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/fix-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/reproduction-review-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/verification-review-error.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-runs/*/*/evidence/**
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/check.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/go-unit-check.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-build/build.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-runs/*/*/runner.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-runs/*/*/emulator/emulator.log
+          if-no-files-found: warn
+      - name: Remove uploaded work files
+        if: always() && steps.evidence.outcome == 'success'
+        working-directory: benchmark
+        run: |
+          uv run python -c 'import os; from pathlib import Path; from ci.auto_improve.emulator import cleanup_orphans, cleanup_completed_work; root=Path(os.environ["AUTO_IMPROVE_WORK_ROOT"]); cleanup_orphans(root); cleanup_completed_work(root, "auto-improve-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])'
+
+  publish:
+    needs: improve
+    if: needs.improve.outputs.identity != '' && needs.improve.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.improve.outputs.base }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: auto-improve-source-${{ needs.improve.outputs.identity }}
+          path: auto-improve-result
+      - uses: astral-sh/setup-uv@v6
+      - name: Install benchmark dependencies
+        working-directory: benchmark
+        run: uv sync --frozen --python 3.12
+      - name: Publish validated draft PRs
+        working-directory: benchmark
+        env:
+          # Built-in token is scoped to this job and never enters model execution.
+          # An optional bot token can be used if organization policy requires it.
+          GH_TOKEN: ${{ secrets.AUTO_IMPROVE_PR_TOKEN || github.token }}
+          AUTO_IMPROVE_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: >-
+          uv run python -m ci.auto_improve.control publish
+          --repo "$GITHUB_WORKSPACE" --out "$GITHUB_WORKSPACE/auto-improve-result"
+          --branch main
