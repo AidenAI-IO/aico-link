@@ -237,6 +237,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		"shell": &ShellTool{execution: shellExecutionConfig{
 			proxy:              proxyCfg,
 			temporaryDirectory: toolOptions.shellTemporaryDirectory,
+			screenshot:         newShellScreenshotExport(screen, ""),
 		}},
 		"weather":     NewWeatherTool(proxyCfg),
 		"web_search":  NewWebSearchTool(searchCfg, proxyCfg),
