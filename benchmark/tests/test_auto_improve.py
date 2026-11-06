@@ -249,6 +249,28 @@ def test_review_has_no_mutating_tools_or_publication_credentials(tmp_path, monke
     assert captured["env"]["ANTHROPIC_API_KEY"] == "review-key"
 
 
+@pytest.mark.parametrize("returncode,payload", [
+    (1, {"type": "result", "is_error": True, "errors": ["Gateway rejected synthetic-key"], "session_id": "private-session"}),
+    (0, {"is_error": True, "result": "Gateway rejected synthetic-key"}),
+])
+def test_review_preserves_stdout_errors_without_leaking_secrets(tmp_path, monkeypatch, returncode, payload):
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_MODEL", "review-model")
+    monkeypatch.setenv("AUTO_IMPROVE_REVIEW_API_KEY", "synthetic-key")
+    monkeypatch.setattr(review.shutil, "which", lambda _: "/bin/claude")
+    class Process:
+        def communicate(self, *args, **kwargs):
+            return json.dumps(payload), None
+    proc = Process()
+    proc.returncode = returncode
+    monkeypatch.setattr(review.subprocess, "Popen", lambda *args, **kwargs: proc)
+    with pytest.raises((RuntimeError, ValueError)):
+        review.ask(tmp_path, "audit", review.AUDIT)
+    saved = (tmp_path / "session-error.log").read_text()
+    assert "Gateway rejected" in saved
+    assert "synthetic-key" not in saved
+    assert "private-session" not in saved
+
+
 def test_failure_evidence_uses_source_rubric_and_keeps_unknown_tasks(tmp_path):
     run = tmp_path / "benchmark/runs/ci-42-1-phone"
     run.mkdir(parents=True)

@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 
+from ci.auto_improve.evidence import sanitize
 from runner.process import terminate_process_tree
 
 STRING = {"type": "string"}
@@ -100,11 +101,24 @@ def ask(workspace: Path, prompt: str, schema: dict, *, timeout: float = 900) -> 
         except BaseException:
             terminate_process_tree(proc)
             raise
-    if proc.returncode:
-        raise RuntimeError(f"Review session failed ({proc.returncode}); see session-error.log")
-    response = json.loads(output)
-    if response.get("is_error") or not isinstance(response.get("structured_output"), dict):
-        raise ValueError("Review returned no completed structured output")
+    try:
+        response = json.loads(output)
+    except ValueError:
+        response = None
+    if (proc.returncode or not isinstance(response, dict) or response.get("is_error") or
+            not isinstance(response.get("structured_output"), dict)):
+        # Print mode reports provider errors and exhausted limits on stdout, often
+        # with empty stderr. Retain only diagnostics, not the entire session JSON.
+        if isinstance(response, dict):
+            detail = {name: response[name] for name in ("type", "subtype", "is_error", "errors",
+                       "num_turns", "total_cost_usd", "duration_ms") if name in response}
+            if proc.returncode or response.get("is_error"):
+                detail["result"] = response.get("result")
+        else:
+            detail = {"invalid_json_stdout": output[:8192]}
+        with (workspace / "session-error.log").open("a") as log:
+            log.write("\nReview result diagnostics:\n" + json.dumps(sanitize(detail), indent=2)[:16384] + "\n")
+        raise RuntimeError(f"Review session did not complete ({proc.returncode}); see session-error.log")
     result = response["structured_output"]
     validate_output(result, schema)
     (workspace / "response.json").write_text(json.dumps(result, indent=2) + "\n")
