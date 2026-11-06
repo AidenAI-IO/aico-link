@@ -188,7 +188,8 @@ class AicoCustomBoardTest(unittest.TestCase):
         self.assertNotIn("BT,wake_host_irq", bluetooth)
         self.assertNotIn("uart_rts_gpios", bluetooth)
         self.assertNotIn("work_led:", self.dts)
-        self.assertNotIn("&uart1 {", self.dts)
+        # UART1_RX is reused as the GX8002 wake input on J17-10.
+        self.assertIn('status = "disabled";', self.node("&uart1"))
         self.assertNotIn("uart1_gpios", self.dts)
 
     def test_wifi_on_sdio_controller_uses_external_wl_en_pullup(self):
@@ -257,6 +258,9 @@ class AicoCustomBoardTest(unittest.TestCase):
         voice = self.node("&uart4")
         self.assertIn('status = "okay";', voice)
         self.assertIn("pinctrl-0 = <&uart4m1_xfer>;", voice)
+        self.assertIn('status = "disabled";', self.node("&uart1"))
+        self.assertIn("<1 RK_PA4 RK_FUNC_GPIO &pcfg_pull_down>", self.node("gx8002-wakeup-pin"))
+        self.assertIn("pinctrl-0 = <&wifi_enable &gx8002_wakeup_pin>;", self.node("&pinctrl"))
         # UART2 M1 is owned by the FIQ recovery console.
         self.assertIn('status = "disabled";', self.node("&uart2"))
 

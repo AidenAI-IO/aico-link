@@ -403,17 +403,17 @@ func startWakeupWatchersWithDebounce(newWatcher voiceWakeupWatcherFactory, callb
 	debouncer := newWakeupDebouncer(debounceInterval, now)
 	watcher, err := newWatcher(func() {
 		if !debouncer.allow() {
-			logging.Warnf("agent", "wakeup", "MCU wakeup event ignored by %s debounce", debounceInterval)
+			logging.Warnf("agent", "wakeup", "wakeup event ignored by %s debounce", debounceInterval)
 			return
 		}
 		callback()
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create MCU wakeup watcher: %w", err)
+		return nil, fmt.Errorf("create voice wakeup watcher: %w", err)
 	}
 	if err := watcher.Start(); err != nil {
 		watcher.Stop()
-		return nil, fmt.Errorf("start MCU wakeup watcher: %w", err)
+		return nil, fmt.Errorf("start voice wakeup watcher: %w", err)
 	}
 	return []wakeupWatcher{watcher}, nil
 }
@@ -478,7 +478,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		return
 	}
 
-	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
+	logging.Infof("agent", "ready", "Starting voice wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -487,7 +487,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start voice wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
@@ -505,7 +505,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 			logging.Infof("agent", "exit", "Stopped.")
 			return
 		case <-events:
-			logging.Infof("agent", "wakeup", "MCU wakeup triggered, opening voice session...")
+			logging.Infof("agent", "wakeup", "Voice wakeup triggered, opening voice session...")
 			if exit := runVoiceSession(cfg, dialog, runtime, sigChan, events); exit {
 				logging.Infof("agent", "exit", "Stopped.")
 				return
@@ -516,7 +516,7 @@ func runWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Ru
 }
 
 func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
+	logging.Infof("agent", "ready", "Starting voice wakeup listener...")
 
 	ctx := context.Background()
 	wakeupEvents := make(chan struct{}, 1)
@@ -526,7 +526,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 		signalWakeupEvent(wakeupEvents)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start voice wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
@@ -549,7 +549,7 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 				logging.Infof("agent", "exit", "Stopped.")
 				return
 			case <-wakeupEvents:
-				logging.Infof("agent", "wakeup", "MCU wakeup triggered, starting to listen...")
+				logging.Infof("agent", "wakeup", "Voice wakeup triggered, starting to listen...")
 			}
 		} else {
 			pendingWakeup = false
@@ -591,6 +591,15 @@ func runLegacyWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *ag
 }
 
 func wakeupReadyLabel(cfg agent.Config) string {
+	if boardUsesGX8002J17Wakeup(readDeviceTreeModel()) {
+		if !mcuServiceSocketAvailable(resolveMCUServiceSocket()) {
+			return "GX8002 GPIO0 (J17-10)"
+		}
+		if cfg.TapWakeupEnabledOrDefault() {
+			return "GX8002 GPIO0 (J17-10), MCU ASR or touch key"
+		}
+		return "GX8002 GPIO0 (J17-10) or MCU ASR; tap wakeup disabled"
+	}
 	if usesLegacyGPIOVoiceWakeup() {
 		return "GPIO 33/32"
 	}
@@ -604,7 +613,7 @@ func wakeupReadyLabel(cfg agent.Config) string {
 }
 
 func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runtime *agent.Runtime, sigChan chan os.Signal, newWatcher voiceWakeupWatcherFactory, reload ...<-chan struct{}) {
-	logging.Infof("agent", "ready", "Starting MCU wakeup listener...")
+	logging.Infof("agent", "ready", "Starting voice wakeup listener...")
 
 	events := make(chan voiceEvent, 1)
 
@@ -613,7 +622,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 		signalVoiceWakeupEvent(events)
 	})
 	if err != nil {
-		logging.Errorf("agent", "daemon", "Failed to start MCU wakeup listener: %v", err)
+		logging.Errorf("agent", "daemon", "Failed to start voice wakeup listener: %v", err)
 		return
 	}
 	defer stopWakeupWatchers(watchers)
@@ -639,7 +648,7 @@ func runSingleTurnSTTWakeupMode(cfg agent.Config, dialog audioDialogRunner, runt
 					logging.Infof("agent", "exit", "Stopped.")
 					return
 				case <-events:
-					logging.Infof("agent", "wakeup", "MCU wakeup triggered, starting to listen...")
+					logging.Infof("agent", "wakeup", "Voice wakeup triggered, starting to listen...")
 				}
 			} else {
 				pendingWakeup = false

@@ -10,6 +10,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type GPIOEdge string
+
+const (
+	GPIOEdgeFalling GPIOEdge = "falling"
+	GPIOEdgeRising  GPIOEdge = "rising"
+	GPIOEdgeBoth    GPIOEdge = "both"
+)
+
 // GPIOWatcher watches a GPIO pin for edge events
 type GPIOWatcher struct {
 	mu        sync.Mutex
@@ -25,6 +33,19 @@ type GPIOWatcher struct {
 
 // NewGPIOWatcher creates a new GPIO watcher
 func NewGPIOWatcher(pin int, callback func()) (*GPIOWatcher, error) {
+	return NewGPIOWatcherWithEdge(pin, GPIOEdgeFalling, callback)
+}
+
+// NewGPIOWatcherWithEdge creates a GPIO watcher for a selected sysfs edge.
+func NewGPIOWatcherWithEdge(pin int, edge GPIOEdge, callback func()) (*GPIOWatcher, error) {
+	if pin < 0 {
+		return nil, fmt.Errorf("GPIO pin must be >= 0, got %d", pin)
+	}
+	switch edge {
+	case GPIOEdgeFalling, GPIOEdgeRising, GPIOEdgeBoth:
+	default:
+		return nil, fmt.Errorf("unsupported GPIO edge %q", edge)
+	}
 	w := &GPIOWatcher{
 		pin:       pin,
 		valuePath: fmt.Sprintf("/sys/class/gpio/gpio%d/value", pin),
@@ -42,8 +63,7 @@ func NewGPIOWatcher(pin int, callback func()) (*GPIOWatcher, error) {
 		return nil, fmt.Errorf("set direction: %w", err)
 	}
 
-	// Set edge to falling
-	if err := w.setEdge("falling"); err != nil {
+	if err := w.setEdge(string(edge)); err != nil {
 		return nil, fmt.Errorf("set edge: %w", err)
 	}
 

@@ -99,6 +99,38 @@ func boardAllowsLegacyGPIOVoiceKeys(model string) bool {
 	return strings.Contains(strings.ToLower(model), "pico zero")
 }
 
+func boardUsesGX8002J17Wakeup(model string) bool {
+	return strings.Contains(strings.ToUpper(model), "AICO LINK SCH V1")
+}
+
+const gx8002WakeupLinuxGPIO = 36 // RV1106 GPIO1_A4, routed to interface-board J17-10.
+
+type gpioEdgeWatcherFactory func(int, agent.GPIOEdge, func()) (wakeupWatcher, error)
+
+func addGX8002GPIOWakeup(model string, base voiceWakeupWatcherFactory, newGPIO gpioEdgeWatcherFactory) voiceWakeupWatcherFactory {
+	if !boardUsesGX8002J17Wakeup(model) {
+		return base
+	}
+	return func(callback func()) (wakeupWatcher, error) {
+		primary, err := base(callback)
+		if err != nil {
+			return nil, err
+		}
+		gx8002, err := newGPIO(gx8002WakeupLinuxGPIO, agent.GPIOEdgeRising, func() {
+			logging.Infof("agent", "wakeup", "GX8002 GPIO0 pulse received on J17-10 (GPIO1_A4/gpio%d)", gx8002WakeupLinuxGPIO)
+			callback()
+		})
+		if err != nil {
+			logging.Errorf("agent", "wakeup", "GX8002 J17-10 GPIO watcher unavailable; retaining existing wake sources: %v", err)
+			return primary, nil
+		}
+		return &multiWakeupWatcher{watchers: []wakeupWatcher{
+			primary,
+			&optionalWakeupWatcher{watcher: gx8002, label: "GX8002 J17-10"},
+		}}, nil
+	}
+}
+
 // legacyGPIOVoiceWakeupAllowed decides whether GPIO 33/32 may replace MCU wakeup.
 // SCH v1 always denies. Otherwise allow Pico Zero boards or an explicit env opt-in.
 func legacyGPIOVoiceWakeupAllowed() bool {
@@ -122,6 +154,23 @@ func usesLegacyGPIOVoiceWakeup() bool {
 // multiWakeupWatcher starts/stops several GPIO (or other) watchers as one unit.
 type multiWakeupWatcher struct {
 	watchers []wakeupWatcher
+}
+
+type optionalWakeupWatcher struct {
+	watcher wakeupWatcher
+	label   string
+}
+
+func (w *optionalWakeupWatcher) Start() error {
+	if err := w.watcher.Start(); err != nil {
+		w.watcher.Stop()
+		logging.Errorf("agent", "wakeup", "%s GPIO watcher failed to start; retaining other wake sources: %v", w.label, err)
+	}
+	return nil
+}
+
+func (w *optionalWakeupWatcher) Stop() {
+	w.watcher.Stop()
 }
 
 func (m *multiWakeupWatcher) Start() error {
@@ -181,6 +230,9 @@ func newInputLifecycle(runtime *agent.Runtime, server *agent.Server) *inputLifec
 			return source.newWatcherWithTap(c.cfg.TapWakeupEnabledOrDefault(), callback)
 		}
 	}
+	c.newVoiceWatcher = addGX8002GPIOWakeup(readDeviceTreeModel(), c.newVoiceWatcher, func(pin int, edge agent.GPIOEdge, callback func()) (wakeupWatcher, error) {
+		return agent.NewGPIOWatcherWithEdge(pin, edge, callback)
+	})
 	runtime.RegisterPreemptHook(func() {
 		c.dialogMu.Lock()
 		defer c.dialogMu.Unlock()
