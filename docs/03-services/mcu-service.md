@@ -130,6 +130,9 @@ plug and unknown events advance the cursor without activating voice. Quick
 Capture's configured GPIO3 input is independent. Text mode does not start this
 consumer.
 
+The [GX8002 integration guide](../07-operations/gx8002-wakeup.md) covers wiring,
+firmware tools, microphone ownership and board validation.
+
 On Aico Link SCH v1, an external GX8002 wake output can also enter the same
 voice loop directly: connect its 3.3 V active-high GPIO0 pulse to interface
 header J17-10 (`UART1_RX`, RV1106 `GPIO1_A4`) and connect grounds. The custom
