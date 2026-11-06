@@ -622,8 +622,11 @@ def generate_report_html(run_dir: Path) -> str:
             for s in rubric_spec:
                 rubric_js.append([s.get("id",""), s.get("check",""), "\u2014"])
 
-        for verdict in (r.get("metrics") or {}).get("precondition_verdicts", []):
-            rubric_js.append(["Precondition: " + verdict.get("id", ""), verdict.get("reason", ""), verdict.get("verdict", "")])
+        precondition_verdicts = (r.get("metrics") or {}).get("precondition_verdicts")
+        for verdict in precondition_verdicts if isinstance(precondition_verdicts, list) else []:
+            if not isinstance(verdict, dict):
+                continue
+            rubric_js.append(["Precondition: " + str(verdict.get("id", "")), verdict.get("reason", ""), verdict.get("verdict", "")])
 
         hard_assertion_failures = [
             {

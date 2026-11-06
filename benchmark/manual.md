@@ -414,7 +414,10 @@ before Agent result scoring. A failed precondition is an ineligible environment
 skip; a missing screenshot or judge error is an ineligible evaluation error.
 Precondition verdicts are recorded in attempt metrics and shown in the report,
 not included in the Agent rubric pass rate. Offline rejudging uses the same
-precondition gate.
+precondition gate. With `--no-judge`, hard assertion evidence is still recorded,
+but attempts requiring a visual precondition remain unscored with
+`preconditions_pending=true`. Rejudging verifies that starting state before
+attributing a recorded hard assertion failure to the Agent.
 
 For `agent_prompt`, set `expected_response` when setup success has a precise
 completion marker. The runner compares the trimmed response exactly and fails

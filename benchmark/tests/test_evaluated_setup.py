@@ -157,10 +157,15 @@ def test_notification_content_uses_persisted_evidence_not_fixed_english(tmp_path
                             for ref in spec.get(expected_key, [])]
     history = [{"type": "tool_call", "tool_name": "recall_memory", "tool_input": "{}"},
                {"type": "tool_result", "tool_name": "recall_memory", "content": json.dumps({"results": [item]})},
-               {"type": "assistant", "content": "The requested conclusion was recalled."}]
+               {"type": "assistant", "content": content}]
 
     def judge(**kwargs):
         assert kwargs["trace"]["memory_state"][0]["content"] == content
+        assert kwargs["final_response"] == content
+        if semantic_verdict == "yes":
+            required = "明天" if task_id == "notification_explicit_update" else "以后的包裹都送到办公室"
+            assert required in kwargs["final_response"]
+            assert required in kwargs["trace"]["memory_state"][0]["content"]
         return JudgeOutput([RubricVerdict(r.id, semantic_verdict, "Checked stored content") for r in kwargs["rubric"]],
                            "", "key", "")
 

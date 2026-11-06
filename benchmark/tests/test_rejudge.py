@@ -98,6 +98,49 @@ def test_rejudge_keeps_preconditions_out_of_agent_score(tmp_path, monkeypatch, i
         assert result["metrics"]["judge_error"] == result["metrics"]["precondition_error"]
 
 
+@pytest.mark.parametrize("hard_pass", [False, True])
+@pytest.mark.parametrize("initial", ["yes", "no", "unavailable"])
+def test_no_judge_preserves_assertions_and_defers_attribution(tmp_path, monkeypatch, hard_pass, initial):
+    from PIL import Image
+    from runner.judge import JudgeConfig, JudgeOutput
+    attempt = tmp_path / "tasks" / "task"
+    attempt.mkdir(parents=True)
+    pre = attempt / "pre.jpg"
+    Image.new("RGB", (10, 10)).save(pre)
+    task = TaskSpec(id="task", category="single_step", prompt="Clear", description_for_judge="Clear field",
+                    rubric=[RubricItem("start", "Populated field", scope="precondition"), RubricItem("empty", "Empty field")],
+                    hard_assertions=HardAssertions(min_tool_calls=1 if not hard_pass else 0))
+    suite = Suite(name="synthetic", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    result = evaluate_task_history(suite=suite, task=task, history=[{"type": "assistant", "content": "Done"}],
+                                  attempt=1, artifact_dir=attempt, judge_cfg=None, judge_cache_dir=None,
+                                  run_id="test", timed_out=False, pre_screenshot=pre)
+    assert result.status == "skipped" and result.metrics["judging_disabled"] is True
+    assert result.metrics["agent_eligible"] is False
+    assert result.hard_assertions.min_tool_calls is hard_pass
+    assert bool(result.hard_assertion_failures) is (not hard_pass)
+    (tmp_path / "results.jsonl").write_text(json.dumps(dc.asdict(result)) + "\n")
+    calls = []
+
+    def judge(**kwargs):
+        calls.append([r.id for r in kwargs["rubric"]])
+        if kwargs["rubric"][0].scope == "precondition":
+            if initial == "unavailable":
+                raise RuntimeError("precondition unavailable")
+            return JudgeOutput([RubricVerdict("start", initial, "Initial state")], "", "key", "")
+        return JudgeOutput([RubricVerdict("empty", "yes", "Final state")], "", "key", "")
+
+    monkeypatch.setattr("runner.judge.judge_task", judge)
+    monkeypatch.setattr(rejudge, "judge_task", judge)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1", only_judge_errors=True)
+    scored = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert scored["hard_assertions"] == dc.asdict(result.hard_assertions)
+    assert scored["hard_assertion_failures"] == [dc.asdict(f) for f in result.hard_assertion_failures]
+    assert scored["metrics"]["agent_eligible"] is (initial == "yes")
+    assert calls == ([["start"], ["empty"]] if initial == "yes" and hard_pass else [["start"]])
+    assert scored["status"] == ("judge_error" if initial == "unavailable" else "skipped" if initial == "no"
+                                 else "passed" if hard_pass else "failed")
+
+
 def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
     attempt = tmp_path / "tasks" / "home"
     attempt.mkdir(parents=True)

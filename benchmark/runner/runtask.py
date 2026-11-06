@@ -258,6 +258,19 @@ def evaluate_task_history(
         })
     (artifact_dir / "trace.json").write_text(
         json.dumps(trace_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+    outcome = evaluate_hard_assertions(trace, task.hard_assertions, timed_out=timed_out)
+    base.hard_assertions = outcome.results
+    base.hard_assertion_failures = list(outcome.failures)
+    if judge_cfg is None and any(item.scope == "precondition" for item in task.rubric):
+        # Keep measured assertion evidence, but do not attribute its failure to
+        # the Agent until the starting state has been verified by rejudge.
+        base.status = "skipped"
+        base.metrics.update(judging_disabled=True, preconditions_pending=True,
+                            error="Precondition and outcome judging disabled; run rejudge to score this attempt.",
+                            quality_score=None)
+        _set_outcome_metrics(base, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        base.finished_at = now_iso()
+        return base
     preconditions = check_preconditions(task.rubric, pre_screenshot, judge_cfg, judge_cache_dir)
     base.metrics.update(preconditions)
     if preconditions and preconditions["preconditions_passed"] is not True:
@@ -271,9 +284,6 @@ def evaluate_task_history(
                              stage="evaluation" if unavailable else "setup")
         base.finished_at = now_iso()
         return base
-    outcome = evaluate_hard_assertions(trace, task.hard_assertions, timed_out=timed_out)
-    base.hard_assertions = outcome.results
-    base.hard_assertion_failures = list(outcome.failures)
     if task.memory_assertions is not None and not timed_out and not base.metrics.get("agent_error"):
         if memory_state_error or memory_state is None:
             base.status = "judge_error"
