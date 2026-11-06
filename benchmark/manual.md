@@ -399,7 +399,7 @@ Common fields:
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
 | `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
 | `memory_assertions` | Optional post-task `recall_memory` observation with `query`, `expected_count`, `expected`, and/or `absent_ids`; uses the same checks as `assert_memory` setup |
-| `rubric` | The judge model's scoring items |
+| `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
 | `hard_assertions.required_tool_calls` | Requires a tool call whose input contains a specified nested subset |
 | `repeats` | Number of times a single task is repeated |
@@ -407,6 +407,18 @@ Common fields:
 | `expected_answer` | Direct answer for multiple-choice/fixed-answer tasks |
 | `trace_observations` | Checks on specific behaviors in the trace, e.g. whether a given skill was read |
 | `mock_environment` | Suite-level default or task-level scripted Phone Bridge state, tool responses, and mock screen |
+
+For tasks with a required starting screen, mark pre-screenshot-only rubric items
+`scope: "precondition"`. The runner checks those items against the pre-screenshot
+before Agent result scoring. A failed precondition is an ineligible environment
+skip; a missing screenshot or judge error is an ineligible evaluation error.
+Precondition verdicts are recorded in attempt metrics and shown in the report,
+not included in the Agent rubric pass rate. Offline rejudging uses the same
+precondition gate. With `--no-judge`, deterministic tool, memory-state,
+expected-answer, and recall assertion evidence is still recorded,
+but attempts requiring a visual precondition remain unscored with
+`preconditions_pending=true`. Rejudging verifies that starting state before
+attributing a recorded hard assertion failure to the Agent.
 
 For `agent_prompt`, set `expected_response` when setup success has a precise
 completion marker. The runner compares the trimmed response exactly and fails
@@ -427,11 +439,22 @@ An `agent_prompt` can also carry `device_prepare: {"recipe": ..., "params": ...}
 On an ADB Android environment the runner first asks the bridge's
 `POST /api/prepare` to build the same starting state directly with intents and
 content providers (`chrome_pages`, `maps_directions`, `messages_draft`,
-`contact_detail`, `camera_photo`; see `adbandroid/bridge/prepare.py`). Each
+`contact_detail`, `camera_photo`, `settings_page`, `settings_search`, `home`;
+see `adbandroid/bridge/prepare.py`). Each
 recipe confirms its expected text through UIAutomator before returning. When the
 bridge has no recipe support or cannot confirm the state, the runner runs the
 agent prompt as before, so the prompt must keep describing the full state. A
-prepared task records the recipe result in its `setup.json`.
+prepared task records the recipe result in its `setup.json` and sets the
+`setup_path` metric to `device_prepare`; a task whose recipe failed records the
+recipe error as `device_prepare_fallback` and sets `setup_path` to
+`agent_fallback`, so an Agent-built start state is never mistaken for a
+confirmed one. For `camera_photo` with `then: "home"`, preparation resets Home
+and waits for launcher text before returning. `wait_for_text` can override the
+launcher labels for the target image; sending a Home key alone is insufficient.
+Subpage, notification-panel, and `home` recipes require non-empty
+`wait_for_text` confirmation labels and validate them before device actions.
+A configured recipe without an environment URL also reports an explicit
+`agent_fallback` with reason `no environment_url`.
 
 A confirmed recipe replaces the prompt, so `device_prepare` cannot be combined
 with `expected_response` or `clear_history_after: false`; suite loading rejects
@@ -549,7 +572,10 @@ Run the suite against isolated benchmark daemons because notification cursors
 and memory are durable. Explicit action tasks compose generic setup primitives:
 `seed_memory`, `seed_notification`, then `assert_memory`.
 `assert_memory.expected` supports scalar/content/tag/entity checks plus generic
-`source_refs_contain` and `evidence_refs_contain` entries. Reference entries may
+`source_refs_contain` and `evidence_refs_contain` entries. Use
+`content_contains_any` with a non-empty list of strings to accept equivalent
+content spellings (for example, a Chinese or English city name) in one record.
+Reference entries may
 match `type`, `id`, and `event_ids_contains`, which lets suites verify evidence
 preservation without adding scenario-specific runner logic.
 
@@ -1263,8 +1289,14 @@ Lark card when `BENCHMARK_REPORT_LARK_WEBHOOK_URL` and
 last seven days (runs, overall pass@1, known cost), then groups datasets under
 their test areas. Each area retains its pass@1 and change from the previous
 seven days, and each dataset occupies one line with its name, pass@1, and
-change (green up, red down), ordered by pass@1 within each area. The card links
-to the dashboard, notes that changes describe different task mixes, and counts
+change, ordered by pass@1 within each area. A change compares only datasets
+measured in both windows, so adding or retiring a suite cannot move it. It is
+colored (green up, red down) only when both windows have at least two runs and
+their 95% Wilson intervals do not overlap; any other change is grey and marked
+`n.s.`. A suite that ran in several execution environments in the report
+history is listed once per environment, for example
+`adb_android_text_editing [adb_aidenbridge]`. The card links
+to the dashboard and counts
 datasets with configuration changes. When configurations differ, the card links
 directly to the workflow summary's weekly comparisons. The dashboard button
 continues to open the per-run results. Run counts and the distinct configuration
@@ -1400,10 +1432,13 @@ set `send_notification` to `false` when dispatching manually.
 
 The report includes each
 suite's runs, eligible tasks, pass@1, and cost, with each pass@1 compared to the
-previous seven days in percentage points. Rates describe each window's task mix;
-configuration differences include every recorded value in each window, not
-just the final run's settings. These comparisons are not matched-run estimates;
-a change is unknown when either window has no measured rate. Cost and token totals are reported only
+previous seven days in percentage points. Rates describe each window's datasets;
+changes for test areas and the total compare only datasets measured in both
+windows. Configuration differences include every recorded value in each window, not
+just the final run's settings. These comparisons are not matched-run estimates:
+a change is unknown when either window has no measured rate, and is marked
+`(n.s.)` unless both windows have at least two runs and non-overlapping 95%
+Wilson intervals. Cost and token totals are reported only
 when every included suite run supplies them with sample counts covering every
 eligible attempt. The report is included in the Actions job
 summary.

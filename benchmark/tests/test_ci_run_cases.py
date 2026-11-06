@@ -113,6 +113,30 @@ def test_run_cases_emits_an_annotation_for_an_interrupted_run(
     )
 
 
+@pytest.mark.parametrize("ready", ["0", "1", None])
+def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path: Path, ready) -> None:
+    bridge = SuiteCase(id="bridge", suite="suites/bridge.json", environment="adb",
+                       target_platform="android", android_phone_bridge=True)
+    started: list[str] = []
+    monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
+    monkeypatch.setattr(run_cases_module, "run_case", lambda case, **kwargs: started.append(case.id) or 0)
+
+    outcomes = run_cases_module.run_cases(
+        (bridge, _case("plain-adb", "adb"), _case("memory", "isolated")),
+        run_id_prefix="ci-test",
+        environment={} if ready is None else {"AIDENBRIDGE_READY": ready},
+        max_parallel=1,
+    )
+
+    by_id = {outcome.case_id: outcome for outcome in outcomes}
+    if ready == "0":
+        assert sorted(started) == ["memory", "plain-adb"]
+        assert not by_id["bridge"].ok and by_id["bridge"].error_summary == "aidenbridge_setup_failed"
+    else:
+        assert sorted(started) == ["bridge", "memory", "plain-adb"]
+    assert by_id["plain-adb"].ok and by_id["memory"].ok
+
+
 @pytest.mark.parametrize("bridge_enabled", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_run_case_terminates_the_runner_process_group_on_timeout(

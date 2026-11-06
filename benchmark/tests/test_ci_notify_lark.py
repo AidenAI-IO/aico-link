@@ -14,9 +14,9 @@ def _week(**overrides):
     return week
 
 
-def _suite(name, pass_at_1, passed=0, eligible=0, runs=1, change=None):
+def _suite(name, pass_at_1, passed=0, eligible=0, runs=1, change=None, significant=True):
     return {"suite": name, "pass_at_1": pass_at_1, "passed": passed, "eligible_tasks": eligible,
-            "suite_runs": runs, "change": change}
+            "suite_runs": runs, "change": change, "change_significant": significant}
 
 
 def _data(**overrides):
@@ -63,17 +63,20 @@ def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     assert "**pass@1 by dataset**" not in text
 
 
-def test_changes_from_the_previous_week_are_colored_by_direction():
+def test_significant_changes_are_colored_by_direction_and_others_are_grey():
     data = _data()
     data["weekly"]["change"] = -0.05
+    data["weekly"]["change_significant"] = True
     data["weekly"]["suites"] = [_suite("up", 0.9, 9, 10, change=0.1), _suite("down", 0.4, 4, 10, change=-0.2),
+                                _suite("noisy", 0.6, 6, 10, change=-0.3, significant=False),
                                 _suite("flat", 0.5, 5, 10, change=0.0004), _suite("new", 0.5, 5, 10)]
-    data["weekly"]["capabilities"][0]["suites"] = ["up", "down", "flat", "new"]
+    data["weekly"]["capabilities"][0]["suites"] = ["up", "down", "noisy", "flat", "new"]
     data["weekly"]["capabilities"][1]["suites"] = []
     text = _text(_build_card(data, "https://example.com/d.html"))
     assert "75.0% <font color='red'>-5.0pp</font> (18/24" in text
     assert "- up: 90.0% <font color='green'>+10.0pp</font>" in text.splitlines()
     assert "- down: 40.0% <font color='red'>-20.0pp</font>" in text
+    assert "- noisy: 60.0% <font color='grey'>-30.0pp n.s.</font>" in text.splitlines()
     assert "- flat: 50.0% <font color='grey'>±0.0pp</font>" in text
     # Without a previous-week rate, no change is shown.
     assert "- new: 50.0%" in text.splitlines()
@@ -98,7 +101,7 @@ def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
 
 def test_card_labels_window_comparisons_without_configuration_changes():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "Changes describe each window's task mix, not matched runs." in text
+    assert "Changes compare datasets measured in both weeks; only significant changes are colored" in text
 
 
 def test_configuration_note_links_to_weekly_summary_and_preserves_dashboard():
@@ -152,7 +155,7 @@ def test_button_opens_the_dashboard():
 def test_card_leads_with_capability_rates():
     data = _data()
     data["weekly"]["capabilities"] = [
-        {"capability": "Memory", "pass_at_1": 0.75, "change": 0.25, "suites": ["memory"]},
+        {"capability": "Memory", "pass_at_1": 0.75, "change": 0.25, "change_significant": True, "suites": ["memory"]},
         {"capability": "Visual grounding", "pass_at_1": 0.5, "change": None,
          "suites": ["perception"]},
     ]
@@ -167,4 +170,4 @@ def test_card_labels_skill_discovery_as_a_diagnostic_observation():
     data["weekly"]["diagnostics"] = [{"suite": "skill_discovery_v1", "rate": 0.25, "change": -0.25}]
     text = _text(_build_card(data, "https://example.com/d.html"))
     assert "**Diagnostics** (skill read observation, not task pass@1)" in text
-    assert "skill_discovery_v1: skill read 25.0% <font color='red'>-25.0pp</font>" in text
+    assert "skill_discovery_v1: skill read 25.0% <font color='grey'>-25.0pp n.s.</font>" in text

@@ -80,6 +80,40 @@ def test_memory_state_failure_keeps_observed_records_and_fixture_boundary(tmp_pa
     assert evidence["memory_state"] == [{"id": "learned", "content": "retained"}]
 
 
+@pytest.mark.parametrize("snapshots,failed_step", [
+    (["My office city is Shenzhen."], 1),
+    (["My office city is Hangzhou.", "My office city is Hangzhou."], 3),
+])
+def test_wrong_intermediate_city_stops_before_a_later_update(tmp_path, monkeypatch, snapshots, failed_step):
+    class CityClient:
+        def __init__(self):
+            self.turns = 0
+            self.snapshots = iter(snapshots)
+
+        def chat(self, prompt, timeout_sec=90):
+            self.turns += 1
+
+        def invoke_tool(self, name, args, timeout=90):
+            return ToolInvokeResult(output=json.dumps({"results": [{"content": next(self.snapshots)}]}),
+                                    is_error=False, duration_ms=0)
+
+    setup = []
+    for city, aliases in [("Hangzhou", ["杭州", "Hangzhou"]), ("Shenzhen", ["深圳", "Shenzhen"])]:
+        setup.extend([
+            {"type": "agent_prompt", "prompt": f"Remember my office city is {city}.", "clear_history_after": False},
+            {"type": "assert_memory", "evaluate": True, "expected_count": 1,
+             "expected": [{"content_contains_any": aliases}]},
+        ])
+    setup.append({"type": "agent_prompt", "prompt": "Update my office city to Chengdu.", "clear_history_after": False})
+    client = CityClient()
+    result = run_setup(tmp_path, monkeypatch, setup, client)
+    assert result.status == "failed" and result.metrics["agent_eligible"] is True
+    assert client.turns == (failed_step + 1) // 2
+    evidence = json.loads((tmp_path / "setup_failure.json").read_text())
+    assert evidence["setup_step"] == setup[failed_step]
+    assert evidence["memory_state"][0]["content"] == snapshots[-1]
+
+
 @pytest.mark.parametrize("evaluate,consolidate", [("true", True), (1, True), (True, False)])
 def test_suite_rejects_invalid_evaluation_marker(tmp_path, evaluate, consolidate):
     data = json.loads((SUITES / "episode_reflection_v1.json").read_text())
@@ -101,6 +135,46 @@ def test_perception_fixture_rejects_malformed_calls_but_accepts_wrong_targets():
         assert server.invoke("touch_gesture", {"type": "tap"}).is_error
         # Keep execution independent of the target label; the evaluator scores aim.
         assert not server.invoke("touch_gesture", {"type": "tap", "point": {"x": 500, "y": 500}}).is_error
+
+
+@pytest.mark.parametrize("task_id,content,semantic_verdict", [
+    ("notification_explicit_update", "包裹明天到达。", "yes"),
+    ("notification_explicit_update", "The package arrives today.", "no"),
+    ("notification_explicit_promote", "以后的包裹都送到办公室。", "yes"),
+    ("notification_explicit_promote", "This package goes to the office today only.", "no"),
+])
+def test_notification_content_uses_persisted_evidence_not_fixed_english(tmp_path, monkeypatch, task_id, content, semantic_verdict):
+    from runner.judge import JudgeConfig, JudgeOutput
+    from runner.models import RubricVerdict
+    suite = load_suite(SUITES / "notification_memory_v1.json")
+    task = next(t for t in suite.tasks if t.id == task_id)
+    # Supply a structurally valid persisted record with varying semantic content.
+    spec = task.memory_assertions["expected"][0]
+    item = {k: v for k, v in spec.items() if k not in ("source_refs_contain", "evidence_refs_contain")}
+    item.update(id=spec.get("id", "promoted"), content=content)
+    for expected_key, stored_key in [("source_refs_contain", "source_refs"), ("evidence_refs_contain", "evidence_refs")]:
+        item[stored_key] = [{("event_ids" if k == "event_ids_contains" else k): v for k, v in ref.items()}
+                            for ref in spec.get(expected_key, [])]
+    history = [{"type": "tool_call", "tool_name": "recall_memory", "tool_input": "{}"},
+               {"type": "tool_result", "tool_name": "recall_memory", "content": json.dumps({"results": [item]})},
+               {"type": "assistant", "content": content}]
+
+    def judge(**kwargs):
+        assert kwargs["trace"]["memory_state"][0]["content"] == content
+        assert kwargs["final_response"] == content
+        if semantic_verdict == "yes":
+            required = "明天" if task_id == "notification_explicit_update" else "以后的包裹都送到办公室"
+            assert required in kwargs["final_response"]
+            assert required in kwargs["trace"]["memory_state"][0]["content"]
+        return JudgeOutput([RubricVerdict(r.id, semantic_verdict, "Checked stored content") for r in kwargs["rubric"]],
+                           "", "key", "")
+
+    monkeypatch.setattr(runtask, "judge_task", judge)
+    result = evaluate_task_history(suite=suite, task=task, history=history, attempt=1,
+                                  artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None,
+                                  run_id="test", timed_out=False, memory_state=[item])
+    assert result.hard_assertions.memory_state is True
+    assert result.status == ("passed" if semantic_verdict == "yes" else "failed")
 
 
 @pytest.mark.parametrize("duplicates", [False, True])

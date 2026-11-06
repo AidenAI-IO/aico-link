@@ -73,9 +73,31 @@ def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days()
     assert suites["new"]["change"] is None and suites["unmeasured"]["change"] is None
     # A suite that only ran last week is not listed for this week.
     assert "gone" not in suites
-    assert report["change"] == pytest.approx(12 / 24 - 8 / 16)
-    assert "+25.0 pp" in render_weekly(report, [])
+    # Only datasets measured in both windows (memory) enter the overall change.
+    assert report["change"] == pytest.approx(0.25)
+    assert report["compared_datasets"] == 1
+    # One run per window cannot separate a change from run-to-run noise.
+    assert suites["memory"]["change_significant"] is False
+    assert "+25.0 pp (n.s.)" in render_weekly(report, [])
     assert suites["memory"]["config_changes"] == []
+
+
+@pytest.mark.parametrize("runs, significant", [(1, False), (2, True)])
+def test_a_change_is_significant_only_with_repeated_runs_and_separated_intervals(runs, significant):
+    report = summarize_weekly([
+        *[_record(f"2026-10-1{day}T00:00:00+00:00", eligible_tasks=40, passed=38, workflow_run_id=f"c{day}")
+          for day in range(runs)],
+        *[_record(f"2026-10-0{day + 1}T00:00:00+00:00", eligible_tasks=40, passed=10, workflow_run_id=f"p{day}")
+          for day in range(runs)],
+        _record("2026-10-11T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=30, workflow_run_id="s1"),
+        _record("2026-10-12T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=28, workflow_run_id="s2"),
+        _record("2026-10-01T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=31, workflow_run_id="s3"),
+        _record("2026-10-02T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=29, workflow_run_id="s4"),
+    ], end=END)
+    suites = {s["suite"]: s for s in report["suites"]}
+    assert suites["memory"]["change_significant"] is significant
+    # Overlapping intervals are noise even with repeated runs.
+    assert suites["steady"]["change"] < 0 and suites["steady"]["change_significant"] is False
 
 
 def test_changes_name_settings_that_differ_between_the_windows():
@@ -146,13 +168,14 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     assert [c["capability"] for c in report["capabilities"]] == ["Memory", "Visual grounding", "Other"]
     assert caps["Memory"]["suites"] == ["memory_v1", "quick_capture_v1"]
     assert caps["Memory"]["pass_at_1"] == pytest.approx(12 / 16)
-    assert caps["Memory"]["change"] == pytest.approx(12 / 16 - 4 / 8)
+    # quick_capture_v1 has no previous week, so the change compares memory_v1 alone.
+    assert caps["Memory"]["change"] == pytest.approx(8 / 8 - 4 / 8)
     assert caps["Visual grounding"]["change"] is None
     assert capability_of("unlisted_v1") == "Other"
     markdown = render_weekly(report, [])
     assert "### By test area" in markdown
     # Tasks: latest eligible count per suite; first attempts: every run summed.
-    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +50.0 pp (n.s.) |" in markdown
 
 
 def test_capability_counts_separate_tasks_from_repetitions():
@@ -236,3 +259,31 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
     assert environment_of({"execution_environment": "adb"}) == "ADB device"
     assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"
+
+
+@pytest.mark.parametrize("known_environment", [None, "adb"])
+def test_missing_null_and_empty_environments_share_one_dataset(known_environment):
+    records = [_record(passed=8), _record(execution_environment=None, passed=4),
+               _record(execution_environment="", passed=0)]
+    if known_environment:
+        records.append(_record(execution_environment=known_environment, passed=8))
+    report = summarize_weekly(records, end=END)
+    suites = {s["suite"]: s for s in report["suites"]}
+    unknown = "memory [unknown]" if known_environment else "memory"
+    assert suites[unknown]["suite_runs"] == 3
+    assert suites[unknown]["pass_at_1"] == 0.5
+    assert set(suites) == ({unknown, "memory [adb]"} if known_environment else {unknown})
+
+
+def test_a_suite_run_in_two_environments_is_reported_as_two_datasets():
+    report = summarize_weekly([
+        _record(suite="adb_android_text_editing", execution_environment="adb", passed=8),
+        _record(suite="adb_android_text_editing", execution_environment="adb_aidenbridge", passed=2),
+        _record(suite="memory_v1", execution_environment="isolated", passed=4),
+    ], end=END)
+    suites = {s["suite"]: s["pass_at_1"] for s in report["suites"]}
+    assert suites == {"adb_android_text_editing [adb]": 1.0,
+                      "adb_android_text_editing [adb_aidenbridge]": 0.25, "memory_v1": 0.5}
+    ui = next(c for c in report["capabilities"] if c["capability"] == "UI operation")
+    assert ui["suites"] == ["adb_android_text_editing [adb]", "adb_android_text_editing [adb_aidenbridge]"]
+    assert ui["task_count"] == 16
