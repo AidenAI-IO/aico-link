@@ -30,6 +30,25 @@ def test_load_suite_returns_parsed(tmp_path: Path):
     assert suite.tasks[0].rubric[0].id == "in_settings"
 
 
+@pytest.mark.parametrize("scope,has_outcome,valid", [
+    ("precondition", True, True), ("precondition", False, False),
+    ("outcome", False, True), ("before", True, False), (None, True, False),
+])
+def test_rubric_scope_requires_an_outcome_and_a_known_scope(tmp_path, scope, has_outcome, valid):
+    fixture = json.loads(json.dumps(FIXTURE))
+    fixture["tasks"][0]["rubric"][0]["scope"] = scope
+    if has_outcome:
+        fixture["tasks"][0]["rubric"].append({"id": "done", "check": "Action completed"})
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps(fixture))
+    if valid:
+        suite = load_suite(path)
+        assert suite.tasks[0].rubric[0].scope == scope
+    else:
+        with pytest.raises(SuiteValidationError, match="rubric"):
+            load_suite(path)
+
+
 @pytest.mark.parametrize("value", ["mobilegym", None, [""], ["MobileGym"], [1]])
 def test_invalid_environment_bridge_allowlist_is_rejected(tmp_path, value):
     fixture = json.loads(json.dumps(FIXTURE))

@@ -485,6 +485,8 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
@@ -515,6 +517,8 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json

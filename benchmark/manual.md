@@ -399,7 +399,7 @@ Common fields:
 | `foreground_app_id` | Optional exact MobileGym app ID to open after reset; independent of the `app_ids` preload list. Setup fails if it cannot be opened |
 | `environment_assertions` | Optional dotted-path checks against the environment's final state and route (for example `apps.scroll_lab.selectedItemId` or `route.path`). A scalar value must match exactly; an object whose keys are a subset of `min`/`max` is an inclusive numeric band (for example `{"min": 4, "max": 10}`) |
 | `memory_assertions` | Optional post-task `recall_memory` observation with `query`, `expected_count`, `expected`, and/or `absent_ids`; uses the same checks as `assert_memory` setup |
-| `rubric` | The judge model's scoring items |
+| `rubric` | The judge model's scoring items. An optional `scope: "precondition"` evaluates a starting-state check against the pre-screenshot separately from Agent outcomes. The default scope is `outcome`; at least one outcome check is required. |
 | `hard_assertions` | Deterministic checks, e.g. tool-call counts, timeout, required/forbidden tools |
 | `hard_assertions.required_tool_calls` | Requires a tool call whose input contains a specified nested subset |
 | `repeats` | Number of times a single task is repeated |
@@ -407,6 +407,14 @@ Common fields:
 | `expected_answer` | Direct answer for multiple-choice/fixed-answer tasks |
 | `trace_observations` | Checks on specific behaviors in the trace, e.g. whether a given skill was read |
 | `mock_environment` | Suite-level default or task-level scripted Phone Bridge state, tool responses, and mock screen |
+
+For tasks with a required starting screen, mark pre-screenshot-only rubric items
+`scope: "precondition"`. The runner checks those items against the pre-screenshot
+before Agent result scoring. A failed precondition is an ineligible environment
+skip; a missing screenshot or judge error is an ineligible evaluation error.
+Precondition verdicts are recorded in attempt metrics and shown in the report,
+not included in the Agent rubric pass rate. Offline rejudging uses the same
+precondition gate.
 
 For `agent_prompt`, set `expected_response` when setup success has a precise
 completion marker. The runner compares the trimmed response exactly and fails

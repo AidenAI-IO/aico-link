@@ -57,6 +57,40 @@ def test_rejudge_scores_no_judge_attempts_but_preserves_execution_gates(tmp_path
         assert "error" not in scored["metrics"]
 
 
+@pytest.mark.parametrize("initial", ["yes", "no"])
+def test_rejudge_keeps_preconditions_out_of_agent_score(tmp_path, monkeypatch, initial):
+    from PIL import Image
+    from runner.judge import JudgeOutput
+    attempt = tmp_path / "tasks" / "task"
+    attempt.mkdir(parents=True)
+    Image.new("RGB", (10, 10)).save(attempt / "pre.jpg")
+    (attempt / "trace.json").write_text(json.dumps({"final_response": "Done"}))
+    row = {"task_id": "task", "attempt": 1, "status": "failed", "rubric_total": 1,
+           "rubric_spec": [{"id": "start", "check": "Field populated", "scope": "precondition"},
+                           {"id": "empty", "check": "Field empty"}], "metrics": {}}
+    (tmp_path / "results.jsonl").write_text(json.dumps(row) + "\n")
+    outcomes = []
+
+    def precondition(**kwargs):
+        assert kwargs["trace"] == {} and kwargs["post_screenshot"] is None
+        return JudgeOutput([RubricVerdict("start", initial, "Initial state")], "", "key", "")
+
+    def outcome(**kwargs):
+        outcomes.append(kwargs)
+        assert [r.id for r in kwargs["rubric"]] == ["empty"]
+        return JudgeOutput([RubricVerdict("empty", "yes", "Final state")], "", "key", "")
+
+    monkeypatch.setattr("runner.judge.judge_task", precondition)
+    monkeypatch.setattr(rejudge, "judge_task", outcome)
+    rejudge.rejudge_run(tmp_path, "model", "https://judge.example/v1")
+    result = json.loads((tmp_path / "results.rejudged.jsonl").read_text())
+    assert result["rubric_total"] == 1
+    assert result["metrics"]["agent_eligible"] is (initial == "yes")
+    assert len(outcomes) == int(initial == "yes")
+    if initial == "no":
+        assert result["metrics"]["failure_class"] == "environment"
+
+
 def test_rejudge_refreshes_screenshot_evidence_but_preserves_execution_trace(tmp_path, monkeypatch):
     attempt = tmp_path / "tasks" / "home"
     attempt.mkdir(parents=True)

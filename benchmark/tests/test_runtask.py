@@ -63,6 +63,71 @@ def test_phone_control_successful_action_count_reaches_visual_judge(
     assert result.hard_assertion_failures == []
 
 
+@pytest.mark.parametrize("initial,has_image,expected_class", [
+    ("no", True, "environment"), ("yes", True, "agent"),
+    ("error", True, "evaluation"), ("yes", False, "evaluation"),
+])
+def test_precondition_is_checked_before_scoring_action_failure(tmp_path, monkeypatch, initial, has_image, expected_class):
+    precondition = RubricItem("start", "A populated editable field is visible.", scope="precondition")
+    task = TaskSpec(id="clear", category="single_step", prompt="Clear it", description_for_judge="Clear the field",
+                    rubric=[precondition, RubricItem("empty", "Field is empty")],
+                    hard_assertions=HardAssertions(min_tool_calls=1))
+    suite = Suite(name="synthetic", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    pre = tmp_path / "pre.jpg"
+    if has_image:
+        Image.new("RGB", (10, 10)).save(pre)
+    calls = []
+
+    def judge(**kwargs):
+        calls.append(kwargs)
+        assert kwargs["post_screenshot"] is None and kwargs["trace"] == {} and kwargs["final_response"] == ""
+        if initial == "error":
+            raise RuntimeError("judge unavailable")
+        return JudgeOutput([RubricVerdict("start", initial, "Starting field checked")], "", "key", "")
+
+    monkeypatch.setattr("runner.judge.judge_task", judge)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=[{"type": "assistant", "content": "Done"}],
+        attempt=1, artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None,
+        run_id="test", timed_out=False, pre_screenshot=pre,
+    )
+    assert result.metrics["failure_class"] == expected_class
+    assert result.metrics["agent_eligible"] is (expected_class == "agent")
+    assert result.rubric_total == 1
+    assert len(calls) == int(has_image)
+
+
+def test_valid_precondition_only_scores_the_action_rubric(tmp_path, monkeypatch):
+    pre = tmp_path / "pre.jpg"
+    Image.new("RGB", (10, 10)).save(pre)
+    checks = [RubricItem("start", "Start state", scope="precondition"), RubricItem("done", "Result state")]
+    task = TaskSpec(id="task", category="single_step", prompt="Do it", description_for_judge="Do it",
+                    rubric=checks, hard_assertions=HardAssertions())
+    suite = Suite(name="synthetic", tasks=[task], global_reset={}, sha256="sha", source_path=tmp_path / "suite.json")
+    called = []
+
+    def precondition(**kwargs):
+        called.append("pre")
+        return JudgeOutput([RubricVerdict("start", "yes", "Ready")], "", "key", "")
+
+    def outcome(**kwargs):
+        called.append("outcome")
+        assert [item.id for item in kwargs["rubric"]] == ["done"]
+        return JudgeOutput([RubricVerdict("done", "yes", "Done")], "", "key", "")
+
+    monkeypatch.setattr("runner.judge.judge_task", precondition)
+    monkeypatch.setattr(runtask_mod, "judge_task", outcome)
+    result = runtask_mod.evaluate_task_history(
+        suite=suite, task=task, history=[{"type": "assistant", "content": "Done"}],
+        attempt=1, artifact_dir=tmp_path, judge_cfg=JudgeConfig(), judge_cache_dir=None,
+        run_id="test", timed_out=False, pre_screenshot=pre,
+    )
+    assert called == ["pre", "outcome"]
+    assert result.status == "passed" and result.metrics["agent_eligible"] is True
+    assert result.rubric_pass_count == result.rubric_total == 1
+    assert result.metrics["precondition_verdicts"][0]["id"] == "start"
+
+
 @pytest.mark.parametrize("has_rubric,has_tool_call,expected_status", [
     (True, True, "skipped"),
     (True, False, "failed"),

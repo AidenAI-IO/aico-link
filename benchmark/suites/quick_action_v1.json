@@ -398,7 +398,7 @@
         },
         {
           "id": "copy_executed",
-          "check": "The quick_action copy call returned ok=true, or the system showed a copy confirmation (toast/banner), or the text remained in the field after copy (not deleted like cut would)."
+          "check": "A successful tool result, explicit system copy confirmation, or clipboard readback establishes that copying succeeded. Text merely remaining in the field is not evidence that the clipboard changed."
         }
       ],
       "hard_assertions": {
@@ -588,7 +588,7 @@
         },
         {
           "id": "browsed_recents",
-          "check": "Trace shows the agent swiped/browsed through the recents list (multiple swipe or scroll actions visible)."
+          "check": "The trace shows successful removal of recent apps, through a clear-all action or individual dismissals. Any sufficient number of actions is valid; multiple swipes are not required."
         },
         {
           "id": "all_apps_cleared",
@@ -596,7 +596,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 3,
+        "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 180
       }

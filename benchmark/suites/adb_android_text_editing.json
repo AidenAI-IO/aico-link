@@ -75,6 +75,7 @@
       "rubric": [
         {
           "id": "initial_query_visible",
+          "scope": "precondition",
           "check": "The pre-screenshot visibly shows the editable Settings search query exactly as alpha beta; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {
@@ -111,6 +112,7 @@
       "rubric": [
         {
           "id": "initial_query_visible",
+          "scope": "precondition",
           "check": "The pre-screenshot visibly shows the editable Settings search query exactly as ClearMe-2026; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {

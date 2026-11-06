@@ -43,6 +43,7 @@ class SuiteValidationError(ValueError):
 class RubricItem:
     id: str
     check: str
+    scope: str = "outcome"
 
 @dc.dataclass
 class TraceObservationSpec:
@@ -193,7 +194,12 @@ def load_suite(path: Path) -> Suite:
             check = r.get("check", r.get("description"))
             if not r.get("id") or not check:
                 raise SuiteValidationError(f"task {tid}: rubric items require id and check")
-            rubric.append(RubricItem(id=r["id"], check=check))
+            scope = r.get("scope", "outcome")
+            if scope not in ("outcome", "precondition"):
+                raise SuiteValidationError(f"task {tid}: rubric scope must be outcome or precondition")
+            rubric.append(RubricItem(id=r["id"], check=check, scope=scope))
+        if rubric and not any(item.scope == "outcome" for item in rubric):
+            raise SuiteValidationError(f"task {tid}: rubric requires at least one outcome check")
         ha = raw.get("hard_assertions") or {}
         # A task may omit the judge only when deterministic call checks decide it.
         if not rubric_raw and not ha.get("required_tool_calls"):

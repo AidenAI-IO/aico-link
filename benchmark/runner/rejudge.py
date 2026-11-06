@@ -2,7 +2,7 @@ from __future__ import annotations
 import dataclasses as dc
 import json
 from pathlib import Path
-from runner.judge import JudgeConfig, judge_task
+from runner.judge import JudgeConfig, judge_task, check_preconditions
 from runner.suite import RubricItem, load_suite
 from runner.report import now_iso
 from runner.trace import extract_trace, apply_episode_tool_evidence
@@ -99,7 +99,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             row.setdefault("metrics", {})["rejudge_error"] = f"trace load: {e}"
             new_results.append(row)
             continue
-        rubric = [RubricItem(id=r["id"], check=r["check"]) for r in row.get("rubric_spec", [])]
+        rubric = [RubricItem(id=r["id"], check=r["check"], scope=r.get("scope", "outcome"))
+                  for r in row.get("rubric_spec", [])]
         if not rubric:
             row["status"] = "judge_error"
             row["metrics"] = {**row.get("metrics", {}), "rejudge_error": "missing rubric_spec"}
@@ -110,6 +111,20 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             metrics["rejudge_error"] = "missing memory state evidence"
             new_results.append(row)
             continue
+        preconditions = check_preconditions(rubric, pre if pre.exists() else None, cfg, cache)
+        metrics.update(preconditions)
+        if preconditions and preconditions["preconditions_passed"] is not True:
+            unavailable = preconditions["preconditions_passed"] is None
+            row["status"] = "judge_error" if unavailable else "skipped"
+            row["rubric"] = []
+            row["rubric_pass_count"] = 0
+            row["rubric_total"] = sum(item.scope == "outcome" for item in rubric)
+            metrics.update(success=None, agent_eligible=False, quality_score=None,
+                           failure_class="evaluation" if unavailable else "environment",
+                           first_failure_stage="evaluation" if unavailable else "setup")
+            new_results.append(row)
+            continue
+        rubric = [item for item in rubric if item.scope == "outcome"]
         try:
             verdict = judge_task(
                 description=row.get("description_for_judge", ""),

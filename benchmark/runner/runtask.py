@@ -19,7 +19,7 @@ from runner.assertions import (
 )
 from runner.capture import take_environment_screenshot
 from runner.environment_state import read_environment_state
-from runner.judge import judge_task, JudgeConfig
+from runner.judge import judge_task, JudgeConfig, check_preconditions
 from runner.metrics import derive_episode_metrics, derive_history_metrics
 from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerdict, TaskResult
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
@@ -82,7 +82,7 @@ def skipped_task_result(
         status="skipped",
         rubric=[],
         rubric_pass_count=0,
-        rubric_total=len(task.rubric),
+        rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
         finished_at=started,
@@ -151,6 +151,7 @@ def evaluate_task_history(
     memory_state_error: str = "",
 ) -> TaskResult:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    outcome_rubric = [item for item in task.rubric if item.scope == "outcome"]
     started = started_at or now_iso()
     base = TaskResult(
         suite=suite.name,
@@ -161,7 +162,7 @@ def evaluate_task_history(
         status="failed",
         rubric=[],
         rubric_pass_count=0,
-        rubric_total=len(task.rubric),
+        rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
         task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
@@ -257,6 +258,19 @@ def evaluate_task_history(
         })
     (artifact_dir / "trace.json").write_text(
         json.dumps(trace_dict, ensure_ascii=False, indent=2), encoding="utf-8")
+    preconditions = check_preconditions(task.rubric, pre_screenshot, judge_cfg, judge_cache_dir)
+    base.metrics.update(preconditions)
+    if preconditions and preconditions["preconditions_passed"] is not True:
+        unavailable = preconditions["preconditions_passed"] is None
+        base.status = "judge_error" if unavailable else "skipped"
+        base.metrics["quality_score"] = None
+        if unavailable:
+            base.metrics["judge_error"] = preconditions["precondition_error"]
+        _set_outcome_metrics(base, success=None, eligible=False,
+                             failure_class="evaluation" if unavailable else "environment",
+                             stage="evaluation" if unavailable else "setup")
+        base.finished_at = now_iso()
+        return base
     outcome = evaluate_hard_assertions(trace, task.hard_assertions, timed_out=timed_out)
     base.hard_assertions = outcome.results
     base.hard_assertion_failures = list(outcome.failures)
@@ -396,7 +410,7 @@ def evaluate_task_history(
             base.finished_at = now_iso()
             return base
     # Tasks without a rubric are fully decided by their deterministic assertions.
-    if not task.rubric:
+    if not outcome_rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)
@@ -415,7 +429,7 @@ def evaluate_task_history(
         verdict = judge_task(
             description=task.description_for_judge,
             task_prompt=base.task_prompt,
-            rubric=task.rubric,
+            rubric=outcome_rubric,
             pre_screenshot=pre_screenshot if pre_screenshot and pre_screenshot.exists() else None,
             post_screenshot=last_shot_path,
             trace=trace_dict,
@@ -473,7 +487,7 @@ def run_one_task(
     base = TaskResult(
         suite=suite.name, run_id=run_id, task_id=task.id, category=task.category,
         attempt=attempt, status="failed",
-        rubric=[], rubric_pass_count=0, rubric_total=len(task.rubric),
+        rubric=[], rubric_pass_count=0, rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir), started_at=started,
         task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,

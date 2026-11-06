@@ -81,8 +81,16 @@ Attempt fields below are exported as `benchmark.<field>` scores unless noted.
 | `agent_eligible` | Whether this attempt participates in Agent capability metrics | Always inspect it alongside success rates. |
 | `failure_class` | `agent`, `environment`, `evaluation`, `skipped`, or `unknown` | Separate capability failures from invalid measurements. |
 | `quality_score` | Usually the fraction of judge rubric checks passed; hard-gate failures receive zero; unavailable evaluation receives unknown | Indicates partial completion, not necessarily task success. With `--no-judge`, unevaluated rubric tasks have unknown quality; tasks without a rubric receive 1 when deterministic assertions pass. |
-| `rubric_pass_rate` | Passed rubric checks divided by rubric count | Inspect individual verdicts: hard-gate failure may prevent the judge from running. |
+| `rubric_pass_rate` | Passed outcome rubric checks divided by outcome rubric count; precondition checks are not part of the Agent score | Inspect individual verdicts: hard-gate failure may prevent the judge from running. |
 | `expected_answer_match`, `expected_recalled_memory_match` | Deterministic checks when the suite configures them | Not automatically present in every memory task. |
+
+A rubric item with `scope: "precondition"` checks only the pre-screenshot.
+Its verdict is recorded in `metrics.precondition_verdicts`. If the starting
+state fails, the attempt is `skipped`, `failure_class=environment`, and
+`agent_eligible=false`, even if later Agent actions appear to succeed. If the
+pre-screenshot or judge is unavailable, the attempt is `judge_error` and
+ineligible. Offline rejudging applies the same gate. These verdicts are not
+included in the outcome rubric denominator.
 
 The runner explicitly sets eligibility. Do not rebuild the denominator from
 `status` alone: a `failed` setup assertion can still be ineligible, and a timeout
