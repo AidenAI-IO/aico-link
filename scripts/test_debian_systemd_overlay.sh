@@ -629,13 +629,22 @@ run_lan_sync() {
     AICO_SYSTEMCTL_BIN="${systemctl_mock}" USERMOD_ARGS_OUTPUT="${usermod_args}" \
     SYSTEMCTL_LOG="${systemctl_log}" "${lan_sync}" >/dev/null 2>&1
 }
+lan_rule_restricted() {
+    grep -Fxq 'Match Address *,!192.168.42.0/24,!127.0.0.0/8,!::1' "${lan_root}/sshd/lan.conf" \
+        && grep -Fq 'DenyUsers *' "${lan_root}/sshd/lan.conf"
+}
 run_lan_sync
-grep -Fxq 'Match Address *,!192.168.42.0/24,!127.0.0.0/8,!::1' "${lan_root}/sshd/lan.conf" \
-    || fail "LAN access off does not restrict SSH"
-grep -Fq 'DenyUsers *' "${lan_root}/sshd/lan.conf"
+lan_rule_restricted || fail "LAN access off does not restrict SSH"
 grep -Fxq 'reload --no-block ssh.service' "${systemctl_log}" || fail "sshd was not reloaded without blocking"
 [ ! -e "${usermod_args}" ] || fail "LAN sync changed the account without a device password"
+# Switch on without a password: SSH must stay restricted.
 touch "${lan_root}/enabled"
+set +e
+run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync without a password returned ${lan_status}"
+lan_rule_restricted || fail "LAN access on without a password opened SSH"
 device_hash='$2a$10$abcdefghijklmnopqrstuuJ2s0yZ1k8m7Y8Y2b6Wm8kQ3xvOQyWm'
 printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
 run_lan_sync
@@ -645,12 +654,24 @@ fi
 grep -Fxq -- '-p' "${usermod_args}"
 grep -Fxq -- "${device_hash}" "${usermod_args}"
 grep -Fxq -- 'aico' "${usermod_args}"
+# A damaged password file must close SSH again even though the switch is on.
 printf '%s\n' 'plaintext' >"${lan_root}/device-password"
 set +e
 run_lan_sync
 lan_status=$?
 set -e
 [ "${lan_status}" -eq 3 ] || fail "LAN sync accepted a non-bcrypt value (status ${lan_status})"
+lan_rule_restricted || fail "a plaintext password file left SSH open to the LAN"
+# A failing usermod must also leave SSH restricted.
+printf '%s\n' "${device_hash}" >"${lan_root}/device-password"
+run_lan_sync
+printf '%s\n' '#!/bin/sh' 'exit 1' >"${usermod_mock}"
+set +e
+run_lan_sync
+lan_status=$?
+set -e
+[ "${lan_status}" -eq 3 ] || fail "LAN sync ignored a usermod failure (status ${lan_status})"
+lan_rule_restricted || fail "a usermod failure left SSH open to the LAN"
 grep -qx 'disable dnsmasq.service' \
     "${OVERLAY}/etc/systemd/system-preset/90-aico.preset"
 grep -qx 'disable wpa_supplicant.service' \

@@ -90,8 +90,9 @@ func (s *Server) handleLANAccessUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	systemSynced := true
 	if err := s.syncLANAccess(r.Context()); err != nil {
-		// The state is stored and the HTTP services already follow it; the
-		// boot unit applies it to SSH and the login account on the next start.
+		// The state is stored and the HTTP services already follow it. The
+		// helper keeps SSH restricted when it cannot apply the password; the
+		// boot unit retries on the next start.
 		systemSynced = false
 		logging.Warnf("config_web", "lan_access", "apply LAN access to SSH and the login account: %v", err)
 	}
@@ -105,13 +106,16 @@ func (s *Server) lanAccessRequestFromUSB(r *http.Request) bool {
 }
 
 // syncLANAccess applies the switch to sshd and the stored hash to the aico
-// login account through the same helper the boot unit runs.
+// login account through the same helper the boot unit runs. The helper is
+// detached from the caller's cancellation: once the state is stored, a client
+// that disconnects must not stop it half-way and leave SSH out of step with
+// the switch. Only the timeout bounds it.
 func (s *Server) syncLANAccess(ctx context.Context) error {
 	helper := strings.TrimSpace(s.options.LANAccessSync)
 	if helper == "" {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, helper).CombinedOutput()
 	if err != nil {

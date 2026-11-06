@@ -2,10 +2,13 @@
 # Apply the LAN access state, set in the Agent settings over USB, to SSH and
 # the aico login account.
 #
-# - While LAN access is off, sshd refuses every source outside the USB link
-#   and the board itself (the HTTP services enforce the same switch).
 # - The device password becomes the aico password, so the web terminal and
 #   SSH use it. Without one the account is left as the image ships it.
+# - sshd accepts LAN sources only while LAN access is on AND the device
+#   password is applied to the account. Otherwise it refuses every source
+#   outside the USB link and the board itself (the HTTP services enforce the
+#   same switch), so a failed password update never exposes the image's
+#   default password to the LAN.
 #
 # /run is volatile and /etc/shadow is reset by OTA, so this runs on every boot
 # before sshd, and again from Config Web whenever the state changes.
@@ -19,41 +22,51 @@ USERMOD=${AICO_USERMOD_BIN:-usermod}
 SYSTEMCTL=${AICO_SYSTEMCTL_BIN:-systemctl}
 USB_SUBNET=${AICO_USB_SUBNET:-192.168.42.0/24}
 
-# Exit status 3: SSH is applied but the password could not be. The boot unit
-# treats it as success so sshd still starts with the right rule.
+# Exit status 3: SSH is left restricted to the USB link because LAN access
+# could not be applied safely. The boot unit treats it as success so sshd
+# still starts, with the restrictive rule.
 status=0
 
 mkdir -p "${SSHD_RULE_DIR}"
 rule=${SSHD_RULE_DIR}/lan.conf
-tmp=$(mktemp "${SSHD_RULE_DIR}/.lan.conf.XXXXXX")
-if [ -f "${ENABLED_FILE}" ]; then
-    printf '# LAN access is on; sshd accepts every source.\n' >"${tmp}"
-    echo "LAN access on: SSH open to the local network"
-else
-    printf '%s\n' \
-        '# LAN access is off; only the USB link and the board itself may log in.' \
-        "Match Address *,!${USB_SUBNET},!127.0.0.0/8,!::1" \
-        '	DenyUsers *' >"${tmp}"
-    echo "LAN access off: SSH limited to the USB link"
-fi
-chmod 0644 "${tmp}"
-mv -f "${tmp}" "${rule}"
-# --no-block: when the boot unit runs this, ssh.service is ordered after it,
-# so a blocking reload would wait for this script and deadlock.
-if "${SYSTEMCTL}" is-active --quiet ssh.service 2>/dev/null; then
-    "${SYSTEMCTL}" reload --no-block ssh.service
+
+write_rule() {
+    tmp=$(mktemp "${SSHD_RULE_DIR}/.lan.conf.XXXXXX")
+    if [ "$1" = open ]; then
+        printf '# LAN access is on; sshd accepts every source.\n' >"${tmp}"
+    else
+        printf '%s\n' \
+            '# LAN access is off; only the USB link and the board itself may log in.' \
+            "Match Address *,!${USB_SUBNET},!127.0.0.0/8,!::1" \
+            '	DenyUsers *' >"${tmp}"
+    fi
+    chmod 0644 "${tmp}"
+    mv -f "${tmp}" "${rule}"
+    # --no-block: when the boot unit runs this, ssh.service is ordered after
+    # it, so a blocking reload would wait for this script and deadlock.
+    if "${SYSTEMCTL}" is-active --quiet ssh.service 2>/dev/null; then
+        "${SYSTEMCTL}" reload --no-block ssh.service
+    fi
+}
+
+# Restrict first: whatever happens below, SSH is never more open than the
+# final state allows.
+if [ ! -f "${rule}" ] || ! grep -q '^Match ' "${rule}"; then
+    write_rule restricted
 fi
 
 hash=
 if [ -s "${PASSWORD_FILE}" ]; then
     hash=$(head -n 1 "${PASSWORD_FILE}" | tr -d '[:space:]')
 fi
+password_applied=no
 case "${hash}" in
     '')
         echo "no device password; ${ACCOUNT} login unchanged"
         ;;
     '$2a$'*|'$2b$'*|'$2y$'*)
         if "${USERMOD}" -p "${hash}" "${ACCOUNT}"; then
+            password_applied=yes
             echo "device password applied to ${ACCOUNT}"
         else
             echo "failed to apply the device password to ${ACCOUNT}" >&2
@@ -65,4 +78,14 @@ case "${hash}" in
         status=3
         ;;
 esac
+
+if [ -f "${ENABLED_FILE}" ] && [ "${password_applied}" = yes ]; then
+    write_rule open
+    echo "LAN access on: SSH open to the local network"
+elif [ -f "${ENABLED_FILE}" ]; then
+    echo "LAN access on but the device password is not applied: SSH kept to the USB link" >&2
+    status=3
+else
+    echo "LAN access off: SSH limited to the USB link"
+fi
 exit "${status}"

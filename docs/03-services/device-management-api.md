@@ -294,7 +294,7 @@ otherwise) and only from the same origin. The body contains `enabled`,
 `password`, or both:
 
 ```jsonc
-{"enabled": true, "password": "at least 8 characters"} // first switch-on
+{"enabled": true, "password": "8 characters to 72 bytes"} // first switch-on
 {"enabled": true}                                       // a password is already set
 {"password": "new password"}                            // change the password
 {"enabled": false}                                      // turn off, keep the password
@@ -304,7 +304,16 @@ Turning LAN access on without a stored or submitted password returns `400`.
 No current password is required: whoever holds the USB cable owns the board,
 and a forgotten password is replaced over USB. The response repeats the status
 and adds `system_synced`, which is `false` when SSH or the login account could
-not be updated; the next boot applies the stored state.
+not be updated. In that case SSH stays restricted to the USB link even if the
+switch is on, so the image's default `aico` password is never exposed to the
+LAN. `aico-lan-access.service` retries on the next boot, but a persistent
+failure (for example a damaged password file) fails again; check
+`systemctl status aico-lan-access` and `/run/aico/sshd/lan.conf`, or set the
+password again over USB.
+
+A device password must be at least 8 characters and at most 72 bytes in UTF-8
+(the bcrypt limit), so a password made of multi-byte characters can be
+rejected with `400` before it reaches 72 characters.
 
 State lives on userdata so it survives OTA:
 

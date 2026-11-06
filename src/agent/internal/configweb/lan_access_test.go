@@ -158,3 +158,20 @@ func TestLANGuardGatesConfigWebOnLAN(t *testing.T) {
 func lanaccessContext(req *http.Request, usb bool) context.Context {
 	return configHTTPServer("", nil, usb).ConnContext(req.Context(), nil)
 }
+
+func TestLANAccessSyncSurvivesClientDisconnect(t *testing.T) {
+	server, marker := newLANAccessServer(t)
+	script := filepath.Join(t.TempDir(), "slow-sync")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 0.3\necho run >>'"+marker+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	server.options.LANAccessSync = script
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the client is already gone when the helper starts
+	if err := server.syncLANAccess(ctx); err != nil {
+		t.Fatalf("sync after client disconnect: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatal("helper was stopped by the caller's cancellation")
+	}
+}
