@@ -12,6 +12,7 @@ import subprocess
 import time
 
 from ci.auto_improve import evidence, execution, policy, review
+from runner.environment import MOBILEGYM_SUBMODULE_PATH
 from runner.metrics import status_fields
 
 
@@ -126,12 +127,23 @@ def ask(out: Path, name: str, repo: Path, payload: dict, prompt: str, schema: di
 
 
 def checkout(repo: Path, destination: Path, base: str, *, deadline: float) -> None:
-    """Materialize the pinned large repository within the overall attempt budget."""
+    """Materialize the pinned repository without downloading its submodule again.
+
+    The workflow checkout has already fetched the MobileGym commit pinned by
+    `base`. Each isolated checkout clones that local copy, then Git verifies the
+    gitlink commit is present before checking it out.
+    """
+    module_source = repo / MOBILEGYM_SUBMODULE_PATH
+    if not (module_source / ".git").exists():
+        raise RuntimeError(f"Initialize {MOBILEGYM_SUBMODULE_PATH} in the workflow checkout first")
     steps = [
         (["git", "clone", "--shared", "--no-checkout", str(repo), str(destination)], repo, "clone"),
         (["git", "checkout", "--detach", base], destination, "checkout"),
-        (["git", "submodule", "update", "--init", "--depth", "1",
-          "benchmark/mobilegym/vendor/mobilegym"], destination, "submodule"),
+        (["git", "submodule", "init", MOBILEGYM_SUBMODULE_PATH], destination, "submodule-init"),
+        (["git", "config", f"submodule.{MOBILEGYM_SUBMODULE_PATH}.url", str(module_source.resolve())],
+         destination, "submodule-source"),
+        (["git", "-c", "protocol.file.allow=always", "submodule", "update", "--checkout",
+          MOBILEGYM_SUBMODULE_PATH], destination, "submodule"),
     ]
     for args, cwd, label in steps:
         remaining = deadline - time.monotonic()
@@ -141,6 +153,13 @@ def checkout(repo: Path, destination: Path, base: str, *, deadline: float) -> No
         execution.command(args, cwd=cwd, timeout=min(900, remaining),
                           log=destination.parent / f"{destination.name}-{label}.log",
                           env=execution.benchmark_environment())
+
+
+def require_unmodified(checkout_path: Path) -> None:
+    """The shared baseline may hold caches and run output, but never source edits."""
+    status = git(checkout_path, "status", "--porcelain", "--untracked-files=no", "--ignore-submodules=none")
+    if status:
+        raise RuntimeError("Shared baseline checkout has tracked changes")
 
 
 def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
@@ -197,6 +216,10 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
              "avd_fixture": os.environ.get("AUTO_IMPROVE_AVD_SHA256", "")}
     out.mkdir(parents=True, exist_ok=False)
     write(out / "manifest.json", state)
+    # Every cluster compares against the same pinned base, so one unmodified
+    # checkout serves them all; each candidate keeps its own isolated tree.
+    baseline_repo = out / "baseline"
+    baseline_ready = False
     try:
         if not failures:
             state["status"] = "no_failures" if not warnings else "insufficient_evidence"
@@ -252,9 +275,13 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                                            exposed_tasks={f["key"] for f in failures})
                 write(cluster_dir / "plan.json", plan)
                 attempt["plan"] = plan
-                baseline_repo = cluster_dir / "baseline"
                 candidate_repo = cluster_dir / "candidate"
-                checkout(repo, baseline_repo, base, deadline=deadline)
+                if not baseline_ready:
+                    if baseline_repo.exists():
+                        remove_checkout(baseline_repo)
+                    checkout(repo, baseline_repo, base, deadline=deadline)
+                    baseline_ready = True
+                require_unmodified(baseline_repo)
                 checkout(repo, candidate_repo, base, deadline=deadline)
                 environments = {tasks[k]["environment"] for keys in plan.values() for k in keys}
                 image_prefix = f"aico-auto-improve:{identity}-{count}"
@@ -316,11 +343,14 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 checks = policy.verification_commands(changed)
                 for index, check in enumerate(checks):
                     progress(f"cluster {count}: check {' '.join(check)}")
+                    resources = cluster_dir / "check-resources.log"
+                    execution.resource_snapshot(resources, "before candidate " + " ".join(check))
                     try:
                         execution.command(check, cwd=candidate_repo,
                                           log=cluster_dir / ("check.log" if index == 0 else "go-unit-check.log"),
                                           timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
                     except RuntimeError:
+                        execution.resource_snapshot(resources, "after failed candidate " + " ".join(check))
                         # Keep the candidate failure as a gate, and collect the same
                         # check on unmodified code to distinguish existing failures.
                         progress(f"cluster {count}: diagnose failed check on baseline")
@@ -380,15 +410,21 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             finally:
                 progress(f"cluster {count}: {attempt['status']}")
                 write(out / "manifest.json", state)
-                for name in ("baseline", "candidate"):
-                    owned = cluster_dir / name
-                    if owned.exists():
-                        try:
-                            remove_checkout(owned)
-                        except OSError as cleanup_error:
-                            state.setdefault("warnings", []).append(f"Cleanup failed for {owned.name}: {cleanup_error}")
-                            attempt.update({"status": "inconclusive", "cleanup_error": str(cleanup_error)})
-                            progress(f"cluster {count}: cleanup failed for {owned.name}")
+                owned = cluster_dir / "candidate"
+                if owned.exists():
+                    try:
+                        remove_checkout(owned)
+                    except OSError as cleanup_error:
+                        state.setdefault("warnings", []).append(f"Cleanup failed for {owned.name}: {cleanup_error}")
+                        attempt.update({"status": "inconclusive", "cleanup_error": str(cleanup_error)})
+                        progress(f"cluster {count}: cleanup failed for {owned.name}")
+        if baseline_repo.exists():
+            try:
+                remove_checkout(baseline_repo)
+            except OSError as cleanup_error:
+                state.setdefault("warnings", []).append(f"Cleanup failed for baseline: {cleanup_error}")
+                state["status"] = "blocked"
+                return state
         state["status"] = ("blocked" if any(a["status"] == "inconclusive" for a in state["attempts"])
                            else "completed")
         return state

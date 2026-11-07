@@ -228,6 +228,14 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   Compose before source discovery or model calls. On apt-based runners it installs
   missing make using root or non-interactive sudo; other runners must provision
   make in advance. Compilers and test dependencies remain in the pinned test image.
+- One unmodified baseline checkout is shared by every cluster in a run; each
+  cluster gets an isolated candidate checkout. Both clone the workflow checkout,
+  including the initialized MobileGym gitlink commit, so they do not download the
+  submodule again. Benchmark image construction still verifies the MobileGym image
+  label against that pinned commit.
+- Code checks retain `check-resources.log`, a bounded CPU, memory, process, and
+  container snapshot without command arguments, to distinguish runner contention
+  from candidate regressions.
 - Every candidate runs `make check`. Any Go file change also requires
   `bash scripts/run_tests_in_docker.sh --suite go-unit`, because the quick
   profile does not exercise the full Go unit suite. The publisher independently

@@ -37,6 +37,27 @@ def command(args: list[str], *, cwd: Path, log: Path, timeout: float, env: dict 
         raise RuntimeError(f"Command failed ({code}); see {log.name}")
 
 
+def resource_snapshot(log: Path, label: str) -> None:
+    """Append host load evidence without process arguments, which may contain secrets."""
+    probes = [
+        ["nproc"], ["cat", "/proc/loadavg"], ["free", "-m"],
+        ["ps", "-eo", "pcpu,pmem,etimes,comm", "--sort=-pcpu"],
+        ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"],
+    ]
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a") as stream:
+        stream.write(f"## {label} at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
+        for args in probes:
+            stream.write("$ " + " ".join(args) + "\n")
+            try:
+                result = subprocess.run(args, capture_output=True, text=True, timeout=20)
+                lines = (result.stdout + result.stderr).splitlines()
+                stream.write("\n".join(lines[:40]) + "\n")
+            except (OSError, subprocess.SubprocessError) as exc:
+                stream.write(f"unavailable: {exc}\n")
+        stream.write("\n")
+
+
 def benchmark_environment() -> dict[str, str]:
     names = {"PATH", "HOME", "LANG", "DOCKER_HOST", "DOCKER_CONFIG", "ANDROID_HOME", "ANDROID_SDK_ROOT",
              "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy",

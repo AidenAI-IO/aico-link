@@ -173,19 +173,39 @@ def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypat
     assert values == {"value": "diagnose", "publish": "false", "artifact_prefix": "auto-improve-test-source-"}
 
 
-def test_checkout_uses_logged_deadline_bounded_commands(tmp_path, monkeypatch):
+def git_fixture(*args, cwd):
+    subprocess.run(["git", "-c", "protocol.file.allow=always", *args], cwd=cwd, check=True,
+                   capture_output=True, text=True)
+
+
+def test_checkout_reuses_local_submodule_without_its_remote(tmp_path):
     import time
-    commands = []
-    monkeypatch.setattr(driver.execution, "command", lambda args, **kwargs: commands.append((args, kwargs)))
-    driver.checkout(tmp_path, tmp_path / "baseline", "base", deadline=time.monotonic() + 1200)
-    assert len(commands) == 3
-    assert all(120 < kwargs["timeout"] <= 900 for _, kwargs in commands)
-    assert [kwargs["log"].name for _, kwargs in commands] == [
-        "baseline-clone.log", "baseline-checkout.log", "baseline-submodule.log"]
-    commands.clear()
+    module = tmp_path / "module"
+    module.mkdir()
+    git_fixture("init", cwd=module)
+    (module / "marker.txt").write_text("pinned\n")
+    git_fixture("add", "marker.txt", cwd=module)
+    git_fixture("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "module", cwd=module)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git_fixture("init", cwd=repo)
+    git_fixture("submodule", "add", str(module), driver.MOBILEGYM_SUBMODULE_PATH, cwd=repo)
+    # The isolated checkout must not contact this unreachable remote.
+    git_fixture("config", "-f", ".gitmodules", f"submodule.{driver.MOBILEGYM_SUBMODULE_PATH}.url",
+                "https://example.invalid/mobilegym.git", cwd=repo)
+    git_fixture("add", ".gitmodules", cwd=repo)
+    git_fixture("-c", "user.name=test", "-c", "user.email=test@example.invalid", "commit", "-m", "base", cwd=repo)
+    base = driver.git(repo, "rev-parse", "HEAD")
+    destination = tmp_path / "work/candidate"
+    destination.parent.mkdir()
+    driver.checkout(repo, destination, base, deadline=time.monotonic() + 120)
+    assert (destination / driver.MOBILEGYM_SUBMODULE_PATH / "marker.txt").read_text() == "pinned\n"
+    assert driver.git(destination / driver.MOBILEGYM_SUBMODULE_PATH, "rev-parse", "HEAD") == driver.git(
+        repo, "rev-parse", f"HEAD:{driver.MOBILEGYM_SUBMODULE_PATH}")
+    assert (tmp_path / "work/candidate-submodule.log").is_file()
     with pytest.raises(TimeoutError):
-        driver.checkout(tmp_path, tmp_path / "candidate", "base", deadline=time.monotonic() - 1)
-    assert not commands
+        driver.checkout(repo, tmp_path / "work/late", base, deadline=time.monotonic() - 1)
+    assert not (tmp_path / "work/late").exists()
 
 
 @pytest.mark.parametrize("branch_test", [False, True])
@@ -457,19 +477,21 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     cluster = {"title": "Verify the screen", "category": "verification", "cause": "missing observation",
                "judge_review": "supported", "fix_target": "go_code" if go_code else "skill", "targets": ["a:target"],
                "neighbors": [], "source_paths": [path], "evidence": ["trace step 2"]}
-    monkeypatch.setattr(driver, "git", lambda *a: "base")
+    monkeypatch.setattr(driver, "git", lambda _root, *a: "" if a[0] == "status" else "base")
     monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
     monkeypatch.setattr(driver.evidence, "source_failures", lambda *a: ([{"key": "a:target", "agent_eligible": True}], []))
     events = []
     def fake_ask(_out, name, *args, **kwargs):
         events.append(name)
         if name == "diagnosis":
-            return {"summary": "One observed failure", "clusters": [cluster]}
+            return {"summary": "One observed failure", "clusters": [cluster, {**cluster, "title": "Second issue"}]}
         if name == "reproduction-review":
             return {"summary": "Reproduced", "tasks": [{"task": "a:target", "disposition": "agent_failure",
                                                           "reason": "Failed deterministic assertion", "evidence": ["fresh trace"]}]}
         return {"summary": "Verify first", "edits": [{"path": path, "old": before, "new": after}]}
+    checkouts = []
     def fake_checkout(_, dest, base, *, deadline):
+        checkouts.append(dest.relative_to(out).as_posix())
         (dest / path).parent.mkdir(parents=True)
         (dest / path).write_text(original.read_text())
     def fake_run(root, key, repeat, *args, **kwargs):
@@ -486,15 +508,18 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
         checks.append(command)
         events.append("check")
     monkeypatch.setattr(driver.execution, "command", fake_check)
+    monkeypatch.setattr(driver.execution, "resource_snapshot", lambda *a: None)
     monkeypatch.setattr(driver.subprocess, "check_output", lambda *a, **kw: "diff\n")
     result = driver.run(repo, source, out, mode="improve")
-    assert result["attempts"][0]["status"] == "ready"
-    assert checks == policy.verification_commands([path])
-    assert result["attempts"][0]["checks"] == checks
+    assert [attempt["status"] for attempt in result["attempts"]] == ["ready", "ready"]
+    assert checkouts == ["baseline", "cluster-1/candidate", "cluster-2/candidate"]
+    assert checks == policy.verification_commands([path]) * 2
+    assert result["attempts"][0]["checks"] == policy.verification_commands([path])
     assert result["execution_ref"] == ref
     assert events.index("run:baseline:a:target") < events.index("fix") < events.index("check")
     assert events.index("check") < events.index("run:candidate:a:target")
     assert not (out / "cluster-1/candidate").exists()
+    assert not (out / "baseline").exists()
     assert (out / "cluster-1/candidate.patch").read_text() == "diff\n"
 
 
