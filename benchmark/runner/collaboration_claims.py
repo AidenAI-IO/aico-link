@@ -3,7 +3,33 @@ from __future__ import annotations
 
 from typing import Any
 
-from runner.matching import dict_contains
+# Claim selectors name the fields the phone-data fixture records for each
+# operation: (input keys, result keys).
+_SELECTOR_KEYS = {
+    "bridge_notification": ({"title", "body"}, set()),
+    "bridge_clipboard": ({"action", "text"}, {"text"}),
+}
+
+
+def _visible(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _normalized(value: Any) -> str:
+    """Compare spoken renderings (spacing, case, punctuation) with recorded values."""
+    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
+
+
+def _selector_matches(actual: dict[str, Any], selector: dict[str, Any]) -> bool:
+    return all(key in actual and _normalized(actual[key]) == _normalized(value) for key, value in selector.items())
+
+
+def _grounded_selector(selector: dict[str, Any], text: str) -> dict[str, Any]:
+    """Keep only values present in evidence the judge was shown, so a placeholder
+    such as "[clipboard content]" cannot make a claim look wrong or right."""
+    visible = _visible(text)
+    return {key: value for key, value in selector.items() if isinstance(value, str) and (
+        value in {"read", "write"} if key == "action" else bool(value.strip()) and _visible(value) in visible)}
 
 
 def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -71,8 +97,14 @@ def _locate_claim(item: dict[str, Any], text: str) -> tuple[int, int]:
     return start, start + len(quote)
 
 
-def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[str]) -> list[dict[str, Any]]:
-    """Validate extraction coverage and spans before interpreting any model output."""
+def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[str],
+                    context: str = "") -> list[dict[str, Any]]:
+    """Validate extraction coverage and spans before interpreting any model output.
+
+    ``context`` is the user/task text shown to the judge. Input selectors may
+    come from it (a reply rarely repeats the title); a claimed read result must
+    appear in the foreground output itself.
+    """
     if not isinstance(parsed, dict) or not isinstance(parsed.get("outputs"), list):
         raise ValueError("claim judge must return an outputs array")
     by_id = {item["event_id"]: item for item in outputs}
@@ -109,7 +141,12 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                     item[field] = {}
                 if not isinstance(item[field], dict):
                     raise ValueError("claim operation match must be an object")
-            identity = (source.get("clock_id"), source["response_id"], source.get("item_id"), start, end, quote, task_id)
+            item["input_contains"] = _grounded_selector(item["input_contains"], source["text"] + "\n" + context)
+            item["result_contains"] = _grounded_selector(item["result_contains"], source["text"])
+            if operation == "bridge_clipboard" and item["result_contains"]:
+                item["input_contains"].setdefault("action", "read")
+            identity = (source.get("clock_id"), source["response_id"], source.get("item_id"), start, end, quote,
+                        task_id, operation)
             if identity in dedup:
                 continue
             dedup.add(identity)
@@ -143,19 +180,26 @@ def adjudicate_claims(claims: list[dict[str, Any]], events: list[dict[str, Any]]
                 category = "ambiguous_task_at_claim_time"
             elif task_id is not None and not starts:
                 verdict, category = "unsupported", "completion_before_execution"
-            elif task_id is not None and claim.get("operation"):
+            elif not claim.get("operation"):
+                category = "claim_operation_unspecified"
+            else:
                 operation = claim["operation"]
+                selector, expected = claim.get("input_contains", {}), claim.get("result_contains", {})
+                allowed_input, allowed_result = _SELECTOR_KEYS[operation]
                 # For a mutation, require a meaningful selector to avoid treating
                 # another successful call in the same task as proof of this claim.
-                selector = claim.get("input_contains", {})
                 meaningful = (operation == "bridge_notification" and bool(set(selector) & {"title", "body"})) or (
                     operation == "bridge_clipboard" and selector.get("action") in {"read", "write"})
-                if meaningful:
+                if set(selector) - allowed_input or set(expected) - allowed_result:
+                    category = "claim_selector_invalid"
+                elif not meaningful:
+                    category = "claim_operation_unspecified"
+                else:
                     relevant = [e for e in fixture_events if e.get("payload", {}).get("task_id") == task_id
                                 and e["payload"].get("operation") == operation
-                                and dict_contains(e["payload"].get("input", {}), selector)]
+                                and _selector_matches(e["payload"].get("input", {}), selector)]
                     completed = [e for e in relevant if e["kind"] == "fixture.call" and e["payload"].get("phase") == "completed"
-                                 and dict_contains(e["payload"].get("result", {}), claim.get("result_contains", {}))]
+                                 and _selector_matches(e["payload"].get("result", {}), expected)]
                     calls = [e for e in events if e.get("task_id") == task_id and e.get("kind") == "tool.completed" and before(e)]
                     proven = [f for f in completed if f["payload"].get("call_id") and any(
                         c.get("call_id") == f["payload"]["call_id"] for c in calls)]

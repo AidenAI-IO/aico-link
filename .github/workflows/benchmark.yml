@@ -491,6 +491,7 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-evaluation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-claim-judge-raw.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-summary.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-timeline.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-events.jsonl
@@ -528,6 +529,7 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-evaluation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-claim-judge-raw.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-summary.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-timeline.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-events.jsonl

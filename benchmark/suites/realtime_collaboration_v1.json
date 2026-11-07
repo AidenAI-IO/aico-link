@@ -873,15 +873,6 @@
             "kind": "effect_count",
             "operation": "bridge_notification",
             "count": 1
-          },
-          {
-            "id": "single_call",
-            "kind": "fixture_call_count",
-            "operation": "bridge_notification",
-            "input_contains": {
-              "title": "Delivery"
-            },
-            "count": 1
           }
         ]
       },

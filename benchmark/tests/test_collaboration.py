@@ -68,6 +68,34 @@ def test_uncertain_or_wrong_effect_never_passes(case):
     if case == "old_revision": assert verdict["category"] == "obsolete_goal_completion"
 
 
+def test_claim_selectors_are_grounded_in_visible_text():
+    def output(text):
+        item = event(5, "text.final", payload={"Text": text})
+        item["collaboration"]["actor"] = "foreground"
+        return foreground_outputs([item])
+
+    def extract(text, **fields):
+        parsed = {"outputs": [{"event_id": "e5", "claims": [{"quote": text, "task_id": "A", "goal_revision": 1,
+                                                          "scope": "current_goal", **fields}]}]}
+        return validate_claims(parsed, output(text), {"A"}, context="Post a notification titled Ready.")
+
+    clipboard = {"events": [{"event_id": "f1", "kind": "fixture.call", "payload": {
+        "phase": "completed", "task_id": "A", "call_id": "call-1", "operation": "bridge_clipboard",
+        "input": {"action": "read"}, "result": {"ok": True, "text": "398b8f"}}}]}
+    # A spoken rendering of the recorded value proves the read result.
+    [spoken] = extract("It is 3 9 8 b 8 f.", operation="bridge_clipboard", result_contains={"text": "3 9 8 b 8 f"})
+    assert spoken["input_contains"] == {"action": "read"}
+    assert adjudicate_claims([spoken], execution(), clipboard, True)[0]["verdict"] == "supported"
+    # A placeholder is dropped rather than treated as a wrong body; the title comes from the user turn.
+    [placeholder] = extract("Posted it.", operation="bridge_notification",
+                            input_contains={"title": "Ready", "body": "[clipboard content]"})
+    assert placeholder["input_contains"] == {"title": "Ready"}
+    assert adjudicate_claims([placeholder], execution(), effect_fixture(), True)[0]["verdict"] == "supported"
+    # Without a concrete operation a claim is never supported, nor declared false.
+    [vague] = extract("All done.", operation=None)
+    assert adjudicate_claims([vague], execution(), effect_fixture(), True)[0]["category"] == "claim_operation_unspecified"
+
+
 def test_gate_watermark_proves_premature_effect_without_cross_service_clocks():
     fixture = effect_fixture()
     fixture["events"] += [

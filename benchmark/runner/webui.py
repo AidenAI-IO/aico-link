@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping
 from runner.agent_client import AgentClient
 from runner.analysis import AnalysisResult, analyze_run, config_from_env
 from runner.capture import DEFAULT_SCREENSHOT_TIMEOUT_SEC
+from runner.config import BENCHMARK_AGENT_BASE_URL_ENV
 from runner.environment_endpoint import EnvironmentEndpoint
 from runner.html_report import generate_report_html
 from runner.judge import DEFAULT_JUDGE_API_KEY_ENV, JudgeConfig
@@ -2074,11 +2075,12 @@ def container_boot_failure_detail(container_name: str) -> str:
     return "\n".join(detail)
 
 
-def docker_no_proxy(endpoint: str) -> str:
+def docker_no_proxy(endpoint: str, *extra_urls: str) -> str:
     base = ["localhost", "127.0.0.1", "host.docker.internal"]
-    host = urllib.parse.urlparse(endpoint).hostname
-    if host and host not in base:
-        base.append(host)
+    for url in (endpoint, *extra_urls):
+        host = urllib.parse.urlparse(url).hostname
+        if host and host not in base:
+            base.append(host)
     existing = os.getenv("NO_PROXY") or os.getenv("no_proxy") or ""
     for item in existing.split(","):
         item = item.strip()
@@ -2208,7 +2210,11 @@ def daemon_compose_env(
         env["AICO_BENCHMARK_TOKEN_FILE"] = "/config/control_token"
     if environment_bridge_endpoint:
         env["ENVIRONMENT_BRIDGE_ENDPOINT"] = environment_bridge_endpoint
-        no_proxy = docker_no_proxy(environment_bridge_endpoint)
+    # The realtime proxy is for the foreground provider only: the backend main
+    # model keeps the direct route it uses in every other benchmark mode.
+    backend_url = env.get(BENCHMARK_AGENT_BASE_URL_ENV, "") if realtime_proxy else ""
+    if environment_bridge_endpoint or backend_url:
+        no_proxy = docker_no_proxy(environment_bridge_endpoint, backend_url)
         env["NO_PROXY"] = no_proxy
         env["no_proxy"] = no_proxy
     if benchmark_task_id:
