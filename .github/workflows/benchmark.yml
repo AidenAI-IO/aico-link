@@ -128,8 +128,8 @@ jobs:
       PREPARE_LOG: runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-prepare-images/mobilegym-image.log
       # The runner reaches openrouter.ai, the Cloudflare-fronted Langfuse host and
       # GitHub artifact storage through this proxy. Only https is proxied because all
-      # three endpoints are https. Docker builds never inherit it; daemon_compose_env
-      # strips proxy variables so the huaweicloud mirrors keep resolving directly.
+      # three endpoints are https. Docker builds never inherit it. Realtime-text
+      # workers explicitly forward it to daemon runtime only; other workers strip it.
       # Actions treats env keys case-insensitively, so declaring both spellings is a
       # duplicate-key error. Lowercase is the portable one: urllib and libcurl accept
       # either, while some tools only read lowercase.

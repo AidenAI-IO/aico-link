@@ -2259,6 +2259,20 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert "host.docker.internal" in env["NO_PROXY"]
 
 
+@pytest.mark.parametrize("realtime", [False, True])
+def test_daemon_realtime_proxy_is_explicit_and_keeps_fixture_local(monkeypatch, realtime):
+    monkeypatch.setenv("https_proxy", "http://proxy.example:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://other-proxy.example:8080")
+    monkeypatch.setenv("AICO_BENCHMARK_REALTIME_HTTPS_PROXY", "http://stale.example:8080")
+    env = webui.daemon_compose_env(
+        image="test", benchmark_realtime_text=realtime,
+        environment_bridge_endpoint="http://host.docker.internal:18080")
+    assert env["AICO_BENCHMARK_REALTIME_HTTPS_PROXY"] == ("http://proxy.example:8080" if realtime else "")
+    assert "https_proxy" not in env and "HTTPS_PROXY" not in env
+    assert "host.docker.internal" in env["NO_PROXY"]
+    assert env["no_proxy"] == env["NO_PROXY"]
+
+
 @pytest.mark.parametrize(
     ("bridge_mode", "headless"),
     [("0", True), ("1", False), ("true", False)],

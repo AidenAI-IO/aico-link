@@ -2184,6 +2184,8 @@ def daemon_compose_env(
     benchmark_realtime_text: bool = False,
 ) -> dict[str, str]:
     env = dict(os.environ)
+    realtime_proxy = (env.get("https_proxy") or env.get("HTTPS_PROXY") or "") if benchmark_realtime_text else ""
+    env["AICO_BENCHMARK_REALTIME_HTTPS_PROXY"] = realtime_proxy
     # Strip general host proxies so builds and model/device traffic do not
     # inherit them. The explicitly configured telemetry-only proxy is retained.
     # NO_PROXY is a bypass list, not a proxy, and is set explicitly below.
