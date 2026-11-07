@@ -93,11 +93,14 @@ def test_claim_extraction_times_claims_by_first_visible_prefix_and_keeps_correct
                                   foreground(4, "text.final", "Not posted yet.")])
     assert [(o["event_id"], o["text"]) for o in outputs] == [("e2", "Done. Posted."), ("e4", "Not posted yet.")]
     parsed = {"outputs": [{"event_id": "e2", "claims": [{"quote": "Posted.", "start": 0,
-        "task_id": "A", "goal_revision": 1, "scope": "current_goal", "operation": "bridge_notification"}]},
+        "task_id": "A", "goal_revision": 1, "scope": "current_goal", "operation": "bridge_notification",
+        "input_contains": None}]},
         {"event_id": "e4", "claims": []}]}
     # A wrong judge offset is resolved from the exact quote; timing comes from the delta that completed it.
+    # A null selector means "nothing to match", not a malformed extraction.
     [extracted] = validate_claims(parsed, outputs, {"A"})
     assert (extracted["start"], extracted["end"], extracted["sequence"]) == (6, 13, 2)
+    assert extracted["input_contains"] == {}
     parsed["outputs"][0]["claims"][0]["quote"] = "Delivered."
     with pytest.raises(ValueError, match="quote not found"):
         validate_claims(parsed, outputs, {"A"})
@@ -234,7 +237,7 @@ def test_evaluation_retains_early_false_claim_even_with_final_success(tmp_path, 
                     rubric=[], hard_assertions=HardAssertions(), scenario=ScenarioSpec(
                         version=1, steps=[], completion={"turn": "initial", "delegation": "none"},
                         assertions=[], policies=["supported_completion_claims"], timeout_sec=30))
-    monkeypatch.setattr("runner.judge.judge_collaboration_claims", lambda *_: [claim(1), claim(5)])
+    monkeypatch.setattr("runner.judge.judge_collaboration_claims", lambda *_args, **_kw: [claim(1), claim(5)])
     evidence = {"complete": True, "assertions": [], "events": execution(), "fixture": effect_fixture()}
     evaluation = evaluate_scenario(evidence, task, JudgeConfig(model="test"), tmp_path)
     assert evaluation["outcome"] == "fail"
@@ -294,7 +297,7 @@ def test_rejudge_uses_collaboration_evidence_not_final_answer(tmp_path, monkeypa
     (attempt / "collaboration.json").write_text(json.dumps(evidence))
     (tmp_path / "results.jsonl").write_text(json.dumps({"task_id": "scenario", "attempt": 1,
         "status": "passed", "metrics": {"execution_mode": "realtime-text"}}) + "\n")
-    monkeypatch.setattr("runner.judge.judge_collaboration_claims", lambda *_: [claim(1), claim(5)])
+    monkeypatch.setattr("runner.judge.judge_collaboration_claims", lambda *_args, **_kw: [claim(1), claim(5)])
     monkeypatch.setattr(rejudge, "judge_task", lambda **_: pytest.fail("backend-only judge used"))
     rejudge.rejudge_run(tmp_path, "test-model", "https://judge.invalid/v1")
     row = json.loads((tmp_path / "results.rejudged.jsonl").read_text())

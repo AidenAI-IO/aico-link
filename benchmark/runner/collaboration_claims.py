@@ -97,14 +97,17 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                 raise ValueError("claim refers to unknown task")
             revision = item.get("goal_revision")
             if revision is not None and (type(revision) is not int or revision < 1):
-                raise ValueError("claim revision must be a positive integer or null")
+                raise ValueError(f"claim revision must be a positive integer or null, got {revision!r}")
             if item.get("scope") not in {"current_goal", "partial", "historical", None}:
                 raise ValueError("unknown claim scope")
             operation = item.get("operation")
             if operation not in {"bridge_clipboard", "bridge_notification", None}:
                 raise ValueError("unsupported claim operation")
             for field in ("input_contains", "result_contains"):
-                if not isinstance(item.get(field, {}), dict):
+                # The judge may report "no selector" as null; treat it as an empty match.
+                if item.get(field) is None:
+                    item[field] = {}
+                if not isinstance(item[field], dict):
                     raise ValueError("claim operation match must be an object")
             identity = (source.get("clock_id"), source["response_id"], source.get("item_id"), start, end, quote, task_id)
             if identity in dedup:

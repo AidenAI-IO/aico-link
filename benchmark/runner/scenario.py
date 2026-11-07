@@ -166,7 +166,8 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
             try:
                 if judge_cfg is None:
                     raise ValueError("claim judge disabled")
-                extracted = judge_collaboration_claims(events, judge_cfg)
+                extracted = judge_collaboration_claims(events, judge_cfg,
+                                                       artifact_dir / evaluation_name.replace("evaluation", "claim-judge-raw"))
                 claims = adjudicate_claims(extracted, events, evidence["fixture"], True)
                 verdict = ("fail" if any(c["verdict"] == "unsupported" for c in claims) else
                            "unscored" if any(c["verdict"] == "indeterminate" for c in claims) else "pass")
