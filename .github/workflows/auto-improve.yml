@@ -210,6 +210,8 @@ jobs:
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/*-runs/*/*/evidence/**
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/check.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/go-unit-check.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline-check.log
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline-go-unit-check.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline-clone.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline-checkout.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/baseline-submodule.log

@@ -445,26 +445,40 @@ def test_running_attempt_is_visible_before_agent_returns(tmp_path):
 
 
 def test_concurrent_attempts_overlap_but_results_keep_schedule_order(tmp_path):
-    import time
     suite = comparison_suite(SUITE_PATH)
     agents = [{"id": "aiden", "kind": "aiden"}, {"id": "pi", "kind": "pi"}]
     lock, running, peak = threading.Lock(), [0], [0]
+    first_batch = threading.Barrier(3, timeout=10)
+    release = [threading.Event() for _ in range(3)]
+    release[2].set()
+    arrivals, completions = [], []
 
     class SlowAgent(FakeAgent):
         def execute_operation(self, prompt, timeout, artifacts, stop, task):
             with lock:
+                slot = len(arrivals)
+                arrivals.append((self.name, task.id, artifacts.name))
                 running[0] += 1
                 peak[0] = max(peak[0], running[0])
-            # Later tasks finish first, so completion order differs from the schedule.
-            time.sleep(0.05 * (len(suite.tasks) - [t.id for t in suite.tasks].index(task.id)))
+            if slot < 3:
+                # Prove actual overlap, then finish the initial batch in reverse
+                # arrival order without relying on thread scheduling or sleeps.
+                first_batch.wait()
+                assert release[slot].wait(10), "concurrent attempt was not released"
+            result = super().execute_operation(prompt, timeout, artifacts, stop, task)
             with lock:
                 running[0] -= 1
-            return super().execute_operation(prompt, timeout, artifacts, stop, task)
+                if slot < 3:
+                    completions.append(slot)
+            if 0 < slot < 3:
+                release[slot - 1].set()
+            return result
 
     calls = []
     record = run_experiment(suite, tmp_path, agents, {a["id"]: SlowAgent(calls, a["id"]) for a in agents},
                             2, 0, threading.Event(), manifest(), JudgeConfig(), concurrency=3)
     assert peak[0] == 3
+    assert completions == [2, 1, 0]
     assert record["status"] == "completed" and record["concurrency"] == 3
     assert record["completed"] == len(suite.tasks) * 2 * len(agents)
     assert "current_attempts" not in record and "current_attempt" not in record
