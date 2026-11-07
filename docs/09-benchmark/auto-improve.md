@@ -233,9 +233,12 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   including the initialized MobileGym gitlink commit, so they do not download the
   submodule again. Benchmark image construction still verifies the MobileGym image
   label against that pinned commit.
-- Code checks retain `check-resources.log`, a bounded CPU, memory, process, and
-  container snapshot without command arguments, to distinguish runner contention
-  from candidate regressions.
+- Code checks retain `check-resources.log`, a bounded CPU, memory, process,
+  container, and synchronous-write latency snapshot without command arguments, to
+  distinguish runner contention from candidate regressions. Checks set
+  `AICO_TEST_TMPFS=1`, so test scratch files and Go test binaries use an in-memory
+  directory inside the pinned test container. Test commands and assertions are
+  unchanged; this removes host disk-sync latency from timing-sensitive tests.
 - Every candidate runs `make check`. Any Go file change also requires
   `bash scripts/run_tests_in_docker.sh --suite go-unit`, because the quick
   profile does not exercise the full Go unit suite. The publisher independently

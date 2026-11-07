@@ -348,7 +348,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     try:
                         execution.command(check, cwd=candidate_repo,
                                           log=cluster_dir / ("check.log" if index == 0 else "go-unit-check.log"),
-                                          timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                                          timeout=deadline - time.monotonic(), env=execution.check_environment())
                     except RuntimeError:
                         execution.resource_snapshot(resources, "after failed candidate " + " ".join(check))
                         # Keep the candidate failure as a gate, and collect the same
@@ -358,7 +358,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                         attempt["failed_check"] = check
                         try:
                             execution.command(check, cwd=baseline_repo, log=baseline_log,
-                                              timeout=deadline - time.monotonic(), env=execution.benchmark_environment())
+                                              timeout=deadline - time.monotonic(), env=execution.check_environment())
                             attempt["baseline_check_passed"] = True
                         except (RuntimeError, OSError, subprocess.SubprocessError) as baseline_error:
                             attempt["baseline_check_passed"] = False
