@@ -200,6 +200,17 @@ def test_controlled_tool_failure_is_distinct_from_task_manager_failure(tmp_path)
                   [], fixture, {}, {}) == (True, ["f1"])
 
 
+def test_provider_failure_is_unscored_not_missing_delegation(tmp_path):
+    task = TaskSpec(id="scenario", category="multi_step", prompt="Post", description_for_judge="Post",
+                    rubric=[], hard_assertions=HardAssertions(), scenario=ScenarioSpec(
+                        version=1, steps=[], completion={"tasks": [{"task": "posting", "status": "completed", "feedback": "required"}]},
+                        assertions=[], policies=["supported_completion_claims"], timeout_sec=30))
+    evidence = {"complete": True, "assertions": [{"id": "scenario_completed", "verdict": "unscored"}],
+                "events": [event(1, "turn.settled", payload={"status": "failed", "error": "provider unavailable"})],
+                "fixture": {}, "task_aliases": {}, "milestones": {}}
+    assert evaluate_scenario(evidence, task, None, tmp_path)["outcome"] == "unscored"
+
+
 def test_disabled_judge_or_incomplete_evidence_never_passes(tmp_path):
     task = TaskSpec(id="scenario", category="multi_step", prompt="Post", description_for_judge="Post",
                     rubric=[], hard_assertions=HardAssertions(), scenario=ScenarioSpec(version=1, steps=[], completion={"turn": "initial", "delegation": "none"},

@@ -135,6 +135,11 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
     claims: list[dict[str, Any]] = []
     rubric_verdicts = []
     events = evidence["events"]
+    provider_failed = any(e.get("kind") == "stream.error" or (
+        e.get("kind") == "turn.settled" and e.get("payload", {}).get("status") == "failed") for e in events)
+    execution_available = evidence["complete"] and not provider_failed
+    if provider_failed:
+        checks.append({"id": "provider_available", "verdict": "unscored", "reason": "foreground provider/request failed"})
     # Recompute delivery gates from raw evidence during both live and offline
     # scoring. A semantic judge cannot replace missing causal milestones.
     for target in scenario.completion.get("tasks", []):
@@ -146,7 +151,7 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
         milestones = _milestones(events, task_id, revision) if task_id else {}
         terminal = milestones.get("backend_terminal")
         if terminal is None:
-            verdict = "unscored" if not evidence["complete"] else "fail"
+            verdict = "unscored" if not execution_available else "fail"
         elif terminal.get("payload", {}).get("status") != target["status"]:
             verdict = "fail"
         else:
@@ -156,7 +161,7 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
                        "evidence_refs": [e["event_id"] for e in milestones.values() if e]})
     if not evidence["complete"]:
         checks.append({"id": "evidence_complete", "verdict": "unscored", "reason": "capture unavailable or incomplete"})
-    else:
+    if execution_available:
         if "supported_completion_claims" in scenario.policies:
             try:
                 if judge_cfg is None:
@@ -263,12 +268,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
                        "daemon_watermark": snapshot["cursor"], "fixture_sequence": len(state["events"])})
 
     try:
-        mock_environment = task.mock_environment or suite.mock_environment
-        permission_gates = {gate["id"] for gate in mock_environment.collaboration_fixture.get("gates", [])
-                            if gate.get("at") == "permission"}
-        if any(step.get("type") == "release" and step.get("gate") in permission_gates
-               for step in scenario.steps):
-            raise CollaborationEvidenceError("permission gates cannot be released by scenario steps")
         if not environment_url or not fixture_token:
             raise CollaborationEvidenceError("realtime scenario requires a controlled fixture")
         prepare_task_isolation(client, suite, task, environment_url=environment_url, benchmark_task_id=benchmark_task_id)
