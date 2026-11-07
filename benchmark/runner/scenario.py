@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from runner.agent_client import AgentClient
 from runner.collaboration import CollaborationEventCollector, CollaborationEvidenceError
@@ -15,6 +15,17 @@ from runner.models import TaskResult
 from runner.recovery import prepare_task_isolation
 from runner.report import now_iso
 from runner.suite import Suite, TaskSpec
+
+# The daemon rejects user text while the foreground is still producing a reply.
+# That is an admission decision, not a provider failure.
+BUSY_ERROR = "realtime response is busy"
+MAX_BUSY_RETRIES = 3
+
+
+def _provider_failed(event: dict[str, Any]) -> bool:
+    payload = event.get("payload") or {}
+    return event.get("kind") == "stream.error" or (
+        event.get("kind") == "turn.settled" and payload.get("status") == "failed" and payload.get("error") != BUSY_ERROR)
 
 
 def _pointer(data: Any, pointer: str) -> Any:
@@ -135,8 +146,7 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
     claims: list[dict[str, Any]] = []
     rubric_verdicts = []
     events = evidence["events"]
-    provider_failed = any(e.get("kind") == "stream.error" or (
-        e.get("kind") == "turn.settled" and e.get("payload", {}).get("status") == "failed") for e in events)
+    provider_failed = any(_provider_failed(e) for e in events)
     execution_available = evidence["complete"] and not provider_failed
     if provider_failed:
         checks.append({"id": "provider_available", "verdict": "unscored", "reason": "foreground provider/request failed"})
@@ -216,6 +226,27 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
     return evaluation
 
 
+def submit_user_turn(client: Any, collector: Any, text: str,
+                     remaining: Callable[[float], float]) -> tuple[str, int]:
+    """Submit user text the way a person would: if the foreground is still
+    producing a reply (the daemon's busy admission), wait for that reply to
+    finish and resend. Returns the admitted request ID and rejection count."""
+    rejected = 0
+    while True:
+        submitted = client.submit_chat(text, timeout_sec=remaining(10))
+        if not isinstance(submitted, str):
+            raise CollaborationEvidenceError("realtime chat did not return a request ID")
+        outcome = collector.wait_for(lambda e: e.get("turn_id") == submitted and (
+            e.get("kind") in {"turn.committed", "turn.settled"}), remaining(60))
+        if outcome["kind"] == "turn.committed" or (outcome.get("payload") or {}).get("error") != BUSY_ERROR:
+            return submitted, rejected
+        rejected += 1
+        if rejected > MAX_BUSY_RETRIES:
+            raise CollaborationEvidenceError("foreground stayed busy; user turn was never admitted")
+        collector.wait_for(lambda e: e.get("kind") == "response.feedback_terminal"
+                           and e["sequence"] > outcome["sequence"], remaining(60))
+
+
 def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt: int,
                      artifact_dir: Path, run_id: str, environment_url: str, judge_cfg: JudgeConfig | None,
                      benchmark_task_id: str | None = None, fixture_token: str = "") -> TaskResult:
@@ -254,10 +285,10 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
 
     def wait(match: dict[str, Any], limit: float = 60) -> dict[str, Any]:
         def predicate(e):
-            if e.get("kind") == "turn.settled" and e.get("payload", {}).get("status") == "failed":
+            if _provider_failed(e):
+                if e.get("kind") == "stream.error":
+                    raise CollaborationEvidenceError("realtime provider reported a stream error")
                 raise CollaborationEvidenceError("foreground request failed: " + e["payload"].get("error", "unknown"))
-            if e.get("kind") == "stream.error":
-                raise CollaborationEvidenceError("realtime provider reported a stream error")
             return _match(e, match, tasks, turns, revisions)
         return collector.wait_for(predicate, remaining(limit))
 
@@ -267,6 +298,12 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         ok, refs = _check(check, collector.snapshot(), state, tasks, turns)
         checks.append({"id": check_id, "verdict": "pass" if ok else "fail", "evidence_refs": refs,
                        "daemon_watermark": snapshot["cursor"], "fixture_sequence": len(state["events"])})
+
+    def send_turn(step_id: str, text: str) -> str:
+        submitted, rejected = submit_user_turn(client, collector, text, remaining)
+        steps.append({"id": step_id, "request_id": submitted, "text": text,
+                      **({"busy_rejections": rejected} if rejected else {})})
+        return submitted
 
     try:
         if not environment_url or not fixture_token:
@@ -282,20 +319,12 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         collector.barrier()
         deadline = time.monotonic() + scenario.timeout_sec
         stage = "initial_turn"
-        submitted = client.submit_chat(result.task_prompt, timeout_sec=10)
-        if not isinstance(submitted, str):
-            raise CollaborationEvidenceError("realtime chat did not return a request ID")
-        turns["initial"] = submitted
-        steps.append({"id": "initial", "request_id": submitted, "text": result.task_prompt})
+        turns["initial"] = send_turn("initial", result.task_prompt)
         for step in scenario.steps:
             stage = step["id"]
             remaining()
             if step["type"] == "send":
-                submitted = client.submit_chat(step["text"], timeout_sec=remaining(10))
-                if not isinstance(submitted, str):
-                    raise CollaborationEvidenceError("realtime chat is not asynchronous")
-                turns[step["id"]] = submitted
-                steps.append({"id": stage, "request_id": submitted, "text": step["text"]})
+                turns[step["id"]] = send_turn(stage, step["text"])
             elif step["type"] == "release":
                 checkpoint = collector.barrier()
                 client.fixture_release(environment_url, fixture_token, step["gate"], checkpoint["cursor"])
@@ -385,8 +414,7 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         if collection_started and not events:
             events = list(collector.events)
         # Score only the captured interval, not events produced by cleanup.
-        provider_error = any(e.get("kind") == "stream.error" or (e.get("kind") == "turn.settled"
-            and e.get("payload", {}).get("status") == "failed") for e in events)
+        provider_error = any(_provider_failed(e) for e in events)
         ready = any(e.get("kind") == "session.ready" for e in events)
         fixture_expired = any(e.get("payload", {}).get("phase") == "expired" for e in fixture.get("events", []))
         if not execution_finished:

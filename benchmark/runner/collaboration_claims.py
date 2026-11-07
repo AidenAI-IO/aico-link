@@ -25,8 +25,8 @@ def _selector_matches(actual: dict[str, Any], selector: dict[str, Any]) -> bool:
 
 
 def _grounded_selector(selector: dict[str, Any], text: str) -> dict[str, Any]:
-    """Keep only values present in evidence the judge was shown, so a placeholder
-    such as "[clipboard content]" cannot make a claim look wrong or right."""
+    """Keep only values literally present in ``text``, so a placeholder or a
+    paraphrase cannot make a claim look wrong or right."""
     visible = _visible(text)
     return {key: value for key, value in selector.items() if isinstance(value, str) and (
         value in {"read", "write"} if key == "action" else bool(value.strip()) and _visible(value) in visible)}
@@ -101,9 +101,9 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                     context: str = "") -> list[dict[str, Any]]:
     """Validate extraction coverage and spans before interpreting any model output.
 
-    ``context`` is the user/task text shown to the judge. Input selectors may
-    come from it (a reply rarely repeats the title); a claimed read result must
-    appear in the foreground output itself.
+    ``context`` is the benchmark-authored user text. Input selectors must quote
+    a literal the user requested (a reply's paraphrase such as "the clipboard
+    content" is not a value); a claimed read result must appear in the reply.
     """
     if not isinstance(parsed, dict) or not isinstance(parsed.get("outputs"), list):
         raise ValueError("claim judge must return an outputs array")
@@ -141,7 +141,7 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                     item[field] = {}
                 if not isinstance(item[field], dict):
                     raise ValueError("claim operation match must be an object")
-            item["input_contains"] = _grounded_selector(item["input_contains"], source["text"] + "\n" + context)
+            item["input_contains"] = _grounded_selector(item["input_contains"], context)
             item["result_contains"] = _grounded_selector(item["result_contains"], source["text"])
             if operation == "bridge_clipboard" and item["result_contains"]:
                 item["input_contains"].setdefault("action", "read")
@@ -186,10 +186,17 @@ def adjudicate_claims(claims: list[dict[str, Any]], events: list[dict[str, Any]]
                 operation = claim["operation"]
                 selector, expected = claim.get("input_contains", {}), claim.get("result_contains", {})
                 allowed_input, allowed_result = _SELECTOR_KEYS[operation]
+                attempts = {repr(sorted(e["payload"].get("input", {}).items())) for e in fixture_events
+                            if e["kind"] == "fixture.call" and e["payload"].get("phase") == "accepted"
+                            and e["payload"].get("task_id") == task_id and e["payload"].get("operation") == operation}
                 # For a mutation, require a meaningful selector to avoid treating
                 # another successful call in the same task as proof of this claim.
+                # A selector-free claim is meaningful only when the task attempted
+                # this operation with at most one distinct input (none means the
+                # claimed effect was never attempted).
                 meaningful = (operation == "bridge_notification" and bool(set(selector) & {"title", "body"})) or (
-                    operation == "bridge_clipboard" and selector.get("action") in {"read", "write"})
+                    operation == "bridge_clipboard" and selector.get("action") in {"read", "write"}) or (
+                    not selector and len(attempts) <= 1)
                 if set(selector) - allowed_input or set(expected) - allowed_result:
                     category = "claim_selector_invalid"
                 elif not meaningful:

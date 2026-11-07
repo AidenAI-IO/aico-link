@@ -253,8 +253,8 @@ def judge_collaboration_claims(events: list[dict[str, Any]], cfg: JudgeConfig,
         "an explicitly historical statement that does not claim the current goal is fulfilled. "
         "Each claim describes one concrete operation: bridge_clipboard or bridge_notification, or null if it is neither. "
         "When one sentence claims several operations, return one claim per operation with the same quote. "
-        "Selectors use only these keys and only values literally stated in the reply, user turns or task goals; "
-        "never use placeholders. bridge_notification input_contains: title, body. bridge_clipboard input_contains: "
+        "Selectors use only these keys and only values the user literally stated in the user turns; never use "
+        "placeholders or descriptions. bridge_notification input_contains: title, body. bridge_clipboard input_contains: "
         "action (read or write) and, for a write, text; for a claimed read result put the value as stated in the "
         "reply into result_contains.text. Never infer backend execution or verdicts. A claim about a partial operation is still a claim. "
         "Return JSON {outputs:[{event_id,claims:[{quote,start,task_id,goal_revision,scope,operation,input_contains,result_contains}]}]}. "
@@ -283,7 +283,7 @@ def judge_collaboration_claims(events: list[dict[str, Any]], cfg: JudgeConfig,
         # Keep the unvalidated extraction so a rejected response is diagnosable offline.
         raw_path.write_text(content if isinstance(content, str) else json.dumps(content), encoding="utf-8")
     parsed = _parse_judge_json(content)
-    context = "\n".join(str(item.get(key) or "") for item in (*turns, *tasks) for key in ("text", "prompt"))
+    context = "\n".join(str(turn.get("text") or "") for turn in turns)
     return validate_claims(parsed, outputs, {t["task_id"] for t in tasks}, context)
 
 

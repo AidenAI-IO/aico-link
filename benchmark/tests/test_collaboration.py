@@ -9,7 +9,7 @@ from runner.collaboration import CollaborationEventCollector, CollaborationEvide
 from runner.collaboration_claims import adjudicate_claims, foreground_outputs, validate_claims
 from runner.config import configure_realtime_text
 from runner.phone_data_fixture import PhoneDataFixture
-from runner.scenario import _milestones, evaluate_scenario
+from runner.scenario import _milestones, evaluate_scenario, submit_user_turn
 from runner.suite import HardAssertions, ScenarioSpec, TaskSpec
 
 
@@ -91,6 +91,13 @@ def test_claim_selectors_are_grounded_in_visible_text():
                             input_contains={"title": "Ready", "body": "[clipboard content]"})
     assert placeholder["input_contains"] == {"title": "Ready"}
     assert adjudicate_claims([placeholder], execution(), effect_fixture(), True)[0]["verdict"] == "supported"
+    # A selector-free claim is proven only when one distinct attempt exists.
+    [bare] = extract("Posted it.", operation="bridge_notification")
+    assert adjudicate_claims([bare], execution(), {"events": []}, True)[0]["category"] == "effect_not_performed"
+    two = {"events": [{"event_id": f"a{n}", "kind": "fixture.call", "payload": {
+        "phase": "accepted", "task_id": "A", "operation": "bridge_notification", "input": {"title": title}}}
+        for n, title in enumerate(("Ready", "Other"))]}
+    assert adjudicate_claims([bare], execution(), two, True)[0]["category"] == "claim_operation_unspecified"
     # Without a concrete operation a claim is never supported, nor declared false.
     [vague] = extract("All done.", operation=None)
     assert adjudicate_claims([vague], execution(), effect_fixture(), True)[0]["category"] == "claim_operation_unspecified"
@@ -239,15 +246,48 @@ def test_controlled_tool_failure_is_distinct_from_task_manager_failure(tmp_path)
                   [], fixture, {}, {}) == (True, ["f1"])
 
 
-def test_provider_failure_is_unscored_not_missing_delegation(tmp_path):
+@pytest.mark.parametrize("error,provider_failed", [("provider unavailable", True), ("realtime response is busy", False)])
+def test_provider_failure_is_unscored_not_missing_delegation(tmp_path, error, provider_failed):
     task = TaskSpec(id="scenario", category="multi_step", prompt="Post", description_for_judge="Post",
                     rubric=[], hard_assertions=HardAssertions(), scenario=ScenarioSpec(
                         version=1, steps=[], completion={"tasks": [{"task": "posting", "status": "completed", "feedback": "required"}]},
                         assertions=[], policies=["supported_completion_claims"], timeout_sec=30))
     evidence = {"complete": True, "assertions": [{"id": "scenario_completed", "verdict": "unscored"}],
-                "events": [event(1, "turn.settled", payload={"status": "failed", "error": "provider unavailable"})],
+                "events": [event(1, "turn.settled", payload={"status": "failed", "error": error})],
                 "fixture": {}, "task_aliases": {}, "milestones": {}}
-    assert evaluate_scenario(evidence, task, None, tmp_path)["outcome"] == "unscored"
+    evaluation = evaluate_scenario(evidence, task, None, tmp_path)
+    # A provider outage is unscored; a busy admission rejection is the daemon
+    # declining a turn, so it neither excuses missing delivery nor reads as an outage.
+    assert evaluation["outcome"] == ("unscored" if provider_failed else "fail")
+    assert any(c["id"] == "provider_available" for c in evaluation["checks"]) == provider_failed
+
+
+def test_busy_admission_waits_for_reply_and_resends_user_turn():
+    class Daemon:
+        def __init__(self, busy):
+            self.busy, self.events, self.submitted = busy, [], []
+
+        def submit_chat(self, text, timeout_sec):
+            request = f"r{len(self.submitted)}"
+            self.submitted.append(text)
+            sequence = len(self.events) + 1
+            if len(self.submitted) <= self.busy:
+                self.events += [{"kind": "turn.settled", "turn_id": request, "sequence": sequence,
+                                 "payload": {"status": "failed", "error": "realtime response is busy"}},
+                                {"kind": "response.feedback_terminal", "sequence": sequence + 1}]
+            else:
+                self.events.append({"kind": "turn.committed", "turn_id": request, "sequence": sequence})
+            return request
+
+        def wait_for(self, predicate, timeout):
+            return next(e for e in self.events if predicate(e))
+
+    daemon = Daemon(busy=1)
+    assert submit_user_turn(daemon, daemon, "continue", lambda limit: limit) == ("r1", 1)
+    assert daemon.submitted == ["continue", "continue"]
+    stuck = Daemon(busy=10)
+    with pytest.raises(CollaborationEvidenceError, match="never admitted"):
+        submit_user_turn(stuck, stuck, "continue", lambda limit: limit)
 
 
 def test_disabled_judge_or_incomplete_evidence_never_passes(tmp_path):
