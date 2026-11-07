@@ -134,6 +134,10 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--realtime-provider", default=os.environ.get("AICO_BENCHMARK_REALTIME_PROVIDER", ""))
     p_run.add_argument("--realtime-model", default=os.environ.get("AICO_BENCHMARK_REALTIME_MODEL", ""))
     p_run.add_argument("--realtime-api-key-env", default="AICO_BENCHMARK_REALTIME_API_KEY")
+    p_run.add_argument("--realtime-endpoint", default=os.environ.get("AICO_BENCHMARK_REALTIME_ENDPOINT", ""))
+    p_run.add_argument("--realtime-protocol", default=os.environ.get("AICO_BENCHMARK_REALTIME_PROTOCOL", ""))
+    p_run.add_argument("--realtime-upstream-provider", default=os.environ.get("AICO_BENCHMARK_REALTIME_UPSTREAM_PROVIDER", ""))
+    p_run.add_argument("--realtime-auth-mode", default=os.environ.get("AICO_BENCHMARK_REALTIME_AUTH_MODE", ""))
     p_run.add_argument("--benchmark-token-file", default="")
     p_run.add_argument(
         "--judge-model",
@@ -734,6 +738,10 @@ def _cmd_run_auto_agent_setup_inner(
         agent_config_text = configure_realtime_text(
             agent_config_text, provider=args.realtime_provider,
             model=args.realtime_model, api_key_env=args.realtime_api_key_env,
+            endpoint=getattr(args, "realtime_endpoint", ""),
+            realtime_protocol=getattr(args, "realtime_protocol", ""),
+            upstream_provider=getattr(args, "realtime_upstream_provider", ""),
+            auth_mode=getattr(args, "realtime_auth_mode", ""),
         )
 
 

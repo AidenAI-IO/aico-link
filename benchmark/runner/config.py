@@ -259,6 +259,7 @@ def render_agent_template(text: str) -> str:
 
 def configure_realtime_text(
     content: str, *, provider: str, model: str, api_key_env: str,
+    endpoint: str = "", realtime_protocol: str = "", upstream_provider: str = "", auth_mode: str = "",
 ) -> str:
     """Select a foreground provider without changing the existing main model."""
     try:
@@ -271,7 +272,7 @@ def configure_realtime_text(
     realtime = voice.get("realtime", config.get("voice_model", {}))
     mode = voice.get("mode", {}).get("input_mode", config.get("input_mode"))
     if realtime:
-        if provider or model:
+        if any((provider, model, endpoint, realtime_protocol, upstream_provider, auth_mode)):
             raise ValueError("configure the foreground in agent.toml or via CLI, not both")
         if mode != "realtime" or realtime.get("use_backend_agent") is not True:
             raise ValueError("realtime-text requires input_mode=realtime and use_backend_agent=true")
@@ -280,18 +281,18 @@ def configure_realtime_text(
         raise ValueError("configure realtime in agent.toml when an input mode is already declared")
     if not re.fullmatch(r"[a-z][a-z0-9_-]*", provider):
         raise ValueError("invalid realtime provider name")
-    if not model.strip():
-        raise ValueError("realtime model is required")
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", api_key_env):
         raise ValueError("invalid realtime API-key environment variable name")
     if not os.environ.get(api_key_env, "").strip():
         raise ValueError(f"realtime-text requires {api_key_env}")
+    options = {"model": model, "endpoint": endpoint, "realtime_protocol": realtime_protocol,
+               "upstream_provider": upstream_provider, "auth_mode": auth_mode}
     return content.rstrip() + "\n\n" + "\n".join([
         "[voice_settings.mode]",
         'input_mode = "realtime"',
         "[voice_settings.realtime.providers.benchmark-foreground]",
         f"type = {json.dumps(provider)}",
-        f"model = {json.dumps(model)}",
+        *[f"{key} = {json.dumps(value)}" for key, value in options.items() if value.strip()],
         f"api_key = {json.dumps('$' + api_key_env)}",
         "[voice_settings.realtime]",
         'provider = "benchmark-foreground"',

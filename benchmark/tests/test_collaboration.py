@@ -296,6 +296,37 @@ def test_rejudge_uses_collaboration_evidence_not_final_answer(tmp_path, monkeypa
     assert not (attempt / "collaboration-evaluation.json").exists()
 
 
+@pytest.mark.parametrize("provider,options", [
+    ("openai", {"model": "gpt-realtime-2", "endpoint": "wss://gateway.example/v1/realtime", "realtime_protocol": "legacy"}),
+    ("speko", {"model": "gemini-live", "upstream_provider": "google"}),
+    ("gemini", {"auth_mode": "api_key"}),
+    ("qwen", {}), ("xai", {}),
+])
+def test_ci_foreground_options_reach_toml_without_changing_backend(monkeypatch, provider, options):
+    import tomllib
+    from ci.run_case import _runtime_environment
+    suffixes = {"endpoint": "ENDPOINT", "realtime_protocol": "PROTOCOL",
+                "upstream_provider": "UPSTREAM_PROVIDER", "auth_mode": "AUTH_MODE", "model": "MODEL"}
+    env = _runtime_environment({"BENCHMARK_REALTIME_" + suffixes[key]: value for key, value in options.items()})
+    forwarded = {key: env["AICO_BENCHMARK_REALTIME_" + suffixes[key]] for key in options}
+    monkeypatch.setenv("TEST_REALTIME_KEY", "test-key")
+    base = '[model_settings.model]\nprovider="existing"\nmodel="fixed-backend"\n'
+    rendered = configure_realtime_text(base, provider=provider, api_key_env="TEST_REALTIME_KEY",
+                                      **{"model": "", **forwarded})
+    config = tomllib.loads(rendered)
+    record = config["voice_settings"]["realtime"]["providers"]["benchmark-foreground"]
+    assert config["model_settings"] == tomllib.loads(base)["model_settings"]
+    assert record["type"] == provider
+    for key, value in options.items():
+        assert record[key] == value
+    assert ("model" in record) is bool(options.get("model"))
+    assert record["api_key"] == "$TEST_REALTIME_KEY"
+    # Explicit TOML remains authoritative, including provider-specific routing.
+    assert configure_realtime_text(rendered, provider="", model="", api_key_env="TEST_REALTIME_KEY") == rendered
+    with pytest.raises(ValueError, match="not both"):
+        configure_realtime_text(rendered, provider="", model="", api_key_env="TEST_REALTIME_KEY", endpoint="wss://other.example")
+
+
 def test_foreground_config_preserves_main_model_and_credential_reference(monkeypatch):
     import tomllib
     monkeypatch.setenv("TEST_REALTIME_KEY", "test-only-not-a-secret")

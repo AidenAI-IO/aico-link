@@ -226,7 +226,7 @@ Repository validation should follow the pinned Docker workflow described in [the
 
 From `benchmark/`, `uv run --locked python -m runner run --execution-mode realtime-text --auto-agent-setup --suite suites/realtime_collaboration_v1.json` keeps one isolated daemon alive for each scenario attempt. The daemon uses the configured realtime provider and production task manager; its main model remains the backend. The controlled `phone_data_v1` fixture intercepts only clipboard and notification tools and is protected by a per-run control token. Ordinary benchmark runs remain `backend-text` by default.
 
-Foreground provider selection is supplied with `--realtime-provider`, `--realtime-model`, and `AICO_BENCHMARK_REALTIME_API_KEY`, or configured in the existing Agent TOML. The realtime provider may require additional provider-specific settings; configure these in the existing TOML/provider record rather than adding backend configuration. The realtime path must fail preflight instead of falling back to backend-direct execution. The WebUI's legacy shared-daemon device and MobileGym paths are not an isolation contract for this mode; run the managed CLI/CI path.
+Foreground provider selection is supplied with `--realtime-provider`, `--realtime-model`, and `AICO_BENCHMARK_REALTIME_API_KEY`, or configured in the existing Agent TOML. Optional CLI flags `--realtime-endpoint`, `--realtime-protocol`, `--realtime-upstream-provider`, and `--realtime-auth-mode` populate the selected foreground provider record. Leave model unset to use the provider's default; providers requiring an explicit model still reject incomplete configuration. Other provider-specific settings belong in the existing TOML/provider record rather than backend configuration. The realtime path must fail preflight instead of falling back to backend-direct execution. The WebUI's legacy shared-daemon device and MobileGym paths are not an isolation contract for this mode; run the managed CLI/CI path.
 
 For an existing TOML that already configures realtime with backend delegation enabled, use `--agent-config /path/to/agent.toml` and leave foreground provider/model flags unset. Otherwise retain the current backend configuration and add only the foreground selection:
 
@@ -242,6 +242,21 @@ uv run --locked python -m runner run \
 ```
 
 Backend and judge credentials use the existing benchmark configuration. `--no-judge` records evidence but cannot pass semantic completion-claim or feedback checks. CI selection uses the existing workflow's suite input, with `BENCHMARK_REALTIME_PROVIDER`, `BENCHMARK_REALTIME_MODEL`, and the `BENCHMARK_REALTIME_API_KEY` secret; the catalog excludes this case from automatic runnable selection. WebUI execution is explicitly rejected until that entry point has its own configuration and isolation contract.
+
+### Optional CI foreground routing
+
+These GitHub Actions **Variables** are forwarded through the runtime environment into the existing realtime provider record. Empty values are omitted, leaving the provider's defaults intact.
+
+| CI Variable | CLI flag | TOML field |
+| --- | --- | --- |
+| `BENCHMARK_REALTIME_ENDPOINT` | `--realtime-endpoint` | `endpoint` |
+| `BENCHMARK_REALTIME_PROTOCOL` | `--realtime-protocol` | `realtime_protocol` |
+| `BENCHMARK_REALTIME_UPSTREAM_PROVIDER` | `--realtime-upstream-provider` | `upstream_provider` |
+| `BENCHMARK_REALTIME_AUTH_MODE` | `--realtime-auth-mode` | `auth_mode` |
+
+For an OpenAI-compatible legacy gateway, set `BENCHMARK_REALTIME_PROVIDER=openai`, `BENCHMARK_REALTIME_MODEL=gpt-realtime-2`, `BENCHMARK_REALTIME_ENDPOINT=wss://api.mixroute.ai/v1/realtime`, and `BENCHMARK_REALTIME_PROTOCOL=legacy`. Store its key only in Secret `BENCHMARK_REALTIME_API_KEY`. Endpoint Variables must not contain credentials. Leave upstream/auth fields empty for this example. Clear provider-specific Variables when changing providers; these fields are explicit overrides, not inferred from the endpoint. Gemini API-key authentication can leave auth mode empty or set `api_key`; Speko requires its supported upstream selection and an explicit model.
+
+When supplying a realtime-configured `--agent-config`, leave all foreground CLI/environment overrides unset: mixing both configuration sources is rejected rather than silently replacing routing or backend settings. Backend model and judge configuration remain unchanged.
 
 Events are persisted in `collaboration-events.jsonl`; the captured scenario, fixture, evaluation, summary and merged timeline are stored alongside the normal attempt artifacts. Offline rejudging re-evaluates saved evidence and does not execute tools. A failed or incomplete recorder is unscored; an early unsupported completion claim remains a failure after later success.
 
