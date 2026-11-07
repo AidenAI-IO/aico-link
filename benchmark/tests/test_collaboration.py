@@ -1,5 +1,4 @@
 """Behavioral evidence tests: no provider credentials or physical devices required."""
-import copy
 import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -82,18 +81,27 @@ def test_gate_watermark_proves_premature_effect_without_cross_service_clocks():
     assert verdict["category"] == "completion_before_effect"
 
 
-def test_claim_extraction_covers_prefixes_and_keeps_early_correction():
-    first = event(1, "text.delta", payload={"Text": "Posted."})
-    first["collaboration"]["actor"] = "foreground"
-    correction = copy.deepcopy(first)
-    correction.update(event_id="e2", sequence=2, kind="text.final", payload={"Text": "Not posted yet."})
-    outputs = foreground_outputs([first, correction])
-    assert [o["text"] for o in outputs] == ["Posted.", "Not posted yet."]
-    parsed = {"outputs": [{"event_id": "e1", "claims": [{"start": 0, "end": 7, "quote": "Posted.",
+def test_claim_extraction_times_claims_by_first_visible_prefix_and_keeps_correction():
+    def foreground(sequence, kind, text):
+        item = event(sequence, kind, payload={"Text": text})
+        item["collaboration"]["actor"] = "foreground"
+        return item
+
+    # Streaming deltas and a matching final are one output; a rewriting final is a new one.
+    outputs = foreground_outputs([foreground(1, "text.delta", "Done. "), foreground(2, "text.delta", "Posted."),
+                                  foreground(3, "text.final", "Done. Posted."),
+                                  foreground(4, "text.final", "Not posted yet.")])
+    assert [(o["event_id"], o["text"]) for o in outputs] == [("e2", "Done. Posted."), ("e4", "Not posted yet.")]
+    parsed = {"outputs": [{"event_id": "e2", "claims": [{"quote": "Posted.", "start": 0,
         "task_id": "A", "goal_revision": 1, "scope": "current_goal", "operation": "bridge_notification"}]},
-        {"event_id": "e2", "claims": []}]}
-    assert validate_claims(parsed, outputs, {"A"})[0]["sequence"] == 1
-    parsed["outputs"].pop()
+        {"event_id": "e4", "claims": []}]}
+    # A wrong judge offset is resolved from the exact quote; timing comes from the delta that completed it.
+    [extracted] = validate_claims(parsed, outputs, {"A"})
+    assert (extracted["start"], extracted["end"], extracted["sequence"]) == (6, 13, 2)
+    parsed["outputs"][0]["claims"][0]["quote"] = "Delivered."
+    with pytest.raises(ValueError, match="quote not found"):
+        validate_claims(parsed, outputs, {"A"})
+    parsed["outputs"].pop(0)
     with pytest.raises(ValueError, match="every foreground output"):
         validate_claims(parsed, outputs, {"A"})
 

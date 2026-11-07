@@ -111,6 +111,7 @@ CAPABILITY_SUITES = {
                            "aico_app_android_bridge_capabilities_v1",
                            "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
+    "Realtime collaboration": ("realtime_collaboration_v1",),
 }
 DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"

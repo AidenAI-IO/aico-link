@@ -7,8 +7,14 @@ from runner.matching import dict_contains
 
 
 def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Preserve cumulative accepted prefixes, including later corrected claims."""
-    texts: dict[tuple[str, str, str, str], str] = {}
+    """Return one text snapshot per accepted foreground output version.
+
+    Append-only streaming (deltas, or a final that extends them) stays one
+    version whose ``observations`` record when each prefix length became
+    visible. A final that rewrites earlier text starts a new version, so an
+    early claim survives a later correction.
+    """
+    current: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     outputs = []
     for event in events:
         meta, payload = event.get("collaboration") or {}, event.get("payload") or {}
@@ -19,18 +25,50 @@ def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         key = (meta.get("provider_session_id", ""), event.get("response_id", ""),
                event.get("item_id", ""), payload.get("TextSource", payload.get("text_source", "")))
+        version = current.get(key)
         if event["kind"] == "text.delta":
-            texts[key] = texts.get(key, "") + text
-        else:
-            if texts.get(key) == text:
+            if version is None or version["closed"]:
+                version = None
+            else:
+                text = version["text"] + text
+        elif version is not None and not version["closed"] and text.startswith(version["text"]):
+            version["closed"] = True
+            if text == version["text"]:
                 continue
-            texts[key] = text
-        outputs.append({"event_id": event["event_id"], "response_id": event.get("response_id"),
-                        "turn_id": event.get("turn_id"), "text": texts[key],
-                        "sequence": event["sequence"], "item_id": event.get("item_id"),
-                        "clock_id": meta.get("clock_id"),
-                        "observed_elapsed_ns": meta.get("observed_elapsed_ns")})
+        else:
+            version = None
+        if version is None:
+            version = {"response_id": event.get("response_id"), "turn_id": event.get("turn_id"),
+                       "item_id": event.get("item_id"), "clock_id": meta.get("clock_id"),
+                       "text": "", "observations": [], "closed": event["kind"] == "text.final"}
+            current[key] = version
+            outputs.append(version)
+        version["text"] = text
+        version["event_id"] = event["event_id"]
+        version["observations"].append({"length": len(text), "event_id": event["event_id"],
+                                        "sequence": event["sequence"],
+                                        "observed_elapsed_ns": meta.get("observed_elapsed_ns")})
+    for version in outputs:
+        del version["closed"]
     return outputs
+
+
+def _locate_claim(item: dict[str, Any], text: str) -> tuple[int, int]:
+    """Resolve the judge's exact quote to code-point offsets in the snapshot."""
+    quote = item.get("quote")
+    if not isinstance(quote, str) or not quote:
+        raise ValueError("invalid completion-claim quote")
+    starts = []
+    index = text.find(quote)
+    while index != -1:
+        starts.append(index)
+        index = text.find(quote, index + 1)
+    if not starts:
+        raise ValueError("completion-claim quote not found in foreground output")
+    # A judge-supplied offset only disambiguates repeated text; otherwise the
+    # earliest occurrence is the earliest moment the claim was visible.
+    start = item.get("start") if item.get("start") in starts else starts[0]
+    return start, start + len(quote)
 
 
 def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[str]) -> list[dict[str, Any]]:
@@ -51,10 +89,9 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
         for item in row["claims"]:
             if not isinstance(item, dict):
                 raise ValueError("claim must be an object")
-            start, end, quote = item.get("start"), item.get("end"), item.get("quote")
-            if (type(start) is not int or type(end) is not int or start < 0 or end <= start
-                    or end > len(source["text"]) or source["text"][start:end] != quote):
-                raise ValueError("invalid completion-claim span")
+            start, end = _locate_claim(item, source["text"])
+            quote = item["quote"]
+            observed = next(o for o in source["observations"] if o["length"] >= end)
             task_id = item.get("task_id")
             if task_id is not None and (not isinstance(task_id, str) or task_id not in task_ids):
                 raise ValueError("claim refers to unknown task")
@@ -73,9 +110,10 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
             if identity in dedup:
                 continue
             dedup.add(identity)
-            claims.append({**item, "event_id": source["event_id"], "response_id": source["response_id"],
-                           "turn_id": source["turn_id"], "sequence": source["sequence"],
-                           "clock_id": source["clock_id"], "observed_elapsed_ns": source["observed_elapsed_ns"]})
+            claims.append({**item, "start": start, "end": end, "event_id": observed["event_id"],
+                           "response_id": source["response_id"], "turn_id": source["turn_id"],
+                           "sequence": observed["sequence"], "clock_id": source["clock_id"],
+                           "observed_elapsed_ns": observed["observed_elapsed_ns"]})
     if seen != set(by_id):
         raise ValueError("claim judge did not cover every foreground output")
     return claims

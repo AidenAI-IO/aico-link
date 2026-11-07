@@ -409,13 +409,16 @@ def test_daemon_compose_env_strips_host_proxy(monkeypatch):
     assert env["AICO_LANGFUSE_HTTPS_PROXY"] == "http://telemetry.test:8080"
 
 
-def test_agent_daemon_compose_only_forwards_dedicated_telemetry_proxy():
+def test_agent_daemon_compose_only_forwards_dedicated_proxies():
     compose = (webui.BENCHMARK_DOCKER_DIR / "docker-compose.agent-daemon.yml").read_text(encoding="utf-8")
 
-    for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY",
-                "http_proxy", "https_proxy", "all_proxy"):
+    # Host proxy variables never leak into the daemon; the only runtime proxy
+    # comes from the realtime-text benchmark's explicit, default-empty setting.
+    for key in ("HTTP_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         assert re.search(rf"(?m)^\s+(?:-\s+)?{key}\s*[:=]", compose) is None
         assert "${" + key not in compose
+    assert "${HTTPS_PROXY" not in compose
+    assert "HTTPS_PROXY: ${AICO_BENCHMARK_REALTIME_HTTPS_PROXY:-}" in compose
     assert "AICO_LANGFUSE_HTTPS_PROXY: ${AICO_LANGFUSE_HTTPS_PROXY:-}" in compose
 
 
