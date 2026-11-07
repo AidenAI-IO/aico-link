@@ -22,7 +22,11 @@ CLUSTER = object_schema({"title": STRING, "category": STRING, "cause": STRING,
     "judge_review": {"type": "string", "enum": ["supported", "disputed", "insufficient_evidence"]},
     "fix_target": {"type": "string", "enum": ["skill", "prompt", "tool_description", "go_code", "benchmark_or_env", "unknown"]},
     "targets": STRINGS, "neighbors": STRINGS, "source_paths": STRINGS, "evidence": STRINGS})
-DIAGNOSIS = object_schema({"summary": STRING, "clusters": {"type": "array", "items": CLUSTER}})
+DIAGNOSIS = object_schema({"summary": STRING, "clusters": {"type": "array", "items": CLUSTER},
+    # Failures attributed to grading or setup; the driver never treats them as repair targets.
+    "evaluation_issues": {"type": "array", "items": object_schema({
+        "task": STRING, "kind": {"type": "string", "enum": ["evaluator", "environment"]},
+        "reason": STRING, "evidence": STRINGS})}})
 PATCH = object_schema({"summary": STRING, "edits": {"type": "array", "items": object_schema({"path": STRING, "old": STRING, "new": STRING})}})
 AUDIT = object_schema({"supported": {"type": "boolean"}, "reason": STRING, "evidence": STRINGS})
 REPRODUCTION_AUDIT = object_schema({"summary": STRING, "tasks": {"type": "array", "items": object_schema({

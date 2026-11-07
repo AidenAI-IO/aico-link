@@ -257,6 +257,12 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   cluster is reported as `environment_unavailable`, and plans over the task budget
   are `deferred` without checkout or model calls. Diagnosis receives the runnable
   environments so it can keep repair targets reproducible on the runner.
+- Diagnosis lists failures it attributes to the evaluator or environment in
+  `evaluation_issues`. The driver removes those tasks from every cluster's repair
+  targets and runs them only as regression checks, recorded as
+  `quarantined_targets`; a cluster left with no target is `evaluation_issue`.
+  Because quarantined tasks are not targets, they do not pull their suite's
+  neighbors into the plan.
   This is a regression holdback, not a new statistically representative baseline.
 - Publication independently recomputes the gate and validates the patch against
   the tested base. If `main` advanced, publication stops and requires

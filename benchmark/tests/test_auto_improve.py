@@ -274,6 +274,39 @@ def test_unrunnable_clusters_do_not_consume_repair_slots(tmp_path, monkeypatch):
     assert state["status"] == "completed" and not list(out.glob("cluster-*"))
 
 
+def test_evaluator_attributed_failures_are_regression_checks_not_targets(tmp_path, monkeypatch):
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
+    repo.mkdir(); source.mkdir()
+    (source / "source.json").write_text(json.dumps({"run": {"id": 42, "run_attempt": 1, "head_sha": "old", "head_branch": "main"}}))
+    tasks = {k: {"case_id": k.split(":")[0], "environment": "isolated", "runnable": True, "task": {"category": k}}
+             for k in ("a:agent", "a:neighbor", "b:graded", "b:sibling", "c:held")}
+    tasks["a:neighbor"]["task"]["category"] = "a:agent"
+    tasks["b:sibling"]["task"]["category"] = "b:graded"
+    base = {"category": "task", "cause": "cause", "judge_review": "supported", "fix_target": "go_code",
+            "neighbors": [], "source_paths": ["x.go"], "evidence": ["trace"]}
+    diagnosis = {"summary": "s", "clusters": [{**base, "title": "mixed", "targets": ["a:agent", "b:graded"]},
+                                             {**base, "title": "graded only", "targets": ["b:graded"]}],
+                 "evaluation_issues": [{"task": "b:graded", "kind": "evaluator", "reason": "scores last turn only",
+                                        "evidence": ["trace"]}]}
+    monkeypatch.setattr(driver, "git", lambda *a: "base")
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
+    monkeypatch.setattr(driver.evidence, "source_failures", lambda *a: (
+        [{"key": k, "agent_eligible": True} for k in ("a:agent", "b:graded")], []))
+    monkeypatch.setattr(driver, "ask", lambda *a, **k: diagnosis)
+    monkeypatch.setattr(driver, "validated_source_paths", lambda *a: ["x.go"])
+    monkeypatch.setattr(driver, "checkout", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("stop after planning")))
+    state = driver.run(repo, source, out, mode="improve")
+    mixed, graded = state["attempts"]
+    assert mixed["quarantined_targets"] == ["b:graded"]
+    plan = json.loads((out / "cluster-1/plan.json").read_text())
+    # The other suite contributes only the quarantined task itself, not its suite neighbors.
+    assert plan["targets"] == ["a:agent"] and plan["neighbors"] == ["a:neighbor", "b:graded"]
+    assert graded["status"] == "evaluation_issue" and not (out / "cluster-2").exists()
+
+
 def test_driver_rejects_non_main_source_even_when_given_local_artifacts(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

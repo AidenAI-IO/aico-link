@@ -242,6 +242,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                         "and fix_target=unknown if the source cause is not established. Inspect supplied images for visual "
                         "claims; absent images or unresolved coordinate/fixture alternatives mean insufficient_evidence. "
                         "Report evaluator/environment issues and missing evidence. Do not propose edits. "
+                        "List every failure you attribute to grading/evaluator scoping or setup/environment in "
+                        "evaluation_issues, and never use those tasks as cluster targets. "
                         "Only targets in repairable_environments can be reproduced in this run; keep each cluster "
                         "within one suite when possible and report other causes without making them repair targets. "
                         "Return no more than two repairable clusters.", review.DIAGNOSIS, deadline,
@@ -253,12 +255,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         executable_tasks = {k: t for k, t in tasks.items()
                             if t["runnable"] and t["environment"] in executable_environments}
         allowed_targets = {f["key"] for f in failures if f["agent_eligible"] and f["key"] in executable_tasks}
+        # The diagnosis's own evaluator/environment attributions are binding: such a
+        # task can never be a repair target, only an explicit regression check.
+        evaluation_issues = {item["task"]: item for item in diagnosis.get("evaluation_issues", [])}
         count = 0
         for cluster in diagnosis["clusters"]:
             attempt = {"title": cluster["title"], "status": "report_only", "cluster": cluster}
             state["attempts"].append(attempt)
             if (cluster["judge_review"] != "supported" or cluster["fix_target"] not in {"skill", "prompt", "tool_description", "go_code"}):
                 continue
+            quarantined = sorted(set(cluster["targets"]) & set(evaluation_issues))
+            if quarantined:
+                attempt["quarantined_targets"] = quarantined
+                cluster = {**cluster, "targets": [k for k in cluster["targets"] if k not in evaluation_issues],
+                           "neighbors": sorted(set(cluster["neighbors"]) | set(quarantined))}
+                if not cluster["targets"]:
+                    attempt.update({"status": "evaluation_issue",
+                                    "reason": "Every target was attributed to the evaluator or environment"})
+                    continue
             # Known capability limits are decided before a repair slot, checkout, or model call is spent.
             unavailable = sorted({tasks[k]["environment"] for k in cluster["targets"]
                                   if k in tasks and tasks[k]["environment"] not in executable_environments})
