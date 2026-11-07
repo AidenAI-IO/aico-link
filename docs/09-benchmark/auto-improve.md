@@ -252,6 +252,11 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   justified neighbors. Up to ten additional same-environment tasks are selected
   deterministically, excluding failures exposed during diagnosis. If independent
   coverage is unavailable or the total exceeds budget, the change is deferred.
+  Clusters are screened before they use one of the two repair slots: ADB targets
+  need `AUTO_IMPROVE_AVD_TEMPLATE` and `AUTO_IMPROVE_AVD_SHA256`, otherwise the
+  cluster is reported as `environment_unavailable`, and plans over the task budget
+  are `deferred` without checkout or model calls. Diagnosis receives the runnable
+  environments so it can keep repair targets reproducible on the runner.
   This is a regression holdback, not a new statistically representative baseline.
 - Publication independently recomputes the gate and validates the patch against
   the tested base. If `main` advanced, publication stops and requires

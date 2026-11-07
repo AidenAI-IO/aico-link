@@ -240,6 +240,40 @@ def test_driver_reports_checkout_timeout_as_blocked(tmp_path, monkeypatch, branc
     assert "timed out" in state["attempts"][0]["error"].lower()
 
 
+def test_unrunnable_clusters_do_not_consume_repair_slots(tmp_path, monkeypatch):
+    """An ADB cluster without a fixture or an oversized plan is skipped before checkout."""
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    monkeypatch.delenv("AUTO_IMPROVE_AVD_TEMPLATE", raising=False)
+    monkeypatch.setenv("AUTO_IMPROVE_MAX_TASKS", "5")
+    repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
+    repo.mkdir(); source.mkdir()
+    (source / "source.json").write_text(json.dumps({"run": {"id": 42, "run_attempt": 1, "head_sha": "old", "head_branch": "main"}}))
+    tasks = {f"big:{i}": {"case_id": "big", "environment": "isolated", "runnable": True,
+                          "task": {"category": "memory"}} for i in range(8)}
+    tasks.update({"phone:type": {"case_id": "phone", "environment": "adb", "runnable": True, "task": {}},
+                  "other:held": {"case_id": "other", "environment": "isolated", "runnable": True, "task": {}}})
+    clusters = [{"title": title, "category": "task", "cause": "cause", "judge_review": "supported",
+                 "fix_target": "go_code", "targets": targets, "neighbors": [], "source_paths": ["x.go"],
+                 "evidence": ["trace"]} for title, targets in (("phone", ["phone:type"]), ("big", ["big:0"]))]
+    seen = {}
+    monkeypatch.setattr(driver, "git", lambda *a: "base")
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
+    monkeypatch.setattr(driver.evidence, "source_failures", lambda *a: (
+        [{"key": k, "agent_eligible": True} for k in ("phone:type", "big:0")], []))
+    def fake_ask(_out, name, _repo, payload, *args, **kwargs):
+        seen[name] = payload
+        return {"summary": "two clusters", "clusters": clusters}
+    monkeypatch.setattr(driver, "ask", fake_ask)
+    monkeypatch.setattr(driver, "checkout", lambda *a, **k: pytest.fail("must not prepare a checkout"))
+    state = driver.run(repo, source, out, mode="improve")
+    assert seen["diagnosis"]["repairable_environments"] == ["isolated", "mobilegym"]
+    assert [a["status"] for a in state["attempts"]] == ["environment_unavailable", "deferred"]
+    assert "adb" in state["attempts"][0]["reason"] and "budget" in state["attempts"][1]["reason"]
+    assert state["status"] == "completed" and not list(out.glob("cluster-*"))
+
+
 def test_driver_rejects_non_main_source_even_when_given_local_artifacts(tmp_path):
     source = tmp_path / "source"
     source.mkdir()

@@ -224,9 +224,13 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         if not failures:
             state["status"] = "no_failures" if not warnings else "insufficient_evidence"
             return state
+        executable_environments = {"isolated", "mobilegym"}
+        if os.environ.get("AUTO_IMPROVE_AVD_TEMPLATE") and os.environ.get("AUTO_IMPROVE_AVD_SHA256"):
+            executable_environments.add("adb")
         diagnosis = ask(out, "diagnosis", repo, {"failures": failures, "history": history, "feedback": feedback,
                         "previous_attempts": previous,
-                        "configuration": state["configuration"]},
+                        "configuration": state["configuration"],
+                        "repairable_environments": sorted(executable_environments)},
                         "Read input.json first. It indexes ALL failures; detail_file points to the full task, "
                         "trace, judge and image references. Inspect relevant detail files and screenshots when "
                         "the index alone cannot support a conclusion. Historical data is optional and on demand. "
@@ -238,13 +242,16 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                         "and fix_target=unknown if the source cause is not established. Inspect supplied images for visual "
                         "claims; absent images or unresolved coordinate/fixture alternatives mean insufficient_evidence. "
                         "Report evaluator/environment issues and missing evidence. Do not propose edits. "
+                        "Only targets in repairable_environments can be reproduced in this run; keep each cluster "
+                        "within one suite when possible and report other causes without making them repair targets. "
                         "Return no more than two repairable clusters.", review.DIAGNOSIS, deadline,
                         image_root=source_dir / "benchmark/runs")
         write(out / "diagnosis.json", diagnosis)
         if mode == "diagnose":
             state["status"] = "diagnosed"
             return state
-        executable_tasks = {k: t for k, t in tasks.items() if t["runnable"] and t["environment"] in {"isolated", "mobilegym", "adb"}}
+        executable_tasks = {k: t for k, t in tasks.items()
+                            if t["runnable"] and t["environment"] in executable_environments}
         allowed_targets = {f["key"] for f in failures if f["agent_eligible"] and f["key"] in executable_tasks}
         count = 0
         for cluster in diagnosis["clusters"]:
@@ -252,6 +259,21 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             state["attempts"].append(attempt)
             if (cluster["judge_review"] != "supported" or cluster["fix_target"] not in {"skill", "prompt", "tool_description", "go_code"}):
                 continue
+            # Known capability limits are decided before a repair slot, checkout, or model call is spent.
+            unavailable = sorted({tasks[k]["environment"] for k in cluster["targets"]
+                                  if k in tasks and tasks[k]["environment"] not in executable_environments})
+            if unavailable:
+                attempt.update({"status": "environment_unavailable",
+                                "reason": "Runner cannot reproduce environments: " + ", ".join(unavailable)})
+                continue
+            if cluster["targets"] and set(cluster["targets"]).issubset(allowed_targets):
+                try:
+                    plan = policy.select_tasks(cluster, executable_tasks,
+                                               max_tasks=int(os.environ.get("AUTO_IMPROVE_MAX_TASKS", "32")),
+                                               exposed_tasks={f["key"] for f in failures})
+                except ValueError as exc:
+                    attempt.update({"status": "deferred", "reason": str(exc)})
+                    continue
             if count >= 2:
                 attempt["status"] = "deferred"
                 continue
@@ -270,9 +292,6 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 if any(f"auto-improve:{sig}" in (issue.get("body") or "") for issue in feedback):
                     attempt["status"] = "previously_reviewed"
                     continue
-                plan = policy.select_tasks(cluster, executable_tasks,
-                                           max_tasks=int(os.environ.get("AUTO_IMPROVE_MAX_TASKS", "32")),
-                                           exposed_tasks={f["key"] for f in failures})
                 write(cluster_dir / "plan.json", plan)
                 attempt["plan"] = plan
                 candidate_repo = cluster_dir / "candidate"
