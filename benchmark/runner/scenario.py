@@ -10,7 +10,7 @@ from runner.agent_client import AgentClient
 from runner.collaboration import CollaborationEventCollector, CollaborationEvidenceError
 from runner.collaboration_claims import adjudicate_claims
 from runner.judge import JudgeConfig
-from runner.matching import dict_contains
+from runner.matching import dict_contains, value_matches
 from runner.models import TaskResult
 from runner.recovery import prepare_task_isolation
 from runner.report import now_iso
@@ -97,10 +97,24 @@ def _check(spec: dict[str, Any], daemon_events: list[dict[str, Any]], fixture: d
         return ok, [state["event_id"]] if state else []
     if kind == "state_equals":
         value = spec["value"]
-        if isinstance(value, dict): value = _pointer(fixture["initial_state"], value["fixture_value"])
-        try: return _pointer(fixture["state"], spec["path"]) == value, []
+        if isinstance(value, dict) and set(value) == {"fixture_value"}:
+            value = _pointer(fixture["initial_state"], value["fixture_value"])
+        try: actual = _pointer(fixture["state"], spec["path"])
         except (KeyError, IndexError): return False, []
+        # {"$contains": text} tolerates incidental punctuation a model copies
+        # from the user's wording, such as a trailing period.
+        return (value_matches(actual, value) if isinstance(value, dict) else actual == value), []
     raise ValueError(f"unsupported scenario assertion: {kind}")
+
+
+def _statuses(expected: str | list[str]) -> list[str]:
+    return expected if isinstance(expected, list) else [expected]
+
+
+def _status_accepted(actual: Any, expected: str | list[str]) -> bool:
+    """Removing part of a goal with update_agent_task can legitimately end as
+    completed instead of cancelled; scenarios list every acceptable status."""
+    return actual in _statuses(expected)
 
 
 def _response_text(event: dict[str, Any]) -> str:
@@ -165,7 +179,7 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
         terminal = milestones.get("backend_terminal")
         if terminal is None:
             verdict = "unscored" if not execution_available else "fail"
-        elif terminal.get("payload", {}).get("status") != target["status"]:
+        elif not _status_accepted(terminal.get("payload", {}).get("status"), target["status"]):
             verdict = "fail"
         else:
             verdict = "pass" if milestones.get("result_injected") and milestones.get("foreground_feedback") else (
@@ -230,6 +244,13 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
                   "rubric": rubric_verdicts, "judge_model": judge_cfg.model if judge_cfg else None}
     (artifact_dir / evaluation_name).write_text(json.dumps(evaluation, ensure_ascii=False, indent=2), encoding="utf-8")
     return evaluation
+
+
+def backend_episode_ids(events: list[dict[str, Any]]) -> list[str]:
+    """Backend runs in start order; each is one exported agent-run trace."""
+    return list(dict.fromkeys(
+        e["payload"]["episode_id"] for e in events if e.get("kind") == "run.started"
+        and isinstance((e.get("payload") or {}).get("episode_id"), str) and e["payload"]["episode_id"]))
 
 
 def submit_user_turn(client: Any, collector: Any, text: str,
@@ -388,14 +409,16 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
             if isinstance(revision, str):
                 revision = revisions[revision.removeprefix("$revision.")]
             terminal = wait({"kind": "task.updated", "task": alias, "phase": "terminal"}, scenario.timeout_sec)
-            status_ok = terminal["payload"].get("status") == target["status"]
+            status_ok = _status_accepted(terminal["payload"].get("status"), target["status"])
             revision_ok = revision is None or terminal["collaboration"].get("goal_revision") == revision
             checks.append({"id": f"{alias}.terminal", "verdict": "pass" if status_ok and revision_ok else "fail",
                            "evidence_refs": [terminal["event_id"]]})
             if target.get("feedback") == "required":
                 collector.wait_for(lambda _: bool(_milestones(collector.events, task_id, revision)["foreground_feedback"]), remaining(30))
             milestones[alias] = {k: v["event_id"] if v else None for k, v in _milestones(collector.snapshot(), task_id, revision).items()}
-        if any(target["status"] == "cancelled" and target["task"] not in merged_aliases
+        # Watch for late effects after any cancellation, including a goal update
+        # that dropped part of the work instead of cancelling the whole task.
+        if any("cancelled" in _statuses(target["status"]) and target["task"] not in merged_aliases
                for target in scenario.completion.get("tasks", [])):
             stage = "post_cancellation_observation"
             observation_started = time.monotonic()
@@ -456,6 +479,12 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         (artifact_dir / "fixture-events.jsonl").write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in fixture.get("events", [])), encoding="utf-8")
         (artifact_dir / "scenario-events.jsonl").write_text("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in steps), encoding="utf-8")
     evaluation = evaluate_scenario(evidence, task, judge_cfg, artifact_dir)
+    # Backend episodes are what the daemon exports as Langfuse agent-run traces.
+    # Expose them so publication attaches results to those execution traces.
+    episodes = backend_episode_ids(events)
+    if episodes:
+        result.metrics["episode_id"] = episodes[0]
+        result.metrics["episode_ids"] = episodes
     failed = evaluation["outcome"] == "fail"
     passed = evaluation["outcome"] == "pass"
     result.status = "passed" if passed else "failed" if failed else "judge_error"

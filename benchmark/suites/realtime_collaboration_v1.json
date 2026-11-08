@@ -391,7 +391,9 @@
             "id": "body",
             "kind": "state_equals",
             "path": "/notifications/0/body",
-            "value": "Collect the parcel"
+            "value": {
+              "$contains": "Collect the parcel"
+            }
           },
           {
             "id": "silent",
@@ -1734,7 +1736,7 @@
     {
       "id": "partial_effect_then_cancel",
       "category": "multi_step",
-      "description_for_judge": "Retain the completed clipboard write but cancel the pending notification without claiming rollback.",
+      "description_for_judge": "Retain the completed clipboard write and stop the pending notification, either by cancelling the task or by updating its goal to drop the notification, without claiming rollback.",
       "prompt": "Write Saved parcel to my phone clipboard, then post a silent notification titled Delivery with body The package is at reception.",
       "mock_environment": {
         "platform": "android",
@@ -1809,7 +1811,6 @@
             "match": {
               "kind": "task.updated",
               "phase": "terminal",
-              "status": "cancelled",
               "task": "delivery"
             }
           },
@@ -1823,7 +1824,10 @@
           "tasks": [
             {
               "task": "delivery",
-              "status": "cancelled",
+              "status": [
+                "cancelled",
+                "completed"
+              ],
               "feedback": "required"
             }
           ]

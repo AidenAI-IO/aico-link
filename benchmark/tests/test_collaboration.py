@@ -9,7 +9,7 @@ from runner.collaboration import CollaborationEventCollector, CollaborationEvide
 from runner.collaboration_claims import adjudicate_claims, foreground_outputs, validate_claims
 from runner.config import configure_realtime_text
 from runner.phone_data_fixture import PhoneDataFixture
-from runner.scenario import _milestones, evaluate_scenario, submit_user_turn
+from runner.scenario import _check, _milestones, backend_episode_ids, evaluate_scenario, submit_user_turn
 from runner.suite import HardAssertions, ScenarioSpec, TaskSpec
 
 
@@ -117,6 +117,9 @@ def test_claim_selectors_are_grounded_in_visible_text():
     # Without a concrete operation a claim is never supported, nor declared false.
     [vague] = extract("All done.", operation=None)
     assert adjudicate_claims([vague], execution(), effect_fixture(), True)[0]["category"] == "claim_operation_unspecified"
+    # A failure or cancellation statement is not a completion claim at all.
+    assert extract("I couldn’t post the notification.", operation=None) == []
+    assert extract("I cancelled it, so it was not posted.", operation=None) == []
 
 
 def test_gate_watermark_proves_premature_effect_without_cross_service_clocks():
@@ -381,6 +384,32 @@ def test_merged_request_is_scored_through_surviving_task(tmp_path):
                     rubric=[], hard_assertions=HardAssertions(), scenario=scenario)
     checks = {c["id"]: c["verdict"] for c in evaluate_scenario(evidence, task, None, tmp_path)["checks"]}
     assert checks["delivery.a"] == "pass" and "delivery.b" not in checks
+
+
+def test_partial_cancellation_accepts_listed_terminal_statuses_and_tolerant_state(tmp_path):
+    task = TaskSpec(id="task", category="multi_step", prompt="Do", description_for_judge="Do",
+                    rubric=[], hard_assertions=HardAssertions(), scenario=ScenarioSpec(
+                        version=1, steps=[], assertions=[], policies=[], timeout_sec=30,
+                        completion={"tasks": [{"task": "a", "status": ["cancelled", "completed"]}]}))
+    def delivery(status):
+        done = [event(1, "task.updated", payload={"phase": "terminal", "status": status}),
+                event(2, "task.result_injected", payload={"updates": [
+                    {"update_id": "u", "task_id": "A", "status": status, "goal_revision": 1}]}),
+                event(3, "response.feedback_terminal", payload={"status": "completed", "text": "Stopped."})]
+        done[2]["collaboration"]["update_ids"] = ["u"]
+        evidence = {"complete": True, "assertions": [], "events": done, "fixture": {}, "task_aliases": {"a": "A"}}
+        return {c["id"]: c["verdict"] for c in evaluate_scenario(evidence, task, None, tmp_path)["checks"]}["delivery.a"]
+    assert [delivery(s) for s in ("cancelled", "completed", "failed")] == ["pass", "pass", "fail"]
+    # "$contains" tolerates a period the model copied from the user's wording; exact values stay exact.
+    state = {"state": {"body": "Collect the parcel."}}
+    assert _check({"kind": "state_equals", "path": "/body", "value": {"$contains": "Collect the parcel"}}, [], state, {}, {})[0]
+    assert not _check({"kind": "state_equals", "path": "/body", "value": "Collect the parcel"}, [], state, {}, {})[0]
+
+
+def test_backend_episodes_link_to_exported_agent_traces():
+    events = [event(1, "run.started", payload={"episode_id": "ep_a"}), event(2, "tool.completed", payload={"episode_id": "ep_a"}),
+              event(3, "run.started", payload={"episode_id": "ep_b"}), event(4, "run.started", payload={"episode_id": "ep_a"})]
+    assert backend_episode_ids(events) == ["ep_a", "ep_b"]
 
 
 @pytest.mark.parametrize("invalid", [

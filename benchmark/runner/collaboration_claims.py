@@ -28,6 +28,11 @@ def _normalized(value: Any) -> str:
     return "".join(_tokens(value))
 
 
+# Statements that work failed, was cancelled, or did not happen. The judge is
+# told these are not completion claims but sometimes returns them anyway.
+_NEGATED = re.compile(r"\b(?:not|never|cannot|unable|failed|cancel(?:l)?ed|stopped)\b|n[’']t\b", re.IGNORECASE)
+
+
 def _is_prose(value: str) -> bool:
     """A description such as "exactly your clipboard content" names a value
     without stating it. Prose clipboard values are also dropped; their fidelity
@@ -150,6 +155,11 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
             operation = item.get("operation")
             if operation not in {"bridge_clipboard", "bridge_notification", None}:
                 raise ValueError("unsupported claim operation")
+            if operation is None and _NEGATED.search(quote):
+                # A negated statement without a concrete operation reports
+                # absence, not success; it can never be a completion claim.
+                # The raw judge response keeps it for review.
+                continue
             for field in ("input_contains", "result_contains"):
                 # The judge may report "no selector" as null; treat it as an empty match.
                 if item.get(field) is None:

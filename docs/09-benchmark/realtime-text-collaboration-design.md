@@ -103,7 +103,7 @@ A result-delivery flag set when text is injected is not proof of milestone 3. Pr
 
 Use source ordering and causal links for correctness checks; do not assume independently timestamped services share a perfectly synchronized clock. Measure durations with suitable local monotonic clocks. Record missing evidence or sequence gaps as evaluation failures, not model passes or model failures.
 
-Retain raw foreground transcripts, backend traces, task transitions, environment snapshots, and derived assertions. Produce a readable merged timeline with links to the underlying evidence. Existing report and offline rejudge workflows should consume the saved artifacts without rerunning tools.
+Retain raw foreground transcripts, backend traces, task transitions, environment snapshots, and derived assertions. Each backend run is exported to Langfuse as a normal `agent-run` trace; the attempt records the backend episode IDs (`episode_id` is the first, `episode_ids` all of them, in start order) so publication attaches the benchmark result to that execution trace exactly as in backend-direct runs. The foreground realtime session itself is not exported to Langfuse; its turns, tool calls and replies are in `collaboration-events.jsonl` and the merged timeline. Produce a readable merged timeline with links to the underlying evidence. Existing report and offline rejudge workflows should consume the saved artifacts without rerunning tools.
 
 ## Detecting unsupported completion claims
 

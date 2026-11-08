@@ -584,7 +584,7 @@ def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
         for target in completion["tasks"]:
             if not isinstance(target, dict) or set(target) - {"task", "status", "goal_revision", "feedback"}:
                 raise SuiteValidationError(f"task {task_id}: invalid completion task")
-            if not isinstance(target.get("task"), str) or target["task"] not in tasks or target.get("status") not in {"completed", "failed", "cancelled"}:
+            if not isinstance(target.get("task"), str) or target["task"] not in tasks or not _valid_terminal_status(target.get("status")):
                 raise SuiteValidationError(f"task {task_id}: invalid completion task")
             if target.get("feedback", "required") != "required":
                 raise SuiteValidationError(f"task {task_id}: delegated completion requires feedback")
@@ -615,6 +615,14 @@ def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
         ids.add(check["id"])
     return ScenarioSpec(version=1, steps=steps, completion=completion, assertions=assertions,
                         policies=policies, timeout_sec=timeout)
+
+
+def _valid_terminal_status(status: Any) -> bool:
+    """A delegated completion status, or a nonempty list of acceptable ones."""
+    allowed = {"completed", "failed", "cancelled"}
+    if isinstance(status, list):
+        return bool(status) and len(set(status)) == len(status) and all(item in allowed for item in status)
+    return status in allowed
 
 
 def _validate_requires_distinct(aliases: Any, tasks: set[str], task_id: str) -> None:
@@ -657,8 +665,10 @@ def _validate_scenario_check(check: Any, tasks: set[str], turns: set[str], task_
     if "path" in check and (not isinstance(check["path"], str) or not check["path"].startswith("/")):
         raise SuiteValidationError(f"task {task_id}: state path must be a JSON Pointer")
     value = check.get("value")
-    if isinstance(value, dict) and (set(value) != {"fixture_value"} or not isinstance(value["fixture_value"], str) or not value["fixture_value"].startswith("/")):
-        raise SuiteValidationError(f"task {task_id}: invalid fixture value reference")
+    if isinstance(value, dict) and not (
+            (set(value) == {"fixture_value"} and isinstance(value["fixture_value"], str) and value["fixture_value"].startswith("/"))
+            or (set(value) == {"$contains"} and isinstance(value["$contains"], str) and value["$contains"])):
+        raise SuiteValidationError(f"task {task_id}: invalid state value matcher")
 
 
 def validate_setup_device_prepare(setup: dict[str, Any]) -> None:
