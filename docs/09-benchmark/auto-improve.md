@@ -263,6 +263,15 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   `quarantined_targets`; a cluster left with no target is `evaluation_issue`.
   Because quarantined tasks are not targets, they do not pull their suite's
   neighbors into the plan.
+- A task attempt whose judge call fails (`judge_error`) is rejudged after 30 and
+  then 90 seconds with the same judge model, rubric, trace, and screenshots, using
+  the repository's `rejudge_run(only_judge_errors=True)`. The agent is not rerun and
+  its execution evidence is unchanged; `results.original.jsonl` keeps the first
+  result. Attempts still failing remain `judge_error` and fail the comparison.
+- The verification reviewer receives the exact candidate diff and an
+  `evidence-index.json` listing every retained trace, judge result, and history
+  file per attempt. The audit is scoped to the claimed fixes and to regressions;
+  gaps that could hide a regression or explain a fix remain blocking.
   This is a regression holdback, not a new statistically representative baseline.
 - Publication independently recomputes the gate and validates the patch against
   the tested base. If `main` advanced, publication stops and requires

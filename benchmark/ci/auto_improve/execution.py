@@ -92,7 +92,7 @@ def prepare(root: Path, image: str, environments: set[str], out: Path, timeout: 
 
 def retain_evidence(run: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    for name in ("manifest.json", "metrics.json", "results.jsonl", "summary.md"):
+    for name in ("manifest.json", "metrics.json", "results.jsonl", "results.original.jsonl", "summary.md"):
         if (run / name).is_file():
             if name.endswith('.json'):
                 value = sanitize(json.loads((run / name).read_text()))
@@ -111,6 +111,28 @@ def retain_evidence(run: Path, destination: Path) -> None:
                 target.write_text(json.dumps(sanitize(json.loads(path.read_text())), indent=2) + "\n")
             else:
                 shutil.copyfile(path, target)
+
+
+def rejudge_transient_errors(run: Path, *, deadline: float, delays: tuple[float, ...] = (30, 90)) -> None:
+    """Retry only a failed judge call; the recorded agent execution is never rerun or changed.
+
+    Uses the repository's rejudge path with the same judge model, rubric, trace and
+    screenshots. Rows still failing stay judge_error, so the comparison gate rejects them.
+    The original rows are kept as results.original.jsonl for audit.
+    """
+    from runner.rejudge import rejudge_run
+    results = run / "results.jsonl"
+    for delay in delays:
+        rows = [json.loads(line) for line in results.read_text().splitlines() if line.strip()]
+        if not any(row.get("status") == "judge_error" for row in rows) or deadline - time.monotonic() < delay + 300:
+            return
+        original = run / "results.original.jsonl"
+        if not original.exists():
+            shutil.copyfile(results, original)
+        time.sleep(delay)
+        rejudge_run(run, os.environ.get("BENCHMARK_JUDGE_MODEL", ""), os.environ.get("BENCHMARK_JUDGE_BASE_URL", ""),
+                    judge_api_key_env="BENCHMARK_JUDGE_API_KEY", only_judge_errors=True)
+        (run / "results.rejudged.jsonl").replace(results)
 
 
 def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float) -> dict:
@@ -155,6 +177,11 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
         # Keep evidence even on timeout; no generated agent configuration is copied.
         run = root / "benchmark/runs" / run_id
         if run.is_dir():
+            if (run / "results.jsonl").is_file():
+                try:
+                    rejudge_transient_errors(run, deadline=deadline)
+                except Exception as exc:  # keep the original judge_error rows; never mask the run outcome
+                    (out / "rejudge-error.log").write_text(sanitize(f"{type(exc).__name__}: {exc}\n"))
             retain_evidence(run, out / "evidence")
     rows = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines() if line.strip()]
     if len(rows) != 1 or rows[0].get("task_id") != task_id:

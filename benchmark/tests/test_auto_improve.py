@@ -566,7 +566,11 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
         return row(repeat, root.name == "candidate" or key != "a:target")
     monkeypatch.setattr(driver, "ask", fake_ask)
     monkeypatch.setattr(driver, "checkout", fake_checkout)
-    monkeypatch.setattr(driver, "audit", lambda *a: {"supported": True, "reason": "checked", "evidence": ["trace"]})
+    audits = []
+    def fake_audit(_out, _name, _repo, payload, _deadline):
+        audits.append(payload)
+        return {"supported": True, "reason": "checked", "evidence": ["trace"]}
+    monkeypatch.setattr(driver, "audit", fake_audit)
     monkeypatch.setattr(driver.execution, "prepare", lambda *a: None)
     monkeypatch.setattr(driver.execution, "run_task", fake_run)
     checks = []
@@ -588,6 +592,8 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     assert not (out / "cluster-1/candidate").exists()
     assert not (out / "baseline").exists()
     assert (out / "cluster-1/candidate.patch").read_text() == "diff\n"
+    # The verification reviewer audits the exact change under test.
+    assert audits and all(payload["candidate_diff"] == "diff\n" for payload in audits)
 
 
 def test_raw_artifact_paths_cannot_escape_run(tmp_path):
@@ -638,6 +644,36 @@ def test_orphan_cleanup_refuses_reused_pid(tmp_path, monkeypatch):
         emulator.cleanup_orphans(tmp_path)
     assert not killed
     assert owner.exists()
+
+
+def test_judge_errors_are_rejudged_without_rerunning_the_agent(tmp_path, monkeypatch):
+    import time
+    import runner.rejudge as rejudge
+    run = tmp_path / "run"
+    run.mkdir()
+    executed = {"task_id": "t", "attempt": 1, "status": "judge_error", "final": "agent output",
+                "metrics": {"agent_eligible": False, "judge_error": "connection reset"}}
+    (run / "results.jsonl").write_text(json.dumps(executed) + "\n")
+    outcomes = iter(["judge_error", "passed"])
+    calls = []
+    def fake_rejudge(path, model, base_url, *, judge_api_key_env, only_judge_errors):
+        calls.append((model, judge_api_key_env, only_judge_errors))
+        row = json.loads((path / "results.jsonl").read_text())
+        row["status"] = next(outcomes)
+        (path / "results.rejudged.jsonl").write_text(json.dumps(row) + "\n")
+    monkeypatch.setenv("BENCHMARK_JUDGE_MODEL", "same-judge")
+    monkeypatch.setattr(rejudge, "rejudge_run", fake_rejudge)
+    monkeypatch.setattr(execution.time, "sleep", lambda _: None)
+    execution.rejudge_transient_errors(run, deadline=time.monotonic() + 3600, delays=(0, 0, 0))
+    assert calls == [("same-judge", "BENCHMARK_JUDGE_API_KEY", True)] * 2
+    result = json.loads((run / "results.jsonl").read_text())
+    assert result["status"] == "passed" and result["final"] == "agent output"
+    assert json.loads((run / "results.original.jsonl").read_text()) == executed
+    # Too little time left keeps the judge_error row, which the comparison gate rejects.
+    (run / "results.jsonl").write_text(json.dumps(executed) + "\n")
+    calls.clear()
+    execution.rejudge_transient_errors(run, deadline=time.monotonic() + 10, delays=(0,))
+    assert not calls and json.loads((run / "results.jsonl").read_text())["status"] == "judge_error"
 
 
 def test_evidence_redaction_keeps_json_valid(tmp_path, monkeypatch):

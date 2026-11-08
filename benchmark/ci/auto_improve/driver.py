@@ -73,6 +73,12 @@ def workspace(out: Path, name: str, repo: Path, payload: dict, *, include_code: 
             return [materialize(item) for item in value]
         return value
     staged = materialize(payload)
+    attempts = path / "attempts"
+    if attempts.is_dir():
+        # Reviewers otherwise see only top-level files and miss per-task traces.
+        write(path / "evidence-index.json", {
+            str(attempt.relative_to(path)): sorted(str(f.relative_to(path)) for f in attempt.rglob("*") if f.is_file())
+            for attempt in sorted(attempts.iterdir()) if attempt.is_dir()})
     if name == "diagnosis":
         details = path / "details"
         details.mkdir()
@@ -181,8 +187,13 @@ def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
 def audit(out: Path, name: str, repo: Path, payload: dict, deadline: float) -> dict:
     return ask(out, name, repo, payload,
                "Audit ALL listed task outcomes, including successes, against rubric, judge reasons and actual "
-               "trace/screenshots/state. supported=true only if evidence supports the conclusions with no "
-               "unresolved grading or setup gaps. Cite exact evidence. Do not substitute your verdict for the stored score.",
+               "trace/screenshots/state. evidence-index.json lists every retained file; each attempt directory "
+               "holds tasks/<task_id>/trace.json (tool calls, results, memory_state, final_response), judge.json "
+               "and history.json. candidate_diff, when present, is the exact change under test. The claims under "
+               "audit are comparison.fixed and the absence of regressions; report gaps in other tasks, and treat "
+               "them as blocking when they could hide a regression or explain a claimed fix. supported=true only "
+               "if evidence supports those claims with no unresolved grading or setup gaps. Cite exact evidence. "
+               "Do not substitute your verdict for the stored score.",
                review.AUDIT, deadline)
 
 
@@ -421,15 +432,16 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 if not comparison["passed"]:
                     attempt["status"] = "rejected"
                     continue
+                patch_path = cluster_dir / "candidate.patch"
+                patch_path.write_text(subprocess.check_output(
+                    ["git", "diff", "--binary", "--", *changed], cwd=candidate_repo, text=True))
                 verdict = audit(cluster_dir, "verification-review", repo, {"plan": plan, "comparison": comparison,
+                    "candidate_diff": patch_path.read_text(),
                     "tasks": {k: tasks[k] for keys in plan.values() for k in keys}, "baseline": baseline, "candidate": candidate}, deadline)
                 write(cluster_dir / "verification-review.json", verdict)
                 if not verdict["supported"]:
                     attempt["status"] = "grading_disputed"
                     continue
-                patch_path = cluster_dir / "candidate.patch"
-                patch_path.write_text(subprocess.check_output(
-                    ["git", "diff", "--binary", "--", *changed], cwd=candidate_repo, text=True))
                 attempt.update({"status": "ready", "patch": str(patch_path.relative_to(out)),
                                 "patch_sha256": policy.digest(patch_path.read_text()), "paths": changed,
                                 "audit": verdict, "check_passed": True, "checks": checks,
