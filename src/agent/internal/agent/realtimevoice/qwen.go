@@ -143,8 +143,12 @@ type qwenFunctionDefinition struct {
 }
 
 func buildQwenSessionUpdate(cfg SessionConfig) qwenSessionUpdate {
+	modalities := []string{"audio", "text"}
+	if cfg.TextOutputOnly {
+		modalities = []string{"text"}
+	}
 	settings := qwenSessionSettings{
-		Modalities:          []string{"audio", "text"},
+		Modalities:          modalities,
 		Voice:               cfg.Voice,
 		EnableSpeechEmotion: cfg.EnableSpeechEmotion,
 		Instructions:        cfg.Instructions,

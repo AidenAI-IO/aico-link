@@ -44,7 +44,7 @@ Record effective foreground and backend provider/model identities, execution mod
 
 ### Device-independent runtime
 
-Introduce an explicit text-driven execution option at the realtime media boundary. Do not open a physical microphone or speaker. Consume any provider audio through a no-device sink while preserving response and cancellation lifecycle semantics. Prefer preserving the normal provider output modality initially; requesting text-only output can change model behavior and must be recorded if used.
+Introduce an explicit text-driven execution option at the realtime media boundary. Do not open a physical microphone or speaker. Consume any provider audio through a no-device sink while preserving response and cancellation lifecycle semantics. The benchmark scores foreground/backend coordination, not speech, so realtime-text sessions request text-only output (`SessionConfig.TextOutputOnly`) from OpenAI, Qwen and xAI to avoid audio generation cost. Gemini Live native-audio models only produce audio, so they keep audio output and are scored from the output transcript. Text-only output can change model behavior relative to production speech; results are comparable across foreground models under this mode, not directly with audio-mode runs.
 
 Use the production provider, task tools, task manager, backend executor, and result injection logic. Do not treat discarded audio as evidence of audible delivery. Foreground feedback means a completed, observable textual response or transcript for this benchmark.
 

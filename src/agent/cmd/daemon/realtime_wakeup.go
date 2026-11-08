@@ -800,7 +800,10 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 		InputAudioFormat: inputFormat, OutputAudioFormat: outputFormat, MaxHistoryTurns: realtimeContextReplayTurns,
 		TurnDetection: turnType, TurnDetectionThresh: turnThreshold, TurnDetectionSilenceMs: turnSilenceMs,
 		EnableSpeechEmotion: enableEmotion, ThinkingLevel: cfg.VoiceModel.ThinkingLevel,
-		Tools: realtimeVoiceToolDefinitionsWithTools(cfg, runtime, runtimeTools)}
+		// realtime-text benchmarks score coordination, not speech; text replies
+		// avoid audio generation cost where the provider supports it.
+		TextOutputOnly: cfg.Benchmark.RealtimeText,
+		Tools:          realtimeVoiceToolDefinitionsWithTools(cfg, runtime, runtimeTools)}
 }
 
 // realtimeClientTurnEndpoint tracks a local speech turn when a provider

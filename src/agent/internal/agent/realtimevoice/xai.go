@@ -81,6 +81,7 @@ func (p XAIProvider) openSession(ctx context.Context, cfg SessionConfig, model s
 	s := &xAISession{
 		jsonRealtimeSession: newJSONRealtimeSession(transport, newPCM16SessionInfo(cfg.SessionID, inputRate, outputRate, Capabilities{EmitsSpeechEvents: true, ExplicitToolContinuation: true})),
 		transcripts:         make(map[string]string),
+		outputModalities:    xAIOutputModalities(cfg),
 	}
 	transport.start(func(body []byte) []Event {
 		event, ok := s.translateXAIEventForSession(body)
@@ -190,7 +191,7 @@ func buildXAISessionUpdate(cfg SessionConfig, model string) xAISessionUpdate {
 	settings := xAISessionSettings{
 		Type:             "realtime",
 		Model:            model,
-		OutputModalities: []string{"audio"},
+		OutputModalities: xAIOutputModalities(cfg),
 		Instructions:     cfg.Instructions,
 		Voice:            cfg.Voice,
 		Audio: xAIAudioSettings{
@@ -209,10 +210,18 @@ func buildXAISessionUpdate(cfg SessionConfig, model string) xAISessionUpdate {
 	return xAISessionUpdate{Type: "session.update", Session: settings}
 }
 
+func xAIOutputModalities(cfg SessionConfig) []string {
+	if cfg.TextOutputOnly {
+		return []string{"text"}
+	}
+	return []string{"audio"}
+}
+
 type xAISession struct {
 	*jsonRealtimeSession
-	transcriptMu sync.Mutex
-	transcripts  map[string]string
+	transcriptMu     sync.Mutex
+	transcripts      map[string]string
+	outputModalities []string
 }
 
 func (s *xAISession) Interrupt(ctx context.Context, _ ResponseInterruption) error {
@@ -222,7 +231,7 @@ func (s *xAISession) CreateResponse(ctx context.Context) error {
 	return s.writeJSON(ctx, map[string]any{
 		"type": "response.create",
 		"response": map[string]any{
-			"output_modalities": []string{"audio"},
+			"output_modalities": s.outputModalities,
 			"metadata":          map[string]string{"client_event_id": fmt.Sprintf("aico-%d", time.Now().UnixNano())},
 		},
 	})

@@ -198,8 +198,12 @@ type openAILegacySessionSettings struct {
 }
 
 func buildOpenAILegacySessionUpdate(cfg SessionConfig) openAILegacySessionUpdate {
+	modalities := []string{"audio", "text"}
+	if cfg.TextOutputOnly {
+		modalities = []string{"text"}
+	}
 	settings := openAILegacySessionSettings{
-		Modalities: []string{"audio", "text"}, Instructions: cfg.Instructions,
+		Modalities: modalities, Instructions: cfg.Instructions,
 		Voice: cfg.Voice, InputAudioFormat: "pcm16", OutputAudioFormat: "pcm16",
 		InputAudioTranscription: &openAITranscriptionConfig{Model: DefaultOpenAIInputTranscriptionModel},
 		TurnDetection:           turnDetectionConfig(cfg),
@@ -219,10 +223,14 @@ func buildOpenAISessionUpdate(cfg SessionConfig, model string) openAISessionUpda
 	if outputRate <= 0 {
 		outputRate = 24000
 	}
+	modalities := []string{"audio"}
+	if cfg.TextOutputOnly {
+		modalities = []string{"text"}
+	}
 	settings := openAISessionSettings{
 		Type:             "realtime",
 		Model:            model,
-		OutputModalities: []string{"audio"},
+		OutputModalities: modalities,
 		Instructions:     cfg.Instructions,
 		Audio: openAIAudioSettings{
 			Input: openAIAudioInput{
