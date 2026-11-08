@@ -56,20 +56,14 @@ func (p XAIProvider) Open(ctx context.Context, cfg SessionConfig) (Session, erro
 		dialer.Subprotocols = append(append([]string(nil), dialer.Subprotocols...), prefix+cfg.APIKey)
 		conn, resp, err := dialer.DialContext(ctx, endpoint, nil)
 		if err != nil {
-			if resp != nil && resp.Body != nil {
-				_ = resp.Body.Close()
-			}
-			return nil, fmt.Errorf("xai realtime websocket connect: %w", err)
+			return nil, dialError("xai realtime", resp, err)
 		}
 		return p.openSession(ctx, cfg, model, conn)
 	}
 	header["Authorization"] = []string{bearer(cfg.APIKey)}
 	conn, resp, err := d.DialContext(ctx, endpoint, header)
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf("xai realtime websocket connect: %w", err)
+		return nil, dialError("xai realtime", resp, err)
 	}
 	return p.openSession(ctx, cfg, model, conn)
 }

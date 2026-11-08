@@ -95,10 +95,7 @@ func (p GeminiProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 	d = &dialer
 	conn, resp, err := d.DialContext(ctx, endpoint, p.headers(cfg.APIKey))
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf("gemini live websocket connect: %w", err)
+		return nil, dialError("gemini live", resp, err)
 	}
 	inputRate := cfg.InputSampleRate
 	if inputRate <= 0 {

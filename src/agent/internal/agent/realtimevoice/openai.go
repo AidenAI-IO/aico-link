@@ -49,10 +49,7 @@ func (p OpenAIProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 	header["Authorization"] = []string{bearer(cfg.APIKey)}
 	conn, resp, err := d.DialContext(ctx, endpoint, header)
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf("openai realtime websocket connect: %w", err)
+		return nil, dialError("openai realtime", resp, err)
 	}
 	inputRate := cfg.InputSampleRate
 	if inputRate <= 0 {

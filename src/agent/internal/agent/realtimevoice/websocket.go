@@ -5,11 +5,37 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+// dialError reports a failed websocket dial. A rejected upgrade (for example
+// an expired key, exhausted quota or unknown model at a gateway) otherwise
+// surfaces only as "bad handshake", hiding the HTTP status and reason.
+func dialError(label string, resp *http.Response, err error) error {
+	if resp == nil {
+		return fmt.Errorf("%s websocket connect: %w", label, err)
+	}
+	defer func() {
+		if resp.Body != nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	detail := ""
+	if resp.Body != nil {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		detail = strings.Join(strings.Fields(string(body)), " ")
+	}
+	if detail == "" {
+		return fmt.Errorf("%s websocket connect: %s: %w", label, resp.Status, err)
+	}
+	return fmt.Errorf("%s websocket connect: %s: %s: %w", label, resp.Status, detail, err)
+}
 
 type jsonWebSocketTransport struct {
 	conn      *websocket.Conn

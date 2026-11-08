@@ -82,3 +82,16 @@ func TestJSONWebSocketTransportCancelBlockedWrite(t *testing.T) {
 		t.Fatal("cancel did not unblock websocket write")
 	}
 }
+
+func TestDialErrorReportsRejectedUpgradeReason(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":"user quota insufficient"}`, http.StatusPaymentRequired)
+	}))
+	defer server.Close()
+	_, err := OpenAIProvider{Endpoint: "ws" + strings.TrimPrefix(server.URL, "http")}.Open(
+		context.Background(), SessionConfig{APIKey: "key"})
+	if err == nil || !strings.Contains(err.Error(), "402 Payment Required") ||
+		!strings.Contains(err.Error(), "user quota insufficient") || !errors.Is(err, websocket.ErrBadHandshake) {
+		t.Fatalf("dial error = %v", err)
+	}
+}
