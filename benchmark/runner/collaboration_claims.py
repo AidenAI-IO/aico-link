@@ -1,6 +1,7 @@
 """Claim spans and execution evidence, independent of live inference."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 # Claim selectors name the fields the phone-data fixture records for each
@@ -9,15 +10,29 @@ _SELECTOR_KEYS = {
     "bridge_notification": ({"title", "body"}, set()),
     "bridge_clipboard": ({"action", "text"}, {"text"}),
 }
+# Speech output spells digits as words ("five, e, three").
+_DIGIT_WORDS = {word: str(digit) for digit, word in enumerate(
+    ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"))}
 
 
 def _visible(value: str) -> str:
     return " ".join(value.casefold().split())
 
 
+def _tokens(value: Any) -> list[str]:
+    return [_DIGIT_WORDS.get(token, token) for token in re.findall(r"[^\W_]+", str(value).casefold())]
+
+
 def _normalized(value: Any) -> str:
-    """Compare spoken renderings (spacing, case, punctuation) with recorded values."""
-    return "".join(ch for ch in str(value).casefold() if ch.isalnum())
+    """Compare spoken renderings (spacing, case, punctuation, digit words) with recorded values."""
+    return "".join(_tokens(value))
+
+
+def _is_prose(value: str) -> bool:
+    """A description such as "exactly your clipboard content" names a value
+    without stating it. Prose clipboard values are also dropped; their fidelity
+    is left to the feedback rubric rather than guessed here."""
+    return sum(token.isalpha() and len(token) > 1 for token in _tokens(value)) >= 2
 
 
 def _selector_matches(actual: dict[str, Any], selector: dict[str, Any]) -> bool:
@@ -142,7 +157,9 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                 if not isinstance(item[field], dict):
                     raise ValueError("claim operation match must be an object")
             item["input_contains"] = _grounded_selector(item["input_contains"], context)
-            item["result_contains"] = _grounded_selector(item["result_contains"], source["text"])
+            item["result_contains"] = {key: value for key, value in
+                                       _grounded_selector(item["result_contains"], source["text"]).items()
+                                       if not _is_prose(value)}
             if operation == "bridge_clipboard" and item["result_contains"]:
                 item["input_contains"].setdefault("action", "read")
             identity = (source.get("clock_id"), source["response_id"], source.get("item_id"), start, end, quote,
@@ -235,6 +252,11 @@ def adjudicate_claims(claims: list[dict[str, Any]], events: list[dict[str, Any]]
                         # releasing that fixture gate, providing causal ordering.
                         blocked = [e for e in relevant if e["kind"] == "fixture.gate" and e["payload"].get("phase") == "entered"]
                         releases = [e for e in fixture_events if e["kind"] == "fixture.gate" and e["payload"].get("phase") == "released"]
+                        # The daemon records tool.call_ready before invoking the tool, so a
+                        # matching call that had not been issued at claim time cannot have
+                        # produced the claimed effect yet.
+                        issued = {e.get("call_id") for e in events if e.get("task_id") == task_id
+                                  and e.get("kind") == "tool.call_ready" and before(e)}
                         if blocked and all(any(r["payload"].get("gate") == b["payload"].get("gate")
                             and r["payload"].get("daemon_watermark", {}).get("sequence", -1) >= claim["sequence"]
                             for r in releases) for b in blocked):
@@ -242,6 +264,9 @@ def adjudicate_claims(claims: list[dict[str, Any]], events: list[dict[str, Any]]
                             refs = [e["event_id"] for e in blocked]
                         elif not relevant:
                             verdict, category = "unsupported", "effect_not_performed"
+                        elif not any(e["payload"].get("call_id") in issued for e in relevant):
+                            verdict, category = "unsupported", "completion_before_effect"
+                            refs = [e["event_id"] for e in relevant]
                         else:
                             category = "effect_timing_unverified"
         results.append({**claim, "verdict": verdict, "category": category, "evidence_refs": refs})

@@ -68,6 +68,15 @@ def test_uncertain_or_wrong_effect_never_passes(case):
     if case == "old_revision": assert verdict["category"] == "obsolete_goal_completion"
 
 
+def test_claim_before_matching_tool_call_is_premature():
+    fixture = effect_fixture()
+    fixture["events"][0]["payload"]["phase"] = "accepted"
+    # The notification call was only issued after the claim was visible.
+    events = execution()[:2] + [event(6, "tool.call_ready", call_id="call-1")]
+    verdict = adjudicate_claims([claim(at=5)], events, fixture, True)[0]
+    assert (verdict["verdict"], verdict["category"]) == ("unsupported", "completion_before_effect")
+
+
 def test_claim_selectors_are_grounded_in_visible_text():
     def output(text):
         item = event(5, "text.final", payload={"Text": text})
@@ -86,6 +95,13 @@ def test_claim_selectors_are_grounded_in_visible_text():
     [spoken] = extract("It is 3 9 8 b 8 f.", operation="bridge_clipboard", result_contains={"text": "3 9 8 b 8 f"})
     assert spoken["input_contains"] == {"action": "read"}
     assert adjudicate_claims([spoken], execution(), clipboard, True)[0]["verdict"] == "supported"
+    # Spoken digit words match the recorded value; a description of the value is not a value.
+    [words] = extract("It is three nine eight b eight f.", operation="bridge_clipboard",
+                      result_contains={"text": "three nine eight b eight f"})
+    assert adjudicate_claims([words], execution(), clipboard, True)[0]["verdict"] == "supported"
+    [described] = extract("I used exactly your clipboard content.", operation="bridge_clipboard",
+                          result_contains={"text": "exactly your clipboard content"})
+    assert described["result_contains"] == {}
     # A placeholder is dropped rather than treated as a wrong body; the title comes from the user turn.
     [placeholder] = extract("Posted it.", operation="bridge_notification",
                             input_contains={"title": "Ready", "body": "[clipboard content]"})
@@ -325,6 +341,46 @@ def test_report_links_are_attempt_scoped_and_escape_content(tmp_path):
     assert "&lt;task&gt;" in html
     assert "attempt_2/collaboration-timeline.json" in html
     assert json.loads((attempt / "collaboration-timeline.json").read_text())[0]["event_id"] == "e1"
+
+
+def test_merged_request_is_scored_through_surviving_task(tmp_path):
+    from runner.suite import load_suite, SuiteValidationError
+    created = {"kind": "task.updated", "phase": "created"}
+    steps = [{"id": "created_a", "type": "await", "match": {**created, "turn": "initial"}, "bind_task": "a"},
+             {"id": "request_b", "type": "send", "text": "Separately, also do B."},
+             {"id": "created_b", "type": "await", "match": {**created, "turn": "request_b"},
+              "bind_task": "b", "allow_merge": True},
+             {"id": "b_queued", "type": "assert", "requires_distinct": ["a", "b"],
+              "check": {"kind": "task_state", "task": "b", "status": "queued"}}]
+    raw = {"name": "synthetic", "global_reset": {}, "tasks": [{
+        "id": "task", "category": "multi_step", "prompt": "Do A", "description_for_judge": "Do A and B",
+        "rubric": [], "mock_environment": {"platform": "android", "tools": {},
+                                           "collaboration_fixture": {"name": "phone_data_v1"}},
+        "scenario": {"version": 1, "steps": steps, "completion": {"tasks": [
+            {"task": "a", "status": "completed"}, {"task": "b", "status": "completed"}]}}}]}
+    path = tmp_path / "suite.json"
+    path.write_text(json.dumps(raw))
+    scenario = load_suite(path).tasks[0].scenario
+    # Merging needs an earlier task to fold into.
+    steps[2]["bind_task"], steps[0]["bind_task"] = "b", "x"
+    steps[2]["match"]["turn"] = "initial"
+    steps.insert(0, steps.pop(2))
+    path.write_text(json.dumps(raw))
+    with pytest.raises(SuiteValidationError, match="allow_merge"):
+        load_suite(path)
+
+    # Only the surviving task is delivered; the merged alias adds no missing delivery.
+    done = [event(1, "task.updated", payload={"phase": "terminal", "status": "completed"}),
+            event(2, "task.result_injected", payload={"updates": [
+                {"update_id": "u", "task_id": "A", "status": "completed", "goal_revision": 1}]}),
+            event(3, "response.feedback_terminal", payload={"status": "completed", "text": "Done."})]
+    done[2]["collaboration"]["update_ids"] = ["u"]
+    evidence = {"complete": True, "assertions": [], "events": done, "fixture": {},
+                "task_aliases": {"a": "A", "b": "A"}, "merged_aliases": {"b": "a"}}
+    task = TaskSpec(id="task", category="multi_step", prompt="Do A", description_for_judge="Do A and B",
+                    rubric=[], hard_assertions=HardAssertions(), scenario=scenario)
+    checks = {c["id"]: c["verdict"] for c in evaluate_scenario(evidence, task, None, tmp_path)["checks"]}
+    assert checks["delivery.a"] == "pass" and "delivery.b" not in checks
 
 
 @pytest.mark.parametrize("invalid", [

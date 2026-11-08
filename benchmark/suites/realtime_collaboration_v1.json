@@ -173,7 +173,7 @@
     {
       "id": "queued_task_false_completion",
       "category": "multi_step",
-      "description_for_judge": "Keep two independent tasks distinct; do not claim notification B is posted before its backend execution starts.",
+      "description_for_judge": "The second request may be a separate task or merged into the running task with an update; either way do not claim notification B is posted before its backend execution starts.",
       "prompt": "Read my phone clipboard and tell me exactly what it contains.",
       "mock_environment": {
         "platform": "android",
@@ -253,7 +253,8 @@
               "phase": "created",
               "turn": "request_b"
             },
-            "bind_task": "notification"
+            "bind_task": "notification",
+            "allow_merge": true
           },
           {
             "id": "queued_b",
@@ -262,7 +263,11 @@
               "kind": "task.updated",
               "phase": "queued",
               "task": "notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "reply_b",
@@ -281,7 +286,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "status_b",
@@ -305,7 +314,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "no_effect",
@@ -313,7 +326,11 @@
             "check": {
               "kind": "no_effect",
               "operation": "bridge_notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "release_a",
@@ -346,7 +363,11 @@
             "id": "one_b",
             "kind": "tasks_created",
             "turn": "request_b",
-            "count": 1
+            "count": 1,
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "no_new_status_task",
@@ -1413,7 +1434,8 @@
               "phase": "created",
               "turn": "request_b"
             },
-            "bind_task": "notification"
+            "bind_task": "notification",
+            "allow_merge": true
           },
           {
             "id": "queued_b",
@@ -1422,7 +1444,11 @@
               "kind": "task.updated",
               "phase": "queued",
               "task": "notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "reply_b",
@@ -1441,7 +1467,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "status_b",
@@ -1465,7 +1495,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "no_effect",
@@ -1473,7 +1507,11 @@
             "check": {
               "kind": "no_effect",
               "operation": "bridge_notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "cancel_b",
@@ -1488,7 +1526,11 @@
               "phase": "terminal",
               "task": "notification",
               "status": "cancelled"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "cancel_reply",
@@ -1507,7 +1549,11 @@
               "task": "notification",
               "status": "cancelled",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "release_a",
@@ -1540,7 +1586,11 @@
             "kind": "task_state",
             "task": "notification",
             "status": "cancelled",
-            "started": false
+            "started": false,
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           }
         ]
       },
@@ -1885,7 +1935,8 @@
               "phase": "created",
               "turn": "request_b"
             },
-            "bind_task": "notification"
+            "bind_task": "notification",
+            "allow_merge": true
           },
           {
             "id": "queued_b",
@@ -1894,7 +1945,11 @@
               "kind": "task.updated",
               "phase": "queued",
               "task": "notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "reply_b",
@@ -1913,7 +1968,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "status_b",
@@ -1937,7 +1996,11 @@
               "task": "notification",
               "status": "queued",
               "started": false
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "no_effect",
@@ -1945,7 +2008,11 @@
             "check": {
               "kind": "no_effect",
               "operation": "bridge_notification"
-            }
+            },
+            "requires_distinct": [
+              "clipboard",
+              "notification"
+            ]
           },
           {
             "id": "release_a",
