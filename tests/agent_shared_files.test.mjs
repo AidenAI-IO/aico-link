@@ -19,7 +19,7 @@ function harness(fetch) {
     URL, FormData, FileReader, AbortController, setTimeout, clearTimeout, console,
     window: {location: {origin: 'http://192.168.42.1:8080', hostname: '192.168.42.1'}},
     loadingDiv: {classList: {contains: () => false}},
-    fileUploadPending: false, draftAttachments: [], nextAttachmentId: 1, maxDraftImageAttachments: 4,
+    fileUploadPending: false, draftAttachments: [], nextAttachmentId: 1, maxDraftImageAttachments: 4, maxDraftAttachments: 16,
     composerHintTimer: null, composerHintEl: {children: [], appendChild(child) { this.children.push(child); }},
     document: {createElement: tag => ({tag, children: [], appendChild(child) { this.children.push(child); }})},
     fetch,

@@ -27,6 +27,7 @@ const toolResultPreviewWrapEl = document.getElementById('toolResultPreviewWrap')
 const toolResultPreviewEl = document.getElementById('toolResultPreview');
 const toolResultOutputEl = document.getElementById('toolResultOutput');
 const maxDraftImageAttachments = 4;
+const maxDraftAttachments = 16;
 const defaultComposerHint = 'Enter to send, Shift+Enter for newline';
 
 let fileUploadPending = false;

@@ -319,7 +319,7 @@ async function addAttachmentFiles(files, source) {
     let failed = 0;
     try {
         for (const file of files) {
-            if (draftAttachments.length >= 16) {
+            if (draftAttachments.length >= maxDraftAttachments) {
                 skipped++;
                 continue;
             }
@@ -367,7 +367,7 @@ async function addAttachmentFiles(files, source) {
                 draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
             } finally { clearTimeout(timeout); }
         }
-        if (skipped > 0) setComposerHint('Attach up to 4 images and 16 files/images in total.', true);
+        if (skipped > 0) setComposerHint('Attach up to ' + maxDraftImageAttachments + ' images and ' + maxDraftAttachments + ' files/images in total.', true);
         else if (failed > 0) setComposerHint('Some images could not be read.', true);
         else resetComposerHint();
     } catch (err) {

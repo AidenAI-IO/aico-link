@@ -329,7 +329,7 @@ function updateEmptyState() {
 function setComposerState(isLoading) {
     sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
     sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
-    const attachmentSlotsFull = draftAttachments.length >= 16;
+    const attachmentSlotsFull = draftAttachments.length >= maxDraftAttachments;
     const fileBtn = document.getElementById('fileBtn');
     if (fileBtn) {
         fileBtn.disabled = fileUploadPending || isLoading || attachmentSlotsFull;
