@@ -61,27 +61,6 @@ func TestScreenshotToolWaitsForFrameServiceBeforeExplicitCapture(t *testing.T) {
 	}
 }
 
-func TestScreenshotToolSkipsStartupWaitForBackgroundCapture(t *testing.T) {
-	jpegData, err := encodeJPEG([]byte{255, 255, 255}, 1, 1, screenshotJPEGQuality)
-	if err != nil {
-		t.Fatalf("encodeJPEG() error = %v", err)
-	}
-	client := &fakeReadyScreenshotFrameClient{
-		fakeScreenshotFrameClient: &fakeScreenshotFrameClient{
-			meta: frameMetadata{Width: 1, Height: 1, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
-			data: jpegData,
-		},
-	}
-
-	tool := &ScreenshotTool{client: client, screen: &screen.ScreenState{}}
-	if _, err := tool.CallWithoutStartupWait(context.Background(), "{}"); err != nil {
-		t.Fatalf("CallWithoutStartupWait() error = %v", err)
-	}
-	if client.readyCalls != 0 || client.calls != 1 {
-		t.Fatalf("ready calls=%d capture calls=%d, want 0 and 1", client.readyCalls, client.calls)
-	}
-}
-
 func TestDetectImageAxisBoundsIgnoresInteriorDarkRun(t *testing.T) {
 	left, right, valid := detectImageAxisBounds(40, func(position int) bool {
 		return position < 2 || position >= 38 || position == 34

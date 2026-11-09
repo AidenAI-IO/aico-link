@@ -29,7 +29,7 @@ Use this skill when the task requires operating a visible connected device UI. T
 
 Always operate through a visual feedback loop:
 
-1. Observe the current screen in an attached screenshot, or use `screenshot` or `wait_for_stable_screen` when no current image is available.
+1. Observe the current screen. A user message does not carry a screenshot, so call `screenshot` (or `wait_for_stable_screen` while the screen may still be changing) unless a tool in this turn already returned a current image.
 2. Compare the observed state with the requested final state. If it is already satisfied, stop and report that no input action was needed.
 3. Otherwise, decide the smallest next UI action that could make progress and act with one input or semantic tool.
 4. Inspect the resulting screen.
@@ -78,6 +78,7 @@ Before using coordinates:
 - For ordinary scrolling, start inside the intended scrollable region near its edge, with a small margin based on the current UI. The end may extend beyond the region while staying inside the screen. Physical screen-edge coordinates are reserved for system gestures: left-edge `back` starts at the left edge (normalized `x=1`, or pixel `x=1` under the pixel protocol), and bottom-edge `home` starts at the bottom edge (normalized `y=999`, or the last pixel row, screenshot height minus 1).
 - Do not guess a coordinate if the target is not visible or the screen is stale.
 - If a tap misses, observe again before adjusting. Do not repeat the exact same coordinate blindly.
+- When targets are small or dense, or a tap missed, call `screenshot` with `{"grounding":true}`. The image then shows numbered boxes around detected interface components, and the tool result lists each element's `id`, `center` and `box` in screenshot pixels. Pick the target by reading the image, then tap its `center`, passed as Coordinate Discipline describes. The detector does not read text, and it can miss a control or box one control several times; when no box fits the target, measure it from the image instead.
 
 ## Text Entry
 

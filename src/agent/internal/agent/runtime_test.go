@@ -790,8 +790,8 @@ func TestRuntimeRunDoesNotStopPointerModeMismatchContentForOtherTool(t *testing.
 	if model.callCount != 2 {
 		t.Fatalf("model call count = %d, want continue to second model call", model.callCount)
 	}
-	if len(tool.inputs) != 2 {
-		t.Fatalf("screenshot calls = %d, want automatic state capture plus explicit tool call", len(tool.inputs))
+	if len(tool.inputs) != 1 {
+		t.Fatalf("screenshot calls = %d, want only the explicit tool call", len(tool.inputs))
 	}
 }
 
@@ -3766,7 +3766,7 @@ func TestRuntimeSimpleLoopDoesNotGenerateImplicitTodo(t *testing.T) {
 	if closed := runEventsOfType(events, "todo_closed"); len(closed) != 0 {
 		t.Fatalf("simple loop emitted implicit todo_closed events: %#v", closed)
 	}
-	if len(screenshot.inputs) != 2 || len(shell.inputs) != 1 {
+	if len(screenshot.inputs) != 1 || len(shell.inputs) != 1 {
 		t.Fatalf("expected simple tools to execute without todo, screenshot=%#v shell=%#v", screenshot.inputs, shell.inputs)
 	}
 }
