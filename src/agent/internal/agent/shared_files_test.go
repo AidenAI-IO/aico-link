@@ -379,11 +379,23 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if err := state.SetPassword("replacement-test-password"); err != nil {
 		t.Fatal(err)
 	}
-	request.Header.Set("Authorization", "Bearer "+session.Token)
-	response = httptest.NewRecorder()
-	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusUnauthorized {
-		t.Fatalf("revoked download session accepted: %d", response.Code)
+	for port, guarded := range map[string]http.Handler{"8080": mainHandler, "8000": handler} {
+		for _, credential := range []string{"cookie", "bearer"} {
+			t.Run(port+"/revoked-"+credential, func(t *testing.T) {
+				r := httptest.NewRequest(http.MethodGet, "/share/report.txt", nil).WithContext(request.Context())
+				r.RemoteAddr = request.RemoteAddr
+				if credential == "cookie" {
+					r.AddCookie(cookies[0])
+				} else {
+					r.Header.Set("Authorization", "Bearer "+session.Token)
+				}
+				w := httptest.NewRecorder()
+				guarded.ServeHTTP(w, r)
+				if w.Code != http.StatusUnauthorized {
+					t.Fatalf("revoked session accepted: %d", w.Code)
+				}
+			})
+		}
 	}
 	server.Close()
 	select {
