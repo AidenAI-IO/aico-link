@@ -470,7 +470,7 @@ The execution policy is based only on whether CI can prepare the environment:
 
 | Trigger | Profile | Purpose |
 | --- | --- | --- |
-| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (18 cases) |
+| Daily schedule | `runnable` | Automatic isolated, MobileGym, and ADB emulator cases (21 cases) |
 | Manual dispatch | `runnable` | Rerun the same automatic cases, or explicitly select one or more suites |
 | Manual dispatch | `hardware` | ADB, VPhone, desktop, and real-phone bridge cases (16 cases) |
 | Manual dispatch | `adb` | Native Android comparisons, built-in app workflows, and Bridge capabilities on the configured emulator |
@@ -478,8 +478,11 @@ The execution policy is based only on whether CI can prepare the environment:
 
 The scheduled sweep runs at 02:07 Asia/Shanghai every day. It selects every
 case whose environment is `isolated`, `mobilegym`, or `adb` and whose catalog
-`runnable` flag is true. This includes both ADB comparison pairs (four cases)
-and the built-in app case on the runner's configured Android emulator. ADB cases remain available through
+`runnable` flag is true. This includes scripted tool-recovery diagnostics,
+the MobileGym phone-control baseline, and five ADB cases: basic operations,
+built-in app workflows, the text-editing pair with and without AidenBridge,
+and connected AidenBridge API capabilities on the runner's configured Android
+emulator. ADB cases remain available through
 the manual `hardware` profile and use the same exclusive device lock in every
 profile. The `all` profile runs each catalog case once, without duplication.
 The workflow starts Android MobileGym environments in Docker; isolated and mock
@@ -499,7 +502,7 @@ selected under the same profile rule, in the order given.
 For a phone-control baseline in MobileGym, manually dispatch with profile
 `runnable`, suite `suites/phone_control_v1.json`, and repeats `1`. CI prepares
 the Android-style MobileGym simulator automatically; no external iOS bridge is
-required. This case is available through manual dispatch only. The iOS-only
+required. This case also runs in the daily `runnable` sweep. The iOS-only
 Bluetooth search task is filtered out, leaving 17
 applicable tasks. Simulator support and setup failures must be reviewed separately
 from Agent capability failures. The same suite with profile `hardware` selects
@@ -653,7 +656,8 @@ the input assertion is unknown; an otherwise passing task becomes an evaluation
 error. Cleanup failures retain the completed task result and are recorded in
 `android_bridge_cleanup_error` and the worker log. Select this suite with the
 `hardware` profile to run only the connected App cases. This dedicated capability
-suite has `runnable: false` and remains excluded from the daily comparison sweep.
+suite also runs in the daily `runnable` sweep, using the same exclusive ADB device
+lock and fixture cleanup as manual runs.
 
 This suite replaces the former separate `android_bridge_data_v1.json` suite.
 It does not claim coverage of iOS-only transports, BLE notification forwarding,
