@@ -22,10 +22,12 @@ The business package installs this directory at `/usr/lib/aico/models/ui-detr`.
 replace the system runtime or the static 2.3.2 runtime linked into the audio
 helpers. `SHA256SUMS` pins the files and is checked during packaging.
 
-Post-processing follows the validated board runner: half-pixel bilinear
-letterbox padded with 114, `score = objectness × class probability`,
-confidence 0, NMS at IoU 0.8 on normalized source coordinates, at most 50
-boxes, highest score first.
+Decoding follows the validated board runner: half-pixel bilinear letterbox
+padded with 114, `score = objectness × class probability`, NMS on normalized
+source coordinates, at most 50 boxes, highest score first. The runner's
+confidence 0 and NMS IoU 0.8 favor recall; the Agent uses confidence 0.3 and
+IoU 0.6 so marked boxes do not duplicate each other. That setting was not
+part of the source evaluation.
 
 Source measurements on an RV1106G3 (steady state, excluding initialization
 and image decoding): median 666 ms and P95 816 ms per screenshot, sampled

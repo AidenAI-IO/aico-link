@@ -65,9 +65,11 @@ func TestScreenshotToolGrounding(t *testing.T) {
 		return result, grounded, image
 	}
 
-	t.Run("marks elements in screenshot pixels", func(t *testing.T) {
+	t.Run("marks control-sized elements in screenshot pixels", func(t *testing.T) {
 		grounder := &fakeUIGrounder{boxes: []uiElementBox{
 			{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9},
+			// Covers most of the screen: a page, not a tap target.
+			{X1: 0, Y1: 0, X2: 60, Y2: 100, Score: 0.8},
 			{X1: 0.4, Y1: 100.2, X2: 8.6, Y2: 119.9, Score: 0.5},
 		}}
 		tool, state := newTool(grounder)

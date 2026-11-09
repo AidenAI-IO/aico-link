@@ -22,9 +22,11 @@ With `grounding: true`, the Agent captures the screenshot as usual, then:
 
 1. Decodes the cropped phone screenshot and sends it as RGB888 to
    `ui_grounding_helper`.
-2. Draws each detected component as a colored box with its number at the inner
-   top-left corner (Set-of-Mark). Tags shrink to fit small boxes; a box too
-   small for any tag gets its tag just above it.
+2. Drops boxes that cover more than half the screen (a page or panel, not a
+   control), then draws each remaining component as a colored box with its
+   number just above the top-left corner (Set-of-Mark), so the tag does not
+   cover the control. At the top edge of the screen the tag goes inside the
+   corner. Tags scale with the screenshot size.
 3. Returns the marked image as the observation, and sets the tool's
    `action_output` to the element list:
 
@@ -34,7 +36,7 @@ With `grounding: true`, the Agent captures the screenshot as usual, then:
 
 Coordinates are pixels of the returned screenshot, the space `touch_gesture`
 takes under the visual coordinate protocol. Elements are ordered by detector
-score, at most 50. The marked image also becomes the latest screenshot for the
+score, at most 50, usually fewer. The marked image also becomes the latest screenshot for the
 shell export (`$AICO_SCREENSHOT_JPEG`/`PPM`) and for coordinate checks.
 
 If detection fails, the plain screenshot is returned with `grounding_error` in
@@ -51,10 +53,14 @@ box one control several times, so the model still chooses the target by reading
 the image. The model, anchors, and provenance are in
 [`assets/business/models/ui-detr/`](../../assets/business/models/ui-detr/README.md).
 
-Post-processing matches the validated board runner: half-pixel bilinear
-letterbox padded with 114, score equal to objectness times class probability,
-no confidence threshold, NMS at IoU 0.8 on normalized source coordinates, and at
-most 50 boxes.
+Preprocessing and decoding match the validated board runner: half-pixel
+bilinear letterbox padded with 114, score equal to objectness times class
+probability, NMS on normalized source coordinates, at most 50 boxes. The runner
+was tuned for recall (confidence 0, NMS IoU 0.8), which leaves several
+near-identical boxes on one control. The Agent passes `--confidence 0.3
+--nms-iou 0.6` instead, so each mark is distinct, accepting that some controls
+go unmarked. On the UI-DETR example screenshot this keeps 32 of the runner's
+50 boxes.
 
 ## Helper process
 
@@ -73,7 +79,7 @@ Protocol (stdin binary, little-endian; stdout text lines):
 
 | Request | Response |
 | --- | --- |
-| startup | `READY <model_width> <model_height>` |
+| startup (`--confidence C --nms-iou T`, both 0 to 1, default 0 and 0.8) | `READY <model_width> <model_height>` |
 | `'D'` u32 width, u32 height, RGB888 bytes | `OK <n> <inference_ms>`, then `n` lines `<x1> <y1> <x2> <y2> <score>` in source pixels |
 | `'Q'` | exit |
 | any failure | `ERR <message>` |

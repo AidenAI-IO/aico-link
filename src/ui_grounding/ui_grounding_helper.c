@@ -4,10 +4,13 @@
  * NPU. Pre- and post-processing follow the validated board runner
  * (UI-DETR-1 tools/benchmark_rv1106_grounding.c, nms50 mode): bilinear
  * letterbox with 114 padding, sigmoid heads, score = objectness x class,
- * confidence 0, NMS IoU 0.8 on normalized original coordinates, at most 50 boxes.
+ * NMS on normalized original coordinates, at most 50 boxes. The runner's
+ * confidence 0 and NMS IoU 0.8 are the defaults; callers that show the boxes
+ * pass a stricter --confidence and --nms-iou to drop duplicates.
  *
  *   ui_grounding_helper --runtime librknnmrt.so --model model.rknn
- *                       --anchors RK_anchors.txt [--self-test]
+ *                       --anchors RK_anchors.txt [--confidence C]
+ *                       [--nms-iou T] [--self-test]
  *
  * The model was compiled with RKNN Toolkit2 2.5.0, so the matching private
  * Mini Runtime is loaded by path; the static 2.3.2 runtime used by the audio
@@ -33,7 +36,6 @@
 #include "rknn_api.h"
 
 #define MAX_KEPT 50
-#define NMS_IOU 0.8f
 #define MAX_SIDE 8192
 
 typedef struct {
@@ -66,6 +68,8 @@ static Detection *candidates;
 static int candidate_count;
 static Detection kept[MAX_KEPT];
 static int kept_count;
+static float min_confidence = 0.0f;
+static float nms_iou = 0.8f;
 
 static double now_ms(void) {
     struct timespec ts;
@@ -329,6 +333,7 @@ static void postprocess(Letterbox b, int sw, int sh) {
                 for (int k = 0; k < 3; k++) {
                     int off = k * 6;
                     float score = head_value(a, buf, off + 4, y, x, h, w, ch) * head_value(a, buf, off + 5, y, x, h, w, ch);
+                    if (score < min_confidence) continue;
                     float cx = (head_value(a, buf, off, y, x, h, w, ch) * 2 - 0.5f + x) * stride;
                     float cy = (head_value(a, buf, off + 1, y, x, h, w, ch) * 2 - 0.5f + y) * stride;
                     float bw = head_value(a, buf, off + 2, y, x, h, w, ch) * 2;
@@ -344,7 +349,7 @@ static void postprocess(Letterbox b, int sw, int sh) {
     qsort(candidates, candidate_count, sizeof *candidates, by_score);
     for (int i = 0; i < candidate_count && kept_count < MAX_KEPT; i++) {
         int suppressed = 0;
-        for (int j = 0; j < kept_count && !suppressed; j++) suppressed = iou(&kept[j], &candidates[i]) > NMS_IOU;
+        for (int j = 0; j < kept_count && !suppressed; j++) suppressed = iou(&kept[j], &candidates[i]) > nms_iou;
         if (!suppressed) kept[kept_count++] = candidates[i];
     }
     for (int i = 0; i < kept_count; i++) {
@@ -374,17 +379,30 @@ static void print_detections(double infer_ms) {
 
 static int read_exact(void *dst, size_t n) { return fread(dst, 1, n, stdin) == n; }
 
+/* Parses a decimal in [0,1]; returns -1 on anything else. */
+static int unit_interval(const char *text, float *out) {
+    char *end = NULL;
+    float value = strtof(text, &end);
+    if (end == text || *end || !isfinite(value) || value < 0 || value > 1) return -1;
+    *out = value;
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const char *runtime = NULL, *model = NULL, *anchor_path = NULL;
-    int self_test = 0;
+    int self_test = 0, bad_args = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--runtime") && i + 1 < argc) runtime = argv[++i];
         else if (!strcmp(argv[i], "--model") && i + 1 < argc) model = argv[++i];
         else if (!strcmp(argv[i], "--anchors") && i + 1 < argc) anchor_path = argv[++i];
         else if (!strcmp(argv[i], "--self-test")) self_test = 1;
+        else if (!strcmp(argv[i], "--confidence") && i + 1 < argc) bad_args |= unit_interval(argv[++i], &min_confidence);
+        else if (!strcmp(argv[i], "--nms-iou") && i + 1 < argc) bad_args |= unit_interval(argv[++i], &nms_iou);
+        else bad_args = 1;
     }
-    if (!runtime || !model || !anchor_path) {
-        printf("ERR usage: ui_grounding_helper --runtime LIB --model MODEL --anchors FILE [--self-test]\n");
+    if (bad_args || !runtime || !model || !anchor_path) {
+        printf("ERR usage: ui_grounding_helper --runtime LIB --model MODEL --anchors FILE "
+               "[--confidence 0..1] [--nms-iou 0..1] [--self-test]\n");
         return 2;
     }
     char err[256];

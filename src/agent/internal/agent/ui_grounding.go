@@ -28,6 +28,12 @@ const (
 	// this long without a request and starts again on the next one.
 	uiGroundingIdleTimeout = 2 * time.Minute
 	uiGroundingMaxElements = 50
+	// The detector's validated defaults (confidence 0, NMS IoU 0.8) favor
+	// recall and leave several near-identical boxes on one control. Marks the
+	// model reads must be distinct, so drop low scores and merge boxes that
+	// overlap by more than 60%, accepting that a few controls go unmarked.
+	uiGroundingConfidence = "0.3"
+	uiGroundingNMSIoU     = "0.6"
 )
 
 // uiElementBox is one detected interface component in source image pixels.
@@ -175,7 +181,8 @@ func (g *helperUIGrounder) ensureStartedLocked() error {
 	if g.cmd != nil {
 		return nil
 	}
-	cmd := exec.Command(g.helperPath, "--runtime", g.runtimePath, "--model", g.modelPath, "--anchors", g.anchorsPath)
+	cmd := exec.Command(g.helperPath, "--runtime", g.runtimePath, "--model", g.modelPath, "--anchors", g.anchorsPath,
+		"--confidence", uiGroundingConfidence, "--nms-iou", uiGroundingNMSIoU)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("open grounding helper stdin: %w", err)

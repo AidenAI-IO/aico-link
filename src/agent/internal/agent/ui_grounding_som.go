@@ -56,6 +56,7 @@ func groundScreenshot(ctx context.Context, grounder uiGrounder, jpegData []byte)
 	if err != nil {
 		return nil, nil, err
 	}
+	boxes = dropScreenSizedBoxes(boxes, width, height)
 
 	elements := make([]uiGroundingElement, len(boxes))
 	rects := make([]image.Rectangle, len(boxes))
@@ -86,6 +87,22 @@ func groundScreenshot(ctx context.Context, grounder uiGrounder, jpegData []byte)
 	return out.Bytes(), elements, nil
 }
 
+// somMaxAreaRatio drops boxes covering more than this share of the screen.
+// Such boxes enclose a whole page or panel rather than a control, so they are
+// not tap targets, and their tags sit on top of the controls inside them.
+const somMaxAreaRatio = 0.5
+
+func dropScreenSizedBoxes(boxes []uiElementBox, width, height int) []uiElementBox {
+	limit := somMaxAreaRatio * float64(width) * float64(height)
+	kept := boxes[:0:0]
+	for _, box := range boxes {
+		if (box.X2-box.X1)*(box.Y2-box.Y1) <= limit {
+			kept = append(kept, box)
+		}
+	}
+	return kept
+}
+
 func drawSoMOutline(img *image.RGBA, rect image.Rectangle, c color.RGBA) {
 	const thickness = 2
 	if rect.Empty() {
@@ -113,26 +130,22 @@ var somDigits = [10][5]uint8{
 	{7, 4, 7, 1, 7}, {7, 4, 7, 5, 7}, {7, 1, 1, 1, 1}, {7, 5, 7, 5, 7}, {7, 5, 7, 1, 7},
 }
 
-// drawSoMTag draws the element number at the box's inner top-left corner,
-// shrinking it to fit small boxes and moving it above a box too small to
-// hold even the smallest tag.
+// drawSoMTag draws the element number just above the box's top-left corner,
+// outside the box, so it does not cover the control's own text or icon.
+// At the top edge of the screen, where there is no room above, it goes
+// inside the corner instead.
 func drawSoMTag(img *image.RGBA, rect image.Rectangle, label string, c color.RGBA) {
 	if rect.Empty() {
 		return
 	}
 	const padding = 1
-	scale := 3
-	tagSize := func(scale int) (int, int) {
-		return len(label)*4*scale - scale + 2*padding, 5*scale + 2*padding
-	}
-	w, h := tagSize(scale)
-	for scale > 1 && (w > rect.Dx()-4 || h > rect.Dy()-4) {
-		scale--
-		w, h = tagSize(scale)
-	}
-	origin := rect.Min.Add(image.Pt(2, 2))
-	if w > rect.Dx()-4 || h > rect.Dy()-4 {
-		origin = image.Pt(rect.Min.X, rect.Min.Y-h)
+	// About 1.5% of the shorter side per digit height: 10 px on a 497 px
+	// wide phone, 15 px or more on a full-resolution one.
+	scale := max(2, min(img.Bounds().Dx(), img.Bounds().Dy())/330)
+	w, h := len(label)*4*scale-scale+2*padding, 5*scale+2*padding
+	origin := image.Pt(rect.Min.X, rect.Min.Y-h)
+	if origin.Y < img.Bounds().Min.Y {
+		origin = rect.Min
 	}
 	bounds := img.Bounds()
 	origin.X = min(max(origin.X, bounds.Min.X), bounds.Max.X-w)
