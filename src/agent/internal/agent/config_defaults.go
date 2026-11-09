@@ -164,6 +164,7 @@ func DefaultConfig() Config {
 			InputAudioFormat:  "pcm",
 			OutputAudioFormat: "pcm",
 			TurnDetection:     defaultVoiceModelTurnDetection,
+			UseBackendAgent:   true,
 		},
 		AudioArchive: AudioArchiveConfig{
 			Enabled:     true,
