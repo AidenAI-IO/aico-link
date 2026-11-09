@@ -63,7 +63,7 @@ def test_card_lists_each_datasets_weekly_rate_in_the_given_order():
     assert "**pass@1 by dataset**" not in text
 
 
-def test_changes_from_the_previous_week_are_colored_by_direction():
+def test_changes_are_colored_by_direction_and_zero_is_grey():
     data = _data()
     data["weekly"]["change"] = -0.05
     data["weekly"]["suites"] = [_suite("up", 0.9, 9, 10, change=0.1), _suite("down", 0.4, 4, 10, change=-0.2),
@@ -98,7 +98,7 @@ def test_dataset_rows_only_show_rate_and_change_even_when_settings_differ():
 
 def test_card_labels_window_comparisons_without_configuration_changes():
     text = _text(_build_card(_data(), "https://example.com/d.html"))
-    assert "Changes describe each window's task mix, not matched runs." in text
+    assert "Changes compare datasets measured in both weeks; they are descriptive" in text
 
 
 def test_configuration_note_links_to_weekly_summary_and_preserves_dashboard():

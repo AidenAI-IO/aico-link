@@ -220,13 +220,53 @@
     },
     {
       "id": "notification_explicit_update",
+      "memory_assertions": {
+        "query": {
+          "tags": [
+            "com.delivery.update"
+          ],
+          "limit": 20
+        },
+        "expected": [
+          {
+            "id": "tmp_update_delivery",
+            "memory_scope": "temporary",
+            "revision": 2,
+            "source_refs_contain": [
+              {
+                "type": "notification",
+                "id": "fixture-update-old",
+                "event_ids_contains": [
+                  "old-event"
+                ]
+              },
+              {
+                "type": "notification",
+                "event_ids_contains": [
+                  "update-delivery-event-1"
+                ]
+              }
+            ],
+            "evidence_refs_contain": [
+              {
+                "type": "notification",
+                "id": "fixture-update-evidence",
+                "event_ids_contains": [
+                  "old-evidence-event"
+                ]
+              }
+            ]
+          }
+        ],
+        "expected_count": 1
+      },
       "category": "memory",
       "description_for_judge": "A changed notification must update the related temporary memory selected from the memory catalog, preserving one record and advancing its revision.",
       "prompt": "Check the delivery update memory and tell me the current delivery conclusion. Use recall_memory with com.delivery.update. Do not call bridge_notification.",
       "rubric": [
         {
           "id": "uses_updated_memory",
-          "check": "The final answer says the package arrives tomorrow and does not repeat the obsolete today conclusion."
+          "check": "Both the post-task memory_state and final answer say the package arrives the day after the update notification (tomorrow relative to it, or 2026-08-23). Accept equivalent wording in any language; the current conclusion must not remain today."
         },
         {
           "id": "keeps_one_memory",
@@ -287,7 +327,7 @@
           "evaluate": true,
           "query": {"tags": ["com.delivery.update"], "limit": 20},
           "expected": [
-            {"id": "tmp_update_delivery", "memory_scope": "temporary", "revision": 2, "content_contains": "tomorrow", "source_refs_contain": [{"type": "notification", "id": "fixture-update-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["update-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-update-evidence", "event_ids_contains": ["old-evidence-event"]}]}
+            {"id": "tmp_update_delivery", "memory_scope": "temporary", "revision": 2, "source_refs_contain": [{"type": "notification", "id": "fixture-update-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["update-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-update-evidence", "event_ids_contains": ["old-evidence-event"]}]}
           ],
           "expected_count": 1
         }
@@ -483,13 +523,54 @@
     },
     {
       "id": "notification_explicit_promote",
+      "memory_assertions": {
+        "query": {
+          "tags": [
+            "com.delivery.promote"
+          ],
+          "limit": 20
+        },
+        "expected": [
+          {
+            "memory_scope": "long_term",
+            "source_refs_contain": [
+              {
+                "type": "notification",
+                "id": "fixture-promote-old",
+                "event_ids_contains": [
+                  "old-event"
+                ]
+              },
+              {
+                "type": "notification",
+                "event_ids_contains": [
+                  "promote-delivery-event-1"
+                ]
+              }
+            ],
+            "evidence_refs_contain": [
+              {
+                "type": "notification",
+                "id": "fixture-promote-evidence",
+                "event_ids_contains": [
+                  "old-evidence-event"
+                ]
+              }
+            ]
+          }
+        ],
+        "absent_ids": [
+          "tmp_promote_delivery"
+        ],
+        "expected_count": 1
+      },
       "category": "memory",
       "description_for_judge": "A stable notification conclusion must be promoted from temporary to long-term memory, leaving the temporary source inactive.",
       "prompt": "Check the delivery rule memory. Use recall_memory with com.delivery.promote and tell me where future packages should be delivered. Do not call bridge_notification.",
       "rubric": [
         {
           "id": "recalls_long_term_rule",
-          "check": "The final answer says future packages should be delivered to the office."
+          "check": "Both the post-task memory_state and final answer say future packages should be delivered to the office. Accept equivalent wording in any language; retaining only a temporary shipment status is insufficient."
         },
         {
           "id": "uses_promoted_scope",
@@ -550,7 +631,7 @@
           "evaluate": true,
           "query": {"tags": ["com.delivery.promote"], "limit": 20},
           "expected": [
-            {"memory_scope": "long_term", "content_contains": "delivered to the office", "source_refs_contain": [{"type": "notification", "id": "fixture-promote-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["promote-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-promote-evidence", "event_ids_contains": ["old-evidence-event"]}]}
+            {"memory_scope": "long_term", "source_refs_contain": [{"type": "notification", "id": "fixture-promote-old", "event_ids_contains": ["old-event"]}, {"type": "notification", "event_ids_contains": ["promote-delivery-event-1"]}], "evidence_refs_contain": [{"type": "notification", "id": "fixture-promote-evidence", "event_ids_contains": ["old-evidence-event"]}]}
           ],
           "absent_ids": ["tmp_promote_delivery"],
           "expected_count": 1
