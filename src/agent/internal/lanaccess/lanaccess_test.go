@@ -16,7 +16,7 @@ import (
 func newState(t *testing.T) *State {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "system")
-	return NewState(filepath.Join(root, "lan-access-enabled"), filepath.Join(root, "device-password"))
+	return NewState(filepath.Join(root, "lan-access-enabled"), filepath.Join(root, "device-password"), filepath.Join(root, "lan-session-secret"))
 }
 
 func newRequest(remote, local string, trusted bool) *http.Request {
@@ -74,8 +74,17 @@ func TestGuardRefusesLANUntilEnabled(t *testing.T) {
 	if err := state.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(h, lan()); code != http.StatusNoContent {
-		t.Fatalf("LAN request while on: %d", code)
+	if code := serve(h, lan()); code != http.StatusUnauthorized {
+		t.Fatalf("LAN request without a session while on: %d", code)
+	}
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withToken := lan()
+	withToken.Header.Set("Authorization", "Bearer "+token)
+	if code := serve(h, withToken); code != http.StatusNoContent {
+		t.Fatalf("LAN request with a session while on: %d", code)
 	}
 	if err := state.SetEnabled(false); err != nil {
 		t.Fatal(err)

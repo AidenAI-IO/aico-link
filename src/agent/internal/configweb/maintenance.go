@@ -18,6 +18,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
+
+	"aico-agent/internal/lanaccess"
 )
 
 // maintenanceController is deliberately separate from the HTTP job store. A
@@ -231,8 +233,8 @@ func randomToken() (string, error) {
 func hashToken(value string) [sha256.Size]byte { return sha256.Sum256([]byte(value)) }
 
 func (s *maintenanceSessionStore) create(r *http.Request) (token, csrf string, expires time.Time, err error) {
-	if !isUSBRequest(r, s.address, s.network) {
-		return "", "", time.Time{}, &backupAPIError{Code: "usb_required", Status: http.StatusForbidden, Message: "connect through the USB ECM link"}
+	if !isMaintenanceClient(r, s.address, s.network) {
+		return "", "", time.Time{}, &backupAPIError{Code: "usb_required", Status: http.StatusForbidden, Message: "connect through the USB ECM link or sign in on the LAN"}
 	}
 	if !sameOrigin(r) {
 		return "", "", time.Time{}, &backupAPIError{Code: "cross_origin_rejected", Status: http.StatusForbidden, Message: "cross-origin maintenance request rejected"}
@@ -266,13 +268,13 @@ func (s *maintenanceSessionStore) create(r *http.Request) (token, csrf string, e
 }
 
 // authorizeStatus admits read-only status requests that carry no secrets:
-// the caller only has to arrive over the USB link from the same origin.
+// the caller only has to be a maintenance client from the same origin.
 func (s *maintenanceSessionStore) authorizeStatus(r *http.Request) bool {
-	return s != nil && isUSBRequest(r, s.address, s.network) && sameOrigin(r)
+	return s != nil && isMaintenanceClient(r, s.address, s.network) && sameOrigin(r)
 }
 
 func (s *maintenanceSessionStore) authorize(r *http.Request, mutate bool) bool {
-	if s == nil || !isUSBRequest(r, s.address, s.network) || !sameOrigin(r) {
+	if s == nil || !isMaintenanceClient(r, s.address, s.network) || !sameOrigin(r) {
 		return false
 	}
 	if mutate {
@@ -324,7 +326,7 @@ func (s *maintenanceSessionStore) authorizeJob(r *http.Request, jobID, operation
 	if s.authorize(r, mutate) {
 		return true
 	}
-	if !isUSBRequest(r, s.address, s.network) || !sameOrigin(r) {
+	if !isMaintenanceClient(r, s.address, s.network) || !sameOrigin(r) {
 		return false
 	}
 	value := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
@@ -345,6 +347,14 @@ func (s *maintenanceSessionStore) revokeJobToken(jobID string) {
 	s.mu.Lock()
 	delete(s.jobTokens, jobID)
 	s.mu.Unlock()
+}
+
+// isMaintenanceClient reports whether r may use backup and restore: a USB
+// client, or a LAN client the LAN guard admitted with a device-password
+// session. Anything else, including any LAN request on a board without the
+// guard, stays refused.
+func isMaintenanceClient(r *http.Request, address net.IP, network *net.IPNet) bool {
+	return isUSBRequest(r, address, network) || (r != nil && lanaccess.IsAuthenticated(r))
 }
 
 func isUSBRequest(r *http.Request, address net.IP, network *net.IPNet) bool {

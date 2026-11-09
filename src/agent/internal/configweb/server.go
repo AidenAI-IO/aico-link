@@ -116,7 +116,7 @@ func NewServer(options Options) (*Server, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("stat Agent config: %w", err)
 	}
-	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath)
+	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath, options.SessionSecretPath)
 	if options.USBTerminalPort > 0 {
 		terminal, err := newUSBTerminalServer(options)
 		if err != nil {
