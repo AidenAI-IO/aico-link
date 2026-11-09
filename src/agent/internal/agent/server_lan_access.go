@@ -26,10 +26,14 @@ func (s *Server) EnableLANGuard(state *lanaccess.State, usb USBIngress) {
 // IPv6 cannot be used to reach the Agent around the USB socket, and it sets
 // SO_REUSEPORT so the interface-bound USB socket can share the port.
 func (s *Server) listenMain() (net.Listener, error) {
+	return s.listenShare(s.addr)
+}
+
+func (s *Server) listenShare(addr string) (net.Listener, error) {
 	if s.lanAccess == nil || s.usbIngress.Interface == "" {
-		return net.Listen("tcp", s.addr)
+		return net.Listen("tcp", addr)
 	}
-	return lanaccess.ListenOnDevice("tcp4", s.addr, "")
+	return lanaccess.ListenOnDevice("tcp4", addr, "")
 }
 
 // startUSBListener serves srv on a socket bound to the USB interface. Only
@@ -39,14 +43,14 @@ func (s *Server) startUSBListener(srv *http.Server) {
 	if s.lanAccess == nil || s.usbIngress.Interface == "" || s.usbIngress.Address == "" {
 		return
 	}
-	_, port, err := net.SplitHostPort(s.addr)
+	_, port, err := net.SplitHostPort(srv.Addr)
 	if err != nil {
 		return
 	}
 	address := net.JoinHostPort(s.usbIngress.Address, port)
 	stop := make(chan struct{})
 	s.httpMu.Lock()
-	s.usbListenStop = stop
+	s.usbListenStops = append(s.usbListenStops, stop)
 	s.httpMu.Unlock()
 	go func() {
 		listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
@@ -65,7 +69,7 @@ func (s *Server) startUSBListener(srv *http.Server) {
 			_ = listener.Close()
 			return
 		}
-		s.usbListener = listener
+		s.usbListeners = append(s.usbListeners, listener)
 		s.httpMu.Unlock()
 		if s.logger != nil {
 			s.logger.Info("USB listener ready on %s (%s)", address, s.usbIngress.Interface)
