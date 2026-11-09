@@ -8,6 +8,7 @@
 #include <cstring>
 #include <dlfcn.h>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #if defined(__ARM_NEON)
@@ -47,6 +48,9 @@ struct Runtime {
     decltype(&rknn_run) run = nullptr;
     decltype(&rknn_destroy) destroy = nullptr;
 
+    // Runtime opens the RKNN runtime at path, resolves every rknn_ entry point,
+    // and pins the library in the process. It throws if the library cannot be
+    // opened, lacks a symbol, or cannot be pinned; a rejected library is closed.
     explicit Runtime(const std::string& path) {
         library = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
         if (!library) throw std::runtime_error(dlerror());
@@ -57,10 +61,44 @@ struct Runtime {
             LOAD(set_io_mem); LOAD(run); LOAD(destroy);
 #undef LOAD
         } catch (...) { dlclose(library); library = nullptr; throw; }
+        // Pin only a runtime whose symbols all resolved, so a rejected library
+        // is still unloaded above. RTLD_NODELETE keeps it mapped after any
+        // owner closes it: the RV1106 VQE library (libaec_bf_process.so)
+        // dlopens "librknnmrt.so" by soname on every recording session, binds
+        // to this already-loaded copy, and dlcloses it when the session stops.
+        // Without NODELETE that close unmaps the runtime on the second session
+        // and audio_service crashes with SIGSEGV.
+        void* pinned = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL | RTLD_NOLOAD | RTLD_NODELETE);
+        if (!pinned) {
+            const char* reason = dlerror();
+            dlclose(library);
+            library = nullptr;
+            throw std::runtime_error(std::string("pin RKNN runtime ") + path + ": " +
+                                     (reason ? reason : "unknown error"));
+        }
+        // dlopen returns the same handle; drop the extra reference. The
+        // library stays mapped because the handle is now NODELETE.
+        dlclose(pinned);
     }
-    ~Runtime() { if (library) dlclose(library); }
+    // The library is loaded once per process (see shared()) and stays
+    // resident: the 2.5.0 runtime does not survive being unloaded and loaded
+    // again, so neither this owner nor the VQE library may unmap it.
+    ~Runtime() = default;
     Runtime(const Runtime&) = delete;
     Runtime& operator=(const Runtime&) = delete;
+
+    // shared returns the process-wide runtime for path, loading it on first
+    // use. A failed load is not cached, so a later session can retry.
+    static Runtime& shared(const std::string& path) {
+        static std::mutex mutex;
+        static std::map<std::string, Runtime*>* loaded = new std::map<std::string, Runtime*>();
+        std::lock_guard<std::mutex> lock(mutex);
+        auto found = loaded->find(path);
+        if (found != loaded->end()) return *found->second;
+        Runtime* runtime = new Runtime(path);  // intentionally never freed
+        loaded->emplace(path, runtime);
+        return *runtime;
+    }
 };
 
 struct Model {
@@ -313,7 +351,7 @@ static void cpu_stage2(const float* weights, const float* block, float* state,
 class DtlnDenoiser : public DenoiseHop {
 public:
     explicit DtlnDenoiser(const std::string& directory)
-        : runtime_(directory + "/librknnmrt.so"),
+        : runtime_(Runtime::shared(directory + "/librknnmrt.so")),
           g0_(runtime_), g1_(runtime_), g2_(runtime_), g3_(runtime_) {
         const auto data = read_file(directory + "/weights.f32", DTLN_WEIGHT_COUNT * sizeof(float));
         if (data.size() != DTLN_WEIGHT_COUNT * sizeof(float))
@@ -356,7 +394,7 @@ public:
     }
 
 private:
-    Runtime runtime_;
+    Runtime& runtime_;
     Model g0_, g1_, g2_, g3_;
     std::vector<float> weights_;
     float inbuf_[BLOCK] = {}, outbuf_[BLOCK] = {}, s1_[512] = {}, s2_[512] = {};

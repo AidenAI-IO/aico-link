@@ -225,7 +225,7 @@ _CONFIG_ORDER = (
     "agent_model", "foreground_model", "execution_mode", "judge_model", "judge_prompt_version",
     "judge_provider", "suite_sha256",
     "workload_sha256", "metrics_schema_version", "metrics_k", "target_platform",
-    "active_skills", "git_branch", "execution_environment",
+    "skills_fingerprint", "git_branch", "execution_environment",
 )
 assert sorted(_CONFIG_ORDER) == sorted(COMPARISON_FIELDS)
 

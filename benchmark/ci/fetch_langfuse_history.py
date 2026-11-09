@@ -35,7 +35,7 @@ REPORT_SCORE_NAMES = tuple(dict.fromkeys((
 COMPARISON_FIELDS = (
     "git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
     "metrics_k", "agent_model", "judge_provider", "judge_model", "execution_environment",
-    "judge_prompt_version", "target_platform", "active_skills", "execution_mode", "foreground_model",
+    "judge_prompt_version", "target_platform", "skills_fingerprint", "execution_mode", "foreground_model",
 )
 
 
@@ -54,6 +54,10 @@ def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
     required = ("git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
                 "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
+        return None
+    # Only a content digest establishes identity, not missing metadata or source labels.
+    fingerprint = record.get("skills_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
 

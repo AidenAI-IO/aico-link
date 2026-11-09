@@ -29,7 +29,7 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
-When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release; use a trusted LAN/USB link or turn the switch off. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port (also unauthenticated in this release).
+When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. On the board, LAN clients are refused until LAN access is turned on over USB (see [LAN Access](../03-services/device-management-api.md#lan-access)); once it is on, they must send `Authorization: Bearer <token>` with a token from `POST /api/auth/login` (see [LAN Sign-In](../03-services/device-management-api.md#lan-sign-in)). USB clients, the board itself, and Docker or host runs without `-lan-guard` need no token. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port under the same rules.
 
 ## Allowlist
 
@@ -72,7 +72,7 @@ If the client sends an `Origin` header (browser requests), it must:
 1. Use a non-rebindable hostname: an IP literal or `localhost`
 2. Match the request `Host` (scheme-insensitive `host:port`)
 
-This blocks ordinary cross-origin browser calls and rejects rebound attacker names even when `Origin` and `Host` agree. It is not a full Host allowlist; point browsers at the board by IP (or `localhost` over USB/loopback). There is still no authentication on `/mcp` in this release.
+This blocks ordinary cross-origin browser calls and rejects rebound attacker names even when `Origin` and `Host` agree. It is not a full Host allowlist; point browsers at the board by IP (or `localhost` over USB/loopback). The `Origin` check is not authentication: on the board, LAN clients still need the device-password session token while LAN access is on (see above), and USB clients, the board itself, and runs without `-lan-guard` need none.
 
 ## Related
 

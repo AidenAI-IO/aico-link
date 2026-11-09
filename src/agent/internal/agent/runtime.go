@@ -2952,6 +2952,7 @@ func (r *Runtime) Close() error {
 	if r.routines != nil {
 		r.routines.Close()
 	}
+	defer removeShellScreenshotExports()
 	r.StopConfigReloads()
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()

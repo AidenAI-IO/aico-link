@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/netproxy"
 	"aico-agent/internal/wifiproxy"
 )
@@ -60,6 +61,18 @@ type Options struct {
 	BluetoothStateMountPoint  string
 	BluetoothStateScript      string
 	OTAConfigPath             string
+
+	// LAN access: LANGuard refuses non-USB requests while the switch is off.
+	// The switch and device password are shared with the Agent; LANAccessSync
+	// applies them to SSH and the aico login; USBTerminalPort fronts the
+	// loopback-bound ttyd on the USB link only (0 disables it).
+	LANGuard           bool
+	LANAccessPath      string
+	DevicePasswordPath string
+	SessionSecretPath  string
+	LANAccessSync      string
+	USBTerminalPort    int
+	TerminalTarget     string
 
 	AgentBinary            string
 	AgentInitScript        string
@@ -118,6 +131,11 @@ func DefaultOptions() Options {
 		BluetoothStateScript:      envOrDefault("AICO_BLUETOOTH_STATE_SCRIPT", "/usr/lib/aico/aico-bluetooth-state"),
 		OTAConfigPath:             envOrDefault("AICO_OTA_CONFIG", "/userdata/debian/ota/config.json"),
 		AgentBinary:               agentBinary,
+		LANAccessPath:             lanaccess.DefaultEnabledPath,
+		DevicePasswordPath:        lanaccess.DefaultPasswordPath,
+		SessionSecretPath:         lanaccess.DefaultSecretPath,
+		LANAccessSync:             envOrDefault("AICO_LAN_ACCESS_SYNC", "/usr/lib/aico/aico-lan-access-sync"),
+		TerminalTarget:            "http://127.0.0.1:3000",
 		AgentInitScript:           envOrDefault("AICO_AGENT_INIT_SCRIPT", "/usr/lib/aico/aico-agent-control"),
 		FrameServiceInitScript:    envOrDefault("AICO_FRAME_SERVICE_INIT_SCRIPT", "/usr/lib/aico/aico-frame-control"),
 		WiFiProxyInitScript:       envOrDefault("AICO_WIFI_PROXY_INIT_SCRIPT", "/usr/lib/aico/aico-wifi-proxy-control"),

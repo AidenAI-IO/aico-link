@@ -299,9 +299,8 @@ class AgentClient:
         message: str,
         timeout_sec: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
-        skills: list[str] | None = None,
     ) -> ChatResponse:
-        submitted = self.submit_chat(message, timeout_sec, attachments, skills)
+        submitted = self.submit_chat(message, timeout_sec, attachments)
         if isinstance(submitted, ChatResponse):
             return submitted
         return self.wait_chat(submitted, timeout_sec)
@@ -311,15 +310,12 @@ class AgentClient:
         message: str,
         timeout_sec: int | None = None,
         attachments: list[dict[str, Any]] | None = None,
-        skills: list[str] | None = None,
     ) -> str | ChatResponse:
         """Submit without waiting for completion; legacy synchronous servers still work."""
         request_id = f"benchmark-{uuid.uuid4().hex}"
         payload: dict[str, Any] = {"message": message, "request_id": request_id}
         if attachments:
             payload["attachments"] = attachments
-        if skills:
-            payload["skills"] = skills
         try:
             status, body_bytes = self._post(
                 "/api/chat", payload, timeout=timeout_sec or self._default_timeout

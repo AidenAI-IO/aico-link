@@ -145,7 +145,6 @@ def evaluate_task_history(
     post_screenshot: Path | None = None,
     started_at: str | None = None,
     started_mono: float | None = None,
-    active_skills: list[str] | None = None,
     episode: dict[str, Any] | None = None,
     memory_state: list[dict[str, Any]] | None = None,
     memory_state_error: str = "",
@@ -194,14 +193,10 @@ def evaluate_task_history(
         wall_ms = None
     else:
         wall_ms = int((time.monotonic() - started_mono) * 1000)
-    active_skills = _normalise_active_skills(active_skills)
-    if active_skills:
-        base.metrics["active_skills"] = active_skills
     if suite.trace_observations:
         observation_results = evaluate_trace_observations(
             trace,
             suite.trace_observations,
-            active_skills=active_skills,
         )
         base.metrics["trace_observations"] = [
             {
@@ -464,7 +459,6 @@ def run_one_task(
     run_id: str,
     environment_url: str | None = None,
     benchmark_task_id: str | None = None,
-    active_skills: list[str] | None = None,
     after_setup: Callable[[], None] | None = None,
     execution_mode: str = "backend-text",
     fixture_token: str = "",
@@ -472,8 +466,8 @@ def run_one_task(
     if task.scenario is not None:
         if execution_mode != "realtime-text":
             raise ValueError("scenario tasks require realtime-text")
-        if active_skills or after_setup:
-            raise ValueError("scenario tasks do not support skill injection or device setup callbacks")
+        if after_setup:
+            raise ValueError("scenario tasks do not support device setup callbacks")
         from runner.scenario import execute_scenario
         return execute_scenario(client, suite, task, attempt, artifact_dir, run_id,
                                 environment_url or "", judge_cfg, benchmark_task_id, fixture_token)
@@ -490,7 +484,6 @@ def run_one_task(
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics=_attempt_metric_defaults(),
     )
-    active_skills = _normalise_active_skills(active_skills)
     setup_result: dict[str, Any] | None = None
     try:
         setup_started_mono = time.monotonic()
@@ -686,8 +679,6 @@ def run_one_task(
             "timeout_sec": task.hard_assertions.must_complete_within_sec,
             "attachments": attachments,
         }
-        if active_skills:
-            chat_kwargs["skills"] = active_skills
         chat = client.chat(prompt, **chat_kwargs)
         base.metrics["task_wall_ms"] = int((time.monotonic() - task_started_mono) * 1000)
         history = chat.history
@@ -777,7 +768,6 @@ def run_one_task(
         post_screenshot=post_path if post_path and post_path.exists() else None,
         started_at=started,
         started_mono=None,
-        active_skills=active_skills,
         episode=episode,
         memory_state=memory_state,
         memory_state_error=memory_state_error,
@@ -872,15 +862,3 @@ def _request_episode_id(client: AgentClient, error: Exception) -> str | None:
             # Correlation must not replace the original execution failure.
             pass
     return None
-
-
-def _normalise_active_skills(skills: list[str] | None) -> list[str]:
-    seen = set()
-    out = []
-    for item in skills or []:
-        name = str(item).strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        out.append(name)
-    return out

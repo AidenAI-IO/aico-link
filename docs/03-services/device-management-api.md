@@ -38,6 +38,12 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Device | `GET /api/device/status` | Read the device, firmware/component versions, Agent process, USB/HID, and capability summary |
 | Device | `POST /api/device/reboot` | Reboot the device |
 | Agent | `POST /api/agent/restart` | Restart the Agent process; Config Web and the USB link stay up |
+| Security | `GET /api/security/lan-access` | Read the LAN access switch and whether a device password is set |
+| Security | `PUT /api/security/lan-access` | Turn LAN access on or off and set the device password; USB only |
+| Security | `GET /login` | Sign-in page for LAN browsers |
+| Security | `POST /api/auth/login` | Exchange the device password for a session token |
+| Security | `POST /api/auth/logout` | Clear the session cookie |
+| Security | `GET /api/auth/session` | Report whether the request is signed in |
 | Device | `POST /api/device/usb/reenumerate` | Re-enumerate USB HID/ECM |
 | Network | `POST /api/network/wifi/scan` | Scan for nearby Wi-Fi networks |
 | Network | `PUT /api/network/wifi/connection` | Start a bounded asynchronous connect-and-save task |
@@ -261,6 +267,145 @@ with its Wi-Fi credentials.
 `no_proxy` is accepted only with `proxy_mode=proxy` and defines the bypass
 rules for that SSID's custom proxy. `proxy_mode=system` uses the proxy and
 `NO_PROXY` values from `/userdata/system/env` without a per-Wi-Fi override.
+
+## LAN Access
+
+LAN access decides whether the board answers clients that are not on the USB
+link. It is off by default. While it is off:
+
+- Config Web (port 80), the Agent (port 8080, including `/api/tools/*`, `/mcp`,
+  Phone Bridge, and `/webtty/`) refuse every request that neither arrives
+  through their socket bound to `usb0` nor comes from the board itself. API
+  clients receive `403` with `"error": "lan_access_disabled"`; browsers receive
+  a short page that explains how to turn it on.
+- sshd refuses every source outside `192.168.42.0/24`, `127.0.0.0/8`, and
+  `::1`, for every account including `root`.
+- ttyd listens on loopback only. USB clients use `http://192.168.42.1:3000/webtty/`,
+  which Config Web serves on a `usb0`-bound socket; LAN clients use the Agent's
+  `/webtty/`, which follows the switch.
+
+While it is on, Config Web and the Agent require LAN clients to sign in with
+the device password (see [LAN Sign-In](#lan-sign-in)); SSH and the web terminal
+ask for the same password as the `aico` login password. USB clients and the
+board itself never sign in.
+
+`GET /api/security/lan-access` never returns the password or its hash:
+
+```json
+{"ok": true, "enabled": false, "password_set": false, "via_usb": true, "min_length": 8}
+```
+
+`PUT /api/security/lan-access` is accepted only over the USB link (`403`
+otherwise) and only from the same origin. The body contains `enabled`,
+`password`, or both:
+
+```jsonc
+{"enabled": true, "password": "8 characters to 72 bytes"} // first switch-on
+{"enabled": true}                                       // a password is already set
+{"password": "new password"}                            // change the password
+{"enabled": false}                                      // turn off, keep the password
+```
+
+Turning LAN access on without a stored or submitted password returns `400`.
+No current password is required: whoever holds the USB cable owns the board,
+and a forgotten password is replaced over USB. The response repeats the status
+and adds `system_synced`, which is `false` when SSH or the login account could
+not be updated. The HTTP services follow the stored switch immediately either
+way. For SSH:
+
+- If the device password could not be applied, the rule file keeps SSH on the
+  USB link even when the switch is on, so the image's default `aico` password
+  is not opened to the LAN.
+- If sshd did not confirm the reload, the running sshd may still use its
+  previous rule, for example staying open to the LAN after the switch was
+  turned off. Every later sync reloads sshd again, whether or not the rule
+  file changed, and sshd reads the rule file whenever it starts.
+
+When `system_synced` is `false`, check `systemctl status aico-lan-access ssh`
+and `/run/aico/sshd/lan.conf`, then retry the change over USB and check the new
+`system_synced`. Each retry applies the password and reloads sshd again.
+Restarting sshd only helps when the reload failed: it rereads the rule file but
+does not apply the password, because `aico-lan-access.service` runs once per
+boot. That unit retries on every boot, but a persistent failure (for example a
+damaged password file) fails again.
+
+A device password must be at least 8 characters and at most 72 bytes in UTF-8
+(the bcrypt limit), so a password made of multi-byte characters can be
+rejected with `400` before it reaches 72 characters.
+
+State lives on userdata so it survives OTA:
+
+| File | Content |
+| --- | --- |
+| `/userdata/system/lan-access-enabled` | Present while LAN access is on |
+| `/userdata/system/device-password` | bcrypt hash of the device password (mode 0600) |
+| `/userdata/system/lan-session-secret` | Key that signs LAN session tokens (mode 0600) |
+
+`/usr/lib/aico/aico-lan-access-sync` applies the state: it writes
+`/run/aico/sshd/lan.conf` (included last by `/etc/ssh/sshd_config.d/20-aico.conf`),
+sets the `aico` password to the device password, and reloads sshd on every
+run. Config Web waits for the reload to complete; the boot unit does not,
+because `ssh.service` is ordered after it. Until a
+device password is set, the account keeps the image's default password.
+`aico-lan-access.service` runs it on every boot, because `/run` is volatile and
+OTA resets `/etc/shadow`; `ssh.service` requires that unit so sshd never starts
+without the rule. Config Web runs the helper after every change.
+
+Docker and host runs of the Agent and Config Web do not pass `-lan-guard` /
+`--lan-guard`, so they are not affected.
+
+### LAN Sign-In
+
+While LAN access is on, Config Web (port 80) and the Agent (port 8080) serve
+the sign-in endpoints themselves and refuse every other LAN request without a
+valid session token:
+
+- Browsers (`GET` with `Accept: text/html`) are redirected with `303` to
+  `/login?next=<original path>`.
+- Other clients receive `401` with `"error": "login_required"` and
+  `WWW-Authenticate: Bearer`.
+
+While LAN access is off, the sign-in endpoints are refused like every other LAN
+request.
+
+`POST /api/auth/login` takes the device password:
+
+```jsonc
+// Content-Type: application/json
+{"password": "device password"}
+// 200
+{"ok": true, "token": "v1.<expiry>.<issued>.<signature>", "expires_at": "2026-12-09T08:00:00Z"}
+```
+
+The response also sets the `aico_session` cookie (`HttpOnly`,
+`SameSite=Strict`, `Path=/`). The `/login` page posts an HTML form to the same
+endpoint and is redirected to its `next` path, which must be a path on the same
+host. Errors are `401 invalid_password`, `403 cross_origin_rejected` (an
+`Origin` header naming another host), and `429 too_many_attempts` with
+`Retry-After`: after five failures from one address, each further failure
+doubles a lockout that starts at 30 seconds and stops at 15 minutes. A
+successful sign-in clears the count.
+
+Requests authenticate with `Authorization: Bearer <token>` or the
+`aico_session` cookie. Cookies are scoped to the host, not the port, so a
+browser signed in on port 80 is also signed in on port 8080, including
+`/webtty/` and the Phone Bridge WebSocket. MCP clients and scripts send the
+bearer token.
+
+A token is valid for 30 days. A browser that uses its cookie more than a day
+after it was issued receives a fresh 30-day cookie, so a browser in regular use
+stays signed in. Tokens are not stored: they are signed with
+`/userdata/system/lan-session-secret`, which the Agent and Config Web share.
+Setting a new device password or turning LAN access off replaces that key and
+signs every LAN client out. `POST /api/auth/logout` only clears the cookie; a
+bearer token stays valid until it expires or the key is replaced.
+
+`GET /api/auth/session` returns `{"ok": true, "via_usb": false,
+"authenticated": true}`.
+
+The board serves plain HTTP, so anyone who can capture traffic on the local
+network can capture the password and the token. Turn LAN access on only on
+trusted networks.
 
 ## API Boundary
 

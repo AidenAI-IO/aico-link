@@ -20,6 +20,7 @@ import {memoryPage} from './pages/memory.js';
 import {storagePage} from './pages/storage.js';
 import {advancedPage, agentLogPage, logLevelPage, logsPage, manualConfigPage} from './pages/advanced.js';
 import {otaLogPage, otaPage} from './pages/ota.js';
+import {lanAccessPage} from './pages/lan-access.js';
 
 /** Section ids that have a real page on the new layout. */
 export const routes = [
@@ -50,6 +51,7 @@ export const routes = [
   {path: '/advanced/logs/agent', name: 'advanced-agent-log', page: agentLogPage},
   {path: '/advanced/logs/level', name: 'advanced-log-level', page: logLevelPage},
   {path: '/advanced/config', name: 'advanced-config', page: manualConfigPage},
+  {path: '/advanced/lan', name: 'advanced-lan', page: lanAccessPage},
   {path: '/firmware', name: 'firmware', page: otaPage},
   {path: '/firmware/log', name: 'firmware-log', page: otaLogPage},
 ];

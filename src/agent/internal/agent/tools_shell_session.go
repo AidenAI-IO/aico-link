@@ -422,6 +422,10 @@ func shellCommandEnv(usePTY bool, execution shellExecutionConfig) []string {
 	if execution.temporaryDirectory != "" {
 		env = shellEnsureEnv(env, "TMPDIR", execution.temporaryDirectory)
 	}
+	for _, entry := range execution.screenshot.env() {
+		key, value, _ := strings.Cut(entry, "=")
+		env = shellEnsureEnv(env, key, value)
+	}
 	if usePTY {
 		env = shellEnsureEnv(env, "TERM", "dumb")
 		env = shellEnsureEnv(env, "NO_COLOR", "1")

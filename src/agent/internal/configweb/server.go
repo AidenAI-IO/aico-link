@@ -19,6 +19,7 @@ import (
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/backup"
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/wifiproxy"
 )
@@ -62,6 +63,9 @@ type Server struct {
 	services                 serviceController
 	mounts                   backup.MountController
 	restoreRecovery          []backup.RecoveryResult
+	lanAccess                *lanaccess.State
+	lanAccessMu              sync.Mutex
+	usbTerminal              *http.Server
 
 	restartMu               sync.Mutex
 	restartCommand          *exec.Cmd
@@ -112,15 +116,33 @@ func NewServer(options Options) (*Server, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("stat Agent config: %w", err)
 	}
+	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath, options.SessionSecretPath)
+	if options.USBTerminalPort > 0 {
+		terminal, err := newUSBTerminalServer(options)
+		if err != nil {
+			return nil, err
+		}
+		s.usbTerminal = terminal
+	}
+	var handler http.Handler = s
+	if options.LANGuard {
+		handler = lanaccess.Guard(s.lanAccess, s)
+	}
 	usbOnly := options.BindAddress == options.USBAddress
-	s.http = configHTTPServer(options.Addr(), s, usbOnly)
+	s.http = configHTTPServer(options.Addr(), handler, usbOnly)
 	if options.BindAddress == "0.0.0.0" {
-		s.usbHTTP = configHTTPServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.Port)), s, true)
+		s.usbHTTP = configHTTPServer(net.JoinHostPort(options.USBAddress, strconv.Itoa(options.Port)), handler, true)
+		s.usbRetryStop = make(chan struct{})
+	}
+	if s.usbTerminal != nil && s.usbRetryStop == nil {
 		s.usbRetryStop = make(chan struct{})
 	}
 	return s, nil
 }
 
+// ListenAndServe serves the portal on its configured address and starts the
+// USB maintenance and terminal listeners in the background. It returns nil
+// after Shutdown.
 func (s *Server) ListenAndServe() error {
 	if s.storage == nil {
 		if err := s.initializeStorageManager(); err != nil {
@@ -135,7 +157,10 @@ func (s *Server) ListenAndServe() error {
 	// A separate SO_BINDTODEVICE socket establishes the USB ingress boundary.
 	// The wildcard portal remains available on Wi-Fi, but its connections are
 	// never maintenance-authorized, even when addressed to the USB IP.
-	errorsCh := make(chan error, 2)
+	errorsCh := make(chan error, 3)
+	if s.usbTerminal != nil {
+		go s.serveUSBTerminal()
+	}
 	if s.usbHTTP != nil {
 		// The USB gadget can come up after Config Web (a Wants= dependency);
 		// keep retrying the interface-bound socket in the background so USB
@@ -146,7 +171,7 @@ func (s *Server) ListenAndServe() error {
 	if s.options.BindAddress == s.options.USBAddress {
 		device = s.options.USBInterface
 	}
-	listener, err := listenConfigWeb(s.http.Addr, device)
+	listener, err := lanaccess.ListenOnDevice("tcp4", s.http.Addr, device)
 	if err != nil {
 		return err
 	}
@@ -163,9 +188,9 @@ func (s *Server) ListenAndServe() error {
 // with backoff until it succeeds or the server shuts down.  Failures are
 // fail-closed: no USB listener means no maintenance authorization.
 func (s *Server) serveUSBListener(errorsCh chan<- error) {
-	listener, err := retryListen(func() (net.Listener, error) {
-		return listenConfigWeb(s.usbHTTP.Addr, s.options.USBInterface)
-	}, s.usbRetryStop, usbListenRetrySchedule, func(attempt int, err error) {
+	listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
+		return lanaccess.ListenOnDevice("tcp4", s.usbHTTP.Addr, s.options.USBInterface)
+	}, s.usbRetryStop, func(attempt int, err error) {
 		if attempt == 1 {
 			logging.Warnf("config_web", "config_web", "USB maintenance listener unavailable (fail closed), retrying: %v", err)
 		}
@@ -199,9 +224,13 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.restoreJobs != nil {
 		s.restoreJobs.cancelAll()
 	}
-	shutdownErrors := make(chan error, 2)
+	shutdownErrors := make(chan error, 3)
 	go func() { shutdownErrors <- s.http.Shutdown(ctx) }()
 	count := 1
+	if s.usbTerminal != nil {
+		count++
+		go func() { shutdownErrors <- s.usbTerminal.Shutdown(ctx) }()
+	}
 	if s.usbHTTP != nil {
 		count++
 		go func() { shutdownErrors <- s.usbHTTP.Shutdown(ctx) }()
