@@ -28,6 +28,14 @@ func withUserProfileSection(systemMessage, profile string) string {
 	return systemMessage + userProfileSectionHeader + profile
 }
 
+// userProfileSection returns the profile entries carried by systemMessage.
+func userProfileSection(systemMessage string) string {
+	if index := strings.Index(systemMessage, userProfileSectionHeader); index >= 0 {
+		return systemMessage[index+len(userProfileSectionHeader):]
+	}
+	return ""
+}
+
 // refreshUserProfileSection rewrites the session's system message when the
 // saved user profile differs from the one it carries, for example after the
 // user saved, changed, or forgot a profile memory. The conversation continues

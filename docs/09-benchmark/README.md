@@ -297,8 +297,29 @@ daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
 Auto-started workers receive the bundled skill files under `config/skills`.
 The Go Agent exposes their catalog summaries and the `skill_read` tool to the
 model; skill bodies enter the conversation only when that tool is called.
-The runner's requested `skills` field does not preload skills through the Go
-Agent chat API. Use recorded `skill_read` calls to verify actual skill use.
+There is no runner option that preloads a skill: the Agent decides on its own
+whether to read one, and `skill_discovery_v1` measures exactly that decision.
+Use recorded `skill_read` calls to verify actual skill use.
+
+Because skill text changes Agent behavior, every run records a
+`skills_fingerprint` in `manifest.json`:
+
+```json
+"skills_fingerprint": {
+  "sha256": "...",
+  "skills": {"device-operator": "..."},
+  "source": "worker-config"
+}
+```
+
+The digest is computed from each worker's copied skill tree when the run
+finishes, so an `--agent-config` or a SkillOpt candidate that replaced a
+`SKILL.md` is what gets recorded, not the repository checkout. `source` is
+`worker-config` when every worker agreed, `mixed` when workers disagreed (the
+null run digest keeps every per-skill digest seen, naming the diverging
+skill), and `external-daemon` for `--agent-url` runs, whose skill
+tree this process never configured and therefore cannot observe. An
+`external-daemon` run is not a like-for-like capability comparison.
 
 The phone-control suite forbids `request_user_action` through each task's
 existing `hard_assertions.forbidden_tools`: these tasks require autonomous
@@ -359,7 +380,8 @@ Runs with the same suite name appear in the same Dataset. The experiment metadat
 records the Git SHA, suite hash, workload hash, model, judge, platform, metrics
 schema, and fixed `k`. The workload hash covers only task and attempt keys. For a
 like-for-like regression, require matching suite hash, workload hash, `k`, Agent
-model, judge provider/model/prompt version, target platform, and active skills.
+model, judge provider/model/prompt version, target platform, and skill
+fingerprint.
 When comparing models or judges intentionally, treat that changed field as the
 experiment axis and keep the other score-affecting metadata fixed. Runs from
 different suite versions can still be inspected in Langfuse, but their aggregate

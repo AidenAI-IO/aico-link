@@ -115,7 +115,9 @@ def test_benchmark_runner_backend_invokes_current_runner_and_reads_rollouts(tmp_
     assert cmd[cmd.index("--agent-config") + 1] == str(tmp_path / "agent.toml")
     assert "--no-build-daemon-image" in cmd
     assert "--no-judge" in cmd
-    assert cmd[cmd.index("--skill") + 1] == "device-operator"
+    # The runner has no --skill option: a run cannot preload a skill, and the
+    # candidate reaches the worker as skill text in the phase config instead.
+    assert "--skill" not in cmd
     assert cmd[cmd.index("--task-id") + 1] == "case_one"
     phase_config = Path(cmd[cmd.index("--base-config-dir") + 1])
     assert (phase_config / "skills" / "device-operator" / "SKILL.md").read_text(encoding="utf-8") == "candidate skill"
@@ -161,7 +163,6 @@ def test_mobilegym_runner_command_does_not_cap_environment_concurrency(tmp_path:
     cmd = backend._runner_command(
         suite=_suite(tmp_path),
         tasks=[_task()],
-        skill_name="device-operator",
         child_runs_root=tmp_path / "children",
         child_run_id="child-run",
         phase_config=tmp_path / "phase-config",
