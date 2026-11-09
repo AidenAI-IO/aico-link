@@ -218,7 +218,7 @@ func main() {
 	}
 	server := agent.NewServer(runtime, *addr)
 	if *lanGuard {
-		server.EnableLANGuard(lanaccess.NewState(*lanAccessFile, ""), agent.USBIngress{Interface: *usbInterface, Address: *usbAddress})
+		server.EnableLANGuard(lanaccess.NewState(*lanAccessFile, "", ""), agent.USBIngress{Interface: *usbInterface, Address: *usbAddress})
 	}
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)

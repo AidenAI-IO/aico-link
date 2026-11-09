@@ -83,6 +83,12 @@ func (s *Server) handleLANAccessUpdate(w http.ResponseWriter, r *http.Request) {
 	if request.Enabled != nil {
 		if err := s.lanAccess.SetEnabled(*request.Enabled); err != nil {
 			logging.Errorf("config_web", "lan_access", "set LAN access: %v", err)
+			// The switch may already have changed (turning off removes the
+			// marker before revoking sessions), so bring SSH in line with
+			// whatever is stored before reporting the failure.
+			if syncErr := s.syncLANAccess(r.Context()); syncErr != nil {
+				logging.Warnf("config_web", "lan_access", "apply LAN access after a failed change: %v", syncErr)
+			}
 			writeJSONError(w, http.StatusInternalServerError, "failed to change LAN access")
 			return
 		}
@@ -144,10 +150,12 @@ func newUSBTerminalServer(options Options) (*http.Server, error) {
 	}, nil
 }
 
+// serveUSBTerminal binds the USB terminal socket, retrying until the USB
+// interface appears or the server shuts down, then serves the ttyd proxy.
 func (s *Server) serveUSBTerminal() {
-	listener, err := retryListen(func() (net.Listener, error) {
-		return listenConfigWeb(s.usbTerminal.Addr, s.options.USBInterface)
-	}, s.usbRetryStop, usbListenRetrySchedule, func(attempt int, err error) {
+	listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
+		return lanaccess.ListenOnDevice("tcp4", s.usbTerminal.Addr, s.options.USBInterface)
+	}, s.usbRetryStop, func(attempt int, err error) {
 		if attempt == 1 {
 			logging.Warnf("config_web", "terminal", "USB terminal listener unavailable, retrying: %v", err)
 		}
