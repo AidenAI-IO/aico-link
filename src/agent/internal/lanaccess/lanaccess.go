@@ -171,6 +171,16 @@ func writeFileAtomic(path string, data []byte) error {
 
 type trustedConnContextKey struct{}
 
+type authenticatedContextKey struct{}
+
+// IsAuthenticated reports whether Guard admitted r as a LAN client that
+// signed in with the device password. USB and on-board requests are trusted
+// instead and report false here; see IsTrusted.
+func IsAuthenticated(r *http.Request) bool {
+	authenticated, _ := r.Context().Value(authenticatedContextKey{}).(bool)
+	return authenticated
+}
+
 type trustedListener struct{ net.Listener }
 
 type trustedConn struct{ net.Conn }
@@ -259,7 +269,7 @@ func Guard(state *State, next http.Handler) http.Handler {
 			return
 		case enabled:
 			if sessionValid(state, w, r, auth.now()) {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticatedContextKey{}, true)))
 				return
 			}
 			rejectUnauthenticated(w, r)
