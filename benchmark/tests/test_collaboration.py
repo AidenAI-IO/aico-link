@@ -364,44 +364,16 @@ def test_report_links_are_attempt_scoped_and_escape_content(tmp_path):
     assert json.loads((attempt / "collaboration-timeline.json").read_text())[0]["event_id"] == "e1"
 
 
-def test_merged_request_is_scored_through_surviving_task(tmp_path):
-    from runner.suite import load_suite, SuiteValidationError
-    created = {"kind": "task.updated", "phase": "created"}
-    steps = [{"id": "created_a", "type": "await", "match": {**created, "turn": "initial"}, "bind_task": "a"},
-             {"id": "request_b", "type": "send", "text": "Separately, also do B."},
-             {"id": "created_b", "type": "await", "match": {**created, "turn": "request_b"},
-              "bind_task": "b", "allow_merge": True},
-             {"id": "b_queued", "type": "assert", "requires_distinct": ["a", "b"],
-              "check": {"kind": "task_state", "task": "b", "status": "queued"}}]
-    raw = {"name": "synthetic", "global_reset": {}, "tasks": [{
-        "id": "task", "category": "multi_step", "prompt": "Do A", "description_for_judge": "Do A and B",
-        "rubric": [], "mock_environment": {"platform": "android", "tools": {},
-                                           "collaboration_fixture": {"name": "phone_data_v1"}},
-        "scenario": {"version": 1, "steps": steps, "completion": {"tasks": [
-            {"task": "a", "status": "completed"}, {"task": "b", "status": "completed"}]}}}]}
-    path = tmp_path / "suite.json"
-    path.write_text(json.dumps(raw))
-    scenario = load_suite(path).tasks[0].scenario
-    # Merging needs an earlier task to fold into.
-    steps[2]["bind_task"], steps[0]["bind_task"] = "b", "x"
-    steps[2]["match"]["turn"] = "initial"
-    steps.insert(0, steps.pop(2))
-    path.write_text(json.dumps(raw))
-    with pytest.raises(SuiteValidationError, match="allow_merge"):
-        load_suite(path)
-
-    # Only the surviving task is delivered; the merged alias adds no missing delivery.
-    done = [event(1, "task.updated", payload={"phase": "terminal", "status": "completed"}),
-            event(2, "task.result_injected", payload={"updates": [
-                {"update_id": "u", "task_id": "A", "status": "completed", "goal_revision": 1}]}),
-            event(3, "response.feedback_terminal", payload={"status": "completed", "text": "Done."})]
-    done[2]["collaboration"]["update_ids"] = ["u"]
-    evidence = {"complete": True, "assertions": [], "events": done, "fixture": {},
-                "task_aliases": {"a": "A", "b": "A"}, "merged_aliases": {"b": "a"}}
-    task = TaskSpec(id="task", category="multi_step", prompt="Do A", description_for_judge="Do A and B",
-                    rubric=[], hard_assertions=HardAssertions(), scenario=scenario)
-    checks = {c["id"]: c["verdict"] for c in evaluate_scenario(evidence, task, None, tmp_path)["checks"]}
-    assert checks["delivery.a"] == "pass" and "delivery.b" not in checks
+@pytest.mark.parametrize("found,failure", [
+    ({"task_id": "B", "payload": {"phase": "created"}}, None),
+    # Folding an unrelated request into running work interrupts that work.
+    ({"task_id": "A", "payload": {"phase": "goal_updated"}}, "folded"),
+    ({"task_id": "A", "payload": {"phase": "created"}}, "reused"),
+])
+def test_new_request_must_get_its_own_task(found, failure):
+    from runner.scenario import _binding_failure
+    reason = _binding_failure(found, {"clipboard": "A"})
+    assert (reason is None) if failure is None else (failure in reason)
 
 
 def test_partial_cancellation_accepts_listed_terminal_statuses_and_tolerant_state(tmp_path):

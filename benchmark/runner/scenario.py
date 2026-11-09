@@ -23,6 +23,14 @@ BUSY_ERROR = "realtime response is busy"
 MAX_BUSY_RETRIES = 3
 
 
+class ScenarioBehaviorFailure(Exception):
+    """An observed agent decision that leaves the remaining steps meaningless.
+
+    The decision is recorded as a failed check before raising, so the attempt
+    fails rather than becoming unscored.
+    """
+
+
 def _provider_failed(event: dict[str, Any]) -> bool:
     payload = event.get("payload") or {}
     return event.get("kind") == "stream.error" or (
@@ -123,6 +131,20 @@ def _response_text(event: dict[str, Any]) -> str:
     return str(payload.get("text") or payload.get("transcript") or "")
 
 
+def _binding_failure(found: dict[str, Any], tasks: dict[str, str]) -> str | None:
+    """Why an event cannot bind a new request to its own task, if it cannot.
+
+    A new request needs its own task. Folding it into other work with
+    update_agent_task interrupts that work, so it is a wrong decision, not a
+    merge to score through the other task.
+    """
+    if (found.get("payload") or {}).get("phase") == "goal_updated":
+        return "the request was folded into an existing task with update_agent_task"
+    if found.get("task_id") in tasks.values():
+        return "the request reused a task already bound to another request"
+    return None
+
+
 def _milestones(events: list[dict[str, Any]], task_id: str, revision: int | None) -> dict[str, Any]:
     terminal = next((e for e in reversed(events) if e.get("kind") == "task.updated"
                      and e.get("task_id") == task_id and e.get("payload", {}).get("phase") == "terminal"
@@ -166,10 +188,8 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
     if provider_failed:
         checks.append({"id": "provider_available", "verdict": "unscored", "reason": "foreground provider/request failed"})
     # Recompute delivery gates from raw evidence during both live and offline
-    # scoring. A semantic judge cannot replace missing causal milestones. A
-    # request merged into another task is delivered through that task.
-    merged_aliases = evidence.get("merged_aliases", {})
-    targets = [t for t in scenario.completion.get("tasks", []) if t["task"] not in merged_aliases]
+    # scoring. A semantic judge cannot replace missing causal milestones.
+    targets = list(scenario.completion.get("tasks", []))
     for target in targets:
         alias = target["task"]
         task_id = evidence.get("task_aliases", {}).get(alias)
@@ -207,13 +227,10 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
         for target in targets:
             if target.get("feedback") == "required":
                 alias = target["task"]
-                folded = sorted(a for a, into in merged_aliases.items() if into == alias)
                 rubric.append(RubricItem(id=f"feedback.{alias}", check=
                     f"The foreground response linked by milestones[{alias}] accurately communicates the actual outcome of "
                     "that task and current goal, including failures. An unrelated reply or generic acknowledgement is not delivery. "
-                    "Use task_aliases, task events, linked response and fixture evidence; do not credit backend text as a foreground reply."
-                    + (f" The requests {', '.join(folded)} were merged into this task, so this response must also report "
-                       "each of their outcomes separately." if folded else "")))
+                    "Use task_aliases, task events, linked response and fixture evidence; do not credit backend text as a foreground reply."))
         if rubric:
             try:
                 if judge_cfg is None:
@@ -319,7 +336,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
     collector = CollaborationEventCollector(client, artifact_dir / "collaboration-events.jsonl")
     turns: dict[str, str] = {}
     tasks: dict[str, str] = {}
-    merged_aliases: dict[str, str] = {}
     revisions: dict[str, int] = {}
     checks: list[dict[str, Any]] = []
     steps: list[dict[str, Any]] = []
@@ -347,9 +363,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
                 raise CollaborationEvidenceError("foreground request failed: " + e["payload"].get("error", "unknown"))
             return any(_match(e, m, tasks, turns, revisions) for m in (match, *alternatives))
         return collector.wait_for(predicate, remaining(limit))
-
-    def merged(pair: list[str]) -> bool:
-        return tasks[pair[0]] == tasks[pair[1]]
 
     def append_check(check, check_id):
         snapshot = collector.barrier()
@@ -382,9 +395,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         for step in scenario.steps:
             stage = step["id"]
             remaining()
-            if step.get("requires_distinct") and merged(step["requires_distinct"]):
-                steps.append({"id": stage, "skipped": "tasks merged"})
-                continue
             if step["type"] == "send":
                 turns[step["id"]] = send_turn(stage, step["text"])
             elif step["type"] == "release":
@@ -405,21 +415,20 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
                         if time.monotonic() >= wait_end:
                             raise TimeoutError("fixture event wait timed out")
                         time.sleep(.05)
-                elif step.get("allow_merge"):
-                    # Folding the request into a running task with update_agent_task
-                    # is a valid delegation; only the outcome is scored.
+                elif step.get("bind_task"):
+                    # Also watch for the request being folded into other work, so
+                    # that decision fails now instead of after a long timeout.
                     found = wait(match, step.get("timeout_sec", 60),
                                  {"kind": "task.updated", "phase": "goal_updated", "turn": match["turn"]})
                 else:
                     found = wait(match, step.get("timeout_sec", 60))
                 if step.get("bind_task"):
-                    task_id = found["task_id"]
-                    into = next((alias for alias, bound in tasks.items() if bound == task_id), None)
-                    if found["payload"].get("phase") == "goal_updated" and into is not None:
-                        merged_aliases[step["bind_task"]] = into
-                    elif into is not None:
-                        checks.append({"id": stage + ".distinct_task", "verdict": "fail", "evidence_refs": [found["event_id"]]})
-                    tasks[step["bind_task"]] = task_id
+                    failure = _binding_failure(found, tasks)
+                    if failure:
+                        checks.append({"id": stage + ".separate_task", "verdict": "fail", "reason": failure,
+                                       "evidence_refs": [found["event_id"]]})
+                        raise ScenarioBehaviorFailure(failure)
+                    tasks[step["bind_task"]] = found["task_id"]
                 if step.get("bind_revision"):
                     revisions[step["bind_revision"]] = found["collaboration"]["goal_revision"]
                 steps.append({"id": stage, "event_id": found["event_id"]})
@@ -430,8 +439,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         for alias in turns:
             wait({"kind": "turn.settled", "turn": alias, "status": "completed"}, scenario.timeout_sec)
         for target in scenario.completion.get("tasks", []):
-            if target["task"] in merged_aliases:
-                continue  # the surviving task's terminal state and feedback cover it
             alias, task_id = target["task"], tasks[target["task"]]
             revision = target.get("goal_revision")
             if isinstance(revision, str):
@@ -446,8 +453,7 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
             milestones[alias] = {k: v["event_id"] if v else None for k, v in _milestones(collector.snapshot(), task_id, revision).items()}
         # Watch for late effects after any cancellation, including a goal update
         # that dropped part of the work instead of cancelling the whole task.
-        if any("cancelled" in _statuses(target["status"]) and target["task"] not in merged_aliases
-               for target in scenario.completion.get("tasks", [])):
+        if any("cancelled" in _statuses(target["status"]) for target in scenario.completion.get("tasks", [])):
             stage = "post_cancellation_observation"
             observation_started = time.monotonic()
             if remaining(5) < 5:
@@ -459,15 +465,12 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
         if scenario.completion.get("delegation") == "none":
             append_check({"kind": "tasks_created", "turn": "initial", "count": 0}, "no_delegation")
         for check in scenario.assertions:
-            if check.get("requires_distinct") and merged(check["requires_distinct"]):
-                continue
             append_check(check, check["id"])
-        # Bindings declared as singular must remain singular through scenario end;
-        # a merged binding must not also have created a separate task.
+        # Bindings declared as singular must remain singular through scenario end.
         for step in scenario.steps:
             if step.get("bind_task"):
-                append_check({"kind": "tasks_created", "turn": step["match"]["turn"],
-                              "count": 0 if step["bind_task"] in merged_aliases else 1}, step["id"] + ".unique")
+                append_check({"kind": "tasks_created", "turn": step["match"]["turn"], "count": 1},
+                             step["id"] + ".unique")
         execution_finished = True
     except Exception as exc:
         error = f"{stage}: {exc}"
@@ -500,7 +503,6 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
             checks.append({"id": "scenario_completed", "verdict": "fail" if timeout_failure and complete and ready and not provider_error and not fixture_expired else "unscored",
                            "reason": error})
         evidence = {"schema_version": 1, "scenario_id": task.id, "task_aliases": tasks, "turns": turns,
-                    "merged_aliases": merged_aliases,
                     "revisions": revisions, "milestones": milestones, "assertions": checks, "complete": complete,
                     "fixture": fixture, "events": events, "steps": steps, "stage": stage, "error": error}
         (artifact_dir / "collaboration.json").write_text(json.dumps(evidence, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -527,14 +527,12 @@ def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
         kind = step.get("type")
         allowed = {
             "send": {"id", "type", "text"},
-            "await": {"id", "type", "match", "bind_task", "allow_merge", "bind_revision", "timeout_sec", "requires_distinct"},
+            "await": {"id", "type", "match", "bind_task", "bind_revision", "timeout_sec"},
             "release": {"id", "type", "gate"},
-            "assert": {"id", "type", "check", "requires_distinct"},
+            "assert": {"id", "type", "check"},
         }.get(kind)
         if allowed is None or set(step) - allowed:
             raise SuiteValidationError(f"task {task_id}: unsupported scenario step {kind!r}")
-        if "requires_distinct" in step:
-            _validate_requires_distinct(step["requires_distinct"], tasks, task_id)
         if kind == "send":
             if not isinstance(step.get("text"), str) or not step["text"].strip():
                 raise SuiteValidationError(f"task {task_id}: send requires text")
@@ -565,8 +563,6 @@ def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
                 if match.get("kind") != "task.updated" or match.get("phase") != "created" or not match.get("turn"):
                     raise SuiteValidationError(f"task {task_id}: bind_task requires a task-created event from a turn")
                 tasks.add(step["bind_task"])
-            if "allow_merge" in step and (step["allow_merge"] is not True or "bind_task" not in step or not tasks - {step["bind_task"]}):
-                raise SuiteValidationError(f"task {task_id}: allow_merge requires bind_task and an earlier task to merge into")
             if "bind_revision" in step:
                 if not isinstance(step["bind_revision"], str) or not step["bind_revision"] or step["bind_revision"] in revisions:
                     raise SuiteValidationError(f"task {task_id}: invalid or duplicate revision alias")
@@ -612,10 +608,7 @@ def _parse_scenario(raw: Any, task_id: str) -> ScenarioSpec | None:
         raise SuiteValidationError(f"task {task_id}: scenario assertions must be objects")
     ids = set()
     for check in assertions:
-        if "requires_distinct" in check:
-            _validate_requires_distinct(check["requires_distinct"], tasks, task_id)
-        _validate_scenario_check({k: v for k, v in check.items() if k != "requires_distinct"},
-                                 tasks, turns, task_id, final=True)
+        _validate_scenario_check(check, tasks, turns, task_id, final=True)
         if check["id"] in ids:
             raise SuiteValidationError(f"task {task_id}: duplicate assertion id")
         ids.add(check["id"])
@@ -629,13 +622,6 @@ def _valid_terminal_status(status: Any) -> bool:
     if isinstance(status, list):
         return bool(status) and len(set(status)) == len(status) and all(item in allowed for item in status)
     return status in allowed
-
-
-def _validate_requires_distinct(aliases: Any, tasks: set[str], task_id: str) -> None:
-    """A step or assertion that only applies when two bound aliases are separate tasks."""
-    if (not isinstance(aliases, list) or len(aliases) != 2 or len(set(aliases)) != 2
-            or any(not isinstance(alias, str) or alias not in tasks for alias in aliases)):
-        raise SuiteValidationError(f"task {task_id}: requires_distinct needs two known task aliases")
 
 
 def _validate_scenario_check(check: Any, tasks: set[str], turns: set[str], task_id: str, *, final: bool) -> None:

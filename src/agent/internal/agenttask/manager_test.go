@@ -10,11 +10,12 @@ import (
 )
 
 type fakeRunner struct {
-	mu      sync.Mutex
-	started chan string
-	release chan struct{}
-	result  string
-	err     error
+	mu           sync.Mutex
+	started      chan string
+	release      chan struct{}
+	result       string
+	err          error
+	cancelResult string
 }
 
 type recordedRun struct {
@@ -52,7 +53,7 @@ func (r *fakeRunner) Run(ctx context.Context, prompt string) (string, error) {
 		select {
 		case <-r.release:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return r.cancelResult, ctx.Err()
 		}
 	}
 	r.mu.Lock()
@@ -90,7 +91,9 @@ func TestManagerCompletesQueuedTask(t *testing.T) {
 }
 
 func TestManagerCancelsRunningTask(t *testing.T) {
-	runner := &fakeRunner{started: make(chan string, 1), release: make(chan struct{})}
+	// A cancelled run keeps its account of effects that already happened.
+	partial := CancelledResult([]CompletedStep{{Tool: "bridge_clipboard", Input: `{"action":"write"}`, Output: "ok"}})
+	runner := &fakeRunner{started: make(chan string, 1), release: make(chan struct{}), cancelResult: partial}
 	manager := newManager(runner, 4, time.Now)
 	defer manager.Close()
 
@@ -111,6 +114,14 @@ func TestManagerCancelsRunningTask(t *testing.T) {
 		t.Fatalf("cancel status = %q, want cancelling", cancelled.Status)
 	}
 	waitForStatus(t, manager, task.ID, StatusCancelled)
+	terminal := waitForTerminalTasks(t, manager)
+	if len(terminal) != 1 || terminal[0].Result != partial ||
+		!strings.Contains(partial, "not undone") || !strings.Contains(partial, "bridge_clipboard") {
+		t.Fatalf("cancelled result = %+v", terminal)
+	}
+	if CancelledResult(nil) != "" {
+		t.Fatal("a run with no completed steps must report no result")
+	}
 }
 
 func TestManagerMarksRunnerFailure(t *testing.T) {

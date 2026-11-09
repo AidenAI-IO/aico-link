@@ -1003,7 +1003,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. Present the work to the user as your own responsibility.",
+				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. Present the work to the user as your own responsibility.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1025,7 +1025,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this when the user changes an existing request instead of cancelling it and creating another task.",
+				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{

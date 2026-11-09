@@ -214,9 +214,9 @@ Steps run in order while the event stream is collected continuously.
 | Type | Fields | Behavior |
 | --- | --- | --- |
 | `send` | `id`, `text` | Submit a user turn. The step ID becomes the turn alias. If the foreground is still replying, the runner waits for it to finish and resubmits, up to three times. |
-| `await` | `id`, `match`, optional `bind_task`, `allow_merge`, `bind_revision`, `timeout_sec`, `requires_distinct` | Wait for a recorded event matching every `match` field. Events received before the step also match. |
+| `await` | `id`, `match`, optional `bind_task`, `bind_revision`, `timeout_sec` | Wait for a recorded event matching every `match` field. Events received before the step also match. |
 | `release` | `id`, `gate` | Open a fixture gate. It never applies an effect by itself. |
-| `assert` | `id`, `check`, optional `requires_distinct` | Evaluate a deterministic check at this point. |
+| `assert` | `id`, `check` | Evaluate a deterministic check at this point. |
 
 `match` accepts `kind`, `actor`, `phase`, `status`, `turn`, `task`,
 `goal_revision`, `applied_revision`, and `gate`. `turn` and `task` name aliases,
@@ -231,15 +231,10 @@ and a revision can be written as `$revision.<alias>`. Common matches:
 
 - `bind_task` names the task created by a turn. The match must be
   `task.updated` with phase `created` and a `turn`. A turn bound this way must
-  create exactly one task by the end of the scenario.
-- `allow_merge: true` also accepts a `goal_updated` event caused by the same
-  turn on an already bound task. The foreground may legitimately fold a second
-  request into running work with `update_agent_task`; the new alias then names
-  the surviving task and is recorded in `merged_aliases`. Creating a separate
-  task still counts as a distinct task.
-- `requires_distinct: [a, b]` skips a step or assertion when those aliases were
-  merged, for checks such as "task B is still queued" that only apply to
-  separate tasks.
+  create exactly one new task by the end of the scenario. A new request that
+  the foreground folds into existing work with `update_agent_task`, or that
+  reuses another bound task, fails the attempt immediately: folding an
+  unrelated request into running work interrupts that work.
 - `bind_revision` captures the goal revision from a `goal_updated` event for
   later matches and completion targets.
 
@@ -314,8 +309,8 @@ ID rather than by text:
 2. A `task.result_injected` event delivers that result to the foreground.
 3. A completed, non-empty foreground response carries that result's update ID.
 
-A merged request is delivered through its surviving task, whose feedback must
-report each merged request's outcome.
+A cancelled task's result lists the tool calls that had already succeeded, so
+feedback about a cancellation can report effects that already happened.
 
 ### Completion claims
 

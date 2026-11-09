@@ -43,6 +43,9 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 	}
 	var suppliedMu sync.Mutex
 	var suppliedSteer agenttask.SteerMessage
+	// Successful tool results, so a cancelled run can report effects it
+	// already produced instead of an empty result.
+	var completed []agenttask.CompletedStep
 	if provider := agenttask.SteerProviderFromContext(ctx); provider != nil {
 		request.SteerProvider = func(ctx context.Context) (agent.RunSteerMessage, bool) {
 			message, ok := provider(ctx)
@@ -59,9 +62,18 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 			}, true
 		}
 	}
-	if acknowledge := agenttask.SteerAcknowledgerFromContext(ctx); acknowledge != nil {
-		request.EventHandler = func(event agent.RunEvent) {
-			if event.Type != "steer" {
+	acknowledge := agenttask.SteerAcknowledgerFromContext(ctx)
+	request.EventHandler = func(event agent.RunEvent) {
+		switch event.Type {
+		case "tool_result":
+			if !event.IsError {
+				suppliedMu.Lock()
+				completed = append(completed, agenttask.CompletedStep{
+					Tool: event.ToolName, Input: event.ToolInput, Output: event.Content})
+				suppliedMu.Unlock()
+			}
+		case "steer":
+			if acknowledge == nil {
 				return
 			}
 			suppliedMu.Lock()
@@ -74,6 +86,11 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 	}
 	request.SteerInterrupt = agenttask.SteerInterruptFromContext(ctx)
 	result, err := r.runtime.Run(ctx, request)
+	if err != nil && ctx.Err() != nil {
+		suppliedMu.Lock()
+		defer suppliedMu.Unlock()
+		return agenttask.CancelledResult(completed), err
+	}
 	return result.Output, err
 }
 

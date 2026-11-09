@@ -91,11 +91,13 @@ the background agent to start or finish.
 
 When the user changes work that is already outstanding, the foreground calls
 `update_agent_task` with the task ID and the complete replacement goal. It does
-not cancel the old task and create a new one. Queued work reads the replacement
-goal when it starts. Running work receives the replacement as an in-context
-steer: the current model or tool call is interrupted, the updated goal is added
-to the backend conversation as a user message, and the agent loop resumes with
-the same task ID and backend context.
+not cancel the old task and create a new one. An unrelated new request is not a
+change: it gets its own task through `create_agent_task`, even while other work
+is running, because folding it into running work interrupts that work. Queued
+work reads the replacement goal when it starts. Running work receives the
+replacement as an in-context steer: the current model or tool call is
+interrupted, the updated goal is added to the backend conversation as a user
+message, and the agent loop resumes with the same task ID and backend context.
 
 Before creating work, the foreground calls `query_agent_task` without a task ID
 and continues the task that already covers the request instead of starting a
@@ -163,7 +165,10 @@ created -> queued -> running -> completed
 
 Queued cancellation is immediate. Running cancellation first publishes
 `cancelling`; it becomes `cancelled` after the legacy runtime returns from
-context cancellation.
+context cancellation. Cancellation cannot undo side effects, so a cancelled run
+reports the tool calls that had already succeeded as its result (tool, input,
+and output, most recent 20). The foreground receives this with the `cancelled`
+status and can tell the user what already happened.
 
 Task updates follow these state rules:
 

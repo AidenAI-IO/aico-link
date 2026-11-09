@@ -130,8 +130,47 @@ func SteerAcknowledgerFromContext(ctx context.Context) func(SteerMessage) {
 
 // Runner is the narrow boundary between task orchestration and an agent
 // implementation. The manager does not depend on the legacy agent package.
+// A run stopped by cancellation may still return text, normally from
+// CancelledResult, describing work it completed before stopping.
 type Runner interface {
 	Run(context.Context, string) (string, error)
+}
+
+// CompletedStep is one successful tool call made by a run.
+type CompletedStep struct {
+	Tool   string
+	Input  string
+	Output string
+}
+
+const (
+	maxCancelledSteps     = 20
+	maxCancelledStepRunes = 300
+)
+
+// CancelledResult describes the successful steps a cancelled run completed,
+// so the user can be told which effects already happened. It returns an empty
+// string when nothing completed.
+func CancelledResult(steps []CompletedStep) string {
+	if len(steps) == 0 {
+		return ""
+	}
+	var out strings.Builder
+	out.WriteString("Stopped before finishing. These steps had already completed and were not undone:")
+	if omitted := len(steps) - maxCancelledSteps; omitted > 0 {
+		fmt.Fprintf(&out, "\n- (%d earlier steps omitted)", omitted)
+		steps = steps[omitted:]
+	}
+	for _, step := range steps {
+		fmt.Fprintf(&out, "\n- %s", step.Tool)
+		if input := limitText(step.Input, maxCancelledStepRunes); input != "" {
+			fmt.Fprintf(&out, " input=%s", input)
+		}
+		if output := limitText(step.Output, maxCancelledStepRunes); output != "" {
+			fmt.Fprintf(&out, " output=%s", output)
+		}
+	}
+	return out.String()
 }
 
 type Observation struct {
@@ -853,7 +892,9 @@ func (m *Manager) runTask(taskID string) {
 			return
 		}
 		if item.task.Status == StatusCancelling || errors.Is(err, context.Canceled) {
-			m.finishLocked(item, StatusCancelled, "", "")
+			// Cancellation cannot undo side effects, so keep the runner's account
+			// of what it already did for the foreground to report.
+			m.finishLocked(item, StatusCancelled, limitText(result, maxResultRunes), "")
 			m.mu.Unlock()
 			return
 		}
