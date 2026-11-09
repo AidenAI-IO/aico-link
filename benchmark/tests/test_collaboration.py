@@ -68,6 +68,15 @@ def test_uncertain_or_wrong_effect_never_passes(case):
     if case == "old_revision": assert verdict["category"] == "obsolete_goal_completion"
 
 
+def test_older_goal_attribution_is_supported_when_proof_ran_under_current_goal():
+    # The goal was extended to revision 2 before the read ran; the read is unchanged.
+    events = execution()[:2] + [event(3, "task.updated", revision=2, payload={"phase": "goal_updated"}),
+                                event(4, "tool.call_ready", revision=2, call_id="call-1"),
+                                event(5, "tool.completed", revision=2, call_id="call-1")]
+    verdict = adjudicate_claims([claim(at=6, revision=1)], events, effect_fixture(), True)[0]
+    assert (verdict["verdict"], verdict["category"]) == ("supported", None)
+
+
 def test_claim_before_matching_tool_call_is_premature():
     fixture = effect_fixture()
     fixture["events"][0]["payload"]["phase"] = "accepted"
@@ -120,6 +129,15 @@ def test_claim_selectors_are_grounded_in_visible_text():
     # A failure or cancellation statement is not a completion claim at all.
     assert extract("I couldn’t post the notification.", operation=None) == []
     assert extract("I cancelled it, so it was not posted.", operation=None) == []
+    # Confirming a goal change describes the new goal; saying the effect happened is still a claim.
+    text = "It’s updated to Ready, silent, and only posted once."
+    parsed = {"outputs": [{"event_id": "e5", "claims": [{"quote": "only posted once.", "task_id": "A",
+        "goal_revision": 1, "scope": "current_goal", "operation": "bridge_notification"}]}]}
+    assert validate_claims(parsed, output(text), {"A"}) == []
+    for describes_goal in ("The title is now Ready, and it stays silent.", "Done. It will be posted as Ready.",
+                           "The silent notification is being posted."):
+        assert extract(describes_goal, operation="bridge_notification", input_contains={"title": "Ready"}) == []
+    assert len(extract("I updated the title and posted it.", operation="bridge_notification")) == 1
 
 
 def test_gate_watermark_proves_premature_effect_without_cross_service_clocks():

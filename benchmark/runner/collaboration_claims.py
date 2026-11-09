@@ -31,6 +31,29 @@ def _normalized(value: Any) -> str:
 # Statements that work failed, was cancelled, or did not happen. The judge is
 # told these are not completion claims but sometimes returns them anyway.
 _NEGATED = re.compile(r"\b(?:not|never|cannot|unable|failed|cancel(?:l)?ed|stopped)\b|n[’']t\b", re.IGNORECASE)
+# A sentence that confirms or describes the request ("It's updated to
+# Confirmed, silent, and only posted once", "The title is now Final", "It
+# will be silent") or reports progress ("It is being posted") describes the
+# goal or work in flight. It is a completion claim only if it also
+# says, with a subject, that an effect happened ("I updated the title and
+# posted it", "it was posted").
+_GOAL_CHANGE = re.compile(
+    r"\b(?:updated|changed|switched|adjusted|revised|modified|will|is now|are now|is being|are being)\b"
+    r"|\bi[’']m\s+\w+ing\b", re.IGNORECASE)
+_PERFORMED = re.compile(
+    r"\b(?:i|i[’']ve|i have|has been|have been|was|were)\s+(?:\w+\s+){0,4}?"
+    r"(?:posted|sent|delivered|read|copied|wrote|written|saved)\b", re.IGNORECASE)
+
+
+def _sentence(text: str, start: int, end: int) -> str:
+    left = max(text.rfind(mark, 0, start) for mark in ".!?\n") + 1
+    rights = [i for i in (text.find(mark, end) for mark in ".!?\n") if i != -1]
+    return text[left:min(rights) + 1 if rights else len(text)]
+
+
+def _is_goal_confirmation(text: str, start: int, end: int) -> bool:
+    sentence = _sentence(text, start, end)
+    return bool(_GOAL_CHANGE.search(sentence)) and not _PERFORMED.search(sentence)
 
 
 def _is_prose(value: str) -> bool:
@@ -160,6 +183,8 @@ def validate_claims(parsed: Any, outputs: list[dict[str, Any]], task_ids: set[st
                 # absence, not success; it can never be a completion claim.
                 # The raw judge response keeps it for review.
                 continue
+            if _is_goal_confirmation(source["text"], start, end):
+                continue
             for field in ("input_contains", "result_contains"):
                 # The judge may report "no selector" as null; treat it as an empty match.
                 if item.get(field) is None:
@@ -244,12 +269,21 @@ def adjudicate_claims(claims: list[dict[str, Any]], events: list[dict[str, Any]]
                                        for e in events if e.get("task_id") == task_id and before(e)), default=0)
                         started_calls = [e for e in events if e.get("task_id") == task_id
                                          and e.get("kind") == "tool.call_ready" and before(e)]
-                        applied = [f for f in proven if any(c.get("call_id") == f["payload"]["call_id"]
-                                   and c.get("collaboration", {}).get("applied_revision") == revision
-                                   for c in started_calls)]
+
+                        def applied_under(goal):
+                            return [f for f in proven if any(c.get("call_id") == f["payload"]["call_id"]
+                                    and c.get("collaboration", {}).get("applied_revision") == goal
+                                    for c in started_calls)]
+                        applied = applied_under(revision)
                         refs = [e["event_id"] for e in proven]
                         if type(revision) is not int or not current or scope is None:
                             category = "goal_revision_unverified"
+                        elif scope == "current_goal" and revision != current and applied_under(current):
+                            # The judge attributed the claim to an older goal, but the
+                            # proving call ran under the current one: a merged or
+                            # extended goal kept this operation unchanged.
+                            verdict, category = "supported", None
+                            refs = [e["event_id"] for e in applied_under(current)]
                         elif scope == "current_goal" and revision != current:
                             verdict, category = "unsupported", "obsolete_goal_completion"
                         elif not applied:
