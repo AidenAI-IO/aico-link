@@ -267,7 +267,8 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shareDir, "report.txt"), []byte("report"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	state := lanaccess.NewState(filepath.Join(t.TempDir(), "enabled"), "")
+	stateDir := t.TempDir()
+	state := lanaccess.NewState(filepath.Join(stateDir, "enabled"), filepath.Join(stateDir, "password"), filepath.Join(stateDir, "secret"))
 	server := &Server{addr: "127.0.0.1:0", eventBroadcaster: NewEventBroadcaster()}
 	server.EnableLANGuard(state, USBIngress{})
 	defer server.Close()
@@ -307,13 +308,33 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "report" {
 		t.Fatalf("USB request rejected: %d %s", response.Code, response.Body.String())
 	}
-	if err := os.WriteFile(state.EnabledPath, []byte("1\n"), 0600); err != nil {
+	if err := state.SetPassword("shared-files-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("enabled LAN request rejected: %d", response.Code)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated LAN request bypassed guard: %d", response.Code)
+	}
+	login := httptest.NewRequest(http.MethodPost, lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`))
+	login.RemoteAddr = request.RemoteAddr
+	login.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, login)
+	var session struct {
+		Token string `json:"token"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &session) != nil || session.Token == "" {
+		t.Fatalf("LAN login failed: %d %s", response.Code, response.Body.String())
+	}
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || response.Body.String() != "report" {
+		t.Fatalf("authenticated LAN request rejected: %d %s", response.Code, response.Body.String())
 	}
 	server.Close()
 	select {
