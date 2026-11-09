@@ -386,11 +386,11 @@
       "description_for_judge": "Use quick_action copy on the selected source text, then paste into a different initially empty field to verify the clipboard effect. Shortcut success alone cannot prove copying; the final screenshot and successful paste sequence must establish the copied value. Clipboard readback is not required.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开备忘录或任何记事应用，准备一个能同时看到两个可编辑输入框的页面（如标题和正文）。第一个输入框输入「你好Aico」并全选，第二个输入框保持为空。如果使用短信，只准备草稿不要发送。",
+        "prompt": "打开邮件应用，新建一封不发送的邮件草稿，使用彼此独立、同时可见的主题和正文输入框。不要填写收件人。在主题框输入「你好Aico」并全选，正文框保持为空。不要发送邮件，不要使用把首行当标题的备忘录界面。",
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "用 quick_action 的 copy 复制第一个输入框里当前选中的文字，再切到第二个空输入框，用 quick_action 的 paste 粘贴来验证复制结果。不要重新输入这段文字，也不要发送或发布内容。最后保留两个输入框可见。",
+      "prompt": "用 quick_action 的 copy 复制邮件主题框里当前选中的文字，再切到空白正文框，用 quick_action 的 paste 粘贴来验证复制结果。不要重新输入这段文字，不要填写收件人或发送邮件。最后保留主题和正文可见。",
       "rubric": [
         {
           "id": "source_selected_destination_empty",
