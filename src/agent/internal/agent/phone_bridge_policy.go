@@ -222,9 +222,6 @@ func phoneBridgeCanRestoreFromReturnEntry(status PhoneBridgeStatus) bool {
 	if platform != "" && platform != "ios" {
 		return false
 	}
-	if phoneBridgePiPBackgroundEnabled(status) {
-		return false
-	}
 	if status.ReturnEntryAvailable == nil || !*status.ReturnEntryAvailable {
 		return false
 	}
@@ -238,9 +235,6 @@ func phoneBridgeAppNeedsForeground(status PhoneBridgeStatus) bool {
 }
 
 func phoneBridgeHasReturnEntry(status PhoneBridgeStatus) bool {
-	if phoneBridgePiPBackgroundEnabled(status) {
-		return false
-	}
 	if status.ReturnEntryAvailable != nil {
 		return *status.ReturnEntryAvailable
 	}
@@ -256,7 +250,7 @@ func phoneBridgeRecoveryGuidance(status PhoneBridgeStatus) string {
 		return "Use screenshot plus HID/touch fallback; Android FGS Bridge mode only supports background-safe data tools."
 	}
 	if phoneBridgeIsIOS(status) {
-		return "Use screenshot plus HID/touch fallback; only visible Dynamic Island return entries are auto-tapped, and lock-screen Live Activity or PiP-hidden entries need visual confirmation."
+		return "Use screenshot plus HID/touch fallback; only visible Dynamic Island return entries are auto-tapped, and lock-screen Live Activity entries need visual confirmation."
 	}
 	return "Use screenshot plus HID/touch fallback; retry companion app tools only after Phone Bridge reconnects or a visible platform return entry is confirmed."
 }
