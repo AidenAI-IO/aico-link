@@ -52,6 +52,19 @@ def test_missing_metrics_or_cost_are_visible_without_false_zero():
     assert "| 1 | 0 | 0 / 0 | — | — | — |" in markdown
 
 
+def test_matched_comparison_excludes_a_dataset_with_an_incomplete_window():
+    report = summarize_weekly([
+        _record(suite="mixed"),
+        _record(suite="mixed", missing_metrics=["evaluation_coverage"]),
+        _record(suite="mixed", timestamp="2026-10-01T00:00:00+00:00"),
+        _record(suite="complete", passed=6),
+        _record(suite="complete", timestamp="2026-10-01T00:00:00+00:00", passed=4),
+    ], end=END)
+    assert report["compared_datasets"] == 1
+    assert report["change"] == pytest.approx(0.25)
+    assert report["totals"]["pass_at_1"] is None
+
+
 def test_markdown_escapes_untrusted_suite_names():
     report = summarize_weekly([_record(suite="<img src=x>|\\nhello")], end=END)
     markdown = render_weekly(report, [])

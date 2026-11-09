@@ -224,6 +224,11 @@ def parse_timestamp(value: Any) -> datetime | None:
 def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
             scores: dict[str, float], experiment_id: str | None, source: str) -> dict[str, Any]:
     match = re.fullmatch(r"ci-(\d+)-(\d+)-.+", run_id)
+    failure_classes = {
+        key.removeprefix("failures.class."): value
+        for key, value in scores.items()
+        if key.startswith("failures.class.")
+    }
     record = {
         **{key: metadata.get(key) for key in COMPARISON_FIELDS},
         "run_id": run_id,
@@ -265,8 +270,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         "cost_usd_p50": scores.get("efficiency.cost_usd.p50"),
         "cost_usd_sum": scores.get("efficiency.cost_usd.sum"),
         "total_tokens_sum": scores.get("efficiency.total_tokens.sum"),
-        "failure_classes": {k.removeprefix("failures.class."): v for k, v in scores.items()
-                            if k.startswith("failures.class.")},
+        "failure_classes": failure_classes,
     }
     missing = [key for key in ("tasks", "eligible_tasks", "passed") if record[key] is None]
     if not missing:
@@ -280,6 +284,12 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
     if any(record["failure_classes"].get(kind, 0) > 0
            for kind in ("environment", "evaluation")):
         missing.append("evaluation_coverage")
+    required_failure_counts = ("environment", "evaluation")
+    missing_failure_counts = [kind for kind in required_failure_counts
+                              if (value := _number(scores.get(f"failures.class.{kind}"))) is None
+                              or value < 0 or not value.is_integer()]
+    if missing_failure_counts:
+        missing.append("failure_class_counts")
     record["missing_metrics"] = missing
     if missing or not record["eligible_tasks"]:
         record["pass_at_1"] = None

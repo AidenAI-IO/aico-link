@@ -105,7 +105,8 @@ def _comparison(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -
     A dataset that is new or retired would otherwise move the total through the
     task mix alone."""
     def measured(records: list[dict[str, Any]]) -> set[str]:
-        return {r["dataset"] for r in records if _totals([r])["pass_at_1"] is not None}
+        return {dataset for dataset, group in _by_suite(records).items()
+                if _totals(group)["pass_at_1"] is not None}
 
     common = measured(current) & measured(previous)
     now = _totals([r for r in current if r["dataset"] in common])

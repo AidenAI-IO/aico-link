@@ -372,6 +372,16 @@ benchmark scores. Updating a suite upserts new Dataset Item versions instead of
 creating a new Dataset. Each new run also stores `suite.json` beside its manifest,
 so it remains publishable after the source suite changes.
 
+The publisher writes explicit `failures.class.environment` and
+`failures.class.evaluation` counts, including zero, before capability scores.
+History requires both valid counts before accepting a capability measurement;
+missing counts are unknown, not zero. Older or partially published runs remain
+visible with a missing-metrics warning but no capability rate. Republish their
+original artifacts with the current publisher to restore verified history without
+rerunning device actions. Nonzero environment or evaluation counts mark coverage
+incomplete: workflow-level pass@1, pass@k, and pass^k are withheld, and weekly
+matched comparisons exclude datasets with incomplete window totals.
+
 ```bash
 cd benchmark
 export LANGFUSE_PUBLIC_KEY="pk-lf-..."
