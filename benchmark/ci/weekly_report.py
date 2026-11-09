@@ -61,7 +61,8 @@ def _change(current: float | None, previous: float | None) -> float | None:
 
 # Settings that explain a score change, in reading order; hashes are shortened.
 CONFIG_LABELS = {
-    "agent_model": "agent model", "judge_model": "judge model",
+    "agent_model": "agent model", "foreground_model": "foreground model",
+    "execution_mode": "execution mode", "judge_model": "judge model",
     "judge_prompt_version": "judge prompt", "judge_provider": "judge provider",
     "suite_sha256": "suite", "workload_sha256": "workload",
     "metrics_schema_version": "metrics schema", "metrics_k": "k",

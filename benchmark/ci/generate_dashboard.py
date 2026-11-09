@@ -222,7 +222,8 @@ def _changed_fields(latest: dict[str, Any], previous: dict[str, Any] | None) -> 
 
 # COMPARISON_FIELDS in reading order: settings that most often explain a score change first.
 _CONFIG_ORDER = (
-    "agent_model", "judge_model", "judge_prompt_version", "judge_provider", "suite_sha256",
+    "agent_model", "foreground_model", "execution_mode", "judge_model", "judge_prompt_version",
+    "judge_provider", "suite_sha256",
     "workload_sha256", "metrics_schema_version", "metrics_k", "target_platform",
     "active_skills", "git_branch", "execution_environment",
 )
