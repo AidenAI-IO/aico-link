@@ -12,6 +12,7 @@ except ModuleNotFoundError:
 
 from runner import config as runner_config
 from runner import webui
+from runner.skills_fingerprint import fingerprint_worker_configs
 
 
 def test_list_benchmark_suites_discovers_nested_benchmark(tmp_path: Path):
@@ -233,6 +234,22 @@ def test_prepare_run_config_renders_template(tmp_path: Path, monkeypatch):
     assert (dest / "control_token").exists()
     assert (dest / "memory").is_dir()
     assert (dest / "skill-state").is_dir()
+
+
+def test_prepared_config_fingerprint_reflects_a_replaced_skill(tmp_path: Path, monkeypatch):
+    """A candidate skill written into a prepared config must change the
+    fingerprint; this is how a SkillOpt override becomes attributable."""
+    config = tmp_path / "config"
+    skills = config / "skills"
+    (skills / "device-operator").mkdir(parents=True)
+    (skills / "device-operator" / "SKILL.md").write_text("original\n", encoding="utf-8")
+    before = fingerprint_worker_configs([config])
+
+    (skills / "device-operator" / "SKILL.md").write_text("candidate text\n", encoding="utf-8")
+    after = fingerprint_worker_configs([config])
+
+    assert before["sha256"] != after["sha256"]
+    assert before["skills"]["device-operator"] != after["skills"]["device-operator"]
 
 
 def test_prepare_run_config_ignores_legacy_agent_model_environment(tmp_path: Path, monkeypatch):

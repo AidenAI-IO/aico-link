@@ -180,14 +180,17 @@ def test_device_type_reads_runtime_phone_bridge_status():
     assert result == "Android"
 
 
-def test_chat_includes_skills_when_provided():
+def test_chat_body_carries_only_fields_the_agent_accepts():
+    """The daemon's ChatRequest has no skills field and drops unknown JSON, so
+    sending one would be a silent no-op rather than a preload."""
     seen = {}
     client = AgentClient(base_url="http://test")
     with patch("urllib.request.urlopen",
                _captured(seen, body={"response": "ok", "history": []})):
-        client.chat("请打开设置", skills=["device-operator"])
+        client.chat("请打开设置")
     body = json.loads(seen["body"])
-    assert body["skills"] == ["device-operator"]
+    assert "skills" not in body
+    assert set(body) == {"message", "request_id"}
 
 
 def test_chat_non_200_error_preserves_request_id():

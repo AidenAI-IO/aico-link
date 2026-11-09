@@ -26,6 +26,7 @@ def _record(**overrides):
         "tasks": 4,
         "workflow_run_attempt": 1,
         "suite_sha256": "suite-v1",
+        "skills_fingerprint": "a" * 64,
         "judge_prompt_version": "v2",
         "workload_sha256": "tasks-v1",
         "metrics_schema_version": "p0-v1",
@@ -370,10 +371,10 @@ def test_workflow_attempts_are_separate():
 
 
 @pytest.mark.parametrize("field", ["agent_model", "suite_sha256", "workload_sha256",
-    "metrics_k", "judge_model", "git_branch", "target_platform", "active_skills"])
+    "metrics_k", "judge_model", "git_branch", "target_platform", "skills_fingerprint"])
 def test_configuration_changes_keep_inline_deltas(field):
     history = [_record(workflow_run_id=1, pass_at_1=1.0),
-               _record(workflow_run_id=2, pass_at_1=0.1, **{field: "changed"})]
+               _record(workflow_run_id=2, pass_at_1=0.1, **{field: "b" * 64 if field == "skills_fingerprint" else "changed"})]
     # The score change stays visible, labelled with the setting that differs.
     summary = _summarize_suites(_group_into_runs(history))[0]
     assert summary["delta"] == pytest.approx(-0.9)
@@ -381,9 +382,13 @@ def test_configuration_changes_keep_inline_deltas(field):
     assert summary["comparison_status"] == "Configuration changed"
 
 
-def test_unknown_configuration_keeps_inline_delta():
-    history = [_record(workflow_run_id=1, pass_at_1=1.0, workload_sha256=None),
-               _record(workflow_run_id=2, pass_at_1=0.1, workload_sha256=None)]
+@pytest.mark.parametrize("unknown", [
+    {"workload_sha256": None},
+    *({"skills_fingerprint": value} for value in (None, "", "mixed", "external-daemon", "unavailable")),
+])
+def test_unknown_configuration_keeps_inline_delta(unknown):
+    history = [_record(workflow_run_id=1, pass_at_1=1.0, **unknown),
+               _record(workflow_run_id=2, pass_at_1=0.1, **unknown)]
     summary = _summarize_suites(_group_into_runs(history))[0]
     assert summary["comparison_status"] == "Configuration unverified"
     assert summary["delta"] == pytest.approx(-0.9)
@@ -577,6 +582,10 @@ if (namesForFilter('all').length !== datasets.length) process.exit(39);
 if (!el('measurement-wrap-cost').hidden || el('measurement-panel-cost').hidden) process.exit(45);
 if (el('measurement-wrap-latency').hidden) process.exit(46);
 const assert = require('node:assert/strict');
+for (const value of ['external-daemon', 'mixed', 'unavailable', 'not-a-sha256-digest']) {
+  assert.equal(configValue({skills_fingerprint: value}, 'skills_fingerprint'), value);
+}
+assert.equal(configValue({skills_fingerprint: 'a'.repeat(64)}, 'skills_fingerprint'), 'a'.repeat(12));
 assert(!overviewHTML.includes('Config changed') && !overviewHTML.includes('Config unverified'));
 assert(!elements.has('configuration-context'));
 assert(!elements.has('comparison-note'));

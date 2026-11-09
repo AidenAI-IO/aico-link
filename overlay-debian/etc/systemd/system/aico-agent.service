@@ -33,7 +33,7 @@ Environment=PIP_BREAK_SYSTEM_PACKAGES=1
 ExecCondition=/usr/lib/aico/aico-feature-enabled ENABLE_AGENT
 RuntimeDirectory=agent
 ExecStartPre=/usr/lib/aico/aico-python-prepare
-ExecStart=/usr/lib/aico/aico-managed-env-run /usr/lib/aico/agent -dir /userdata/agent -addr 0.0.0.0:8080
+ExecStart=/usr/lib/aico/aico-managed-env-run /usr/lib/aico/agent -dir /userdata/agent -addr 0.0.0.0:8080 -lan-guard
 Restart=on-failure
 RestartSec=2s
 TimeoutStartSec=30s

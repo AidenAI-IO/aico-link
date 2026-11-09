@@ -126,8 +126,8 @@ def test_cost_preserves_free_calls_and_small_billed_amounts():
 
 def test_config_changes_cover_every_comparison_setting():
     report = summarize_weekly([
-        _record(judge_provider="b", active_skills=["device-operator"]),
-        _record("2026-10-01T00:00:00+00:00", judge_provider="a", active_skills=[]),
+        _record(judge_provider="b", skills_fingerprint="bbbbbbbb"),
+        _record("2026-10-01T00:00:00+00:00", judge_provider="a", skills_fingerprint="aaaaaaaa"),
     ], end=END)
     fields = [c["field"] for c in report["suites"][0]["config_changes"]]
     assert fields == ["judge provider", "skills"]

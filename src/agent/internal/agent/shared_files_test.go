@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"aico-agent/internal/agent/messages"
+	"aico-agent/internal/lanaccess"
 )
 
 func postSharedFile(t *testing.T, handler http.Handler, name, content string) *httptest.ResponseRecorder {
@@ -246,6 +248,72 @@ func TestSharedFilesListenerFailureKeepsMainServerAvailable(t *testing.T) {
 	response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("main file routes unavailable: %d", response.StatusCode)
+	}
+	server.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("shutdown timed out")
+	}
+}
+
+func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
+	shareDir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", shareDir)
+	t.Setenv("AICO_SHARE_ADDR", "127.0.0.1:0")
+	if err := os.WriteFile(filepath.Join(shareDir, "report.txt"), []byte("report"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state := lanaccess.NewState(filepath.Join(t.TempDir(), "enabled"), "")
+	server := &Server{addr: "127.0.0.1:0", eventBroadcaster: NewEventBroadcaster()}
+	server.EnableLANGuard(state, USBIngress{})
+	defer server.Close()
+	done := make(chan error, 1)
+	go func() { done <- server.Start() }()
+	var handler http.Handler
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		server.httpMu.Lock()
+		if server.shareServer != nil {
+			handler = server.shareServer.Handler
+		}
+		server.httpMu.Unlock()
+		if handler != nil {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("Agent exited before shared listener started: %v", err)
+		default:
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if handler == nil {
+		t.Fatal("shared listener never started")
+	}
+	request := httptest.NewRequest(http.MethodGet, "/share/report.txt", nil)
+	request.RemoteAddr = "192.168.1.2:12345"
+	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 8000}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("LAN request bypassed guard: %d", response.Code)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request.WithContext(lanaccess.WithTrusted(request.Context(), true)))
+	if response.Code != http.StatusOK || response.Body.String() != "report" {
+		t.Fatalf("USB request rejected: %d %s", response.Code, response.Body.String())
+	}
+	if err := os.WriteFile(state.EnabledPath, []byte("1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("enabled LAN request rejected: %d", response.Code)
 	}
 	server.Close()
 	select {

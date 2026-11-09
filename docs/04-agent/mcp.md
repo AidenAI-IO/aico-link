@@ -29,7 +29,7 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
-When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release; use a trusted LAN/USB link or turn the switch off. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port (also unauthenticated in this release).
+When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release. On the board, LAN clients are refused until LAN access is turned on over USB (see [LAN Access](../03-services/device-management-api.md#lan-access)); once it is on, use a trusted network or turn the switch off. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port (also unauthenticated in this release).
 
 ## Allowlist
 

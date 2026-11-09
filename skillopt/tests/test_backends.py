@@ -39,7 +39,7 @@ def test_aico_device_backend_overrides_when_skill_text_differs(monkeypatch, tmp_
         yield
 
     def fake_run_one_task(**kwargs):
-        events.append(("run", kwargs["artifact_dir"], kwargs.get("active_skills")))
+        events.append(("run", kwargs["artifact_dir"]))
         return TaskResult(
             suite=kwargs["suite"].name,
             run_id=kwargs["run_id"],
@@ -75,6 +75,6 @@ def test_aico_device_backend_overrides_when_skill_text_differs(monkeypatch, tmp_
     assert rollouts[0].hard == 1
     assert events == [
         ("override", "http://agent.local", skill_path, "candidate"),
-        ("run", tmp_path / "runs" / "phase" / "task", ["device-operator"]),
+        ("run", tmp_path / "runs" / "phase" / "task"),
         ("close", "http://agent.local"),
     ]

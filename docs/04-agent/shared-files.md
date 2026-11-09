@@ -18,7 +18,9 @@ Delete files explicitly with normal device administration when no longer needed.
 
 The Agent serves `POST /api/files`, `GET /api/files`, and `/share/` on its existing
 HTTP port (8080). The device service also sets `AICO_SHARE_ADDR=0.0.0.0:8000` to
-start a listener exposing only these file routes. For example:
+start a listener exposing only these file routes. Both listeners follow the
+device's LAN access switch: requests from the USB link and the board are
+allowed, while other networks are refused until LAN access is enabled. For example:
 
 ```text
 Agent path: /share/report.pdf
@@ -113,8 +115,8 @@ Android opens the system save-document picker and streams to the selected
 location. Neither platform requires broad storage access. Transfer errors are
 shown in the UI; selecting or canceling a picker does not send a chat turn.
 
-These endpoints follow the Agent's existing trusted local-network access model,
-without per-user authentication. Web transfers stay on the current origin, and
-cross-origin browser uploads are rejected. They expose all explicitly shared files to
-clients that can reach the board. Do not place credentials in this directory or
+These endpoints use the Agent's LAN access switch, without per-user
+authentication. Web transfers stay on the current origin, and cross-origin
+browser uploads are rejected. They expose all explicitly shared files to
+clients allowed by that switch. Do not place credentials in this directory or
 forward these ports to an untrusted network.
