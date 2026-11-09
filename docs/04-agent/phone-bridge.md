@@ -35,7 +35,7 @@ The board is the WebSocket server, so it does not need to discover the phone's D
 
 The board also exposes `/api/phone-bridge/commands` and `/api/phone-bridge/results` HTTP queue endpoints, but React Native JS, WebSocket, and polling timers in the iOS background must not be treated as a general tool execution path. On iOS, Phone Bridge is normally a foreground fast path: if the Aico companion app is backgrounded and the app has reported `return_entry=dynamic_island`, Agent restores the Aico companion app through Dynamic Island, waits for foreground WebSocket bridge reconnection, then executes the requested tool command. Lock-screen Live Activity entries require visual confirmation rather than fixed-coordinate tapping.
 
-PiP Bridge is a narrow exception. When the app reports `pip_bridge_enabled=true` while backgrounded, iOS gives PiP priority over the Dynamic Island, so the Dynamic Island return entry is not visible. `pip_bridge_enabled` is the authoritative PiP transport signal for background-safe data commands; ordinary foreground app-state timestamps are not an additional PiP expiry. The HTTP/Tool Lab catalog remains complete for direct diagnostics, while the conversational Agent catalog is filtered from live runtime capabilities before each run. `open_app` remains exposed because it can fall back to SearchLaunchApp; only executable background-safe data tools (`bridge_clipboard`, `bridge_calendar`, `bridge_contacts`, `bridge_notification`) are exposed through the HTTP queue, and unavailable App actions are omitted.
+PiP Bridge is a narrow exception. When the app reports `pip_bridge_enabled=true` while backgrounded, the PiP session runs silently and the Dynamic Island return entry stays visible, so foreground-only commands such as `open_url` still restore the companion app through Dynamic Island. `pip_bridge_enabled` is the authoritative PiP transport signal for background-safe data commands; ordinary foreground app-state timestamps are not an additional PiP expiry. The HTTP/Tool Lab catalog remains complete for direct diagnostics, while the conversational Agent catalog is filtered from live runtime capabilities before each run. `open_app` remains exposed because it can fall back to SearchLaunchApp; only executable background-safe data tools (`bridge_clipboard`, `bridge_calendar`, `bridge_contacts`, `bridge_notification`) are exposed through the HTTP queue, and unavailable App actions are omitted.
 
 BLE Wake provides an on-demand iOS background route for a narrower command set: calendar create/query/delete, contacts query/create, and local notification send. Clipboard read/write is not reliable in the iOS background, and contacts update is not exposed through BLE Wake; those calls return an explicit `app_backgrounded` error unless foreground Phone Bridge, PiP, or Dynamic Island restoration provides another executable route. Before each Agent run, runtime capability filtering checks whether `ble_service` reports a connected Wake subscriber and exposes only executable tools and actions. The command is then placed in the existing HTTP queue and the board makes a best-effort `wake` call. BLE carries only the wake hint: the app polls with its `phone_id`, executes the native module, and posts the structured result over HTTP. The phone must therefore remain connected to the board's USB ECM network; BLE is not a replacement command transport. If BLE is unavailable, those App-only tools are omitted unless another route such as foreground Phone Bridge, PiP/FGS polling, or Dynamic Island restoration is usable; a failed Wake notify never removes an already queued command.
 
@@ -212,11 +212,17 @@ near-black page still crops to the phone's aspect ratio instead of into the
 page. Every 20th capture that uses the entry also detects again, so a
 different phone with a verified crop of another aspect ratio replaces it.
 
-When `app_state=background|inactive`, `return_entry=dynamic_island`,
-`return_entry_available=true`, and PiP Bridge mode is not enabled, `open_url`
+When `app_state=background|inactive`, `return_entry=dynamic_island`, and
+`return_entry_available=true`, with or without PiP Bridge mode, `open_url`
 and bridge data tools can click the Aico companion app Dynamic Island entry, wait for Phone
 Bridge recovery, then send their commands. `open_app` instead selects
-SearchLaunchApp whenever foreground Bridge app launch is unavailable.
+SearchLaunchApp whenever foreground Bridge app launch is unavailable. For
+`http` and `https` URLs, `open_url` has a visible-UI fallback when Phone Bridge
+can neither run the command nor restore the companion app, or when the Bridge
+command fails: it opens the browser through SearchLaunchApp (Safari on iOS;
+Chrome, then the vendor Browser on Android), taps the address bar, types the
+URL locally, and presses Enter. `sms`, `mailto`, and `tel` links still require
+Phone Bridge.
 Lock-screen Live Activity entries are not blind-tapped because their screen
 position is not stable; use screenshot/HID fallback or visual confirmation
 instead. When `pip_bridge_enabled=true` on iOS or `fgs_bridge_enabled=true` on
