@@ -275,6 +275,11 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         rate = record["pass_at_1"]
         if not valid or (eligible and (rate is None or not math.isclose(rate, passed / eligible))):
             missing.append("pass_at_1")
+    # Fixture and evaluation errors are not Agent failures, but a workflow
+    # containing them must not advertise a complete capability measurement.
+    if any(record["failure_classes"].get(kind, 0) > 0
+           for kind in ("environment", "evaluation")):
+        missing.append("evaluation_coverage")
     record["missing_metrics"] = missing
     if missing or not record["eligible_tasks"]:
         record["pass_at_1"] = None
@@ -284,7 +289,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         rate = record[metric]
         valid = all(v is not None and v >= 0 and float(v).is_integer()
                     for v in (total, eligible, successes))
-        if not valid or not (0 <= successes <= eligible <= total) or not eligible or rate is None or not math.isclose(rate, successes / eligible):
+        if missing or not valid or not (0 <= successes <= eligible <= total) or not eligible or rate is None or not math.isclose(rate, successes / eligible):
             record[metric] = None
     return record
 

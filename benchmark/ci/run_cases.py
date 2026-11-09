@@ -82,6 +82,72 @@ def _log_tail(log_path: Path, lines: int = LOG_TAIL_LINES) -> str:
     return "\n".join(tail)
 
 
+def _record_setup_failure(
+    case: SuiteCase, run_id: str, environment: Mapping[str, str], error: str,
+) -> Path:
+    """Keep a planned case visible using the normal, publishable run artifacts."""
+    from runner.main import (
+        _build_task_units, _planned_metrics_k, _planned_task_attempts,
+        _result_totals, _write_suite_snapshot,
+    )
+    from runner.html_report import generate_report_html
+    from runner.judge import JUDGE_PROMPT_VERSION, JudgeConfig
+    from runner.report import git_sha, now_iso, write_jsonl, write_manifest, write_metrics, write_summary
+    from runner.runtask import skipped_task_result
+    from runner.suite import load_suite
+    from ci.run_case import _runtime_environment
+
+    runtime = _runtime_environment(environment)
+    suite = load_suite(BENCHMARK_ROOT / case.suite)
+    if case.task_ids:
+        by_id = {task.id: task for task in suite.tasks}
+        suite.tasks = [by_id[task_id] for task_id in case.task_ids]
+    repeats = runtime.get("BENCHMARK_REPEATS", "").strip()
+    repeat_count = int(repeats) if repeats else None
+    if repeat_count is not None and repeat_count <= 0:
+        raise ValueError("BENCHMARK_REPEATS must be a positive integer")
+    units = _build_task_units(argparse.Namespace(repeats=repeat_count), suite, case.target_platform)
+    run_dir = BENCHMARK_ROOT / "runs" / run_id
+    # Match the normal runner's refusal to overwrite an existing measurement.
+    run_dir.mkdir(parents=True, exist_ok=False)
+    results = []
+    for unit in units:
+        result = skipped_task_result(
+            suite, unit.task, unit.attempt,
+            run_dir / "tasks" / unit.task.id / f"attempt_{unit.attempt}", run_id, error,
+        )
+        result.metrics["failure_class"] = "environment"
+        results.append(result)
+    sha, dirty = git_sha(BENCHMARK_ROOT.parent)
+    judge = JudgeConfig()
+    manifest = {
+        "run_id": run_id, "git_sha": sha, "git_dirty": dirty,
+        "git_branch": runtime.get("GITHUB_REF_NAME"),
+        "suite_path": str(suite.source_path), "suite_sha256": suite.sha256,
+        "suite_snapshot_path": _write_suite_snapshot(run_dir, suite),
+        "selected_task_ids": case.task_ids,
+        "target_platform": case.target_platform,
+        "execution_environment": "adb_aidenbridge",
+        "agent_model": runtime.get("AICO_BENCHMARK_AGENT_MODEL"),
+        "judge_config": {"provider": judge.provider,
+                         "model": runtime.get("AICO_BENCHMARK_JUDGE_MODEL", judge.model),
+                         "base_url": runtime.get("AICO_BENCHMARK_JUDGE_BASE_URL", judge.base_url)},
+        "judge_prompt_version": JUDGE_PROMPT_VERSION,
+        "started_at": now_iso(), "finished_at": now_iso(),
+        "totals": _result_totals(results), "metrics_schema_version": "p0-v1",
+        "metrics_k": _planned_metrics_k(units),
+        "planned_task_attempts": _planned_task_attempts(units),
+    }
+    write_manifest(run_dir / "manifest.json", manifest)
+    write_jsonl(run_dir / "results.jsonl", results)
+    write_metrics(run_dir / "metrics.json", suite.name, manifest, results)
+    write_summary(run_dir / "summary.md", suite.name, manifest, results)
+    (run_dir / "report.html").write_text(generate_report_html(run_dir), encoding="utf-8")
+    log_path = run_dir / "ci-case.log"
+    log_path.write_text(error + "\n", encoding="utf-8")
+    return log_path
+
+
 def run_cases(
     cases: tuple[SuiteCase, ...],
     *,
@@ -104,8 +170,15 @@ def run_cases(
         run_id = f"{run_id_prefix}-{case.id}"
         if case.android_phone_bridge and environment.get(AIDENBRIDGE_READY_ENV) == "0":
             # The workflow installs AidenBridge once for every case that needs it.
-            # When that fails, only those cases are lost; the rest still run.
+            # Retain invalid setup attempts without attributing them to the Agent.
             summary = "aidenbridge_setup_failed"
+            log_path = BENCHMARK_ROOT / "runs" / run_id / "ci-case.log"
+            try:
+                log_path = _record_setup_failure(case, run_id, environment, summary)
+            except (OSError, ValueError, KeyError, RuntimeError) as exc:
+                # Reporting errors must not prevent independent cases from running.
+                summary += ", setup_report_failed"
+                emit(f"ERROR   {case.id}: could not record setup failure: {exc}")
             with print_lock:
                 print(f"::error title=Benchmark case {case.id}::{summary}", flush=True)
             emit(f"SKIP    {case.id}: AidenBridge device setup failed")
@@ -114,7 +187,7 @@ def run_cases(
                 run_id=run_id,
                 returncode=2,
                 duration_seconds=0.0,
-                log_path=BENCHMARK_ROOT / "runs" / run_id / "ci-case.log",
+                log_path=log_path,
                 error_summary=summary,
             )
         # Keep each case's staging directory private.  Cases execute in parallel,

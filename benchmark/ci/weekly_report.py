@@ -69,7 +69,8 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
         "run_count": len({(r["workflow_run_id"], r.get("workflow_run_attempt")) if r.get("workflow_run_id")
                           else (r.get("run_id") or r["timestamp"], None) for r in measured}),
         "passed": sum(r["passed"] for r in measured),
-        "pass_at_1": sum(r["passed"] for r in measured) / eligible if eligible else None,
+        "pass_at_1": sum(r["passed"] for r in measured) / eligible
+            if eligible and len(measured) == len(records) else None,
         # Missing cost/token measurements must not silently become zero.
         **{f"{metric}_sum": _complete_resource_sum(records, metric)
            for metric in ("cost_usd", "total_tokens")},

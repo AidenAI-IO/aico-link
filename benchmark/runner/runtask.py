@@ -865,7 +865,11 @@ def _apply_environment_assertions(
                     actual=f"Observed {check.actual!r}.",
                 )
             )
-        if result.status == "passed" or (result.status == "skipped" and result.metrics.get("judging_disabled")):
+        if result.status == "passed" or (
+            result.status == "skipped"
+            and result.metrics.get("judging_disabled")
+            and not result.metrics.get("preconditions_pending")
+        ):
             if result.metrics.pop("judging_disabled", False):
                 result.metrics.pop("error", None)
                 result.metrics["first_failure_stage"] = "unknown"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import threading
 from pathlib import Path
@@ -117,6 +118,15 @@ def test_run_cases_emits_an_annotation_for_an_interrupted_run(
 def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path: Path, ready) -> None:
     bridge = SuiteCase(id="bridge", suite="suites/bridge.json", environment="adb",
                        target_platform="android", android_phone_bridge=True)
+    suite_path = tmp_path / bridge.suite
+    suite_path.parent.mkdir(parents=True)
+    suite_path.write_text(json.dumps({"name": "bridge", "tasks": [
+        {"id": "selected", "category": "single_step", "prompt": "Act", "description_for_judge": "Act",
+         "rubric": [{"id": "done", "check": "Action completed"}]},
+        {"id": "unselected", "category": "single_step", "prompt": "Act", "description_for_judge": "Act",
+         "rubric": [{"id": "done", "check": "Action completed"}]},
+    ]}))
+    bridge = SuiteCase(**{**bridge.matrix_entry(), "task_ids": ["selected"]})
     started: list[str] = []
     monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
     monkeypatch.setattr(run_cases_module, "run_case", lambda case, **kwargs: started.append(case.id) or 0)
@@ -124,7 +134,7 @@ def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path:
     outcomes = run_cases_module.run_cases(
         (bridge, _case("plain-adb", "adb"), _case("memory", "isolated")),
         run_id_prefix="ci-test",
-        environment={} if ready is None else {"AIDENBRIDGE_READY": ready},
+        environment={"BENCHMARK_REPEATS": "2", **({} if ready is None else {"AIDENBRIDGE_READY": ready})},
         max_parallel=1,
     )
 
@@ -132,6 +142,29 @@ def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path:
     if ready == "0":
         assert sorted(started) == ["memory", "plain-adb"]
         assert not by_id["bridge"].ok and by_id["bridge"].error_summary == "aidenbridge_setup_failed"
+        from ci.fetch_langfuse_history import _read_local_runs
+        from ci.generate_dashboard import _group_into_runs
+        from ci.weekly_report import _totals
+        from runner.langfuse_reporter import _load_run_artifacts, _experiment_metadata, _run_scores
+        run_dir = tmp_path / "runs" / by_id["bridge"].run_id
+        artifacts = _load_run_artifacts(run_dir)
+        assert [(row["task_id"], row["attempt"]) for row in artifacts.results] == [
+            ("selected", 1), ("selected", 2)]
+        assert all(row["status"] == "skipped" and row["metrics"]["agent_eligible"] is False
+                   and row["metrics"]["failure_class"] == "environment" for row in artifacts.results)
+        assert _experiment_metadata(artifacts)["execution_environment"] == "adb_aidenbridge"
+        assert {s["name"]: s["value"] for s in _run_scores(artifacts.metrics["aggregate"])}[
+            "coverage.agent_eligible_attempts"] == 0
+        warnings = []
+        records = _read_local_runs(tmp_path / "runs", "ci-test", None, warnings)
+        assert len(records) == 1
+        assert records[0]["missing_metrics"]
+        healthy = {**records[0], "run_id": "healthy", "missing_metrics": [],
+                   "eligible_tasks": 1, "passed": 1, "pass_at_1": 1.0}
+        records[0]["workflow_run_id"] = healthy["workflow_run_id"] = "123"
+        run, = _group_into_runs([healthy, records[0]])
+        assert run["metrics_complete"] is False and run["pass_at_1"] is None
+        assert _totals([healthy, records[0]])["pass_at_1"] is None
     else:
         assert sorted(started) == ["bridge", "memory", "plain-adb"]
     assert by_id["plain-adb"].ok and by_id["memory"].ok

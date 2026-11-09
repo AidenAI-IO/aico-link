@@ -346,7 +346,7 @@ def test_run_one_task_does_not_count_pre_execution_agent_error_as_agent_failure(
     assert result.metrics["failure_class"] == "unknown"
 
 
-@pytest.mark.parametrize("has_rubric", [False, True])
+@pytest.mark.parametrize("has_rubric", [False, True, "precondition"])
 def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monkeypatch, has_rubric):
     suite = Suite(
         name="mobilegym",
@@ -360,7 +360,8 @@ def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monke
         category="multi_step",
         description_for_judge="Open the exact target.",
         prompt="open target",
-        rubric=[RubricItem(id="opened", check="Target is open")] if has_rubric else [],
+        rubric=[RubricItem(id="opened", check="Target is open",
+                           scope="precondition" if has_rubric == "precondition" else "outcome")] if has_rubric else [],
         hard_assertions=HardAssertions(min_tool_calls=0, max_tool_calls=0),
         environment_assertions={
             "route.path": "/item/scroll-item-083",
@@ -390,8 +391,15 @@ def test_run_one_task_applies_environment_state_assertions(tmp_path: Path, monke
         environment_url="http://environment.test",
     )
 
-    assert result.status == "failed"
     assert result.hard_assertions.environment_state is False
+    if has_rubric == "precondition":
+        assert result.status == "skipped"
+        assert result.metrics["preconditions_pending"] is True
+        assert result.metrics["agent_eligible"] is False
+        assert result.metrics["environment_state_assertions"]
+        assert aggregate([result])["pass_at_1"]["value"] is None
+        return
+    assert result.status == "failed"
     assert result.metrics["success"] is False
     assert result.metrics["agent_eligible"] is True
     assert result.metrics["first_failure_stage"] != "evaluation"
