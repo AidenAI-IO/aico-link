@@ -24,8 +24,11 @@ The runner's `--execution-mode` option, or a CI catalog case's
 | `realtime-text` | The runner sends text to the realtime foreground, which creates, updates, queries, and cancels backend tasks. | Collaboration scenario suites. |
 
 Scenario suites require `realtime-text`, and `realtime-text` accepts only
-scenario suites. Results, Langfuse metadata, and history comparisons record the
-mode, so the two are never aggregated together.
+scenario suites. Results and Langfuse experiment metadata record the mode, and
+run-to-run comparisons in the dashboard and weekly report treat a mode change
+as a configuration change. The weekly report's overall pass rate covers every
+non-diagnostic suite, including the realtime collaboration suite; use its
+per-suite row to follow this benchmark.
 
 ## Runtime
 
@@ -395,10 +398,11 @@ the original timestamps. It contains:
 - adjudicated completion claims, with unsupported claims marked as warnings.
 
 The experiment item records `foreground_trace_id`, `foreground_trace_url`, and
-`foreground_trace_status` (`exported`, `not_exported`, `no_capture`, or
-`unreadable`). Experiment metadata adds `execution_mode` and
-`foreground_model`. The dashboard and weekly report treat both as comparison
-fields.
+`foreground_trace_status` (`exported`, `export_failed`, `not_exported`,
+`no_capture`, or `unreadable`). A failed export is recorded with
+`foreground_trace_error` and does not block the benchmark scores. Experiment
+metadata adds `execution_mode` and `foreground_model`. The dashboard and weekly
+report treat both as comparison fields.
 
 ## Limitations
 

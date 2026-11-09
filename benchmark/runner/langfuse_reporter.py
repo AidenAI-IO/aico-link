@@ -433,7 +433,14 @@ def _export_foreground_traces(
         if exporter is None:
             outputs[key] = {"foreground_trace_status": "not_exported", "foreground_trace_id": trace_id}
             continue
-        exporter(spans)
+        try:
+            exporter(spans)
+        except Exception as exc:
+            # The foreground trace is a navigation aid: a failed export must not
+            # block the attempt's benchmark scores.
+            outputs[key] = {"foreground_trace_status": "export_failed", "foreground_trace_id": trace_id,
+                            "foreground_trace_error": f"{type(exc).__name__}: {exc}"[:500]}
+            continue
         exported += 1
         outputs[key] = {"foreground_trace_status": "exported", "foreground_trace_id": trace_id,
                         "foreground_trace_url": url(trace_id)}
@@ -616,6 +623,9 @@ def _validate_existing_run_metadata(
         # predate these fields. Artifact hashes still guard conflicting results.
         if key not in {"git_branch", "benchmark_started_at", "workflow_run_id",
                        "workflow_run_attempt", "workflow_run_number"}
+        # realtime-text runs published before the execution mode was recorded
+        # lack these keys; a recorded value must still match.
+        and not (key in {"execution_mode", "foreground_model"} and key not in actual)
     ):
         raise LangfusePublishError(
             f"Langfuse run {run_name} conflicts with benchmark artifacts; "

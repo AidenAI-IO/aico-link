@@ -84,7 +84,8 @@ def build_foreground_spans(
     root["metadata"].update({"foreground_model": foreground_model})
     turns: dict[str, dict[str, Any]] = {}
     responses: dict[str, dict[str, Any]] = {}
-    texts: dict[str, str] = {}
+    # One response can contain several output items; keep them apart.
+    texts: dict[str, dict[str, str]] = {}
     tools: dict[str, dict[str, Any]] = {}
     tasks: dict[str, dict[str, Any]] = {}
     runs: dict[str, dict[str, Any]] = {}
@@ -113,11 +114,14 @@ def build_foreground_spans(
                     trigger="user_turn" if turn_id in turns else "task_result")
             elif kind in {"text.delta", "text.final"} and response_id in responses:
                 text = payload.get("Text") or ""
-                texts[response_id] = texts.get(response_id, "") + text if kind == "text.delta" else text
-                responses[response_id]["output"] = texts[response_id]
+                items = texts.setdefault(response_id, {})
+                item = event.get("item_id") or ""
+                items[item] = items.get(item, "") + text if kind == "text.delta" else text
+                output = "\n\n".join(part for part in items.values() if part)
+                responses[response_id]["output"] = output
                 # The trace output is the last thing the foreground told the
                 # user, which for delegated work is the result feedback.
-                root["output"] = texts[response_id]
+                root["output"] = output
             elif kind == "response.terminal" and response_id in responses:
                 usage = payload.get("Usage") or {}
                 responses[response_id].update(end=when, usage={

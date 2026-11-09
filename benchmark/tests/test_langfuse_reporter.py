@@ -306,6 +306,17 @@ def test_publish_run_exports_foreground_trace_only_for_realtime_attempts(tmp_pat
     assert output["foreground_trace_status"] == "exported" and output["foreground_trace_id"] == trace_id
     assert client.experiment is None  # still attached to the backend execution trace
 
+    # A failed trace export is recorded on the item and never blocks the scores.
+    def failing(_spans):
+        raise RuntimeError("otlp unavailable")
+    failed_dir = _write_run(tmp_path / "export-failed")
+    _realtime_attempt(failed_dir)
+    failed_client = ExecutionLangfuse()
+    assert publish_run(failed_dir, client=failed_client, foreground_exporter=failing).item_count == 1
+    output = failed_client.execution_observations[0]["output"]
+    assert output["foreground_trace_status"] == "export_failed"
+    assert "otlp unavailable" in output["foreground_trace_error"]
+
 
 def test_publish_run_without_episode_keeps_failure_replay(tmp_path: Path):
     run_dir = _write_run(tmp_path)
@@ -987,3 +998,10 @@ def test_reporting_metadata_preserves_old_publication_retry_identity():
     with pytest.raises(LangfusePublishError, match="conflicts"):
         _validate_existing_run_metadata(SimpleNamespace(metadata=old),
                                         {**added, "artifact_sha256": "changed"}, "run")
+    # realtime-text runs published before the mode was recorded can be retried;
+    # a recorded mode must still match.
+    realtime = {**added, "execution_mode": "realtime-text", "foreground_model": "openai/m"}
+    _validate_existing_run_metadata(SimpleNamespace(metadata=old), realtime, "run")
+    with pytest.raises(LangfusePublishError, match="conflicts"):
+        _validate_existing_run_metadata(
+            SimpleNamespace(metadata={**old, "execution_mode": "backend-text"}), realtime, "run")
