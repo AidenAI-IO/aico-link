@@ -89,7 +89,9 @@ func (s *State) PasswordSet() bool {
 
 // SetEnabled turns LAN access on or off. Turning it on requires a stored
 // device password. Turning it off keeps the password but signs every LAN
-// client out, so turning it back on asks for the password again.
+// client out. Turning it on revokes sessions again before the switch flips,
+// so a token that survived a failed revocation while off can never sign in
+// once it is back on; if that revocation fails, LAN access stays off.
 func (s *State) SetEnabled(enabled bool) error {
 	if !enabled {
 		if err := os.Remove(s.EnabledPath); err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -99,6 +101,11 @@ func (s *State) SetEnabled(enabled bool) error {
 	}
 	if !s.PasswordSet() {
 		return ErrPasswordRequired
+	}
+	if !s.Enabled() {
+		if err := s.revokeSessions(); err != nil {
+			return err
+		}
 	}
 	return writeFileAtomic(s.EnabledPath, []byte("1\n"))
 }

@@ -83,6 +83,12 @@ func (s *Server) handleLANAccessUpdate(w http.ResponseWriter, r *http.Request) {
 	if request.Enabled != nil {
 		if err := s.lanAccess.SetEnabled(*request.Enabled); err != nil {
 			logging.Errorf("config_web", "lan_access", "set LAN access: %v", err)
+			// The switch may already have changed (turning off removes the
+			// marker before revoking sessions), so bring SSH in line with
+			// whatever is stored before reporting the failure.
+			if syncErr := s.syncLANAccess(r.Context()); syncErr != nil {
+				logging.Warnf("config_web", "lan_access", "apply LAN access after a failed change: %v", syncErr)
+			}
 			writeJSONError(w, http.StatusInternalServerError, "failed to change LAN access")
 			return
 		}

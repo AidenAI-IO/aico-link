@@ -353,3 +353,60 @@ func TestPasswordUnchangedWhenSessionsCannotBeRevoked(t *testing.T) {
 		t.Fatalf("a refused change must leave existing sessions alone: %v", err)
 	}
 }
+
+// A token that outlived a failed revocation while LAN access was off must not
+// work once LAN access is turned back on.
+func TestReEnablingRevokesSessionsThatSurvivedSwitchOff(t *testing.T) {
+	state := enabledState(t)
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Switch off without revoking, as if revocation had failed.
+	if err := os.Remove(state.EnabledPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err != nil {
+		t.Fatalf("setup: token should still verify: %v", err)
+	}
+	if err := state.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err == nil {
+		t.Fatal("a session from before the switch-off works again after re-enabling")
+	}
+}
+
+// If sessions cannot be revoked, LAN access must stay off.
+func TestReEnablingStaysOffWhenSessionsCannotBeRevoked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	state := enabledState(t)
+	if err := os.Remove(state.EnabledPath); err != nil {
+		t.Fatal(err)
+	}
+	keyDir := filepath.Join(t.TempDir(), "keys")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(state.SecretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SecretPath = filepath.Join(keyDir, "secret")
+	if err := os.WriteFile(state.SecretPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(keyDir, 0o700) })
+
+	if err := state.SetEnabled(true); err == nil {
+		t.Fatal("LAN access turned on although sessions could not be revoked")
+	}
+	if state.Enabled() {
+		t.Fatal("LAN access is on after a failed revocation")
+	}
+}
