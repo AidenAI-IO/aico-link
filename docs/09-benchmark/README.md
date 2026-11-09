@@ -272,7 +272,7 @@ Common options:
 - `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
-- `--execution-mode backend-text|realtime-text` - `backend-text` (default) sends prompts directly to the backend Agent. `realtime-text` drives a realtime foreground model that delegates to the backend; it requires `--auto-agent-setup` and a scenario suite. See [Realtime Text Collaboration](./realtime-text-collaboration-design.md).
+- `--execution-mode MODE` - `backend-text` (default) or `realtime-text`. See [Realtime Collaboration Benchmark](./realtime-text-collaboration.md).
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
 - `--verbose` - Print detailed rubric results.
 
@@ -546,6 +546,10 @@ below.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
 
+The realtime collaboration suite also uses the `BENCHMARK_REALTIME_*`
+settings described in
+[Realtime Collaboration Benchmark](./realtime-text-collaboration.md#ci).
+
 Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 `3` to repeat each task in scheduled and manual runs. A nonempty manual
 `repeats` input overrides that variable for one run; leave it blank to use the
@@ -714,7 +718,7 @@ runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 ## Related Documentation
 
 - [Architecture Design](./architecture.md)
-- [Realtime Text Collaboration](./realtime-text-collaboration-design.md)
+- [Realtime Collaboration Benchmark](./realtime-text-collaboration.md)
 - [Detailed Guide](./quickstart.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)
