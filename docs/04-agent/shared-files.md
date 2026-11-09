@@ -84,6 +84,9 @@ type or image filename extension and retain the existing visual input path;
 other files, including audio, are uploaded as local files. Pasted images use the
 same visual input path. Reaching the image limit still allows adding other files
 until the combined attachment limit is reached.
+An individual read or upload failure does not stop later files in the selection.
+The composer reports failed and skipped counts with the first failure reason.
+A login-required response stops the batch and preserves the existing draft.
 
 Uploads stream to a hidden temporary file and become visible only after the
 complete request is persisted. A duplicate filename receives a random suffix;

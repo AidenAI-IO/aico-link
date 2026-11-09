@@ -40,25 +40,58 @@ test('download cards accept encoded board links and reject external or executabl
   assert.equal(context.sharedLinksFromText('下载 /share/report.pdf。')[0].download_url, '/share/report.pdf');
 });
 
-test('upload completion adds only a file reference and failure preserves existing draft files', async () => {
-  let requests = 0;
-  const context = harness(async (url, options) => {
-    requests++;
-    assert.equal(url, '/api/files');
-    assert.ok(options.body instanceof FormData);
-    assert.equal(context.fileUploadPending, true);
-    if (requests === 2) return {ok: false, text: async () => 'Storage full'};
-    return {ok: true, json: async () => ({kind: 'file', path: '/share/report.csv', name: 'report.csv', download_url: '/share/report.csv', size: 3})};
-  });
-  const event = {target: {files: [new File(['abc'], 'report.csv'), new File(['bad'], 'failed.csv')], value: 'selected'}};
-  await context.handleFileSelection(event);
-  assert.equal(event.target.value, '');
-  assert.equal(context.fileUploadPending, false);
-  assert.equal(context.draftAttachments.length, 1);
-  assert.equal(context.lastHint, 'Storage full');
-  const payload = context.cloneAttachmentsForTransport(context.draftAttachments)[0];
-  assert.equal(payload.path, '/share/report.csv');
-  assert.equal(payload.data, undefined);
+test('individual attachment failures preserve the draft and process later mixed files', async t => {
+  for (const [failure, reason] of [
+    ['http', 'Storage full'],
+    ['network', 'Network unavailable'],
+    ['timeout', 'Upload timed out. Please try again.'],
+    ['oversize', 'File exceeds the 100 MiB limit: failed.csv'],
+    ['image', 'Image could not be read'],
+  ]) {
+    await t.test(failure, async () => {
+      const requests = [];
+      const context = harness(async (url, options) => {
+        assert.equal(url, '/api/files');
+        assert.ok(options.body instanceof FormData);
+        assert.equal(context.fileUploadPending, true);
+        const name = options.body.get('file').name;
+        requests.push(name);
+        if (name === 'failed.csv') {
+          if (failure === 'network') throw new TypeError(reason);
+          if (failure === 'timeout') throw Object.assign(new Error('aborted'), {name: 'AbortError'});
+          return {ok: false, text: async () => reason};
+        }
+        if (name === 'last-failure.csv') return {ok: false, text: async () => 'Later upload error'};
+        return {ok: true, json: async () => ({kind: 'file', path: '/share/' + name, name, size: 3})};
+      });
+      context.draftAttachments.push({kind: 'file', path: '/share/existing.csv', name: 'existing.csv'});
+      context.maxDraftImageAttachments = 1;
+      const failedFile = new File(['bad'], failure === 'image' ? 'failed.png' : 'failed.csv');
+      if (failure === 'oversize') Object.defineProperty(failedFile, 'size', {value: 100 * 1024 * 1024 + 1});
+      if (failure === 'image') failedFile.arrayBuffer = async () => { throw new Error(reason); };
+      const event = {target: {files: [
+        failedFile,
+        new File(['png'], 'photo.png'),
+        new File(['abc'], 'report.csv'),
+        new File(['bad'], 'last-failure.csv'),
+        new File(['jpg'], 'skipped.jpg'),
+      ], value: 'selected'}};
+      await context.handleFileSelection(event);
+      assert.deepEqual(requests, [
+        ...(['oversize', 'image'].includes(failure) ? [] : ['failed.csv']),
+        'report.csv', 'last-failure.csv',
+      ]);
+      assert.equal(event.target.value, '');
+      assert.equal(context.fileUploadPending, false);
+      const payload = JSON.parse(JSON.stringify(context.cloneAttachmentsForTransport(context.draftAttachments)));
+      assert.deepEqual(payload.map(attachment => attachment.name), ['existing.csv', 'photo.png', 'report.csv']);
+      assert.equal(payload[1].kind, 'image');
+      assert.equal(payload[1].data, Buffer.from('png').toString('base64'));
+      assert.equal(payload[2].path, '/share/report.csv');
+      assert.equal(payload[2].data, undefined);
+      assert.equal(context.lastHint, '2 files could not be attached. ' + reason + ' 1 file skipped. Attach up to 1 images and 16 files/images in total.');
+    });
+  }
 });
 
 test('one picker routes mixed selections to visual input or shared files in selection order', async () => {
@@ -137,9 +170,14 @@ test('image reads block concurrent selections and pasted images retain visual in
 });
 
 test('expired upload sessions offer local login without navigating away or losing the draft', async () => {
-  const context = harness(async () => ({status: 401, ok: false, text: async () => '{"error":"login_required"}'}));
+  let requests = 0;
+  const context = harness(async () => {
+    requests++;
+    return {status: 401, ok: false, text: async () => '{"error":"login_required"}'};
+  });
   context.draftAttachments.push({kind: 'file', path: '/share/existing.csv'});
-  await context.handleFileSelection({target: {files: [new File(['abc'], 'report.csv')], value: 'selected'}});
+  await context.handleFileSelection({target: {files: [new File(['abc'], 'report.csv'), new File(['png'], 'photo.png'), new File(['later'], 'later.csv')], value: 'selected'}});
+  assert.equal(requests, 1);
   assert.equal(context.draftAttachments.length, 1);
   assert.equal(context.fileUploadPending, false);
   assert.equal(context.composerHintEl.children.length, 1);

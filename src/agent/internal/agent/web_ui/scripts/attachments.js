@@ -306,6 +306,8 @@ async function handleFileSelection(event) {
     await addAttachmentFiles(files, 'selected');
 }
 
+// Process mixed selections independently, preserving successes and reporting
+// failures together. Login expiration stops the batch so the draft can be retried.
 // Images retain visual input; other files upload separately and use board paths.
 async function addAttachmentFiles(files, source) {
     if (!files.length) return;
@@ -317,18 +319,19 @@ async function addAttachmentFiles(files, source) {
     setComposerState(loadingDiv.classList.contains('active'));
     let skipped = 0;
     let failed = 0;
+    let firstError = '';
     try {
         for (const file of files) {
             if (draftAttachments.length >= maxDraftAttachments) {
                 skipped++;
                 continue;
             }
-            if (isImageFile(file)) {
-                if (getDraftImageCount() >= maxDraftImageAttachments) {
-                    skipped++;
-                    continue;
-                }
-                try {
+            try {
+                if (isImageFile(file)) {
+                    if (getDraftImageCount() >= maxDraftImageAttachments) {
+                        skipped++;
+                        continue;
+                    }
                     const id = nextAttachmentId++;
                     const dataUrl = await readFileAsDataURL(file);
                     draftAttachments.push({
@@ -339,36 +342,39 @@ async function addAttachmentFiles(files, source) {
                         data: extractBase64(dataUrl),
                         size: file.size || 0
                     });
-                } catch (err) {
-                    failed++;
-                    console.error('Failed to read image attachment:', err);
+                    continue;
                 }
-                continue;
+                if (file.size > 100 * 1024 * 1024) throw new Error('File exceeds the 100 MiB limit: ' + file.name);
+                setComposerHint('Uploading ' + file.name + '…');
+                const form = new FormData();
+                form.append('file', file, file.name);
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 300000);
+                try {
+                    const response = await fetch('/api/files', {method: 'POST', body: form, signal: controller.signal});
+                    if (!response.ok) {
+                        const message = await response.text();
+                        let code = '';
+                        try { code = JSON.parse(message).error; } catch (_) {}
+                        const error = new Error(code === 'lan_access_disabled'
+                            ? 'LAN access is off. Connect over USB and enable it in Settings.'
+                            : message || 'Upload failed');
+                        error.loginRequired = response.status === 401 && code === 'login_required';
+                        throw error;
+                    }
+                    const uploaded = await response.json();
+                    draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
+                } finally { clearTimeout(timeout); }
+            } catch (err) {
+                if (err.loginRequired) throw err;
+                failed++;
+                if (!firstError) firstError = err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message;
             }
-            if (file.size > 100 * 1024 * 1024) throw new Error('File exceeds the 100 MiB limit: ' + file.name);
-            setComposerHint('Uploading ' + file.name + '…');
-            const form = new FormData();
-            form.append('file', file, file.name);
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 300000);
-            try {
-                const response = await fetch('/api/files', {method: 'POST', body: form, signal: controller.signal});
-                if (!response.ok) {
-                    const message = await response.text();
-                    let code = '';
-                    try { code = JSON.parse(message).error; } catch (_) {}
-                    const error = new Error(code === 'lan_access_disabled'
-                        ? 'LAN access is off. Connect over USB and enable it in Settings.'
-                        : message || 'Upload failed');
-                    error.loginRequired = response.status === 401 && code === 'login_required';
-                    throw error;
-                }
-                const uploaded = await response.json();
-                draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
-            } finally { clearTimeout(timeout); }
         }
-        if (skipped > 0) setComposerHint('Attach up to ' + maxDraftImageAttachments + ' images and ' + maxDraftAttachments + ' files/images in total.', true);
-        else if (failed > 0) setComposerHint('Some images could not be read.', true);
+        const hints = [];
+        if (failed > 0) hints.push(failed + (failed === 1 ? ' file' : ' files') + ' could not be attached. ' + firstError);
+        if (skipped > 0) hints.push(skipped + (skipped === 1 ? ' file' : ' files') + ' skipped. Attach up to ' + maxDraftImageAttachments + ' images and ' + maxDraftAttachments + ' files/images in total.');
+        if (hints.length > 0) setComposerHint(hints.join(' '), true);
         else resetComposerHint();
     } catch (err) {
         if (err.loginRequired) showSharedFileLoginHint();
