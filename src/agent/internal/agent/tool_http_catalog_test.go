@@ -210,7 +210,6 @@ func TestAvailableToolsHidesUnavailablePhoneBridgeToolsWhenDisconnected(t *testi
 
 	names := toolNameSet(runtime.availableTools())
 	for _, notWant := range []string{
-		"open_url",
 		"bridge_clipboard",
 		"bridge_calendar",
 		"bridge_contacts",
@@ -220,8 +219,10 @@ func TestAvailableToolsHidesUnavailablePhoneBridgeToolsWhenDisconnected(t *testi
 			t.Fatalf("agent catalog exposed unavailable %s while Phone Bridge and BLE are disconnected: %v", notWant, names)
 		}
 	}
-	if _, ok := names["open_app"]; !ok {
-		t.Fatalf("agent catalog should keep open_app because it can fall back to visible system search: %v", names)
+	for _, want := range []string{"open_app", "open_url"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("agent catalog should keep %s because it can fall back to visible system search: %v", want, names)
+		}
 	}
 	if _, ok := names["enter_text"]; !ok {
 		t.Fatalf("agent catalog should keep non-bridge input fallback enter_text: %v", names)
@@ -233,6 +234,18 @@ func TestAvailableToolsHidesUnavailablePhoneBridgeToolsWhenDisconnected(t *testi
 		if _, ok := runtime.ToolDescriptorByName(internal); ok {
 			t.Fatalf("internal launch route %s leaked into HTTP catalog", internal)
 		}
+	}
+}
+
+func TestAvailableToolsHidesOpenURLWithoutBrowserFallback(t *testing.T) {
+	runtime := newRuntimeWithTextEntryTools()
+	runtime.tools.searchOpenTool = nil
+	bridge := newPhoneBridgeForTest()
+	t.Cleanup(func() { bridge.queue.Stop() })
+	runtime.tools.RegisterPhoneBridge(bridge)
+
+	if _, ok := toolNameSet(runtime.availableTools())["open_url"]; ok {
+		t.Fatal("agent catalog exposed open_url with neither Phone Bridge nor a browser fallback")
 	}
 }
 
@@ -464,13 +477,10 @@ func TestAvailableToolsExposesOnlyBackgroundSafeBridgeToolsDuringPiP(t *testing.
 			t.Fatalf("agent catalog missing PiP-safe %s: %v", want, names)
 		}
 	}
-	for _, notWant := range []string{"open_url"} {
-		if _, ok := names[notWant]; ok {
-			t.Fatalf("agent catalog exposed foreground-only %s during PiP background state: %v", notWant, names)
+	for _, want := range []string{"open_app", "open_url"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("agent catalog should keep fallback-capable %s during PiP: %v", want, names)
 		}
-	}
-	if _, ok := names["open_app"]; !ok {
-		t.Fatalf("agent catalog should keep fallback-capable open_app during PiP: %v", names)
 	}
 	if _, ok := runtime.ToolDescriptorByName("open_app"); !ok {
 		t.Fatalf("HTTP catalog should keep open_app available for direct diagnostics: %v", names)
@@ -505,13 +515,15 @@ func TestAvailableToolsExposesBackgroundSafeBridgeToolsThroughBLEWake(t *testing
 			t.Fatalf("agent catalog missing BLE-Wake-safe %s: %v", want, names)
 		}
 	}
-	for _, notWant := range []string{"open_url", "bridge_clipboard"} {
+	for _, notWant := range []string{"bridge_clipboard"} {
 		if _, ok := names[notWant]; ok {
 			t.Fatalf("agent catalog exposed foreground-only %s through BLE Wake: %v", notWant, names)
 		}
 	}
-	if _, ok := names["open_app"]; !ok {
-		t.Fatalf("agent catalog should keep fallback-capable open_app through BLE Wake: %v", names)
+	for _, want := range []string{"open_app", "open_url"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("agent catalog should keep fallback-capable %s through BLE Wake: %v", want, names)
+		}
 	}
 	var contacts langtools.Tool
 	for _, tool := range runtime.availableTools() {
@@ -569,13 +581,15 @@ func TestAvailableToolsExposesOnlyNotificationWhenBLECanOnlyQuery(t *testing.T) 
 	if _, ok := names["bridge_notification"]; !ok {
 		t.Fatalf("agent catalog missing BLE notification query tool: %v", names)
 	}
-	for _, notWant := range []string{"open_url", "bridge_clipboard", "bridge_calendar", "bridge_contacts"} {
+	for _, notWant := range []string{"bridge_clipboard", "bridge_calendar", "bridge_contacts"} {
 		if _, ok := names[notWant]; ok {
 			t.Fatalf("agent catalog exposed unavailable %s with query-only BLE: %v", notWant, names)
 		}
 	}
-	if _, ok := names["open_app"]; !ok {
-		t.Fatalf("agent catalog should keep fallback-capable open_app with query-only BLE: %v", names)
+	for _, want := range []string{"open_app", "open_url"} {
+		if _, ok := names[want]; !ok {
+			t.Fatalf("agent catalog should keep fallback-capable %s with query-only BLE: %v", want, names)
+		}
 	}
 	var notification langtools.Tool
 	for _, tool := range tools {
