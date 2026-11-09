@@ -61,6 +61,9 @@ func stripScreenshotData(content string) string {
 	if strings.TrimSpace(result.ActionOutput) != "" {
 		compact["action_output"] = result.ActionOutput
 	}
+	if result.Grounding != nil {
+		compact["grounding"] = result.Grounding
+	}
 	if result.ScreenStable != nil {
 		compact["screen_stable"] = *result.ScreenStable
 	}

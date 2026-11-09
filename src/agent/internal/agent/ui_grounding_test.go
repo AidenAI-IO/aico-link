@@ -11,11 +11,14 @@ import (
 	"fmt"
 	"image/jpeg"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"aico-agent/internal/agent/screen"
+
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 type fakeUIGrounder struct {
@@ -48,21 +51,33 @@ func TestScreenshotToolGrounding(t *testing.T) {
 		}
 		return &ScreenshotTool{client: client, screen: state, grounder: grounder, deviceTypeFn: func() string { return "macos" }}, state
 	}
-	decode := func(t *testing.T, output string) (postActionScreenshotResult, groundedScreenshotOutput, []byte) {
+	// decode returns the result, the grounding the model reads in the tool
+	// message, and the image.
+	decode := func(t *testing.T, output string) (postActionScreenshotResult, screenshotGrounding, []byte) {
 		t.Helper()
 		var result postActionScreenshotResult
 		if err := json.Unmarshal([]byte(output), &result); err != nil {
 			t.Fatalf("output %q: %v", output, err)
 		}
-		var grounded groundedScreenshotOutput
-		if err := json.Unmarshal([]byte(result.ActionOutput), &grounded); err != nil {
-			t.Fatalf("action_output %q: %v", result.ActionOutput, err)
+		if result.ActionOutput != "ok" {
+			t.Fatalf("action_output = %q, want ok with grounding in its own field", result.ActionOutput)
+		}
+		content, ok := compactScreenshotObservation("screenshot", output)
+		if !ok {
+			t.Fatalf("output %q is not a screenshot observation", output)
+		}
+		var message struct {
+			ActionOutput string               `json:"action_output"`
+			Grounding    *screenshotGrounding `json:"grounding"`
+		}
+		if err := json.Unmarshal([]byte(content), &message); err != nil || message.ActionOutput != "ok" || message.Grounding == nil {
+			t.Fatalf("tool message %q, %v; want action_output ok and grounding", content, err)
 		}
 		image, err := base64.StdEncoding.DecodeString(result.Data)
 		if err != nil {
 			t.Fatalf("decode data: %v", err)
 		}
-		return result, grounded, image
+		return result, *message.Grounding, image
 	}
 
 	t.Run("marks control-sized elements in screenshot pixels", func(t *testing.T) {
@@ -81,12 +96,14 @@ func TestScreenshotToolGrounding(t *testing.T) {
 		if grounder.width != width || grounder.height != height {
 			t.Fatalf("detector saw %dx%d, want the %dx%d screenshot", grounder.width, grounder.height, width, height)
 		}
+		// Normalized 0-1000, the units touch_gesture takes natively:
+		// pixel / (size-1) * 1000 on a 60x120 screenshot.
 		want := []uiGroundingElement{
-			{ID: 1, Center: [2]int{30, 30}, Box: [4]int{10, 20, 50, 40}},
-			{ID: 2, Center: [2]int{5, 110}, Box: [4]int{0, 100, 9, 120}},
+			{ID: 1, Center: [2]float64{508.5, 252.1}, Box: [4]float64{169.5, 168.1, 847.5, 336.1}},
+			{ID: 2, Center: [2]float64{84.7, 924.4}, Box: [4]float64{0, 840.3, 152.5, 1000}},
 		}
-		if !grounded.OK || grounded.GroundingError != "" || fmt.Sprint(grounded.Elements) != fmt.Sprint(want) {
-			t.Fatalf("grounded output = %+v, want elements %+v", grounded, want)
+		if grounded.Error != "" || fmt.Sprint(grounded.Elements) != fmt.Sprint(want) {
+			t.Fatalf("grounding = %+v, want elements %+v", grounded, want)
 		}
 		if bytes.Equal(image, jpegData) || result.Size != len(image) {
 			t.Fatalf("image was not replaced by the marked screenshot (size %d, %d bytes)", result.Size, len(image))
@@ -109,8 +126,8 @@ func TestScreenshotToolGrounding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 		_, grounded, image := decode(t, output)
-		if grounded.GroundingError != "npu busy" || len(grounded.Elements) != 0 || !bytes.Equal(image, jpegData) {
-			t.Fatalf("grounded output = %+v, want plain screenshot with the error", grounded)
+		if grounded.Error != "npu busy" || len(grounded.Elements) != 0 || !bytes.Equal(image, jpegData) {
+			t.Fatalf("grounding = %+v, want plain screenshot with the error", grounded)
 		}
 	})
 
@@ -122,8 +139,11 @@ func TestScreenshotToolGrounding(t *testing.T) {
 			t.Fatalf("Call() error = %v", err)
 		}
 		var result postActionScreenshotResult
-		if err := json.Unmarshal([]byte(output), &result); err != nil || result.ActionOutput != "ok" || grounder.width != 0 {
+		if err := json.Unmarshal([]byte(output), &result); err != nil || result.ActionOutput != "ok" || result.Grounding != nil || grounder.width != 0 {
 			t.Fatalf("result = %+v, %v; want plain ok without detection", result, err)
+		}
+		if content, _ := compactScreenshotObservation("screenshot", output); content != "ok" {
+			t.Fatalf("tool message = %q, want ok", content)
 		}
 	})
 }
@@ -176,5 +196,60 @@ func TestUIGroundingHelperProcess(t *testing.T) {
 			os.Exit(1)
 		}
 		fmt.Printf("OK 1 1.0\n0 0 %d %d %d\n", size[0], size[1], requests)
+	}
+}
+
+// Under the visual coordinate protocol, touch_gesture takes screenshot pixels,
+// so the wrapped screenshot tool must report grounding in the same pixels.
+func TestVisualCoordinatesGroundingUsesTouchGestureUnits(t *testing.T) {
+	const width, height = 60, 120
+	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, width*height), width, height, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatalf("encodeJPEG() error = %v", err)
+	}
+	state := &screen.ScreenState{}
+	screenshot := &ScreenshotTool{
+		client: &fakeScreenshotFrameClient{
+			meta: frameMetadata{Width: width, Height: height, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
+			data: jpegData,
+		},
+		screen:       state,
+		grounder:     &fakeUIGrounder{boxes: []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}},
+		deviceTypeFn: func() string { return "macos" },
+	}
+	touch := &visualRecordingTool{name: "touch_gesture"}
+	frames := newVisualCoordinates(state)
+	tools := frames.wrap([]langtools.Tool{screenshot, touch})
+
+	output, err := tools[0].Call(context.Background(), `{"grounding":true}`)
+	if err != nil {
+		t.Fatalf("Call() error = %v", err)
+	}
+	var result postActionScreenshotResult
+	if err := json.Unmarshal([]byte(output), &result); err != nil || result.Grounding == nil || len(result.Grounding.Elements) != 1 {
+		t.Fatalf("output %q, %v; want one grounded element", output, err)
+	}
+	element := result.Grounding.Elements[0]
+	if element.Center != [2]float64{30, 30} || element.Box != [4]float64{10, 20, 50, 40} {
+		t.Fatalf("element = %+v, want pixel center (30,30) and box (10,20,50,40)", element)
+	}
+	if result.Data == "" || result.ActionOutput != "ok" {
+		t.Fatalf("result lost its image or action output: %+v", result.screenshotResult)
+	}
+
+	// The reported center goes into touch_gesture unchanged and reaches the
+	// device as the same normalized point the plain screenshot tool reports.
+	input, _ := json.Marshal(map[string]any{"type": "tap", "point": map[string]any{"x": element.Center[0], "y": element.Center[1]}})
+	if _, err := tools[1].Call(context.Background(), string(input)); err != nil {
+		t.Fatalf("touch_gesture Call() error = %v", err)
+	}
+	if len(touch.inputs) != 1 {
+		t.Fatalf("touch_gesture inputs = %v", touch.inputs)
+	}
+	point, _ := touch.inputs[0]["point"].(map[string]any)
+	x, _ := point["x"].(float64)
+	y, _ := point["y"].(float64)
+	if math.Abs(x-508.5) > 0.1 || math.Abs(y-252.1) > 0.1 {
+		t.Fatalf("device point = %v, want the normalized element center (508.5, 252.1)", point)
 	}
 }

@@ -6,7 +6,10 @@ sidebar_position: 19
 
 The `screenshot` tool can mark the interface components it detects on the
 screen, so the model can pick a target by number and tap a measured center
-instead of estimating pixels by eye. This is opt-in per call:
+instead of estimating pixels by eye. It is for correcting coordinates: when a
+`touch_gesture` seems to have missed its target, the model takes a grounded
+screenshot, finds the target's box, and retries at that element's center.
+It is opt-in per call:
 
 ```json
 {"grounding": true}
@@ -27,20 +30,27 @@ With `grounding: true`, the Agent captures the screenshot as usual, then:
    number just above the top-left corner (Set-of-Mark), so the tag does not
    cover the control. At the top edge of the screen the tag goes inside the
    corner. Tags scale with the screenshot size.
-3. Returns the marked image as the observation, and sets the tool's
-   `action_output` to the element list:
+3. Returns the marked image as the observation, and adds a `grounding` field
+   with the element list beside the unchanged `action_output` of `ok`. The model
+   reads both in the tool message:
 
 ```json
-{"ok":true,"elements":[{"id":1,"center":[248,281],"box":[31,250,477,312]}]}
+{"action_output":"ok","grounding":{"elements":[{"id":1,"center":[500.0,260.4],"box":[62.5,231.7,961.7,289.2]}]}}
 ```
 
-Coordinates are pixels of the returned screenshot, the space `touch_gesture`
-takes under the visual coordinate protocol. Elements are ordered by detector
+Coordinates follow `touch_gesture`, so a center can be passed to it unchanged.
+The screenshot tool reports normalized 0-1000 coordinates of the returned
+screenshot (`pixel / (size - 1) × 1000`, one decimal), which is what
+`touch_gesture` and the HTTP API take. When the visual coordinate protocol is
+active (Anthropic models), `touch_gesture` takes screenshot pixels instead, and
+the Agent converts the grounding field to the same pixels before the model
+reads it. Elements are ordered by detector
 score, at most 50, usually fewer. The marked image also becomes the latest screenshot for the
 shell export (`$AICO_SCREENSHOT_JPEG`/`PPM`) and for coordinate checks.
 
-If detection fails, the plain screenshot is returned with `grounding_error` in
-`action_output`, so the observation is never lost. On a host or benchmark
+If detection fails, the plain screenshot is returned and `grounding.error`
+gives the reason, with an empty element list, so the observation is never
+lost. On a host or benchmark
 container without the helper and model, the error says grounding is
 unavailable.
 
@@ -98,5 +108,8 @@ The self-test runs one blank page through the NPU and prints the `OK` response.
 
 Source measurements on an RV1106G3 show a steady-state median of 666 ms and a
 P95 of 816 ms per screenshot, excluding initialization (median 233 ms) and image
-decoding. Grounding is therefore off by default; the device-operator skill asks
-for it when targets are small or dense, or after a missed tap.
+decoding. Grounding is therefore off by default. The system prompt's role
+rules, the tool description and the device-operator skill reserve it for one
+case: when a `touch_gesture` result does not match what the model expected,
+it takes a grounded screenshot and retries at the target element's center,
+instead of adjusting coordinates from the same screenshot.

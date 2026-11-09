@@ -90,6 +90,8 @@ func (v *visualCoordinates) wrap(tools []langtools.Tool) []langtools.Tool {
 		switch tool.Name() {
 		case "touch_gesture", "mouse_move", "enter_text":
 			out[i] = &visualCoordinateTool{Tool: tool, frames: v}
+		case "screenshot":
+			out[i] = &visualScreenshotTool{Tool: tool}
 		}
 	}
 	return out
@@ -242,4 +244,78 @@ func convertVisualArguments(args map[string]any, frame visualFrame) error {
 		}
 	}
 	return nil
+}
+
+// visualScreenshotTool converts screenshot grounding from touch_gesture's
+// native 0-1000 coordinates to pixels of the returned screenshot, so the
+// element centers can be passed to the wrapped touch_gesture unchanged.
+type visualScreenshotTool struct {
+	langtools.Tool
+}
+
+func (t *visualScreenshotTool) ReturnsVisualObservation() bool {
+	visual, ok := t.Tool.(visualObservationTool)
+	return ok && visual.ReturnsVisualObservation()
+}
+
+func (t *visualScreenshotTool) SetDeviceTypeFunc(fn func() string) {
+	if tool, ok := t.Tool.(runtimeDeviceTypeConfigurable); ok {
+		tool.SetDeviceTypeFunc(fn)
+	}
+}
+
+func (t *visualScreenshotTool) ArgsSchema() map[string]any {
+	if provider, ok := t.Tool.(interface{ ArgsSchema() map[string]any }); ok {
+		return provider.ArgsSchema()
+	}
+	return nil
+}
+
+func (t *visualScreenshotTool) Call(ctx context.Context, input string) (string, error) {
+	output, err := t.Tool.Call(ctx, input)
+	if err != nil {
+		return output, err
+	}
+	return pixelGroundingOutput(output), nil
+}
+
+// pixelGroundingOutput rewrites only the grounding field of a screenshot
+// result; any other output is returned unchanged.
+func pixelGroundingOutput(output string) string {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal([]byte(output), &fields) != nil || fields["grounding"] == nil {
+		return output
+	}
+	var size struct{ Width, Height int }
+	var grounding screenshotGrounding
+	if json.Unmarshal([]byte(output), &size) != nil || size.Width < 1 || size.Height < 1 ||
+		json.Unmarshal(fields["grounding"], &grounding) != nil {
+		return output
+	}
+	for i, e := range grounding.Elements {
+		grounding.Elements[i] = uiGroundingElement{
+			ID:     e.ID,
+			Center: [2]float64{visualGroundingPixel(e.Center[0], size.Width), visualGroundingPixel(e.Center[1], size.Height)},
+			Box: [4]float64{
+				visualGroundingPixel(e.Box[0], size.Width), visualGroundingPixel(e.Box[1], size.Height),
+				visualGroundingPixel(e.Box[2], size.Width), visualGroundingPixel(e.Box[3], size.Height),
+			},
+		}
+	}
+	data, err := json.Marshal(grounding)
+	if err != nil {
+		return output
+	}
+	fields["grounding"] = data
+	rewritten, err := json.Marshal(fields)
+	if err != nil {
+		return output
+	}
+	return string(rewritten)
+}
+
+// visualGroundingPixel is the inverse of normalizeVisualAxis, kept inside the
+// image so the protocol accepts the result.
+func visualGroundingPixel(normalized float64, size int) float64 {
+	return min(float64(size-1), max(0, math.Round(normalized/1000*float64(max(1, size-1)))))
 }

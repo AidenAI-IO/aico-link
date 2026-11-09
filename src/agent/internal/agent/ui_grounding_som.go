@@ -13,20 +13,22 @@ import (
 	"strconv"
 )
 
-// uiGroundingElement is one Set-of-Mark element reported to the model, in
-// screenshot pixels: the coordinate space touch_gesture takes.
+// uiGroundingElement is one Set-of-Mark element reported to the model. The
+// screenshot tool reports it in touch_gesture's native normalized 0-1000
+// coordinates; under the visual coordinate protocol it is converted to
+// screenshot pixels, as touch_gesture's own arguments are.
 type uiGroundingElement struct {
-	ID     int    `json:"id"`
-	Center [2]int `json:"center"`
-	Box    [4]int `json:"box"`
+	ID     int        `json:"id"`
+	Center [2]float64 `json:"center"`
+	Box    [4]float64 `json:"box"`
 }
 
-// groundedScreenshotOutput is the screenshot tool's action output when
-// grounding was requested. It is the tool content the model reads.
-type groundedScreenshotOutput struct {
-	OK             bool                 `json:"ok"`
-	Elements       []uiGroundingElement `json:"elements"`
-	GroundingError string               `json:"grounding_error,omitempty"`
+// screenshotGrounding is the grounding field of a screenshot result. It is
+// set only when grounding was requested: either the marked elements or the
+// reason detection failed.
+type screenshotGrounding struct {
+	Elements []uiGroundingElement `json:"elements"`
+	Error    string               `json:"error,omitempty"`
 }
 
 var somColors = []color.RGBA{
@@ -68,8 +70,8 @@ func groundScreenshot(ctx context.Context, grounder uiGrounder, jpegData []byte)
 		rects[i] = rect
 		elements[i] = uiGroundingElement{
 			ID:     i + 1,
-			Center: [2]int{int(math.Round((box.X1 + box.X2) / 2)), int(math.Round((box.Y1 + box.Y2) / 2))},
-			Box:    [4]int{rect.Min.X, rect.Min.Y, rect.Max.X, rect.Max.Y},
+			Center: [2]float64{math.Round((box.X1 + box.X2) / 2), math.Round((box.Y1 + box.Y2) / 2)},
+			Box:    [4]float64{float64(rect.Min.X), float64(rect.Min.Y), float64(rect.Max.X), float64(rect.Max.Y)},
 		}
 	}
 	// Outlines first, then tags, so later outlines do not cross earlier labels.
@@ -170,14 +172,50 @@ func drawSoMTag(img *image.RGBA, rect image.Rectangle, label string, c color.RGB
 	}
 }
 
-func marshalGroundedScreenshotOutput(elements []uiGroundingElement, groundingErr error) string {
-	output := groundedScreenshotOutput{OK: true, Elements: elements}
-	if output.Elements == nil {
-		output.Elements = []uiGroundingElement{}
+// normalizeGroundingAxis maps a screenshot pixel position to touch_gesture's
+// 0-1000 scale, the inverse of the visual coordinate protocol's conversion.
+// One decimal keeps the round trip back to pixels exact.
+func normalizeGroundingAxis(pixel float64, size int) float64 {
+	return min(1000, max(0, math.Round(pixel/float64(max(1, size-1))*10000)/10))
+}
+
+// normalizeGroundingElements converts pixel elements to 0-1000 coordinates.
+func normalizeGroundingElements(elements []uiGroundingElement, width, height int) []uiGroundingElement {
+	out := make([]uiGroundingElement, len(elements))
+	for i, e := range elements {
+		out[i] = uiGroundingElement{
+			ID:     e.ID,
+			Center: [2]float64{normalizeGroundingAxis(e.Center[0], width), normalizeGroundingAxis(e.Center[1], height)},
+			Box: [4]float64{
+				normalizeGroundingAxis(e.Box[0], width), normalizeGroundingAxis(e.Box[1], height),
+				normalizeGroundingAxis(e.Box[2], width), normalizeGroundingAxis(e.Box[3], height),
+			},
+		}
+	}
+	return out
+}
+
+func newScreenshotGrounding(elements []uiGroundingElement, groundingErr error) *screenshotGrounding {
+	grounding := &screenshotGrounding{Elements: elements}
+	if grounding.Elements == nil {
+		grounding.Elements = []uiGroundingElement{}
 	}
 	if groundingErr != nil {
-		output.GroundingError = groundingErr.Error()
+		grounding.Error = groundingErr.Error()
 	}
-	data, _ := json.Marshal(output)
+	return grounding
+}
+
+// screenshotToolContent is the tool message the model reads for a visual
+// observation: the action output, plus the grounding result when present.
+// The image itself follows in a separate message.
+func screenshotToolContent(actionOutput string, grounding *screenshotGrounding) string {
+	if grounding == nil {
+		return actionOutput
+	}
+	data, _ := json.Marshal(struct {
+		ActionOutput string               `json:"action_output"`
+		Grounding    *screenshotGrounding `json:"grounding"`
+	}{actionOutput, grounding})
 	return string(data)
 }

@@ -38,7 +38,7 @@ func compactScreenshotObservation(_ string, observation string) (string, bool) {
 		return "", false
 	}
 	if actionOutput, ok := actionOutputFromScreenshotObservation(observation); ok {
-		return actionOutput, true
+		return screenshotToolContent(actionOutput, result.Grounding), true
 	}
 	return observation, true
 }

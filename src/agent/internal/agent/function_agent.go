@@ -157,7 +157,7 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 
 	toolContent := step.Observation
 	if actionOutput, ok := actionOutputFromScreenshotObservation(step.Observation); ok {
-		toolContent = actionOutput
+		toolContent = screenshotToolContent(actionOutput, result.Grounding)
 	}
 	caption := fmt.Sprintf("This image is the screenshot observation returned by the %s tool. Use it when answering the original request.", step.Action.Tool)
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {

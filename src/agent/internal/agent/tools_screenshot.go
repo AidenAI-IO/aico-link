@@ -32,6 +32,8 @@ type screenshotResult struct {
 	ScreenshotRef  string                   `json:"screenshot_ref,omitempty"`
 	CaptureBackend string                   `json:"capture_backend,omitempty"`
 	ADBDevice      *adbDeviceInfo           `json:"adb_device,omitempty"`
+	// Grounding is set when the screenshot tool was called with grounding.
+	Grounding *screenshotGrounding `json:"grounding,omitempty"`
 }
 
 type screenshotFrameClient = screenprovider.Provider
@@ -378,17 +380,21 @@ func (t *ScreenshotTool) Name() string { return "screenshot" }
 func (t *ScreenshotTool) ReturnsVisualObservation() bool { return true }
 
 func (t *ScreenshotTool) Description() string {
-	return `Capture a screenshot from the connected display. Input is optional (pass {} or ""). ` +
-		`Set grounding to true to also detect interface components: the image then carries numbered Set-of-Mark boxes, ` +
-		`and the tool result lists each element's id, center and box in screenshot pixels. ` +
-		`The detector finds tappable components but not their text or meaning, and may miss or duplicate some; read the image to choose a target. ` +
-		`Use grounding when targets are small, dense, or hard to locate precisely. ` +
-		`Returns ok in the tool result and provides the image in a follow-up state message.`
+	return `Capture a screenshot from the connected display. Input is optional: {} or "". ` +
+		`The tool result is ok, and the image arrives in a follow-up state message. ` +
+		`Set grounding to true only to correct touch_gesture coordinates: when a tap or gesture seems to have missed its target ` +
+		`(the expected change did not happen, or a neighboring control reacted instead), take a grounded screenshot before retrying, ` +
+		`find the target's numbered box in the image, and retry touch_gesture at that element's center. ` +
+		`With grounding, the image carries numbered boxes around detected interface components, and the tool result adds a grounding field ` +
+		`whose elements list each element's id, center and box in the same coordinates touch_gesture takes, so a center can be passed to touch_gesture as is. The detector does not read text and may miss a control; ` +
+		`choose the box by reading the image, and if no box covers the target, measure it from the image. ` +
+		`Grounding adds a few seconds, so do not use it for routine observation. If it fails, grounding.error says why ` +
+		`and the plain screenshot is still returned.`
 }
 
 func (t *ScreenshotTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"grounding": boolArgSchema("Detect interface components and mark them with numbered boxes (Set-of-Mark). Defaults to false."),
+		"grounding": boolArgSchema("Mark detected interface components with numbered boxes and list their centers, to correct a touch_gesture that seems to have missed. Defaults to false."),
 	})
 }
 
@@ -503,14 +509,13 @@ func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs) (string,
 		)
 	}
 
-	actionOutput := "ok"
 	if args.Grounding {
-		actionOutput = t.ground(ctx, &result, displayData)
+		result.Grounding = t.ground(ctx, &result, displayData)
 	}
 
 	out, _ := json.Marshal(postActionScreenshotResult{
 		screenshotResult: result,
-		ActionOutput:     actionOutput,
+		ActionOutput:     "ok",
 	})
 	return string(out), nil
 }
@@ -518,21 +523,21 @@ func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs) (string,
 // ground replaces the result image with a Set-of-Mark copy and returns the
 // element list. A grounding failure keeps the plain screenshot and reports
 // the error, so the observation is never lost.
-func (t *ScreenshotTool) ground(ctx context.Context, result *screenshotResult, jpegData []byte) string {
+func (t *ScreenshotTool) ground(ctx context.Context, result *screenshotResult, jpegData []byte) *screenshotGrounding {
 	if t.grounder == nil {
-		return marshalGroundedScreenshotOutput(nil, fmt.Errorf("UI grounding is not available on this device"))
+		return newScreenshotGrounding(nil, fmt.Errorf("UI grounding is not available on this device"))
 	}
 	marked, elements, err := groundScreenshot(ctx, t.grounder, jpegData)
 	if err != nil {
 		logging.Warnf("agent", "ui_grounding", "screenshot grounding failed: %v", err)
-		return marshalGroundedScreenshotOutput(nil, err)
+		return newScreenshotGrounding(nil, err)
 	}
 	result.Data = base64.StdEncoding.EncodeToString(marked)
 	result.Size = len(marked)
 	if t.screen != nil {
 		t.screen.UpdateScreenshot(marked, result.Width, result.Height)
 	}
-	return marshalGroundedScreenshotOutput(elements, nil)
+	return newScreenshotGrounding(normalizeGroundingElements(elements, result.Width, result.Height), nil)
 }
 
 func detectScreenshotActiveArea(jpegData []byte, expectedWidth, expectedHeight int) screen.ScreenActiveArea {
