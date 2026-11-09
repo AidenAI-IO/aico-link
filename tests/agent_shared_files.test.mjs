@@ -9,6 +9,8 @@ function harness(fetch) {
     window: {location: {origin: 'http://192.168.42.1:8080', hostname: '192.168.42.1'}},
     loadingDiv: {classList: {contains: () => false}},
     fileUploadPending: false, draftAttachments: [], nextAttachmentId: 1, maxDraftImageAttachments: 4,
+    composerHintTimer: null, composerHintEl: {children: [], appendChild(child) { this.children.push(child); }},
+    document: {createElement: tag => ({tag, children: [], appendChild(child) { this.children.push(child); }})},
     fetch,
   });
   vm.runInContext(readFileSync('src/agent/internal/agent/web_ui/scripts/attachments.js', 'utf8'), context);
@@ -54,4 +56,36 @@ test('image selection respects the combined attachment limit', async () => {
   await context.addImageFiles([new File(['image'], 'photo.png', {type: 'image/png'})], 'selected');
   assert.equal(context.draftAttachments.length, 16);
   assert.match(context.lastHint, /16/);
+});
+
+test('expired upload sessions offer local login without navigating away or losing the draft', async () => {
+  const context = harness(async () => ({status: 401, ok: false, text: async () => '{"error":"login_required"}'}));
+  context.draftAttachments.push({kind: 'file', path: '/share/existing.csv'});
+  await context.handleFileSelection({target: {files: [new File(['abc'], 'report.csv')], value: 'selected'}});
+  assert.equal(context.draftAttachments.length, 1);
+  assert.equal(context.fileUploadPending, false);
+  assert.equal(context.composerHintEl.children.length, 1);
+  const link = context.composerHintEl.children[0];
+  assert.equal(link.href, '/login?next=%2Fshare%2F');
+  assert.equal(link.target, '_blank');
+  assert.equal(link.rel, 'noopener');
+});
+
+test('download cards let a login redirect open as a page without replacing the composer', () => {
+  const context = harness();
+  const wrapper = context.renderMessageAttachments([{kind: 'file', name: 'report.csv', download_url: '/share/report.csv'}]);
+  const link = wrapper.children[0].children.find(child => child.tag === 'a');
+  assert.equal(link.href, '/share/report.csv');
+  assert.equal(link.download, undefined);
+  assert.equal(link.target, '_blank');
+  assert.equal(link.rel, 'noopener');
+});
+
+test('other authorization errors do not prompt for a device password', async () => {
+  for (const [status, error] of [[401, 'maintenance_session_required'], [403, 'lan_access_disabled']]) {
+    const context = harness(async () => ({status, ok: false, text: async () => JSON.stringify({error})}));
+    await context.handleFileSelection({target: {files: [new File(['abc'], 'report.csv')], value: 'selected'}});
+    assert.equal(context.composerHintEl.children.length, 0);
+    assert.equal(context.draftAttachments.length, 0);
+  }
 });

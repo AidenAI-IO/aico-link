@@ -20,7 +20,8 @@ The Agent serves `POST /api/files`, `GET /api/files`, and `/share/` on its exist
 HTTP port (8080). The device service also sets `AICO_SHARE_ADDR=0.0.0.0:8000` to
 start a listener exposing only these file routes. Both listeners follow the
 device's LAN access switch: requests from the USB link and the board are
-allowed, while other networks are refused until LAN access is enabled. For example:
+allowed, while other networks require LAN access to be enabled and a valid
+device-password session. For example:
 
 ```text
 Agent path: /share/report.pdf
@@ -115,8 +116,27 @@ Android opens the system save-document picker and streams to the selected
 location. Neither platform requires broad storage access. Transfer errors are
 shown in the UI; selecting or canceling a picker does not send a chat turn.
 
-These endpoints use the Agent's LAN access switch, without per-user
-authentication. Web transfers stay on the current origin, and cross-origin
-browser uploads are rejected. They expose all explicitly shared files to
-clients allowed by that switch. Do not place credentials in this directory or
-forward these ports to an untrusted network.
+Both ports use the same `lanaccess.Guard` as the Agent. LAN clients sign in at
+`/login` or `POST /api/auth/login`; browsers send the `aico_session` cookie and
+native clients send `Authorization: Bearer <token>`. The cookie applies to the
+same host across ports 80, 8080, and 8000. Download URLs contain no credentials
+and do not grant access by themselves. Changing the device password or disabling
+LAN access revokes existing sessions. USB transfers do not require a session.
+
+When a Web upload receives `401 login_required`, the composer offers a login
+link in a new tab, preserving the draft. Sign in and select the file again to
+retry. Directory links and browser downloads use the guard's normal login
+redirect. `403 lan_access_disabled` means LAN access must first be enabled over
+USB; signing in cannot override that switch.
+
+The App requests the device password when a file operation requires login and
+shares an in-memory, board-origin-scoped token between uploads, listings, and
+native downloads. Downloads check the session before opening a save picker;
+the native request sends the token explicitly and refuses redirects. Passwords
+are not persisted. Restarting the App may require another LAN sign-in.
+
+Web transfers stay on the current origin, and cross-origin browser uploads are
+rejected. All authenticated device sessions can access all explicitly shared
+files; there is no per-file or per-user ACL. The board serves plain HTTP, so
+enable LAN access only on a trusted network. Do not place credentials in this
+directory or forward these ports to an untrusted network.

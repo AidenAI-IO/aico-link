@@ -280,7 +280,10 @@ function renderMessageAttachments(attachments) {
         if (downloadURL) {
             const link = document.createElement('a');
             link.href = downloadURL;
-            link.download = attachment.name || '';
+            // Let Content-Disposition trigger the save. A forced download
+            // would save a redirected login page as if it were the artifact.
+            link.target = '_blank';
+            link.rel = 'noopener';
             link.textContent = 'Download';
             card.appendChild(link);
         }
@@ -386,18 +389,44 @@ async function handleFileSelection(event) {
             const timeout = setTimeout(() => controller.abort(), 300000);
             try {
                 const response = await fetch('/api/files', {method: 'POST', body: form, signal: controller.signal});
-                if (!response.ok) throw new Error(await response.text() || 'Upload failed');
+                if (!response.ok) {
+                    const message = await response.text();
+                    let code = '';
+                    try { code = JSON.parse(message).error; } catch (_) {}
+                    const error = new Error(code === 'lan_access_disabled'
+                        ? 'LAN access is off. Connect over USB and enable it in Settings.'
+                        : message || 'Upload failed');
+                    error.loginRequired = response.status === 401 && code === 'login_required';
+                    throw error;
+                }
                 const uploaded = await response.json();
                 draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
             } finally { clearTimeout(timeout); }
         }
         resetComposerHint();
     } catch (err) {
-        setComposerHint(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message, true);
+        if (err.loginRequired) showSharedFileLoginHint();
+        else setComposerHint(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message, true);
     } finally {
         fileUploadPending = false;
         renderDraftAttachments();
     }
+}
+
+function showSharedFileLoginHint() {
+    setComposerHint('Sign in to upload files, then select the file again. ', true);
+    if (composerHintTimer) {
+        clearTimeout(composerHintTimer);
+        composerHintTimer = null;
+    }
+    if (!composerHintEl) return;
+    const link = document.createElement('a');
+    // Keep this page and its draft intact while the shared host cookie is set.
+    link.href = '/login?next=%2Fshare%2F';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Sign in';
+    composerHintEl.appendChild(link);
 }
 
 function safeSharedURL(value) {

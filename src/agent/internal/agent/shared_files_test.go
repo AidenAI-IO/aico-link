@@ -267,18 +267,21 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(shareDir, "report.txt"), []byte("report"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	state := lanaccess.NewState(filepath.Join(t.TempDir(), "enabled"), "")
+	stateDir := t.TempDir()
+	state := lanaccess.NewState(filepath.Join(stateDir, "enabled"), filepath.Join(stateDir, "password"), filepath.Join(stateDir, "secret"))
 	server := &Server{addr: "127.0.0.1:0", eventBroadcaster: NewEventBroadcaster()}
 	server.EnableLANGuard(state, USBIngress{})
 	defer server.Close()
 	done := make(chan error, 1)
 	go func() { done <- server.Start() }()
 	var handler http.Handler
+	var mainHandler http.Handler
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		server.httpMu.Lock()
 		if server.shareServer != nil {
 			handler = server.shareServer.Handler
+			mainHandler = server.httpServer.Handler
 		}
 		server.httpMu.Unlock()
 		if handler != nil {
@@ -307,13 +310,80 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "report" {
 		t.Fatalf("USB request rejected: %d %s", response.Code, response.Body.String())
 	}
-	if err := os.WriteFile(state.EnabledPath, []byte("1\n"), 0600); err != nil {
+	if err := state.SetPassword("shared-files-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
 	response = httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
-	if response.Code != http.StatusOK {
-		t.Fatalf("enabled LAN request rejected: %d", response.Code)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated LAN request accepted: %d", response.Code)
+	}
+	login := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"shared-files-test-password"}`)).WithContext(request.Context())
+	login.RemoteAddr = request.RemoteAddr
+	login.Header.Set("Content-Type", "application/json")
+	response = httptest.NewRecorder()
+	mainHandler.ServeHTTP(response, login)
+	var session struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &session); err != nil || response.Code != http.StatusOK || session.Token == "" {
+		t.Fatalf("login failed: status=%d err=%v", response.Code, err)
+	}
+	cookies := response.Result().Cookies()
+	if len(cookies) != 1 {
+		t.Fatal("login did not set the session cookie")
+	}
+	// A login on 8080 must authorize every file route on both ports. Invalid
+	// credentials must be rejected before serving bytes or persisting uploads.
+	for port, guarded := range map[string]http.Handler{"8080": mainHandler, "8000": handler} {
+		for _, route := range []struct {
+			method, path string
+			status       int
+		}{{http.MethodGet, "/api/files", 200}, {http.MethodGet, "/share/", 200}, {http.MethodGet, "/share/report.txt", 200}, {http.MethodHead, "/share/report.txt", 200}, {http.MethodPost, "/api/files", 201}} {
+			for _, credential := range []string{"none", "invalid", "cookie", "bearer"} {
+				t.Run(port+"/"+route.method+route.path+"/"+credential, func(t *testing.T) {
+					var body bytes.Buffer
+					writer := multipart.NewWriter(&body)
+					if route.method == http.MethodPost {
+						part, _ := writer.CreateFormFile("file", "upload.txt")
+						_, _ = part.Write([]byte("uploaded"))
+						_ = writer.Close()
+					}
+					r := httptest.NewRequest(route.method, route.path, &body).WithContext(request.Context())
+					r.RemoteAddr = request.RemoteAddr
+					r.Header.Set("Content-Type", writer.FormDataContentType())
+					switch credential {
+					case "invalid":
+						r.Header.Set("Authorization", "Bearer invalid-session")
+					case "cookie":
+						r.AddCookie(cookies[0])
+					case "bearer":
+						r.Header.Set("Authorization", "Bearer "+session.Token)
+					}
+					w := httptest.NewRecorder()
+					guarded.ServeHTTP(w, r)
+					want := route.status
+					if credential == "none" || credential == "invalid" {
+						want = http.StatusUnauthorized
+					}
+					if w.Code != want {
+						t.Fatalf("status=%d, want %d", w.Code, want)
+					}
+				})
+			}
+		}
+	}
+	if err := state.SetPassword("replacement-test-password"); err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Authorization", "Bearer "+session.Token)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked download session accepted: %d", response.Code)
 	}
 	server.Close()
 	select {
