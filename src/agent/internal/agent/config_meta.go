@@ -531,7 +531,7 @@ func ConfigMeta() ConfigMetadata {
 						Default:     defaults.VoiceModel.Provider,
 						VisibleWhen: all(eq("agent.input_mode", "realtime"))},
 					{Key: "use_backend_agent", Label: "Use Backend Agent", Widget: WidgetBoolean,
-						Help:        "Enabled by default. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected.",
+						Help:        "Enabled by default when the backend model has a credential. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected.",
 						Default:     defaults.VoiceModel.UseBackendAgent,
 						Advanced:    true,
 						VisibleWhen: all(eq("agent.input_mode", "realtime"))},
