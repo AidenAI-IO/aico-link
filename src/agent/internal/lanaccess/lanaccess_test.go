@@ -10,12 +10,13 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newState(t *testing.T) *State {
 	t.Helper()
 	root := filepath.Join(t.TempDir(), "system")
-	return NewState(filepath.Join(root, "lan-access-enabled"), filepath.Join(root, "device-password"))
+	return NewState(filepath.Join(root, "lan-access-enabled"), filepath.Join(root, "device-password"), filepath.Join(root, "lan-session-secret"))
 }
 
 func newRequest(remote, local string, trusted bool) *http.Request {
@@ -73,8 +74,17 @@ func TestGuardRefusesLANUntilEnabled(t *testing.T) {
 	if err := state.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(h, lan()); code != http.StatusNoContent {
-		t.Fatalf("LAN request while on: %d", code)
+	if code := serve(h, lan()); code != http.StatusUnauthorized {
+		t.Fatalf("LAN request without a session while on: %d", code)
+	}
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withToken := lan()
+	withToken.Header.Set("Authorization", "Bearer "+token)
+	if code := serve(h, withToken); code != http.StatusNoContent {
+		t.Fatalf("LAN request with a session while on: %d", code)
 	}
 	if err := state.SetEnabled(false); err != nil {
 		t.Fatal(err)
@@ -157,5 +167,37 @@ func TestTrustListenerMarksConnections(t *testing.T) {
 	r.RemoteAddr = "192.168.50.20:5000"
 	if !IsTrusted(r) {
 		t.Fatal("connection from a TrustListener is not trusted")
+	}
+}
+
+func TestRetryListenRecoversAfterTransientFailures(t *testing.T) {
+	attempts := 0
+	var seen []int
+	listener, err := retryListen(func() (net.Listener, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("no such device")
+		}
+		return net.Listen("tcp", "127.0.0.1:0")
+	}, make(chan struct{}), func(int) time.Duration { return time.Millisecond }, func(attempt int, _ error) {
+		seen = append(seen, attempt)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if attempts != 3 || len(seen) != 2 || seen[0] != 1 || seen[1] != 2 {
+		t.Fatalf("attempts=%d seen=%v", attempts, seen)
+	}
+}
+
+func TestRetryListenStopsOnShutdown(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	_, err := retryListen(func() (net.Listener, error) {
+		return nil, errors.New("no such device")
+	}, stop, func(int) time.Duration { return time.Hour }, nil)
+	if !errors.Is(err, ErrListenStopped) {
+		t.Fatalf("err = %v", err)
 	}
 }

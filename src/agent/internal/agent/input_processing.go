@@ -19,6 +19,8 @@ const (
 )
 
 type InputAttachment struct {
+	Path     string
+	Size     int64
 	Kind     string
 	Name     string
 	MIMEType string
@@ -316,11 +318,16 @@ func artifactsFromAttachments(attachments []InputAttachment) []InputArtifact {
 		if kind == "" && mimeType == "" && name == "" && len(attachment.Data) == 0 {
 			continue
 		}
+		size := int64(len(attachment.Data))
+		if attachment.Path != "" {
+			size = attachment.Size
+		}
 		artifacts = append(artifacts, InputArtifact{
 			Kind:     kind,
 			Name:     name,
 			MIMEType: mimeType,
-			Size:     int64(len(attachment.Data)),
+			Size:     size,
+			Path:     attachment.Path,
 		})
 	}
 	return sanitizeInputArtifacts(artifacts)

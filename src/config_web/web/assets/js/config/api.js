@@ -10,7 +10,8 @@ function isConfigWrite(url, options) {
   return ['/api/config', '/api/config/locale', '/api/config/backup'].includes(url)
     && !!options?.method && options.method !== 'GET';
 }
-    async function performRequest(url,options){const res=await fetch(url,options);const text=await res.text();let body={};try{body=text?(JSON.parse(text)??{}):{}}catch(err){body={ok:false,error:text||err.message}}if(!res.ok){if(isConfigWrite(url,options)&&body.persisted&&runtime.configApplicationSaved)runtime.configApplicationSaved({...body,state:'failed'});const error=new Error(body.error||('HTTP '+res.status));if(body&&typeof body==='object')Object.keys(body).forEach(function(key){error[key]=body[key];});error.status=res.status;throw error;}if(isConfigWrite(url,options)){if(runtime.configApplicationSaved)runtime.configApplicationSaved(body);}return body;}
+    function redirectToLogin(res,body){if(res.status!==401||body.error!=='login_required'||typeof window==='undefined'||!window.location)return;const next=window.location.pathname+window.location.search+window.location.hash;window.location.assign('/login?next='+encodeURIComponent(next));}
+    async function performRequest(url,options){const res=await fetch(url,options);const text=await res.text();let body={};try{body=text?(JSON.parse(text)??{}):{}}catch(err){body={ok:false,error:text||err.message}}redirectToLogin(res,body);if(!res.ok){if(isConfigWrite(url,options)&&body.persisted&&runtime.configApplicationSaved)runtime.configApplicationSaved({...body,state:'failed'});const error=new Error(body.error||('HTTP '+res.status));if(body&&typeof body==='object')Object.keys(body).forEach(function(key){error[key]=body[key];});error.status=res.status;throw error;}if(isConfigWrite(url,options)){if(runtime.configApplicationSaved)runtime.configApplicationSaved(body);}return body;}
 
 let configSaves = Promise.resolve();
 function request(url, options) {

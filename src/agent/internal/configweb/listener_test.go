@@ -2,50 +2,11 @@ package configweb
 
 import (
 	"context"
-	"errors"
 	"net"
 	"strconv"
 	"testing"
 	"time"
 )
-
-func TestRetryListenRecoversAfterTransientFailures(t *testing.T) {
-	attempts := 0
-	var seen []int
-	listener, err := retryListen(func() (net.Listener, error) {
-		attempts++
-		if attempts < 3 {
-			return nil, errors.New("no such device")
-		}
-		return net.Listen("tcp", "127.0.0.1:0")
-	}, make(chan struct{}), func(int) time.Duration { return time.Millisecond }, func(attempt int, _ error) {
-		seen = append(seen, attempt)
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer listener.Close()
-	if attempts != 3 || len(seen) != 2 || seen[0] != 1 || seen[1] != 2 {
-		t.Fatalf("attempts=%d seen=%v", attempts, seen)
-	}
-}
-
-func TestRetryListenStopsOnShutdown(t *testing.T) {
-	stop := make(chan struct{})
-	close(stop)
-	_, err := retryListen(func() (net.Listener, error) {
-		return nil, errors.New("no such device")
-	}, stop, func(int) time.Duration { return time.Hour }, nil)
-	if !errors.Is(err, errListenRetryStopped) {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func TestUSBListenRetryScheduleBacksOff(t *testing.T) {
-	if usbListenRetrySchedule(1) != 2*time.Second || usbListenRetrySchedule(30) != 2*time.Second || usbListenRetrySchedule(31) != 15*time.Second {
-		t.Fatal("unexpected retry schedule")
-	}
-}
 
 // The wildcard portal must come up even when the USB interface does not
 // exist yet; the USB maintenance socket keeps retrying in the background and

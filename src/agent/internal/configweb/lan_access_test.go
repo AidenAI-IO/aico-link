@@ -17,6 +17,7 @@ func newLANAccessServer(t *testing.T) (*Server, string) {
 	root := t.TempDir()
 	options.LANAccessPath = filepath.Join(root, "system", "lan-access-enabled")
 	options.DevicePasswordPath = filepath.Join(root, "system", "device-password")
+	options.SessionSecretPath = filepath.Join(root, "system", "lan-session-secret")
 	marker := filepath.Join(root, "synced")
 	script := filepath.Join(root, "sync")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho run >>'"+marker+"'\n"), 0o755); err != nil {
@@ -119,6 +120,7 @@ func TestLANGuardGatesConfigWebOnLAN(t *testing.T) {
 	options.LANGuard = true
 	options.LANAccessPath = filepath.Join(root, "lan-access-enabled")
 	options.DevicePasswordPath = filepath.Join(root, "device-password")
+	options.SessionSecretPath = filepath.Join(root, "lan-session-secret")
 	options.LANAccessSync = ""
 	server, err := NewServer(options)
 	if err != nil {
@@ -149,8 +151,28 @@ func TestLANGuardGatesConfigWebOnLAN(t *testing.T) {
 	if err := server.lanAccess.SetEnabled(true); err != nil {
 		t.Fatal(err)
 	}
-	if response := get(false, ""); response.Code != http.StatusOK {
-		t.Fatalf("LAN request while on: %d", response.Code)
+	if response := get(false, ""); response.Code != http.StatusUnauthorized {
+		t.Fatalf("LAN request while on without a session: %d", response.Code)
+	}
+
+	login := httptest.NewRequest(http.MethodPost, "http://192.168.50.76/api/auth/login", bytes.NewBufferString(`{"password":"correct horse"}`))
+	login.RemoteAddr = "192.168.50.20:5000"
+	login.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, login.WithContext(lanaccessContext(login, false)))
+	var body struct {
+		Token string `json:"token"`
+	}
+	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &body) != nil || body.Token == "" {
+		t.Fatalf("LAN login: %d %s", response.Code, response.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://192.168.50.76/api/security/lan-access", nil)
+	req.RemoteAddr = "192.168.50.20:5000"
+	req.Header.Set("Authorization", "Bearer "+body.Token)
+	response = httptest.NewRecorder()
+	server.http.Handler.ServeHTTP(response, req.WithContext(lanaccessContext(req, false)))
+	if response.Code != http.StatusOK {
+		t.Fatalf("LAN request with a session: %d", response.Code)
 	}
 }
 
