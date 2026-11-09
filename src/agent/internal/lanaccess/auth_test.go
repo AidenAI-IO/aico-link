@@ -265,3 +265,25 @@ func TestLogoutClearsCookie(t *testing.T) {
 		t.Fatalf("logout: %d %+v", w.Code, cookies)
 	}
 }
+
+func TestCookieSessionCountsWhenBearerIsAnotherToken(t *testing.T) {
+	state := enabledState(t)
+	h := guarded(state)
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Backup and restore put their own maintenance/job tokens in the bearer.
+	r := lanRequest(http.MethodGet, "/api/backup/jobs/1", "")
+	r.Header.Set("Authorization", "Bearer maintenance-token")
+	r.AddCookie(&http.Cookie{Name: SessionCookie, Value: token})
+	if w := record(h, r); w.Code != http.StatusNoContent {
+		t.Fatalf("cookie session with a non-session bearer: %d", w.Code)
+	}
+
+	r = lanRequest(http.MethodGet, "/api/backup/jobs/1", "")
+	r.Header.Set("Authorization", "Bearer maintenance-token")
+	if w := record(h, r); w.Code != http.StatusUnauthorized {
+		t.Fatalf("non-session bearer alone: %d", w.Code)
+	}
+}

@@ -144,15 +144,24 @@ func sign(key []byte, payload string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
 }
 
-// requestToken returns the bearer token, else the session cookie.
-func requestToken(r *http.Request) (token string, fromCookie bool) {
+type requestCredential struct {
+	token      string
+	fromCookie bool
+}
+
+// requestCredentials lists the bearer token, then the session cookie. The
+// bearer is not always a LAN session token: backup and restore send their
+// own maintenance and job tokens there, so a signed-in browser's cookie must
+// still count when the bearer is something else.
+func requestCredentials(r *http.Request) []requestCredential {
+	var credentials []requestCredential
 	if value := strings.TrimSpace(r.Header.Get("Authorization")); len(value) > 7 && strings.EqualFold(value[:7], "Bearer ") {
-		return strings.TrimSpace(value[7:]), false
+		credentials = append(credentials, requestCredential{token: strings.TrimSpace(value[7:])})
 	}
-	if cookie, err := r.Cookie(SessionCookie); err == nil {
-		return cookie.Value, true
+	if cookie, err := r.Cookie(SessionCookie); err == nil && cookie.Value != "" {
+		credentials = append(credentials, requestCredential{token: cookie.Value, fromCookie: true})
 	}
-	return "", false
+	return credentials
 }
 
 func setSessionCookie(w http.ResponseWriter, token string, expires time.Time) {
@@ -250,20 +259,19 @@ func clientKey(r *http.Request) string {
 // sessionValid reports whether r carries a valid token, renewing an aging
 // session cookie so a browser in use stays signed in.
 func sessionValid(state *State, w http.ResponseWriter, r *http.Request, now time.Time) bool {
-	token, fromCookie := requestToken(r)
-	if token == "" {
-		return false
-	}
-	issued, err := state.VerifyToken(token, now)
-	if err != nil {
-		return false
-	}
-	if fromCookie && now.Sub(issued) >= renewAfter {
-		if fresh, expires, err := state.IssueToken(now); err == nil {
-			setSessionCookie(w, fresh, expires)
+	for _, credential := range requestCredentials(r) {
+		issued, err := state.VerifyToken(credential.token, now)
+		if err != nil {
+			continue
 		}
+		if credential.fromCookie && now.Sub(issued) >= renewAfter {
+			if fresh, expires, err := state.IssueToken(now); err == nil {
+				setSessionCookie(w, fresh, expires)
+			}
+		}
+		return true
 	}
-	return true
+	return false
 }
 
 // safeNext keeps post-login redirects on this host.
