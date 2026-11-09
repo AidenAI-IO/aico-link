@@ -144,6 +144,8 @@ func newUSBTerminalServer(options Options) (*http.Server, error) {
 	}, nil
 }
 
+// serveUSBTerminal binds the USB terminal socket, retrying until the USB
+// interface appears or the server shuts down, then serves the ttyd proxy.
 func (s *Server) serveUSBTerminal() {
 	listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
 		return lanaccess.ListenOnDevice("tcp4", s.usbTerminal.Addr, s.options.USBInterface)

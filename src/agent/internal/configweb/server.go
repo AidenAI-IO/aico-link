@@ -140,6 +140,9 @@ func NewServer(options Options) (*Server, error) {
 	return s, nil
 }
 
+// ListenAndServe serves the portal on its configured address and starts the
+// USB maintenance and terminal listeners in the background. It returns nil
+// after Shutdown.
 func (s *Server) ListenAndServe() error {
 	if s.storage == nil {
 		if err := s.initializeStorageManager(); err != nil {
