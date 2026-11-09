@@ -840,6 +840,7 @@ func (m *Manager) runTask(taskID string) {
 		item.cancel = cancel
 		item.resumeQueued = false
 		item.task.Status = StatusRunning
+		alreadyStarted := item.task.StartedAt != nil
 		if item.task.StartedAt == nil {
 			item.task.StartedAt = &startedAt
 		}
@@ -849,10 +850,16 @@ func (m *Manager) runTask(taskID string) {
 			prompt = item.task.Prompt
 		}
 		item.nextPrompt = ""
+		// A rerun that starts from a newer goal applies that revision just as a
+		// steer would; observers waiting for goal_applied must see it.
+		advanced := alreadyStarted && item.goalRevision > item.appliedRevision
 		item.appliedRevision = item.goalRevision
 		item.pendingSteer = nil
 		item.steerSignal = make(chan struct{})
 		m.observeLocked(item, "running")
+		if advanced {
+			m.observeLocked(item, "goal_applied")
+		}
 		m.mu.Unlock()
 
 		runCtx := context.WithValue(taskCtx, taskContextKey{}, func() Observation { return m.ObservationSnapshot(taskID) })

@@ -115,7 +115,10 @@ uv run --locked python -m runner run \
 
 The runner adds a `benchmark-foreground` provider to the generated
 `agent.toml` with `input_mode = "realtime"` and `use_backend_agent = true`. The
-key is written as a reference to the environment variable, not as its value.
+key is first written as a reference to the environment variable. As for the
+backend model key, auto-started workers then receive a read-only worker config
+with the reference resolved to the key's value, so treat worker config
+directories as secret-bearing.
 Empty options are omitted, so provider defaults apply; providers that require
 an explicit model still reject an incomplete configuration. For an
 OpenAI-compatible gateway, set the endpoint (for example
@@ -133,9 +136,10 @@ The WebUI rejects scenario suites; run them from the CLI or CI.
 
 ### CI
 
-The catalog case `realtime-collaboration` has `runnable: false`, so it runs
-only when its suite is selected in a manual dispatch with the `runnable`
-profile:
+The catalog case `realtime-collaboration` has `runnable: false`, so the
+scheduled run and an unfiltered `runnable` dispatch skip it. It runs when its
+suite is selected in a manual dispatch, or with a manual `all` dispatch, which
+selects every catalog case:
 
 ```bash
 gh workflow run benchmark.yml --ref <branch> \
@@ -369,7 +373,7 @@ Each attempt directory contains:
 | `collaboration-evaluation.json` | Outcome, checks, claim verdicts, and rubric verdicts |
 | `collaboration-claim-judge-raw.json` | Raw claim-judge response |
 | `collaboration-timeline.json`, `collaboration-summary.json` | Readable timeline and summary used by `report.html` |
-| `episode.json`, `episode-<n>.json` | Backend episodes, in start order |
+| `episode.json`, `episodes.json` | First backend episode, and all backend episodes in start order (`null` for one that could not be read) |
 
 Result metrics include:
 

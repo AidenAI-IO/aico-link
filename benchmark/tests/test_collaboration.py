@@ -290,8 +290,10 @@ def test_provider_failure_is_unscored_not_missing_delegation(tmp_path, error, pr
                         version=1, steps=[], completion={"tasks": [{"task": "posting", "status": "completed", "feedback": "required"}]},
                         assertions=[], policies=["supported_completion_claims"], timeout_sec=30))
     evidence = {"complete": True, "assertions": [{"id": "scenario_completed", "verdict": "unscored"}],
-                "events": [event(1, "turn.settled", payload={"status": "failed", "error": error})],
-                "fixture": {}, "task_aliases": {}, "milestones": {}}
+                # The backend finished; only the foreground result delivery is missing.
+                "events": [event(1, "task.updated", payload={"phase": "terminal", "status": "completed"}),
+                           event(2, "turn.settled", payload={"status": "failed", "error": error})],
+                "fixture": {}, "task_aliases": {"posting": "A"}, "milestones": {}}
     evaluation = evaluate_scenario(evidence, task, None, tmp_path)
     # A provider outage is unscored; a busy admission rejection is the daemon
     # declining a turn, so it neither excuses missing delivery nor reads as an outage.

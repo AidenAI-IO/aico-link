@@ -633,12 +633,12 @@
           },
           {
             "id": "single_read",
-            "kind": "effect_count",
+            "kind": "fixture_call_count",
             "operation": "bridge_clipboard",
             "input_contains": {
               "action": "read"
             },
-            "count": 0
+            "count": 1
           }
         ]
       },
@@ -2098,12 +2098,12 @@
           },
           {
             "id": "single_read",
-            "kind": "effect_count",
+            "kind": "fixture_call_count",
             "operation": "bridge_clipboard",
             "input_contains": {
               "action": "read"
             },
-            "count": 0
+            "count": 1
           }
         ]
       },

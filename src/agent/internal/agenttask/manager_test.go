@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"aico-agent/internal/stream"
 )
 
 type fakeRunner struct {
@@ -449,6 +451,8 @@ func TestManagerRerunsWhenUpdateWasNotConsumed(t *testing.T) {
 	runner := &revisionRunner{started: make(chan string, 2), release: make(chan struct{})}
 	manager := newManager(runner, 4, time.Now)
 	defer manager.Close()
+	sink := &phaseSink{}
+	manager.SetEventSink(sink)
 	task, err := manager.Create("old goal")
 	if err != nil {
 		t.Fatal(err)
@@ -470,6 +474,34 @@ func TestManagerRerunsWhenUpdateWasNotConsumed(t *testing.T) {
 	if completed.Result != "fresh result" {
 		t.Fatalf("task completed with stale result: %+v", completed)
 	}
+	// The rerun applied revision 2; observers waiting for it must see goal_applied.
+	if applied := sink.appliedRevisions("goal_applied"); len(applied) != 1 || applied[0] != 2 {
+		t.Fatalf("goal_applied revisions = %v, want [2]", applied)
+	}
+}
+
+type phaseSink struct {
+	mu     sync.Mutex
+	events []stream.Event
+}
+
+func (s *phaseSink) Emit(_ context.Context, event stream.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *phaseSink) appliedRevisions(phase string) []uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var revisions []uint64
+	for _, event := range s.events {
+		if payload, ok := event.Payload.(map[string]any); ok && payload["phase"] == phase {
+			revisions = append(revisions, event.Collaboration.AppliedRevision)
+		}
+	}
+	return revisions
 }
 
 type userActionRunner struct {

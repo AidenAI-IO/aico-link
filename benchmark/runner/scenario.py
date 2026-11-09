@@ -204,7 +204,7 @@ def evaluate_scenario(evidence: dict[str, Any], task: TaskSpec, judge_cfg: Judge
             verdict = "fail"
         else:
             verdict = "pass" if milestones.get("result_injected") and milestones.get("foreground_feedback") else (
-                "unscored" if not evidence["complete"] else "fail")
+                "unscored" if not execution_available else "fail")
         checks.append({"id": f"delivery.{alias}", "verdict": verdict,
                        "evidence_refs": [e["event_id"] for e in milestones.values() if e]})
     if not evidence["complete"]:
@@ -271,21 +271,31 @@ def backend_episode_ids(events: list[dict[str, Any]]) -> list[str]:
         and isinstance((e.get("payload") or {}).get("episode_id"), str) and e["payload"]["episode_id"]))
 
 
-def _fetch_episode(client: AgentClient, episode_id: str, artifact_dir: Path, index: int) -> dict[str, Any] | None:
-    """Read a committed backend episode, saving it beside the attempt's other evidence.
+def _fetch_episode(client: AgentClient, episode_id: str) -> dict[str, Any] | None:
+    """Read a committed backend episode.
 
     Episodes commit asynchronously after the task ends, so allow a short wait.
     """
     for delay in (0, .5, 1, 2):
         time.sleep(delay)
         try:
-            episode = client.get_episode(episode_id)
+            return client.get_episode(episode_id)
         except Exception:
             continue
-        name = "episode.json" if index == 0 else f"episode-{index + 1}.json"
-        (artifact_dir / name).write_text(json.dumps(episode, ensure_ascii=False, indent=2), encoding="utf-8")
-        return episode
     return None
+
+
+def _save_episodes(episodes: list[dict[str, Any] | None], artifact_dir: Path) -> None:
+    """Save every backend episode in start order under fixed artifact names.
+
+    episode.json keeps the first episode for existing readers; episodes.json
+    holds all of them (null when one could not be read).
+    """
+    if not episodes:
+        return
+    if episodes[0] is not None:
+        (artifact_dir / "episode.json").write_text(json.dumps(episodes[0], ensure_ascii=False, indent=2), encoding="utf-8")
+    (artifact_dir / "episodes.json").write_text(json.dumps(episodes, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _foreground_usage(events: list[dict[str, Any]]) -> dict[str, Any]:
@@ -519,8 +529,9 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
     # history have cost, token, LLM and tool metrics for realtime-text too. The
     # realtime foreground's own usage is recorded separately below.
     result.metrics.update(count_backend_actions(events))
-    result.metrics.update(combine_episode_metrics(
-        [_fetch_episode(client, episode, artifact_dir, index) for index, episode in enumerate(episodes)]))
+    fetched = [_fetch_episode(client, episode) for episode in episodes]
+    _save_episodes(fetched, artifact_dir)
+    result.metrics.update(combine_episode_metrics(fetched))
     result.metrics.update(_foreground_usage(events))
     failed = evaluation["outcome"] == "fail"
     passed = evaluation["outcome"] == "pass"

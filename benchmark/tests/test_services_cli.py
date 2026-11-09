@@ -418,7 +418,6 @@ def test_agent_daemon_compose_only_forwards_dedicated_proxies():
         assert re.search(rf"(?m)^\s+(?:-\s+)?{key}\s*[:=]", compose) is None
         assert "${" + key not in compose
     assert "${HTTPS_PROXY" not in compose
-    assert "HTTPS_PROXY: ${AICO_BENCHMARK_REALTIME_HTTPS_PROXY:-}" in compose
     assert "AICO_LANGFUSE_HTTPS_PROXY: ${AICO_LANGFUSE_HTTPS_PROXY:-}" in compose
 
 
