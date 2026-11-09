@@ -133,12 +133,15 @@ def test_k_rates_pool_their_own_eligible_tasks():
 @pytest.mark.parametrize("overrides", [
     {"metrics_k": "3"}, {"metrics_k": None}, {"metrics_k": "unknown"},
     {"metrics_k": "0"}, {"pass_pow_k": None}, {"pass_pow_k_eligible_tasks": None},
+    {"missing_metrics": ["evaluation_coverage"], "eligible_tasks": 0,
+     "pass_at_k": None, "pass_at_k_successes": 0, "pass_at_k_eligible_tasks": 0,
+     "pass_pow_k": None, "pass_pow_k_successes": 0, "pass_pow_k_eligible_tasks": 0},
 ])
 def test_k_rates_do_not_hide_missing_data_or_pool_different_k(overrides):
     run = _group_into_runs([_k_record(suite="a"), _k_record(suite="b", **overrides)])[0]
     assert run["pass_pow_k"] is None
-    assert run["pass_at_1"] == 0.5
-    if "metrics_k" in overrides:
+    assert run["pass_at_1"] == (None if "missing_metrics" in overrides else 0.5)
+    if "metrics_k" in overrides or "missing_metrics" in overrides:
         assert run["pass_at_k"] is None
     else:
         assert run["pass_at_k"] == 1

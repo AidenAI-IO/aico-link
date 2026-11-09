@@ -52,6 +52,7 @@ def _metrics(experiment_id="exp-1"):
         "diagnostics.failure_stage_coverage.eligible_failures": 2,
         "failures.stage.device_execution": 1, "failures.stage.unknown": 1,
         "efficiency.cost_usd.sum": 0.1, "failures.class.agent": 1,
+        "failures.class.environment": 0, "failures.class.evaluation": 0,
     }.items()]
 
 
@@ -131,7 +132,7 @@ def test_real_sdk_paginates_experiments_and_scores_beyond_fifty():
     assert record["pass_at_k_eligible_tasks"] == 12
     assert record["pass_pow_k_successes"] == 9
     assert record["metrics_k"] == 2
-    assert record["failure_classes"] == {"agent": 1}
+    assert record["failure_classes"] == {"agent": 1, "environment": 0, "evaluation": 0}
     assert record["total_tokens_p50"] == 23118
     assert record["workflow_run_id"] == "123"
     assert record["workflow_run_attempt"] == "1"
@@ -155,7 +156,9 @@ def test_batched_scores_are_assigned_to_their_experiment():
         return _response(_metrics() + [_score("capability.pass_at_1.successes", 0, "exp-2"),
             _score("capability.pass_at_1.eligible_tasks", 16, "exp-2"),
             _score("capability.pass_at_1.total_tasks", 16, "exp-2"),
-            _score("capability.pass_at_1", 0, "exp-2")])
+            _score("capability.pass_at_1", 0, "exp-2"),
+            _score("failures.class.environment", 0, "exp-2"),
+            _score("failures.class.evaluation", 0, "exp-2")])
     result = history.fetch_benchmark_history(client=_client(handler), now=NOW)
     assert {r["run_id"]: r["pass_at_1"] for r in result.records} == {"ci-123-1-memory": 0.9375, "other": 0}
 
@@ -178,6 +181,8 @@ def test_weekly_comparison_includes_experiments_across_metadata_versions():
                 "capability.pass_at_1.eligible_tasks": 16,
                 "capability.pass_at_1.successes": passed,
                 "capability.pass_at_1": passed / 16,
+                "failures.class.environment": 0,
+                "failures.class.evaluation": 0,
             }.items()
         ])
 
@@ -304,6 +309,23 @@ def test_local_metrics_use_the_publishers_score_mapping_and_configuration(tmp_pa
     assert records[0]["tasks"] == 3
     assert records[0]["suite_sha256"] == "suitehash"
     assert records[0]["workflow_run_attempt"] == "1"
+
+
+@pytest.mark.parametrize("count", [None, -1, 0.5, float("nan"), 1, 0])
+def test_failure_counts_must_be_explicit_valid_and_zero_for_complete_measurement(count):
+    scores = {s["name"]: float(s["value"]) for s in _metrics()}
+    if count is None:
+        del scores["failures.class.environment"]
+    else:
+        scores["failures.class.environment"] = count
+    record = history._record(metadata={}, run_id="partial", timestamp=NOW,
+                             scores=scores, experiment_id=None, source="langfuse")
+    if count == 0:
+        assert not record["missing_metrics"]
+        assert record["pass_at_1"] == 15 / 16
+    else:
+        assert record["missing_metrics"]
+        assert all(record[metric] is None for metric in ("pass_at_1", "pass_at_k", "pass_pow_k"))
 
 
 def test_inconsistent_pass_counts_are_unknown():
@@ -465,7 +487,9 @@ def test_zero_eligible_tasks_have_no_rate_and_no_missing_counts():
     record = history._record(metadata={}, run_id="empty", timestamp=NOW,
         scores={"capability.pass_at_1.total_tasks": 4.0,
                 "capability.pass_at_1.eligible_tasks": 0.0,
-                "capability.pass_at_1.successes": 0.0}, experiment_id=None, source="langfuse")
+                "capability.pass_at_1.successes": 0.0,
+                "failures.class.environment": 0, "failures.class.evaluation": 0},
+        experiment_id=None, source="langfuse")
     assert record["pass_at_1"] is None
     assert not record["missing_metrics"]
 
