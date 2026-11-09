@@ -11,6 +11,7 @@ from runner.collaboration import CollaborationEventCollector, CollaborationEvide
 from runner.collaboration_claims import adjudicate_claims
 from runner.judge import JudgeConfig
 from runner.matching import dict_contains, value_matches
+from runner.metrics import combine_episode_metrics, count_backend_actions
 from runner.models import TaskResult
 from runner.recovery import prepare_task_isolation
 from runner.report import now_iso
@@ -253,6 +254,33 @@ def backend_episode_ids(events: list[dict[str, Any]]) -> list[str]:
         and isinstance((e.get("payload") or {}).get("episode_id"), str) and e["payload"]["episode_id"]))
 
 
+def _fetch_episode(client: AgentClient, episode_id: str, artifact_dir: Path, index: int) -> dict[str, Any] | None:
+    """Read a committed backend episode, saving it beside the attempt's other evidence.
+
+    Episodes commit asynchronously after the task ends, so allow a short wait.
+    """
+    for delay in (0, .5, 1, 2):
+        time.sleep(delay)
+        try:
+            episode = client.get_episode(episode_id)
+        except Exception:
+            continue
+        name = "episode.json" if index == 0 else f"episode-{index + 1}.json"
+        (artifact_dir / name).write_text(json.dumps(episode, ensure_ascii=False, indent=2), encoding="utf-8")
+        return episode
+    return None
+
+
+def _foreground_usage(events: list[dict[str, Any]]) -> dict[str, Any]:
+    usage = [(e.get("payload") or {}).get("Usage") or {} for e in events
+             if e.get("kind") == "response.terminal" and (e.get("collaboration") or {}).get("actor") == "foreground"]
+    if not usage:
+        return {}
+    return {"foreground_responses": len(usage),
+            "foreground_input_tokens": sum(u.get("InputTokens", 0) for u in usage),
+            "foreground_output_tokens": sum(u.get("OutputTokens", 0) for u in usage)}
+
+
 def submit_user_turn(client: Any, collector: Any, text: str,
                      remaining: Callable[[float], float]) -> tuple[str, int]:
     """Submit user text the way a person would: if the foreground is still
@@ -485,6 +513,13 @@ def execute_scenario(client: AgentClient, suite: Suite, task: TaskSpec, attempt:
     if episodes:
         result.metrics["episode_id"] = episodes[0]
         result.metrics["episode_ids"] = episodes
+    # The same backend usage that backend-text attempts report, so reports and
+    # history have cost, token, LLM and tool metrics for realtime-text too. The
+    # realtime foreground's own usage is recorded separately below.
+    result.metrics.update(count_backend_actions(events))
+    result.metrics.update(combine_episode_metrics(
+        [_fetch_episode(client, episode, artifact_dir, index) for index, episode in enumerate(episodes)]))
+    result.metrics.update(_foreground_usage(events))
     failed = evaluation["outcome"] == "fail"
     passed = evaluation["outcome"] == "pass"
     result.status = "passed" if passed else "failed" if failed else "judge_error"
