@@ -1,20 +1,9 @@
-// Image/audio attachments, recording, and WAV encoding.
-async function handleImageSelection(event) {
-    const files = Array.from(event.target.files || []);
-    imageInputEl.value = '';
-    if (files.length === 0) return;
-    await addImageFiles(files, 'selected');
-}
-
+// File, image, and audio attachments.
 async function handleComposerPaste(event) {
     const files = clipboardImageFiles(event.clipboardData);
     if (files.length === 0) return;
     event.preventDefault();
-    if (!canAttachImagesNow()) {
-        setComposerHint('Images can be attached after the current run finishes.', true);
-        return;
-    }
-    await addImageFiles(files, 'pasted');
+    await addAttachmentFiles(files, 'pasted');
 }
 
 function clipboardImageFiles(clipboardData) {
@@ -31,52 +20,6 @@ function clipboardImageFiles(clipboardData) {
     return Array.from(clipboardData.files || []).filter(isImageFile);
 }
 
-async function addImageFiles(files, source) {
-    const imageFiles = Array.from(files || []).filter(isImageFile);
-    if (imageFiles.length === 0) return;
-    if (!canAttachImagesNow()) {
-        setComposerHint('Images can be attached after the current run finishes.', true);
-        return;
-    }
-
-    let accepted = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const file of imageFiles) {
-        if (getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16) {
-            skipped++;
-            continue;
-        }
-        try {
-            const id = nextAttachmentId++;
-            const dataUrl = await readFileAsDataURL(file);
-            if (!canAttachImagesNow()) {
-                skipped++;
-                continue;
-            }
-            if (getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16) {
-                skipped++;
-                continue;
-            }
-            draftAttachments.push({
-                id: id,
-                kind: 'image',
-                name: imageAttachmentName(file, source, id),
-                mime_type: imageMIMEType(file, dataUrl),
-                data: extractBase64(dataUrl),
-                size: file.size || 0
-            });
-            accepted++;
-        } catch (err) {
-            failed++;
-            console.error('Failed to read image attachment:', err);
-        }
-    }
-
-    renderDraftAttachments();
-    reportImageAddResult(accepted, skipped, failed);
-}
-
 function isImageFile(file) {
     if (!file) return false;
     const mimeType = String(file.type || '').toLowerCase();
@@ -90,7 +33,7 @@ function getDraftImageCount() {
     }).length;
 }
 
-function canAttachImagesNow() {
+function canAttachFilesNow() {
     return !fileUploadPending && !loadingDiv.classList.contains('active');
 }
 
@@ -131,20 +74,6 @@ function imageMIMETypeFromDataURL(dataUrl) {
     const match = String(dataUrl || '').match(/^data:([^;,]+)[;,]/);
     const mimeType = match && match[1] ? match[1].toLowerCase() : '';
     return mimeType.indexOf('image/') === 0 ? mimeType : 'image/png';
-}
-
-function reportImageAddResult(accepted, skipped, failed) {
-    if (skipped > 0) {
-        setComposerHint('Attach up to 4 images and 16 files/images in total.', true);
-        return;
-    }
-    if (failed > 0) {
-        setComposerHint('Some images could not be read.', true);
-        return;
-    }
-    if (accepted > 0) {
-        resetComposerHint();
-    }
 }
 
 function setComposerHint(text, isError) {
@@ -371,16 +300,51 @@ function readFileAsDataURL(file) {
     });
 }
 
-// Upload binary files separately; chat requests carry only the validated board path.
 async function handleFileSelection(event) {
     const files = Array.from(event.target.files || []);
     event.target.value = '';
-    if (!canAttachImagesNow() || !files.length) return;
+    await addAttachmentFiles(files, 'selected');
+}
+
+// Images retain visual input; other files upload separately and use board paths.
+async function addAttachmentFiles(files, source) {
+    if (!files.length) return;
+    if (!canAttachFilesNow()) {
+        setComposerHint('Attachments can be added after the current operation finishes.', true);
+        return;
+    }
     fileUploadPending = true;
     setComposerState(loadingDiv.classList.contains('active'));
+    let skipped = 0;
+    let failed = 0;
     try {
         for (const file of files) {
-            if (draftAttachments.length >= 16) throw new Error('Only 16 attachments can be attached.');
+            if (draftAttachments.length >= 16) {
+                skipped++;
+                continue;
+            }
+            if (isImageFile(file)) {
+                if (getDraftImageCount() >= maxDraftImageAttachments) {
+                    skipped++;
+                    continue;
+                }
+                try {
+                    const id = nextAttachmentId++;
+                    const dataUrl = await readFileAsDataURL(file);
+                    draftAttachments.push({
+                        id: id,
+                        kind: 'image',
+                        name: imageAttachmentName(file, source, id),
+                        mime_type: imageMIMEType(file, dataUrl),
+                        data: extractBase64(dataUrl),
+                        size: file.size || 0
+                    });
+                } catch (err) {
+                    failed++;
+                    console.error('Failed to read image attachment:', err);
+                }
+                continue;
+            }
             if (file.size > 100 * 1024 * 1024) throw new Error('File exceeds the 100 MiB limit: ' + file.name);
             setComposerHint('Uploading ' + file.name + '…');
             const form = new FormData();
@@ -403,7 +367,9 @@ async function handleFileSelection(event) {
                 draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
             } finally { clearTimeout(timeout); }
         }
-        resetComposerHint();
+        if (skipped > 0) setComposerHint('Attach up to 4 images and 16 files/images in total.', true);
+        else if (failed > 0) setComposerHint('Some images could not be read.', true);
+        else resetComposerHint();
     } catch (err) {
         if (err.loginRequired) showSharedFileLoginHint();
         else setComposerHint(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message, true);

@@ -79,9 +79,11 @@ The server validates that the file exists inside the shared directory and derive
 its metadata from storage. It supplies the local path to the Agent without
 embedding binary data into provider requests. File references remain available
 in chat history. A turn accepts up to 16 attachments, including up to 4 images.
-Images selected through the image picker retain the existing visual input path;
-files selected through the file picker are treated as local files, including
-images and audio selected there.
+The Web **Add file** picker accepts mixed selections. Images are detected by MIME
+type or image filename extension and retain the existing visual input path;
+other files, including audio, are uploaded as local files. Pasted images use the
+same visual input path. Reaching the image limit still allows adding other files
+until the combined attachment limit is reached.
 
 Uploads stream to a hidden temporary file and become visible only after the
 complete request is persisted. A duplicate filename receives a random suffix;

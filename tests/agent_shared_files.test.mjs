@@ -4,8 +4,19 @@ import {test} from 'node:test';
 import vm from 'node:vm';
 
 function harness(fetch) {
+  class FileReader {
+    async readAsDataURL(file) {
+      try {
+        this.result = 'data:' + (file.type || 'application/octet-stream') + ';base64,' + Buffer.from(await file.arrayBuffer()).toString('base64');
+        this.onload();
+      } catch (error) {
+        this.error = error;
+        this.onerror();
+      }
+    }
+  }
   const context = vm.createContext({
-    URL, FormData, AbortController, setTimeout, clearTimeout, console,
+    URL, FormData, FileReader, AbortController, setTimeout, clearTimeout, console,
     window: {location: {origin: 'http://192.168.42.1:8080', hostname: '192.168.42.1'}},
     loadingDiv: {classList: {contains: () => false}},
     fileUploadPending: false, draftAttachments: [], nextAttachmentId: 1, maxDraftImageAttachments: 4,
@@ -50,12 +61,79 @@ test('upload completion adds only a file reference and failure preserves existin
   assert.equal(payload.data, undefined);
 });
 
-test('image selection respects the combined attachment limit', async () => {
-  const context = harness();
-  context.draftAttachments = Array.from({length: 16}, (_, index) => ({kind: 'file', path: '/share/' + index}));
-  await context.addImageFiles([new File(['image'], 'photo.png', {type: 'image/png'})], 'selected');
-  assert.equal(context.draftAttachments.length, 16);
-  assert.match(context.lastHint, /16/);
+test('one picker routes mixed selections to visual input or shared files in selection order', async () => {
+  const uploadedNames = [];
+  const context = harness(async (url, options) => {
+    assert.equal(url, '/api/files');
+    const name = options.body.get('file').name;
+    uploadedNames.push(name);
+    return {ok: true, json: async () => ({kind: 'file', name, path: '/share/' + name})};
+  });
+  const files = [
+    new File(['png'], 'camera-upload', {type: 'image/png'}),
+    new File(['csv'], 'report.csv', {type: 'text/csv'}),
+    new File(['jpg'], 'PHOTO.JPG'),
+    new File(['audio'], 'audio.wav', {type: 'audio/wav'}),
+  ];
+  await context.handleFileSelection({target: {files, value: 'selected'}});
+  assert.deepEqual(uploadedNames, ['report.csv', 'audio.wav']);
+  const payload = JSON.parse(JSON.stringify(context.cloneAttachmentsForTransport(context.draftAttachments)));
+  assert.deepEqual(payload.map(attachment => attachment.kind), ['image', 'file', 'image', 'file']);
+  for (const [index, mime] of [[0, 'image/png'], [2, 'image/jpeg']]) {
+    assert.equal(payload[index].mime_type, mime);
+    assert.equal(payload[index].data, Buffer.from(await files[index].arrayBuffer()).toString('base64'));
+    assert.equal(payload[index].path, undefined);
+  }
+  for (const index of [1, 3]) {
+    assert.equal(payload[index].path, '/share/' + files[index].name);
+    assert.equal(payload[index].data, undefined);
+  }
+});
+
+test('image and combined limits still allow eligible files later in a mixed selection', async () => {
+  for (const [images, files, expectedImages, expectedFiles, expectedUploads] of [
+    [4, 0, 4, 1, 1],
+    [0, 15, 1, 15, 0],
+    [0, 16, 0, 16, 0],
+  ]) {
+    let uploads = 0;
+    const context = harness(async () => {
+      uploads++;
+      return {ok: true, json: async () => ({kind: 'file', path: '/share/report.csv'})};
+    });
+    context.draftAttachments = [
+      ...Array.from({length: images}, () => ({kind: 'image'})),
+      ...Array.from({length: files}, (_, index) => ({kind: 'file', path: '/share/' + index})),
+    ];
+    await context.handleFileSelection({target: {files: [new File(['image'], 'photo.png'), new File(['csv'], 'report.csv')]}});
+    assert.equal(context.getDraftImageCount(), expectedImages);
+    assert.equal(context.draftAttachments.length, expectedImages + expectedFiles);
+    assert.equal(uploads, expectedUploads);
+    assert.match(context.lastHint, /4 images and 16/);
+  }
+});
+
+test('image reads block concurrent selections and pasted images retain visual input', async () => {
+  const context = harness(() => assert.fail('Images must not upload as shared files'));
+  let finishRead;
+  const photo = new File(['image'], '', {type: 'image/png'});
+  photo.arrayBuffer = () => new Promise(resolve => { finishRead = resolve; });
+  let pasteHandled = false;
+  const pending = context.handleComposerPaste({
+    clipboardData: {files: [photo]},
+    preventDefault() { pasteHandled = true; },
+  });
+  assert.equal(pasteHandled, true);
+  assert.equal(context.fileUploadPending, true);
+  await context.handleFileSelection({target: {files: [new File(['csv'], 'report.csv')]}});
+  assert.equal(context.draftAttachments.length, 0);
+  finishRead(new Uint8Array([1, 2, 3]).buffer);
+  await pending;
+  assert.equal(context.fileUploadPending, false);
+  assert.equal(context.draftAttachments.length, 1);
+  assert.equal(context.draftAttachments[0].kind, 'image');
+  assert.equal(context.draftAttachments[0].name, 'pasted-image-1.png');
+  assert.equal(context.draftAttachments[0].data, 'AQID');
 });
 
 test('expired upload sessions offer local login without navigating away or losing the draft', async () => {
