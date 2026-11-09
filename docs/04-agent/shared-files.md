@@ -108,7 +108,7 @@ Hidden files, symbolic links, special files, and paths outside the shared root
 are excluded. Downloads use attachment disposition, support HEAD and byte ranges,
 and do not execute HTML or SVG as same-origin content.
 
-The Web composer has **Add file** and **Shared files** controls. Download cards
+The Web composer has an **Add file** control. Download cards
 appear for attached files and Agent output links. The phone App offers file
 selection through the attachment menu and a shared-file browser. iOS downloads
 to a temporary file and opens the system share sheet (including Save to Files);
