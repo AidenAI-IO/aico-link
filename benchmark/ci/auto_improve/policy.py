@@ -55,6 +55,9 @@ def edit_target(path: str) -> bool:
     if (p.is_absolute() or p.as_posix() != path or
             any(part.startswith(".") or part in {"vendor", "testdata"} for part in p.parts)):
         return False
+    # The benchmark MCU emulator is part of the evaluation environment.
+    if path.startswith("src/agent/cmd/benchmark-mcu/"):
+        return False
     return ((path.startswith(("src/agent/internal/", "src/agent/cmd/")) and
              p.suffix == ".go" and not p.name.endswith("_test.go")) or
             (path.startswith("src/agent/config/skills/") and p.name == "SKILL.md"))

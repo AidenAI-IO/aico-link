@@ -51,6 +51,7 @@ aico-link-firmware/
 | `cmd/abctl` | A/B metadata diagnostic utility |
 | `cmd/ota` | OTA update client |
 | `cmd/benchmark-http` | Standalone LLM endpoint latency probe |
+| `cmd/benchmark-mcu` | MCU firmware emulator for isolated benchmark daemon containers; not shipped to devices |
 | `cmd/test-warmup` | Connection warmup measurement harness |
 | `internal/agent/runtime.go` | Model invocation, tool loop, and runtime lifecycle |
 | `internal/agent/realtimevoice` | Provider-neutral realtime voice session seam and native Qwen, OpenAI, xAI, Gemini, and Speko adapters |

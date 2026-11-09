@@ -12,13 +12,15 @@ COPY src/agent/go.mod src/agent/go.sum ./
 RUN go mod download
 
 COPY src/agent/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -o daemon ./cmd/daemon
+RUN CGO_ENABLED=0 GOOS=linux go build -o daemon ./cmd/daemon && \
+    CGO_ENABLED=0 GOOS=linux go build -o benchmark-mcu ./cmd/benchmark-mcu
 
 FROM debian:bullseye-slim AS agent-daemon-runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 COPY --from=agent-daemon-builder /build/daemon /usr/local/bin/daemon
+COPY --from=agent-daemon-builder /build/benchmark-mcu /usr/local/bin/benchmark-mcu
 COPY benchmark/docker/agent-daemon-entrypoint.sh /usr/local/bin/agent-daemon-entrypoint
 RUN chmod +x /usr/local/bin/agent-daemon-entrypoint
 RUN useradd --system --create-home --uid 10001 agent && \

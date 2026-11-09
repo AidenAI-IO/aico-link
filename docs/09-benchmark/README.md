@@ -145,6 +145,14 @@ These mock fixtures do not emulate `ble_service` or a live iOS Wake subscriber,
 so they do not cover live BLE Wake capability discovery or delivery. Platform
 and Phone Bridge availability filtering still use the scripted status.
 
+Headless isolated containers, which have no environment bridge, start
+`benchmark-mcu` before the daemon and point `AICO_MCU_SERVICE_SOCKET` at it. It
+emulates only the MCU firmware peer behind the real `mcu_service` code, so the
+`schedule` tool arms and cancels a real countdown and a due routine receives an RTC
+wakeup, as on a device. Battery reads return a fixed charge. LEDs are unsupported,
+and suspend and poweroff are refused. Bridged, MobileGym, and ADB environments do
+not start it.
+
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the
 tool restores the Aico companion app internally before executing, so the Agent must not click the

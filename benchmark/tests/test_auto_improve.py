@@ -94,6 +94,7 @@ def test_code_patches_are_allowed_and_atomic(tmp_path, path):
     "src/agent/internal/../go.mod", "src/agent/internal/vendor/dep/code.go",
     "src/agent/internal/testdata/example.go", "src/agent/internal//agent/code.go",
     "src/agent/internal/agent/.cache/code.go", "benchmark/runner/judge.py",
+    "src/agent/cmd/benchmark-mcu/main.go",
     ".github/workflows/ci.yml", "scripts/run_tests_in_docker.sh"])
 def test_edit_scope_preserves_evaluators_tests_dependencies_and_ci(path):
     assert not policy.edit_target(path)
