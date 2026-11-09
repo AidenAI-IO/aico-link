@@ -386,11 +386,11 @@
       "description_for_judge": "Use quick_action copy on the selected source text, then paste into a different initially empty field to verify the clipboard effect. Shortcut success alone cannot prove copying; the final screenshot and successful paste sequence must establish the copied value. Clipboard readback is not required.",
       "setup": {
         "type": "agent_prompt",
-        "prompt": "打开邮件应用，新建一封不发送的邮件草稿，使用彼此独立、同时可见的主题和正文输入框。不要填写收件人。在主题框输入「你好Aico」并全选，正文框保持为空。不要发送邮件，不要使用把首行当标题的备忘录界面。",
+        "prompt": "Open the mail app and create an unsent draft with separate, simultaneously visible Subject and Body fields. Leave the recipient empty. Type 你好Aico in Subject and select it; leave Body empty. Do not send the email or use a notes app that treats the first line as the title.",
         "timeout_sec": 120,
         "clear_history_after": true
       },
-      "prompt": "用 quick_action 的 copy 复制邮件主题框里当前选中的文字，再切到空白正文框，用 quick_action 的 paste 粘贴来验证复制结果。不要重新输入这段文字，不要填写收件人或发送邮件。最后保留主题和正文可见。",
+      "prompt": "Use quick_action with action=copy to copy the selected text in Subject. Then focus the empty Body field and use quick_action with action=paste to verify the copied value. Do not type the text again, fill in a recipient, or send the email. Leave both Subject and Body visible.",
       "rubric": [
         {
           "id": "source_selected_destination_empty",
