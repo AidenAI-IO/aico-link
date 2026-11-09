@@ -321,7 +321,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated LAN request accepted: %d", response.Code)
 	}
-	login := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"password":"shared-files-test-password"}`)).WithContext(request.Context())
+	login := httptest.NewRequest(http.MethodPost, lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`)).WithContext(request.Context())
 	login.RemoteAddr = request.RemoteAddr
 	login.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
