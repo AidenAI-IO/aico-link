@@ -1,6 +1,6 @@
 # Realtime Text Collaboration Benchmark Design
 
-Status: **Implementation in progress.** The approved design is implemented by the realtime-text runner path and the `realtime_collaboration_v1` controlled suite. The 15 current scenarios cover direct answers, early completion while queued/running, successive target updates, progress/repeated requests, running and queued cancellation, controlled tool failure, user assistance/continue, partial effects followed by cancellation, mixed task outcomes, unrelated conversation during work, and an attempted result/new-turn overlap. The overlap candidate does not yet enforce the exact provider response boundary. Assistance ambiguity and suppression of stale results after cancellation/update are not covered. These cases have not been exercised against a live realtime provider; fixture validation and deterministic unit tests are not model-quality acceptance.
+Status: **Implemented; manual-only, not yet a scheduled production benchmark.** The `realtime-text` runner path and the `realtime_collaboration_v1` controlled suite are implemented. The 15 current scenarios cover direct answers, early completion while queued/running, successive target updates, progress/repeated requests, running and queued cancellation, controlled tool failure, user assistance/continue, partial effects followed by cancellation, mixed task outcomes, unrelated conversation during work, and an attempted result/new-turn overlap. The overlap candidate does not yet enforce the exact provider response boundary. Assistance ambiguity and suppression of stale results after cancellation/update are not covered. Live validation so far is limited to single-repeat CI runs with one foreground model (OpenAI `gpt-realtime-2`); see [Current implementation and operational limits](#current-implementation-and-operational-limits).
 
 The companion [implementation contracts](realtime-text-collaboration-contracts.md) describe the recorder interface, correlation invariants, scenario language, and adjudication rules. Deviations and remaining validation limits are recorded below.
 
@@ -27,7 +27,14 @@ Reuse these production paths. Do not implement a benchmark-only foreground orche
 
 ## Execution and configuration
 
-Retain the current backend text path as the baseline. Introduce an explicit benchmark `realtime-text` selection, separate from the product's voice input mode.
+The benchmark has two execution modes, selected with `run --execution-mode` (CLI) or a catalog entry's `execution_mode` (CI):
+
+| Mode | Path | Role |
+| --- | --- | --- |
+| `backend-text` (default) | The runner sends each task prompt to the backend Agent through `/api/chat`; no realtime foreground is involved. | The existing benchmark, unchanged. It is the baseline for backend execution quality. |
+| `realtime-text` | The runner sends text to a real realtime foreground model, which delegates to the same backend Agent through the production task manager. | Measures foreground/backend collaboration on top of that baseline. |
+
+`backend-text` is the name of the existing behavior, not a leftover: an explicit name keeps results, Langfuse metadata and history comparisons from mixing the two modes. This document uses it wherever it refers to the baseline. Neither mode evaluates speech. `realtime-text` is a benchmark selection, separate from the product's voice input mode. Scenario suites require `realtime-text`, and `realtime-text` accepts only scenario suites.
 
 Use the existing agent configuration schema for foreground realtime provider selection and settings. Preserve the existing main model configuration as the backend source of truth. Configuration entry points should expose the foreground configuration alongside the current main model settings, without a new backend settings form.
 
@@ -38,9 +45,9 @@ Preflight must verify:
 - The backend main model and selected environment are available.
 - Required collaboration evidence can be collected before sending evaluated input.
 
-Fail explicitly for an unsupported configuration. Never silently fall back to backend-direct execution. A healthy HTTP endpoint alone is not sufficient readiness evidence.
+Fail explicitly for an unsupported configuration. Never silently fall back to `backend-text` execution. A healthy HTTP endpoint alone is not sufficient readiness evidence.
 
-Record effective foreground and backend provider/model identities, execution mode, delegation setting, provider output modality, suite version, code revision, environment, limits, and repetition settings. Do not store credentials. Keep realtime results distinct from existing backend-only aggregates.
+Record effective foreground and backend provider/model identities, execution mode, delegation setting, provider output modality, suite version, code revision, environment, limits, and repetition settings. Do not store credentials. Keep realtime results distinct from existing `backend-text` aggregates.
 
 ### Device-independent runtime
 
@@ -63,7 +70,7 @@ Here, a worker means the existing benchmark-owned Agent daemon and its isolated 
 
 Reuse the existing `run --auto-agent-setup` provisioning and scheduling path, which already creates and stops a daemon per task attempt. For `realtime-text`, keep that daemon alive for the entire multi-turn scenario, including asynchronous task results and foreground feedback. Repetitions receive fresh state. No new worker pool or foreground/backend container split is proposed.
 
-Existing entry points do not all have this lifecycle: ordinary WebUI device/ADB/non-parallel MobileGym jobs share a daemon across tasks; parallel MobileGym uses task workers; direct `--agent-url` runs use a caller-owned daemon. Leave existing backend-direct behavior unchanged. Initially run managed realtime scenarios through the existing auto-setup path, including when launched from the WebUI, rather than silently inheriting the shared-daemon lifecycle. Caller-owned daemon support would require an explicit isolation/reset contract and is not part of the initial managed implementation.
+Existing entry points do not all have this lifecycle: ordinary WebUI device/ADB/non-parallel MobileGym jobs share a daemon across tasks; parallel MobileGym uses task workers; direct `--agent-url` runs use a caller-owned daemon. Leave existing `backend-text` behavior unchanged. Initially run managed realtime scenarios through the existing auto-setup path, including when launched from the WebUI, rather than silently inheriting the shared-daemon lifecycle. Caller-owned daemon support would require an explicit isolation/reset contract and is not part of the initial managed implementation.
 
 Completion is explicit per scenario:
 
@@ -103,7 +110,7 @@ A result-delivery flag set when text is injected is not proof of milestone 3. Pr
 
 Use source ordering and causal links for correctness checks; do not assume independently timestamped services share a perfectly synchronized clock. Measure durations with suitable local monotonic clocks. Record missing evidence or sequence gaps as evaluation failures, not model passes or model failures.
 
-Retain raw foreground transcripts, backend traces, task transitions, environment snapshots, and derived assertions. Each backend run is exported to Langfuse as a normal `agent-run` trace; the attempt records the backend episode IDs (`episode_id` is the first, `episode_ids` all of them, in start order) so publication attaches the benchmark result to that execution trace exactly as in backend-direct runs. The daemon does not export the foreground realtime session, so publication rebuilds it from `collaboration-events.jsonl` as a separate `realtime-foreground` trace with the original timestamps: user turns, foreground responses (with token usage), the task tools each response called, backend tasks and runs, result injections, and adjudicated completion claims (unsupported claims are flagged as warnings on the reply that made them). Each backend run span links to its `agent-run` trace (`backend_trace_id`/`backend_trace_url`), and each benchmark result records `foreground_trace_id`/`foreground_trace_url` next to the backend trace it is attached to, so the attempt is navigable from either side. Backend traces keep the daemon's own Langfuse session; the foreground trace uses `<run_id>:<task_id>:<attempt>`. Only attempts recorded with `execution_mode=realtime-text` get a foreground trace; backend-text suites publish exactly as before. Runs record `execution_mode` and `foreground_model` in experiment metadata so history comparisons never mix the two modes or different foreground models. Attempts report the same backend usage metrics as backend-text runs (tokens, cost, LLM calls and time, tool calls, device actions, tool errors), summed over every backend episode of the attempt and left unknown if any episode cannot be read; the realtime foreground's token usage is recorded separately as `foreground_*` metrics. Produce a readable merged timeline with links to the underlying evidence. Existing report and offline rejudge workflows should consume the saved artifacts without rerunning tools.
+Retain raw foreground transcripts, backend traces, task transitions, environment snapshots, and derived assertions. Each backend run is exported to Langfuse as a normal `agent-run` trace; the attempt records the backend episode IDs (`episode_id` is the first, `episode_ids` all of them, in start order) so publication attaches the benchmark result to that execution trace exactly as in `backend-text` runs. The daemon does not export the foreground realtime session, so publication rebuilds it from `collaboration-events.jsonl` as a separate `realtime-foreground` trace with the original timestamps: user turns, foreground responses (with token usage), the task tools each response called, backend tasks and runs, result injections, and adjudicated completion claims (unsupported claims are flagged as warnings on the reply that made them). Each backend run span links to its `agent-run` trace (`backend_trace_id`/`backend_trace_url`), and each benchmark result records `foreground_trace_id`/`foreground_trace_url` next to the backend trace it is attached to, so the attempt is navigable from either side. Backend traces keep the daemon's own Langfuse session; the foreground trace uses `<run_id>:<task_id>:<attempt>`. Only attempts recorded with `execution_mode=realtime-text` get a foreground trace; backend-text suites publish exactly as before. Runs record `execution_mode` and `foreground_model` in experiment metadata so history comparisons never mix the two modes or different foreground models. Attempts report the same backend usage metrics as backend-text runs (tokens, cost, LLM calls and time, tool calls, device actions, tool errors), summed over every backend episode of the attempt and left unknown if any episode cannot be read; the realtime foreground's token usage is recorded separately as `foreground_*` metrics. Produce a readable merged timeline with links to the underlying evidence. Existing report and offline rejudge workflows should consume the saved artifacts without rerunning tools.
 
 ## Detecting unsupported completion claims
 
@@ -170,7 +177,7 @@ Ordering cases must respect the production scheduler. Do not assume parallel bac
 
 For every negative case, retain a positive counterpart: a valid completion claim after verified effect must pass. Use small parameterized fixtures for state combinations instead of near-duplicate suites.
 
-After the controlled suite is stable, run a compatible subset against a simulator or real device. Existing suites that require direct foreground image attachments, backend-specific setup prompts, or backend-only history need explicit compatibility review; do not switch all suites automatically.
+After the controlled suite is stable, run a compatible subset against a simulator or real device. Existing suites that require direct foreground image attachments, backend-specific setup prompts, or backend history need explicit compatibility review; do not switch all suites automatically.
 
 ## Scoring and reporting
 
@@ -190,7 +197,7 @@ Structural ordering, task identity, revisions, and environment effects use deter
 
 A report should answer: what did the user ask, what did the foreground claim, what had the backend actually done at that point, what changed in the environment, and where did the result-delivery chain stop?
 
-For model comparisons, hold the existing backend main model and environment fixed and vary only the foreground realtime model. Reuse compatible tasks against the backend-direct baseline to distinguish execution failures from additional coordination failures. Keep audio costs, when incurred by the provider, visible rather than claiming these are text-only billing measurements.
+For model comparisons, hold the existing backend main model and environment fixed and vary only the foreground realtime model. Reuse compatible tasks against the `backend-text` baseline to distinguish execution failures from additional coordination failures. Keep audio costs, when incurred by the provider, visible rather than claiming these are text-only billing measurements.
 
 ## Implementation sequence after approval
 
@@ -218,7 +225,7 @@ Acceptance requires:
 - No physical audio hardware is required, and no speech-quality claims are made.
 - Reports expose missing evidence and incomplete delivery explicitly.
 - Timed-out scenarios cannot leave tasks operating an environment after its lease is released.
-- Existing backend-direct benchmark behavior remains compatible.
+- Existing `backend-text` benchmark behavior remains compatible.
 
 Repository validation should follow the pinned Docker workflow described in [the testing guide](../01-getting-started/testing.md). Actual model evaluations require configured credentials supplied through the existing secret/configuration mechanisms, never committed into fixtures or reports.
 
@@ -226,7 +233,7 @@ Repository validation should follow the pinned Docker workflow described in [the
 
 From `benchmark/`, `uv run --locked python -m runner run --execution-mode realtime-text --auto-agent-setup --suite suites/realtime_collaboration_v1.json` keeps one isolated daemon alive for each scenario attempt. The daemon uses the configured realtime provider and production task manager; its main model remains the backend. The controlled `phone_data_v1` fixture intercepts only clipboard and notification tools and is protected by a per-run control token. Ordinary benchmark runs remain `backend-text` by default.
 
-Foreground provider selection is supplied with `--realtime-provider`, `--realtime-model`, and `AICO_BENCHMARK_REALTIME_API_KEY`, or configured in the existing Agent TOML. Optional CLI flags `--realtime-endpoint`, `--realtime-protocol`, `--realtime-upstream-provider`, and `--realtime-auth-mode` populate the selected foreground provider record. Leave model unset to use the provider's default; providers requiring an explicit model still reject incomplete configuration. Other provider-specific settings belong in the existing TOML/provider record rather than backend configuration. The realtime path must fail preflight instead of falling back to backend-direct execution. The WebUI's legacy shared-daemon device and MobileGym paths are not an isolation contract for this mode; run the managed CLI/CI path.
+Foreground provider selection is supplied with `--realtime-provider`, `--realtime-model`, and `AICO_BENCHMARK_REALTIME_API_KEY`, or configured in the existing Agent TOML. Optional CLI flags `--realtime-endpoint`, `--realtime-protocol`, `--realtime-upstream-provider`, and `--realtime-auth-mode` populate the selected foreground provider record. Leave model unset to use the provider's default; providers requiring an explicit model still reject incomplete configuration. Other provider-specific settings belong in the existing TOML/provider record rather than backend configuration. The realtime path must fail preflight instead of falling back to `backend-text` execution. The WebUI's legacy shared-daemon device and MobileGym paths are not an isolation contract for this mode; run the managed CLI/CI path.
 
 For an existing TOML that already configures realtime with backend delegation enabled, use `--agent-config /path/to/agent.toml` and leave foreground provider/model flags unset. Otherwise retain the current backend configuration and add only the foreground selection:
 
@@ -254,10 +261,22 @@ These GitHub Actions **Variables** are forwarded through the runtime environment
 | `BENCHMARK_REALTIME_UPSTREAM_PROVIDER` | `--realtime-upstream-provider` | `upstream_provider` |
 | `BENCHMARK_REALTIME_AUTH_MODE` | `--realtime-auth-mode` | `auth_mode` |
 
-For an OpenAI-compatible legacy gateway, set `BENCHMARK_REALTIME_PROVIDER=openai`, `BENCHMARK_REALTIME_MODEL=gpt-realtime-2`, `BENCHMARK_REALTIME_ENDPOINT=wss://api.mixroute.ai/v1/realtime`, and `BENCHMARK_REALTIME_PROTOCOL=legacy`. Store its key only in Secret `BENCHMARK_REALTIME_API_KEY`. Endpoint Variables must not contain credentials. Leave upstream/auth fields empty for this example. Clear provider-specific Variables when changing providers; these fields are explicit overrides, not inferred from the endpoint. Gemini API-key authentication can leave auth mode empty or set `api_key`; Speko requires its supported upstream selection and an explicit model.
+For an OpenAI-compatible gateway, set `BENCHMARK_REALTIME_PROVIDER=openai`, `BENCHMARK_REALTIME_MODEL=gpt-realtime-2`, `BENCHMARK_REALTIME_ENDPOINT=wss://api.mixroute.ai/v1/realtime`, and `BENCHMARK_REALTIME_PROTOCOL` set to the gateway's protocol (`ga` for this gateway today; `legacy` for beta-protocol gateways). Store its key only in Secret `BENCHMARK_REALTIME_API_KEY`. Endpoint Variables must not contain credentials. Leave upstream/auth fields empty for this example. Clear provider-specific Variables when changing providers; these fields are explicit overrides, not inferred from the endpoint. Gemini API-key authentication can leave auth mode empty or set `api_key`; Speko requires its supported upstream selection and an explicit model.
 
 When supplying a realtime-configured `--agent-config`, leave all foreground CLI/environment overrides unset: mixing both configuration sources is rejected rather than silently replacing routing or backend settings. Backend model and judge configuration remain unchanged.
 
 Events are persisted in `collaboration-events.jsonl`; the captured scenario, fixture, evaluation, summary and merged timeline are stored alongside the normal attempt artifacts. Offline rejudging re-evaluates saved evidence and does not execute tools. A failed or incomplete recorder is unscored; an early unsupported completion claim remains a failure after later success.
 
-Validation completed to date includes focused Python tests and host Go tests for `agenttask`, `stream`, and the realtime provider event bridge. The pinned Docker-backed repository check could not run in the current environment because its Docker daemon was unavailable. No live realtime provider or device evaluation has been run. Provider-specific text/tool behavior, full scenario quality, the remaining coverage matrix, and real-provider cost accounting still require operational validation.
+Validation completed to date:
+
+- Focused benchmark Python tests, and host Go tests for `agenttask`, `stream`, and the realtime provider packages. The pinned Docker-backed `make check` has not been run for this change locally.
+- Manually dispatched CI runs (`repeats=1`) with OpenAI `gpt-realtime-2` as the foreground and the existing backend main model. The latest complete run passed 14 of 15 scenarios; `user_assistance_and_resume` depends on whether the backend model requests user assistance. Foreground Langfuse traces were exported for every attempt. A single full run costs roughly USD 1.2 in foreground usage at text pricing.
+
+Not yet validated:
+
+- Qwen, xAI, and Gemini Live as live foreground providers. Their text-output handling is covered only by unit tests or code review.
+- Run-to-run variance. Repeated runs are needed before treating pass rates as stable.
+- Human labeling of claim adjudication. The claim filters are heuristics derived from observed judge errors on English prompts.
+- Device or simulator runs.
+
+The catalog entry stays `runnable: false`, so the suite does not join the scheduled run. Moving it into the scheduled profile requires stable repeated results and an owned foreground provider budget.

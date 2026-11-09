@@ -1,6 +1,6 @@
 # Realtime Text Collaboration Implementation Contracts
 
-Status: **Implementation in progress.** This supplement is the target contract for the [primary design](realtime-text-collaboration-design.md). The managed realtime-text path and controlled suite are implemented; the illustrative JSON below includes proposed extensions and must not be assumed identical to the executable suite. See the primary design for current coverage and validation limits.
+Status: **Implemented; manual-only.** This supplement is the contract for the [primary design](realtime-text-collaboration-design.md). The managed `realtime-text` path and controlled suite are implemented; the illustrative JSON below includes proposed extensions and must not be assumed identical to the executable suite. See the primary design for execution modes, current coverage, and validation limits.
 
 The existing main model remains the backend. A scenario is one suite task attempt in one existing auto-setup worker. All its foreground turns and delegated tasks share that daemon. These contracts do not introduce another scheduler, a simulated Agent, or speech-quality evaluation.
 
