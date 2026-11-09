@@ -81,9 +81,30 @@ func (s *State) RotateSecret() error {
 	return err
 }
 
+// revokeSessions invalidates every issued token. It replaces the signing key,
+// and if that fails it deletes the key, which also invalidates every token
+// (the next sign-in creates a new one). It fails only when the old key is
+// still on disk.
+func (s *State) revokeSessions() error {
+	err := s.RotateSecret()
+	if err == nil {
+		return nil
+	}
+	s.secretMu.Lock()
+	defer s.secretMu.Unlock()
+	_ = os.Remove(s.SecretPath)
+	if _, statErr := os.Lstat(s.SecretPath); statErr == nil {
+		return fmt.Errorf("revoke LAN sessions: %w", err)
+	}
+	return nil
+}
+
+// readRandom fills new signing keys; tests replace it to make rotation fail.
+var readRandom = rand.Read
+
 func (s *State) writeNewSecret() ([]byte, error) {
 	key := make([]byte, secretBytes)
-	if _, err := rand.Read(key); err != nil {
+	if _, err := readRandom(key); err != nil {
 		return nil, err
 	}
 	if err := writeFileAtomic(s.SecretPath, []byte(base64.RawStdEncoding.EncodeToString(key)+"\n")); err != nil {

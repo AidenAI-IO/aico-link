@@ -95,7 +95,7 @@ func (s *State) SetEnabled(enabled bool) error {
 		if err := os.Remove(s.EnabledPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return s.RotateSecret()
+		return s.revokeSessions()
 	}
 	if !s.PasswordSet() {
 		return ErrPasswordRequired
@@ -104,16 +104,18 @@ func (s *State) SetEnabled(enabled bool) error {
 }
 
 // SetPassword stores the bcrypt hash of a new device password and signs
-// every LAN client out.
+// every LAN client out. Sessions are revoked before the password changes, so
+// a failure can never leave the new password in place with sessions signed
+// under the old one.
 func (s *State) SetPassword(password string) error {
 	hash, err := HashPassword(password)
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(s.PasswordPath, []byte(hash+"\n")); err != nil {
+	if err := s.revokeSessions(); err != nil {
 		return err
 	}
-	return s.RotateSecret()
+	return writeFileAtomic(s.PasswordPath, []byte(hash+"\n"))
 }
 
 // ValidatePassword enforces the length rules for a new password.

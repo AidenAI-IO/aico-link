@@ -2,9 +2,12 @@ package lanaccess
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -285,5 +288,68 @@ func TestCookieSessionCountsWhenBearerIsAnotherToken(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer maintenance-token")
 	if w := record(h, r); w.Code != http.StatusUnauthorized {
 		t.Fatalf("non-session bearer alone: %d", w.Code)
+	}
+}
+
+// When a new key cannot be created, revoking sessions deletes the old key,
+// which invalidates every token just the same.
+func TestRevokeSessionsDeletesKeyWhenRotationFails(t *testing.T) {
+	state := enabledState(t)
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := readRandom
+	readRandom = func([]byte) (int, error) { return 0, errors.New("no entropy") }
+	t.Cleanup(func() { readRandom = original })
+
+	if err := state.revokeSessions(); err != nil {
+		t.Fatalf("revoke with failing rotation: %v", err)
+	}
+	if _, err := os.Stat(state.SecretPath); !os.IsNotExist(err) {
+		t.Fatalf("old key still on disk: %v", err)
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err == nil {
+		t.Fatal("token verified after its key was deleted")
+	}
+}
+
+// When sessions cannot be revoked, the password must not change.
+func TestPasswordUnchangedWhenSessionsCannotBeRevoked(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	state := enabledState(t)
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the key in its own read-only directory: neither a new key can be
+	// written nor the old one removed.
+	keyDir := filepath.Join(t.TempDir(), "keys")
+	if err := os.MkdirAll(keyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(state.SecretPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state.SecretPath = filepath.Join(keyDir, "secret")
+	if err := os.WriteFile(state.SecretPath, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(keyDir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(keyDir, 0o700) })
+
+	if err := state.SetPassword("another horse"); err == nil {
+		t.Fatal("password changed although sessions could not be revoked")
+	}
+	if !state.CheckPassword("correct horse") || state.CheckPassword("another horse") {
+		t.Fatal("password changed although sessions were not revoked")
+	}
+	if _, err := state.VerifyToken(token, time.Now()); err != nil {
+		t.Fatalf("a refused change must leave existing sessions alone: %v", err)
 	}
 }
