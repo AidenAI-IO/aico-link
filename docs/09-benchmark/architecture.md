@@ -80,12 +80,11 @@ real-device behavior. Apply these rules when adding or changing tasks:
   procedure steps reconstructed from source events retain exact checks. Do not
   relax those contracts to increase the pass rate.
 - A successful copy requires evidence of the copied value, not shortcut delivery.
-  `quick_action_copy_and_verify` copies selected source text and pastes into a
-  different initially empty field. Its precondition checks the source selection
-  and empty destination; its outcome checks the copy/paste trace and visible
-  destination text. This works without a clipboard-read tool on macOS. The new
-  task ID separates it from the old copy-only workload. Unchanged source text
-  proves nothing. A clear-all operation need not include multiple swipes.
+  The standalone iOS/macOS quick-action copy workload is currently omitted because
+  the harness has no clipboard readback and no account-independent two-field
+  fixture; do not treat shortcut success or unchanged source text as proof. The
+  Android phone-control copy/paste workload retains visible paste verification.
+  A clear-all operation need not include multiple swipes.
 
 Known evidence gaps remain in manually selected suites. The forwarded-environment
 context tasks in `aico_app/connection_capabilities_v1.json` ask the judge to

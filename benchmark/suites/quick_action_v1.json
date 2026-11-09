@@ -377,42 +377,6 @@
       }
     },
     {
-      "id": "quick_action_copy_and_verify",
-      "category": "single_step",
-      "platforms": [
-        "ios",
-        "mac"
-      ],
-      "description_for_judge": "Use quick_action copy on the selected source text, then paste into a different initially empty field to verify the clipboard effect. Shortcut success alone cannot prove copying; the final screenshot and successful paste sequence must establish the copied value. Clipboard readback is not required.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "Open the mail app and create an unsent draft with separate, simultaneously visible Subject and Body fields. Leave the recipient empty. Type 你好Aico in Subject and select it; leave Body empty. Do not send the email or use a notes app that treats the first line as the title.",
-        "timeout_sec": 120,
-        "clear_history_after": true
-      },
-      "prompt": "Use quick_action with action=copy to copy the selected text in Subject. Then focus the empty Body field and use quick_action with action=paste to verify the copied value. Do not type the text again, fill in a recipient, or send the email. Leave both Subject and Body visible.",
-      "rubric": [
-        {
-          "id": "source_selected_destination_empty",
-          "scope": "precondition",
-          "check": "The pre-screenshot shows two different editable fields: source text 你好Aico is selected in the first, and the second is empty."
-        },
-        {
-          "id": "used_quick_action_copy",
-          "check": "A successful quick_action copy (or equivalent alias) precedes focusing the second field and a successful quick_action paste. No intervening action overwrites the clipboard."
-        },
-        {
-          "id": "copied_text_pasted",
-          "check": "The post-screenshot shows 你好Aico in the second field, matching the selected source in the pre-screenshot. The trace establishes paste into that field; directly typing or setting the destination text does not count. Neither shortcut success alone nor unchanged source text proves copying."
-        }
-      ],
-      "hard_assertions": {
-        "min_tool_calls": 2,
-        "max_tool_calls": 12,
-        "must_complete_within_sec": 120
-      }
-    },
-    {
       "id": "quick_action_cut",
       "category": "single_step",
       "platforms": [
