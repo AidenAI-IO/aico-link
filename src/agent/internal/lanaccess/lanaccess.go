@@ -6,7 +6,9 @@
 // the cable, or a process already on the board, can make them. Every other
 // request, such as one from Wi-Fi, is refused until LAN access is turned on
 // over USB. Turning it on requires a device password, which becomes the
-// password of the aico login account used by the terminal and SSH.
+// password of the aico login account used by the terminal and SSH. While it is
+// on, LAN clients sign in with that password to get a session token (see
+// auth.go).
 package lanaccess
 
 import (
@@ -21,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -46,22 +49,29 @@ var (
 	ErrPasswordRequired = errors.New("set a device password before turning on LAN access")
 )
 
-// State is the LAN access switch and the device password hash, both kept as
-// files so the Agent and Config Web processes see the same state without
-// coordinating.
+// State is the LAN access switch, the device password hash, and the session
+// signing key, all kept as files so the Agent and Config Web processes see
+// the same state without coordinating.
 type State struct {
 	EnabledPath  string
 	PasswordPath string
+	SecretPath   string
+
+	secretMu sync.Mutex
 }
 
-func NewState(enabledPath, passwordPath string) *State {
+// NewState uses the default path for each empty argument.
+func NewState(enabledPath, passwordPath, secretPath string) *State {
 	if strings.TrimSpace(enabledPath) == "" {
 		enabledPath = DefaultEnabledPath
 	}
 	if strings.TrimSpace(passwordPath) == "" {
 		passwordPath = DefaultPasswordPath
 	}
-	return &State{EnabledPath: enabledPath, PasswordPath: passwordPath}
+	if strings.TrimSpace(secretPath) == "" {
+		secretPath = DefaultSecretPath
+	}
+	return &State{EnabledPath: enabledPath, PasswordPath: passwordPath, SecretPath: secretPath}
 }
 
 // Enabled reports whether LAN access is on. Any error other than a missing
@@ -78,13 +88,14 @@ func (s *State) PasswordSet() bool {
 }
 
 // SetEnabled turns LAN access on or off. Turning it on requires a stored
-// device password. Turning it off keeps the password.
+// device password. Turning it off keeps the password but signs every LAN
+// client out, so turning it back on asks for the password again.
 func (s *State) SetEnabled(enabled bool) error {
 	if !enabled {
 		if err := os.Remove(s.EnabledPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return nil
+		return s.RotateSecret()
 	}
 	if !s.PasswordSet() {
 		return ErrPasswordRequired
@@ -92,13 +103,17 @@ func (s *State) SetEnabled(enabled bool) error {
 	return writeFileAtomic(s.EnabledPath, []byte("1\n"))
 }
 
-// SetPassword stores the bcrypt hash of a new device password.
+// SetPassword stores the bcrypt hash of a new device password and signs
+// every LAN client out.
 func (s *State) SetPassword(password string) error {
 	hash, err := HashPassword(password)
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(s.PasswordPath, []byte(hash+"\n"))
+	if err := writeFileAtomic(s.PasswordPath, []byte(hash+"\n")); err != nil {
+		return err
+	}
+	return s.RotateSecret()
 }
 
 // ValidatePassword enforces the length rules for a new password.
@@ -227,11 +242,27 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 	`<p>Connect over USB and turn it on in Settings &gt; Advanced &gt; LAN access.</p>` +
 	`<p>请通过 USB 连接设备，在 设置 &gt; 高级设置 &gt; 局域网访问 中开启。</p></body></html>`
 
-// Guard refuses requests from outside the USB link while LAN access is off.
+// Guard admits requests from the USB link and the board itself. Other
+// requests are refused while LAN access is off; while it is on they need a
+// session token from the login endpoints, which Guard serves itself.
 func Guard(state *State, next http.Handler) http.Handler {
+	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if IsTrusted(r) || state.Enabled() {
+		trusted := IsTrusted(r)
+		enabled := state.Enabled()
+		switch {
+		case isAuthPath(r.URL.Path) && (trusted || enabled):
+			auth.serveLogin(w, r)
+			return
+		case trusted:
 			next.ServeHTTP(w, r)
+			return
+		case enabled:
+			if sessionValid(state, w, r, auth.now()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rejectUnauthenticated(w, r)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")

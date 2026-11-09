@@ -7,7 +7,8 @@
  * terminal and SSH answer only the USB link. Turning it on needs a device password, which also
  * becomes the password of the `aico` login used by the terminal and SSH.
  * Both can be changed only over USB (`via_usb`); on any other connection the
- * page shows the state read-only.
+ * page shows the state read-only. A LAN client signed in with the device
+ * password can sign out here.
  */
 
 import {request} from '../data.js';
@@ -21,6 +22,7 @@ import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
 const LAN_ACCESS_API = '/api/security/lan-access';
+const LOGOUT_API = '/api/auth/logout';
 
 export function fetchLANAccess() {
   return request(LAN_ACCESS_API, {cache: 'no-store'});
@@ -202,20 +204,34 @@ export async function lanAccessPage(context) {
         : undefined,
     });
 
+    const signOut = editable ? null : group({rows: [row({
+      label: msg('lan.sign_out', '退出登录'),
+      tone: 'danger',
+      action: 'lan-sign-out',
+      onPress: async () => {
+        try {
+          await request(LOGOUT_API, {method: 'POST'});
+        } finally {
+          window.location.assign('/login');
+        }
+      },
+    })]});
+
     replace(body, [
       group({
         rows: [row({
           label: msg('lan.title', '局域网访问'),
-          description: msg('lan.help', '开启后，同一局域网内的设备可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。'),
+          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。'),
           accessory: control,
           action: 'toggle-lan-access',
         })],
       }),
       group({
         rows: [passwordRow],
-        note: msg('lan.password_help', '设备密码同时是 aico 账号的登录密码，用于网页终端和 SSH。'),
+        note: msg('lan.password_help', '局域网设备用这个密码登录，它同时是 aico 账号的密码，用于网页终端和 SSH。修改密码或关闭局域网访问会让所有局域网设备退出登录。'),
       }),
       editable ? null : text(msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。'), 'page__note'),
+      signOut,
     ].filter(Boolean));
     saver.refreshChrome();
   }
