@@ -170,6 +170,26 @@ def test_failed_aidenbridge_setup_loses_only_bridge_cases(monkeypatch, tmp_path:
     assert by_id["plain-adb"].ok and by_id["memory"].ok
 
 
+def test_setup_report_failure_does_not_abort_independent_cases(monkeypatch, tmp_path):
+    bridge = SuiteCase(id="broken", suite="broken.json", environment="adb",
+                       android_phone_bridge=True)
+    (tmp_path / bridge.suite).write_text(json.dumps({"tasks": [
+        {"id": "broken", "category": []},
+    ]}))
+    monkeypatch.setattr(run_cases_module, "BENCHMARK_ROOT", tmp_path)
+    started = []
+    monkeypatch.setattr(run_cases_module, "run_case",
+                        lambda case, **kwargs: started.append(case.id) or 0)
+    outcomes = run_cases_module.run_cases(
+        (bridge, _case("memory", "isolated")), run_id_prefix="ci-test",
+        environment={"AIDENBRIDGE_READY": "0"}, max_parallel=1,
+    )
+    assert started == ["memory"]
+    assert not outcomes[0].ok
+    assert outcomes[0].error_summary == "aidenbridge_setup_failed, setup_report_failed"
+    assert outcomes[1].ok
+
+
 @pytest.mark.parametrize("bridge_enabled", [False, True])
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 def test_run_case_terminates_the_runner_process_group_on_timeout(

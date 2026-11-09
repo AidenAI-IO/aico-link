@@ -175,7 +175,7 @@ def run_cases(
             log_path = BENCHMARK_ROOT / "runs" / run_id / "ci-case.log"
             try:
                 log_path = _record_setup_failure(case, run_id, environment, summary)
-            except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            except Exception as exc:
                 # Reporting errors must not prevent independent cases from running.
                 summary += ", setup_report_failed"
                 emit(f"ERROR   {case.id}: could not record setup failure: {exc}")
