@@ -191,7 +191,10 @@ def audit(out: Path, name: str, repo: Path, payload: dict, deadline: float) -> d
                "holds tasks/<task_id>/trace.json (tool calls, results, memory_state, final_response), judge.json "
                "and history.json. candidate_diff, when present, is the exact change under test. The claims under "
                "audit are comparison.fixed and the absence of regressions; report gaps in other tasks, and treat "
-               "them as blocking when they could hide a regression or explain a claimed fix. supported=true only "
+               "them as blocking when they could hide a regression or explain a claimed fix. known_evaluation_issues, "
+               "when present, lists tasks the diagnosis already attributed to the evaluator or environment; they are "
+               "regression checks, not claimed fixes, and that known issue alone is not an unresolved gap. Still block "
+               "when their trace shows candidate behavior worse than baseline. supported=true only "
                "if evidence supports those claims with no unresolved grading or setup gaps. Cite exact evidence. "
                "Do not substitute your verdict for the stored score.",
                review.AUDIT, deadline)
@@ -273,6 +276,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         for cluster in diagnosis["clusters"]:
             attempt = {"title": cluster["title"], "status": "report_only", "cluster": cluster}
             state["attempts"].append(attempt)
+            plan, images = None, []
             if (cluster["judge_review"] != "supported" or cluster["fix_target"] not in {"skill", "prompt", "tool_description", "go_code"}):
                 continue
             quarantined = sorted(set(cluster["targets"]) & set(evaluation_issues))
@@ -280,6 +284,9 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 attempt["quarantined_targets"] = quarantined
                 cluster = {**cluster, "targets": [k for k in cluster["targets"] if k not in evaluation_issues],
                            "neighbors": sorted(set(cluster["neighbors"]) | set(quarantined))}
+                # The publisher recomputes the signature from attempt["cluster"], so it must
+                # hold the cluster actually repaired; the diagnosed targets stay auditable.
+                attempt.update({"cluster": cluster, "diagnosed_targets": sorted(set(cluster["targets"]) | set(quarantined))})
                 if not cluster["targets"]:
                     attempt.update({"status": "evaluation_issue",
                                     "reason": "Every target was attributed to the evaluator or environment"})
@@ -306,7 +313,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             cluster_dir = out / f"cluster-{count}"
             cluster_dir.mkdir()
             try:
-                if not cluster["targets"] or not set(cluster["targets"]).issubset(allowed_targets):
+                if plan is None:
                     raise ValueError("Repair targets must be observed eligible failures")
                 source_paths = validated_source_paths(repo, cluster)
                 if not source_paths:
@@ -329,9 +336,11 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 checkout(repo, candidate_repo, base, deadline=deadline)
                 environments = {tasks[k]["environment"] for keys in plan.values() for k in keys}
                 image_prefix = f"aico-auto-improve:{identity}-{count}"
-                reproduction_started = time.monotonic()
+                images = [image_prefix + "-base", image_prefix + "-candidate"]
                 progress(f"cluster {count}: build baseline")
                 execution.prepare(baseline_repo, image_prefix + "-base", environments, cluster_dir / "base-build", deadline - time.monotonic())
+                # Evidence age starts with the first target run, not with the image build.
+                reproduction_started = time.monotonic()
                 baseline, candidate = {}, {}
                 for key in plan["targets"]:
                     progress(f"cluster {count}: reproduce {key} (3 attempts)")
@@ -437,6 +446,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     ["git", "diff", "--binary", "--", *changed], cwd=candidate_repo, text=True))
                 verdict = audit(cluster_dir, "verification-review", repo, {"plan": plan, "comparison": comparison,
                     "candidate_diff": patch_path.read_text(),
+                    "known_evaluation_issues": [evaluation_issues[k] for keys in plan.values()
+                                                for k in keys if k in evaluation_issues],
                     "tasks": {k: tasks[k] for keys in plan.values() for k in keys}, "baseline": baseline, "candidate": candidate}, deadline)
                 write(cluster_dir / "verification-review.json", verdict)
                 if not verdict["supported"]:
@@ -455,6 +466,12 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             finally:
                 progress(f"cluster {count}: {attempt['status']}")
                 write(out / "manifest.json", state)
+                if images:
+                    # Per-cluster daemon images are never reused; keep the persistent runner's disk bounded.
+                    warning = execution.remove_images(images)
+                    if warning:
+                        state.setdefault("warnings", []).append(warning)
+                    images = []
                 owned = cluster_dir / "candidate"
                 if owned.exists():
                     try:
@@ -516,6 +533,11 @@ def cli() -> int:
         raise InterruptedError(f"Workflow interrupted by signal {signum}")
     signal.signal(signal.SIGTERM, interrupted)
     state = run(args.repo.resolve(), args.source.resolve(), args.out.resolve(), mode=args.mode)
+    # A blocked sibling cluster still fails this step, but must not hide a validated candidate:
+    # the workflow publishes whenever ready > 0, and the publisher revalidates every one.
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
+            stream.write(f"ready={sum(a['status'] == 'ready' for a in state['attempts'])}\n")
     return 1 if state["status"] in {"blocked", "error", "interrupted", "insufficient_evidence"} else 0
 
 

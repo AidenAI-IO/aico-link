@@ -90,6 +90,16 @@ def prepare(root: Path, image: str, environments: set[str], out: Path, timeout: 
             log=out / "build.log", timeout=timeout, env=benchmark_environment())
 
 
+def remove_images(images: list[str]) -> str | None:
+    """Untag this cluster's daemon images; shared layers and other images are untouched."""
+    try:
+        result = subprocess.run(["docker", "image", "rm", *images], capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"Image cleanup failed: {exc}"
+    errors = [line for line in result.stderr.splitlines() if line.strip() and "No such image" not in line]
+    return f"Image cleanup failed: {sanitize(' '.join(errors))[:500]}" if result.returncode and errors else None
+
+
 def retain_evidence(run: Path, destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for name in ("manifest.json", "metrics.json", "results.jsonl", "results.original.jsonl", "summary.md"):
@@ -177,12 +187,19 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
         # Keep evidence even on timeout; no generated agent configuration is copied.
         run = root / "benchmark/runs" / run_id
         if run.is_dir():
-            if (run / "results.jsonl").is_file():
-                try:
-                    rejudge_transient_errors(run, deadline=deadline)
-                except Exception as exc:  # keep the original judge_error rows; never mask the run outcome
-                    (out / "rejudge-error.log").write_text(sanitize(f"{type(exc).__name__}: {exc}\n"))
-            retain_evidence(run, out / "evidence")
+            # Rejudging waits 30/90 s, so only rejudge a completed run (a judge_error run still
+            # exits 0 through run_case); never wait while a failure or cancellation propagates.
+            try:
+                if sys.exc_info()[0] is None and (run / "results.jsonl").is_file():
+                    try:
+                        rejudge_transient_errors(run, deadline=deadline)
+                    except InterruptedError:
+                        # Cancellation (SIGTERM) must stop the driver, not be logged as a judge failure.
+                        raise
+                    except Exception as exc:  # keep the original judge_error rows; never mask the run outcome
+                        (out / "rejudge-error.log").write_text(sanitize(f"{type(exc).__name__}: {exc}\n"))
+            finally:
+                retain_evidence(run, out / "evidence")
     rows = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines() if line.strip()]
     if len(rows) != 1 or rows[0].get("task_id") != task_id:
         raise ValueError(f"Incomplete result for {key}")

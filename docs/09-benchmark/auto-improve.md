@@ -155,7 +155,8 @@ The initial operational bounds are at most two clusters, three attempts per
 task/side, 48 turns and 15 minutes per review session, a five-hour driver budget,
 and a six-hour job ceiling. There is **no Claude Code model-cost cap**; the CLI's
 `total_cost_usd` estimate is recorded for each session and summarized in the
-job output/PR. A target baseline older than one hour is treated as stale and
+job output/PR. A target baseline is stale when more than one hour passed between
+its first target run and the start of candidate verification; a stale baseline
 requires a new attempt. These turn/time limits prevent a stuck job; they are not
 spend limits. Configure any provider-side financial alerts or quotas separately
 if needed.
@@ -261,6 +262,11 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   `evaluation_issues`. The driver removes those tasks from every cluster's repair
   targets and runs them only as regression checks, recorded as
   `quarantined_targets`; a cluster left with no target is `evaluation_issue`.
+  The attempt's stored `cluster` is the repaired one (its identity is what the
+  publisher recomputes), and `diagnosed_targets` keeps the original list. The
+  verification reviewer receives these tasks as `known_evaluation_issues`: the
+  known issue alone is not a blocking gap, but worse candidate behavior in their
+  traces still is.
   Because quarantined tasks are not targets, they do not pull their suite's
   neighbors into the plan.
 - A task attempt whose judge call fails (`judge_error`) is rejudged after 30 and
@@ -268,6 +274,9 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   the repository's `rejudge_run(only_judge_errors=True)`. The agent is not rerun and
   its execution evidence is unchanged; `results.original.jsonl` keeps the first
   result. Attempts still failing remain `judge_error` and fail the comparison.
+  Rejudging happens only after a completed runner invocation; a timed-out or
+  cancelled run keeps its evidence, and cancellation during the wait stops the
+  driver.
 - The verification reviewer receives the exact candidate diff and an
   `evidence-index.json` listing every retained trace, judge result, and history
   file per attempt. The audit is scoped to the claimed fixes and to regressions;
@@ -279,7 +288,10 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
 - Reports go to the Actions job summary and artifacts. The summary explicitly
   states execution status and validated-candidate count. A checkout/build/task
   execution error marks the run `blocked` and returns a nonzero exit code;
-  successful diagnosis alone cannot hide a blocked improve attempt. A completed
+  successful diagnosis alone cannot hide a blocked improve attempt. A blocked
+  sibling cluster does not discard a validated one: the driver exports the
+  `ready` count, and the publish job runs whenever it is positive and the run was
+  not cancelled. The publisher still revalidates every candidate. A completed
   run with no accepted candidate still does not mean that a fix was validated.
   Large checkout operations have a deadline-bounded 15-minute allowance and
   individual retained logs. Environment/evaluator findings remain report-only
@@ -615,7 +627,8 @@ Task-level runs need no runner changes:
 - The new policy module aggregates successes per task across three independent
   runs and rejects missing, duplicate, ineligible, or unmeasured results.
 - The driver builds baseline and candidate daemon images separately and supplies
-  each side's bundled skills from its own checkout.
+  each side's bundled skills from its own checkout. Both per-cluster image tags
+  are removed when the cluster finishes; a failed removal is a warning.
 - The new emulator lifecycle wraps the existing serial-addressed ADB bridge.
   Each task/repeat gets a fresh AVD clone, a fresh daemon, and owned cleanup.
 - Remaining acceptance work is live model/CI publication and actual Android

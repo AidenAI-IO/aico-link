@@ -55,6 +55,7 @@ jobs:
       base: ${{ steps.base.outputs.sha }}
       mode: ${{ steps.mode.outputs.value }}
       publish: ${{ steps.mode.outputs.publish }}
+      ready: ${{ steps.driver.outputs.ready }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -146,6 +147,7 @@ jobs:
             echo "$sdk_dir/emulator" >> "$GITHUB_PATH"
           fi
       - name: Diagnose, reproduce and verify
+        id: driver
         if: steps.discover.outputs.found == 'true'
         working-directory: benchmark
         env:
@@ -232,7 +234,11 @@ jobs:
 
   publish:
     needs: improve
-    if: needs.improve.outputs.identity != '' && needs.improve.outputs.publish == 'true'
+    # A blocked sibling cluster fails the improve job but must not discard a validated
+    # candidate. Publish whenever one is ready; control.py revalidates everything.
+    if: >-
+      !cancelled() && needs.improve.outputs.identity != '' &&
+      needs.improve.outputs.publish == 'true' && fromJSON(needs.improve.outputs.ready || '0') > 0
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

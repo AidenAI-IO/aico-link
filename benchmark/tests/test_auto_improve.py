@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import stat
 import subprocess
+import time
 import zipfile
 
 import pytest
@@ -541,7 +542,7 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     original.write_text(before)
     (source / "source.json").write_text(json.dumps({"run": {"id": 42, "run_attempt": 1, "head_sha": "old", "head_branch": "main"}}))
     tasks = {k: {"case_id": k.split(':')[0], "environment": "isolated", "runnable": True,
-                 "task": {"category": "task"}} for k in ("a:target", "a:neighbor", "b:held")}
+                 "task": {"category": "task"}} for k in ("a:target", "a:neighbor", "b:held", "b:graded")}
     cluster = {"title": "Verify the screen", "category": "verification", "cause": "missing observation",
                "judge_review": "supported", "fix_target": "go_code" if go_code else "skill", "targets": ["a:target"],
                "neighbors": [], "source_paths": [path], "evidence": ["trace step 2"]}
@@ -552,7 +553,11 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     def fake_ask(_out, name, *args, **kwargs):
         events.append(name)
         if name == "diagnosis":
-            return {"summary": "One observed failure", "clusters": [cluster, {**cluster, "title": "Second issue"}]}
+            # The second cluster also names a task the diagnosis attributes to the environment.
+            return {"summary": "One observed failure",
+                    "clusters": [cluster, {**cluster, "title": "Second issue", "targets": ["a:target", "b:graded"]}],
+                    "evaluation_issues": [{"task": "b:graded", "kind": "environment", "reason": "socket missing",
+                                           "evidence": ["trace"]}]}
         if name == "reproduction-review":
             return {"summary": "Reproduced", "tasks": [{"task": "a:target", "disposition": "agent_failure",
                                                           "reason": "Failed deterministic assertion", "evidence": ["fresh trace"]}]}
@@ -573,6 +578,8 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
         return {"supported": True, "reason": "checked", "evidence": ["trace"]}
     monkeypatch.setattr(driver, "audit", fake_audit)
     monkeypatch.setattr(driver.execution, "prepare", lambda *a: None)
+    removed_images = []
+    monkeypatch.setattr(driver.execution, "remove_images", lambda images: removed_images.append(images))
     monkeypatch.setattr(driver.execution, "run_task", fake_run)
     checks = []
     def fake_check(command, **kwargs):
@@ -595,6 +602,15 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     assert (out / "cluster-1/candidate.patch").read_text() == "diff\n"
     # The verification reviewer audits the exact change under test.
     assert audits and all(payload["candidate_diff"] == "diff\n" for payload in audits)
+    # Quarantine rewrites the stored cluster, so the publisher's recomputed identity matches.
+    quarantined = result["attempts"][1]
+    assert quarantined["cluster"]["targets"] == ["a:target"]
+    assert quarantined["diagnosed_targets"] == ["a:target", "b:graded"]
+    assert all(policy.signature(a["cluster"]) == a["signature"] for a in result["attempts"])
+    # Known evaluation issues follow the task into any plan that contains it.
+    assert all([i["task"] for i in a["known_evaluation_issues"]] == ["b:graded"] for a in audits)
+    assert removed_images == [[f"aico-auto-improve:42-1-{n}-base", f"aico-auto-improve:42-1-{n}-candidate"]
+                              for n in (1, 2)]
 
 
 def test_raw_artifact_paths_cannot_escape_run(tmp_path):
@@ -675,6 +691,37 @@ def test_judge_errors_are_rejudged_without_rerunning_the_agent(tmp_path, monkeyp
     calls.clear()
     execution.rejudge_transient_errors(run, deadline=time.monotonic() + 10, delays=(0,))
     assert not calls and json.loads((run / "results.jsonl").read_text())["status"] == "judge_error"
+
+
+@pytest.mark.parametrize("failure", [None, "timeout", "cancel_during_rejudge"])
+def test_run_task_rejudges_only_completed_runs_and_propagates_cancellation(tmp_path, monkeypatch, failure):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    run_dir = root / "benchmark/runs"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(*args, **kwargs):
+        run = next(iter(run_dir.glob("*")), None) or run_dir / args[0][4]
+        run.mkdir(parents=True, exist_ok=True)
+        (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": "judge_error"}) + "\n")
+        if failure == "timeout":
+            raise TimeoutError("runner timed out")
+    rejudged = []
+    def fake_rejudge(run, **kwargs):
+        rejudged.append(run)
+        if failure == "cancel_during_rejudge":
+            raise InterruptedError("Workflow interrupted by signal 15")
+    monkeypatch.setattr(execution, "command", fake_command)
+    monkeypatch.setattr(execution, "rejudge_transient_errors", fake_rejudge)
+    out = tmp_path / "out"
+    expected = {None: None, "timeout": TimeoutError, "cancel_during_rejudge": InterruptedError}[failure]
+    if expected:
+        with pytest.raises(expected):
+            execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)
+    else:
+        assert execution.run_task(root, "case:t", 1, "image", out, deadline=time.monotonic() + 3600)["task_id"] == "t"
+    # A timed-out run is retained as evidence but never waits for a rejudge.
+    assert len(rejudged) == (0 if failure == "timeout" else 1)
+    assert (out / "evidence/results.jsonl").is_file() and not (out / "rejudge-error.log").exists()
 
 
 def test_evidence_redaction_keeps_json_valid(tmp_path, monkeypatch):
