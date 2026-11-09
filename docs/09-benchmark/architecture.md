@@ -40,8 +40,8 @@ For each task, `runner/runtask.py` performs:
 5. Send the task prompt to agent `/api/chat`.
 6. Capture `post.jpg` directly from bridge `POST /api/providers/screenshot`.
 7. Extract structured tool trace from agent history.
-8. Evaluate hard assertions.
-9. If judge is enabled, submit rubric, trace, final response, and pre/post screenshots.
+8. Evaluate any `scope: "precondition"` rubric items against the pre-screenshot alone. An invalid initial state excludes the attempt from Agent scores; unavailable evidence is an evaluation error. These checks happen during scoring, after execution, and do not prevent the task from running.
+9. Evaluate hard assertions, then submit outcome rubric, trace, final response, and pre/post screenshots to the judge when enabled.
 10. Persist task artifacts and release the bridge route through `/api/release`.
 
 The runner does not call agent screenshot tools to create judge images. Judge
@@ -58,6 +58,46 @@ address list elements with numeric segments, such as
 `apps.notes.notes.0.content`. The phone-control `select_all_and_delete` task
 uses MobileGym coordinates and declares `environment_bridge_types: ["mobilegym"]`.
 Other bridges, including ADB Android, skip it before setup.
+
+## Evaluation contract audit
+
+The suite audit covers the task definitions under `benchmark/suites`, including
+manually selected hardware suites. Reading a definition does not certify its
+real-device behavior. Apply these rules when adding or changing tasks:
+
+- Setup calls are not part of the final request's tool trace. Check evaluated
+  setup behavior at that step, or supply its captured state as explicit evidence.
+  Never ask a final-request tool-count assertion to count earlier setup calls.
+- Initial-screen requirements belong to `scope: "precondition"`, not the
+  Agent outcome score. Mixed checks about the starting screen and the Agent's
+  subsequent action remain outcome checks until separated explicitly.
+- Check persisted memory when testing persistence. A correct answer or a save
+  attempt alone does not prove that storage changed. Keep structural checks
+  deterministic and judge generated content semantically. Notification update
+  and promotion checks use post-task memory evidence; reinforcement retains its
+  original-content check because it must preserve the seeded conclusion.
+- Exact copied identifiers, requested literal text, coordinate bounds, and
+  procedure steps reconstructed from source events retain exact checks. Do not
+  relax those contracts to increase the pass rate.
+- A successful copy requires evidence of the copied value, not shortcut delivery.
+  The standalone iOS/macOS quick-action copy workload is currently omitted because
+  the harness has no clipboard readback and no account-independent two-field
+  fixture; do not treat shortcut success or unchanged source text as proof. The
+  Android phone-control copy/paste workload retains visible paste verification.
+  A clear-all operation need not include multiple swipes.
+
+Known evidence gaps remain in manually selected suites. The forwarded-environment
+context tasks in `aico_app/connection_capabilities_v1.json` ask the judge to
+validate runtime context that is not independently attached to its input. Several
+hardware setups still rely on Agent preparation without a separate initial-state
+check. Those tasks need captured context or device-state contracts before their
+scores can support a readiness claim. The device-information preparation recipe
+also still falls back to Agent setup on the tested emulator.
+
+Benchmark CI archives `pre.jpg` and `post.jpg` alongside task traces so starting
+state and outcome verdicts can be audited. Precondition verdicts remain separate
+from outcome rubric counts in metrics and reports; excluded attempts must still
+be reviewed through coverage, not silently treated as successes.
 
 ## Environment Bridge Routing
 
