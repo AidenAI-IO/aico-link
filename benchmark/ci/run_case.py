@@ -262,6 +262,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
         ]
 
     reasons: list[str] = []
+    if judge_errors:
+        reasons.append(f"judge_errors={judge_errors}")
     completed = passed + failed + skipped + judge_errors + timeouts
     if tasks < 1:
         reasons.append(f"tasks={tasks}")
@@ -273,6 +275,7 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
         unknown_statuses = 0
         result_identities: list[tuple[str, int]] = []
         invalid_identities = 0
+        invalid_preconditions = 0
         result_counts = {
             "passed": 0,
             "failed": 0,
@@ -304,6 +307,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
             metrics = row.get("metrics") or {}
             if not isinstance(metrics, dict):
                 raise TypeError("result metrics must be an object")
+            if metrics.get("preconditions_passed") is False:
+                invalid_preconditions += 1
     except (
         AttributeError,
         OSError,
@@ -314,6 +319,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
     ):
         reasons.append("results_invalid")
     else:
+        if invalid_preconditions:
+            reasons.append(f"invalid_preconditions={invalid_preconditions}")
         manifest_counts = {
             "passed": passed,
             "failed": failed,
@@ -376,7 +383,7 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
 
 
 def _effective_exit_code(returncode: int, manifest_path: Path) -> int:
-    """Fail CI only when the benchmark did not produce a complete result set."""
+    """Fail CI on incomplete results or unavailable scoring, not Agent failures."""
     return 1 if _incomplete_run_reasons(returncode, manifest_path) else 0
 
 

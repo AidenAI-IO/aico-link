@@ -82,6 +82,32 @@ Respond as JSON only, no prose:
   "overall_notes": "..."
 }}"""
 
+def check_preconditions(
+    rubric: list[RubricItem], pre_screenshot: Path | None,
+    cfg: JudgeConfig | None, cache_dir: Path | None = None,
+) -> dict[str, Any]:
+    """Check fixture state independently of the measured action and its outcome.
+
+    Return no metrics when the suite has no preconditions. Missing evidence or
+    an unavailable judge is an evaluation error, never an Agent failure.
+    """
+    checks = [item for item in rubric if item.scope == "precondition"]
+    if not checks:
+        return {}
+    if cfg is None or pre_screenshot is None or not pre_screenshot.exists():
+        return {"preconditions_passed": None, "precondition_error": "Precondition judge or pre-screenshot unavailable"}
+    try:
+        verdict = judge_task(
+            description="Verify only the initial fixture state in the PRE-SCREENSHOT. No agent action is being evaluated.",
+            rubric=checks, pre_screenshot=pre_screenshot, post_screenshot=None,
+            trace={}, final_response="", cfg=cfg, cache_dir=cache_dir,
+        )
+    except Exception as exc:
+        return {"preconditions_passed": None, "precondition_error": str(exc)}
+    return {"preconditions_passed": all(v.verdict == "yes" for v in verdict.verdicts),
+            "precondition_verdicts": [dc.asdict(v) for v in verdict.verdicts]}
+
+
 def _read_image_b64(p: Path) -> str:
     return base64.b64encode(p.read_bytes()).decode("ascii")
 
@@ -97,7 +123,7 @@ def _cache_key(pre: Path | None, post: Path | None, trace_json: str, rubric: lis
     h.update(task_prompt.encode("utf-8"))
     h.update(final_response.encode("utf-8"))
     for r in rubric:
-        h.update(r.id.encode()); h.update(r.check.encode())
+        h.update(r.id.encode()); h.update(r.check.encode()); h.update(r.scope.encode())
     h.update(model.encode())
     h.update(base_url.encode())
     h.update(JUDGE_PROMPT_VERSION.encode())

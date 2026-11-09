@@ -305,7 +305,11 @@ jobs:
           adb devices >&2
           exit 1
       - name: Install AidenBridge on Android device
+        id: aidenbridge_install
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        # Only AidenBridge cases need the app. A failed install marks those
+        # cases as failed in ci.run_cases instead of stopping every other case.
+        continue-on-error: true
         run: |
           set -euo pipefail
           echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
@@ -352,7 +356,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Enable emulator routing for AidenBridge cases
-        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        id: aidenbridge_routing
+        if: ${{ steps.aidenbridge_install.outcome == 'success' }}
+        continue-on-error: true
         run: |
           set -euo pipefail
           adb -s "$ANDROID_SERIAL" root
@@ -382,6 +388,8 @@ jobs:
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # 0 only when AidenBridge cases are planned and their device setup failed.
+          AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
           uv run python -m ci.run_cases
           --matrix-json "$MATRIX"
@@ -484,6 +492,8 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
@@ -522,6 +532,8 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json

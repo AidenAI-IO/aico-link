@@ -200,12 +200,17 @@ Reports include:
 Judge uses only the pre/post screenshots plus trace/final response. It does not
 consume every intermediate screenshot.
 
-CI treats a benchmark as complete when every planned task has a result row and
-the manifest totals match those rows. Task-level `failed`, `skipped`,
-`judge_error`, `timeout`, setup, environment, and agent errors remain visible in
-`summary.md` and `report.html`, but do not fail the workflow. A missing or
+CI requires every planned task to have a result row and the manifest totals to
+match those rows. A `judge_error` or a failed visual precondition
+(`preconditions_passed=false`) also fails the workflow: complete artifacts do
+not make unavailable scoring or an invalid starting state a valid measurement.
+Artifacts and publication still
+run so the unscored attempts can be inspected and rejudged without repeating device
+actions. Task-level `failed`, `skipped`, and `timeout` remain visible in
+`summary.md` and `report.html` without automatically failing the workflow;
+inspect eligibility and coverage before interpreting the score. A missing or
 invalid manifest, missing result rows, inconsistent totals, or a killed runner
-still fails the workflow because no complete report exists.
+also fails the workflow because no complete report exists.
 
 When artifact upload succeeds, the Actions job summary links the report bundle.
 To expose the same self-contained, interactive `report.html` directly from CI, configure
@@ -367,6 +372,16 @@ benchmark execution creates an Experiment Run with item-level and aggregate
 benchmark scores. Updating a suite upserts new Dataset Item versions instead of
 creating a new Dataset. Each new run also stores `suite.json` beside its manifest,
 so it remains publishable after the source suite changes.
+
+The publisher writes explicit `failures.class.environment` and
+`failures.class.evaluation` counts, including zero, before capability scores.
+History requires both valid counts before accepting a capability measurement;
+missing counts are unknown, not zero. Older or partially published runs remain
+visible with a missing-metrics warning but no capability rate. Republish their
+original artifacts with the current publisher to restore verified history without
+rerunning device actions. Nonzero environment or evaluation counts mark coverage
+incomplete: workflow-level pass@1, pass@k, and pass^k are withheld, and weekly
+matched comparisons exclude datasets with incomplete window totals.
 
 ```bash
 cd benchmark
@@ -572,7 +587,10 @@ with the `link.aico.app` package already installed on the emulator. It downloads
 and installs the APK only when the versions differ. The job summary records the
 release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
-`versionCode` is treated as the same release.
+`versionCode` is treated as the same release. Installation runs once per job.
+When installation or emulator routing fails, only the AidenBridge cases fail
+with `aidenbridge_setup_failed`; every other case still runs and publishes,
+and the job still fails.
 
 The text-editing suite runs as a matched pair using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:

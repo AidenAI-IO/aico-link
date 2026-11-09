@@ -376,10 +376,11 @@ def test_ci_rejects_a_run_without_generated_reports(tmp_path: Path) -> None:
     ]
 
 
-@pytest.mark.parametrize("error_status", ["judge_error", "timeout"])
-def test_ci_allows_complete_run_with_judge_error_or_timeout(
+@pytest.mark.parametrize("error_status,expected_exit", [("judge_error", 1), ("timeout", 0)])
+def test_ci_flags_unscored_judge_errors_but_accepts_task_timeout(
     tmp_path: Path,
     error_status: str,
+    expected_exit: int,
 ) -> None:
     manifest = tmp_path / "manifest.json"
     totals = {
@@ -406,8 +407,23 @@ def test_ci_allows_complete_run_with_judge_error_or_timeout(
     )
     _write_generated_reports(tmp_path)
 
-    assert _effective_exit_code(1, manifest) == 0
-    assert _incomplete_run_reasons(1, manifest) == []
+    assert _effective_exit_code(1, manifest) == expected_exit
+    assert _incomplete_run_reasons(1, manifest) == (["judge_errors=1"] if expected_exit else [])
+
+
+def test_ci_flags_invalid_start_state_without_conflating_agent_failures(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"totals": {"tasks": 2, "passed": 0, "failed": 1,
+                                               "skipped": 1, "judge_error": 0, "timeout": 0}}))
+    (tmp_path / "results.jsonl").write_text(
+        json.dumps({"task_id": "agent-failure", "attempt": 1, "status": "failed",
+                    "metrics": {"agent_eligible": True}}) + "\n"
+        + json.dumps({"task_id": "bad-setup", "attempt": 1, "status": "skipped",
+                      "metrics": {"agent_eligible": False, "preconditions_passed": False}}) + "\n"
+    )
+    _write_generated_reports(tmp_path)
+    assert "invalid_preconditions=1" in _incomplete_run_reasons(0, manifest)
+    assert _effective_exit_code(0, manifest) == 1
 
 
 def test_ci_rejects_anomalous_exit_after_complete_artifacts(tmp_path: Path) -> None:
@@ -483,7 +499,10 @@ def test_workflow_artifacts_upload_only_named_files_from_benchmark_runs() -> Non
     assert {workflow for workflow, _ in paths} >= {"benchmark.yml", "agent-experiment.yml"}
     for workflow, path in paths:
         name = path.rsplit("/", 1)[-1]
-        assert re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name), f"{workflow}: {path}"
+        # Only the two named evaluation screenshots are permitted, not arbitrary
+        # image globs or directories that might sweep in credentials.
+        assert (re.fullmatch(r"[\w.-]+\.(json|jsonl|md|html|log)", name)
+                or name in {"pre.jpg", "post.jpg"}), f"{workflow}: {path}"
 
 
 def test_self_hosted_benchmark_job_never_runs_pull_request_code() -> None:

@@ -197,7 +197,7 @@ def _group_into_runs(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for metric in ("pass_at_k", "pass_pow_k"):
             counts = [(suite.get(f"{metric}_successes"), suite.get(f"{metric}_eligible_tasks"))
                       for suite in run["suites"]]
-            complete = run["metrics_k"] is not None and all(
+            complete = run["metrics_complete"] and run["metrics_k"] is not None and all(
                 successes is not None and eligible is not None and 0 <= successes <= eligible
                 and (not eligible or suite.get(metric) is not None)
                 for suite, (successes, eligible) in zip(run["suites"], counts)
