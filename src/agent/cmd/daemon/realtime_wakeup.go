@@ -1346,6 +1346,15 @@ func realtimeVoiceDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	}
 }
 
+// realtimeVoicePlaybackDeviceFormat leaves SampleRate unset so the managed
+// realtime session follows the provider's native output rate. That avoids
+// userspace 24k/48k→16k resampling on the weak board during playback.
+func realtimeVoicePlaybackDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
+	format := realtimeVoiceDeviceFormat(cfg)
+	format.SampleRate = 0
+	return format
+}
+
 func realtimeProviderAudioFormat(format realtimevoice.AudioFormat, legacyRate, defaultRate int) agent.AudioFormat {
 	return realtimeAgentAudioFormat(format.OrDefault(positiveRate(legacyRate, defaultRate)))
 }
@@ -1407,7 +1416,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	logging.Infof("agent", "realtime", "Connecting: provider=%s model=%s region=%s workspace_configured=%t endpoint_override=%t",
 		providerName, cfg.VoiceModel.Model, cfg.VoiceModel.Region, cfg.VoiceModel.WorkspaceID != "", cfg.VoiceModel.Endpoint != "")
 	connectCtx, connectCancel := context.WithTimeout(ctx, realtimeConnectTimeout)
-	session, err := registry.Open(connectCtx, providerName, realtimevoice.ProviderConfig{Endpoint: cfg.VoiceModel.Endpoint, BaseURL: cfg.VoiceModel.BaseURL, AgentID: cfg.VoiceModel.AgentID, UpstreamProvider: cfg.VoiceModel.UpstreamProvider, WorkspaceID: cfg.VoiceModel.WorkspaceID, Region: cfg.VoiceModel.Region, AuthMode: cfg.VoiceModel.AuthMode, ProjectID: cfg.VoiceModel.ProjectID, Location: cfg.VoiceModel.Location, RealtimeProtocol: cfg.VoiceModel.RealtimeProtocol}, sessionConfig, realtimevoice.DeviceMediaConfig{Input: realtimeVoiceDeviceFormat(cfg), Output: realtimeVoiceDeviceFormat(cfg)})
+	session, err := registry.Open(connectCtx, providerName, realtimevoice.ProviderConfig{Endpoint: cfg.VoiceModel.Endpoint, BaseURL: cfg.VoiceModel.BaseURL, AgentID: cfg.VoiceModel.AgentID, UpstreamProvider: cfg.VoiceModel.UpstreamProvider, WorkspaceID: cfg.VoiceModel.WorkspaceID, Region: cfg.VoiceModel.Region, AuthMode: cfg.VoiceModel.AuthMode, ProjectID: cfg.VoiceModel.ProjectID, Location: cfg.VoiceModel.Location, RealtimeProtocol: cfg.VoiceModel.RealtimeProtocol}, sessionConfig, realtimevoice.DeviceMediaConfig{Input: realtimeVoiceDeviceFormat(cfg), Output: realtimeVoicePlaybackDeviceFormat(cfg)})
 	connectCancel()
 	if err != nil {
 		return markRealtimeProviderFailure(fmt.Errorf("connect realtime voice model: %w", err))
@@ -1468,19 +1477,25 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	readErrs := make(chan error, 1)
 	go streamRealtimeAudio(ctx, recordingAudio, recording.SessionID, chunks, readErrs)
 
-	realtimeOutputFormat := realtimeAgentAudioFormat(info.OutputFormatOrDefault(24000))
-	outputFormat := realtimePlaybackOutputFormat(cfg)
+	// Play at the negotiated device output rate. With an unset configured
+	// playback rate above, that matches the provider native rate and keeps
+	// PCM off the userspace resampler.
+	outputFormat := realtimeAgentAudioFormat(info.OutputFormatOrDefault(int(cfg.Audio.SampleRateOrDefault())))
 	if outputFormat.SampleRate == 0 {
-		outputFormat = realtimeOutputFormat
+		outputFormat = realtimePlaybackOutputFormat(cfg)
+	}
+	providerOutputRate := info.ProviderOutputAudioFormat.SampleRate
+	if providerOutputRate <= 0 {
+		providerOutputRate = int(outputFormat.SampleRate)
 	}
 	logging.Infof("agent", "realtime", "Playback format: source=pcm/%d/%d/%d target=pcm/%d/%d/%d resample=%t",
-		realtimeOutputFormat.SampleRate,
-		realtimeOutputFormat.Channels,
-		realtimeOutputFormat.BitWidth,
+		providerOutputRate,
+		outputFormat.Channels,
+		outputFormat.BitWidth,
 		outputFormat.SampleRate,
 		outputFormat.Channels,
 		outputFormat.BitWidth,
-		uint32(info.ProviderOutputAudioFormat.SampleRate) != outputFormat.SampleRate,
+		providerOutputRate != int(outputFormat.SampleRate),
 	)
 	playback := realtimePlaybackState{finalizeResponses: cfg.AudioBackendOrDefault() == agent.AudioBackendLocal}
 	if err := playback.open(playbackAudio, outputFormat); err != nil {
