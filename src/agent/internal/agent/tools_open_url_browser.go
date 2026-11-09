@@ -132,20 +132,14 @@ func (f *openURLBrowserFallback) run(ctx context.Context, url, reason string) (s
 		focus = *focused.TapPoint
 	}
 
-	input := map[string]any{"text": url, "focus": map[string]any{"x": focus.X, "y": focus.Y}}
-	// enter_text records its own ToolError; keep it out of open_url's result.
-	// The Bridge clipboard route is disabled: restoring the companion app
-	// through Dynamic Island would leave the browser.
-	entryCtx, _ := WithToolError(ctx)
-	out, err := f.search.entryTool.enterTextInner(entryCtx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
+	route, err := f.enterURL(ctx, engine, url, focus)
 	if err != nil {
 		return "", err
 	}
-	var entered enterTextToolResult
-	if err := json.Unmarshal([]byte(out), &entered); err != nil || !entered.OK {
+	if route == "" {
 		return f.fail(ctx, url, "could not enter the URL into the address bar", append(steps, "URL entry failed")), nil
 	}
-	steps = append(steps, "entered URL")
+	steps = append(steps, "entered URL via "+route)
 	if err := engine.tapKeys(ctx, []string{"enter"}); err != nil {
 		return "", err
 	}
@@ -163,6 +157,71 @@ func (f *openURLBrowserFallback) run(ctx context.Context, url, reason string) (s
 		"reason":    reason,
 		"steps":     steps,
 	}), nil
+}
+
+// enterURL puts url into the focused address bar and confirms it from a
+// screenshot. Like system app search, it pastes through the PiP or Android
+// FGS background clipboard when available, which does not leave the browser
+// and avoids the local IME, then falls back to local keyboard input. It
+// returns the route that entered the URL, or "" when neither was confirmed.
+func (f *openURLBrowserFallback) enterURL(ctx context.Context, engine *textInputEngine, url string, focus focusPointArgs) (string, error) {
+	platform := f.platform()
+	args := textInputArgs{Text: url, Focus: focus, ReplaceField: true}
+	if bridgeTool := f.search.entryTool.bridgeTool; bridgeTool != nil && openURLBackgroundClipboardUsable(bridgeTool.currentBridge(), platform) {
+		result := bridgeTool.runClipboardWritePasteFlow(ctx, platform, args)
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if result.Err == nil && result.Committed {
+			return "background_clipboard_paste", nil
+		}
+		logging.Infof("agent", "open_url", "background clipboard paste not confirmed field=%q err=%v; typing locally", result.FieldText, result.Err)
+		// A paste that landed partly would be typed over; clear the field
+		// without Escape, which could close the address bar.
+		if err := clearSearchQueryText(ctx, engine); err != nil {
+			return "", err
+		}
+	}
+
+	// enter_text records its own ToolError; keep it out of open_url's result.
+	// Its Bridge route is disabled: the legacy route switches to the
+	// companion app, and the background route was tried above.
+	entryCtx, _ := WithToolError(ctx)
+	input := map[string]any{"text": url, "focus": map[string]any{"x": focus.X, "y": focus.Y}}
+	out, err := f.search.entryTool.enterTextInner(entryCtx, jsonString(input), enterTextOptions{disableBridge: true, replaceField: true})
+	if err != nil {
+		return "", err
+	}
+	var entered enterTextToolResult
+	if err := json.Unmarshal([]byte(out), &entered); err != nil || !entered.OK {
+		return "", nil
+	}
+	// Local entry does not verify plain ASCII text, so confirm the address
+	// bar holds the URL before pressing Enter.
+	analysis, _, err := engine.analyzeScreen(ctx, platform, args, nil)
+	if err != nil {
+		return "", err
+	}
+	if committed, _ := evaluateFieldCommit(analysis); !committed {
+		logging.Infof("agent", "open_url", "local URL entry not confirmed field=%q", analysis.FieldText)
+		return "", nil
+	}
+	return "local_keyboard", nil
+}
+
+func openURLBackgroundClipboardUsable(bridge *PhoneBridge, platform string) bool {
+	if bridge == nil {
+		return false
+	}
+	status := bridge.getStatus()
+	switch platform {
+	case "ios":
+		return phoneBridgeCanUsePiPBackground(status, "clipboard_write")
+	case "android":
+		return phoneBridgeCanUseFGSBackground(status, "clipboard_write")
+	default:
+		return false
+	}
 }
 
 func (f *openURLBrowserFallback) fail(ctx context.Context, url, message string, steps []string) string {

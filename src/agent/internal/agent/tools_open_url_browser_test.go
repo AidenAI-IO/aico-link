@@ -9,12 +9,24 @@ import (
 	"time"
 )
 
+// urlFieldVision reports the target text as entered in the field.
+type urlFieldVision struct {
+	*stubTextInputVision
+	analyzed int
+}
+
+func (v *urlFieldVision) AnalyzeScreen(_ context.Context, _ screenshotResult, req textInputScreenAnalysisRequest) (textInputScreenAnalysis, error) {
+	v.analyzed++
+	return textInputScreenAnalysis{ObservedMode: textInputModeASCII, FieldText: req.TargetText, TargetMatched: true}, nil
+}
+
 type openURLBrowserHarness struct {
 	tool         *OpenURLTool
 	quick        *recordingTextInputTool
 	touch        *recordingTextInputTool
 	keyboardText *recordingTextInputTool
 	keyboardTap  *recordingTextInputTool
+	vision       *urlFieldVision
 	searched     []string
 }
 
@@ -34,9 +46,9 @@ func newOpenURLBrowserHarness(t *testing.T, bridge *PhoneBridge, platform string
 		keyboardText: h.keyboardText, keyboardTap: h.keyboardTap,
 		screenshot: textInputStubTool{name: "screenshot", out: `{"format":"jpeg","width":100,"height":100,"data":"abc"}`},
 	}
-	// One probe observation in ASCII mode; the URL is ASCII-only, so
-	// nothing else is analyzed.
-	vision := &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeASCII}}}
+	// The probe observes ASCII mode; every later analysis confirms the URL
+	// is in the address bar.
+	vision := &urlFieldVision{stubTextInputVision: &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeASCII}}}}
 	search := &appSearchOpenTool{
 		hw: hw, vision: vision, deviceTypeFn: hw.deviceTypeFn, sleep: testNoWaitSleep,
 		entryTool:      &EnterTextTool{engine: newFastTextInputEngine(*hw, vision), allowIOSKeyboardIsolationBypass: true},
@@ -49,6 +61,7 @@ func newOpenURLBrowserHarness(t *testing.T, bridge *PhoneBridge, platform string
 			return bridgeAppOpenResult{Opened: opens(app)}, nil
 		},
 	}
+	h.vision = vision
 	h.tool = newOpenURLToolWithBrowser(bridge, nil, search)
 	h.tool.browser.findAddressBarFn = func(context.Context, screenshotResult, string) (addressBarCheck, error) {
 		return addressBarCheck{Found: true, TapPoint: &focusPointArgs{X: 500, Y: 930}}, nil
@@ -204,5 +217,84 @@ func TestOpenURLFallsBackToBrowserWhenBridgeCommandFails(t *testing.T) {
 	var result map[string]any
 	if err := json.Unmarshal([]byte(out), &result); err != nil || result["reason"] != "phone_bridge_failed" {
 		t.Fatalf("output = %s, want browser fallback after bridge failure", out)
+	}
+}
+
+func TestOpenURLPastesThroughPiPClipboardInBrowser(t *testing.T) {
+	const target = "https://example.com/pip"
+	bridge := pipBackgroundBridge(t)
+	h := newOpenURLBrowserHarness(t, bridge, "ios", func(string) bool { return true })
+	entry := h.tool.browser.search.entryTool
+	entry.bridgeTool = &textInputBridge{hw: h.tool.browser.search.hw, vision: h.vision, bridgeFn: func() *PhoneBridge { return bridge }, sleep: testNoWaitSleep}
+
+	written := make(chan string, 4)
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			cmd, err := waitForQueuedBridgeCommand(bridge.queue, "ios", 50*time.Millisecond)
+			if err != nil {
+				continue
+			}
+			var payload struct {
+				Text string `json:"text"`
+			}
+			_ = json.Unmarshal(cmd.Payload, &payload)
+			written <- payload.Text
+			_ = bridge.queue.SubmitResult(BridgeCommandResponse{ID: cmd.ID, Method: "clipboard_write"})
+		}
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := h.tool.Call(ctx, jsonString(map[string]string{"url": target}))
+	if err != nil {
+		t.Fatalf("Call returned err: %v", err)
+	}
+	var result struct {
+		OK    bool     `json:"ok"`
+		Steps []string `json:"steps"`
+	}
+	if err := json.Unmarshal([]byte(out), &result); err != nil || !result.OK {
+		t.Fatalf("output = %s: %v", out, err)
+	}
+	if !slices.Contains(result.Steps, "entered URL via background_clipboard_paste") {
+		t.Fatalf("steps = %v, want background clipboard paste", result.Steps)
+	}
+	var texts []string
+	for len(written) > 0 {
+		texts = append(texts, <-written)
+	}
+	if !slices.Contains(texts, target) {
+		t.Fatalf("clipboard writes = %v, want URL", texts)
+	}
+	if typed := strings.Join(typedTexts(t, h.keyboardText), ""); strings.Contains(typed, "example.com") {
+		t.Fatalf("typed URL %q locally after a confirmed paste", typed)
+	}
+}
+
+func TestOpenURLFailsWhenLocalEntryIsNotConfirmed(t *testing.T) {
+	h := newOpenURLBrowserHarness(t, pipBackgroundBridge(t), "ios", func(string) bool { return true })
+	// The probe passes; the address bar stays empty afterwards.
+	h.tool.browser.search.entryTool.engine.vision = h.vision.stubTextInputVision
+	h.tool.browser.search.vision = &stubTextInputVision{analyses: []textInputScreenAnalysis{{ObservedMode: textInputModeASCII}}}
+
+	ctx, _ := WithToolError(context.Background())
+	out, err := h.tool.Call(ctx, `{"url":"https://example.com"}`)
+	if err != nil {
+		t.Fatalf("Call returned err: %v", err)
+	}
+	if te := ToolErrorFromContext(ctx); te == nil || !strings.Contains(out, "could not enter the URL") {
+		t.Fatalf("output = %s, ToolError = %+v; want unconfirmed entry failure", out, te)
+	}
+	for _, keys := range tappedKeys(t, h.keyboardTap) {
+		if slices.Equal(keys, []string{"enter"}) {
+			t.Fatalf("pressed Enter with an unconfirmed address bar: %v", tappedKeys(t, h.keyboardTap))
+		}
 	}
 }
