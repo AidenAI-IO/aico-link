@@ -308,6 +308,20 @@ var ErrListenStopped = errors.New("listener retry stopped")
 // gadget can come up after the service starts, so the device-bound socket is
 // retried quickly at first and then polled slowly.
 func RetryListen(listen func() (net.Listener, error), stop <-chan struct{}, onError func(int, error)) (net.Listener, error) {
+	return retryListen(listen, stop, usbRetryDelay, onError)
+}
+
+// usbRetryDelay maps a failed attempt count to the delay before the next try.
+func usbRetryDelay(attempt int) time.Duration {
+	if attempt <= 30 {
+		return 2 * time.Second
+	}
+	return 15 * time.Second
+}
+
+// retryListen is RetryListen with an injectable delay schedule; onError sees
+// each failed attempt number before the wait.
+func retryListen(listen func() (net.Listener, error), stop <-chan struct{}, delay func(int) time.Duration, onError func(int, error)) (net.Listener, error) {
 	for attempt := 1; ; attempt++ {
 		listener, err := listen()
 		if err == nil {
@@ -316,11 +330,7 @@ func RetryListen(listen func() (net.Listener, error), stop <-chan struct{}, onEr
 		if onError != nil {
 			onError(attempt, err)
 		}
-		delay := 2 * time.Second
-		if attempt > 30 {
-			delay = 15 * time.Second
-		}
-		timer := time.NewTimer(delay)
+		timer := time.NewTimer(delay(attempt))
 		select {
 		case <-stop:
 			timer.Stop()

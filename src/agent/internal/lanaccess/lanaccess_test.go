@@ -169,3 +169,35 @@ func TestTrustListenerMarksConnections(t *testing.T) {
 		t.Fatal("connection from a TrustListener is not trusted")
 	}
 }
+
+func TestRetryListenRecoversAfterTransientFailures(t *testing.T) {
+	attempts := 0
+	var seen []int
+	listener, err := retryListen(func() (net.Listener, error) {
+		attempts++
+		if attempts < 3 {
+			return nil, errors.New("no such device")
+		}
+		return net.Listen("tcp", "127.0.0.1:0")
+	}, make(chan struct{}), func(int) time.Duration { return time.Millisecond }, func(attempt int, _ error) {
+		seen = append(seen, attempt)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	if attempts != 3 || len(seen) != 2 || seen[0] != 1 || seen[1] != 2 {
+		t.Fatalf("attempts=%d seen=%v", attempts, seen)
+	}
+}
+
+func TestRetryListenStopsOnShutdown(t *testing.T) {
+	stop := make(chan struct{})
+	close(stop)
+	_, err := retryListen(func() (net.Listener, error) {
+		return nil, errors.New("no such device")
+	}, stop, func(int) time.Duration { return time.Hour }, nil)
+	if !errors.Is(err, ErrListenStopped) {
+		t.Fatalf("err = %v", err)
+	}
+}
