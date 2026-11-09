@@ -269,6 +269,8 @@ func usbRetryDelay(attempt int) time.Duration {
 	return 15 * time.Second
 }
 
+// retryListen is RetryListen with an injectable delay schedule; onError sees
+// each failed attempt number before the wait.
 func retryListen(listen func() (net.Listener, error), stop <-chan struct{}, delay func(int) time.Duration, onError func(int, error)) (net.Listener, error) {
 	for attempt := 1; ; attempt++ {
 		listener, err := listen()
