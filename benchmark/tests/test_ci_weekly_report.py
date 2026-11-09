@@ -89,28 +89,8 @@ def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days()
     # Only datasets measured in both windows (memory) enter the overall change.
     assert report["change"] == pytest.approx(0.25)
     assert report["compared_datasets"] == 1
-    # One run per window cannot separate a change from run-to-run noise.
-    assert suites["memory"]["change_significant"] is False
-    assert "+25.0 pp (n.s.)" in render_weekly(report, [])
+    assert "+25.0 pp" in render_weekly(report, [])
     assert suites["memory"]["config_changes"] == []
-
-
-@pytest.mark.parametrize("runs, significant", [(1, False), (2, True)])
-def test_a_change_is_significant_only_with_repeated_runs_and_separated_intervals(runs, significant):
-    report = summarize_weekly([
-        *[_record(f"2026-10-1{day}T00:00:00+00:00", eligible_tasks=40, passed=38, workflow_run_id=f"c{day}")
-          for day in range(runs)],
-        *[_record(f"2026-10-0{day + 1}T00:00:00+00:00", eligible_tasks=40, passed=10, workflow_run_id=f"p{day}")
-          for day in range(runs)],
-        _record("2026-10-11T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=30, workflow_run_id="s1"),
-        _record("2026-10-12T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=28, workflow_run_id="s2"),
-        _record("2026-10-01T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=31, workflow_run_id="s3"),
-        _record("2026-10-02T00:00:00+00:00", suite="steady", eligible_tasks=40, passed=29, workflow_run_id="s4"),
-    ], end=END)
-    suites = {s["suite"]: s for s in report["suites"]}
-    assert suites["memory"]["change_significant"] is significant
-    # Overlapping intervals are noise even with repeated runs.
-    assert suites["steady"]["change"] < 0 and suites["steady"]["change_significant"] is False
 
 
 def test_changes_name_settings_that_differ_between_the_windows():
@@ -188,7 +168,7 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     markdown = render_weekly(report, [])
     assert "### By test area" in markdown
     # Tasks: latest eligible count per suite; first attempts: every run summed.
-    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +50.0 pp (n.s.) |" in markdown
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +50.0 pp |" in markdown
 
 
 def test_capability_counts_separate_tasks_from_repetitions():

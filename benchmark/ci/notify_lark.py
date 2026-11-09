@@ -29,19 +29,13 @@ def _format_cost(value: float | None) -> str:
 
 
 def _format_change(row: dict[str, Any]) -> str:
-    """Percentage-point change from the previous seven days.
-
-    Only a significant change is colored by direction; any other change is grey
-    and marked n.s., so window-to-window noise never reads as a regression.
-    """
+    """Descriptive percentage-point change from the previous seven days."""
     change = row.get("change")
     if change is None:
         return ""
     points = change * 100
     if round(points, 1) == 0:
         return " <font color='grey'>±0.0pp</font>"
-    if not row.get("change_significant"):
-        return f" <font color='grey'>{points:+.1f}pp n.s.</font>"
     return f" <font color='{'green' if points > 0 else 'red'}'>{points:+.1f}pp</font>"
 
 
@@ -81,8 +75,8 @@ def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str
 
     if suites:
         changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
-        note = ("Changes compare datasets measured in both weeks; only significant changes are colored, "
-                "others are marked n.s.")
+        note = ("Changes compare datasets measured in both weeks; "
+                "they are descriptive, not statistical significance claims.")
         if changed:
             noun = "comparison" if changed == 1 else "comparisons"
             verb = "has" if changed == 1 else "have"

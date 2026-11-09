@@ -2,37 +2,10 @@
 
 from __future__ import annotations
 
-import math
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp
-
-# A window needs this many workflow runs before its change can be called
-# significant. Repeated attempts of one task are correlated, so a single run's
-# interval understates the run-to-run variation.
-MIN_RUNS_FOR_SIGNIFICANCE = 2
-_Z95 = 1.959963984540054
-
-
-def _wilson(successes: float, trials: float) -> tuple[float, float] | None:
-    if not trials:
-        return None
-    p = successes / trials
-    denominator = 1 + _Z95 * _Z95 / trials
-    centre = (p + _Z95 * _Z95 / (2 * trials)) / denominator
-    margin = _Z95 * math.sqrt(p * (1 - p) / trials + _Z95 * _Z95 / (4 * trials * trials)) / denominator
-    return max(0.0, centre - margin), min(1.0, centre + margin)
-
-
-def _significant(current: dict[str, Any], previous: dict[str, Any]) -> bool:
-    """Both windows have repeated runs and their 95% intervals do not overlap."""
-    if min(current["run_count"], previous["run_count"]) < MIN_RUNS_FOR_SIGNIFICANCE:
-        return False
-    now = _wilson(current["passed"], current["eligible_tasks"])
-    before = _wilson(previous["passed"], previous["eligible_tasks"])
-    return bool(now and before and (now[0] > before[1] or now[1] < before[0]))
-
 
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
     # Run sums contain only measured eligible attempts. A present sum alone
@@ -100,7 +73,7 @@ def _label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _comparison(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -> dict[str, Any]:
-    """Change over the datasets measured in both windows, and whether it is real.
+    """Descriptive change over the datasets measured in both windows.
 
     A dataset that is new or retired would otherwise move the total through the
     task mix alone."""
@@ -112,8 +85,7 @@ def _comparison(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -
     now = _totals([r for r in current if r["dataset"] in common])
     before = _totals([r for r in previous if r["dataset"] in common])
     change = _change(now["pass_at_1"], before["pass_at_1"])
-    return {"change": change, "change_significant": change is not None and _significant(now, before),
-            "compared_datasets": len(common)}
+    return {"change": change, "compared_datasets": len(common)}
 
 
 def _change(current: float | None, previous: float | None) -> float | None:
@@ -225,9 +197,7 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
 
     Rates are descriptive totals over each window's datasets. A change compares
     only datasets measured in both windows, so a new or retired dataset cannot
-    move it. It is significant only when both windows have repeated runs and
-    their 95% Wilson intervals do not overlap; otherwise it is reported as not
-    significant rather than as an improvement or regression.
+    move it. Changes are descriptive, not statistical significance claims.
     """
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
@@ -280,13 +250,6 @@ def _pp(value: float | None) -> str:
     return "—" if value is None else f"{value * 100:+.1f} pp"
 
 
-def _change_cell(row: dict[str, Any]) -> str:
-    text = _pp(row["change"])
-    if row["change"] is None or row.get("change_significant") or round(row["change"] * 100, 1) == 0:
-        return text
-    return f"{text} (n.s.)"
-
-
 def _cell(value: Any) -> str:
     # Report values are data, including in the Actions Markdown renderer.
     import html
@@ -310,16 +273,16 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| Suite runs | Measured runs | Measured eligible / total tasks | pass@1 | Change vs previous 7 days | Cost (USD) | Tokens |",
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
-        f"{_pct(totals['pass_at_1'])} | {_change_cell(report)} | {cost} | {tokens} |",
+        f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
         "", "Rates are descriptive totals over each window's datasets. Changes compare only datasets measured in both windows;",
-        f"n.s. marks a change without at least {MIN_RUNS_FOR_SIGNIFICANCE} runs per window and non-overlapping 95% intervals.",
+        "changes are descriptive, not statistical significance claims.",
         "Configuration changes compare all recorded values in the two windows.", "",
         "### By test area", "",
         "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         *[f"| {_cell(c['capability'])} | {_cell(', '.join(c['suites']))} | {c['task_count']:.0f} | "
           f"{c['run_count']} | {c['eligible_tasks']:.0f} | "
-          f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_change_cell(c)} |"
+          f"{_pct(c['pass_at_1'])} | {_pct(c['previous_pass_at_1'])} | {_pp(c['change'])} |"
           for c in report.get("capabilities", [])],
         "", "### By suite", "",
         "| Suite | Runs | Eligible tasks | pass@1 | Previous 7 days | Change | Configuration changes | Cost (USD) |",
@@ -327,7 +290,7 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
     ]
     for suite in report["suites"]:
         lines.append(f"| {_cell(suite['suite'])} | {suite['suite_runs']} | {suite['eligible_tasks']:.0f} | "
-                     f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_change_cell(suite)} | "
+                     f"{_pct(suite['pass_at_1'])} | {_pct(suite['previous_pass_at_1'])} | {_pp(suite['change'])} | "
                      f"{_cell(describe_config_changes(suite.get('config_changes') or [])) or '—'} | "
                      f"{_resources(suite)[0]} |")
     if not report["suites"]:

@@ -1290,10 +1290,9 @@ last seven days (runs, overall pass@1, known cost), then groups datasets under
 their test areas. Each area retains its pass@1 and change from the previous
 seven days, and each dataset occupies one line with its name, pass@1, and
 change, ordered by pass@1 within each area. A change compares only datasets
-measured in both windows, so adding or retiring a suite cannot move it. It is
-colored (green up, red down) only when both windows have at least two runs and
-their 95% Wilson intervals do not overlap; any other change is grey and marked
-`n.s.`. A suite that ran in several execution environments in the report
+measured in both windows, so adding or retiring a suite cannot move it. Color
+indicates direction only (green up, red down, grey unchanged), not statistical
+significance. A suite that ran in several execution environments in the report
 history is listed once per environment, for example
 `adb_android_text_editing [adb_aidenbridge]`. The card links
 to the dashboard and counts
@@ -1436,9 +1435,8 @@ previous seven days in percentage points. Rates describe each window's datasets;
 changes for test areas and the total compare only datasets measured in both
 windows. Configuration differences include every recorded value in each window, not
 just the final run's settings. These comparisons are not matched-run estimates:
-a change is unknown when either window has no measured rate, and is marked
-`(n.s.)` unless both windows have at least two runs and non-overlapping 95%
-Wilson intervals. Cost and token totals are reported only
+a change is unknown when either window has no measured rate. Changes are
+descriptive and do not claim statistical significance. Cost and token totals are reported only
 when every included suite run supplies them with sample counts covering every
 eligible attempt. The report is included in the Actions job
 summary.
