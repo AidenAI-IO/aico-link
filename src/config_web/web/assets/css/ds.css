@@ -1688,25 +1688,52 @@
   background-image: none;
 }
 
-/* A copyable value shown once, e.g. a new MCP access token. */
-.ds-code-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  margin: var(--space-sm) 0 var(--space-md);
-}
-
+/* A copyable value, e.g. a new MCP access token: text with a small copy
+   button in its top-right corner. */
 .ds-code {
-  margin: 0;
-  padding: var(--space-md);
+  position: relative;
+  margin: var(--space-xs) 0 var(--space-md);
   border-radius: var(--radius-field);
   background: var(--color-canvas);
-  border: 1px solid var(--color-field-border);
+}
+
+.ds-code__text {
+  margin: 0;
+  padding: var(--space-md) 40px var(--space-md) var(--space-md);
   font-family: var(--font-family-mono);
-  font-size: 12.5px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-ink);
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   -webkit-user-select: text;
   user-select: text;
+}
+
+.ds-code__copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-ink-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ds-code__copy:hover,
+.ds-code__copy:focus-visible {
+  background: var(--color-pressed);
+  color: var(--color-ink);
+}
+
+.ds-code__copy--done {
+  color: var(--color-success);
 }

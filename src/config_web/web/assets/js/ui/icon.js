@@ -254,6 +254,24 @@ export const glyphs = {
     ],
   },
 
+  // Copy-to-clipboard: two overlapping rounded sheets.
+  copy: {
+    box: '0 0 24 24',
+    shapes: [
+      {tag: 'rect', attrs: {x: 9, y: 9, width: 11, height: 11, rx: 2.5, fill: 'none', stroke: 'currentColor', 'stroke-width': 1.8}},
+      {
+        tag: 'path',
+        attrs: {
+          d: 'M15 5.5V5.5a1.5 1.5 0 0 0-1.5-1.5h-8A1.5 1.5 0 0 0 4 5.5v8A1.5 1.5 0 0 0 5.5 15',
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': 1.8,
+          'stroke-linecap': 'round',
+        },
+      },
+    ],
+  },
+
   // Secured-network indicator.
   lock: {
     box: '0 0 24 24',

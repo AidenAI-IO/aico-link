@@ -16,6 +16,7 @@ import {createSaver} from '../saver.js';
 import {button} from '../../ui/button.js';
 import {confirmSheet} from '../../ui/confirm.js';
 import {el, replace} from '../../ui/dom.js';
+import {icon} from '../../ui/icon.js';
 import {group, row, screen} from '../../ui/list.js';
 import {sheet} from '../../ui/sheet.js';
 import {setChecked, switchControl} from '../../ui/switch.js';
@@ -58,24 +59,39 @@ export function mcpClientSnippets(endpoint, secret = '') {
   if (secret) server.headers = {Authorization: `Bearer ${secret}`};
   return {
     claudeCode: `claude mcp add --transport http aico ${endpoint}${header}`,
-    json: JSON.stringify({mcpServers: {aico: server}}, null, 2),
+    json: JSON.stringify({mcpServers: {aico: server}}, null, 1),
   };
 }
 
 async function copy(value) {
   try {
     await navigator.clipboard.writeText(value);
-    toast(msg('mcp.copied', '已复制'));
+    return true;
   } catch (_) {
     toast(msg('mcp.copy_failed', '无法复制，请手动选择'));
+    return false;
   }
 }
 
+/** A code block with a small copy button in its top-right corner. */
 function codeBlock(value, action) {
-  const block = el('pre', {class: 'ds-code', text: value});
-  const copyButton = button({label: msg('mcp.copy', '复制'), variant: 'secondary', action});
-  copyButton.addEventListener('click', () => copy(value));
-  return el('div', {class: 'ds-code-block'}, [block, copyButton]);
+  const copyButton = el('button', {
+    class: 'ds-code__copy',
+    attrs: {type: 'button', 'aria-label': resolve(msg('mcp.copy', '复制')), title: resolve(msg('mcp.copy', '复制'))},
+    data: {action},
+  }, [icon('copy', {size: 16})]);
+  let reset = null;
+  copyButton.addEventListener('click', async () => {
+    if (!(await copy(value))) return;
+    replace(copyButton, [icon('check', {size: 14})]);
+    copyButton.classList.add('ds-code__copy--done');
+    clearTimeout(reset);
+    reset = setTimeout(() => {
+      replace(copyButton, [icon('copy', {size: 16})]);
+      copyButton.classList.remove('ds-code__copy--done');
+    }, 1500);
+  });
+  return el('div', {class: 'ds-code'}, [el('pre', {class: 'ds-code__text', text: value}), copyButton]);
 }
 
 function nameInput() {
