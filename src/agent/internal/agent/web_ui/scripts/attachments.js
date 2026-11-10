@@ -1,20 +1,9 @@
-// Image/audio attachments, recording, and WAV encoding.
-async function handleImageSelection(event) {
-    const files = Array.from(event.target.files || []);
-    imageInputEl.value = '';
-    if (files.length === 0) return;
-    await addImageFiles(files, 'selected');
-}
-
+// File, image, and audio attachments.
 async function handleComposerPaste(event) {
     const files = clipboardImageFiles(event.clipboardData);
     if (files.length === 0) return;
     event.preventDefault();
-    if (!canAttachImagesNow()) {
-        setComposerHint('Images can be attached after the current run finishes.', true);
-        return;
-    }
-    await addImageFiles(files, 'pasted');
+    await addAttachmentFiles(files, 'pasted');
 }
 
 function clipboardImageFiles(clipboardData) {
@@ -31,52 +20,6 @@ function clipboardImageFiles(clipboardData) {
     return Array.from(clipboardData.files || []).filter(isImageFile);
 }
 
-async function addImageFiles(files, source) {
-    const imageFiles = Array.from(files || []).filter(isImageFile);
-    if (imageFiles.length === 0) return;
-    if (!canAttachImagesNow()) {
-        setComposerHint('Images can be attached after the current run finishes.', true);
-        return;
-    }
-
-    let accepted = 0;
-    let skipped = 0;
-    let failed = 0;
-    for (const file of imageFiles) {
-        if (getDraftImageCount() >= maxDraftImageAttachments) {
-            skipped++;
-            continue;
-        }
-        try {
-            const id = nextAttachmentId++;
-            const dataUrl = await readFileAsDataURL(file);
-            if (!canAttachImagesNow()) {
-                skipped++;
-                continue;
-            }
-            if (getDraftImageCount() >= maxDraftImageAttachments) {
-                skipped++;
-                continue;
-            }
-            draftAttachments.push({
-                id: id,
-                kind: 'image',
-                name: imageAttachmentName(file, source, id),
-                mime_type: imageMIMEType(file, dataUrl),
-                data: extractBase64(dataUrl),
-                size: file.size || 0
-            });
-            accepted++;
-        } catch (err) {
-            failed++;
-            console.error('Failed to read image attachment:', err);
-        }
-    }
-
-    renderDraftAttachments();
-    reportImageAddResult(accepted, skipped, failed);
-}
-
 function isImageFile(file) {
     if (!file) return false;
     const mimeType = String(file.type || '').toLowerCase();
@@ -90,8 +33,8 @@ function getDraftImageCount() {
     }).length;
 }
 
-function canAttachImagesNow() {
-    return !loadingDiv.classList.contains('active');
+function canAttachFilesNow() {
+    return !fileUploadPending && !loadingDiv.classList.contains('active');
 }
 
 function imageAttachmentName(file, source, id) {
@@ -131,20 +74,6 @@ function imageMIMETypeFromDataURL(dataUrl) {
     const match = String(dataUrl || '').match(/^data:([^;,]+)[;,]/);
     const mimeType = match && match[1] ? match[1].toLowerCase() : '';
     return mimeType.indexOf('image/') === 0 ? mimeType : 'image/png';
-}
-
-function reportImageAddResult(accepted, skipped, failed) {
-    if (skipped > 0) {
-        setComposerHint('Only 4 images can be attached.', true);
-        return;
-    }
-    if (failed > 0) {
-        setComposerHint('Some images could not be read.', true);
-        return;
-    }
-    if (accepted > 0) {
-        resetComposerHint();
-    }
 }
 
 function setComposerHint(text, isError) {
@@ -276,6 +205,18 @@ function renderMessageAttachments(attachments) {
         meta.appendChild(name);
         card.appendChild(meta);
 
+        const downloadURL = safeSharedURL(attachment.download_url);
+        if (downloadURL) {
+            const link = document.createElement('a');
+            link.href = downloadURL;
+            // Let Content-Disposition trigger the save. A forced download
+            // would save a redirected login page as if it were the artifact.
+            link.target = '_blank';
+            link.rel = 'noopener';
+            link.textContent = 'Download';
+            card.appendChild(link);
+        }
+
         if (attachment.transcript) {
             const transcript = document.createElement('div');
             transcript.className = 'attachment-transcript';
@@ -297,6 +238,8 @@ function cloneAttachmentsForTransport(attachments) {
             mime_type: attachment.mime_type,
             data: attachment.data,
             size: attachment.size,
+            path: attachment.path,
+            download_url: attachment.download_url,
             transcript: attachment.transcript || ''
         };
     });
@@ -310,6 +253,8 @@ function cloneAttachmentsForMessage(attachments) {
             mime_type: attachment.mime_type,
             data: attachment.data,
             size: attachment.size,
+            path: attachment.path,
+            download_url: attachment.download_url,
             preview_url: attachment.preview_url || '',
             transcript: attachment.transcript || ''
         };
@@ -353,4 +298,131 @@ function readFileAsDataURL(file) {
         reader.onerror = function() { reject(reader.error || new Error('Failed to read file.')); };
         reader.readAsDataURL(file);
     });
+}
+
+async function handleFileSelection(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = '';
+    await addAttachmentFiles(files, 'selected');
+}
+
+// Process mixed selections independently, preserving successes and reporting
+// failures together. Login expiration stops the batch so the draft can be retried.
+// Images retain visual input; other files upload separately and use board paths.
+async function addAttachmentFiles(files, source) {
+    if (!files.length) return;
+    if (!canAttachFilesNow()) {
+        setComposerHint('Attachments can be added after the current operation finishes.', true);
+        return;
+    }
+    fileUploadPending = true;
+    setComposerState(loadingDiv.classList.contains('active'));
+    let skipped = 0;
+    let failed = 0;
+    let firstError = '';
+    try {
+        for (const file of files) {
+            if (draftAttachments.length >= maxDraftAttachments) {
+                skipped++;
+                continue;
+            }
+            try {
+                if (isImageFile(file)) {
+                    if (getDraftImageCount() >= maxDraftImageAttachments) {
+                        skipped++;
+                        continue;
+                    }
+                    const id = nextAttachmentId++;
+                    const dataUrl = await readFileAsDataURL(file);
+                    draftAttachments.push({
+                        id: id,
+                        kind: 'image',
+                        name: imageAttachmentName(file, source, id),
+                        mime_type: imageMIMEType(file, dataUrl),
+                        data: extractBase64(dataUrl),
+                        size: file.size || 0
+                    });
+                    continue;
+                }
+                if (file.size > 100 * 1024 * 1024) throw new Error('File exceeds the 100 MiB limit: ' + file.name);
+                setComposerHint('Uploading ' + file.name + '…');
+                const form = new FormData();
+                form.append('file', file, file.name);
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 300000);
+                try {
+                    const response = await fetch('/api/files', {method: 'POST', body: form, signal: controller.signal});
+                    if (!response.ok) {
+                        const message = await response.text();
+                        let code = '';
+                        try { code = JSON.parse(message).error; } catch (_) {}
+                        const error = new Error(code === 'lan_access_disabled'
+                            ? 'LAN access is off. Connect over USB and enable it in Settings.'
+                            : message || 'Upload failed');
+                        error.loginRequired = response.status === 401 && code === 'login_required';
+                        throw error;
+                    }
+                    const uploaded = await response.json();
+                    draftAttachments.push(Object.assign({}, uploaded, {id: nextAttachmentId++}));
+                } finally { clearTimeout(timeout); }
+            } catch (err) {
+                if (err.loginRequired) throw err;
+                failed++;
+                if (!firstError) firstError = err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message;
+            }
+        }
+        const hints = [];
+        if (failed > 0) hints.push(failed + (failed === 1 ? ' file' : ' files') + ' could not be attached. ' + firstError);
+        if (skipped > 0) hints.push(skipped + (skipped === 1 ? ' file' : ' files') + ' skipped. Attach up to ' + maxDraftImageAttachments + ' images and ' + maxDraftAttachments + ' files/images in total.');
+        if (hints.length > 0) setComposerHint(hints.join(' '), true);
+        else resetComposerHint();
+    } catch (err) {
+        if (err.loginRequired) showSharedFileLoginHint();
+        else setComposerHint(err.name === 'AbortError' ? 'Upload timed out. Please try again.' : err.message, true);
+    } finally {
+        fileUploadPending = false;
+        renderDraftAttachments();
+    }
+}
+
+function showSharedFileLoginHint() {
+    setComposerHint('Sign in to upload files, then select the file again. ', true);
+    if (composerHintTimer) {
+        clearTimeout(composerHintTimer);
+        composerHintTimer = null;
+    }
+    if (!composerHintEl) return;
+    const link = document.createElement('a');
+    // Keep this page and its draft intact while the shared host cookie is set.
+    link.href = '/login?next=%2Fshare%2F';
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = 'Sign in';
+    composerHintEl.appendChild(link);
+}
+
+function safeSharedURL(value) {
+    if (!value) return '';
+    try {
+        const url = new URL(value, window.location.origin);
+        if (!['http:', 'https:'].includes(url.protocol) || url.hostname !== window.location.hostname || !url.pathname.startsWith('/share/')) return '';
+        // Use the current origin so downloads also work through an Agent reverse proxy.
+        return url.pathname;
+    } catch (_) { return ''; }
+}
+
+function sharedLinksFromText(text) {
+    const result = [];
+    const seen = new Set();
+    const pattern = /\[([^\]\n]+)\]\(([^\s)]+)\)|https?:\/\/[^\s<>"')]+|\/share\/[^\s<>"')\]]+/g;
+    for (const match of String(text || '').matchAll(pattern)) {
+        const target = match[2] || match[0].replace(/[.,;:!?。，；：！？、]+$/, '');
+        const href = safeSharedURL(target);
+        if (!href || seen.has(href) || href.endsWith('/')) continue;
+        seen.add(href);
+        let name = href.split('/').pop();
+        try { name = decodeURIComponent(name); } catch (_) {}
+        result.push({kind: 'file', name: match[1] || name, download_url: href});
+    }
+    return result;
 }

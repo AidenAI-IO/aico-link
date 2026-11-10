@@ -3,6 +3,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 from runner.agent_client import ToolInvokeResult
 from runner.html_report import generate_report_html, upload_report
 
@@ -20,6 +22,18 @@ def _report_tasks(html: str) -> list[dict]:
     match = re.search(r"const TASKS = (.*?);\nconst rows", html, re.S)
     assert match, "report TASKS payload missing"
     return json.loads(match.group(1))
+
+
+@pytest.mark.parametrize("verdicts", [None, "bad", {"id": "bad"}, [None, "bad", 12]])
+def test_report_ignores_malformed_precondition_verdicts(tmp_path, verdicts):
+    (tmp_path / "manifest.json").write_text(json.dumps({"run_id": "test", "totals": {"tasks": 1}}))
+    if isinstance(verdicts, list):
+        verdicts = verdicts + [{"id": 7, "reason": "Ready", "verdict": "yes"}]
+    (tmp_path / "results.jsonl").write_text(json.dumps({
+        "task_id": "task", "status": "skipped", "metrics": {"precondition_verdicts": verdicts},
+    }) + "\n")
+    tasks = _report_tasks(generate_report_html(tmp_path))
+    assert tasks[0]["rubric"] == ([["Precondition: 7", "Ready", "yes"]] if isinstance(verdicts, list) else [])
 
 
 def test_upload_report_uploads_run_artifacts_for_benchmark_page(tmp_path: Path):

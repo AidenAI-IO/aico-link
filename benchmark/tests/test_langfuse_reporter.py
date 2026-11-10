@@ -517,6 +517,11 @@ def test_publish_run_maps_attempts_and_aggregate_metrics(tmp_path: Path):
         for score in client.score_calls
         if score.get("dataset_run_id")
     }
+    assert run_scores["failures.class.environment"] == 0
+    assert run_scores["failures.class.evaluation"] == 0
+    run_score_names = [score["name"] for score in client.score_calls if score.get("dataset_run_id")]
+    assert run_score_names.index("failures.class.environment") < run_score_names.index("capability.pass_at_1")
+    assert run_score_names.index("failures.class.evaluation") < run_score_names.index("capability.pass_at_1")
     assert run_scores["capability.pass_at_1"] == 1.0
     assert run_scores["capability.pass_at_1.successes"] == 1
     assert run_scores["capability.pass_at_1.ci95_lower"] == 0.2

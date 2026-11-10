@@ -116,7 +116,7 @@ func NewServer(options Options) (*Server, error) {
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("stat Agent config: %w", err)
 	}
-	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath)
+	s.lanAccess = lanaccess.NewState(options.LANAccessPath, options.DevicePasswordPath, options.SessionSecretPath)
 	if options.USBTerminalPort > 0 {
 		terminal, err := newUSBTerminalServer(options)
 		if err != nil {
@@ -140,6 +140,9 @@ func NewServer(options Options) (*Server, error) {
 	return s, nil
 }
 
+// ListenAndServe serves the portal on its configured address and starts the
+// USB maintenance and terminal listeners in the background. It returns nil
+// after Shutdown.
 func (s *Server) ListenAndServe() error {
 	if s.storage == nil {
 		if err := s.initializeStorageManager(); err != nil {
@@ -168,7 +171,7 @@ func (s *Server) ListenAndServe() error {
 	if s.options.BindAddress == s.options.USBAddress {
 		device = s.options.USBInterface
 	}
-	listener, err := listenConfigWeb(s.http.Addr, device)
+	listener, err := lanaccess.ListenOnDevice("tcp4", s.http.Addr, device)
 	if err != nil {
 		return err
 	}
@@ -185,9 +188,9 @@ func (s *Server) ListenAndServe() error {
 // with backoff until it succeeds or the server shuts down.  Failures are
 // fail-closed: no USB listener means no maintenance authorization.
 func (s *Server) serveUSBListener(errorsCh chan<- error) {
-	listener, err := retryListen(func() (net.Listener, error) {
-		return listenConfigWeb(s.usbHTTP.Addr, s.options.USBInterface)
-	}, s.usbRetryStop, usbListenRetrySchedule, func(attempt int, err error) {
+	listener, err := lanaccess.RetryListen(func() (net.Listener, error) {
+		return lanaccess.ListenOnDevice("tcp4", s.usbHTTP.Addr, s.options.USBInterface)
+	}, s.usbRetryStop, func(attempt int, err error) {
 		if attempt == 1 {
 			logging.Warnf("config_web", "config_web", "USB maintenance listener unavailable (fail closed), retrying: %v", err)
 		}

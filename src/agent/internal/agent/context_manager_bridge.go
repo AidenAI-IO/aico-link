@@ -80,6 +80,11 @@ func userMessageFromInput(manager *contextmanager.ContextManager, input string, 
 		Role:    messages.MessageRoleUser,
 		Content: attachmentAwarePrompt(normalizeRunInput(input, attachments), attachments, descriptions),
 	}
+	for _, attachment := range attachments {
+		if attachment.Kind == "file" && attachment.Path != "" {
+			message.SharedFiles = append(message.SharedFiles, messages.SharedFile{Name: attachment.Name, MIMEType: attachment.MIMEType, Path: attachment.Path, Size: attachment.Size})
+		}
+	}
 	if manager == nil {
 		return message
 	}

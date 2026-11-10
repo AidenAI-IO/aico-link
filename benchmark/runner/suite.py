@@ -30,7 +30,7 @@ SETUP_KEYS = {
 }
 
 ASSERT_MEMORY_EXPECTED_KEYS = {
-    "id", "memory_scope", "type", "revision", "content_contains",
+    "id", "memory_scope", "type", "revision", "content_contains", "content_contains_any",
     "title_contains", "tags_contains", "entities_contains",
     "source_refs_contain", "evidence_refs_contain", "sensitive",
 }
@@ -43,6 +43,7 @@ class SuiteValidationError(ValueError):
 class RubricItem:
     id: str
     check: str
+    scope: str = "outcome"
 
 @dc.dataclass
 class TraceObservationSpec:
@@ -193,7 +194,12 @@ def load_suite(path: Path) -> Suite:
             check = r.get("check", r.get("description"))
             if not r.get("id") or not check:
                 raise SuiteValidationError(f"task {tid}: rubric items require id and check")
-            rubric.append(RubricItem(id=r["id"], check=check))
+            scope = r.get("scope", "outcome")
+            if scope not in ("outcome", "precondition"):
+                raise SuiteValidationError(f"task {tid}: rubric scope must be outcome or precondition")
+            rubric.append(RubricItem(id=r["id"], check=check, scope=scope))
+        if rubric and not any(item.scope == "outcome" for item in rubric):
+            raise SuiteValidationError(f"task {tid}: rubric requires at least one outcome check")
         ha = raw.get("hard_assertions") or {}
         # A task may omit the judge only when deterministic call checks decide it.
         if not rubric_raw and not ha.get("required_tool_calls"):
@@ -560,6 +566,13 @@ def validate_assert_memory_setup(
             ):
                 raise SuiteValidationError(
                     f"{spec_path} {field} must be a non-empty string"
+                )
+        if "content_contains_any" in spec:
+            alternatives = spec["content_contains_any"]
+            if (not isinstance(alternatives, list) or not alternatives
+                    or not all(isinstance(item, str) and item.strip() for item in alternatives)):
+                raise SuiteValidationError(
+                    f"{spec_path} content_contains_any must be a non-empty list of non-empty strings"
                 )
         if "sensitive" in spec and not isinstance(spec["sensitive"], bool):
             raise SuiteValidationError(f"{spec_path} sensitive must be a boolean")

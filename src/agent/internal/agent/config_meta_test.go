@@ -992,8 +992,8 @@ func TestConfigMeta_VoiceModelRequiresRealtimeInputMode(t *testing.T) {
 			if !agentSwitch.Advanced {
 				t.Fatal("voice_model.use_backend_agent must be an advanced field")
 			}
-			if enabled, ok := agentSwitch.Default.(bool); !ok || enabled {
-				t.Fatalf("voice_model.use_backend_agent default = %#v, want false", agentSwitch.Default)
+			if enabled, ok := agentSwitch.Default.(bool); !ok || !enabled {
+				t.Fatalf("voice_model.use_backend_agent default = %#v, want true", agentSwitch.Default)
 			}
 			if agentSwitch.VisibleWhen == nil {
 				t.Fatal("voice_model.use_backend_agent has no visibleWhen rule")

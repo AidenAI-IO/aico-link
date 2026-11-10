@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"aico-agent/internal/logging"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -243,16 +244,30 @@ func normalizeOpenURL(value string) (string, *ToolError) {
 type OpenURLTool struct {
 	bridge   *PhoneBridge
 	restorer *PhoneBridgeRestorer
+	// browser opens HTTP(S) URLs through the visible browser when Phone
+	// Bridge cannot run the command.
+	browser *openURLBrowserFallback
 }
 
 func NewOpenURLTool(bridge *PhoneBridge, restorer *PhoneBridgeRestorer) *OpenURLTool {
 	return &OpenURLTool{bridge: bridge, restorer: restorer}
 }
 
+// newOpenURLToolWithBrowser adds the visible-browser fallback for HTTP(S)
+// URLs, built on the system app search tool.
+func newOpenURLToolWithBrowser(bridge *PhoneBridge, restorer *PhoneBridgeRestorer, search *appSearchOpenTool) *OpenURLTool {
+	tool := NewOpenURLTool(bridge, restorer)
+	if search != nil {
+		tool.browser = &openURLBrowserFallback{search: search}
+	}
+	return tool
+}
+
 func (t *OpenURLTool) Name() string { return toolOpenURL }
 
 func (t *OpenURLTool) Description() string {
 	return `Open an HTTP/HTTPS webpage, SMS composer, email composer, or telephone link on the connected phone through Phone Bridge. ` +
+		`When Phone Bridge cannot run the command, HTTP/HTTPS webpages open in the phone browser through visible system search and the address bar; sms, mailto, and tel links require Phone Bridge. ` +
 		`Supported formats: https://example.com, http://example.com, sms:<phone_number>?body=<message>, mailto:<email_address>?subject=<subject>, and tel:<phone_number>. ` +
 		`Percent-encode spaces and reserved characters in SMS body and email subject query values. ` +
 		`Use open_app to launch a browser without navigating to a fixed URL.`
@@ -381,7 +396,43 @@ func (t *OpenURLTool) Call(ctx context.Context, input string) (string, error) {
 		URL:       args.URL,
 		TimeoutMs: 10000,
 	}
-	return sendBridgeOpenCommand(ctx, t.bridge, t.restorer, cmd, "open_url", args.URL)
+	if !t.browserFallbackApplies(args.URL) {
+		return sendBridgeOpenCommand(ctx, t.bridge, t.restorer, cmd, "open_url", args.URL)
+	}
+	if !openURLBridgeRouteAvailable(t.bridgeStatus()) {
+		return t.browser.open(ctx, args.URL, "phone_bridge_unavailable")
+	}
+	out, te, err := callNestedBridgeOpen(ctx, t.bridge, t.restorer, cmd, args.URL)
+	if err != nil || te == nil || ctx.Err() != nil {
+		return returnNestedToolResult(ctx, out, te, err)
+	}
+	// The Bridge route was selected but failed, for example when the
+	// Dynamic Island restore timed out. The browser does not depend on it.
+	logging.Infof("agent", "open_url", "bridge route failed code=%q error=%q; using browser fallback", te.Code, te.Message)
+	return t.browser.open(ctx, args.URL, "phone_bridge_failed")
+}
+
+func (t *OpenURLTool) bridgeStatus() PhoneBridgeStatus {
+	if t == nil || t.bridge == nil {
+		return PhoneBridgeStatus{}
+	}
+	return t.bridge.getStatus()
+}
+
+func (t *OpenURLTool) browserFallbackApplies(url string) bool {
+	return t != nil && t.browser.available() && openURLBrowserFallbackSupports(url)
+}
+
+// openURLBridgeRouteAvailable reports whether Phone Bridge can run an
+// open_app command now or after restoring the companion app.
+func openURLBridgeRouteAvailable(status PhoneBridgeStatus) bool {
+	return phoneBridgeReadyForCommand(status, "open_app") || phoneBridgeCanRestoreFromReturnEntry(status)
+}
+
+func callNestedBridgeOpen(ctx context.Context, bridge *PhoneBridge, restorer *PhoneBridgeRestorer, cmd BridgeCommand, target string) (string, *ToolError, error) {
+	toolCtx, _ := WithToolError(ctx)
+	out, err := sendBridgeOpenCommand(toolCtx, bridge, restorer, cmd, "open_url", target)
+	return out, ToolErrorFromContext(toolCtx), err
 }
 
 func (s *ToolSet) refreshOpenAppTool() {
@@ -397,6 +448,19 @@ func (s *ToolSet) refreshOpenAppTool() {
 	s.tools[toolOpenApp] = openApp
 }
 
+func (s *ToolSet) refreshOpenURLTool() {
+	if s == nil || s.phoneBridge == nil {
+		return
+	}
+	openURL := newOpenURLToolWithBrowser(s.phoneBridge, s.phoneBridgeRestorer, s.searchOpenTool)
+	if screenshot, ok := s.tools["screenshot"]; ok && screenshot != nil {
+		s.tools[toolOpenURL] = newPostActionScreenshotTool(openURL, screenshot, postActionScreenshotDelay)
+		s.applyUIGrounding()
+		return
+	}
+	s.tools[toolOpenURL] = openURL
+}
+
 func (s *ToolSet) RegisterPhoneBridge(bridge *PhoneBridge) {
 	if bridge == nil {
 		return
@@ -410,13 +474,7 @@ func (s *ToolSet) RegisterPhoneBridge(bridge *PhoneBridge) {
 		s.phoneBridgeRestorer.SetBridge(bridge)
 	}
 	s.refreshOpenAppTool()
-	openURL := NewOpenURLTool(bridge, s.phoneBridgeRestorer)
-	if screenshot, ok := s.tools["screenshot"]; ok && screenshot != nil {
-		s.tools[toolOpenURL] = newPostActionScreenshotTool(openURL, screenshot, postActionScreenshotDelay)
-		s.applyUIGrounding()
-	} else {
-		s.tools[toolOpenURL] = openURL
-	}
+	s.refreshOpenURLTool()
 	s.tools[toolBridgeClipboard] = NewClipboardTool(bridge, s.phoneBridgeRestorer)
 	s.tools[toolBridgeCalendar] = NewCalendarTool(bridge, s.phoneBridgeRestorer)
 	s.tools[toolBridgeContacts] = NewContactsTool(bridge, s.phoneBridgeRestorer)

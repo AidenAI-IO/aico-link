@@ -21,7 +21,7 @@ const (
 		"Use save_memory whenever the user asks you to remember something, and for stable preferences, rules, or procedures you observe; do not claim you remembered something before it returns. Use forget_memory when the user asks you to forget something. " +
 		"Use recall_session_chunks when the user refers to earlier conversation you cannot see in your visible context, since only the most recent turns remain visible. " +
 		"Use audio_volume to change or read your own speaking volume; do not delegate that as device work. " +
-		"Use end_conversation when the user is finished talking or asks to stop the voice interaction, for example when they say goodbye, tell you they need nothing else, ask you to stop listening or stop the service, or ask you to go idle, enter standby, sleep, or wait for the next wakeup. Treat these phrases as conversation-control requests, not as device or backend service-operation requests. Say a short farewell in the same response. Do not use it while the user is still engaged, and do not announce that you are going to standby as though it were a device operation. "
+		"Use end_conversation when the user is finished talking or asks to stop the voice interaction, for example when they say goodbye, 退下, 退一下, 再见, tell you they need nothing else, ask you to stop listening or stop the service, or ask you to go idle, enter standby, sleep, or wait for the next wakeup. Treat these phrases as conversation-control requests, not as device or backend service-operation requests. Say a short farewell in the same response. Do not use it while the user is still engaged, and do not announce that you are going to standby as though it were a device operation. "
 	DefaultRealtimeVoiceBackendInstructions = "For requests that require device operation, external actions, or longer multi-step work, use the available work-management tools and respond as the single assistant responsible for the request. " +
 		"Before creating background work, call query_agent_task with no task_id and continue the task that already covers the request instead of starting a duplicate. " +
 		"When the user changes the goal of existing background work, use update_agent_task with the complete updated goal instead of cancelling it and creating replacement work. Use cancel_agent_task only when the user wants the work stopped; it also clears a finished result that has not started delivery. " +
@@ -125,6 +125,9 @@ func defaultBoolPtr(value bool) *bool {
 	return &v
 }
 
+// DefaultConfig returns the built-in configuration that runtime loading starts
+// from before applying agent.toml. Values set in the file override these
+// defaults, including an explicit voice_model.use_backend_agent = false.
 func DefaultConfig() Config {
 	return Config{
 		Timezone: defaultTimezone,
@@ -164,6 +167,7 @@ func DefaultConfig() Config {
 			InputAudioFormat:  "pcm",
 			OutputAudioFormat: "pcm",
 			TurnDetection:     defaultVoiceModelTurnDetection,
+			UseBackendAgent:   true,
 		},
 		AudioArchive: AudioArchiveConfig{
 			Enabled:     true,

@@ -15,6 +15,53 @@ fail() {
 
 [ -d "${UNIT_DIR}" ] || fail "overlay-debian systemd unit directory is missing"
 
+# Run the real preparation commands against a disposable filesystem and check
+# that crash cleanup removes only old upload temporaries at the shared root.
+python3 - "${UNIT_DIR}/aico-share-prepare.service" "${TEST_ROOT}" <<'PY'
+from pathlib import Path
+import os
+import shlex
+import subprocess
+import sys
+import time
+
+root = Path(sys.argv[2])
+share = root / "userdata-share"
+share.mkdir()
+old = time.time() - 7200
+for name in [".upload-stale", ".upload-published", ".upload-recent", "report.csv", ".other"]:
+    file = share / name
+    file.write_text("keep these bytes")
+    if name != ".upload-recent":
+        os.utime(file, (old, old))
+os.link(share / ".upload-published", share / "published.csv")
+(share / ".upload-directory").mkdir()
+nested = share / ".upload-directory" / ".upload-nested"
+nested.write_text("nested")
+os.utime(nested, (old, old))
+outside = root / "outside"
+outside.write_text("outside")
+os.utime(outside, (old, old))
+(share / ".upload-link").symlink_to(outside)
+os.utime(share / ".upload-link", (old, old), follow_symlinks=False)
+os.mkfifo(share / ".upload-fifo")
+os.utime(share / ".upload-fifo", (old, old))
+
+paths = {"/userdata/share": str(share), "/share": str(root / "mount-point")}
+for line in Path(sys.argv[1]).read_text().splitlines():
+    if line.startswith("ExecStart="):
+        command = [paths.get(arg, arg) for arg in shlex.split(line.split("=", 1)[1])]
+        subprocess.run(command, check=True, timeout=10)
+assert not (share / ".upload-stale").exists()
+assert not (share / ".upload-published").exists()
+for name in [".upload-recent", "report.csv", ".other", "published.csv"]:
+    assert (share / name).read_text() == "keep these bytes", name
+assert nested.read_text() == "nested"
+assert (share / ".upload-link").is_symlink()
+assert outside.read_text() == "outside"
+assert (share / ".upload-fifo").is_fifo()
+PY
+
 # The stable unit must have exactly one UART owner, and final power removal
 # must use the post-unmount hook rather than a normal service ExecStop.
 grep -Fqx 'ExecStart=/usr/lib/aico/mcu_service --port /dev/ttyS5' "${UNIT_DIR}/aico-mcu-event.service"

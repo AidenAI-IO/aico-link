@@ -60,6 +60,11 @@ function createMessageNode(msg) {
         }
     }
 
+    if (msg.type === 'assistant') {
+        const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
+        if (downloads) body.appendChild(downloads);
+    }
+
     // Add audio playback button for voice messages with archived audio
     if (msg.audio_file && msg.audio_file !== '') {
         const audioBtn = document.createElement('button');
@@ -322,11 +327,14 @@ function updateEmptyState() {
 }
 
 function setComposerState(isLoading) {
-    sendBtn.disabled = pendingSteerSubmitting || (isLoading && !currentChatRequestId);
+    sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
     sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
-    const imageSlotsFull = getDraftImageCount() >= maxDraftImageAttachments;
-    imageBtn.disabled = isLoading || imageSlotsFull;
-    imageBtn.title = imageSlotsFull ? 'Maximum 4 images attached' : 'Add image';
+    const attachmentSlotsFull = draftAttachments.length >= maxDraftAttachments;
+    const fileBtn = document.getElementById('fileBtn');
+    if (fileBtn) {
+        fileBtn.disabled = fileUploadPending || isLoading || attachmentSlotsFull;
+        fileBtn.title = attachmentSlotsFull ? 'Attachment limit reached' : 'Add file';
+    }
     stopRunBtn.disabled = !isLoading;
     if (!isLoading) {
         resetStopRunArm();
@@ -391,9 +399,4 @@ function formatTime(timestamp) {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function openImagePicker() {
-    if (imageBtn.disabled) return;
-    imageInputEl.click();
 }

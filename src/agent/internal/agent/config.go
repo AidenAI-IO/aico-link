@@ -1001,6 +1001,7 @@ func LoadRuntimeConfig(path string) (Config, error) {
 	if err := applyRuntimeModelProviders(&cfg); err != nil {
 		return Config{}, err
 	}
+	applyBackendAgentDefault(&cfg, metadata)
 
 	// base_url belongs to [model_providers.*]. Drop provider-record values for
 	// provider types whose model builders pin their own endpoint.
@@ -1213,6 +1214,33 @@ func applyVoiceModelProviderDefaults(cfg *Config, metadata toml.MetaData) {
 	if !metadata.IsDefined("voice_model", "turn_detection_silence_ms") {
 		cfg.VoiceModel.TurnDetectionSilenceMs = 0
 	}
+}
+
+// applyBackendAgentDefault keeps realtime tools on the realtime model when
+// voice_model.use_backend_agent is omitted and the backend model has no
+// credential, because delegated tasks would fail when the backend model starts.
+// An explicit use_backend_agent value is always preserved.
+func applyBackendAgentDefault(cfg *Config, metadata toml.MetaData) {
+	if cfg == nil || metadata.IsDefined("voice_model", "use_backend_agent") {
+		return
+	}
+	if !modelCredentialConfigured(cfg.Model) {
+		cfg.VoiceModel.UseBackendAgent = false
+	}
+}
+
+// modelCredentialConfigured reports whether the resolved backend model can
+// authenticate. Local providers need no credential; Anthropic also accepts its
+// standard environment variables.
+func modelCredentialConfigured(m ModelConfig) bool {
+	switch strings.ToLower(strings.TrimSpace(m.Provider)) {
+	case "ollama", "fake":
+		return true
+	case "anthropic":
+		token, _ := resolveAnthropicToken(m.APIKey)
+		return token != ""
+	}
+	return ProviderAPIKeyConfigured(m.APIKey)
 }
 
 func clearNonAllowedModelBaseURL(m *ModelConfig) {

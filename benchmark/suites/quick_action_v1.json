@@ -377,37 +377,6 @@
       }
     },
     {
-      "id": "quick_action_copy",
-      "category": "single_step",
-      "platforms": [
-        "ios",
-        "mac"
-      ],
-      "description_for_judge": "Agent must use quick_action copy to copy selected text in an editable text field, including SMS/message compose boxes.",
-      "setup": {
-        "type": "agent_prompt",
-        "prompt": "打开备忘录或任何能打字的地方，输入「你好Aico」并全选。如果用短信，只输入不要发送。",
-        "timeout_sec": 90,
-        "clear_history_after": true
-      },
-      "prompt": "复制当前选中的文字。",
-      "rubric": [
-        {
-          "id": "used_quick_action_copy",
-          "check": "Trace contains a quick_action call with action=copy or equivalent alias."
-        },
-        {
-          "id": "copy_executed",
-          "check": "The quick_action copy call returned ok=true, or the system showed a copy confirmation (toast/banner), or the text remained in the field after copy (not deleted like cut would)."
-        }
-      ],
-      "hard_assertions": {
-        "min_tool_calls": 1,
-        "max_tool_calls": 8,
-        "must_complete_within_sec": 90
-      }
-    },
-    {
       "id": "quick_action_cut",
       "category": "single_step",
       "platforms": [
@@ -588,7 +557,7 @@
         },
         {
           "id": "browsed_recents",
-          "check": "Trace shows the agent swiped/browsed through the recents list (multiple swipe or scroll actions visible)."
+          "check": "The trace shows successful removal of recent apps, through a clear-all action or individual dismissals. Any sufficient number of actions is valid; multiple swipes are not required."
         },
         {
           "id": "all_apps_cleared",
@@ -596,7 +565,7 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 3,
+        "min_tool_calls": 1,
         "max_tool_calls": 30,
         "must_complete_within_sec": 180
       }

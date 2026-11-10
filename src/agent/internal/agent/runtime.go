@@ -1968,7 +1968,9 @@ func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtool
 	capabilities := bridge.bleCapabilities(ctx)
 	cancel()
 
-	openURLAvailable := phoneBridgeReadyForCommand(status, "open_app") || phoneBridgeCanRestoreFromReturnEntry(status)
+	// HTTP(S) URLs fall back to the visible browser, so open_url stays
+	// available whenever that route is configured.
+	openURLAvailable := openURLBridgeRouteAvailable(status) || r.toolSnapshot().openURLBrowserFallbackAvailable()
 	clipboardAvailable := phoneBridgeCommandAvailable(status, "clipboard_read", capabilities.Wake) ||
 		phoneBridgeCommandAvailable(status, "clipboard_write", capabilities.Wake)
 	calendarAvailable := phoneBridgeCommandAvailable(status, "calendar_create", capabilities.Wake) ||

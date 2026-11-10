@@ -114,13 +114,14 @@ commit task Episode and notify background consolidation
 
 ### Runtime Context
 
-Runtime context is supplied per request and is not written back into memory. The phone bridge is the main producer today. It keeps connection status, platform, heartbeat time, app foreground/background state, return-entry state, PiP Bridge state, and the latest phone environment. Each run receives only compact state facts: connection state, system type and version, locale/timezone, screen size, return-entry visibility, PiP/Dynamic Island visibility constraints, and confirmed launchable third-party app candidates. When the bridge disconnects, stale environment data is cleared.
+Runtime context is supplied per request and is not written back into memory. The phone bridge is the main producer today. It keeps connection status, platform, heartbeat time, app foreground/background state, return-entry state, PiP Bridge state, and the latest phone environment. Each run receives only compact state facts: connection state, system type and version, locale/timezone, screen size, return-entry visibility, PiP Bridge state, and confirmed launchable third-party app candidates. When the bridge disconnects, stale environment data is cleared.
 
 Tool availability is evaluated separately from the model-facing runtime-context
 text. Before each conversational run, the Agent filters App-only tools and
 their supported actions from the same live Phone Bridge and BLE capabilities.
 `open_app` remains exposed because it can select BridgeOpenApp or fall back to
-SearchLaunchApp. `open_url`, `bridge_clipboard`, `bridge_calendar`,
+SearchLaunchApp. `open_url` remains exposed when its visible-browser fallback
+for HTTP(S) URLs is configured. `bridge_clipboard`, `bridge_calendar`,
 `bridge_contacts`, and `bridge_notification` are exposed only when foreground
 Phone Bridge, Dynamic Island restoration, PiP/FGS polling, iOS BLE Wake, or the
 direct BLE notification-query path can execute the relevant operation. In an

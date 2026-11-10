@@ -52,7 +52,9 @@ directly. Two front ends forward to it:
   `usb0` (`--usb-terminal-port=3000`), so only USB clients can use it. The
   config web page's `Terminal` link opens this address over USB.
 - The Agent proxies `/webtty/` on port 8080. LAN clients reach it only while
-  LAN access is on; USB clients always can.
+  LAN access is on and after signing in with the device password (see
+  [LAN Sign-In](./device-management-api.md#lan-sign-in)); USB clients always
+  can.
 
 The Docker sandbox runs ttyd itself and proxies `/webtty/` on its published
 Agent Web port.

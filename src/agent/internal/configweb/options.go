@@ -69,6 +69,7 @@ type Options struct {
 	LANGuard           bool
 	LANAccessPath      string
 	DevicePasswordPath string
+	SessionSecretPath  string
 	LANAccessSync      string
 	USBTerminalPort    int
 	TerminalTarget     string
@@ -132,6 +133,7 @@ func DefaultOptions() Options {
 		AgentBinary:               agentBinary,
 		LANAccessPath:             lanaccess.DefaultEnabledPath,
 		DevicePasswordPath:        lanaccess.DefaultPasswordPath,
+		SessionSecretPath:         lanaccess.DefaultSecretPath,
 		LANAccessSync:             envOrDefault("AICO_LAN_ACCESS_SYNC", "/usr/lib/aico/aico-lan-access-sync"),
 		TerminalTarget:            "http://127.0.0.1:3000",
 		AgentInitScript:           envOrDefault("AICO_AGENT_INIT_SCRIPT", "/usr/lib/aico/aico-agent-control"),

@@ -40,6 +40,10 @@ All public endpoints use the `/api` root without an additional version prefix:
 | Agent | `POST /api/agent/restart` | Restart the Agent process; Config Web and the USB link stay up |
 | Security | `GET /api/security/lan-access` | Read the LAN access switch and whether a device password is set |
 | Security | `PUT /api/security/lan-access` | Turn LAN access on or off and set the device password; USB only |
+| Security | `GET /login` | Sign-in page for LAN browsers |
+| Security | `POST /api/auth/login` | Exchange the device password for a session token |
+| Security | `POST /api/auth/logout` | Clear the session cookie |
+| Security | `GET /api/auth/session` | Report whether the request is signed in |
 | Device | `POST /api/device/usb/reenumerate` | Re-enumerate USB HID/ECM |
 | Network | `POST /api/network/wifi/scan` | Scan for nearby Wi-Fi networks |
 | Network | `PUT /api/network/wifi/connection` | Start a bounded asynchronous connect-and-save task |
@@ -280,8 +284,10 @@ link. It is off by default. While it is off:
   which Config Web serves on a `usb0`-bound socket; LAN clients use the Agent's
   `/webtty/`, which follows the switch.
 
-While it is on, all of these serve LAN clients as before. This release does not
-add a web login; the device password is only the `aico` login password.
+While it is on, Config Web and the Agent require LAN clients to sign in with
+the device password (see [LAN Sign-In](#lan-sign-in)); SSH and the web terminal
+ask for the same password as the `aico` login password. USB clients and the
+board itself never sign in.
 
 `GET /api/security/lan-access` never returns the password or its hash:
 
@@ -333,6 +339,7 @@ State lives on userdata so it survives OTA:
 | --- | --- |
 | `/userdata/system/lan-access-enabled` | Present while LAN access is on |
 | `/userdata/system/device-password` | bcrypt hash of the device password (mode 0600) |
+| `/userdata/system/lan-session-secret` | Key that signs LAN session tokens (mode 0600) |
 
 `/usr/lib/aico/aico-lan-access-sync` applies the state: it writes
 `/run/aico/sshd/lan.conf` (included last by `/etc/ssh/sshd_config.d/20-aico.conf`),
@@ -346,6 +353,59 @@ without the rule. Config Web runs the helper after every change.
 
 Docker and host runs of the Agent and Config Web do not pass `-lan-guard` /
 `--lan-guard`, so they are not affected.
+
+### LAN Sign-In
+
+While LAN access is on, Config Web (port 80) and the Agent (port 8080) serve
+the sign-in endpoints themselves and refuse every other LAN request without a
+valid session token:
+
+- Browsers (`GET` with `Accept: text/html`) are redirected with `303` to
+  `/login?next=<original path>`.
+- Other clients receive `401` with `"error": "login_required"` and
+  `WWW-Authenticate: Bearer`.
+
+While LAN access is off, the sign-in endpoints are refused like every other LAN
+request.
+
+`POST /api/auth/login` takes the device password:
+
+```jsonc
+// Content-Type: application/json
+{"password": "device password"}
+// 200
+{"ok": true, "token": "v1.<expiry>.<issued>.<signature>", "expires_at": "2026-12-09T08:00:00Z"}
+```
+
+The response also sets the `aico_session` cookie (`HttpOnly`,
+`SameSite=Strict`, `Path=/`). The `/login` page posts an HTML form to the same
+endpoint and is redirected to its `next` path, which must be a path on the same
+host. Errors are `401 invalid_password`, `403 cross_origin_rejected` (an
+`Origin` header naming another host), and `429 too_many_attempts` with
+`Retry-After`: after five failures from one address, each further failure
+doubles a lockout that starts at 30 seconds and stops at 15 minutes. A
+successful sign-in clears the count.
+
+Requests authenticate with `Authorization: Bearer <token>` or the
+`aico_session` cookie. Cookies are scoped to the host, not the port, so a
+browser signed in on port 80 is also signed in on port 8080, including
+`/webtty/` and the Phone Bridge WebSocket. MCP clients and scripts send the
+bearer token.
+
+A token is valid for 30 days. A browser that uses its cookie more than a day
+after it was issued receives a fresh 30-day cookie, so a browser in regular use
+stays signed in. Tokens are not stored: they are signed with
+`/userdata/system/lan-session-secret`, which the Agent and Config Web share.
+Setting a new device password or turning LAN access off replaces that key and
+signs every LAN client out. `POST /api/auth/logout` only clears the cookie; a
+bearer token stays valid until it expires or the key is replaced.
+
+`GET /api/auth/session` returns `{"ok": true, "via_usb": false,
+"authenticated": true}`.
+
+The board serves plain HTTP, so anyone who can capture traffic on the local
+network can capture the password and the token. Turn LAN access on only on
+trusted networks.
 
 ## API Boundary
 
