@@ -442,8 +442,8 @@ without the device password. Unlike a session token it:
 - still needs LAN access to be on. While it is off, `/mcp` refuses LAN
   clients whatever they send.
 
-Create and revoke tokens in Settings > Advanced > LAN access > MCP access
-tokens, or with these endpoints. They are accepted over USB or from a LAN
+Create and revoke tokens in Settings > Advanced > MCP, or with these
+endpoints. They are accepted over USB or from a LAN
 client signed in with the device password; a token never manages tokens.
 Writes must come from the same origin.
 

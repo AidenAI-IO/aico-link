@@ -1,26 +1,29 @@
 /**
- * MCP access tokens route.
+ * MCP route.
  *
- *   /advanced/lan/mcp   named tokens that let an MCP client on the LAN reach /mcp
+ *   /advanced/mcp   the MCP switch, how to connect, and MCP access tokens
  *
- * A token reaches only the Agent's /mcp, and only while LAN access is on. It
- * does not expire and survives a password change; each one is revoked here on
- * its own. The secret is shown once, when it is created, together with a
- * ready-to-paste client configuration. Clients connected over USB need no
- * token.
+ * MCP clients are usually agents on a computer (Claude Code, Cursor). Over the
+ * USB cable they connect to 192.168.42.1 with no credentials. Over Wi-Fi they
+ * need LAN access on and an MCP access token: a token reaches only the Agent's
+ * /mcp, does not expire, survives a password change, and is revoked here on its
+ * own. The secret is shown once, when it is created, together with a
+ * ready-to-paste client configuration.
  */
 
-import {ensureSnapshot, request} from '../data.js';
+import {adoptSaved, ensureSnapshot, request} from '../data.js';
 import {createSaver} from '../saver.js';
 import {button} from '../../ui/button.js';
 import {confirmSheet} from '../../ui/confirm.js';
 import {el, replace} from '../../ui/dom.js';
 import {group, row, screen} from '../../ui/list.js';
 import {sheet} from '../../ui/sheet.js';
+import {setChecked, switchControl} from '../../ui/switch.js';
 import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
 const MCP_TOKENS_API = '/api/security/mcp-tokens';
+const USB_MCP_ENDPOINT = 'http://192.168.42.1:8080/mcp';
 
 function fetchTokens() {
   return request(MCP_TOKENS_API, {cache: 'no-store'});
@@ -39,20 +42,23 @@ function revokeToken(id) {
 }
 
 /**
- * The MCP URL a LAN client uses. Over USB the page is on 192.168.42.1, which a
- * LAN client cannot reach, so the board's Wi-Fi address is used instead when
- * it is known.
+ * The MCP URL a Wi-Fi client uses: the board's Wi-Fi address when it is known,
+ * otherwise the address this page was opened on unless that is the USB link.
+ * Empty when neither is known.
  */
-export function mcpEndpoint(location = window.location, wifiAddress = '') {
-  const host = location.hostname === '192.168.42.1' && wifiAddress ? wifiAddress : location.hostname;
-  return `http://${host}:8080/mcp`;
+export function wifiEndpoint(location = window.location, wifiAddress = '') {
+  const host = wifiAddress || (location.hostname !== '192.168.42.1' ? location.hostname : '');
+  return host ? `http://${host}:8080/mcp` : '';
 }
 
-/** Client configuration snippets for a new token. */
-export function mcpClientSnippets(endpoint, secret) {
+/** Client configuration snippets; `secret` is omitted for the USB link. */
+export function mcpClientSnippets(endpoint, secret = '') {
+  const header = secret ? ` --header "Authorization: Bearer ${secret}"` : '';
+  const server = {type: 'http', url: endpoint};
+  if (secret) server.headers = {Authorization: `Bearer ${secret}`};
   return {
-    claudeCode: `claude mcp add --transport http aico ${endpoint} --header "Authorization: Bearer ${secret}"`,
-    json: JSON.stringify({mcpServers: {aico: {type: 'http', url: endpoint, headers: {Authorization: `Bearer ${secret}`}}}}, null, 2),
+    claudeCode: `claude mcp add --transport http aico ${endpoint}${header}`,
+    json: JSON.stringify({mcpServers: {aico: server}}, null, 2),
   };
 }
 
@@ -88,29 +94,54 @@ function nameInput() {
   });
 }
 
-function showSecret(secret, endpoint) {
+function configSheet({title, intro, endpoint, secret}) {
   const snippets = mcpClientSnippets(endpoint, secret);
   sheet({
-    title: msg('mcp.created_title', '令牌已创建'),
+    title,
     body: [el('div', {}, [
-      text(msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。'), 'page__note'),
-      codeBlock(secret, 'copy-mcp-token'),
+      text(intro, 'page__note'),
+      secret ? codeBlock(secret, 'copy-mcp-token') : null,
       text(msg('mcp.claude_code', 'Claude Code'), 'ds-field__help'),
       codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
       text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-field__help'),
       codeBlock(snippets.json, 'copy-mcp-json'),
-    ])],
+    ].filter(Boolean))],
   }).open();
 }
 
-export async function mcpTokensPage(context) {
+function showSecret(secret, endpoint) {
+  configSheet({
+    title: msg('mcp.created_title', '令牌已创建'),
+    intro: msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。'),
+    endpoint,
+    secret,
+  });
+}
+
+function showUSBConfig() {
+  configSheet({
+    title: msg('mcp.usb_title', '通过 USB 连接'),
+    intro: msg('mcp.usb_help', '用数据线把电脑连上设备，不需要令牌。'),
+    endpoint: USB_MCP_ENDPOINT,
+  });
+}
+
+export async function mcpPage(context) {
+  const snapshot = await ensureSnapshot(context);
   const body = el('div');
-  const saver = createSaver(context, {title: msg('mcp.title', 'MCP 访问令牌'), back: '/advanced/lan', root: body});
+  const saver = createSaver(context, {
+    title: msg('advanced.mcp_enabled', 'MCP'),
+    back: '/advanced',
+    root: body,
+    onSaved: adoptSaved(snapshot, () => render()),
+  });
+  const mcpSaved = () => snapshot?.config?.agent?.mcp_enabled !== false;
+  const wifiAddress = ((snapshot && snapshot.wifi_status) || {}).ip_address || '';
+  let mcpDraft = mcpSaved();
+  let mcpSaving = false;
   let state = null;
   let loadError = null;
   let busy = false;
-  const snapshot = await ensureSnapshot(context);
-  const wifiAddress = ((snapshot && snapshot.wifi_status) || {}).ip_address || '';
 
   async function load() {
     try {
@@ -118,6 +149,22 @@ export async function mcpTokensPage(context) {
       loadError = null;
     } catch (error) {
       loadError = error;
+    }
+  }
+
+  async function saveMCP(next) {
+    if (mcpSaving) return;
+    const previous = mcpDraft;
+    mcpDraft = next;
+    mcpSaving = true;
+    render();
+    try {
+      const outcome = await saver.change('agent.mcp_enabled', {agent: {mcp_enabled: next}});
+      if (outcome === 'invalid' || outcome === 'failed') mcpDraft = previous;
+      else mcpDraft = mcpSaved();
+    } finally {
+      mcpSaving = false;
+      render();
     }
   }
 
@@ -147,7 +194,7 @@ export async function mcpTokensPage(context) {
         view.close();
         await load();
         render();
-        showSecret(created.secret, mcpEndpoint(window.location, wifiAddress));
+        showSecret(created.secret, wifiEndpoint(window.location, wifiAddress) || 'http://<board-ip>:8080/mcp');
       } catch (failure) {
         error.hidden = false;
         error.textContent = failure && failure.message ? failure.message : resolve(msg('lan.save_failed', '保存失败'));
@@ -180,43 +227,6 @@ export async function mcpTokensPage(context) {
       await load();
       render();
     }
-  }
-
-  function render() {
-    if (!state) {
-      replace(body, [group({rows: [row({
-        label: msg('mcp.title', 'MCP 访问令牌'),
-        value: msg('lan.unavailable', '无法读取'),
-        tone: 'danger',
-        description: loadError && loadError.message ? loadError.message : null,
-      })]})]);
-      saver.refreshChrome();
-      return;
-    }
-    const tokens = Array.isArray(state.tokens) ? state.tokens : [];
-    const rows = tokens.map(token => row({
-      label: token.name,
-      description: new Date(token.created_at).toLocaleString(),
-      value: msg('mcp.revoke', '撤销'),
-      tone: 'danger',
-      action: 'revoke-mcp-token',
-      onPress: busy ? undefined : () => revoke(token),
-    }));
-    const full = tokens.length >= (state.max_tokens || 20);
-    rows.push(row({
-      label: msg('mcp.create', '创建令牌'),
-      labelTone: 'accent',
-      action: 'create-mcp-token',
-      onPress: busy ? undefined : () => (full ? toast(msg('mcp.limit', '令牌数量已达上限，请先撤销一个')) : askName()),
-    }));
-    replace(body, [
-      group({
-        rows,
-        note: msg('mcp.help', '局域网里的 MCP 客户端用令牌连接 Agent 的 /mcp，不需要设备密码。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。通过 USB 连接的客户端不需要令牌。'),
-      }),
-      state.lan_access ? null : text(msg('mcp.lan_off', '局域网访问未开启，令牌暂时不能使用。'), 'page__note'),
-    ].filter(Boolean));
-    saver.refreshChrome();
   }
 
   await load();

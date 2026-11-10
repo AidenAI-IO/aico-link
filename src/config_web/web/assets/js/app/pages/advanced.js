@@ -1,7 +1,7 @@
 /**
  * Advanced routes.
  *
- *   /advanced             entries: logs, manual configuration, terminal, LAN access
+ *   /advanced             entries: logs, manual configuration, terminal, LAN access, MCP
  *   /advanced/logs        live logs, raw model HTTP logging, log level, retention, export
  *   /advanced/logs/agent  the Agent log, tailed live, with the Agent's run state
  *   /advanced/logs/level  log level choice
@@ -96,7 +96,6 @@ export async function advancedPage(context) {
     root: body,
     onSaved: adoptSaved(snapshot, () => render()),
   });
-  const mcpSaved = () => snapshot?.config?.agent?.mcp_enabled !== false;
   // The row still opens its page when the state cannot be read; the page
   // reports the error itself.
   let lanAccess = null;
@@ -104,38 +103,7 @@ export async function advancedPage(context) {
     lanAccess = state;
     render();
   }).catch(() => {});
-  let mcpDraft = mcpSaved();
-  let mcpSaving = false;
-
-  async function saveMCP(next) {
-    if (mcpSaving) return;
-    const previous = mcpDraft;
-    mcpDraft = next;
-    mcpSaving = true;
-    render();
-    try {
-      const outcome = await saver.change('agent.mcp_enabled', {agent: {mcp_enabled: next}});
-      if (outcome === 'invalid' || outcome === 'failed') mcpDraft = previous;
-      else mcpDraft = mcpSaved();
-    } finally {
-      mcpSaving = false;
-      render();
-    }
-  }
-
   function render() {
-    const mcpToggle = switchControl({
-      checked: mcpDraft,
-      label: msg('advanced.mcp_enabled', 'MCP'),
-      onChange: next => {
-        if (mcpSaving) {
-          setChecked(mcpToggle, mcpDraft);
-          return;
-        }
-        saveMCP(next);
-      },
-    });
-    if (mcpSaving) mcpToggle.disabled = true;
     replace(body, [
       group({
         rows: [
@@ -167,9 +135,10 @@ export async function advancedPage(context) {
         rows: [
           row({
             label: msg('advanced.mcp_enabled', 'MCP'),
-            description: msg('advanced.mcp_enabled_help', '允许电脑上的 Agent 调用设备工具。通过 Wi-Fi 使用需开启局域网访问。'),
-            accessory: mcpToggle,
-            action: 'toggle-mcp-enabled',
+            value: snapshot?.config?.agent?.mcp_enabled === false ? msg('lan.off', '已关闭') : msg('lan.on', '已开启'),
+            chevron: true,
+            action: 'open-mcp',
+            onPress: () => context.navigate('/advanced/mcp'),
           }),
         ],
       }),

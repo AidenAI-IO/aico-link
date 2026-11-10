@@ -25,7 +25,7 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `mcp_enabled` | `true` | `[conversation_settings.agent]` in `agent.toml`, or Config Web → Advanced |
+| `mcp_enabled` | `true` | `[conversation_settings.agent]` in `agent.toml`, or Config Web → Advanced → MCP |
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
@@ -39,8 +39,8 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 | LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
 | LAN, LAN access on | `Authorization: Bearer <MCP access token>` |
 
-Create an MCP access token in Config Web: Settings > Advanced > LAN access >
-MCP access tokens > Create token. The secret is shown once, with ready-to-paste
+Config Web → Advanced → MCP holds the MCP switch, the USB connection settings,
+and the MCP access tokens. Create a token under "Over Wi-Fi" > Create token. The secret is shown once, with ready-to-paste
 configuration. A token reaches only `/mcp`, does not expire, survives a
 device-password change, and is revoked on its own on the same page. See
 [MCP Access Tokens](../03-services/device-management-api.md#mcp-access-tokens)
