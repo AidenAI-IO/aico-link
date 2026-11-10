@@ -45,6 +45,14 @@ const (
 	// defaultKeyboardTapHoldMs matches example_usb_hid's default tap duration.
 	// Zero hold often fails on macOS/iOS hosts that miss sub-frame modifier chords.
 	defaultKeyboardTapHoldMs = 50
+
+	// keyboardTextHoldDelay and keyboardTextGapDelay pace HID text typing.
+	// Back-to-back press/release reports (about 1 ms apart) let some app text
+	// fields drop characters, while a physical keyboard types fine. A 20 ms hold
+	// plus a 30 ms gap was verified on device and still types about 20
+	// characters per second.
+	keyboardTextHoldDelay = 20 * time.Millisecond
+	keyboardTextGapDelay  = 30 * time.Millisecond
 )
 
 // pointerController sends hid.usb1 reports in absolute mouse or touchscreen mode.
@@ -227,11 +235,18 @@ func (t *KeyboardTextTool) Call(ctx context.Context, input string) (string, erro
 			report := make([]byte, 8)
 			report[0] = stroke.Modifier
 			report[2] = stroke.Usage
-			// Press then release immediately, same as keyboard_tap.
 			if err := t.dev.Write(report); err != nil {
 				return err
 			}
+			holdErr := sleepWithContext(ctx, keyboardTextHoldDelay)
+			// Always release, even when cancelled mid-hold, so no key stays down.
 			if err := t.dev.Write(releaseReport); err != nil {
+				return err
+			}
+			if holdErr != nil {
+				return holdErr
+			}
+			if err := sleepWithContext(ctx, keyboardTextGapDelay); err != nil {
 				return err
 			}
 		}

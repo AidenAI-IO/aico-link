@@ -17,10 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"aico-agent/internal/usbuplink"
 	xproxy "golang.org/x/net/proxy"
 )
 
-func startTestProxy(t *testing.T, config Config, fallback Upstreams) (*Server, *url.URL) {
+func startTestProxy(t *testing.T, config Config, fallback Upstreams, usb ...*usbuplink.Manager) (*Server, *url.URL) {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "wifi-proxies.json")
 	if err := Save(configPath, config); err != nil {
@@ -29,6 +30,9 @@ func startTestProxy(t *testing.T, config Config, fallback Upstreams) (*Server, *
 	server, err := NewServer(DefaultListenAddress, configPath, "missing-test-interface", fallback)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(usb) > 0 {
+		server.usbInternet = usb[0]
 	}
 	server.SetEnvironmentPath("")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -98,7 +102,7 @@ func TestLocalSOCKS5EntryUsesSOCKS5Upstream(t *testing.T) {
 	}
 }
 
-func startSOCKS5TestServer(t *testing.T) (string, *atomic.Int32) {
+func startSOCKS5TestServer(t *testing.T, targets ...string) (string, *atomic.Int32) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -139,7 +143,11 @@ func startSOCKS5TestServer(t *testing.T) (string, *atomic.Int32) {
 				if _, err := io.ReadFull(client, port[:]); err != nil {
 					return
 				}
-				remote, err := net.Dial("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", binary.BigEndian.Uint16(port[:]))))
+				target := net.JoinHostPort(host, fmt.Sprintf("%d", binary.BigEndian.Uint16(port[:])))
+				if len(targets) > 0 {
+					target = targets[0]
+				}
+				remote, err := net.Dial("tcp", target)
 				if err != nil {
 					_ = writeSOCKS5Reply(client, 0x05)
 					return
@@ -569,5 +577,109 @@ func TestSSIDCustomHTTPProxySupportsAuthenticatedHTTPSConnect(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if string(body) != "secure through upstream" || connects.Load() != 1 {
 		t.Fatalf("body=%q upstream CONNECTs=%d", body, connects.Load())
+	}
+}
+
+func TestUSBInternetOverridesSSIDAndDisablingStopsProxyTraffic(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "USB response") }))
+	defer origin.Close()
+	originURL, _ := url.Parse(origin.URL)
+	address, handshakes := startSOCKS5TestServer(t, originURL.Host)
+	manager, err := usbuplink.New(filepath.Join(t.TempDir(), "usb.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Register(usbuplink.Request{ID: strings.Repeat("a", 32), Host: "mac", Peer: "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.Current().Upstream.Host = address // Ephemeral fixture port, before serving any requests.
+	config := EmptyConfig()
+	config.Networks["Office"] = Network{Mode: ModeDirect}
+	local, proxyURL := startTestProxy(t, config, Upstreams{}, manager)
+	local.SetCurrentSSID("Office")
+	for _, host := range []string{"localhost", "LOCALHOST", "127.0.0.2", "127.255.255.254", "::1", "::ffff:127.0.0.2", "192.168.42.100"} {
+		route, err := local.routeForHost(host, "8080", "http")
+		if err != nil || route.upstream != nil || route.lease != nil {
+			t.Fatalf("local destination %q routed through USB: %+v, %v", host, route, err)
+		}
+	}
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+	response, err := client.Get("http://usb-only.invalid/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || string(data) != "USB response" || handshakes.Load() != 1 {
+		t.Fatal(response.StatusCode, string(data), handshakes.Load())
+	}
+	if err := manager.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Get("http://usb-only.invalid/download")
+	if err == nil {
+		response.Body.Close()
+		if response.StatusCode == 200 {
+			t.Fatal("USB still forwards while disabled")
+		}
+	}
+	if handshakes.Load() != 1 {
+		t.Fatal("disabled session dialed the host")
+	}
+	upstream, err := local.upstreamFor(&url.URL{Scheme: "https", Host: "example.com:443"})
+	if err != nil || upstream != nil {
+		t.Fatal("SSID direct policy not restored", err)
+	}
+}
+
+func TestUSBSetupFailureKeepsCoreProxyAvailable(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "core proxy available")
+	}))
+	defer origin.Close()
+	for _, failure := range []string{"invalid settings", "unreadable settings", "non-socket control path", "invalid socket parent"} {
+		t.Run(failure, func(t *testing.T) {
+			directory := t.TempDir()
+			settings := filepath.Join(directory, "usb.json")
+			socket := filepath.Join(directory, "control.sock")
+			var err error
+			switch failure {
+			case "invalid settings":
+				err = os.WriteFile(settings, []byte("not JSON"), 0600)
+			case "unreadable settings":
+				err = os.Mkdir(settings, 0700)
+			case "non-socket control path":
+				err = os.WriteFile(socket, []byte("reserved"), 0600)
+			case "invalid socket parent":
+				err = os.WriteFile(socket, []byte("reserved"), 0600)
+				socket = filepath.Join(socket, "control.sock")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			local, proxyURL := startTestProxy(t, EmptyConfig(), Upstreams{})
+			stop := local.startUSBInternet(settings, socket)
+			t.Cleanup(stop)
+			if local.usbInternet != nil {
+				t.Fatal("failed USB setup installed a manager")
+			}
+			transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+			defer transport.CloseIdleConnections()
+			response, err := (&http.Client{Transport: transport, Timeout: time.Second}).Get(origin.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			body, err := io.ReadAll(response.Body)
+			if err != nil || response.StatusCode != http.StatusOK || string(body) != "core proxy available" {
+				t.Fatalf("core proxy failed after USB setup error: %d %q %v", response.StatusCode, body, err)
+			}
+		})
 	}
 }

@@ -442,6 +442,7 @@ func (s *ToolSet) refreshOpenAppTool() {
 	openApp := NewOpenAppTool(s.phoneBridge, s.phoneBridgeRestorer, s.searchOpenTool)
 	if screenshot, ok := s.tools["screenshot"]; ok && screenshot != nil {
 		s.tools[toolOpenApp] = newPostActionScreenshotTool(openApp, screenshot, postActionScreenshotDelay)
+		s.applyUIGrounding()
 		return
 	}
 	s.tools[toolOpenApp] = openApp
@@ -454,6 +455,7 @@ func (s *ToolSet) refreshOpenURLTool() {
 	openURL := newOpenURLToolWithBrowser(s.phoneBridge, s.phoneBridgeRestorer, s.searchOpenTool)
 	if screenshot, ok := s.tools["screenshot"]; ok && screenshot != nil {
 		s.tools[toolOpenURL] = newPostActionScreenshotTool(openURL, screenshot, postActionScreenshotDelay)
+		s.applyUIGrounding()
 		return
 	}
 	s.tools[toolOpenURL] = openURL

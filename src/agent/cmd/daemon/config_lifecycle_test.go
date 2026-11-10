@@ -366,6 +366,7 @@ func TestVoiceConfigCoversVoiceLoopFields(t *testing.T) {
 		"MCPEnabled":                 "HTTP /mcp gated from runtime snapshot; not used by voice loop",
 		"MCPShellEnabled":            "HTTP /mcp gated from runtime snapshot; not used by voice loop",
 		"MCPConfigWebBaseURL":        "HTTP /mcp gated from runtime snapshot; not used by voice loop",
+		"UIGroundingEnabled":         "read live by the runtime and its screenshot tools; not used by voice loop",
 	}
 	filledValue := fillNonZeroValue(t, reflect.TypeOf(agent.Config{}))
 	filled := filledValue.Interface().(agent.Config)

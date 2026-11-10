@@ -19,6 +19,7 @@ import {isEmbedded} from '../../ui/environment.js';
 import {postToHost} from '../host.js';
 import {createSaver} from '../saver.js';
 import {fetchLANAccess} from './lan-access.js';
+import {usbInternetSettings} from './usb-internet.js';
 import {choiceSheet} from '../../ui/choice-sheet.js';
 import {el, replace} from '../../ui/dom.js';
 import {icon} from '../../ui/icon.js';
@@ -96,6 +97,7 @@ export async function advancedPage(context) {
     root: body,
     onSaved: adoptSaved(snapshot, () => render()),
   });
+  const usbInternet = usbInternetSettings();
   // The row still opens its page when the state cannot be read; the page
   // reports the error itself.
   let lanAccess = null;
@@ -138,6 +140,7 @@ export async function advancedPage(context) {
           }),
         ],
       }),
+      usbInternet,
     ]);
     saver.refreshChrome();
   }

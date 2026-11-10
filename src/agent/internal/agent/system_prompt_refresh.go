@@ -14,7 +14,7 @@ import (
 // refresh paths.
 const userProfileSectionHeader = "\n\n## User profile\n" +
 	"The user saved these profile entries, preferences, and rules. Apply them whenever relevant without asking again. " +
-	"The user's words in this conversation take precedence. Use recall_memory for other saved facts.\n"
+	"The user's words in this conversation take precedence. This list is partial: facts and sensitive memories are never listed here, so use recall_memory for anything else the user may have saved.\n"
 
 // withUserProfileSection returns the system message with its user profile
 // section replaced by profile, or removed when profile is empty.

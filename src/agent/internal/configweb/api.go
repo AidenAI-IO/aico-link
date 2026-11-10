@@ -70,6 +70,10 @@ const (
 	apiMCPTokensGet
 	apiMCPTokensCreate
 	apiMCPTokenRevoke
+	apiUSBInternetGet
+	apiUSBInternetPut
+	apiUSBInternetSessionPut
+	apiUSBInternetSessionDelete
 )
 
 type routeVariant struct{ method, path string }
@@ -80,6 +84,10 @@ type apiRoute struct {
 }
 
 var apiRoutes = []apiRoute{
+	{apiUSBInternetGet, routeVariant{http.MethodGet, apiPrefix + "/network/usb-internet"}},
+	{apiUSBInternetPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet"}},
+	{apiUSBInternetSessionPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet/session"}},
+	{apiUSBInternetSessionDelete, routeVariant{http.MethodDelete, apiPrefix + "/network/usb-internet/session"}},
 	{apiDeviceSnapshot, routeVariant{http.MethodGet, apiPrefix + "/device/snapshot"}},
 	{apiConfigApplication, routeVariant{http.MethodGet, apiPrefix + "/config/application"}},
 	{apiConfigGet, routeVariant{http.MethodGet, apiPrefix + "/config"}},
@@ -221,6 +229,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	s.startDeferredRestartIfIdle()
 	w.Header().Set("X-Aico-API-Version", "1")
 	switch match.endpoint {
+	case apiUSBInternetGet, apiUSBInternetPut, apiUSBInternetSessionPut, apiUSBInternetSessionDelete:
+		s.handleUSBInternet(w, r)
 	case apiDeviceSnapshot:
 		s.handleGetDeviceSnapshot(w, r)
 	case apiConfigApplication:
@@ -346,7 +356,7 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
 		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
-		apiLANAccessPut:
+		apiLANAccessPut, apiUSBInternetPut:
 		return true
 	default:
 		return false
