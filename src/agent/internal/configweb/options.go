@@ -10,6 +10,7 @@ import (
 
 	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/netproxy"
+	"aico-agent/internal/usbuplink"
 	"aico-agent/internal/wifiproxy"
 )
 
@@ -43,6 +44,7 @@ type Options struct {
 	CmdlinePath               string
 	SystemEnvPath             string
 	WiFiProxyConfigPath       string
+	USBInternetSocketPath     string
 	LocalProxyAddress         string
 	LocalProxyEnvironmentPath string
 	StorageStatePath          string
@@ -112,6 +114,7 @@ func DefaultOptions() Options {
 		CmdlinePath:               "/proc/cmdline",
 		SystemEnvPath:             defaultSystemEnvPath,
 		WiFiProxyConfigPath:       wifiproxy.DefaultConfigPath,
+		USBInternetSocketPath:     usbuplink.DefaultSocketPath,
 		LocalProxyAddress:         wifiproxy.DefaultListenAddress,
 		LocalProxyEnvironmentPath: envOrDefault("AICO_WIFI_PROXY_ENVIRONMENT", wifiproxy.DefaultEnvironmentPath),
 		StorageStatePath:          "/run/aico/storage.state",
