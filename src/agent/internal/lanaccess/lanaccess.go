@@ -53,14 +53,17 @@ var (
 // signing key, all kept as files so the Agent and Config Web processes see
 // the same state without coordinating.
 type State struct {
-	EnabledPath  string
-	PasswordPath string
-	SecretPath   string
+	EnabledPath   string
+	PasswordPath  string
+	SecretPath    string
+	MCPTokensPath string
 
 	secretMu sync.Mutex
+	mcpMu    sync.Mutex
 }
 
-// NewState uses the default path for each empty argument.
+// NewState uses the default path for each empty argument. MCP access tokens
+// are kept next to the device password.
 func NewState(enabledPath, passwordPath, secretPath string) *State {
 	if strings.TrimSpace(enabledPath) == "" {
 		enabledPath = DefaultEnabledPath
@@ -71,7 +74,12 @@ func NewState(enabledPath, passwordPath, secretPath string) *State {
 	if strings.TrimSpace(secretPath) == "" {
 		secretPath = DefaultSecretPath
 	}
-	return &State{EnabledPath: enabledPath, PasswordPath: passwordPath, SecretPath: secretPath}
+	return &State{
+		EnabledPath:   enabledPath,
+		PasswordPath:  passwordPath,
+		SecretPath:    secretPath,
+		MCPTokensPath: filepath.Join(filepath.Dir(passwordPath), filepath.Base(DefaultMCPTokensPath)),
+	}
 }
 
 // Enabled reports whether LAN access is on. Any error other than a missing
@@ -263,10 +271,16 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 
 // Guard admits requests from the USB link and the board itself. Other
 // requests are refused while LAN access is off; while it is on they need a
-// session token from the login endpoints, which Guard serves itself.
+// session token from the login endpoints, which Guard serves itself, or an
+// MCP access token on /mcp. Browser requests made on behalf of another site
+// are refused first, wherever they come from (see CrossSiteReason).
 func Guard(state *State, next http.Handler) http.Handler {
 	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reason := CrossSiteReason(r); reason != "" {
+			rejectCrossSite(w, reason)
+			return
+		}
 		trusted := IsTrusted(r)
 		enabled := state.Enabled()
 		switch {
@@ -277,6 +291,10 @@ func Guard(state *State, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		case enabled:
+			if mcpTokenValid(state, r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			if sessionValid(state, w, r, auth.now()) {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticatedContextKey{}, true)))
 				return
@@ -298,6 +316,17 @@ func Guard(state *State, next http.Handler) http.Handler {
 			"error":   "lan_access_disabled",
 			"message": disabledMessage,
 		})
+	})
+}
+
+func rejectCrossSite(w http.ResponseWriter, reason string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      false,
+		"error":   reason,
+		"message": "Requests from other sites are refused. Open the board by its IP address.",
 	})
 }
 

@@ -1,7 +1,8 @@
 /**
  * LAN access route.
  *
- *   /advanced/lan   the LAN access switch and the device password
+ *   /advanced/lan   the LAN access switch, the device password, and a link
+ *                   to MCP access tokens (/advanced/lan/mcp)
  *
  * While LAN access is off, the settings page (80), the Agent (8080), the web
  * terminal and SSH answer only the USB link. Turning it on needs a device password, which also
@@ -216,6 +217,18 @@ export async function lanAccessPage(context) {
             {}, msg('lan.password_saved', '设备密码已更新')),
     });
 
+    // Managing tokens needs USB or a signed-in LAN session, which is every
+    // way this page can be reached, so the link is always shown.
+    const mcpRow = group({
+      rows: [row({
+        label: msg('mcp.title', 'MCP 访问令牌'),
+        chevron: true,
+        action: 'open-mcp-tokens',
+        onPress: () => context.navigate('/advanced/lan/mcp'),
+      })],
+      note: msg('mcp.entry_help', '让局域网里的 MCP 客户端（如 Claude Code、Cursor）不用设备密码就能连接。'),
+    });
+
     const signOut = editable ? null : group({rows: [row({
       label: msg('lan.sign_out', '退出登录'),
       tone: 'danger',
@@ -242,6 +255,7 @@ export async function lanAccessPage(context) {
         rows: [passwordRow],
         note: msg('lan.password_help', '局域网设备用这个密码登录，它同时是 aico 账号的密码，用于网页终端和 SSH。修改密码或关闭局域网访问会让所有局域网设备退出登录。'),
       }),
+      mcpRow,
       signOut,
     ].filter(Boolean));
     saver.refreshChrome();

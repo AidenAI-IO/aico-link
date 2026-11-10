@@ -295,7 +295,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if handler == nil {
 		t.Fatal("shared listener never started")
 	}
-	request := httptest.NewRequest(http.MethodGet, "/share/report.txt", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.1:8000/share/report.txt", nil)
 	request.RemoteAddr = "192.168.1.2:12345"
 	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 8000}))
 	response := httptest.NewRecorder()
@@ -319,7 +319,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated LAN request bypassed guard: %d", response.Code)
 	}
-	login := httptest.NewRequest(http.MethodPost, lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`))
+	login := httptest.NewRequest(http.MethodPost, "http://192.168.1.1:8000"+lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`))
 	login.RemoteAddr = request.RemoteAddr
 	login.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()

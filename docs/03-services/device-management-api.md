@@ -285,9 +285,29 @@ link. It is off by default. While it is off:
   `/webtty/`, which follows the switch.
 
 While it is on, Config Web and the Agent require LAN clients to sign in with
-the device password (see [LAN Sign-In](#lan-sign-in)); SSH and the web terminal
-ask for the same password as the `aico` login password. USB clients and the
-board itself never sign in.
+the device password (see [LAN Sign-In](#lan-sign-in)), or, for `/mcp` only, to
+send an [MCP access token](#mcp-access-tokens); SSH and the web terminal ask
+for the same password as the `aico` login password. USB clients and the board
+itself never sign in.
+
+### Cross-Site Requests
+
+USB clients need no credentials, but the phone or computer at the other end of
+the cable also runs a browser, and a page it loads can send requests to
+`192.168.42.1` that arrive on the USB socket like the app's own. Config Web,
+the Agent, and the USB terminal on port 3000 therefore refuse browser requests
+made on behalf of another site, before any other check and on every
+connection, with `403` and one of these errors:
+
+| Error | Request |
+| --- | --- |
+| `cross_site_request` | `Sec-Fetch-Site: cross-site`, except a top-level `GET` navigation (`Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`), such as following a shared-file link |
+| `host_not_allowed` | `Host` is a name other than `localhost`, not an IP address (DNS rebinding) |
+| `origin_not_allowed` | `Origin` is `null`, is not an `http`/`https` URL whose host is an IP address or `localhost`, or does not match `Host` |
+
+Native clients (the companion app, MCP hosts, `curl`) send neither `Origin` nor
+`Sec-Fetch-Site` and address the board by IP, so they are unaffected. Open the
+board by its IP address; a hostname such as an mDNS `.local` name is refused.
 
 `GET /api/security/lan-access` never returns the password or its hash:
 
@@ -340,6 +360,7 @@ State lives on userdata so it survives OTA:
 | `/userdata/system/lan-access-enabled` | Present while LAN access is on |
 | `/userdata/system/device-password` | bcrypt hash of the device password (mode 0600) |
 | `/userdata/system/lan-session-secret` | Key that signs LAN session tokens (mode 0600) |
+| `/userdata/system/mcp-tokens.json` | Names, creation times, and SHA-256 hashes of MCP access tokens (mode 0600) |
 
 `/usr/lib/aico/aico-lan-access-sync` applies the state: it writes
 `/run/aico/sshd/lan.conf` (included last by `/etc/ssh/sshd_config.d/20-aico.conf`),
@@ -389,8 +410,9 @@ successful sign-in clears the count.
 Requests authenticate with `Authorization: Bearer <token>` or the
 `aico_session` cookie. Cookies are scoped to the host, not the port, so a
 browser signed in on port 80 is also signed in on port 8080, including
-`/webtty/` and the Phone Bridge WebSocket. MCP clients and scripts send the
-bearer token.
+`/webtty/` and the Phone Bridge WebSocket. Scripts send the bearer token; MCP
+clients should use an [MCP access token](#mcp-access-tokens) instead, which
+does not expire and reaches only `/mcp`.
 
 A token is valid for 30 days. A browser that uses its cookie more than a day
 after it was issued receives a fresh 30-day cookie, so a browser in regular use
@@ -406,6 +428,47 @@ bearer token stays valid until it expires or the key is replaced.
 The board serves plain HTTP, so anyone who can capture traffic on the local
 network can capture the password and the token. Turn LAN access on only on
 trusted networks.
+
+### MCP Access Tokens
+
+An MCP access token lets an MCP client on the LAN reach the Agent's `/mcp`
+without the device password. Unlike a session token it:
+
+- reaches only `POST /mcp` on port 8080. It is refused everywhere else,
+  including `/api/tools/*` (which would bypass the MCP tool allowlist and the
+  `mcp_shell_enabled` gate), Config Web, backup, and the terminal;
+- does not expire, and survives a password change. Each token is named when
+  it is created and revoked on its own;
+- still needs LAN access to be on. While it is off, `/mcp` refuses LAN
+  clients whatever they send.
+
+Create and revoke tokens in Settings > Advanced > LAN access > MCP access
+tokens, or with these endpoints. They are accepted over USB or from a LAN
+client signed in with the device password; a token never manages tokens.
+Writes must come from the same origin.
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/security/mcp-tokens` | List tokens (never their secret or hash) |
+| `POST` | `/api/security/mcp-tokens` | Create a token: `{"name": "MacBook Claude Code"}` |
+| `DELETE` | `/api/security/mcp-tokens/{id}` | Revoke one token |
+
+```jsonc
+// POST /api/security/mcp-tokens → 201
+{"ok": true,
+ "token": {"id": "3f9a1c0b7e2d", "name": "MacBook Claude Code", "created_at": "2026-11-10T08:00:00Z"},
+ "secret": "aico_mcp_3f9a1c0b7e2d_<43 characters>"}
+// GET /api/security/mcp-tokens → 200
+{"ok": true, "tokens": [{"id": "3f9a1c0b7e2d", "name": "MacBook Claude Code", "created_at": "2026-11-10T08:00:00Z"}],
+ "lan_access": true, "max_tokens": 20}
+```
+
+The secret is returned once and is not stored: the board keeps only its
+SHA-256 hash. A name is 1 to 64 characters on one line; at most 20 tokens
+exist at a time (`400` otherwise). Revoking an unknown ID returns `404`. A
+missing or damaged token file accepts no token. Clients send the secret as
+`Authorization: Bearer <secret>`; see [MCP](../04-agent/mcp.md#authentication)
+for client configuration.
 
 ## API Boundary
 

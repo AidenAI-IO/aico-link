@@ -1687,3 +1687,26 @@
 .ds-swipe__content--dragging:active {
   background-image: none;
 }
+
+/* A copyable value shown once, e.g. a new MCP access token. */
+.ds-code-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  margin: var(--space-sm) 0 var(--space-md);
+}
+
+.ds-code {
+  margin: 0;
+  padding: var(--space-md);
+  border-radius: var(--radius-field);
+  background: var(--color-canvas);
+  border: 1px solid var(--color-field-border);
+  font-family: var(--font-family-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  -webkit-user-select: text;
+  user-select: text;
+}
