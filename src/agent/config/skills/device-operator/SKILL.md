@@ -29,7 +29,7 @@ Use this skill when the task requires operating a visible connected device UI. T
 
 Always operate through a visual feedback loop:
 
-1. Observe the current screen. A user message does not carry a screenshot, so call `screenshot` (or `wait_for_stable_screen` while the screen may still be changing) unless a tool in this turn already returned a current image.
+1. Observe the current screen in an attached screenshot, or use `screenshot` or `wait_for_stable_screen` when no current image is available.
 2. Compare the observed state with the requested final state. If it is already satisfied, stop and report that no input action was needed.
 3. Otherwise, decide the smallest next UI action that could make progress and act with one input or semantic tool.
 4. Inspect the resulting screen.
@@ -78,7 +78,7 @@ Before using coordinates:
 - For ordinary scrolling, start inside the intended scrollable region near its edge, with a small margin based on the current UI. The end may extend beyond the region while staying inside the screen. Physical screen-edge coordinates are reserved for system gestures: left-edge `back` starts at the left edge (normalized `x=1`, or pixel `x=1` under the pixel protocol), and bottom-edge `home` starts at the bottom edge (normalized `y=999`, or the last pixel row, screenshot height minus 1).
 - Do not guess a coordinate if the target is not visible or the screen is stale.
 - If a tap misses, observe again before adjusting. Do not repeat the exact same coordinate blindly.
-- When a `touch_gesture` seems to have missed (the expected change did not happen, or a neighboring control reacted instead), call `screenshot` with `{"grounding":true}` before retrying. The image then shows numbered boxes around detected interface components, and the tool result's `grounding.elements` lists each element's `id`, `center` and `box` in the coordinates `touch_gesture` takes. Find the target's box by reading the image, then retry at that element's `center`, passed unchanged. The detector does not read text and can miss a control; when no box covers the target, measure it from the image instead. Grounding adds a few seconds, so do not use it for routine observation.
+- A screenshot may show numbered boxes around detected interface components; its state message then lists each element's `id`, `center` and `box` in the coordinates `touch_gesture` takes. When one box covers the target, tap its `center`, passed unchanged, rather than a point estimated by eye. The detector does not read text and can miss a control; when no box covers the target, measure it from the image instead. When a `touch_gesture` seems to have missed (the expected change did not happen, or a neighboring control reacted instead), retry from the boxes in the returned screenshot, or call `screenshot` with `{"grounding":true}` when the current screenshot has none.
 
 ## Text Entry
 

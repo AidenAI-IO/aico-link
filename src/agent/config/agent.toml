@@ -45,6 +45,13 @@
 # Optional base URL for MCP device_status / support_bundle (config-web).
 # mcp_config_web_base_url = "http://127.0.0.1"
 
+# UI Grounding: mark detected interface components with numbered boxes on the
+# screenshots the Agent takes by itself (after input tools such as
+# touch_gesture, and with each user message). The screenshot tool grounds only
+# when its grounding argument is true. Default true.
+# Also available under Config Web → Conversation & tools.
+# ui_grounding_enabled = true
+
 # History pruning threshold
 # Context size management. Both values are fractions of the usable model input
 # budget: either 0 to select the default, or greater than 0 and less than 1.

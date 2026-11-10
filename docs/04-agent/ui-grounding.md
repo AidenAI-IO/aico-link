@@ -4,24 +4,37 @@ sidebar_position: 19
 
 # UI Grounding
 
-The `screenshot` tool can mark the interface components it detects on the
-screen, so the model can pick a target by number and tap a measured center
-instead of estimating pixels by eye. It is for correcting coordinates: when a
-`touch_gesture` seems to have missed its target, the model takes a grounded
-screenshot, finds the target's box, and retries at that element's center.
-It is opt-in per call:
+The Agent can mark the interface components it detects on the screen, so the
+model can pick a target by number and tap a measured center instead of
+estimating pixels by eye.
 
-```json
-{"grounding": true}
-```
+## Setting
+
+`[conversation_settings.agent].ui_grounding_enabled` (default `true`) controls
+every screenshot the Agent takes by itself for the model. Config Web shows it
+as the "Mark tappable elements automatically" (自动标注可点击元素) switch on the
+Conversation & tools page. The Agent reads it
+live, so a change applies to the next screenshot without a restart.
+
+| Screenshot | Setting on | Setting off |
+| --- | --- | --- |
+| Attached to each user message | Grounded | Plain |
+| After `touch_gesture`, `keyboard_tap`, `quick_action`, `mouse_move`, `mouse_scroll`, `enter_text`, `open_app`, `open_url` | Grounded | Plain |
+| `screenshot` tool | Only with `{"grounding": true}` | Only with `{"grounding": true}` |
+| `wait_for_stable_screen` | Plain | Plain |
+
+The `screenshot` tool is a plain capture tool: it grounds only when the model
+passes `grounding: true`, whatever the setting.
+
+Post-action grounding runs after the `screen_changed` comparison, which needs
+the plain image, and before the touch markers are drawn, so the detector never
+sees them. On a device without the detector, the screenshots the Agent takes
+by itself stay plain and carry no grounding or error; only an explicit
+`screenshot` request reports that grounding is unavailable.
 
 ## Observation
 
-Without `grounding`, `screenshot` behaves as before. A user message no longer
-triggers a screenshot by itself: the model calls `screenshot` when it needs to
-see the screen.
-
-With `grounding: true`, the Agent captures the screenshot as usual, then:
+For a grounded screenshot, the Agent:
 
 1. Decodes the cropped phone screenshot and sends it as RGB888 to
    `ui_grounding_helper`.
@@ -30,12 +43,14 @@ With `grounding: true`, the Agent captures the screenshot as usual, then:
    number just above the top-left corner (Set-of-Mark), so the tag does not
    cover the control. At the top edge of the screen the tag goes inside the
    corner. Tags scale with the screenshot size.
-3. Returns the marked image as the observation, and adds a `grounding` field
-   with the element list beside the unchanged `action_output` of `ok`. The model
-   reads both in the tool message:
+3. Returns the marked image as the observation and adds a `grounding` field to
+   the tool output. The tool's `action_output` is unchanged, and so is the
+   tool result the model reads. The element list goes into the state message
+   that carries the image, after its caption (for the user-message screenshot,
+   after the device state lines):
 
-```json
-{"action_output":"ok","grounding":{"elements":[{"id":1,"center":[500.0,260.4],"box":[62.5,231.7,961.7,289.2]}]}}
+```text
+UI grounding: the numbered boxes in this image are these elements, with center and box in touch_gesture coordinates: {"elements":[{"id":1,"center":[500.0,260.4],"box":[62.5,231.7,961.7,289.2]}]}
 ```
 
 Coordinates follow `touch_gesture`, so a center can be passed to it unchanged.
@@ -49,9 +64,9 @@ score, at most 50, usually fewer. The marked image also becomes the latest scree
 shell export (`$AICO_SCREENSHOT_JPEG`/`PPM`) and for coordinate checks.
 
 If detection fails, the plain screenshot is returned and `grounding.error`
-gives the reason, with an empty element list, so the observation is never
-lost. On a host or benchmark
-container without the helper and model, the error says grounding is
+gives the reason, with an empty element list; the state message says grounding
+failed, so the observation is never lost. For an explicit request on a host or
+benchmark container without the helper and model, the error says grounding is
 unavailable.
 
 ## Detector
@@ -108,8 +123,8 @@ The self-test runs one blank page through the NPU and prints the `OK` response.
 
 Source measurements on an RV1106G3 show a steady-state median of 666 ms and a
 P95 of 816 ms per screenshot, excluding initialization (median 233 ms) and image
-decoding. Grounding is therefore off by default. The system prompt's role
-rules, the tool description and the device-operator skill reserve it for one
-case: when a `touch_gesture` result does not match what the model expected,
-it takes a grounded screenshot and retries at the target element's center,
-instead of adjusting coordinates from the same screenshot.
+decoding. With the setting on, every user message and every input, text-entry
+and launch action pays this once. Turn the setting off to save that time; the
+model can still ask for grounding with the `screenshot` tool. The system
+prompt's role rules and the device-operator skill tell the model to tap a
+numbered element's center, unchanged, when one box covers the target.

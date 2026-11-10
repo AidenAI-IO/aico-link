@@ -14,10 +14,15 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"aico-agent/internal/agent/contextmanager"
+	"aico-agent/internal/agent/messages"
 	"aico-agent/internal/agent/screen"
 
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/schema"
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
@@ -51,33 +56,18 @@ func TestScreenshotToolGrounding(t *testing.T) {
 		}
 		return &ScreenshotTool{client: client, screen: state, grounder: grounder, deviceTypeFn: func() string { return "macos" }}, state
 	}
-	// decode returns the result, the grounding the model reads in the tool
-	// message, and the image.
 	decode := func(t *testing.T, output string) (postActionScreenshotResult, screenshotGrounding, []byte) {
 		t.Helper()
 		var result postActionScreenshotResult
-		if err := json.Unmarshal([]byte(output), &result); err != nil {
-			t.Fatalf("output %q: %v", output, err)
+		if err := json.Unmarshal([]byte(output), &result); err != nil || result.Grounding == nil {
+			t.Fatalf("output %q, %v; want a grounding field", output, err)
 		}
-		if result.ActionOutput != "ok" {
-			t.Fatalf("action_output = %q, want ok with grounding in its own field", result.ActionOutput)
-		}
-		content, ok := compactScreenshotObservation("screenshot", output)
-		if !ok {
-			t.Fatalf("output %q is not a screenshot observation", output)
-		}
-		var message struct {
-			ActionOutput string               `json:"action_output"`
-			Grounding    *screenshotGrounding `json:"grounding"`
-		}
-		if err := json.Unmarshal([]byte(content), &message); err != nil || message.ActionOutput != "ok" || message.Grounding == nil {
-			t.Fatalf("tool message %q, %v; want action_output ok and grounding", content, err)
-		}
+		requireGroundingInStateMessage(t, "screenshot", output, *result.Grounding)
 		image, err := base64.StdEncoding.DecodeString(result.Data)
 		if err != nil {
 			t.Fatalf("decode data: %v", err)
 		}
-		return result, *message.Grounding, image
+		return result, *result.Grounding, image
 	}
 
 	t.Run("marks control-sized elements in screenshot pixels", func(t *testing.T) {
@@ -142,8 +132,11 @@ func TestScreenshotToolGrounding(t *testing.T) {
 		if err := json.Unmarshal([]byte(output), &result); err != nil || result.ActionOutput != "ok" || result.Grounding != nil || grounder.width != 0 {
 			t.Fatalf("result = %+v, %v; want plain ok without detection", result, err)
 		}
-		if content, _ := compactScreenshotObservation("screenshot", output); content != "ok" {
-			t.Fatalf("tool message = %q, want ok", content)
+		toolContent, followups := (&FunctionAgent{Tools: []langtools.Tool{tool}}).observationMessagesForStep(schema.AgentStep{
+			Action: schema.AgentAction{Tool: "screenshot"}, Observation: output,
+		})
+		if toolContent != "ok" || len(followups) != 1 || strings.Contains(followupText(followups[0]), "UI grounding") {
+			t.Fatalf("tool content %q, followups %v; want ok and a plain screenshot", toolContent, followups)
 		}
 	})
 }
@@ -251,5 +244,173 @@ func TestVisualCoordinatesGroundingUsesTouchGestureUnits(t *testing.T) {
 	y, _ := point["y"].(float64)
 	if math.Abs(x-508.5) > 0.1 || math.Abs(y-252.1) > 0.1 {
 		t.Fatalf("device point = %v, want the normalized element center (508.5, 252.1)", point)
+	}
+
+	// A grounded post-action observation coming back through the wrapped
+	// touch_gesture is converted to pixels as well.
+	normalized := `{"width":60,"height":120,"format":"jpeg","size":1,"data":"YQ==","action_output":"ok",` +
+		`"grounding":{"elements":[{"id":1,"center":[508.5,252.1],"box":[169.5,168.1,847.5,336.1]}]}}`
+	gesture := frames.wrap([]langtools.Tool{&stubTool{name: "touch_gesture", output: normalized}})[0]
+	output, err = gesture.Call(context.Background(), string(input))
+	if err != nil {
+		t.Fatalf("wrapped touch_gesture Call() error = %v", err)
+	}
+	var posted postActionScreenshotResult
+	if err := json.Unmarshal([]byte(output), &posted); err != nil || posted.Grounding == nil || len(posted.Grounding.Elements) != 1 {
+		t.Fatalf("post-action output %q, %v; want one grounded element", output, err)
+	}
+	if got := posted.Grounding.Elements[0]; got.Center != [2]float64{30, 30} || got.Box != [4]float64{10, 20, 50, 40} {
+		t.Fatalf("post-action element = %+v, want pixel center (30,30) and box (10,20,50,40)", got)
+	}
+}
+
+// requireGroundingInStateMessage checks what the model reads for a grounded
+// observation: the tool result keeps the tool's own output, and the element
+// list travels in the state message that carries the image.
+func requireGroundingInStateMessage(t *testing.T, toolName, output string, grounding screenshotGrounding) {
+	t.Helper()
+	tool := &stubTool{name: toolName, visual: true}
+	toolContent, followups := (&FunctionAgent{Tools: []langtools.Tool{tool}}).observationMessagesForStep(schema.AgentStep{
+		Action: schema.AgentAction{Tool: toolName}, Observation: output,
+	})
+	if strings.Contains(toolContent, "elements") || strings.Contains(toolContent, "grounding") {
+		t.Fatalf("tool content %q carries grounding; want it in the state message", toolContent)
+	}
+	if len(followups) != 1 {
+		t.Fatalf("followups = %v, want one state message with the image", followups)
+	}
+	text := followupText(followups[0])
+	want, _ := json.Marshal(grounding)
+	if grounding.Error != "" {
+		want = []byte(grounding.Error)
+	}
+	if !strings.Contains(text, string(want)) {
+		t.Fatalf("state message %q does not carry grounding %s", text, want)
+	}
+}
+
+func followupText(message llms.MessageContent) string {
+	var text strings.Builder
+	for _, part := range message.Parts {
+		if part, ok := part.(llms.TextContent); ok {
+			text.WriteString(part.Text)
+		}
+	}
+	return text.String()
+}
+
+// Every post-action screenshot (stable-wait and fixed-delay tools alike)
+// follows the live UI Grounding setting, and grounding goes into the state
+// message while the tool result keeps its own output.
+func TestPostActionScreenshotFollowsUIGroundingSetting(t *testing.T) {
+	const width, height = 60, 120
+	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, width*height), width, height, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatalf("encodeJPEG() error = %v", err)
+	}
+	newScreenshot := func(grounder uiGrounder) *ScreenshotTool {
+		return &ScreenshotTool{
+			client: &fakeScreenshotFrameClient{
+				meta: frameMetadata{Width: width, Height: height, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
+				data: jpegData,
+			},
+			screen:       &screen.ScreenState{},
+			grounder:     grounder,
+			deviceTypeFn: func() string { return "macos" },
+		}
+	}
+	wait := &stubTool{name: "wait_for_stable_screen", output: `{"ok":true,"stable":true,"elapsed_ms":5}`}
+	boxes := []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}
+	enabled := true
+	setting := func() bool { return enabled }
+	call := func(t *testing.T, tool langtools.Tool, input string) postActionScreenshotResult {
+		t.Helper()
+		tool.(*postActionScreenshotTool).SetUIGroundingFunc(setting)
+		output, err := tool.Call(context.Background(), input)
+		if err != nil {
+			t.Fatalf("Call() error = %v", err)
+		}
+		var result postActionScreenshotResult
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("decode %q: %v", output, err)
+		}
+		if result.ActionOutput != "ok" {
+			t.Fatalf("action_output = %q, want the tool's own output", result.ActionOutput)
+		}
+		if result.Grounding != nil {
+			requireGroundingInStateMessage(t, tool.Name(), output, *result.Grounding)
+		}
+		return result
+	}
+	tools := map[string]func(uiGrounder) langtools.Tool{
+		"stable wait (touch_gesture)": func(g uiGrounder) langtools.Tool {
+			return newPostActionStableScreenshotTool(&stubTool{name: "touch_gesture", output: "ok"}, wait, newScreenshot(g), 0, ScreenStableDefaults{})
+		},
+		"fixed delay (enter_text)": func(g uiGrounder) langtools.Tool {
+			return newPostActionScreenshotTool(&stubTool{name: "enter_text", output: "ok"}, newScreenshot(g), 0)
+		},
+	}
+	for name, build := range tools {
+		t.Run(name, func(t *testing.T) {
+			enabled = true
+			on := &fakeUIGrounder{boxes: boxes}
+			if result := call(t, build(on), `{"type":"tap","point":{"x":500,"y":250}}`); result.Grounding == nil || len(result.Grounding.Elements) != 1 || on.width != width {
+				t.Fatalf("setting on: grounding = %+v, want one element", result.Grounding)
+			}
+			enabled = false
+			off := &fakeUIGrounder{boxes: boxes}
+			if result := call(t, build(off), `{"type":"tap","point":{"x":500,"y":250}}`); result.Grounding != nil || off.width != 0 {
+				t.Fatalf("setting off: grounding = %+v, detector ran = %v", result.Grounding, off.width != 0)
+			}
+			// A device without the detector stays plain and silent.
+			enabled = true
+			if result := call(t, build(nil), `{"type":"tap","point":{"x":500,"y":250}}`); result.Grounding != nil {
+				t.Fatalf("no detector: grounding = %+v, want none", result.Grounding)
+			}
+		})
+	}
+}
+
+// The screenshot attached to a user turn follows the live UI Grounding
+// setting, and its element list goes into the state message text.
+func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
+	const width, height = 60, 120
+	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, width*height), width, height, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatalf("encodeJPEG() error = %v", err)
+	}
+	for _, enabled := range []bool{true, false} {
+		t.Run(fmt.Sprintf("enabled=%v", enabled), func(t *testing.T) {
+			grounder := &fakeUIGrounder{boxes: []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}}
+			screenshot := &ScreenshotTool{
+				client: &fakeScreenshotFrameClient{
+					meta: frameMetadata{Width: width, Height: height, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
+					data: jpegData,
+				},
+				screen:       &screen.ScreenState{},
+				grounder:     grounder,
+				deviceTypeFn: func() string { return "macos" },
+			}
+			tools := &ToolSet{tools: map[string]langtools.Tool{"screenshot": screenshot}}
+			// The runtime installs the live ui_grounding_enabled setting.
+			runtime := NewRuntimeWithDeps(Config{UIGroundingEnabled: &enabled}, nil, nil, tools, NewSkillIndex())
+			manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runtime.contextManager = manager
+			manager.AddAppendMessageHook(runtime.getStateHook())
+			if err := manager.AppendMessage(messages.Message{Role: messages.MessageRoleUser, Content: "hello"}); err != nil {
+				t.Fatalf("AppendMessage() error = %v", err)
+			}
+			state := manager.MessageListDump().Messages[0]
+			if state.Role != messages.MessageRoleState || len(state.Attachments) != 1 {
+				t.Fatalf("state message = %#v, want one screenshot attachment", state)
+			}
+			grounded := strings.Contains(state.Content, "UI grounding:") && strings.Contains(state.Content, `"center":[508.5,252.1]`)
+			if grounded != enabled || (grounder.width != 0) != enabled {
+				t.Fatalf("state content %q, detector ran = %v; want grounding = %v", state.Content, grounder.width != 0, enabled)
+			}
+		})
 	}
 }

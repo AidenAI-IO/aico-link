@@ -206,16 +206,16 @@ func newScreenshotGrounding(elements []uiGroundingElement, groundingErr error) *
 	return grounding
 }
 
-// screenshotToolContent is the tool message the model reads for a visual
-// observation: the action output, plus the grounding result when present.
-// The image itself follows in a separate message.
-func screenshotToolContent(actionOutput string, grounding *screenshotGrounding) string {
+// screenshotGroundingCaption is the grounding text added to the state
+// message that carries a grounded screenshot, so the element list travels
+// with the image it describes and leaves the tool result unchanged.
+func screenshotGroundingCaption(grounding *screenshotGrounding) string {
 	if grounding == nil {
-		return actionOutput
+		return ""
 	}
-	data, _ := json.Marshal(struct {
-		ActionOutput string               `json:"action_output"`
-		Grounding    *screenshotGrounding `json:"grounding"`
-	}{actionOutput, grounding})
-	return string(data)
+	if grounding.Error != "" {
+		return "UI grounding failed, so this screenshot has no numbered boxes: " + grounding.Error
+	}
+	data, _ := json.Marshal(grounding)
+	return "UI grounding: the numbered boxes in this image are these elements, with center and box in touch_gesture coordinates: " + string(data)
 }

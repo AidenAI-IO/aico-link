@@ -191,7 +191,11 @@ func (t *visualCoordinateTool) Call(ctx context.Context, input string) (string, 
 			"pixel_input": json.RawMessage(input), "normalized_input": json.RawMessage(data),
 		}})
 	}
-	return t.Tool.Call(ctx, string(data))
+	output, err := t.Tool.Call(ctx, string(data))
+	if err != nil {
+		return output, err
+	}
+	return pixelGroundingOutput(output), nil
 }
 
 func convertVisualArguments(args map[string]any, frame visualFrame) error {

@@ -93,6 +93,21 @@ type postActionScreenshotTool struct {
 	// pointer is set for pointer tools in absolute mouse mode; the pointer's
 	// own movement is excluded from screen_changed.
 	pointer *pointerTracker
+	// grounding reports the live ui_grounding_enabled setting. When it is on,
+	// the final screenshot is marked with Set-of-Mark boxes so the model can
+	// tap a detected element's center. Nil means off.
+	grounding func() bool
+}
+
+// postActionGroundingDescription tells the model how to read a grounded
+// post-action screenshot. It stays in the description whatever the setting,
+// so the tool list does not change when UI Grounding is toggled.
+const postActionGroundingDescription = " When UI Grounding is on, the final screenshot carries numbered boxes around detected interface components, and the state message with it lists each element's id, center and box in touch_gesture coordinates."
+
+// screenshotResultGrounder grounds an already captured screenshot result.
+// The screenshot tool implements it; stand-ins without a detector do not.
+type screenshotResultGrounder interface {
+	groundResult(ctx context.Context, result *screenshotResult)
 }
 
 type stableScreenWaiter interface {
@@ -118,19 +133,31 @@ func newPostActionStableScreenshotTool(inner langtools.Tool, waitStable langtool
 	}
 }
 
+// SetUIGroundingFunc installs the live ui_grounding_enabled setting.
+func (t *postActionScreenshotTool) SetUIGroundingFunc(enabled func() bool) {
+	if t != nil {
+		t.grounding = enabled
+	}
+}
+
+func (t *postActionScreenshotTool) groundingEnabled() bool {
+	return t != nil && t.grounding != nil && t.grounding()
+}
+
 func (t *postActionScreenshotTool) Name() string {
 	return t.inner.Name()
 }
 
 func (t *postActionScreenshotTool) Description() string {
 	if t.waitStable != nil {
-		return t.inner.Description() + " On successful execution, captures a pre-action baseline, waits for the screen to become stable (or until the configured timeout), and returns the final screenshot observation. screen_changed compares the pre-action baseline with the final stable screenshot using meaningful structural change detection; it ignores the top status area and minor image noise. When screen_changed=false and the action was expected to change the UI, do not assume success and inspect the screenshot before answering or repeating. screen_stable=false means the screen was still changing (for example during video playback) but the screenshot was still captured."
+		description := t.inner.Description() + " On successful execution, captures a pre-action baseline, waits for the screen to become stable (or until the configured timeout), and returns the final screenshot observation. screen_changed compares the pre-action baseline with the final stable screenshot using meaningful structural change detection; it ignores the top status area and minor image noise. When screen_changed=false and the action was expected to change the UI, do not assume success and inspect the screenshot before answering or repeating. screen_stable=false means the screen was still changing (for example during video playback) but the screenshot was still captured."
+		return description + postActionGroundingDescription
 	}
 	return fmt.Sprintf(
 		"%s Captures a pre-action baseline and, on successful execution, waits %s before returning the final screenshot observation. screen_changed reports meaningful structural change between those screenshots while ignoring the top status area and minor image noise.",
 		t.inner.Description(),
 		t.delay,
-	)
+	) + postActionGroundingDescription
 }
 
 func (t *postActionScreenshotTool) ReturnsVisualObservation() bool {
@@ -284,6 +311,13 @@ func (t *postActionScreenshotTool) Call(ctx context.Context, input string) (stri
 		}
 	}
 	timing.mark(&timing.compareMs)
+	// Ground after the comparison, which needs the plain image, and before
+	// the touch markers, so they are drawn on top and not detected.
+	if grounder, ok := t.screenshot.(screenshotResultGrounder); ok && t.groundingEnabled() {
+		reportToolProgress(ctx, ToolProgress{Status: "verifying", Content: "Marking interface components on the screen"})
+		grounder.groundResult(ctx, &payload.screenshotResult)
+		timing.mark(&timing.groundMs)
+	}
 	if t.waitStable != nil {
 		stable := waitResult.Stable
 		elapsed := waitResult.ElapsedMs
@@ -311,6 +345,7 @@ type postActionTiming struct {
 	tool                                                       string
 	started, since                                             time.Time
 	baselineMs, actionMs, waitMs, finalMs, compareMs, markerMs int64
+	groundMs                                                   int64
 	stable                                                     *bool
 }
 
@@ -332,7 +367,7 @@ func (p *postActionTiming) log() {
 	if p.stable != nil {
 		stable = fmt.Sprint(*p.stable)
 	}
-	logging.Infof("agent", "tools_post_action_screenshot", "post_action_timing: tool=%s baseline_ms=%d action_ms=%d wait_ms=%d wait_stable=%s final_ms=%d compare_ms=%d marker_ms=%d total_ms=%d", p.tool, p.baselineMs, p.actionMs, p.waitMs, stable, p.finalMs, p.compareMs, p.markerMs, time.Since(p.started).Milliseconds())
+	logging.Infof("agent", "tools_post_action_screenshot", "post_action_timing: tool=%s baseline_ms=%d action_ms=%d wait_ms=%d wait_stable=%s final_ms=%d compare_ms=%d ground_ms=%d marker_ms=%d total_ms=%d", p.tool, p.baselineMs, p.actionMs, p.waitMs, stable, p.finalMs, p.compareMs, p.groundMs, p.markerMs, time.Since(p.started).Milliseconds())
 }
 
 func parseTouchGesturePostMarker(input string) (touchGesturePostMarkerInfo, bool) {

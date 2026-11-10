@@ -157,11 +157,14 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 
 	toolContent := step.Observation
 	if actionOutput, ok := actionOutputFromScreenshotObservation(step.Observation); ok {
-		toolContent = screenshotToolContent(actionOutput, result.Grounding)
+		toolContent = actionOutput
 	}
 	caption := fmt.Sprintf("This image is the screenshot observation returned by the %s tool. Use it when answering the original request.", step.Action.Tool)
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
 		caption += " " + summary
+	}
+	if grounding := screenshotGroundingCaption(result.Grounding); grounding != "" {
+		caption += "\n" + grounding
 	}
 	return toolContent, []llms.MessageContent{{
 		Role: llms.ChatMessageTypeHuman,

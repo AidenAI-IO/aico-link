@@ -32,7 +32,9 @@ type screenshotResult struct {
 	ScreenshotRef  string                   `json:"screenshot_ref,omitempty"`
 	CaptureBackend string                   `json:"capture_backend,omitempty"`
 	ADBDevice      *adbDeviceInfo           `json:"adb_device,omitempty"`
-	// Grounding is set when the screenshot tool was called with grounding.
+	// Grounding is set for a grounded screenshot: an explicit grounding
+	// request, or a post-action screenshot of a tool that waits for a stable
+	// screen. The model reads it in the state message carrying the image.
 	Grounding *screenshotGrounding `json:"grounding,omitempty"`
 }
 
@@ -380,26 +382,25 @@ func (t *ScreenshotTool) Name() string { return "screenshot" }
 func (t *ScreenshotTool) ReturnsVisualObservation() bool { return true }
 
 func (t *ScreenshotTool) Description() string {
-	return `Capture a screenshot from the connected display. Input is optional: {} or "". ` +
+	return `Capture a screenshot of the connected display. Input is optional: {} or "". ` +
 		`The tool result is ok, and the image arrives in a follow-up state message. ` +
-		`Set grounding to true only to correct touch_gesture coordinates: when a tap or gesture seems to have missed its target ` +
-		`(the expected change did not happen, or a neighboring control reacted instead), take a grounded screenshot before retrying, ` +
-		`find the target's numbered box in the image, and retry touch_gesture at that element's center. ` +
-		`With grounding, the image carries numbered boxes around detected interface components, and the tool result adds a grounding field ` +
-		`whose elements list each element's id, center and box in the same coordinates touch_gesture takes, so a center can be passed to touch_gesture as is. The detector does not read text and may miss a control; ` +
-		`choose the box by reading the image, and if no box covers the target, measure it from the image. ` +
-		`Grounding adds a few seconds, so do not use it for routine observation. If it fails, grounding.error says why ` +
-		`and the plain screenshot is still returned.`
+		`Set grounding to true to also mark detected interface components: the image then carries numbered boxes, and the state ` +
+		`message lists each element's id, center and box in touch_gesture coordinates. Without grounding the screenshot is plain, ` +
+		`whatever the UI Grounding setting. If grounding fails, the state message says why and the plain screenshot is still returned.`
 }
 
 func (t *ScreenshotTool) ArgsSchema() map[string]any {
 	return objectArgsSchema(map[string]any{
-		"grounding": boolArgSchema("Mark detected interface components with numbered boxes and list their centers, to correct a touch_gesture that seems to have missed. Defaults to false."),
+		"grounding": boolArgSchema("Also mark detected interface components with numbered boxes and list their centers in touch_gesture coordinates. Defaults to false."),
 	})
 }
 
 type screenshotArgs struct {
 	Grounding bool `json:"grounding"`
+	// autoGround grounds a screenshot the Agent takes by itself under the
+	// ui_grounding_enabled setting. Unlike Grounding, a device without the
+	// detector returns the plain screenshot without an error.
+	autoGround bool
 }
 
 func parseScreenshotArgs(input string) (screenshotArgs, error) {
@@ -419,13 +420,29 @@ func (t *ScreenshotTool) Call(ctx context.Context, input string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	return t.call(ctx, args)
+	return t.call(ctx, args, true)
 }
 
-func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs) (string, error) {
+// CallWithoutStartupWait captures a screenshot without waiting for the frame
+// service to become ready, for the screenshot attached to a user turn. It
+// grounds only when ground is true: the caller passes the live
+// ui_grounding_enabled setting, never the model's own input.
+func (t *ScreenshotTool) CallWithoutStartupWait(ctx context.Context, ground bool) (string, error) {
+	return t.call(ctx, screenshotArgs{autoGround: ground}, false)
+}
+
+func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs, waitForReady bool) (string, error) {
 	// Request JPEG format directly from frame_service (hardware-encoded)
 	cropBlack := t.cropBlack()
-	meta, jpegData, captureInfo, err := captureScreenshotJPEGWhenReady(t.client, t.screen, cropBlack)
+	var meta *frameMetadata
+	var jpegData []byte
+	var captureInfo screenCaptureInfo
+	var err error
+	if waitForReady {
+		meta, jpegData, captureInfo, err = captureScreenshotJPEGWhenReady(t.client, t.screen, cropBlack)
+	} else {
+		meta, jpegData, captureInfo, err = captureScreenshotJPEG(t.client, t.screen, cropBlack)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -511,6 +528,8 @@ func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs) (string,
 
 	if args.Grounding {
 		result.Grounding = t.ground(ctx, &result, displayData)
+	} else if args.autoGround {
+		t.groundResult(ctx, &result)
 	}
 
 	out, _ := json.Marshal(postActionScreenshotResult{
@@ -518,6 +537,22 @@ func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs) (string,
 		ActionOutput:     "ok",
 	})
 	return string(out), nil
+}
+
+// groundResult grounds an already captured screenshot result in place, for
+// screenshots the Agent takes by itself. Unlike an explicit grounding request,
+// a device without the detector leaves the result unchanged rather than
+// reporting an error on every action.
+func (t *ScreenshotTool) groundResult(ctx context.Context, result *screenshotResult) {
+	if t == nil || t.grounder == nil || result == nil {
+		return
+	}
+	jpegData, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil || len(jpegData) == 0 {
+		result.Grounding = newScreenshotGrounding(nil, fmt.Errorf("decode screenshot for grounding: %v", err))
+		return
+	}
+	result.Grounding = t.ground(ctx, result, jpegData)
 }
 
 // ground replaces the result image with a Set-of-Mark copy and returns the

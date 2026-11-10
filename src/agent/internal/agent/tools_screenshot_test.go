@@ -61,6 +61,67 @@ func TestScreenshotToolWaitsForFrameServiceBeforeExplicitCapture(t *testing.T) {
 	}
 }
 
+func TestScreenshotToolSkipsStartupWaitForBackgroundCapture(t *testing.T) {
+	jpegData, err := encodeJPEG([]byte{255, 255, 255}, 1, 1, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatalf("encodeJPEG() error = %v", err)
+	}
+	client := &fakeReadyScreenshotFrameClient{
+		fakeScreenshotFrameClient: &fakeScreenshotFrameClient{
+			meta: frameMetadata{Width: 1, Height: 1, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))},
+			data: jpegData,
+		},
+	}
+
+	tool := &ScreenshotTool{client: client, screen: &screen.ScreenState{}}
+	if _, err := tool.CallWithoutStartupWait(context.Background(), false); err != nil {
+		t.Fatalf("CallWithoutStartupWait() error = %v", err)
+	}
+	if client.readyCalls != 0 || client.calls != 1 {
+		t.Fatalf("ready calls=%d capture calls=%d, want 0 and 1", client.readyCalls, client.calls)
+	}
+}
+
+// The screenshot attached to a user turn follows the ui_grounding_enabled
+// setting passed by the caller, never the model's input, and stays silent on
+// a device without the detector.
+func TestScreenshotToolBackgroundCaptureFollowsGroundingSetting(t *testing.T) {
+	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, 60*120), 60, 120, screenshotJPEGQuality)
+	if err != nil {
+		t.Fatalf("encodeJPEG() error = %v", err)
+	}
+	capture := func(grounder uiGrounder, ground bool) postActionScreenshotResult {
+		t.Helper()
+		tool := &ScreenshotTool{
+			client:       &fakeScreenshotFrameClient{meta: frameMetadata{Width: 60, Height: 120, PixelFormat: "jpeg", Bytes: uint64(len(jpegData))}, data: jpegData},
+			screen:       &screen.ScreenState{},
+			grounder:     grounder,
+			deviceTypeFn: func() string { return "macos" },
+		}
+		output, err := tool.CallWithoutStartupWait(context.Background(), ground)
+		if err != nil {
+			t.Fatalf("CallWithoutStartupWait() error = %v", err)
+		}
+		var result postActionScreenshotResult
+		if err := json.Unmarshal([]byte(output), &result); err != nil {
+			t.Fatalf("decode %q: %v", output, err)
+		}
+		return result
+	}
+	box := []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}
+
+	off := &fakeUIGrounder{boxes: box}
+	if result := capture(off, false); result.Grounding != nil || off.width != 0 {
+		t.Fatalf("grounding off: result grounding = %+v, detector ran = %v", result.Grounding, off.width != 0)
+	}
+	if result := capture(&fakeUIGrounder{boxes: box}, true); result.Grounding == nil || len(result.Grounding.Elements) != 1 {
+		t.Fatalf("grounding on: result grounding = %+v, want one element", result.Grounding)
+	}
+	if result := capture(nil, true); result.Grounding != nil {
+		t.Fatalf("grounding on without a detector: grounding = %+v, want none", result.Grounding)
+	}
+}
+
 func TestDetectImageAxisBoundsIgnoresInteriorDarkRun(t *testing.T) {
 	left, right, valid := detectImageAxisBounds(40, func(position int) bool {
 		return position < 2 || position >= 38 || position == 34

@@ -34,6 +34,9 @@ type ToolSet struct {
 	iosKeyboardIsolationOptional bool
 	searchOpenTool               *appSearchOpenTool
 	skillInstallClient           *http.Client
+	// uiGrounding reports the live ui_grounding_enabled setting to every
+	// post-action screenshot tool, including ones registered later.
+	uiGrounding func() bool
 }
 
 type runtimeDeviceTypeConfigurable interface {
@@ -301,6 +304,35 @@ func (s *ToolSet) RegisterEnterTextTool(models model.Model, deviceTypeFn func() 
 	s.searchOpenTool = searchOpenTool
 	s.refreshOpenAppTool()
 	s.tools["enter_text"] = newPostActionScreenshotTool(entryTool, s.textInputHW.screenshot, 300*time.Millisecond)
+	s.applyUIGrounding()
+}
+
+// SetUIGroundingFunc installs the live ui_grounding_enabled setting. Every
+// screenshot the Agent takes by itself for the model (after input, bridge and
+// launch tools) is grounded while it reports true; the screenshot tool
+// follows only its own grounding argument.
+func (s *ToolSet) SetUIGroundingFunc(enabled func() bool) {
+	if s == nil {
+		return
+	}
+	s.uiGrounding = enabled
+	s.applyUIGrounding()
+}
+
+// UIGroundingEnabled reports the live setting; false when none is installed.
+func (s *ToolSet) UIGroundingEnabled() bool {
+	return s != nil && s.uiGrounding != nil && s.uiGrounding()
+}
+
+func (s *ToolSet) applyUIGrounding() {
+	if s == nil {
+		return
+	}
+	for _, tool := range s.tools {
+		if action, ok := tool.(*postActionScreenshotTool); ok {
+			action.SetUIGroundingFunc(s.uiGrounding)
+		}
+	}
 }
 
 func (s *ToolSet) Get(name string) (langtools.Tool, bool) {

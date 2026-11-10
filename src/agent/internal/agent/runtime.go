@@ -731,6 +731,7 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
 	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
+	rt.tools.SetUIGroundingFunc(rt.uiGroundingEnabled)
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -1486,10 +1487,16 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				Message: &message,
 			}
 		}
-		// The user turn carries text state only. The model calls the
-		// screenshot tool when it needs to see the screen.
+		// A user turn carries a fresh screenshot, grounded when UI Grounding
+		// is on, unless the user attached an image of their own.
+		var attachment *messages.Attachment
+		var grounding *screenshotGrounding
+		if !messageHasImageAttachment(message) {
+			attachment, grounding = r.captureStateScreenshot()
+		}
 		entries := r.stateManager.GetAllStates()
-		if len(entries) == 0 {
+		// If neither runtime state nor a screenshot is available, just skip.
+		if len(entries) == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1506,7 +1513,10 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
 		}
-		if formated.Len() == 0 {
+		if caption := screenshotGroundingCaption(grounding); caption != "" {
+			formated.WriteString(caption + "\n")
+		}
+		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1515,6 +1525,9 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		stateMessage := messages.Message{
 			Role:    messages.MessageRoleState,
 			Content: formated.String(),
+		}
+		if attachment != nil {
+			stateMessage.Attachments = []messages.Attachment{*attachment}
 		}
 		return contextmanager.AppendMessageHookResult{
 			Before:  []messages.Message{stateMessage},
@@ -1547,6 +1560,66 @@ func emitAppendedStateEvents(
 		message.EpisodeID = episodeID
 		emitter.emit(ctx, stream.EventStateUpdated, stream.VisibilityUser, message, nil)
 	}
+}
+
+func messageHasImageAttachment(message messages.Message) bool {
+	for _, attachment := range message.Attachments {
+		if isImageMIMEType(attachment.MIMEType) {
+			return true
+		}
+	}
+	return false
+}
+
+// uiGroundingEnabled reads the live ui_grounding_enabled setting.
+func (r *Runtime) uiGroundingEnabled() bool {
+	return r.ConfigSnapshot().UIGroundingEnabledOrDefault()
+}
+
+// captureStateScreenshot captures the screenshot attached to a user turn and,
+// when UI Grounding is on, its grounding result for the state message text.
+func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGrounding) {
+	tools := r.toolSnapshot()
+	if r == nil || tools == nil || r.contextManager == nil {
+		return nil, nil
+	}
+	screenshotTool, ok := tools.Get("screenshot")
+	if !ok || screenshotTool == nil {
+		return nil, nil
+	}
+
+	ground := tools.UIGroundingEnabled()
+	var output string
+	var err error
+	if fastTool, ok := screenshotTool.(interface {
+		CallWithoutStartupWait(context.Context, bool) (string, error)
+	}); ok {
+		output, err = fastTool.CallWithoutStartupWait(context.Background(), ground)
+	} else {
+		output, err = screenshotTool.Call(context.Background(), "{}")
+	}
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Debug("[state] screenshot unavailable: %v", err)
+		}
+		return nil, nil
+	}
+	observation, ok := parseScreenshotObservation(output)
+	if !ok {
+		if r.logger != nil {
+			r.logger.Debug("[state] screenshot output is not a valid visual observation")
+		}
+		return nil, nil
+	}
+	attachment, err := r.contextManager.StoreAttachment(observation.MIMEType, observation.ImageBytes)
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Debug("[state] failed to store screenshot attachment: %v", err)
+		}
+		return nil, nil
+	}
+	attachment.Source = messages.AttachmentSourceScreenshotObservation
+	return &attachment, observation.Result.Grounding
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {
