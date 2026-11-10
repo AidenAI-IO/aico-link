@@ -120,9 +120,6 @@ jobs:
       BENCHMARK_REALTIME_UPSTREAM_PROVIDER: ${{ vars.BENCHMARK_REALTIME_UPSTREAM_PROVIDER }}
       BENCHMARK_REALTIME_AUTH_MODE: ${{ vars.BENCHMARK_REALTIME_AUTH_MODE }}
       BENCHMARK_REALTIME_API_KEY: ${{ secrets.BENCHMARK_REALTIME_API_KEY }}
-      # Optional worker log level for protocol investigations; debug logs raw
-      # realtime provider frames. Unset keeps the Agent default.
-      BENCHMARK_LOG_LEVEL: ${{ vars.BENCHMARK_LOG_LEVEL }}
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
@@ -386,6 +383,14 @@ jobs:
           --daemon-dockerfile "$DAEMON_DOCKERFILE"
           --mobilegym-image "$MOBILEGYM_IMAGE"
           --mobilegym-log "$PREPARE_LOG"
+      - name: Enable temporary Gemini protocol diagnostics
+        if: ${{ github.ref == 'refs/heads/fix/gemini-realtime-collaboration' && inputs.suite == 'suites/realtime_collaboration_v1.json' }}
+        run: |
+          cat >> benchmark/config/agent.toml.template <<'TOML'
+
+          [advanced_settings.log]
+          level = "debug"
+          TOML
       - name: Run benchmark cases
         working-directory: benchmark
         env:

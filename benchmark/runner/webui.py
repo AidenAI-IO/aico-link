@@ -56,7 +56,6 @@ try:
     )
     from benchmark.runner.config import (
         AgentConfigManager,
-        apply_benchmark_log_level,
         apply_benchmark_telemetry,
         apply_agent_toml_runtime_defaults,
         materialize_agent_config_credentials,
@@ -78,7 +77,6 @@ except ImportError:
     )
     from runner.config import (
         AgentConfigManager,
-        apply_benchmark_log_level,
         apply_benchmark_telemetry,
         apply_agent_toml_runtime_defaults,
         materialize_agent_config_credentials,
@@ -1831,7 +1829,6 @@ def prepare_run_config(
 
     content = apply_agent_toml_runtime_defaults(config.read_text(encoding="utf-8"))
     content = apply_benchmark_telemetry(content)
-    content = apply_benchmark_log_level(content)
     content = materialize_agent_config_credentials(content)
     validate_agent_toml(content)
     config.write_text(content, encoding="utf-8")

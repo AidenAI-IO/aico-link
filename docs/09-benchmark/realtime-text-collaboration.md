@@ -158,11 +158,11 @@ overrides and are not inferred from the endpoint. For example,
 `BENCHMARK_REALTIME_PROTOCOL` is accepted only with `openai`. Endpoint
 variables must not contain credentials.
 
-To investigate a provider protocol problem, set the repository variable
-`BENCHMARK_LOG_LEVEL=debug` (runner: `AICO_BENCHMARK_LOG_LEVEL`). Workers then
-log at debug level, including raw realtime provider frames with transcripts and
-tool arguments, in the uploaded `daemon.log`. An explicit `[log] level` in the
-Agent config takes precedence. Remove the variable afterwards.
+To investigate a provider protocol problem, set `level = "debug"` under
+`[advanced_settings.log]` in the Agent configuration. Workers retain this
+setting in the uploaded `daemon.log`, including raw realtime provider frames
+with transcripts and tool arguments. The default level is `info`; restore it
+after the investigation.
 
 When the runner has an HTTPS proxy, realtime-text workers forward it to the
 daemon for the foreground provider. The backend model endpoint is added to
