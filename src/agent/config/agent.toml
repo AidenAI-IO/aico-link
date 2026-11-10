@@ -38,7 +38,7 @@
 # max_iterations = -1
 
 # MCP Streamable HTTP endpoint on the Agent (:8080/mcp). Default true.
-# Also available under Config Web → Advanced.
+# Clients need an MCP access token from Config Web → Advanced → MCP.
 # mcp_enabled = true
 # Expose the shell tool over MCP. Default false.
 # mcp_shell_enabled = false

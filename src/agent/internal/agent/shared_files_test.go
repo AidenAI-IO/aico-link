@@ -297,7 +297,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if handler == nil {
 		t.Fatal("shared listener never started")
 	}
-	request := httptest.NewRequest(http.MethodGet, "/share/report.txt", nil)
+	request := httptest.NewRequest(http.MethodGet, "http://192.168.1.1:8000/share/report.txt", nil)
 	request.RemoteAddr = "192.168.1.2:12345"
 	request = request.WithContext(context.WithValue(request.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("192.168.1.1"), Port: 8000}))
 	response := httptest.NewRecorder()
@@ -321,7 +321,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	if response.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated LAN request accepted: %d", response.Code)
 	}
-	login := httptest.NewRequest(http.MethodPost, lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`)).WithContext(request.Context())
+	login := httptest.NewRequest(http.MethodPost, "http://192.168.1.1:8000"+lanaccess.LoginAPI, strings.NewReader(`{"password":"shared-files-test-password"}`)).WithContext(request.Context())
 	login.RemoteAddr = request.RemoteAddr
 	login.Header.Set("Content-Type", "application/json")
 	response = httptest.NewRecorder()
@@ -352,7 +352,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 						_, _ = part.Write([]byte("uploaded"))
 						_ = writer.Close()
 					}
-					r := httptest.NewRequest(route.method, route.path, &body).WithContext(request.Context())
+					r := httptest.NewRequest(route.method, "http://192.168.1.1:"+port+route.path, &body).WithContext(request.Context())
 					r.RemoteAddr = request.RemoteAddr
 					r.Header.Set("Content-Type", writer.FormDataContentType())
 					switch credential {
@@ -382,7 +382,7 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 	for port, guarded := range map[string]http.Handler{"8080": mainHandler, "8000": handler} {
 		for _, credential := range []string{"cookie", "bearer"} {
 			t.Run(port+"/revoked-"+credential, func(t *testing.T) {
-				r := httptest.NewRequest(http.MethodGet, "/share/report.txt", nil).WithContext(request.Context())
+				r := httptest.NewRequest(http.MethodGet, "http://192.168.1.1:"+port+"/share/report.txt", nil).WithContext(request.Context())
 				r.RemoteAddr = request.RemoteAddr
 				if credential == "cookie" {
 					r.AddCookie(cookies[0])

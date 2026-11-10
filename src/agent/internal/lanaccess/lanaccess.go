@@ -53,14 +53,17 @@ var (
 // signing key, all kept as files so the Agent and Config Web processes see
 // the same state without coordinating.
 type State struct {
-	EnabledPath  string
-	PasswordPath string
-	SecretPath   string
+	EnabledPath   string
+	PasswordPath  string
+	SecretPath    string
+	MCPTokensPath string
 
 	secretMu sync.Mutex
+	mcpMu    sync.Mutex
 }
 
-// NewState uses the default path for each empty argument.
+// NewState uses the default path for each empty argument. MCP access tokens
+// are kept next to the device password.
 func NewState(enabledPath, passwordPath, secretPath string) *State {
 	if strings.TrimSpace(enabledPath) == "" {
 		enabledPath = DefaultEnabledPath
@@ -71,7 +74,12 @@ func NewState(enabledPath, passwordPath, secretPath string) *State {
 	if strings.TrimSpace(secretPath) == "" {
 		secretPath = DefaultSecretPath
 	}
-	return &State{EnabledPath: enabledPath, PasswordPath: passwordPath, SecretPath: secretPath}
+	return &State{
+		EnabledPath:   enabledPath,
+		PasswordPath:  passwordPath,
+		SecretPath:    secretPath,
+		MCPTokensPath: filepath.Join(filepath.Dir(passwordPath), filepath.Base(DefaultMCPTokensPath)),
+	}
 }
 
 // Enabled reports whether LAN access is on. Any error other than a missing
@@ -263,12 +271,23 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 
 // Guard admits requests from the USB link and the board itself. Other
 // requests are refused while LAN access is off; while it is on they need a
-// session token from the login endpoints, which Guard serves itself.
+// session token from the login endpoints, which Guard serves itself. MCP is
+// the exception: /mcp needs an MCP access token from every client and nothing
+// else, so it works over Wi-Fi with LAN access off (see serveMCP). Browser requests made on behalf of another site are refused
+// first, wherever they come from (see CrossSiteReason).
 func Guard(state *State, next http.Handler) http.Handler {
 	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reason := CrossSiteReason(r); reason != "" {
+			rejectCrossSite(w, reason)
+			return
+		}
 		trusted := IsTrusted(r)
 		enabled := state.Enabled()
+		if r.URL.Path == MCPPath {
+			serveMCP(state, w, r, next)
+			return
+		}
 		switch {
 		case isAuthPath(r.URL.Path) && (trusted || enabled):
 			auth.serveLogin(w, r)
@@ -284,20 +303,54 @@ func Guard(state *State, next http.Handler) http.Handler {
 			rejectUnauthenticated(w, r)
 			return
 		}
+		rejectLANDisabled(w, r)
+	})
+}
+
+// serveMCP admits /mcp requests that carry an MCP access token, from any
+// client, whether LAN access is on or off. Creating a token, which needs USB
+// or a signed-in session, is the user's consent to MCP; the token reaches
+// nothing but /mcp. A session token does not count, and neither does arriving
+// over USB or from the board.
+func serveMCP(state *State, w http.ResponseWriter, r *http.Request, next http.Handler) {
+	if !mcpTokenValid(state, r) {
 		w.Header().Set("Cache-Control", "no-store")
-		if strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = io.WriteString(w, disabledPage)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		w.Header().Set("WWW-Authenticate", `Bearer realm="aico-mcp"`)
+		writeAuthJSON(w, http.StatusUnauthorized, map[string]any{
 			"ok":      false,
-			"error":   "lan_access_disabled",
-			"message": disabledMessage,
+			"error":   "mcp_token_required",
+			"message": "Create an MCP access token in Settings > Advanced > MCP and send it as Authorization: Bearer <token>.",
 		})
+		return
+	}
+	next.ServeHTTP(w, r)
+}
+
+func rejectLANDisabled(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, disabledPage)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      false,
+		"error":   "lan_access_disabled",
+		"message": disabledMessage,
+	})
+}
+
+func rejectCrossSite(w http.ResponseWriter, reason string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      false,
+		"error":   reason,
+		"message": "Requests from other sites are refused. Open the board by its IP address.",
 	})
 }
 
