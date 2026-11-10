@@ -300,6 +300,7 @@ func (s *ToolSet) RegisterEnterTextTool(models model.Model, deviceTypeFn func() 
 	}
 	s.searchOpenTool = searchOpenTool
 	s.refreshOpenAppTool()
+	s.refreshOpenURLTool()
 	s.tools["enter_text"] = newPostActionScreenshotTool(entryTool, s.textInputHW.screenshot, 300*time.Millisecond)
 }
 

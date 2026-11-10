@@ -75,6 +75,7 @@
       "rubric": [
         {
           "id": "initial_query_visible",
+          "scope": "precondition",
           "check": "The pre-screenshot visibly shows the editable Settings search query exactly as alpha beta; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {
@@ -96,7 +97,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings search, clear any existing query, and enter exactly: alpha beta. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_search", "params": {"query": "alpha beta"}}
       }
     },
     {
@@ -110,6 +112,7 @@
       "rubric": [
         {
           "id": "initial_query_visible",
+          "scope": "precondition",
           "check": "The pre-screenshot visibly shows the editable Settings search query exactly as ClearMe-2026; a failed entry attempt or a different initial field does not satisfy this precondition."
         },
         {
@@ -131,7 +134,8 @@
         "type": "agent_prompt",
         "prompt": "Open Settings search, clear any existing query, and enter exactly: ClearMe-2026. Observe the field and leave that query visible in the editable search field. Do not submit, navigate away, or change settings.",
         "timeout_sec": 180,
-        "clear_history_after": true
+        "clear_history_after": true,
+        "device_prepare": {"recipe": "settings_search", "params": {"query": "ClearMe-2026"}}
       }
     }
   ]

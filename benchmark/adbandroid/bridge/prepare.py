@@ -22,6 +22,13 @@ from .adb import ADBCommandError
 
 
 CHROME_PACKAGE = "com.android.chrome"
+SETTINGS_PACKAGE = "com.android.settings"
+# Pixel images serve Settings search from a separate package.
+SETTINGS_SEARCH_PACKAGES = ("com.google.android.settings.intelligence",)
+SETTINGS_PAGE_ACTIONS = {
+    "wifi": "android.settings.WIFI_SETTINGS",
+    "device_info": "android.settings.DEVICE_INFO_SETTINGS",
+}
 MAPS_PACKAGE = "com.google.android.apps.maps"
 MESSAGES_PACKAGE = "com.google.android.apps.messaging"
 CONTACTS_PACKAGE = "com.google.android.contacts"
@@ -104,7 +111,7 @@ def _texts_param(params: dict[str, Any], key: str, default: list[str]) -> list[s
     value = params.get(key, default)
     if isinstance(value, str):
         value = [value]
-    if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
+    if not isinstance(value, list) or not value or not all(isinstance(item, str) and item.strip() for item in value):
         raise PrepareError(f"{key} must be a non-empty string or list of strings")
     return value
 
@@ -261,9 +268,17 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
     previous = device.newest_media_image()
     device.capture_photo()
     photo = _wait_for_new_photo(device, previous, timeout_sec=timeout)
-    device.keyevent("KEYCODE_HOME")
     details: dict[str, Any] = {"photo": photo.get("_display_name", ""), "folder": photo.get("relative_path", "")}
-    if then == "photos":
+    if then == "home":
+        # Sending HOME is not evidence that the transition has finished. Do not
+        # hand the task a camera screenshot while claiming a prepared launcher.
+        device.reset_home()
+        details["confirmed_by"] = wait_for_any_text(
+            device, _texts_param(params, "wait_for_text", ["Phone", "Chrome", "Messages", "Gmail"]),
+            timeout_sec=timeout,
+        )
+    elif then == "photos":
+        device.keyevent("KEYCODE_HOME")
         device.start_intent(
             action="android.intent.action.VIEW",
             data=f"{MEDIA_IMAGES_URI}/{photo['_id']}",
@@ -273,6 +288,7 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
             device, _texts_param(params, "wait_for_text", ["Share", "Edit"]), timeout_sec=timeout
         )
     elif then == "files":
+        device.keyevent("KEYCODE_HOME")
         folder = str(photo.get("relative_path") or "").strip("/")
         if not folder:
             raise PrepareError("the new photo has no relative_path")
@@ -291,6 +307,94 @@ def prepare_camera_photo(device: Any, params: dict[str, Any]) -> dict[str, Any]:
             device, [candidate for candidate in (name, stem) if candidate], timeout_sec=timeout
         )
     return details
+
+
+def _start_settings_main(device: Any, params: dict[str, Any]) -> str:
+    """Relaunch Settings on its main list, scrolled to the top.
+
+    Settings is stopped first so no subpage, scroll position or search query
+    survives from an earlier task.
+    """
+    device.force_stop(SETTINGS_PACKAGE)
+    device.start_intent(action="android.settings.SETTINGS", package=SETTINGS_PACKAGE)
+    return wait_for_any_text(
+        device,
+        _texts_param(params, "main_text", ["Network & internet", "Search settings"]),
+        timeout_sec=_timeout_param(params),
+    )
+
+
+def prepare_settings_page(device: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Show main Settings, a subpage opened from it, or a panel over it.
+
+    A subpage is started inside the Settings task after the main list, so Back
+    returns to the main list as it does after navigating there by hand.
+    """
+    page = str(params.get("page") or "main")
+    if page != "main" and page not in SETTINGS_PAGE_ACTIONS:
+        raise PrepareError(f"unsupported settings page {page!r}")
+    panel = params.get("panel")
+    if panel not in (None, "notifications"):
+        raise PrepareError(f"unsupported panel {panel!r}")
+    if panel and page != "main":
+        raise PrepareError("a panel can open only over the main Settings page")
+    confirmation = _texts_param(params, "wait_for_text", []) if page != "main" or panel else None
+    details: dict[str, Any] = {"page": page, "main_confirmed_by": _start_settings_main(device, params)}
+    if page != "main":
+        device.start_intent(action=SETTINGS_PAGE_ACTIONS[page], package=SETTINGS_PACKAGE)
+        details["confirmed_by"] = wait_for_any_text(
+            device, confirmation, timeout_sec=_timeout_param(params)
+        )
+    if panel:
+        device.expand_notifications()
+        details["panel"] = panel
+        details["confirmed_by"] = wait_for_any_text(
+            device, confirmation, timeout_sec=_timeout_param(params)
+        )
+    return details
+
+
+def prepare_settings_search(device: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Open Settings search with an unsubmitted ASCII query in the field.
+
+    The query is typed only once a focused editable field is on screen, so it
+    cannot land in another app or in the main list's search entry point.
+    """
+    query = _string_param(params, "query")
+    for package in SETTINGS_SEARCH_PACKAGES:
+        device.force_stop(package)
+    _start_settings_main(device, params)
+    device.start_intent(action="android.settings.APP_SEARCH_SETTINGS")
+    _wait_for_focused_edit_text(device, timeout_sec=_timeout_param(params))
+    device.input_text(query)
+    matched = wait_for_any_text(device, [query], timeout_sec=_timeout_param(params))
+    return {"query": query, "confirmed_by": matched}
+
+
+FOCUSED_EDIT_TEXT = re.compile(
+    r'<node\b(?=[^>]*\bclass="android\.widget\.EditText")(?=[^>]*\bfocused="true")[^>]*>'
+)
+
+
+def _wait_for_focused_edit_text(device: Any, *, timeout_sec: float) -> None:
+    deadline = time.monotonic() + timeout_sec
+    while True:
+        try:
+            if FOCUSED_EDIT_TEXT.search(device.dump_window_xml()):
+                return
+        except ADBCommandError:
+            pass
+        if time.monotonic() >= deadline:
+            raise PrepareError(f"no focused text field appeared within {timeout_sec:.0f}s")
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+def prepare_home(device: Any, params: dict[str, Any]) -> dict[str, Any]:
+    """Show the launcher Home screen with no panel or keyboard open."""
+    confirmation = _texts_param(params, "wait_for_text", [])
+    device.reset_home()
+    matched = wait_for_any_text(device, confirmation, timeout_sec=_timeout_param(params))
+    return {"confirmed_by": matched}
 
 
 def _wait_for_new_photo(
@@ -320,4 +424,7 @@ RECIPES: dict[str, Callable[[Any, dict[str, Any]], dict[str, Any]]] = {
     "messages_draft": prepare_messages_draft,
     "contact_detail": prepare_contact_detail,
     "camera_photo": prepare_camera_photo,
+    "settings_page": prepare_settings_page,
+    "settings_search": prepare_settings_search,
+    "home": prepare_home,
 }

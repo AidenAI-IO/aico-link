@@ -28,8 +28,9 @@ def _format_cost(value: float | None) -> str:
     return "—" if value is None else f"${value:.3f}"
 
 
-def _format_change(change: float | None) -> str:
-    """Percentage-point change from the previous seven days: green up, red down."""
+def _format_change(row: dict[str, Any]) -> str:
+    """Descriptive percentage-point change from the previous seven days."""
+    change = row.get("change")
     if change is None:
         return ""
     points = change * 100
@@ -45,7 +46,7 @@ def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str
     week = weekly["totals"]
 
     overview = (f"**Runs:** {week.get('run_count', len(data.get('runs', [])))} workflow runs, {week['suite_runs']} dataset runs\n"
-                f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly['change'])}"
+                f"**pass@1:** {_format_rate(week['pass_at_1'])}{_format_change(weekly)}"
                 f" ({week['passed']:.0f}/{week['eligible_tasks']:.0f} eligible tasks)")
     if week["cost_usd_sum"] is not None:
         overview += f"\n**Cost:** {_format_cost(week['cost_usd_sum'])}"
@@ -60,21 +61,22 @@ def _build_card(data: dict[str, Any], dashboard_url: str, weekly_report_url: str
         elements.append({"tag": "hr"})
     for cap in capabilities:
         names = set(cap["suites"])
-        lines = [f"- {suite['suite']}: {_format_rate(suite['pass_at_1'])}{_format_change(suite['change'])}"
+        lines = [f"- {suite['suite']}: {_format_rate(suite['pass_at_1'])}{_format_change(suite)}"
                  for suite in sorted((suite for suite in suites if suite["suite"] in names),
                                      key=lambda suite: (suite["pass_at_1"] is None,
                                                         suite["pass_at_1"] or 0.0, suite["suite"]))]
-        header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap['change'])}"
+        header = f"**{cap['capability']}**: {_format_rate(cap['pass_at_1'])}{_format_change(cap)}"
         elements.append({"tag": "markdown", "content": "\n".join([header, *lines])})
 
     if weekly.get("diagnostics"):
-        lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s['change'])}"
+        lines = [f"{s['suite']}: skill read {_format_rate(s['rate'])}{_format_change(s)}"
                  for s in weekly["diagnostics"]]
         elements.append({"tag": "markdown", "content": "**Diagnostics** (skill read observation, not task pass@1)\n" + "\n".join(lines)})
 
     if suites:
         changed = sum(s.get("change") is not None and bool(s.get("config_changes")) for s in suites)
-        note = "Changes describe each window's task mix, not matched runs."
+        note = ("Changes compare datasets measured in both weeks; "
+                "they are descriptive, not statistical significance claims.")
         if changed:
             noun = "comparison" if changed == 1 else "comparisons"
             verb = "has" if changed == 1 else "have"

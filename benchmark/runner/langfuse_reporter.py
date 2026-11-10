@@ -1048,6 +1048,11 @@ def _attempt_scores(*, output: Any, **_: Any) -> list[dict[str, Any]]:
 
 def _run_scores(aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
     evaluations: list[dict[str, Any]] = []
+    # Explicit counts distinguish a healthy run from a partial score upload.
+    # Publish these before capability scores; history requires both counts.
+    failure_classes = aggregate.get("failure_classes") or {}
+    for kind in ("environment", "evaluation"):
+        _add_score(evaluations, f"failures.class.{kind}", failure_classes.get(kind, 0))
     for metric_name in (
         "pass_at_1",
         "pass_at_k",
@@ -1148,8 +1153,9 @@ def _run_scores(aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
             f"diagnostics.failure_stage_coverage.{field}",
             _nested(aggregate, "failure_stage_coverage", field),
         )
-    for failure_class, count in sorted((aggregate.get("failure_classes") or {}).items()):
-        _add_score(evaluations, f"failures.class.{failure_class}", count)
+    for failure_class, count in sorted(failure_classes.items()):
+        if failure_class not in ("environment", "evaluation"):
+            _add_score(evaluations, f"failures.class.{failure_class}", count)
     for stage, count in sorted((aggregate.get("failure_stages") or {}).items()):
         _add_score(evaluations, f"failures.stage.{stage}", count)
     for status, count in sorted((aggregate.get("by_status") or {}).items()):

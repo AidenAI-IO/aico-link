@@ -125,6 +125,9 @@ func defaultBoolPtr(value bool) *bool {
 	return &v
 }
 
+// DefaultConfig returns the built-in configuration that runtime loading starts
+// from before applying agent.toml. Values set in the file override these
+// defaults, including an explicit voice_model.use_backend_agent = false.
 func DefaultConfig() Config {
 	return Config{
 		Timezone: defaultTimezone,
@@ -164,6 +167,7 @@ func DefaultConfig() Config {
 			InputAudioFormat:  "pcm",
 			OutputAudioFormat: "pcm",
 			TurnDetection:     defaultVoiceModelTurnDetection,
+			UseBackendAgent:   true,
 		},
 		AudioArchive: AudioArchiveConfig{
 			Enabled:     true,
