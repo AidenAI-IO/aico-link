@@ -78,6 +78,15 @@ that match it, never by a browse by type. It is excluded from the user profile
 and from the related memories shown to Notification Memory. The memory is still
 a plain file, like every other memory.
 
+Because a sensitive memory is never in the model's context until it is
+recalled, a model asked for a saved secret can conclude from its own caution
+that the secret was never kept. The default behavior prompt therefore requires
+a `recall_memory` query on the question's topic before the Agent says it does
+not know, did not save, or cannot provide something the user asks it to
+recall, and the user profile section states that its list is partial. The
+Agent gives the secret the user asked for; another secret that merely matched
+the query is mentioned at most by name, never by value.
+
 Notifications are never an explicit request to remember, and the Notification
 Memory prompt tells the model to ignore OTPs and secrets.
 
