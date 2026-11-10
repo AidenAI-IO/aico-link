@@ -331,6 +331,25 @@ def test_prepare_run_config_enables_ci_telemetry_only_when_requested(tmp_path: P
         webui.prepare_run_config(base, dest, agent_config_text=config_text)
 
 
+def test_prepare_run_config_sets_worker_log_level_only_when_requested(tmp_path: Path, monkeypatch):
+    config_text = '[model_settings.model]\nprovider = "fake"\n'
+    base, dest = tmp_path / "base", tmp_path / "dest"
+    monkeypatch.delenv("AICO_BENCHMARK_TELEMETRY", raising=False)
+    monkeypatch.delenv("AICO_BENCHMARK_LOG_LEVEL", raising=False)
+    webui.prepare_run_config(base, dest, agent_config_text=config_text)
+    assert "log" not in tomllib.loads((dest / "agent.toml").read_text())
+
+    monkeypatch.setenv("AICO_BENCHMARK_LOG_LEVEL", "DEBUG")
+    webui.prepare_run_config(base, dest, agent_config_text=config_text)
+    assert tomllib.loads((dest / "agent.toml").read_text())["log"] == {"level": "debug"}
+    # An explicit Agent setting wins; an unknown level fails before the run.
+    webui.prepare_run_config(base, dest, agent_config_text=config_text + '[log]\nlevel = "warn"\n')
+    assert tomllib.loads((dest / "agent.toml").read_text())["log"] == {"level": "warn"}
+    monkeypatch.setenv("AICO_BENCHMARK_LOG_LEVEL", "verbose")
+    with pytest.raises(ValueError, match="AICO_BENCHMARK_LOG_LEVEL"):
+        webui.prepare_run_config(base, dest, agent_config_text=config_text)
+
+
 def test_prepare_run_config_uses_agent_config_text(tmp_path: Path):
     base = tmp_path / "base"
     base.mkdir()

@@ -75,6 +75,15 @@ def _grounded_selector(selector: dict[str, Any], text: str) -> dict[str, Any]:
         value in {"read", "write"} if key == "action" else bool(value.strip()) and _visible(value) in visible)}
 
 
+def response_key(event: dict[str, Any]) -> str:
+    """The foreground response an event belongs to.
+
+    Providers such as Gemini Live do not return response IDs, so fall back to the
+    daemon's own response request identity, which every foreground response has.
+    """
+    return event.get("response_id") or (event.get("collaboration") or {}).get("response_request_id") or ""
+
+
 def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return one text snapshot per accepted foreground output version.
 
@@ -92,7 +101,7 @@ def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         text = payload.get("Text", payload.get("text", ""))
         if not isinstance(text, str) or not text:
             continue
-        key = (meta.get("provider_session_id", ""), event.get("response_id", ""),
+        key = (meta.get("provider_session_id", ""), response_key(event),
                event.get("item_id", ""), payload.get("TextSource", payload.get("text_source", "")))
         version = current.get(key)
         if event["kind"] == "text.delta":
@@ -107,7 +116,7 @@ def foreground_outputs(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
         else:
             version = None
         if version is None:
-            version = {"response_id": event.get("response_id"), "turn_id": event.get("turn_id"),
+            version = {"response_id": response_key(event), "turn_id": event.get("turn_id"),
                        "item_id": event.get("item_id"), "clock_id": meta.get("clock_id"),
                        "text": "", "observations": [], "closed": event["kind"] == "text.final"}
             current[key] = version

@@ -19,6 +19,8 @@ from typing import Any
 
 import httpx
 
+from runner.collaboration_claims import response_key
+
 TRACE_NAME = "realtime-foreground"
 _OTLP_PATH = "/api/public/otel/v1/traces"
 
@@ -93,7 +95,7 @@ def build_foreground_spans(
         kind, payload, when = event["kind"], event.get("payload") or {}, at[event["event_id"]]
         meta = event.get("collaboration") or {}
         if actor(event) == "foreground":
-            turn_id, response_id = event.get("turn_id"), event.get("response_id")
+            turn_id, response_id = event.get("turn_id"), response_key(event)
             if kind == "turn.committed" and turn_id:
                 turns[turn_id] = add(f"turn:{turn_id}", name="user-turn", kind="span", start=when,
                                      end=last, parent=root["span_id"], input=payload.get("text"))

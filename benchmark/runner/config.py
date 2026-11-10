@@ -301,6 +301,27 @@ def configure_realtime_text(
     ])
 
 
+def apply_benchmark_log_level(content: str) -> str:
+    """Raise worker logging for a protocol investigation; explicit settings win.
+
+    Debug output includes raw realtime provider frames (transcripts, tool
+    arguments, audio data), so it is opt-in through AICO_BENCHMARK_LOG_LEVEL.
+    """
+    level = os.getenv("AICO_BENCHMARK_LOG_LEVEL", "").strip().lower()
+    if not level:
+        return content
+    if level not in {"debug", "info", "warn", "error"}:
+        raise ValueError(f"AICO_BENCHMARK_LOG_LEVEL must be debug, info, warn or error, got {level!r}")
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        import tomli as tomllib
+
+    if "level" in tomllib.loads(content).get("log", {}):
+        return content
+    return content.rstrip() + f'\n\n[log]\nlevel = "{level}"\n'
+
+
 def apply_benchmark_telemetry(content: str) -> str:
     """Opt CI workers into execution tracing; explicit Agent settings take precedence."""
     if os.getenv("AICO_BENCHMARK_TELEMETRY", "").strip().lower() not in {"1", "true"}:

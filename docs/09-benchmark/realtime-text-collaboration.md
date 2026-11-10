@@ -154,8 +154,15 @@ The workflow maps these repository settings to the variables above:
 - Secret: `BENCHMARK_REALTIME_API_KEY`.
 
 Clear provider-specific variables when switching providers; they are explicit
-overrides and are not inferred from the endpoint. Endpoint variables must not
-contain credentials.
+overrides and are not inferred from the endpoint. For example,
+`BENCHMARK_REALTIME_PROTOCOL` is accepted only with `openai`. Endpoint
+variables must not contain credentials.
+
+To investigate a provider protocol problem, set the repository variable
+`BENCHMARK_LOG_LEVEL=debug` (runner: `AICO_BENCHMARK_LOG_LEVEL`). Workers then
+log at debug level, including raw realtime provider frames with transcripts and
+tool arguments, in the uploaded `daemon.log`. An explicit `[log] level` in the
+Agent config takes precedence. Remove the variable afterwards.
 
 When the runner has an HTTPS proxy, realtime-text workers forward it to the
 daemon for the foreground provider. The backend model endpoint is added to
