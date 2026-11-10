@@ -65,7 +65,7 @@ suites:
       go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
       go test -race -count=1 -timeout=2m ./internal/usbuplink ./internal/wifiproxy
       go test -race -count=1 -timeout=2m -run '^TestUSBInternet' ./internal/configweb
-    dependencies: [go]
+    dependencies: [go, gcc]
     required: true
     timeout_seconds: 900
 

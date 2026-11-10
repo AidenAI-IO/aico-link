@@ -20,7 +20,7 @@ type proxyRoute struct {
 func (s *Server) routeForHost(host, port, scheme string) (proxyRoute, error) {
 	if s.usbInternet != nil {
 		if lease := s.usbInternet.Current(); lease != nil {
-			if netproxy.Bypass(host, port, usbNoProxy) {
+			if netproxy.IsLoopbackHost(host) || netproxy.Bypass(host, port, usbNoProxy) {
 				return proxyRoute{}, nil
 			}
 			return proxyRoute{upstream: lease.Upstream, lease: lease}, nil

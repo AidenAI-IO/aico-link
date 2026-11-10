@@ -58,3 +58,35 @@ test('a stale status read cannot undo a completed toggle and LAN reads cannot wr
   await readonly.save(true);
   assert.equal(writes, 0);
 });
+
+test('unchanged polling preserves the rendered control while visible changes and outages update it', async () => {
+  let result = {enabled: true, active: true, host: 'mac', via_usb: true, expires_in_seconds: 29};
+  let offline = false;
+  let renders = 0;
+  const model = usbInternetState(async () => {
+    if (offline) throw new Error('offline');
+    return {...result};
+  }, () => { renders++; });
+  await model.load();
+  assert.equal(renders, 1);
+  result.expires_in_seconds = 24;
+  await model.load();
+  await model.load();
+  assert.equal(renders, 1, 'lease countdown must not replace the focused control');
+  for (const change of [{host: 'android'}, {active: false}, {enabled: false}, {via_usb: false}]) {
+    result = {...result, ...change};
+    const before = renders;
+    await model.load();
+    assert.equal(renders, before + 1);
+  }
+  offline = true;
+  const before = renders;
+  await assert.rejects(model.load(), /offline/);
+  assert.equal(model.state, null);
+  assert.equal(renders, before + 1);
+  await assert.rejects(model.load(), /offline/);
+  assert.equal(renders, before + 1, 'repeated errors must not replace the unavailable control');
+  offline = false;
+  await model.load();
+  assert.equal(renders, before + 2);
+});

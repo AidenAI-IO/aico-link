@@ -117,6 +117,9 @@ requests through a root-only Unix socket at
 `/userdata/system/usb-internet.json`. Sessions, upstream credentials, and active
 connections are in memory only and disappear when the proxy process restarts.
 The switch is currently device-local and is not included in network backups.
+If USB settings or the control socket cannot be initialized, the proxy logs
+the failure and continues serving the existing Wi-Fi/system proxy policy with
+USB sharing unavailable. Repair the reported path and restart the proxy to retry.
 
 | Endpoint | Behavior |
 | --- | --- |

@@ -21,9 +21,13 @@ export function usbInternetState(send, changed) {
       const revision = version;
       try {
         const result = await send(endpoint, {cache: 'no-store'});
-        if (revision === version) { state = result; changed(); }
+        if (revision === version) {
+          const different = state === null || ['enabled', 'active', 'host', 'via_usb'].some(key => state[key] !== result[key]);
+          state = result;
+          if (different) changed();
+        }
       } catch (error) {
-        if (revision === version) { state = null; changed(); }
+        if (revision === version && state !== null) { state = null; changed(); }
         throw error;
       }
     },
