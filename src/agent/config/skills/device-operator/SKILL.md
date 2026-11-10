@@ -78,6 +78,7 @@ Before using coordinates:
 - For ordinary scrolling, start inside the intended scrollable region near its edge, with a small margin based on the current UI. The end may extend beyond the region while staying inside the screen. Physical screen-edge coordinates are reserved for system gestures: left-edge `back` starts at the left edge (normalized `x=1`, or pixel `x=1` under the pixel protocol), and bottom-edge `home` starts at the bottom edge (normalized `y=999`, or the last pixel row, screenshot height minus 1).
 - Do not guess a coordinate if the target is not visible or the screen is stale.
 - If a tap misses, observe again before adjusting. Do not repeat the exact same coordinate blindly.
+- A screenshot may show numbered boxes around detected interface components; its state message then lists each element's `id`, `center` and `box` in the coordinates `touch_gesture` takes. When one box covers the target, tap its `center`, passed unchanged, rather than a point estimated by eye. The detector does not read text and can miss a control; when no box covers the target, measure it from the image instead. When a `touch_gesture` seems to have missed (the expected change did not happen, or a neighboring control reacted instead), retry from the boxes in the returned screenshot, or call `screenshot` with `{"grounding":true}` when the current screenshot has none.
 
 ## Text Entry
 

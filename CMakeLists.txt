@@ -225,6 +225,15 @@ if(AICO_RKNN_COMPAT_SOURCES)
     target_compile_definitions(smart_turn_helper PRIVATE AICO_RKNN_GLIBC_COMPAT=1)
 endif()
 
+# UI-DETR component detector for screenshot grounding. The model was compiled
+# with RKNN 2.5.0, so the helper loads the matching private runtime by path at
+# run time instead of linking the static 2.3.2 runtime.
+add_executable(ui_grounding_helper src/ui_grounding/ui_grounding_helper.c)
+target_include_directories(ui_grounding_helper PRIVATE
+    ${CMAKE_SOURCE_DIR}/third_party/rknpu2/v2.5.0/include
+)
+target_link_libraries(ui_grounding_helper PRIVATE dl m)
+
 # Classic speaker verification toolchain (ERes2Net), matching aico-speaker-verification.
 add_executable(speaker_verify_fbank src/speaker_verify/fbank.c)
 target_link_libraries(speaker_verify_fbank PRIVATE m)
@@ -250,7 +259,7 @@ add_executable(cpu_vad src/cpu_vad.cpp src/aico_log.cpp)
 target_include_directories(cpu_vad PRIVATE ${CMAKE_SOURCE_DIR}/src)
 target_link_libraries(cpu_vad PRIVATE pthread m)
 
-foreach(_vad_target rknn_vad cpu_vad smart_turn_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail)
+foreach(_vad_target rknn_vad cpu_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail)
     target_compile_options(${_vad_target} PRIVATE -O3)
     if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm|ARM)")
         target_compile_options(${_vad_target} PRIVATE
@@ -288,6 +297,7 @@ if(AICO_ENABLE_LINK_MAPS)
             rknn_vad
             cpu_vad
             smart_turn_helper
+            ui_grounding_helper
             speaker_verify_fbank
             speaker_verify_rknn
             speaker_verify_tail

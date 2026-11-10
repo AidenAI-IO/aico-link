@@ -1189,6 +1189,9 @@ func compactMaterializedScreenshotObservation(result postActionScreenshotResult)
 	if strings.TrimSpace(result.ActionOutput) != "" {
 		compact["action_output"] = strings.TrimSpace(result.ActionOutput)
 	}
+	if result.Grounding != nil {
+		compact["grounding"] = result.Grounding
+	}
 	data, _ := json.Marshal(compact)
 	return string(data)
 }
@@ -1347,6 +1350,9 @@ func compactEpisodeObservation(observation string) string {
 		}
 		if strings.TrimSpace(result.ActionOutput) != "" {
 			compact["action_output"] = strings.TrimSpace(result.ActionOutput)
+		}
+		if result.Grounding != nil {
+			compact["grounding"] = result.Grounding
 		}
 		data, _ := json.Marshal(compact)
 		return string(data)

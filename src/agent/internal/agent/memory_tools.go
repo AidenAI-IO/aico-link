@@ -94,6 +94,7 @@ func (t *RecallMemoryTool) Description() string {
 		"Use for remembered preferences, rules, procedures, facts, profile info, or screen content the user saved earlier with the device button.",
 		"Screen content the user saved belongs here even when they phrase it as something recent (\"the tracking number I just saved\"); use types [\"screen_snapshot\"] for those. Only use recall_session_chunks for what was actually said in conversation.",
 		"Notification-derived temporary memories are included automatically. Use this tool for remembered notification conclusions; when the exact original notification record is required, use shell to read `/userdata/agent/memory/notifications/events/*.jsonl` without modifying it.",
+		"Sensitive memories (secrets the user asked to keep) are returned only when tags or entities name their topic, never by a browse with empty arrays.",
 		"Returns matching memories with id, revision, type, title, content, summary.",
 	}, " ")
 }

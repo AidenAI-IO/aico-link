@@ -267,6 +267,7 @@ touch \
     "${apps_dir}/bin/ota" \
     "${apps_dir}/bin/rknn_vad" \
     "${apps_dir}/bin/smart_turn_helper" \
+    "${apps_dir}/bin/ui_grounding_helper" \
     "${apps_dir}/bin/speaker_verify_fbank" \
     "${apps_dir}/bin/speaker_verify_rknn" \
     "${apps_dir}/bin/speaker_verify_tail" \
@@ -289,6 +290,7 @@ printf '%s\n' \
     'librknnmrt version: 2.3.2 (429f97ae6b@2025-04-09T09:11:49)' \
     >"${apps_dir}/bin/speaker_verify_rknn"
 chmod +x \
+    "${apps_dir}/bin/ui_grounding_helper" \
     "${apps_dir}/bin/speaker_verify_fbank" \
     "${apps_dir}/bin/speaker_verify_rknn" \
     "${apps_dir}/bin/speaker_verify_tail"
@@ -412,7 +414,7 @@ expect_audit_failure() {
 
 run_audit "${TEST_ROOT}/report-pass"
 grep -qx 'status=pass' "${TEST_ROOT}/report-pass/summary.txt"
-grep -qx 'elf_count=13' "${TEST_ROOT}/report-pass/summary.txt"
+grep -qx 'elf_count=14' "${TEST_ROOT}/report-pass/summary.txt"
 
 chmod -x "${apps_dir}/bin/mcu_service"
 expect_audit_failure nonexecutable-mcu-service
@@ -455,6 +457,7 @@ bundle_payload=(
     bin/image_process
     bin/rknn_vad
     bin/smart_turn_helper
+    bin/ui_grounding_helper
     bin/speaker_verify_fbank
     bin/speaker_verify_rknn
     bin/speaker_verify_tail
@@ -475,7 +478,7 @@ done
 chmod +x "${bundle_apps}/bin/"*
 ln -s librga.so.2.1.0 "${bundle_apps}/lib/librga.so.2"
 ln -s librga.so.2 "${bundle_apps}/lib/librga.so"
-printf 'status=pass\nelf_count=23\n' >"${bundle_audit}/summary.txt"
+printf 'status=pass\nelf_count=24\n' >"${bundle_audit}/summary.txt"
 
 help_bundle_dir=${TEST_ROOT}/bundle-help
 DEBIAN_APPS_OUTPUT_DIR="${bundle_output}" \

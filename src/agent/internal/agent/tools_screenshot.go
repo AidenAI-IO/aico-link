@@ -3,6 +3,7 @@ package agent
 import (
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/agent/screenprovider"
+	"aico-agent/internal/logging"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -12,6 +13,7 @@ import (
 	"image/color"
 	"image/jpeg"
 	"math"
+	"strings"
 )
 
 const screenshotJPEGQuality = 80
@@ -30,6 +32,10 @@ type screenshotResult struct {
 	ScreenshotRef  string                   `json:"screenshot_ref,omitempty"`
 	CaptureBackend string                   `json:"capture_backend,omitempty"`
 	ADBDevice      *adbDeviceInfo           `json:"adb_device,omitempty"`
+	// Grounding is set for a grounded screenshot: an explicit grounding
+	// request, or a post-action screenshot of a tool that waits for a stable
+	// screen. The model reads it in the state message carrying the image.
+	Grounding *screenshotGrounding `json:"grounding,omitempty"`
 }
 
 type screenshotFrameClient = screenprovider.Provider
@@ -307,6 +313,9 @@ type ScreenshotTool struct {
 	client       screenshotFrameClient
 	screen       *screen.ScreenState
 	deviceTypeFn func() string
+	// grounder detects interface components for grounding:true requests;
+	// nil when the detector is not installed.
+	grounder uiGrounder
 }
 
 func (t *ScreenshotTool) SetDeviceTypeFunc(fn func() string) {
@@ -362,8 +371,9 @@ func frameMetadataSourceActiveArea(meta *frameMetadata) (sourceWidth, sourceHeig
 
 func NewScreenshotTool(provider screenprovider.Provider, screen *screen.ScreenState) *ScreenshotTool {
 	return &ScreenshotTool{
-		client: provider,
-		screen: screen,
+		client:   provider,
+		screen:   screen,
+		grounder: defaultUIGrounder(),
 	}
 }
 
@@ -372,23 +382,58 @@ func (t *ScreenshotTool) Name() string { return "screenshot" }
 func (t *ScreenshotTool) ReturnsVisualObservation() bool { return true }
 
 func (t *ScreenshotTool) Description() string {
-	return `Capture a screenshot from the connected display. No input required (pass empty JSON {} or ""). ` +
-		`Returns ok in the tool result and provides the image in a follow-up state message.`
+	return `Capture a screenshot of the connected display. Input is optional: {} or "". ` +
+		`The tool result is ok, and the image arrives in a follow-up state message. ` +
+		`Set grounding to true to also mark detected interface components: the image then carries numbered boxes, and the state ` +
+		`message lists each element's id, center and box in touch_gesture coordinates. Without grounding the screenshot is plain, ` +
+		`whatever the UI Grounding setting. If grounding fails, the state message says why and the plain screenshot is still returned.`
 }
 
 func (t *ScreenshotTool) ArgsSchema() map[string]any {
-	return objectArgsSchema(nil)
+	return objectArgsSchema(map[string]any{
+		"grounding": boolArgSchema("Also mark detected interface components with numbered boxes and list their centers in touch_gesture coordinates. Defaults to false."),
+	})
+}
+
+type screenshotArgs struct {
+	Grounding bool `json:"grounding"`
+	// autoGround grounds a screenshot the Agent takes by itself under the
+	// ui_grounding_enabled setting. Unlike Grounding, a device without the
+	// detector returns the plain screenshot without an error.
+	autoGround bool
+}
+
+// parseScreenshotArgs accepts an empty input, "" or a JSON object; grounding
+// defaults to false.
+func parseScreenshotArgs(input string) (screenshotArgs, error) {
+	var args screenshotArgs
+	input = strings.TrimSpace(input)
+	if input == "" || input == `""` {
+		return args, nil
+	}
+	if err := json.Unmarshal([]byte(input), &args); err != nil {
+		return args, fmt.Errorf("screenshot input must be a JSON object such as {} or {\"grounding\":true}: %w", err)
+	}
+	return args, nil
 }
 
 func (t *ScreenshotTool) Call(ctx context.Context, input string) (string, error) {
-	return t.call(ctx, input, true)
+	args, err := parseScreenshotArgs(input)
+	if err != nil {
+		return "", err
+	}
+	return t.call(ctx, args, true)
 }
 
-func (t *ScreenshotTool) CallWithoutStartupWait(ctx context.Context, input string) (string, error) {
-	return t.call(ctx, input, false)
+// CallWithoutStartupWait captures a screenshot without waiting for the frame
+// service to become ready, for the screenshot attached to a user turn. It
+// grounds only when ground is true: the caller passes the live
+// ui_grounding_enabled setting, never the model's own input.
+func (t *ScreenshotTool) CallWithoutStartupWait(ctx context.Context, ground bool) (string, error) {
+	return t.call(ctx, screenshotArgs{autoGround: ground}, false)
 }
 
-func (t *ScreenshotTool) call(_ context.Context, _ string, waitForReady bool) (string, error) {
+func (t *ScreenshotTool) call(ctx context.Context, args screenshotArgs, waitForReady bool) (string, error) {
 	// Request JPEG format directly from frame_service (hardware-encoded)
 	cropBlack := t.cropBlack()
 	var meta *frameMetadata
@@ -483,11 +528,53 @@ func (t *ScreenshotTool) call(_ context.Context, _ string, waitForReady bool) (s
 		)
 	}
 
+	if args.Grounding {
+		result.Grounding = t.ground(ctx, &result, displayData)
+	} else if args.autoGround {
+		t.groundResult(ctx, &result)
+	}
+
 	out, _ := json.Marshal(postActionScreenshotResult{
 		screenshotResult: result,
 		ActionOutput:     "ok",
 	})
 	return string(out), nil
+}
+
+// groundResult grounds an already captured screenshot result in place, for
+// screenshots the Agent takes by itself. Unlike an explicit grounding request,
+// a device without the detector leaves the result unchanged rather than
+// reporting an error on every action.
+func (t *ScreenshotTool) groundResult(ctx context.Context, result *screenshotResult) {
+	if t == nil || t.grounder == nil || result == nil {
+		return
+	}
+	jpegData, err := base64.StdEncoding.DecodeString(result.Data)
+	if err != nil || len(jpegData) == 0 {
+		result.Grounding = newScreenshotGrounding(nil, fmt.Errorf("decode screenshot for grounding: %v", err))
+		return
+	}
+	result.Grounding = t.ground(ctx, result, jpegData)
+}
+
+// ground replaces the result image with a Set-of-Mark copy and returns the
+// element list. A grounding failure keeps the plain screenshot and reports
+// the error, so the observation is never lost.
+func (t *ScreenshotTool) ground(ctx context.Context, result *screenshotResult, jpegData []byte) *screenshotGrounding {
+	if t.grounder == nil {
+		return newScreenshotGrounding(nil, fmt.Errorf("UI grounding is not available on this device"))
+	}
+	marked, elements, err := groundScreenshot(ctx, t.grounder, jpegData)
+	if err != nil {
+		logging.Warnf("agent", "ui_grounding", "screenshot grounding failed: %v", err)
+		return newScreenshotGrounding(nil, err)
+	}
+	result.Data = base64.StdEncoding.EncodeToString(marked)
+	result.Size = len(marked)
+	if t.screen != nil {
+		t.screen.UpdateScreenshot(marked, result.Width, result.Height)
+	}
+	return newScreenshotGrounding(normalizeGroundingElements(elements, result.Width, result.Height), nil)
 }
 
 func detectScreenshotActiveArea(jpegData []byte, expectedWidth, expectedHeight int) screen.ScreenActiveArea {

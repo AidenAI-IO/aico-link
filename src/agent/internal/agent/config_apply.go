@@ -256,6 +256,7 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 		tools.RegisterEnterTextTool(r.models, r.deviceTypeFromState)
 		tools.SetRuntimeDeviceTypeFn(r.deviceTypeFromState)
 		tools.SetDecisionConfigFn(r.decisionConfig)
+		tools.SetUIGroundingFunc(r.uiGroundingEnabled)
 		// Preserve registered memory/skill tools and their live state.
 		for name, tool := range oldTools.tools {
 			if _, exists := tools.tools[name]; !exists {
@@ -334,6 +335,9 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 	r.config = cfg
 	r.tools = tools
 	r.configMu.Unlock()
+	if current.UIGroundingEnabledOrDefault() != cfg.UIGroundingEnabledOrDefault() {
+		setUIGroundingResident(cfg.UIGroundingEnabledOrDefault())
+	}
 	if current.HID != cfg.HID || current.Device != cfg.Device {
 		r.screenState.InvalidateCapture()
 	}
