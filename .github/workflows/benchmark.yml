@@ -391,12 +391,7 @@ jobs:
           [advanced_settings.log]
           level = "debug"
           TOML
-      - name: Probe Gemini tool protocol once per variant
-        if: ${{ github.ref == 'refs/heads/fix/gemini-realtime-collaboration' && inputs.suite == 'suites/realtime_collaboration_v1.json' }}
-        working-directory: benchmark
-        run: uv run --with websockets==15.0.1 python -m ci.probe_gemini_live
       - name: Run benchmark cases
-        if: ${{ github.ref != 'refs/heads/fix/gemini-realtime-collaboration' || inputs.suite != 'suites/realtime_collaboration_v1.json' }}
         working-directory: benchmark
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
