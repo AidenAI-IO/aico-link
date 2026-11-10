@@ -88,10 +88,12 @@ The realtime model receives this focused catalog:
 
 `create_agent_task` only enqueues work. The foreground response never waits for
 the background agent to start or finish. Until a result update or
-`query_agent_task` reports the work as completed, the foreground says it is
-working on it and never that it is done; the tool description and default
-instructions both state this. Work the foreground completes with its own tools,
-such as saving a memory, is reported directly.
+`query_agent_task` reports the work's outcome, the foreground says it is
+working on it and never that it is done. A failed or cancelled outcome is
+reported as such, together with any steps the result lists as already
+completed. The tool description and default instructions both state this. Work
+the foreground completes with its own tools, such as saving a memory, is
+reported directly.
 
 When the user changes work that is already outstanding, the foreground calls
 `update_agent_task` with the task ID and the complete replacement goal. It does
