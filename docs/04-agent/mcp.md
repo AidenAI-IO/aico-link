@@ -35,7 +35,7 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 
 On the board, `/mcp` needs an MCP access token from every client: a computer
 plugged straight into Aico Link, one on Wi-Fi, and processes on the board
-itself. Create one in Config Web → Advanced → MCP → Create token; the secret is
+itself. It does not depend on LAN access. Create one in Config Web → Advanced → MCP → Create token; the secret is
 shown once, with ready-to-paste configuration. A token reaches only `/mcp`,
 does not expire, survives a device-password change, and is revoked on its own
 on the same page. A session token from `POST /api/auth/login` is not accepted
@@ -45,9 +45,8 @@ for the API.
 
 | Client | Needs |
 | --- | --- |
+| Same Wi-Fi (`http://<board-ip>:8080/mcp`), LAN access on or off | MCP access token |
 | Plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`) | MCP access token |
-| LAN, LAN access on (`http://<board-ip>:8080/mcp`) | MCP access token |
-| LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
 | Docker or host runs without `-lan-guard` | Nothing |
 
 Without a valid token `/mcp` returns `401` with `"error": "mcp_token_required"`.

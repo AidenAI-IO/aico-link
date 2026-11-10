@@ -38,7 +38,6 @@ func (s *Server) handleMCPTokensList(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":         true,
 		"tokens":     tokens,
-		"lan_access": s.lanAccess.Enabled(),
 		"max_tokens": lanaccess.MaxMCPTokens,
 	})
 }

@@ -17,7 +17,7 @@ func mcpRequest(path, bearer string) *http.Request {
 	return r
 }
 
-func TestMCPTokenReachesOnlyMCPWhileLANAccessIsOn(t *testing.T) {
+func TestMCPTokenReachesOnlyMCP(t *testing.T) {
 	state := enabledState(t)
 	token, secret, err := state.CreateMCPToken("MacBook Claude Code", time.Now())
 	if err != nil {
@@ -39,11 +39,18 @@ func TestMCPTokenReachesOnlyMCPWhileLANAccessIsOn(t *testing.T) {
 		t.Fatalf("MCP with a tampered token: %d", code)
 	}
 
+	// MCP does not depend on LAN access; everything else is closed again.
 	if err := state.SetEnabled(false); err != nil {
 		t.Fatal(err)
 	}
-	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusForbidden {
+	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusNoContent {
 		t.Fatalf("MCP token while LAN access is off: %d", code)
+	}
+	if code := serve(h, mcpRequest("/api/chat", secret)); code != http.StatusForbidden {
+		t.Fatalf("other routes while LAN access is off: %d", code)
+	}
+	if code := serve(h, mcpRequest(MCPPath, "")); code != http.StatusUnauthorized {
+		t.Fatalf("MCP without a token while LAN access is off: %d", code)
 	}
 }
 
@@ -140,11 +147,11 @@ func TestMCPNeedsATokenFromEveryClient(t *testing.T) {
 			t.Fatalf("%s /mcp without a token: %d", name, code)
 		}
 	}
-	// LAN access stays off: the USB link only spares the client from needing it.
+	// LAN access stays off throughout: MCP does not need it on either link.
 	if code := serve(h, trustedMCP("192.168.42.100:5000", "192.168.42.1", true, secret)); code != http.StatusNoContent {
 		t.Fatalf("USB /mcp with a token: %d", code)
 	}
-	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusForbidden {
+	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusNoContent {
 		t.Fatalf("LAN /mcp with a token while LAN access is off: %d", code)
 	}
 	// Other USB routes stay trusted without credentials.

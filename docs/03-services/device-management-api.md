@@ -273,9 +273,10 @@ rules for that SSID's custom proxy. `proxy_mode=system` uses the proxy and
 LAN access decides whether the board answers clients that are not on the USB
 link. It is off by default. While it is off:
 
-- Config Web (port 80), the Agent (port 8080, including `/api/tools/*`, `/mcp`,
-  Phone Bridge, and `/webtty/`) refuse every request that neither arrives
-  through their socket bound to `usb0` nor comes from the board itself. API
+- Config Web (port 80), the Agent (port 8080, including `/api/tools/*`, Phone
+  Bridge, and `/webtty/`) refuse every request that neither arrives through
+  their socket bound to `usb0` nor comes from the board itself. `/mcp` is not
+  affected by the switch; see [MCP Access Tokens](#mcp-access-tokens). API
   clients receive `403` with `"error": "lan_access_disabled"`; browsers receive
   a short page that explains how to turn it on.
 - sshd refuses every source outside `192.168.42.0/24`, `127.0.0.0/8`, and
@@ -287,8 +288,9 @@ link. It is off by default. While it is off:
 While it is on, Config Web and the Agent require LAN clients to sign in with
 the device password (see [LAN Sign-In](#lan-sign-in)); SSH and the web terminal
 ask for the same password as the `aico` login password. USB clients and the
-board itself never sign in. `/mcp` is the exception: every client, USB and
-on-board included, sends an [MCP access token](#mcp-access-tokens).
+board itself never sign in. `/mcp` follows its own rule whether LAN access is
+on or off: every client, USB and on-board included, sends an
+[MCP access token](#mcp-access-tokens).
 
 ### Cross-Site Requests
 
@@ -427,22 +429,25 @@ bearer token stays valid until it expires or the key is replaced.
 
 The board serves plain HTTP, so anyone who can capture traffic on the local
 network can capture the password and the token. Turn LAN access on only on
-trusted networks.
+trusted networks. The same applies to MCP access tokens, which travel over
+Wi-Fi even while LAN access is off: create them only on trusted networks and
+revoke any you no longer use.
 
 ### MCP Access Tokens
 
 `/mcp` on the Agent needs an MCP access token from every client, including
-a computer plugged straight into Aico Link and processes on the board; USB
-and on-board clients are otherwise trusted without credentials, and a session
-token is not accepted there. An MCP access token:
+a computer plugged straight into Aico Link and processes on the board, and
+accepts nothing else: not a session token, not the USB link alone. It does not
+depend on LAN access, so a computer on the same Wi-Fi can use MCP while LAN
+access stays off. Creating a token, which needs USB or a signed-in session,
+is what opens MCP. An MCP access token:
 
 - reaches only `POST /mcp` on port 8080. It is refused everywhere else,
   including `/api/tools/*` (which would bypass the MCP tool allowlist and the
-  `mcp_shell_enabled` gate), Config Web, backup, and the terminal;
-- does not expire, and survives a password change. Each token is named when
-  it is created and revoked on its own;
-- over the LAN, still needs LAN access to be on. While it is off, `/mcp`
-  refuses LAN clients whatever they send; the USB link does not need it.
+  `mcp_shell_enabled` gate), Config Web, backup, the terminal, and SSH;
+- does not expire, and survives a password change and LAN access being
+  turned off. Each token is named when it is created and revoked on its own.
+  Turn MCP off (`mcp_enabled`) to stop every client at once.
 
 Create and revoke tokens in Settings > Advanced > MCP, or with these
 endpoints. They are accepted over USB or from a LAN
@@ -462,7 +467,7 @@ Writes must come from the same origin.
  "secret": "aico_mcp_3f9a1c0b7e2d_<43 characters>"}
 // GET /api/security/mcp-tokens → 200
 {"ok": true, "tokens": [{"id": "3f9a1c0b7e2d", "name": "MacBook Claude Code", "created_at": "2026-11-10T08:00:00Z"}],
- "lan_access": true, "max_tokens": 20}
+ "max_tokens": 20}
 ```
 
 The secret is returned once and is not stored: the board keeps only its

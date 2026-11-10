@@ -620,7 +620,7 @@ process.stdout.write('config web UI component tests passed\n');
   const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
   globalThis.fetch = async url => {
     if (url === '/api/security/mcp-tokens') {
-      return respond({ok: true, lan_access: false, max_tokens: 20, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
+      return respond({ok: true, max_tokens: 20, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
     }
     return respond({});
   };
@@ -633,10 +633,11 @@ process.stdout.write('config web UI component tests passed\n');
       (node.childNodes || []).forEach(walk);
     };
     walk(page);
-    for (const action of ['toggle-mcp-enabled', 'open-lan-access', 'revoke-mcp-token', 'create-mcp-token']) {
+    for (const action of ['toggle-mcp-enabled', 'revoke-mcp-token', 'create-mcp-token']) {
       assert.ok(actions.includes(action), `the MCP page shows ${action}`);
     }
     assert.ok(!actions.includes('show-mcp-usb-config'), 'there is no separate direct-connection section');
+    assert.ok(!actions.includes('open-lan-access'), 'MCP does not send the user to LAN access');
 
     const off = await mcpPage({snapshot: {config: {agent: {mcp_enabled: false}}}, header() {}, navigate() {}});
     const offActions = [];

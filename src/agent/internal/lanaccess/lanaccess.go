@@ -272,9 +272,8 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 // Guard admits requests from the USB link and the board itself. Other
 // requests are refused while LAN access is off; while it is on they need a
 // session token from the login endpoints, which Guard serves itself. MCP is
-// the exception: /mcp always needs an MCP access token, from every client,
-// so a computer plugged into Aico Link and one on Wi-Fi connect the same way
-// (see serveMCP). Browser requests made on behalf of another site are refused
+// the exception: /mcp needs an MCP access token from every client and nothing
+// else, so it works over Wi-Fi with LAN access off (see serveMCP). Browser requests made on behalf of another site are refused
 // first, wherever they come from (see CrossSiteReason).
 func Guard(state *State, next http.Handler) http.Handler {
 	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
@@ -286,7 +285,7 @@ func Guard(state *State, next http.Handler) http.Handler {
 		trusted := IsTrusted(r)
 		enabled := state.Enabled()
 		if r.URL.Path == MCPPath {
-			serveMCP(state, trusted, enabled, w, r, next)
+			serveMCP(state, w, r, next)
 			return
 		}
 		switch {
@@ -308,14 +307,12 @@ func Guard(state *State, next http.Handler) http.Handler {
 	})
 }
 
-// serveMCP admits /mcp requests that carry an MCP access token. A session
-// token does not count, and neither does arriving over USB or from the board:
-// the USB link only spares the client from needing LAN access on.
-func serveMCP(state *State, trusted, enabled bool, w http.ResponseWriter, r *http.Request, next http.Handler) {
-	if !trusted && !enabled {
-		rejectLANDisabled(w, r)
-		return
-	}
+// serveMCP admits /mcp requests that carry an MCP access token, from any
+// client, whether LAN access is on or off. Creating a token, which needs USB
+// or a signed-in session, is the user's consent to MCP; the token reaches
+// nothing but /mcp. A session token does not count, and neither does arriving
+// over USB or from the board.
+func serveMCP(state *State, w http.ResponseWriter, r *http.Request, next http.Handler) {
 	if !mcpTokenValid(state, r) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("WWW-Authenticate", `Bearer realm="aico-mcp"`)

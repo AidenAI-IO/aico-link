@@ -233,7 +233,7 @@ export async function lanAccessPage(context) {
       group({
         rows: [row({
           label: msg('lan.title', '局域网访问'),
-          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。'),
+          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。'),
           accessory: control,
           action: 'toggle-lan-access',
         })],

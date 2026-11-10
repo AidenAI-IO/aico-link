@@ -15,13 +15,12 @@ import (
 	"unicode/utf8"
 )
 
-// MCP access tokens let an MCP client on the LAN reach /mcp without the device
-// password. Unlike session tokens they do not expire and are not revoked by a
-// password change or by turning LAN access off: each one is named when it is
-// created and revoked on its own. They are accepted only on MCPPath and only
-// while LAN access is on, so a leaked token never reaches the settings page,
-// backup, the terminal, or /api/tools/* (which would bypass the MCP tool
-// allowlist, including the shell gate).
+// MCP access tokens are the only credential /mcp accepts, from every client.
+// They work whether LAN access is on or off, do not expire, and are not
+// revoked by a password change: each one is named when it is created and
+// revoked on its own. They are accepted only on MCPPath, so a leaked token
+// never reaches the settings page, backup, the terminal, SSH, or /api/tools/*
+// (which would bypass the MCP tool allowlist, including the shell gate).
 const (
 	DefaultMCPTokensPath = "/userdata/system/mcp-tokens.json"
 

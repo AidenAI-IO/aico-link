@@ -3,12 +3,12 @@
  *
  *   /advanced/mcp   the MCP switch and MCP access tokens
  *
- * Every MCP client needs an MCP access token, whether the computer is plugged
- * straight into Aico Link or on the same Wi-Fi, so this page is the one place
- * to set a client up. Over Wi-Fi, LAN access must also be on. A token reaches
- * only the Agent's /mcp, does not expire, survives a password change, and is
- * revoked here on its own. The secret is shown once, when it is created,
- * together with a ready-to-paste client configuration.
+ * Every MCP client connects with an MCP access token, over Wi-Fi or plugged
+ * straight into Aico Link. MCP does not depend on LAN access: a token reaches
+ * only the Agent's /mcp, so creating one is all it takes. Tokens do not expire,
+ * survive a password change, and are revoked here one by one. The secret is
+ * shown once, when it is created, together with a ready-to-paste client
+ * configuration.
  */
 
 import {adoptSaved, ensureSnapshot, request} from '../data.js';
@@ -97,7 +97,7 @@ function nameInput() {
     attrs: {
       type: 'text',
       maxlength: '64',
-      placeholder: resolve(msg('mcp.name_placeholder', '例如：MacBook Claude Code')),
+      placeholder: resolve(msg('mcp.name_placeholder', '例如：MacBook 上的 Claude Code')),
       autocapitalize: 'none',
       autocorrect: 'off',
       spellcheck: 'false',
@@ -112,13 +112,13 @@ function showSecret(secret, endpoint) {
   sheet({
     title: msg('mcp.created_title', '令牌已创建'),
     body: [el('div', {class: 'ds-code-sheet'}, [
-      text(msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。'), 'ds-code-sheet__intro'),
+      text(msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。把下面任一配置粘贴到 MCP 客户端即可。'), 'ds-code-sheet__intro'),
       codeBlock(secret, 'copy-mcp-token'),
       text(msg('mcp.claude_code', 'Claude Code'), 'ds-code-sheet__label'),
       codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
       text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
       codeBlock(snippets.json, 'copy-mcp-json'),
-      text(msg('mcp.direct_hint', '电脑用数据线直连 Aico Link 时，把地址换成 192.168.42.1。'), 'ds-code-sheet__label'),
+      text(msg('mcp.direct_hint', '用数据线直连 Aico Link 时，把地址里的 IP 换成 192.168.42.1。'), 'ds-code-sheet__label'),
     ])],
   }).open();
 }
@@ -171,9 +171,9 @@ export async function mcpPage(context) {
     error.hidden = true;
     const submit = button({label: msg('mcp.create', '创建令牌'), variant: 'primary', block: true, action: 'mcp-token-submit'});
     const view = sheet({
-      title: msg('mcp.new_title', '新建 MCP 访问令牌'),
+      title: msg('mcp.new_title', '新建令牌'),
       body: [el('div', {}, [
-        el('div', {class: 'ds-field'}, [input, text(msg('mcp.name_help', '用来区分不同的设备或客户端'), 'ds-field__help'), error]),
+        el('div', {class: 'ds-field'}, [input, text(msg('mcp.name_help', '方便以后认出是哪台电脑、哪个客户端'), 'ds-field__help'), error]),
         el('div', {class: 'page__footer'}, [submit]),
       ])],
     });
@@ -206,7 +206,7 @@ export async function mcpPage(context) {
   async function revoke(token) {
     const confirmed = await confirmSheet({
       title: msg('mcp.revoke_title', '撤销这个令牌？'),
-      body: msg('mcp.revoke_body', '使用它的 MCP 客户端会立即无法连接。'),
+      body: msg('mcp.revoke_body', '用这个令牌的 MCP 客户端会立即断开，且无法恢复。'),
       confirmLabel: msg('mcp.revoke', '撤销'),
       danger: true,
       action: 'confirm-mcp-revoke',
@@ -239,16 +239,6 @@ export async function mcpPage(context) {
     }
     const tokens = Array.isArray(state.tokens) ? state.tokens : [];
     const rows = [];
-    if (!state.lan_access) {
-      rows.push(row({
-        label: msg('lan.title', '局域网访问'),
-        value: msg('lan.off', '已关闭'),
-        tone: 'muted',
-        chevron: true,
-        action: 'open-lan-access',
-        onPress: () => context.navigate('/advanced/lan'),
-      }));
-    }
     tokens.forEach(token => rows.push(row({
       label: token.name,
       description: new Date(token.created_at).toLocaleString(),
@@ -266,9 +256,7 @@ export async function mcpPage(context) {
     }));
     return group({
       rows,
-      note: state.lan_access
-        ? msg('mcp.help', '所有 MCP 客户端都用令牌连接，直连 Aico Link 和通过 Wi-Fi 都一样。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
-        : msg('mcp.lan_off', '通过 Wi-Fi 连接还需要开启局域网访问；直连 Aico Link 时不需要。'),
+      note: msg('mcp.help', '电脑和 Aico Link 连同一个 Wi-Fi 就能用，不需要开启局域网访问。令牌只能用于 MCP，不会过期，修改设备密码后依然有效；不再使用时在这里撤销。'),
     });
   }
 
@@ -289,7 +277,7 @@ export async function mcpPage(context) {
       group({
         rows: [row({
           label: msg('advanced.mcp_enabled', 'MCP'),
-          description: msg('advanced.mcp_enabled_help', '让电脑上的 AI 助手（如 Claude Code、Cursor）调用设备工具，例如截屏、点击和输入文字。'),
+          description: msg('advanced.mcp_enabled_help', '让电脑上的 AI 助手（如 Claude Code、Cursor）通过 Aico Link 操作手机，例如截屏、点击和输入文字。'),
           accessory: mcpToggle,
           action: 'toggle-mcp-enabled',
         })],
