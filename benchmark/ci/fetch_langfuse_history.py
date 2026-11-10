@@ -35,7 +35,7 @@ REPORT_SCORE_NAMES = tuple(dict.fromkeys((
 COMPARISON_FIELDS = (
     "git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
     "metrics_k", "agent_model", "judge_provider", "judge_model", "execution_environment",
-    "judge_prompt_version", "target_platform", "skills_fingerprint",
+    "judge_prompt_version", "target_platform", "skills_fingerprint", "execution_mode", "foreground_model",
 )
 
 

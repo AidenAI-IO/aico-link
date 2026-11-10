@@ -6,6 +6,7 @@ import (
 
 	"aico-agent/internal/agent"
 	"aico-agent/internal/agenttask"
+	"aico-agent/internal/stream"
 )
 
 // runtimeAgentTaskRunner adapts the legacy agent Runtime to the narrow
@@ -36,8 +37,15 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 		AsyncEpisodeMaintenance: true,
 		UserActionHandler:       actionHandler,
 	}
+	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok && observation.StreamSink != nil {
+		request.StreamScope = stream.EventScope{TaskID: observation.Task.ID}
+		request.StreamSink = &backendCollaborationSink{sink: observation.StreamSink, taskContext: ctx}
+	}
 	var suppliedMu sync.Mutex
 	var suppliedSteer agenttask.SteerMessage
+	// Successful tool results, so a cancelled run can report effects it
+	// already produced instead of an empty result.
+	var completed []agenttask.CompletedStep
 	if provider := agenttask.SteerProviderFromContext(ctx); provider != nil {
 		request.SteerProvider = func(ctx context.Context) (agent.RunSteerMessage, bool) {
 			message, ok := provider(ctx)
@@ -54,9 +62,18 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 			}, true
 		}
 	}
-	if acknowledge := agenttask.SteerAcknowledgerFromContext(ctx); acknowledge != nil {
-		request.EventHandler = func(event agent.RunEvent) {
-			if event.Type != "steer" {
+	acknowledge := agenttask.SteerAcknowledgerFromContext(ctx)
+	request.EventHandler = func(event agent.RunEvent) {
+		switch event.Type {
+		case "tool_result":
+			if !event.IsError {
+				suppliedMu.Lock()
+				completed = append(completed, agenttask.CompletedStep{
+					Tool: event.ToolName, Input: event.ToolInput, Output: event.Content})
+				suppliedMu.Unlock()
+			}
+		case "steer":
+			if acknowledge == nil {
 				return
 			}
 			suppliedMu.Lock()
@@ -69,5 +86,32 @@ func (r runtimeAgentTaskRunner) Run(ctx context.Context, prompt string) (string,
 	}
 	request.SteerInterrupt = agenttask.SteerInterruptFromContext(ctx)
 	result, err := r.runtime.Run(ctx, request)
+	if err != nil && ctx.Err() != nil {
+		suppliedMu.Lock()
+		defer suppliedMu.Unlock()
+		return agenttask.CancelledResult(completed), err
+	}
 	return result.Output, err
+}
+
+type backendCollaborationSink struct {
+	sink        stream.EventSink
+	taskContext context.Context
+	mu          sync.Mutex
+	episodeID   string
+}
+
+func (s *backendCollaborationSink) Emit(ctx context.Context, event stream.Event) error {
+	observation, _ := agenttask.TaskObservationFromContext(s.taskContext)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if event.Kind == stream.EventRunStarted {
+		if payload, ok := event.Payload.(map[string]string); ok {
+			s.episodeID = payload["episode_id"]
+		}
+	}
+	event.Collaboration = &stream.Collaboration{Version: 1, Actor: "backend",
+		GoalRevision: observation.GoalRevision, AppliedRevision: observation.AppliedRevision,
+		EpisodeID: s.episodeID}
+	return s.sink.Emit(ctx, event)
 }

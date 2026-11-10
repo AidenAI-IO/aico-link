@@ -343,6 +343,24 @@ def test_derive_episode_metrics_uses_run_usage_and_device_action_durations():
     assert metrics["failure_event_ref"] == "episode.json#/events/1"
 
 
+def test_combined_backend_episodes_sum_usage_and_never_undercount():
+    import json
+    from runner.metrics import combine_episode_metrics, count_backend_actions
+    def episode(tokens, cost):
+        return {"extra": {"total_tokens": tokens, "llm_calls": 2, "cost_usd": cost}, "events": []}
+    combined = combine_episode_metrics([episode(100, 0.01), episode(50, 0.02)])
+    assert (combined["total_tokens"], combined["llm_calls"]) == (150, 4)
+    assert combined["cost_usd"] == pytest.approx(0.03)
+    # One unreadable episode makes totals unknown instead of an undercount.
+    assert combine_episode_metrics([episode(100, 0.01), None])["total_tokens"] is None
+    events = [{"kind": "tool.call_ready", "collaboration": {"actor": actor},
+               "payload": {"tool_name": name, "tool_input": json.dumps(args)}}
+              for actor, name, args in (("backend", "bridge_clipboard", {"action": "read"}),
+                                        ("backend", "bridge_notification", {"action": "send"}),
+                                        ("foreground", "create_agent_task", {}))]
+    assert count_backend_actions(events) == {"tool_calls": 2, "device_actions": 1}
+
+
 def test_derive_episode_metrics_keeps_unreported_replans_unknown():
     metrics = derive_episode_metrics({
         "events": [

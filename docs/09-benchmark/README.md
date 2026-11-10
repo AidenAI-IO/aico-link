@@ -277,6 +277,7 @@ Common options:
 - `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
+- `--execution-mode MODE` - `backend-text` (default) or `realtime-text`. See [Realtime Collaboration Benchmark](./realtime-text-collaboration.md).
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
 - `--verbose` - Print detailed rubric results.
 
@@ -560,6 +561,10 @@ below.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
 
+The realtime collaboration suite also uses the `BENCHMARK_REALTIME_*`
+settings described in
+[Realtime Collaboration Benchmark](./realtime-text-collaboration.md#ci).
+
 Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 `3` to repeat each task in scheduled and manual runs. A nonempty manual
 `repeats` input overrides that variable for one run; leave it blank to use the
@@ -722,12 +727,16 @@ credentials.
 - WebUI: manages suites, jobs, environments, workers, task screens, logs, and persisted job records.
 
 The benchmark suite format is shared across physical devices and MobileGym.
+Independently of these daemon setups, `--execution-mode` selects the agent
+path under test: `backend-text` (default) for the backend Agent alone, or
+`realtime-text` for realtime foreground and backend collaboration.
 SkillOpt is independent and lives under `skillopt/`; it may call benchmark
 runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 
 ## Related Documentation
 
 - [Architecture Design](./architecture.md)
+- [Realtime Collaboration Benchmark](./realtime-text-collaboration.md)
 - [Detailed Guide](./quickstart.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)

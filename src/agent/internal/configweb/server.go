@@ -21,6 +21,7 @@ import (
 	"aico-agent/internal/backup"
 	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/logging"
+	"aico-agent/internal/usbuplink"
 	"aico-agent/internal/wifiproxy"
 )
 
@@ -66,6 +67,8 @@ type Server struct {
 	lanAccess                *lanaccess.State
 	lanAccessMu              sync.Mutex
 	usbTerminal              *http.Server
+	usbInternetClient        *http.Client
+	usbInternetSetTime       func(context.Context, time.Time) error
 
 	restartMu               sync.Mutex
 	restartCommand          *exec.Cmd
@@ -76,6 +79,9 @@ type Server struct {
 }
 
 func NewServer(options Options) (*Server, error) {
+	if options.USBInternetSocketPath == "" {
+		options.USBInternetSocketPath = usbuplink.DefaultSocketPath
+	}
 	if strings.TrimSpace(options.USBInterface) == "" {
 		options.USBInterface = "usb0"
 	}
@@ -102,6 +108,8 @@ func NewServer(options Options) (*Server, error) {
 		sttTest:          agent.NewSTTConfigTestAPI(options.AgentConfigPath),
 		wifiRegionDriver: systemWiFiRegionDriver{},
 	}
+	s.usbInternetClient = newUSBInternetClient(options.USBInternetSocketPath)
+	s.usbInternetSetTime = setUSBInternetTime
 	s.services = &systemdServiceController{binary: options.SystemctlBinary}
 	s.maintenance = newMaintenanceController(options.MaintenanceLockPath)
 	s.maintenanceSessions = newMaintenanceSessionStore(options.USBAddress, options.USBSubnet)
@@ -217,6 +225,7 @@ func (s *Server) stopUSBRetry() {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	s.usbInternetClient.CloseIdleConnections()
 	s.stopUSBRetry()
 	if s.backupJobs != nil {
 		s.backupJobs.cancelAll()

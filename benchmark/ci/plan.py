@@ -45,6 +45,7 @@ class SuiteCase:
     # selectable by explicit --suite (workflow_dispatch).
     runnable: bool = True
     android_phone_bridge: bool = False
+    execution_mode: str = "backend-text"
     # Reuse a suite's tasks without copying or changing its scoring contract.
     task_ids: list[str] = dc.field(default_factory=list)
 
@@ -76,6 +77,10 @@ def _case_from_raw(raw: Any, index: int) -> SuiteCase:
         raise CatalogError(f"invalid case id: {case.id!r}")
     if not case.suite.startswith("suites/") or not case.suite.endswith(".json"):
         raise CatalogError(f"invalid suite path for {case.id}: {case.suite!r}")
+    if case.execution_mode not in {"backend-text", "realtime-text"}:
+        raise CatalogError(f"unsupported execution mode for {case.id}: {case.execution_mode}")
+    if case.execution_mode == "realtime-text" and case.environment != "isolated":
+        raise CatalogError(f"realtime-text case {case.id} requires an isolated environment")
     if case.environment not in ENVIRONMENTS:
         raise CatalogError(f"unsupported environment for {case.id}: {case.environment}")
     if case.target_platform not in TARGET_PLATFORMS:

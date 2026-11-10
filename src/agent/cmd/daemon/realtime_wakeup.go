@@ -83,6 +83,8 @@ type realtimeSemanticEmitter struct {
 	responseEpoch  map[string]uint64
 	conversationID string
 	sessionEpoch   uint64
+	turnID         string
+	collaboration  *streamcontract.Collaboration
 }
 
 func newRealtimeSemanticEmitter(sink streamcontract.EventSink) *realtimeSemanticEmitter {
@@ -163,12 +165,14 @@ func (e *realtimeSemanticEmitter) emit(source realtimevoice.Event, outputEpoch .
 		ConversationID: e.conversationID,
 		SessionEpoch:   e.sessionEpoch,
 		ResponseID:     source.ResponseID,
+		TurnID:         e.turnID,
 		ItemID:         source.ItemID,
 		OutputEpoch:    epoch,
 		CallID:         source.CallID,
 	}
 	if bridged, ok := realtimevoice.BridgeEvent(identity, e.outputEpoch, source); ok {
 		e.sequence = nextSequence
+		bridged.Collaboration = e.collaboration
 		_ = e.sink.Emit(context.Background(), bridged)
 	}
 }
@@ -548,6 +552,9 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 	}
 	defer stopFailureAnnouncement()
 	startFailureAnnouncement := func(sessionErr error) {
+		if cfg.Benchmark.RealtimeText {
+			return
+		}
 		if server == nil || !shouldAnnounceRealtimeSessionFailure(sessionErr) || failureAnnouncementDone != nil {
 			return
 		}
@@ -568,6 +575,9 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		return failureAnnouncementDone
 	}
 	startNotificationFallback := func() {
+		if cfg.Benchmark.RealtimeText {
+			return
+		}
 		if server == nil || runtime == nil || notificationFallbackDone != nil || failureAnnouncementDone != nil {
 			return
 		}
@@ -596,9 +606,11 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 		defer server.SetRealtimeChatHandler(nil)
 	}
 	logging.Infof("agent", "ready", "Starting realtime MCU wakeup listener...")
-	watchers, err := startWakeupWatchers(newWatcher, func() {
-		signalWakeupEvent(events)
-	})
+	var watchers []wakeupWatcher
+	var err error
+	if !cfg.Benchmark.RealtimeText {
+		watchers, err = startWakeupWatchers(newWatcher, func() { signalWakeupEvent(events) })
+	}
 	if err != nil {
 		logging.Warnf("agent", "realtime", "MCU wakeup unavailable: %v; /api/chat activation remains enabled", err)
 	} else {
@@ -675,6 +687,13 @@ func runRealtimeWakeupModeWithServer(cfg agent.Config, sigChan chan os.Signal, s
 			var semanticSink streamcontract.EventSink
 			if server != nil {
 				semanticSink = server.RealtimeEventSink()
+				if cfg.Benchmark.RealtimeText {
+					collaboration := server.CollaborationRecorder()
+					semanticSink = collaboration
+					if tasks != nil {
+						tasks.SetEventSink(collaboration)
+					}
+				}
 			}
 			sessionErr := runRealtimeSessionWithSink(cfg, sigChan, runtime, tasks, semanticSink, bridge)
 			if errors.Is(sessionErr, errRealtimeShutdown) {
@@ -781,7 +800,10 @@ func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Run
 		InputAudioFormat: inputFormat, OutputAudioFormat: outputFormat, MaxHistoryTurns: realtimeContextReplayTurns,
 		TurnDetection: turnType, TurnDetectionThresh: turnThreshold, TurnDetectionSilenceMs: turnSilenceMs,
 		EnableSpeechEmotion: enableEmotion, ThinkingLevel: cfg.VoiceModel.ThinkingLevel,
-		Tools: realtimeVoiceToolDefinitionsWithTools(cfg, runtime, runtimeTools)}
+		// realtime-text benchmarks score coordination, not speech; text replies
+		// avoid audio generation cost where the provider supports it.
+		TextOutputOnly: cfg.Benchmark.RealtimeText,
+		Tools:          realtimeVoiceToolDefinitionsWithTools(cfg, runtime, runtimeTools)}
 }
 
 // realtimeClientTurnEndpoint tracks a local speech turn when a provider
@@ -981,7 +1003,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed.",
+				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed. If this tool returns an error, tell the user you could not start the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -992,7 +1014,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeCancelTaskTool,
-				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. Do not tell the user the work is stopped until this tool returns.",
+				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. A status of cancelling means cancellation is in progress, not finished; do not tell the user the work is stopped until a task update or query_agent_task result shows status cancelled.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1003,7 +1025,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this when the user changes an existing request instead of cancelling it and creating another task. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work.",
+				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work. If this tool returns an error, tell the user you could not update the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1124,7 +1146,8 @@ func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments str
 		if e.tasks == nil {
 			return realtimeToolJSON(map[string]any{"error": "background agent is unavailable"})
 		}
-		task, err := e.tasks.Create(input.Task)
+		task, err := e.tasks.CreateWithCause(input.Task, agenttask.CauseFromContext(ctx))
+
 		if err != nil {
 			return realtimeToolJSON(map[string]any{"error": err.Error()})
 		}
@@ -1140,7 +1163,8 @@ func (e realtimeVoiceToolExecutor) call(ctx context.Context, name, arguments str
 		if e.tasks == nil {
 			return realtimeToolJSON(map[string]any{"error": "background agent is unavailable"})
 		}
-		task, err := e.tasks.Update(input.TaskID, input.Task)
+		task, err := e.tasks.UpdateWithCause(input.TaskID, input.Task, agenttask.CauseFromContext(ctx))
+
 		if err != nil {
 			return realtimeToolJSON(map[string]any{"error": err.Error()})
 		}
@@ -1461,22 +1485,26 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}()
 	}
 
-	audioService := agent.NewAudioServiceClient(cfg.Audio.SocketOrDefault())
-	recordingAudio := agent.NewConfiguredAudioRecordingBackend(cfg, audioService, nil)
-	playbackAudio := realtimePlaybackAudioAdapter{
-		backend: agent.NewConfiguredAudioPlaybackBackend(cfg, audioService, nil),
-	}
-	inputFormat := realtimeAgentAudioFormat(info.InputFormatOrDefault(16000))
-	recording, err := recordingAudio.StartRecording(inputFormat)
-	if err != nil {
-		return fmt.Errorf("start realtime recording: %w", err)
-	}
-	defer func() { _ = recordingAudio.StopRecording(recording.SessionID) }()
-	logging.Infof("agent", "realtime", "Microphone opened: session_id=%d format=pcm/%d/%d/%d", recording.SessionID, inputFormat.SampleRate, inputFormat.Channels, inputFormat.BitWidth)
-
 	chunks := make(chan []byte, 8)
 	readErrs := make(chan error, 1)
-	go streamRealtimeAudio(ctx, recordingAudio, recording.SessionID, chunks, readErrs)
+	playbackAudio := realtimePlaybackAudioAdapter{}
+	if cfg.Benchmark.RealtimeText {
+		if !supportsText || !canSendToolResult {
+			return fmt.Errorf("realtime provider %s lacks text or tool-result support", providerName)
+		}
+		playbackAudio.backend = &benchmarkSilentPlayback{}
+	} else {
+		audioService := agent.NewAudioServiceClient(cfg.Audio.SocketOrDefault())
+		recordingAudio := agent.NewConfiguredAudioRecordingBackend(cfg, audioService, nil)
+		playbackAudio.backend = agent.NewConfiguredAudioPlaybackBackend(cfg, audioService, nil)
+		inputFormat := realtimeAgentAudioFormat(info.InputFormatOrDefault(16000))
+		recording, err := recordingAudio.StartRecording(inputFormat)
+		if err != nil {
+			return fmt.Errorf("start realtime recording: %w", err)
+		}
+		defer func() { _ = recordingAudio.StopRecording(recording.SessionID) }()
+		go streamRealtimeAudio(ctx, recordingAudio, recording.SessionID, chunks, readErrs)
+	}
 
 	// Play at the negotiated device output rate. With an unset configured
 	// playback rate above, that matches the provider native rate; audio_service
@@ -1674,6 +1702,17 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		}
 	}()
 	toolExecutor := newRealtimeVoiceToolExecutor(runtime, tasks, runtimeTools)
+	collaboration, _ := sink.(*agent.CollaborationRecorder)
+	var responseUpdateIDs []string
+	var pendingResponseUpdateIDs []string
+	var responseRequestID string
+	var pendingResponseRequestID string
+	currentTurnID := ""
+	recordForeground := func(kind streamcontract.EventKind, payload any, taskID string, meta *streamcontract.Collaboration) {
+		if collaboration != nil {
+			collaboration.Record(kind, "foreground", taskID, currentTurnID, payload, meta)
+		}
+	}
 	toolResults := make(chan realtimeToolResult, 16)
 	toolTracker := newRealtimeToolTracker()
 	var pendingTaskUpdates []agenttask.Task
@@ -1733,6 +1772,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			taskUpdatesReady = false
 			return nil
 		}
+		currentTurnID = ""
 		message := formatRealtimeTaskUpdates(delivering)
 		if err := appendRealtimeNoticeMessage(userContext, message); err != nil {
 			return fmt.Errorf("persist task update in realtime context: %w", err)
@@ -1740,6 +1780,19 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		if err := textSession.SendText(ctx, message); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("inject background task update: %w", err))
 		}
+		pendingResponseUpdateIDs = nil
+		updates := make([]map[string]any, 0, len(delivering))
+		for _, update := range delivering {
+			id := uuid.NewString()
+			pendingResponseUpdateIDs = append(pendingResponseUpdateIDs, id)
+			revision := update.GoalRevision
+			updates = append(updates, map[string]any{"update_id": id, "task_id": update.ID,
+				"goal_revision": revision, "status": update.Status, "result": update.Result,
+				"error": update.Error, "pending_user_action": update.PendingUserAction})
+		}
+		pendingResponseRequestID = uuid.NewString()
+		recordForeground("task.result_injected", map[string]any{"updates": updates}, "",
+			&streamcontract.Collaboration{Version: 1, UpdateIDs: append([]string(nil), pendingResponseUpdateIDs...)})
 		if err := textSession.CreateResponse(ctx); err != nil {
 			return markRealtimeProviderFailure(fmt.Errorf("respond to background task update: %w", err))
 		}
@@ -1749,9 +1802,15 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 		pendingTaskUpdates = nil
 		taskUpdatesReady = false
 		requestResponse()
+		recordForeground("response.requested", nil, "",
+			&streamcontract.Collaboration{Version: 1, ResponseRequestID: pendingResponseRequestID,
+				UpdateIDs: append([]string(nil), pendingResponseUpdateIDs...)})
 		return nil
 	}
 	tryInjectVoiceNotification := func() error {
+		if cfg.Benchmark.RealtimeText {
+			return nil
+		}
 		if !currentAdmission().canInjectVoiceNotification() {
 			return nil
 		}
@@ -1775,6 +1834,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	}
 	startChat := func(command realtimeChatCommand) error {
 		activeChat = &command
+		currentTurnID = command.request.RequestID
+		recordForeground(streamcontract.EventTurnCommitted, map[string]string{"text": command.request.Message}, "", nil)
 		watchdog.stop()
 		logging.Infof("agent", "realtime", "Chat started: request_id=%s", command.request.RequestID)
 		chatMode = ""
@@ -1787,11 +1848,15 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			return fmt.Errorf("send realtime chat: %w", err)
 		}
 		requestResponse()
+		pendingResponseRequestID = uuid.NewString()
+		pendingResponseUpdateIDs = nil
 		if err := textSession.CreateResponse(command.ctx); err != nil {
 			// The write may have partially reached the provider. Only closing
 			// the session prevents a delayed answer from owning the next chat.
 			return fmt.Errorf("create realtime chat response: %w", err)
 		}
+		recordForeground("response.requested", nil, "",
+			&streamcontract.Collaboration{Version: 1, ResponseRequestID: pendingResponseRequestID})
 		return nil
 	}
 	tryStartQueuedChat := func() error {
@@ -1911,6 +1976,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			if err := toolResultSender.SendToolResult(ctx, call.CallID, result.output); err != nil {
 				return markRealtimeProviderFailure(fmt.Errorf("send realtime tool result: %w", err))
 			}
+			recordForeground(streamcontract.EventToolCompleted, map[string]any{"tool": call.Name, "call_id": call.CallID,
+				"arguments": call.Arguments, "output": result.output}, "", nil)
 			watchdog.progress()
 			if activeNotificationToken == "" && !suppressedNotificationResponsePending && !hasSuppressedNotificationResponse(suppressedNotificationResponseIDs, call.ResponseID) {
 				if err := appendRealtimeToolExecution(userContext, call, result.output); err != nil {
@@ -2227,10 +2294,24 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					logging.Warnf("agent", "realtime", "Ignoring stale response.created: response_id=%s input_turn=%d request_turn=%d", event.ResponseID, turnState.inputTurnSequence, turnState.responseRequestTurn)
 					continue
 				}
+				if pendingResponseRequestID != "" {
+					responseRequestID = pendingResponseRequestID
+					responseUpdateIDs = append([]string(nil), pendingResponseUpdateIDs...)
+					pendingResponseRequestID = ""
+					pendingResponseUpdateIDs = nil
+				}
+				if semanticEmitter != nil && collaboration != nil {
+					semanticEmitter.turnID = currentTurnID
+					semanticEmitter.collaboration = &streamcontract.Collaboration{Version: 1,
+						ResponseRequestID: responseRequestID, UpdateIDs: append([]string(nil), responseUpdateIDs...), ProviderSessionID: info.ID}
+				}
 				if semanticEmitter != nil {
 					semanticEmitter.beginResponse(event.ResponseID)
 					semanticEmitter.emit(event, semanticEmitter.outputEpoch)
 				}
+				recordForeground("response.associated", map[string]string{"response_id": event.ResponseID}, "",
+					&streamcontract.Collaboration{Version: 1, ResponseRequestID: responseRequestID,
+						UpdateIDs: responseUpdateIDs, ProviderSessionID: info.ID})
 				if info.Capabilities.ServerAuthoritativeTurnDetection {
 					admissionTurnEndpoint.Reset()
 				}
@@ -2347,6 +2428,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				}
 				logging.Infof("agent", "realtime", "Tool call: name=%s provider=%s session_id=%s request_id=%s response_id=%s item_id=%s call_id=%s", event.Name, providerName, info.ID, realtimeChatRequestID(activeChat), event.ResponseID, event.ItemID, event.CallID)
 				toolCtx, cancelTool := context.WithCancel(ctx)
+				toolCtx = agenttask.WithCause(toolCtx, agenttask.Cause{TurnID: currentTurnID, ResponseID: event.ResponseID, CallID: event.CallID})
 				foregroundTools[event.CallID] = foregroundTool{responseID: event.ResponseID, cancel: cancelTool}
 				watchdog.progress()
 				if info.Capabilities.ExplicitToolContinuation {
@@ -2467,16 +2549,29 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				realtimeResponseUsage = messages.Usage{}
 				hasRealtimeResponseUsage = false
 				assistantPersisted = false
+				feedbackStatus := event.Status
+				if feedbackStatus == "" {
+					feedbackStatus = "completed"
+				}
+				if wasCanceled || notificationResponse || suppressedResponse {
+					feedbackStatus = "cancelled"
+				}
+				recordForeground("response.feedback_terminal", map[string]any{"response_id": event.ResponseID,
+					"text": strings.TrimSpace(responseText.String()), "transcript": strings.TrimSpace(responseTranscript.String()),
+					"status": feedbackStatus}, "", &streamcontract.Collaboration{Version: 1,
+					ResponseRequestID: responseRequestID, UpdateIDs: responseUpdateIDs, ProviderSessionID: info.ID})
+				responseRequestID, responseUpdateIDs = "", nil
 				if activeChat != nil {
 					logging.Infof("agent", "realtime", "Chat completed: request_id=%s occupied_ms=%d", activeChat.request.RequestID, watchdog.age().Milliseconds())
 					content := chatText.String()
 					if content == "" {
 						content = chatTranscript.String()
 					}
-					sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: content})
+					sendRealtimeChatEvent(*activeChat, agent.RealtimeChatEvent{Type: agent.RealtimeChatEventDone, Response: content, ResponseID: event.ResponseID, ProviderSessionID: info.ID})
 					close(activeChat.events)
 					activeChat = nil
 				}
+				currentTurnID = ""
 				if err := tryStartQueuedChat(); err != nil {
 					return err
 				}
@@ -3251,6 +3346,15 @@ type realtimePlaybackAudioAdapter struct {
 	backend tts.AudioServiceBackend
 }
 
+type benchmarkSilentPlayback struct{ next uint64 }
+
+func (p *benchmarkSilentPlayback) StartPlayback(tts.AudioFormat) (uint64, error) {
+	p.next++
+	return p.next, nil
+}
+func (*benchmarkSilentPlayback) WritePlayChunk(uint64, []byte, bool) error { return nil }
+func (*benchmarkSilentPlayback) StopPlayback(uint64) error                 { return nil }
+
 type realtimePlaybackDrainWaiter interface {
 	WaitForPlaybackDrain(context.Context) error
 }
@@ -3287,6 +3391,9 @@ func (a realtimePlaybackAudioAdapter) StopPlayback(sessionID uint64) error {
 }
 
 func (a realtimePlaybackAudioAdapter) WaitForPlaybackDrain(ctx context.Context) error {
+	if _, silent := a.backend.(*benchmarkSilentPlayback); silent {
+		return nil
+	}
 	if waiter, ok := a.backend.(realtimePlaybackDrainWaiter); ok {
 		return waiter.WaitForPlaybackDrain(ctx)
 	}

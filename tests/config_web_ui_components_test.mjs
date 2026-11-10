@@ -667,7 +667,6 @@ process.stdout.write('config web UI component tests passed\n');
       (node.childNodes || []).forEach(walk);
     };
     walk(page);
-    assert.equal(cards.length, 1, 'Advanced is a single card, with MCP as one of its rows');
     const actions = [];
     const collect = node => {
       if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));

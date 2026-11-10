@@ -259,6 +259,7 @@ func (c *inputLifecycle) buildDialog(cfg agent.Config) (*agent.AudioDialog, erro
 }
 
 func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog) {
+	cfg.Benchmark = c.runtime.ConfigSnapshot().Benchmark
 	c.cfg = cfg
 	c.stop = make(chan struct{})
 	c.shutdown = make(chan os.Signal)
@@ -281,6 +282,9 @@ func (c *inputLifecycle) startVoice(cfg agent.Config, dialog *agent.AudioDialog)
 			tasks := newRealtimeAgentTaskManager(cfg, c.runtime)
 			if tasks != nil {
 				defer tasks.Close()
+				if recorder := c.server.CollaborationRecorder(); recorder != nil {
+					tasks.SetEventSink(recorder)
+				}
 			}
 			runRealtimeWakeupModeWithServer(cfg, shutdown, c.server, c.runtime, tasks, c.newVoiceWatcher, stop)
 		default:
@@ -299,7 +303,10 @@ func (c *inputLifecycle) Start(cfg agent.Config) error {
 	if err != nil {
 		return err
 	}
-	quick, err := startQuickCaptureGPIOWatcher(cfg, c.server, c.newWatcher)
+	var quick wakeupWatcher
+	if !cfg.Benchmark.RealtimeText {
+		quick, err = startQuickCaptureGPIOWatcher(cfg, c.server, c.newWatcher)
+	}
 	if err != nil {
 		logging.Warnf("agent", "quick_capture", "GPIO trigger disabled: %v", err)
 	}

@@ -32,8 +32,9 @@ type EnvironmentBridgeConfig struct {
 }
 
 type BenchmarkConfig struct {
-	Headless  bool `toml:"-"` // Benchmark container without a device or environment bridge.
-	MockTools bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+	Headless     bool `toml:"-"` // Benchmark container without a device or environment bridge.
+	MockTools    bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+	RealtimeText bool `toml:"-"` // Text-driven realtime collaboration, without physical audio devices.
 
 	Token string `toml:"-"` // Only set via benchmark runner CLI flags, never from config file
 }

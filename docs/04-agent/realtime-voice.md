@@ -121,9 +121,15 @@ the realtime instructions require an outcome-claim gate: before a result showing
 the actual outcome is available, the model may only acknowledge that it is
 handling the request; it must report success or failure from that evidence
 afterward. A tool result that only says work was accepted, queued, or started
-does not count. In backend mode the `create_agent_task` result is only such an
-acknowledgement, so outcomes come from a task update or `query_agent_task`
-result whose status is `completed` or `failed`; direct-tool mode
+does not count. A tool error does count as failure to start or update the work,
+so the model must report that instead of continuing to say it is handling the
+request. In backend mode the successful `create_agent_task` result is only an
+acknowledgement, so outcomes of accepted work come from a task update or
+`query_agent_task` result whose status is `completed` or `failed`. Cancellation
+is separate: `cancelling` means the stop is still in progress, and only
+`cancelled` confirms that the work stopped; that status is not a success or
+failure of the original work. Unrelated requests must start their own task
+instead of folding into existing work. Direct-tool mode
 (`use_backend_agent = false`) applies the gate to runtime tools such as
 `open_app` until they return.
 

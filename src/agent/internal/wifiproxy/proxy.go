@@ -23,6 +23,7 @@ import (
 
 	"aico-agent/internal/logging"
 	"aico-agent/internal/netproxy"
+	"aico-agent/internal/usbuplink"
 	xproxy "golang.org/x/net/proxy"
 )
 
@@ -101,6 +102,10 @@ type Server struct {
 	config      Config
 	currentSSID string
 	transports  map[string]*http.Transport
+
+	usbInternet       *usbuplink.Manager
+	usbTransportLease *usbuplink.Lease
+	usbTransport      *http.Transport
 
 	httpServer *http.Server
 	cancel     context.CancelFunc
@@ -187,10 +192,16 @@ func (s *Server) Serve(listener net.Listener) error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.usbInternet != nil {
+		s.usbInternet.Close()
+	}
 	s.mu.Lock()
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
+	}
+	if s.usbTransport != nil {
+		s.usbTransport.CloseIdleConnections()
 	}
 	for _, transport := range s.transports {
 		transport.CloseIdleConnections()
@@ -362,12 +373,12 @@ func (s *Server) handleSOCKS5(client net.Conn) {
 	// SOCKS5 does not carry an application-layer scheme. Use the generic
 	// fallback order (ALL_PROXY, then HTTPS_PROXY, then HTTP_PROXY) instead of
 	// guessing from the destination port.
-	upstream, err := s.genericFallbackUpstream(targetAddress)
+	route, err := s.routeForHost(targetHost, fmt.Sprint(targetPort), "socks5")
 	if err != nil {
 		writeSOCKS5Reply(client, 0x01)
 		return
 	}
-	remote, err := dialTarget(context.Background(), targetAddress, upstream)
+	remote, err := route.dial(context.Background(), targetAddress)
 	if err != nil {
 		writeSOCKS5Reply(client, 0x05)
 		return
@@ -439,6 +450,10 @@ func (s *Server) writeLocalProxyEnvironment() error {
 			noProxy = network.NoProxy
 			noProxySet = network.NoProxySet
 		}
+	}
+	if s.usbInternet != nil && s.usbInternet.Current() != nil {
+		httpScheme, httpsScheme, allScheme = "http", "http", "http"
+		noProxy, noProxySet = usbNoProxy, true
 	}
 	normalizedNoProxy, err := NormalizeNoProxy(noProxy)
 	if err != nil {
@@ -569,6 +584,11 @@ func (s *Server) genericFallbackUpstream(targetAddress string) (*url.URL, error)
 // nil to connect directly. scheme selects the fallback proxy variable when the
 // network has no saved setting.
 func (s *Server) upstreamForHost(host, port, scheme string) (*url.URL, error) {
+	route, err := s.routeForHost(host, port, scheme)
+	return route.upstream, err
+}
+
+func (s *Server) legacyUpstreamForHost(host, port, scheme string) (*url.URL, error) {
 	if netproxy.IsLoopbackHost(host) {
 		return nil, nil
 	}
@@ -655,12 +675,12 @@ func (s *Server) handleHTTP(w http.ResponseWriter, request *http.Request) {
 	if !upgrade {
 		removeHopHeaders(outgoing.Header)
 	}
-	upstream, err := s.upstreamFor(target)
+	route, err := s.routeForHost(target.Hostname(), target.Port(), target.Scheme)
 	if err != nil {
 		http.Error(w, "invalid upstream proxy", http.StatusBadGateway)
 		return
 	}
-	transport, err := s.transportFor(upstream)
+	transport, err := s.transportForRoute(route)
 	if err != nil {
 		http.Error(w, "configure upstream proxy", http.StatusBadGateway)
 		return
@@ -688,12 +708,12 @@ func (s *Server) handleConnect(w http.ResponseWriter, request *http.Request) {
 		return
 	}
 	targetURL := &url.URL{Scheme: "https", Host: targetAddress}
-	upstream, err := s.upstreamFor(targetURL)
+	route, err := s.routeForHost(targetURL.Hostname(), targetURL.Port(), targetURL.Scheme)
 	if err != nil {
 		http.Error(w, "invalid upstream proxy", http.StatusBadGateway)
 		return
 	}
-	remote, err := dialTarget(request.Context(), targetAddress, upstream)
+	remote, err := route.dial(request.Context(), targetAddress)
 	if err != nil {
 		http.Error(w, "proxy connect failed: "+err.Error(), http.StatusBadGateway)
 		return

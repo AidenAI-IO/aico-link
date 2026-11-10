@@ -211,6 +211,14 @@ def test_mobilegym_case_reuses_prepared_image(monkeypatch) -> None:
     assert "--no-build-mobilegym-image" in captured["command"]
 
 
+def test_realtime_case_is_explicitly_selectable_but_not_automatic() -> None:
+    case = SuiteCase(id="realtime", suite="suites/realtime.json", environment="isolated",
+                     execution_mode="realtime-text", runnable=False)
+    catalog = Catalog(cases=(case,))
+    assert select_cases(catalog, profile="runnable", suite=case.suite) == (case,)
+    assert select_cases(catalog, profile="runnable") == ()
+
+
 def test_benchmark_case_reuses_prepared_daemon_image(monkeypatch, tmp_path: Path) -> None:
     case = next(item for item in load_catalog().cases if item.environment == "isolated")
     captured = {}
