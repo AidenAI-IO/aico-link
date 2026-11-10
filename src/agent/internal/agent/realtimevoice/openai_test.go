@@ -211,6 +211,24 @@ func TestOpenAISessionUpdateUsesNegotiatedRates(t *testing.T) {
 	}
 }
 
+func TestTextOutputOnlyRequestsTextModality(t *testing.T) {
+	cfg := SessionConfig{TextOutputOnly: true}
+	for name, update := range map[string]any{
+		"openai ga":     buildOpenAISessionUpdateForProtocol(cfg, "gpt-realtime", "ga"),
+		"openai legacy": buildOpenAISessionUpdateForProtocol(cfg, "gpt-realtime", "legacy"),
+		"qwen":          buildQwenSessionUpdate(cfg),
+		"xai":           buildXAISessionUpdate(cfg, "grok"),
+	} {
+		body, err := json.Marshal(update)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `odalities":["text"]`) {
+			t.Errorf("%s: text-only session still requests audio output: %s", name, body)
+		}
+	}
+}
+
 func TestOpenAILegacySessionUpdateUsesBetaFields(t *testing.T) {
 	provider := OpenAIProvider{Endpoint: "wss://api.mixroute.ai/v1/realtime"}
 	endpoint, err := provider.endpoint("gpt-realtime-2")

@@ -85,7 +85,6 @@ class BenchmarkRunnerBackend:
         cmd = self._runner_command(
             suite=suite,
             tasks=tasks,
-            skill_name=skill_name,
             child_runs_root=child_runs_root,
             child_run_id=child_run_id,
             phase_config=phase_config,
@@ -158,7 +157,6 @@ class BenchmarkRunnerBackend:
         *,
         suite: Suite,
         tasks: list[TaskSpec],
-        skill_name: str,
         child_runs_root: Path,
         child_run_id: str,
         phase_config: Path,
@@ -182,8 +180,6 @@ class BenchmarkRunnerBackend:
             str(child_runs_root),
             "--run-id",
             child_run_id,
-            "--skill",
-            skill_name,
         ]
         if not self.build_daemon_image:
             cmd.append("--no-build-daemon-image")

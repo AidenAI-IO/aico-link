@@ -65,6 +65,15 @@ const (
 	apiRestorePlan
 	apiRestoreValidate
 	apiRestoreApply
+	apiLANAccessGet
+	apiLANAccessPut
+	apiMCPTokensGet
+	apiMCPTokensCreate
+	apiMCPTokenRevoke
+	apiUSBInternetGet
+	apiUSBInternetPut
+	apiUSBInternetSessionPut
+	apiUSBInternetSessionDelete
 )
 
 type routeVariant struct{ method, path string }
@@ -75,6 +84,10 @@ type apiRoute struct {
 }
 
 var apiRoutes = []apiRoute{
+	{apiUSBInternetGet, routeVariant{http.MethodGet, apiPrefix + "/network/usb-internet"}},
+	{apiUSBInternetPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet"}},
+	{apiUSBInternetSessionPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet/session"}},
+	{apiUSBInternetSessionDelete, routeVariant{http.MethodDelete, apiPrefix + "/network/usb-internet/session"}},
 	{apiDeviceSnapshot, routeVariant{http.MethodGet, apiPrefix + "/device/snapshot"}},
 	{apiConfigApplication, routeVariant{http.MethodGet, apiPrefix + "/config/application"}},
 	{apiConfigGet, routeVariant{http.MethodGet, apiPrefix + "/config"}},
@@ -117,6 +130,10 @@ var apiRoutes = []apiRoute{
 	{apiBackupCapabilities, routeVariant{http.MethodGet, apiPrefix + "/backup/capabilities"}},
 	{apiBackupJobs, routeVariant{http.MethodPost, apiPrefix + "/backup/jobs"}},
 	{apiRestoreJobs, routeVariant{http.MethodPost, apiPrefix + "/restore/jobs"}},
+	{apiLANAccessGet, routeVariant{http.MethodGet, apiPrefix + "/security/lan-access"}},
+	{apiLANAccessPut, routeVariant{http.MethodPut, apiPrefix + "/security/lan-access"}},
+	{apiMCPTokensGet, routeVariant{http.MethodGet, apiPrefix + "/security/mcp-tokens"}},
+	{apiMCPTokensCreate, routeVariant{http.MethodPost, apiPrefix + "/security/mcp-tokens"}},
 }
 
 type apiMatch struct {
@@ -181,6 +198,10 @@ func matchAPIRequest(r *http.Request) apiMatch {
 			}
 		}
 	}
+	const mcpTokenPrefix = apiPrefix + "/security/mcp-tokens/"
+	if id, ok := strings.CutPrefix(r.URL.Path, mcpTokenPrefix); ok && id != "" && !strings.Contains(id, "/") && r.Method == http.MethodDelete {
+		return apiMatch{endpoint: apiMCPTokenRevoke, suffix: id}
+	}
 	escapedPath := r.URL.EscapedPath()
 	const canonicalLogPrefix = apiPrefix + "/logs/llm/"
 	if strings.HasPrefix(escapedPath, canonicalLogPrefix) {
@@ -208,6 +229,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	s.startDeferredRestartIfIdle()
 	w.Header().Set("X-Aico-API-Version", "1")
 	switch match.endpoint {
+	case apiUSBInternetGet, apiUSBInternetPut, apiUSBInternetSessionPut, apiUSBInternetSessionDelete:
+		s.handleUSBInternet(w, r)
 	case apiDeviceSnapshot:
 		s.handleGetDeviceSnapshot(w, r)
 	case apiConfigApplication:
@@ -312,6 +335,16 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleRestoreValidate(w, r, match.suffix)
 	case apiRestoreApply:
 		s.handleRestoreApply(w, r, match.suffix)
+	case apiLANAccessGet:
+		s.handleLANAccessStatus(w, r)
+	case apiLANAccessPut:
+		s.handleLANAccessUpdate(w, r)
+	case apiMCPTokensGet:
+		s.handleMCPTokensList(w, r)
+	case apiMCPTokensCreate:
+		s.handleMCPTokenCreate(w, r)
+	case apiMCPTokenRevoke:
+		s.handleMCPTokenRevoke(w, r, match.suffix)
 	}
 }
 
@@ -322,7 +355,8 @@ func endpointConflictsWithMaintenance(endpoint apiEndpoint) bool {
 		apiConfigBackupImport, apiWiFiScan, apiWiFiConnect, apiWiFiForget,
 		apiWiFiRegionUpdate,
 		apiSystemEnvironmentPut, apiSystemEnvironmentApply, apiOTAUpdate,
-		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport:
+		apiDeviceReboot, apiAgentRestart, apiUSBReenumerate, apiLLMLogImport,
+		apiLANAccessPut, apiUSBInternetPut:
 		return true
 	default:
 		return false

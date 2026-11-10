@@ -116,7 +116,7 @@ func buildHTTPToolSkillMarkdown(name, description string, baseURL string, descri
 		} else if descriptor.Name == "enter_text" {
 			builder.WriteString("  `action_output` contains only `{\"ok\":true}` on success, or `{\"ok\":false,\"suggestion\":\"...\"}` on failure. The outer output also includes an optional `screen_changed` comparison and a short-delay post-action screenshot; `enter_text` does not perform the stable-screen wait, so `screen_stable` and `stable_wait_ms` are not included.\n")
 		} else if descriptor.Category == "input" {
-			builder.WriteString("  On successful execution, output includes `action_output`, `screen_stable`, `stable_wait_ms`, optional `screen_changed`, and a post-action screenshot. When present, `screen_changed` reports meaningful structural change between a pre-action baseline and the final settled screenshot while ignoring the top status area and minor image noise; `screen_stable=false` is not a failure.\n")
+			builder.WriteString("  On successful execution, output includes `action_output`, `screen_stable`, `stable_wait_ms`, optional `screen_changed`, and a post-action screenshot. When present, `screen_changed` reports meaningful structural change between a pre-action baseline and the final settled screenshot while ignoring the top status area and minor image noise; `screen_stable=false` is not a failure. When the UI Grounding setting is on and the detector is installed, the post-action screenshot also carries numbered boxes and a `grounding` object listing each element's `id`, `center` and `box` in `touch_gesture` coordinates.\n")
 		}
 		if strings.TrimSpace(descriptor.ExampleInput) != "" {
 			builder.WriteString(fmt.Sprintf("  Example input: `%s`\n", descriptor.ExampleInput))

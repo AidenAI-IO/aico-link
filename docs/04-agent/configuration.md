@@ -148,7 +148,9 @@ A save goes through the same validation and atomic write as Config Web, then
 queues the new revision for live application like a Config Web save. The
 running task holds the run lock, so the change takes effect when the current
 task or voice conversation ends. Each save logs `config_self_update` with the
-changed settings and revision.
+changed settings and revision. Changing `agent.locale` or `agent.timezone`
+updates the system prompt and keeps the conversation, so the Agent still
+remembers the request that changed it.
 
 A saved setting can still have no effect, and the result says so instead of
 letting the reply claim it changed. `ignored` lists, with a reason, a setting
@@ -228,7 +230,7 @@ The firmware starts `agent config-web` on port 80.
 
 ### What the page can configure
 
-The page renders the following config sections. The Language & Time Zone controls persist the device-level `locale` and `timezone` and apply them online. Changing either value rotates the context at the next task boundary instead of rewriting the previous session. The selected time zone is included in Agent state and controls the current-date context and controller shell commands.
+The page renders the following config sections. The Language & Time Zone controls persist the device-level `locale` and `timezone` and apply them online. Changing either value, or the Agent prompt, rewrites the session's system message in a new session revision at the next task boundary: the conversation continues, the previous revision stays on disk, and provider continuation IDs are dropped. Changing the model, provider, API mode, or base URL starts a new conversation instead, because the transcript carries provider-specific reasoning and continuation data. This also applies to a change saved while the Agent was stopped: each session folder records a hash of the model settings in `.conversation_identity`, and the next start compares it. The selected time zone is included in Agent state and controls the current-date context and controller shell commands.
 
 - `[basic_settings.language_timezone]`: UI and response language plus controller time zone
 - `[conversation_settings.agent]`: Agent prompt, iteration and context controls
@@ -457,6 +459,7 @@ frame_socket = "/run/frame_service/frame_service.sock"
 | `prompt`                    | -                           | Prompt appended after the built-in Agent instruction at runtime. The built-in instruction is not configurable. |
 | `max_iterations`            | `-1`                        | Maximum number of tool-call loops per run; `-1` means unlimited                                                                                                                                           |
 | `mcp_enabled`               | `true`                      | When on, the Agent serves Streamable HTTP MCP at `POST /mcp` on port 8080. Config Web exposes this under Advanced Settings. See [MCP](mcp.md).                                                              |
+| `ui_grounding_enabled`      | `true`                      | When on, the screenshots the Agent takes by itself (with each user message, and after input, text-entry and launch tools) mark detected interface components with numbered boxes, and their state message lists each element's center in `touch_gesture` coordinates. The `screenshot` tool grounds only when its `grounding` argument is true. Applied live. Config Web exposes this as "Mark tappable elements automatically" under Conversation & tools. See [UI Grounding](ui-grounding.md). |
 | `mcp_shell_enabled`         | `false`                     | When on, the MCP allowlist includes the `shell` tool. TOML-only in this release (not on the Config Web Advanced page).                                                                                      |
 | `mcp_config_web_base_url`   | `http://127.0.0.1`          | Loopback HTTP base URL used by MCP `device_status` / `support_bundle`. Non-loopback values are rejected.                                                                                                   |
 | `context_prune_threshold`   | `0.5`                       | Fraction of the usable model input budget that triggers deterministic cleanup of stale state snapshots and older tool exchanges, including while one long-running tool loop is still executing. It cleans down to 6/7 of the trigger (so the default cleans from 50% to ~43%). Must be `0` or within `(0, 1)`; `0` (or an omitted value) uses `0.5`. The effective value is capped at `context_compaction_threshold`, so this cheap deterministic pass always gets a chance to free tokens before the LLM summary runs. A value of `1` or greater is rejected, as are `nan` and `inf`; a legacy absolute token count (for example `12000`) is detected on load, logged, and replaced by the default. |
@@ -964,7 +967,7 @@ provider = "speko-main"
 | `project_id` / `location` | Gemini Vertex | Required Google Cloud project and Vertex region, for example `us-central1`. |
 | `endpoint` | Qwen, OpenAI, Gemini, xAI | Optional WebSocket endpoint override, primarily for regional gateways and protocol tests. |
 | `realtime_protocol` | OpenAI | OpenAI Realtime wire schema: empty or `ga` (default) uses the current GA session payload; `legacy` (alias `beta`) uses the older `modalities`, `input_audio_format`, and `output_audio_format` fields required by some compatible gateways. Set this explicitly; the endpoint URL is never used to infer the protocol. |
-| `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`false` (default) disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model; `true` enables the backend agent and exposes its communication tools (`*_agent_task`). This setting does not control provider reasoning, which remains a provider/model capability. |
+| `use_backend_agent` | realtime mode (`[voice_settings.realtime]`) | Controls tool ownership: omitted/`true` (default) enables the backend agent and exposes its communication tools (`*_agent_task`); when omitted and the backend model (`[model_settings.model]`) has no usable credential, the runtime falls back to `false` so delegated tasks do not fail; `false` disables agent communication tools and exposes the runtime tools that the backend agent would otherwise use directly to the realtime model. This setting does not control provider reasoning, which remains a provider/model capability. |
 | `thinking_level` | Gemini | Thinking depth for Live Extended Thinking models: `LOW` (default), `MINIMAL`, `MEDIUM`, or `HIGH`. Only applies to models that support thinking; other models ignore it. |
 | `upstream_provider` | Speko | Required S2S upstream: `google` (or `gemini`) or `xai`, paired with `model`. Automatic routing is disabled because it may select an unsupported WebRTC route. OpenAI is not a supported Speko route in Aico; use the top-level `openai` provider instead. |
 | `agent_id` / `base_url` | Speko | Optional Speko agent ID and API base URL override. |

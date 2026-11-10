@@ -15,6 +15,7 @@ from types import SimpleNamespace
 from typing import Any, Mapping
 from urllib.parse import urlencode
 
+from runner.skills_fingerprint import digest_of
 from runner.suite import Suite, TaskSpec, load_suite
 
 
@@ -110,8 +111,15 @@ def publish_run(
     client: Any | None = None,
     dataset_prefix: str = "aico-benchmark",
     progress: Callable[[str], None] | None = None,
+    foreground_exporter: Callable[[list[dict[str, Any]]], None] | None = None,
 ) -> PublishResult:
-    """Publish one completed benchmark run as a Langfuse dataset experiment."""
+    """Publish one completed benchmark run as a Langfuse dataset experiment.
+
+    realtime-text attempts also get a reconstructed foreground trace, exported
+    through ``foreground_exporter`` (OTLP by default when this function owns
+    the client). backend-text attempts have no foreground session and are
+    published exactly as before.
+    """
     owned_client = client is None
     phase = "load-artifacts"
     dataset_name: str | None = None
@@ -121,6 +129,9 @@ def publish_run(
         phase = "client-init"
         if client is None:
             client = _new_client(artifacts.manifest)
+            if foreground_exporter is None:
+                from runner.langfuse_foreground import otlp_exporter
+                foreground_exporter = otlp_exporter(*_langfuse_connection())
 
         phase = "auth-check"
         auth_check = getattr(client, "auth_check", None)
@@ -222,12 +233,23 @@ def publish_run(
             f"dataset items ready: created={len(dataset_items)} "
             f"reused={len(item_ids) - len(dataset_items)}",
         )
+        phase = "export-foreground-traces"
+        # Only newly published items are exported: OTLP spans are immutable, so
+        # a repaired run must not resend spans that were already ingested.
+        foreground_traces = _export_foreground_traces(
+            client, artifacts, [results_by_key[key] for key in sorted(results_by_key)
+                                if item_ids[key] in missing_item_ids],
+            foreground_exporter, progress,
+        )
 
         def replay_saved_result(*, item: Any, **_: Any) -> dict[str, Any]:
             item_input = _item_input(item)
             key = _item_key(item_input["task_id"], item_input["attempt"])
             row = results_by_key[key]
             output = _experiment_output(artifacts.run_dir, row)
+            foreground = foreground_traces.get(key)
+            if foreground:
+                output.update(foreground)
             trace_url = getattr(client, "get_trace_url", None)
             if output["aico_trace_id"] and callable(trace_url):
                 try:
@@ -338,6 +360,103 @@ def publish_run(
             shutdown = getattr(client, "shutdown", None)
             if callable(shutdown):
                 shutdown()
+
+
+def _export_foreground_traces(
+    client: Any,
+    artifacts: _RunArtifacts,
+    rows: list[dict[str, Any]],
+    exporter: Callable[[list[dict[str, Any]]], None] | None,
+    progress: Callable[[str], None] | None,
+) -> dict[str, dict[str, Any]]:
+    """Export a foreground trace for each realtime-text attempt.
+
+    Only attempts recorded with ``execution_mode=realtime-text`` have a
+    foreground session. Other attempts return no entry, so backend-text suites
+    keep their existing output and publication path. A missing or unreadable
+    event capture is reported in the item output rather than guessed at.
+    """
+    from runner.langfuse_foreground import TRACE_NAME, build_foreground_spans, foreground_trace_id
+
+    realtime = [row for row in rows if (row.get("metrics") or {}).get("execution_mode") == "realtime-text"]
+    if not realtime:
+        return {}
+    run_id = str(artifacts.manifest["run_id"])
+    trace_url = getattr(client, "get_trace_url", None)
+
+    def url(trace_id: str) -> str | None:
+        try:
+            return trace_url(trace_id=trace_id) if callable(trace_url) else None
+        except Exception:
+            return None
+
+    def backend_link(episode_id: str) -> dict[str, Any]:
+        trace_id = _agent_trace_id(episode_id)
+        return {"backend_trace_id": trace_id, "backend_trace_url": url(trace_id)}
+
+    outputs: dict[str, dict[str, Any]] = {}
+    exported = 0
+    for row in realtime:
+        key, attempt = _result_key(row), int(row.get("attempt") or 1)
+        trace_id = foreground_trace_id(run_id, str(row["task_id"]), attempt)
+        directory = _attempt_dir(artifacts.run_dir, row)
+        events_path = directory / "collaboration-events.jsonl" if directory else None
+        if events_path is None or not events_path.is_file():
+            outputs[key] = {"foreground_trace_status": "no_capture"}
+            continue
+        try:
+            events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines() if line.strip()]
+            evaluation_path = directory / "collaboration-evaluation.json"
+            evaluation = json.loads(evaluation_path.read_text(encoding="utf-8")) if evaluation_path.is_file() else None
+        except (OSError, UnicodeError, ValueError):
+            outputs[key] = {"foreground_trace_status": "unreadable"}
+            continue
+        models = (row.get("metrics") or {}).get("collaboration_models") or {}
+        foreground_model = "/".join(str(part) for part in models.get("foreground") or [] if part) or None
+        spans = build_foreground_spans(
+            events, trace_id=trace_id, evaluation=evaluation, foreground_model=foreground_model,
+            backend_trace=backend_link,
+            trace_context={
+                "name": TRACE_NAME,
+                # Backend agent-run traces keep the daemon's own session ID, so
+                # navigation between the two uses the backend-run span links.
+                "session_id": f"{run_id}:{row['task_id']}:{attempt}",
+                "environment": "benchmark",
+                "release": str(artifacts.manifest.get("git_sha") or "") or None,
+                "tags": ["benchmark", "realtime-text", "foreground"],
+                "metadata": {"benchmark_run_id": run_id, "benchmark_suite": artifacts.suite.name,
+                             "benchmark_task_id": str(row["task_id"]), "benchmark_attempt": attempt},
+            })
+        if not spans:
+            outputs[key] = {"foreground_trace_status": "no_capture"}
+            continue
+        if exporter is None:
+            outputs[key] = {"foreground_trace_status": "not_exported", "foreground_trace_id": trace_id}
+            continue
+        try:
+            exporter(spans)
+        except Exception as exc:
+            # The foreground trace is a navigation aid: a failed export must not
+            # block the attempt's benchmark scores.
+            outputs[key] = {"foreground_trace_status": "export_failed", "foreground_trace_id": trace_id,
+                            "foreground_trace_error": f"{type(exc).__name__}: {exc}"[:500]}
+            continue
+        exported += 1
+        outputs[key] = {"foreground_trace_status": "exported", "foreground_trace_id": trace_id,
+                        "foreground_trace_url": url(trace_id)}
+    _emit_progress(progress, f"foreground traces exported: {exported}/{len(realtime)}")
+    return outputs
+
+
+def _attempt_dir(run_dir: Path, row: Mapping[str, Any]) -> Path | None:
+    """Locate an attempt's artifact directory inside this run, including moved runs."""
+    run_dir = run_dir.resolve()
+    attempt = int(row.get("attempt") or 1)
+    task_dir = run_dir / "tasks" / str(row["task_id"])
+    for candidate in (task_dir / f"attempt_{attempt}", task_dir if attempt == 1 else None):
+        if candidate is not None and candidate.is_dir() and candidate.resolve().is_relative_to(run_dir):
+            return candidate
+    return None
 
 
 def _new_client(manifest: Mapping[str, Any]) -> Any:
@@ -504,6 +623,9 @@ def _validate_existing_run_metadata(
         # predate these fields. Artifact hashes still guard conflicting results.
         if key not in {"git_branch", "benchmark_started_at", "workflow_run_id",
                        "workflow_run_attempt", "workflow_run_number"}
+        # realtime-text runs published before the execution mode was recorded
+        # lack these keys; a recorded value must still match.
+        and not (key in {"execution_mode", "foreground_model"} and key not in actual)
     ):
         raise LangfusePublishError(
             f"Langfuse run {run_name} conflicts with benchmark artifacts; "
@@ -1047,6 +1169,11 @@ def _attempt_scores(*, output: Any, **_: Any) -> list[dict[str, Any]]:
 
 def _run_scores(aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
     evaluations: list[dict[str, Any]] = []
+    # Explicit counts distinguish a healthy run from a partial score upload.
+    # Publish these before capability scores; history requires both counts.
+    failure_classes = aggregate.get("failure_classes") or {}
+    for kind in ("environment", "evaluation"):
+        _add_score(evaluations, f"failures.class.{kind}", failure_classes.get(kind, 0))
     for metric_name in (
         "pass_at_1",
         "pass_at_k",
@@ -1147,8 +1274,9 @@ def _run_scores(aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
             f"diagnostics.failure_stage_coverage.{field}",
             _nested(aggregate, "failure_stage_coverage", field),
         )
-    for failure_class, count in sorted((aggregate.get("failure_classes") or {}).items()):
-        _add_score(evaluations, f"failures.class.{failure_class}", count)
+    for failure_class, count in sorted(failure_classes.items()):
+        if failure_class not in ("environment", "evaluation"):
+            _add_score(evaluations, f"failures.class.{failure_class}", count)
     for stage, count in sorted((aggregate.get("failure_stages") or {}).items()):
         _add_score(evaluations, f"failures.stage.{stage}", count)
     for status, count in sorted((aggregate.get("by_status") or {}).items()):
@@ -1214,6 +1342,7 @@ def _nested(value: Mapping[str, Any], *path: str) -> Any:
 def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
     manifest = artifacts.manifest
     judge = manifest.get("judge_config") if isinstance(manifest.get("judge_config"), dict) else {}
+    skills_fingerprint = digest_of(manifest)
     ci_run = re.fullmatch(r"ci-(\d+)-(\d+)-.+", str(manifest.get("run_id") or ""))
     values = {
         "benchmark_run_id": manifest.get("run_id"),
@@ -1233,13 +1362,17 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         "workflow_run_number": os.environ.get("GITHUB_RUN_NUMBER")
             if ci_run and ci_run.group(1) == os.environ.get("GITHUB_RUN_ID") else None,
         "agent_model": manifest.get("agent_model"),
+        # realtime-text runs add a foreground model on top of the same backend;
+        # recording the mode keeps them distinguishable from backend-text runs.
+        "execution_mode": manifest.get("execution_mode") if manifest.get("execution_mode") not in (None, "backend-text") else None,
+        "foreground_model": _foreground_model(manifest),
         "judge_provider": judge.get("provider"),
         "judge_model": judge.get("model"),
         "judge_prompt_version": manifest.get("judge_prompt_version"),
         "target_platform": manifest.get("target_platform"),
         "execution_environment": manifest.get("execution_environment"),
         "selected_task_ids": manifest.get("selected_task_ids"),
-        "active_skills": manifest.get("active_skills"),
+        "skills_fingerprint": skills_fingerprint or None,
     }
     metadata = {}
     for key, value in values.items():
@@ -1252,6 +1385,14 @@ def _experiment_metadata(artifacts: _RunArtifacts) -> dict[str, str]:
         else:
             metadata[key] = str(value)
     return metadata
+
+
+def _foreground_model(manifest: Mapping[str, Any]) -> str | None:
+    models = {
+        "/".join(str(part) for part in entry.get("foreground") or [] if part)
+        for entry in manifest.get("collaboration_models") or [] if isinstance(entry, Mapping)
+    } - {""}
+    return ",".join(sorted(models)) or None
 
 
 def _result_key(row: Mapping[str, Any]) -> str:

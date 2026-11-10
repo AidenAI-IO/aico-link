@@ -99,7 +99,7 @@ func TestVisualCoordinatesProtocolTravelsInToolDescriptions(t *testing.T) {
 			t.Fatalf("%s description lost the pixel protocol: %q", name, tools[0].Description())
 		}
 	}
-	untouched := &visualRecordingTool{name: "screenshot"}
+	untouched := &visualRecordingTool{name: "shell"}
 	if got := v.wrap([]langtools.Tool{untouched})[0]; got != langtools.Tool(untouched) {
 		t.Fatal("non-geometry tool was wrapped")
 	}

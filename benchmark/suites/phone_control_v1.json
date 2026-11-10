@@ -371,6 +371,7 @@
       "rubric": [
         {
           "id": "populated_input_before",
+          "scope": "precondition",
           "check": "The pre-screenshot shows hello-aiden in the editable field. An attempted setup alone is insufficient."
         },
         {

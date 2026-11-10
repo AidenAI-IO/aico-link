@@ -52,6 +52,19 @@ def test_missing_metrics_or_cost_are_visible_without_false_zero():
     assert "| 1 | 0 | 0 / 0 | — | — | — |" in markdown
 
 
+def test_matched_comparison_excludes_a_dataset_with_an_incomplete_window():
+    report = summarize_weekly([
+        _record(suite="mixed"),
+        _record(suite="mixed", missing_metrics=["evaluation_coverage"]),
+        _record(suite="mixed", timestamp="2026-10-01T00:00:00+00:00"),
+        _record(suite="complete", passed=6),
+        _record(suite="complete", timestamp="2026-10-01T00:00:00+00:00", passed=4),
+    ], end=END)
+    assert report["compared_datasets"] == 1
+    assert report["change"] == pytest.approx(0.25)
+    assert report["totals"]["pass_at_1"] is None
+
+
 def test_markdown_escapes_untrusted_suite_names():
     report = summarize_weekly([_record(suite="<img src=x>|\\nhello")], end=END)
     markdown = render_weekly(report, [])
@@ -73,7 +86,9 @@ def test_changes_compare_each_suite_and_the_total_with_the_previous_seven_days()
     assert suites["new"]["change"] is None and suites["unmeasured"]["change"] is None
     # A suite that only ran last week is not listed for this week.
     assert "gone" not in suites
-    assert report["change"] == pytest.approx(12 / 24 - 8 / 16)
+    # Only datasets measured in both windows (memory) enter the overall change.
+    assert report["change"] == pytest.approx(0.25)
+    assert report["compared_datasets"] == 1
     assert "+25.0 pp" in render_weekly(report, [])
     assert suites["memory"]["config_changes"] == []
 
@@ -126,8 +141,8 @@ def test_cost_preserves_free_calls_and_small_billed_amounts():
 
 def test_config_changes_cover_every_comparison_setting():
     report = summarize_weekly([
-        _record(judge_provider="b", active_skills=["device-operator"]),
-        _record("2026-10-01T00:00:00+00:00", judge_provider="a", active_skills=[]),
+        _record(judge_provider="b", skills_fingerprint="bbbbbbbb"),
+        _record("2026-10-01T00:00:00+00:00", judge_provider="a", skills_fingerprint="aaaaaaaa"),
     ], end=END)
     fields = [c["field"] for c in report["suites"][0]["config_changes"]]
     assert fields == ["judge provider", "skills"]
@@ -146,13 +161,14 @@ def test_capabilities_group_suites_and_compare_with_the_previous_week():
     assert [c["capability"] for c in report["capabilities"]] == ["Memory", "Visual grounding", "Other"]
     assert caps["Memory"]["suites"] == ["memory_v1", "quick_capture_v1"]
     assert caps["Memory"]["pass_at_1"] == pytest.approx(12 / 16)
-    assert caps["Memory"]["change"] == pytest.approx(12 / 16 - 4 / 8)
+    # quick_capture_v1 has no previous week, so the change compares memory_v1 alone.
+    assert caps["Memory"]["change"] == pytest.approx(8 / 8 - 4 / 8)
     assert caps["Visual grounding"]["change"] is None
     assert capability_of("unlisted_v1") == "Other"
     markdown = render_weekly(report, [])
     assert "### By test area" in markdown
     # Tasks: latest eligible count per suite; first attempts: every run summed.
-    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +25.0 pp |" in markdown
+    assert "| Memory | memory_v1, quick_capture_v1 | 16 | 1 | 16 | 75.0% | 50.0% | +50.0 pp |" in markdown
 
 
 def test_capability_counts_separate_tasks_from_repetitions():
@@ -236,3 +252,31 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
     assert environment_of({"execution_environment": "adb"}) == "ADB device"
     assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"
+
+
+@pytest.mark.parametrize("known_environment", [None, "adb"])
+def test_missing_null_and_empty_environments_share_one_dataset(known_environment):
+    records = [_record(passed=8), _record(execution_environment=None, passed=4),
+               _record(execution_environment="", passed=0)]
+    if known_environment:
+        records.append(_record(execution_environment=known_environment, passed=8))
+    report = summarize_weekly(records, end=END)
+    suites = {s["suite"]: s for s in report["suites"]}
+    unknown = "memory [unknown]" if known_environment else "memory"
+    assert suites[unknown]["suite_runs"] == 3
+    assert suites[unknown]["pass_at_1"] == 0.5
+    assert set(suites) == ({unknown, "memory [adb]"} if known_environment else {unknown})
+
+
+def test_a_suite_run_in_two_environments_is_reported_as_two_datasets():
+    report = summarize_weekly([
+        _record(suite="adb_android_text_editing", execution_environment="adb", passed=8),
+        _record(suite="adb_android_text_editing", execution_environment="adb_aidenbridge", passed=2),
+        _record(suite="memory_v1", execution_environment="isolated", passed=4),
+    ], end=END)
+    suites = {s["suite"]: s["pass_at_1"] for s in report["suites"]}
+    assert suites == {"adb_android_text_editing [adb]": 1.0,
+                      "adb_android_text_editing [adb_aidenbridge]": 0.25, "memory_v1": 0.5}
+    ui = next(c for c in report["capabilities"] if c["capability"] == "UI operation")
+    assert ui["suites"] == ["adb_android_text_editing [adb]", "adb_android_text_editing [adb_aidenbridge]"]
+    assert ui["task_count"] == 16

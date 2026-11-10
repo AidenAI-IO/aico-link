@@ -1,6 +1,7 @@
 {
   "version": 1,
   "cases": [
+    {"id": "realtime-collaboration", "suite": "suites/realtime_collaboration_v1.json", "environment": "isolated", "execution_mode": "realtime-text", "runnable": false},
     {"id": "memory", "suite": "suites/memory_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "memory-admission", "suite": "suites/memory_admission_v1.json", "environment": "isolated", "max_concurrency": 2},
     {"id": "shell-utility", "suite": "suites/shell_utility_v1.json", "environment": "isolated", "max_concurrency": 2},

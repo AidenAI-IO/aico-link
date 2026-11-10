@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Aico Link</title>
+<style>
+:root{--canvas:#F6F8FA;--card:#FFFFFF;--ink:#111214;--ink2:#8A8A8E;--border:#D6D6DA;--focus:#5478FF;--danger:#FF3B30;--fill:#000000;--fill-ink:#FFFFFF;--shadow:0 1px 2px rgba(0,0,0,.04),0 8px 24px rgba(0,0,0,.06)}
+@media (prefers-color-scheme:dark){:root{--canvas:#000000;--card:#1C1C1E;--ink:#F5F5F7;--ink2:#98989F;--border:#3A3A3C;--focus:#6E8BFF;--danger:#FF453A;--fill:#FFFFFF;--fill-ink:#000000;--shadow:none}}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;display:flex;align-items:center;justify-content:center;padding:24px 16px;background:var(--canvas);color:var(--ink);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+main{width:100%;max-width:360px;background:var(--card);border-radius:20px;padding:40px 28px 32px;box-shadow:var(--shadow);text-align:center}
+.logo{display:block;width:96px;height:auto;margin:0 auto 28px;color:var(--ink)}
+h1{margin:0 0 6px;font-size:20px;font-weight:600;line-height:1.3}
+.sub{margin:0 0 24px;font-size:14px;color:var(--ink2);line-height:1.5}
+input[type=password]{display:block;width:100%;height:48px;padding:0 16px;border:1px solid var(--border);border-radius:12px;background:var(--card);color:var(--ink);font-size:16px;outline:none;transition:border-color .15s}
+input[type=password]:focus{border-color:var(--focus)}
+input[type=password][aria-invalid=true]{border-color:var(--danger)}
+.error{margin:10px 2px 0;font-size:13px;color:var(--danger);text-align:left}
+button{display:block;width:100%;height:48px;margin-top:16px;border:0;border-radius:12px;background:var(--fill);color:var(--fill-ink);font-size:16px;font-weight:600;cursor:pointer}
+button:active{opacity:.8}
+.foot{margin:20px 0 0;font-size:12px;color:var(--ink2);line-height:1.5}
+</style>
+</head>
+<body>
+<main>
+<svg class="logo" viewBox="0 0 72 26" role="img" aria-label="aico" xmlns="http://www.w3.org/2000/svg"><path fill="currentColor" d="M42.6957 6.54035C44.8319 6.54035 46.5714 6.98874 47.9247 7.90317L48.1899 8.09156L48.193 8.09463C49.6196 9.20816 50.5134 10.8713 50.8551 13.0923L50.892 13.3339H46.6868L46.651 13.168C46.4238 12.0971 45.9747 11.3388 45.3496 10.8387C44.6918 10.3396 43.8019 10.08 42.6957 10.08C41.3448 10.08 40.3031 10.558 39.5421 11.5729L39.54 11.5749C38.7733 12.5652 38.3758 13.9903 38.3758 15.8425C38.3758 17.6138 38.6972 19.0054 39.3689 20.0149L39.5083 20.2125L39.5113 20.2166C40.2045 21.1934 41.2436 21.7053 42.6619 21.7054C43.9027 21.7054 44.837 21.3953 45.496 20.8064C46.1553 20.2173 46.5685 19.3232 46.7155 18.0982L46.737 17.9139H50.9636L50.9217 18.1586C50.5134 20.5411 49.5889 22.3373 48.1643 23.5187C46.7756 24.6645 44.9121 25.2449 42.6291 25.245C39.8953 25.245 37.7508 24.3533 36.2277 22.5532C34.7464 20.8296 34.0314 18.596 34.0314 15.8753C34.0315 13.3857 34.6608 11.2977 35.9328 9.65404L36.1959 9.33049C37.7517 7.46521 39.9278 6.5404 42.6957 6.54035ZM61.771 6.54035C64.271 6.54035 66.3375 7.2934 67.9502 8.86564L68.2667 9.19123L68.5604 9.52605C69.983 11.2273 70.7045 13.3503 70.7046 15.9091C70.7046 18.4365 69.9832 20.558 68.5881 22.2317L68.3004 22.5603C66.6454 24.3533 64.439 25.245 61.771 25.245C59.0692 25.2449 56.8972 24.3529 55.2426 22.5603C53.6239 20.8372 52.8384 18.6018 52.8384 15.9091C52.8385 13.1817 53.624 10.9459 55.2774 9.18919C56.9002 7.39558 59.0735 6.54042 61.771 6.54035ZM14.654 0.400002L14.7052 0.535157L23.865 24.4904L23.9736 24.7751H19.3282L19.2779 24.6368L17.1472 18.7698H7.40889L5.27917 24.6368L5.22899 24.7751H0.58252L0.692077 24.4904L9.85089 0.535157L9.90311 0.400002H14.654ZM30.3782 7.0093V24.7751H26.134V7.0093H30.3782ZM61.771 10.08C60.3214 10.0801 59.2288 10.5846 58.4136 11.6475L58.2539 11.8677C57.5463 12.8969 57.1829 14.2609 57.1829 15.9091C57.1829 17.5563 57.5459 18.8878 58.2539 19.9176C59.086 21.1008 60.2283 21.7053 61.771 21.7054C63.2799 21.7054 64.4545 21.1002 65.286 19.9197C65.998 18.8517 66.3929 17.5179 66.3929 15.9091C66.3928 14.3674 66.0458 13.0714 65.4182 12.0654L65.2891 11.8677C64.4592 10.6548 63.2848 10.08 61.771 10.08ZM8.73483 15.1289H15.8223L12.2939 5.26969L8.73483 15.1289Z"/><path fill="#FC5500" d="M30.6844 2.86622C30.6844 4.31386 29.5108 5.48741 28.0632 5.48741C26.6156 5.48741 25.442 4.31386 25.442 2.86622C25.442 1.41858 26.6156 0.245026 28.0632 0.245026C29.5108 0.245026 30.6844 1.41858 30.6844 2.86622Z"/></svg>
+<h1>登录 · Sign in</h1>
+<p class="sub">请输入设备密码<br>Enter the device password</p>
+<form method="post" action="{{.Action}}">
+<input type="hidden" name="next" value="{{.Next}}">
+<input type="password" name="password" autocomplete="current-password" autofocus required placeholder="设备密码 / Device password" aria-label="Device password"{{if .Error}} aria-invalid="true"{{end}}>
+{{if .Error}}<p class="error" role="alert">{{.Error}}</p>{{end}}
+<button type="submit">登录 · Sign in</button>
+</form>
+<p class="foot">忘记密码？请通过 USB 连接设备后重新设置。<br>Forgot it? Reset it over USB.</p>
+</main>
+</body>
+</html>

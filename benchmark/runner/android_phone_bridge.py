@@ -232,6 +232,31 @@ def _wait_for_boot(serial: str, timeout_sec: int = 180) -> None:
     raise RuntimeError("Android framework did not finish restarting")
 
 
+def _ensure_root(serial: str, timeout_sec: int = 60) -> None:
+    """Restart adbd as root so the board network can be installed.
+
+    adbd returns to the shell user when the emulator restarts, and both steps
+    that follow need root: the permission copy is owned by root, and creating the
+    veth pair needs CAP_NET_ADMIN. A shell-user adbd can neither delete that
+    leftover copy nor bind-mount over /vendor/etc/permissions.
+    """
+    if _adb(serial, "shell", "id", "-u") == "0":
+        return
+    _adb(serial, "root")
+    deadline = time.monotonic() + timeout_sec
+    while time.monotonic() < deadline:
+        try:
+            if _adb(serial, "shell", "id", "-u") == "0":
+                return
+        except (RuntimeError, subprocess.TimeoutExpired):
+            # adbd is restarting: the device is briefly offline or unresponsive.
+            pass
+        time.sleep(2)
+    raise RuntimeError(
+        "adbd did not start as root; the emulator board network requires a rooted emulator"
+    )
+
+
 def ensure_emulator_ethernet(serial: str) -> bool:
     """Enable EthernetService with a static eth1 config; returns True if it restarted.
 
@@ -252,6 +277,7 @@ def ensure_emulator_ethernet(serial: str) -> bool:
     ) + " && echo present || echo missing") == "present"
     if feature_present and config_present:
         return False
+    _ensure_root(serial)
     install = []
     if not feature_present:
         feature_xml = (
@@ -300,6 +326,10 @@ def emulator_board_network(serial: str, timeout_sec: int = 90) -> Iterator[None]
     has no internet route, so the emulator is offline until it is removed.
     """
     ensure_emulator_ethernet(serial)
+    # ensure_emulator_ethernet only restores root on its install path, and its
+    # framework restart is not the only way adbd can lose root. The veth pair
+    # needs CAP_NET_ADMIN, so root is re-established at the operation boundary.
+    _ensure_root(serial)
     remove_board_network(serial)
     try:
         _adb(serial, "shell", " && ".join([

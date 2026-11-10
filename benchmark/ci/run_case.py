@@ -20,6 +20,13 @@ ACTION_ENVIRONMENT_ALIASES = {
     "BENCHMARK_AGENT_MODEL": "AICO_BENCHMARK_AGENT_MODEL",
     "BENCHMARK_AGENT_BASE_URL": "AICO_BENCHMARK_AGENT_BASE_URL",
     "BENCHMARK_AGENT_API_KEY": "AICO_BENCHMARK_AGENT_API_KEY",
+    "BENCHMARK_REALTIME_PROVIDER": "AICO_BENCHMARK_REALTIME_PROVIDER",
+    "BENCHMARK_REALTIME_MODEL": "AICO_BENCHMARK_REALTIME_MODEL",
+    "BENCHMARK_REALTIME_ENDPOINT": "AICO_BENCHMARK_REALTIME_ENDPOINT",
+    "BENCHMARK_REALTIME_PROTOCOL": "AICO_BENCHMARK_REALTIME_PROTOCOL",
+    "BENCHMARK_REALTIME_UPSTREAM_PROVIDER": "AICO_BENCHMARK_REALTIME_UPSTREAM_PROVIDER",
+    "BENCHMARK_REALTIME_AUTH_MODE": "AICO_BENCHMARK_REALTIME_AUTH_MODE",
+    "BENCHMARK_REALTIME_API_KEY": "AICO_BENCHMARK_REALTIME_API_KEY",
     "BENCHMARK_JUDGE_MODEL": "AICO_BENCHMARK_JUDGE_MODEL",
     "BENCHMARK_JUDGE_BASE_URL": "AICO_BENCHMARK_JUDGE_BASE_URL",
     "BENCHMARK_JUDGE_API_KEY": "AICO_BENCHMARK_JUDGE_API_KEY",
@@ -257,6 +264,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
         ]
 
     reasons: list[str] = []
+    if judge_errors:
+        reasons.append(f"judge_errors={judge_errors}")
     completed = passed + failed + skipped + judge_errors + timeouts
     if tasks < 1:
         reasons.append(f"tasks={tasks}")
@@ -268,6 +277,7 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
         unknown_statuses = 0
         result_identities: list[tuple[str, int]] = []
         invalid_identities = 0
+        invalid_preconditions = 0
         result_counts = {
             "passed": 0,
             "failed": 0,
@@ -299,6 +309,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
             metrics = row.get("metrics") or {}
             if not isinstance(metrics, dict):
                 raise TypeError("result metrics must be an object")
+            if metrics.get("preconditions_passed") is False:
+                invalid_preconditions += 1
     except (
         AttributeError,
         OSError,
@@ -309,6 +321,8 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
     ):
         reasons.append("results_invalid")
     else:
+        if invalid_preconditions:
+            reasons.append(f"invalid_preconditions={invalid_preconditions}")
         manifest_counts = {
             "passed": passed,
             "failed": failed,
@@ -371,7 +385,7 @@ def _incomplete_run_reasons(returncode: int, manifest_path: Path) -> list[str]:
 
 
 def _effective_exit_code(returncode: int, manifest_path: Path) -> int:
-    """Fail CI only when the benchmark did not produce a complete result set."""
+    """Fail CI on incomplete results or unavailable scoring, not Agent failures."""
     return 1 if _incomplete_run_reasons(returncode, manifest_path) else 0
 
 
@@ -434,6 +448,8 @@ def run_case(
             str(case.max_concurrency),
             "--verbose",
         ]
+        if case.execution_mode != "backend-text":
+            command.extend(["--execution-mode", case.execution_mode])
         for task_id in case.task_ids:
             command.extend(["--task-id", task_id])
         repeats = runtime_environment.get("BENCHMARK_REPEATS", "").strip()

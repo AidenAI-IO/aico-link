@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"aico-agent/internal/agenttask"
 	langtools "github.com/tmc/langchaingo/tools"
 )
 
@@ -74,7 +75,19 @@ func (t *benchmarkMockTool) Call(ctx context.Context, input string) (string, err
 	if t.taskID != "" {
 		req.Header.Set("benchmark-task-id", t.taskID)
 	}
-	resp, err := benchmarkMockClient.Do(req)
+	client := benchmarkMockClient
+	if observation, ok := agenttask.TaskObservationFromContext(ctx); ok && observation.StreamSink != nil {
+		// The fixture needs production task identity, distinct from the worker's
+		// environment route. These headers never enter model-visible arguments.
+		req.Header.Set("X-Aico-Backend-Task-ID", observation.Task.ID)
+		if callID, ok := ctx.Value(benchmarkToolCallContextKey{}).(string); ok {
+			req.Header.Set("X-Aico-Benchmark-Call-ID", callID)
+		}
+		copyClient := *benchmarkMockClient
+		copyClient.Timeout = 150 * time.Second // bounded collaboration fixture gate budget
+		client = &copyClient
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("benchmark mock tool %s: %w", t.Name(), err)
 	}

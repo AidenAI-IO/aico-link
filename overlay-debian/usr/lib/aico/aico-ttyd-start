@@ -2,7 +2,6 @@
 set -eu
 
 TTYD_BIN=${TTYD_BIN:-${WETTY_BIN:-/usr/lib/aico/ttyd}}
-TTYD_INTERFACE=${TTYD_INTERFACE:-${WETTY_HOST:-}}
 TTYD_PORT=${TTYD_PORT:-${WETTY_PORT:-3000}}
 TTYD_BASE=${TTYD_BASE:-${WETTY_BASE:-/webtty/}}
 TTYD_TITLE=${TTYD_TITLE:-${WETTY_TITLE:-Aico Link Shell}}
@@ -24,9 +23,11 @@ set -- \
     --client-option "scrollback=${TTYD_SCROLLBACK}" \
     --client-option "cursorStyle=${TTYD_CURSOR_STYLE}" \
     --client-option "disableResizeOverlay=${TTYD_DISABLE_RESIZE_OVERLAY}"
-if [ -n "${TTYD_INTERFACE}" ]; then
-    set -- "$@" --interface "${TTYD_INTERFACE}"
-fi
+# ttyd is reachable only from the board itself. Config Web serves it on the
+# USB link (192.168.42.1:3000) and the Agent at :8080/webtty/, which refuses
+# LAN clients until LAN access is turned on. The interface is therefore not
+# configurable.
+set -- "$@" --interface lo
 set -- "$@" "${TTYD_COMMAND}"
 
 exec "${TTYD_BIN}" "$@"

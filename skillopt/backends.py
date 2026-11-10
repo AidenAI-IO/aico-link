@@ -80,7 +80,6 @@ class AicoDeviceBackend:
                 judge_cfg=judge_cfg,
                 judge_cache_dir=judge_cache,
                 run_id=run_id,
-                active_skills=[skill_name] if skill_name else [],
             )
             rollouts.append(task_result_to_rollout(result))
         return rollouts

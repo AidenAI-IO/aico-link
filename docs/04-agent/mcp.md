@@ -25,11 +25,58 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 
 | Setting | Default | Where |
 | --- | --- | --- |
-| `mcp_enabled` | `true` | `[conversation_settings.agent]` in `agent.toml`, or Config Web → Advanced |
+| `mcp_enabled` | `true` | `[conversation_settings.agent]` in `agent.toml`, or Config Web → Advanced → MCP |
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
-When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. There is no authentication in this release; use a trusted LAN/USB link or turn the switch off. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port (also unauthenticated in this release).
+When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port under its own rules, never with an MCP access token.
+
+## Authentication
+
+On the board, `/mcp` needs an MCP access token from every client: a computer
+plugged straight into Aico Link, one on Wi-Fi, and processes on the board
+itself. It does not depend on LAN access. Create one in Config Web → Advanced → MCP → Create token; the secret is
+shown once, with ready-to-paste configuration. A token reaches only `/mcp`,
+does not expire, survives a device-password change, and is revoked on its own
+on the same page. A session token from `POST /api/auth/login` is not accepted
+on `/mcp`. See
+[MCP Access Tokens](../03-services/device-management-api.md#mcp-access-tokens)
+for the API.
+
+| Client | Needs |
+| --- | --- |
+| Same Wi-Fi (`http://<board-ip>:8080/mcp`), LAN access on or off | MCP access token |
+| Plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`) | MCP access token |
+| Docker or host runs without `-lan-guard` | Nothing |
+
+Without a valid token `/mcp` returns `401` with `"error": "mcp_token_required"`.
+Other Agent routes keep their own rules: USB and on-board clients need no
+credentials, LAN clients sign in with the device password.
+
+Claude Code:
+
+```bash
+claude mcp add --transport http aico http://<board-ip>:8080/mcp \
+  --header "Authorization: Bearer aico_mcp_..."
+```
+
+Clients configured with JSON:
+
+```json
+{
+  "mcpServers": {
+    "aico": {
+      "type": "http",
+      "url": "http://<board-ip>:8080/mcp",
+      "headers": {"Authorization": "Bearer aico_mcp_..."}
+    }
+  }
+}
+```
+
+Address the board by IP: the Agent
+refuses requests whose `Host` is a hostname (see
+[Cross-Site Requests](../03-services/device-management-api.md#cross-site-requests)).
 
 ## Allowlist
 
@@ -72,7 +119,7 @@ If the client sends an `Origin` header (browser requests), it must:
 1. Use a non-rebindable hostname: an IP literal or `localhost`
 2. Match the request `Host` (scheme-insensitive `host:port`)
 
-This blocks ordinary cross-origin browser calls and rejects rebound attacker names even when `Origin` and `Host` agree. It is not a full Host allowlist; point browsers at the board by IP (or `localhost` over USB/loopback). There is still no authentication on `/mcp` in this release.
+This blocks ordinary cross-origin browser calls and rejects rebound attacker names even when `Origin` and `Host` agree. On the board, the LAN guard applies the same rules to every Agent and Config Web route and additionally refuses `Sec-Fetch-Site: cross-site` and hostname `Host` headers (see [Cross-Site Requests](../03-services/device-management-api.md#cross-site-requests)). The `Origin` check is not authentication; see [Authentication](#authentication).
 
 ## Related
 

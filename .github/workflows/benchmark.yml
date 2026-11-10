@@ -113,6 +113,13 @@ jobs:
       BENCHMARK_AGENT_MODEL: ${{ vars.BENCHMARK_AGENT_MODEL }}
       BENCHMARK_AGENT_BASE_URL: ${{ vars.BENCHMARK_AGENT_BASE_URL }}
       BENCHMARK_AGENT_API_KEY: ${{ secrets.BENCHMARK_AGENT_API_KEY }}
+      BENCHMARK_REALTIME_PROVIDER: ${{ vars.BENCHMARK_REALTIME_PROVIDER }}
+      BENCHMARK_REALTIME_MODEL: ${{ vars.BENCHMARK_REALTIME_MODEL }}
+      BENCHMARK_REALTIME_ENDPOINT: ${{ vars.BENCHMARK_REALTIME_ENDPOINT }}
+      BENCHMARK_REALTIME_PROTOCOL: ${{ vars.BENCHMARK_REALTIME_PROTOCOL }}
+      BENCHMARK_REALTIME_UPSTREAM_PROVIDER: ${{ vars.BENCHMARK_REALTIME_UPSTREAM_PROVIDER }}
+      BENCHMARK_REALTIME_AUTH_MODE: ${{ vars.BENCHMARK_REALTIME_AUTH_MODE }}
+      BENCHMARK_REALTIME_API_KEY: ${{ secrets.BENCHMARK_REALTIME_API_KEY }}
       BENCHMARK_JUDGE_MODEL: ${{ vars.BENCHMARK_JUDGE_MODEL || 'anthropic/claude-sonnet-4-6' }}
       BENCHMARK_JUDGE_BASE_URL: ${{ vars.BENCHMARK_JUDGE_BASE_URL || 'https://openrouter.ai/api/v1' }}
       BENCHMARK_JUDGE_API_KEY: ${{ secrets.BENCHMARK_JUDGE_API_KEY }}
@@ -125,8 +132,8 @@ jobs:
       PREPARE_LOG: runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-prepare-images/mobilegym-image.log
       # The runner reaches openrouter.ai, the Cloudflare-fronted Langfuse host and
       # GitHub artifact storage through this proxy. Only https is proxied because all
-      # three endpoints are https. Docker builds never inherit it; daemon_compose_env
-      # strips proxy variables so the huaweicloud mirrors keep resolving directly.
+      # three endpoints are https. Docker builds never inherit it. Realtime-text
+      # workers explicitly forward it to daemon runtime only; other workers strip it.
       # Actions treats env keys case-insensitively, so declaring both spellings is a
       # duplicate-key error. Lowercase is the portable one: urllib and libcurl accept
       # either, while some tools only read lowercase.
@@ -298,7 +305,11 @@ jobs:
           adb devices >&2
           exit 1
       - name: Install AidenBridge on Android device
+        id: aidenbridge_install
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        # Only AidenBridge cases need the app. A failed install marks those
+        # cases as failed in ci.run_cases instead of stopping every other case.
+        continue-on-error: true
         run: |
           set -euo pipefail
           echo "Checking $AIDENBRIDGE_PACKAGE on $ANDROID_SERIAL"
@@ -345,7 +356,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
       - name: Enable emulator routing for AidenBridge cases
-        if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
+        id: aidenbridge_routing
+        if: ${{ steps.aidenbridge_install.outcome == 'success' }}
+        continue-on-error: true
         run: |
           set -euo pipefail
           adb -s "$ANDROID_SERIAL" root
@@ -375,6 +388,8 @@ jobs:
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
+          # 0 only when AidenBridge cases are planned and their device setup failed.
+          AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
           uv run python -m ci.run_cases
           --matrix-json "$MATRIX"
@@ -477,15 +492,24 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/judge.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/environment_state.json
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episodes.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup_failure.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-evaluation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-claim-judge-raw.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-summary.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-timeline.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-events.jsonl
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/fixture-events.jsonl
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/scenario-events.jsonl
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log
@@ -511,15 +535,24 @@ jobs:
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/report.html
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/suite.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/trace.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/history.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/judge.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/environment_state.json
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/pre.jpg
-            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/post.jpg
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episode.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/episodes.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/setup_failure.json
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/consolidation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-evaluation.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-claim-judge-raw.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-summary.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-timeline.json
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/collaboration-events.jsonl
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/fixture-events.jsonl
+            benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/tasks/**/scenario-events.jsonl
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/daemon.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/workers/*/runner.log
             benchmark/runs/ci-${{ github.run_id }}-${{ github.run_attempt }}-*/auto-agent-setup.log

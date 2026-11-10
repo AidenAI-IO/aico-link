@@ -2,7 +2,7 @@ from __future__ import annotations
 import dataclasses as dc
 import json
 from pathlib import Path
-from runner.judge import JudgeConfig, judge_task
+from runner.judge import JudgeConfig, judge_task, check_preconditions
 from runner.suite import RubricItem, load_suite
 from runner.report import now_iso
 from runner.trace import extract_trace, apply_episode_tool_evidence
@@ -61,10 +61,78 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
     prompts = {t.id: f"{suite.prompt_prefix.rstrip()}\n\n{t.prompt}".strip() for t in suite.tasks} if suite else {}
     for line in (run_dir / "results.jsonl").read_text("utf-8").splitlines():
         row = json.loads(line)
-        if only_judge_errors and row.get("status") != "judge_error":
+        if only_judge_errors and row.get("status") != "judge_error" and not (row.get("metrics") or {}).get("preconditions_pending"):
             new_results.append(row)
             continue
         metrics = row.setdefault("metrics", {})
+        if metrics.get("execution_mode") == "realtime-text":
+            td = run_dir / "tasks" / row["task_id"]
+            attempt_dir = td / f"attempt_{row['attempt']}" if (td / f"attempt_{row['attempt']}").exists() else td
+            try:
+                from runner.scenario import evaluate_scenario
+                task = next((t for t in suite.tasks if t.id == row["task_id"]), None) if suite else None
+                if task is None or task.scenario is None:
+                    raise ValueError("missing recorded collaboration scenario")
+                evidence = json.loads((attempt_dir / "collaboration.json").read_text("utf-8"))
+                evaluation = evaluate_scenario(evidence, task, cfg, attempt_dir,
+                                               evaluation_name="collaboration-evaluation.rejudged.json")
+                outcome = evaluation["outcome"]
+                row["status"] = {"pass": "passed", "fail": "failed", "unscored": "judge_error"}[outcome]
+                row["rubric"] = evaluation["rubric"]
+                row["rubric_total"] = len(row["rubric"])
+                row["rubric_pass_count"] = sum(v["verdict"] == "yes" for v in row["rubric"])
+                row["hard_assertion_failures"] = [
+                    {"id": c["id"], "label": c["id"], "requirement": "Collaboration contract",
+                     "actual": c.get("reason") or json.dumps(c.get("evidence_refs", []))}
+                    for c in evaluation["checks"] if c["verdict"] == "fail"]
+                metrics.update(success=outcome == "pass" if outcome != "unscored" else None,
+                               agent_eligible=outcome != "unscored",
+                               quality_score=1.0 if outcome == "pass" else 0.0 if outcome == "fail" else None,
+                               failure_class="agent" if outcome == "fail" else "evaluation" if outcome == "unscored" else None)
+                metrics.pop("rejudge_error", None)
+            except Exception as exc:
+                row["status"] = "judge_error"
+                metrics["rejudge_error"] = str(exc)
+            new_results.append(row)
+            continue
+        preconditions_checked = False
+        if metrics.get("preconditions_pending"):
+            rubric = [RubricItem(id=r["id"], check=r["check"], scope=r.get("scope", "outcome"))
+                      for r in row.get("rubric_spec", [])]
+            td = run_dir / "tasks" / row["task_id"]
+            attempt_dir = td / f"attempt_{row['attempt']}" if (td / f"attempt_{row['attempt']}").exists() else td
+            preconditions = check_preconditions(rubric, attempt_dir / "pre.jpg", cfg, cache)
+            metrics.update(preconditions)
+            if not preconditions or preconditions["preconditions_passed"] is not True:
+                unavailable = not preconditions or preconditions["preconditions_passed"] is None
+                row["status"] = "judge_error" if unavailable else "skipped"
+                metrics.update(success=None, agent_eligible=False, quality_score=None,
+                               failure_class="evaluation" if unavailable else "environment",
+                               first_failure_stage="evaluation" if unavailable else "setup")
+                if unavailable:
+                    metrics["judge_error"] = preconditions.get("precondition_error", "Missing precondition checks")
+                else:
+                    metrics.pop("preconditions_pending", None)
+                new_results.append(row)
+                continue
+            metrics.pop("preconditions_pending", None)
+            preconditions_checked = True
+            deterministic = metrics.pop("deterministic_outcome", None)
+            if deterministic and deterministic["status"] in ("judge_error", "timeout", "failed"):
+                row["status"] = deterministic["status"]
+                metrics.update(deterministic["metrics"])
+                metrics.pop("judging_disabled", None)
+                metrics.pop("error", None)
+                new_results.append(row)
+                continue
+            if execution_gate_blocks_rejudge({**row, "status": "failed"}):
+                row["status"] = "timeout" if (row.get("hard_assertions") or {}).get("timeout") is False else "failed"
+                metrics.pop("judging_disabled", None)
+                metrics.pop("error", None)
+                metrics.update(success=False, agent_eligible=True, quality_score=0.0,
+                               failure_class="agent", first_failure_stage="unknown")
+                new_results.append(row)
+                continue
         if execution_gate_blocks_rejudge(row):
             new_results.append(row)
             continue
@@ -99,7 +167,8 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             row.setdefault("metrics", {})["rejudge_error"] = f"trace load: {e}"
             new_results.append(row)
             continue
-        rubric = [RubricItem(id=r["id"], check=r["check"]) for r in row.get("rubric_spec", [])]
+        rubric = [RubricItem(id=r["id"], check=r["check"], scope=r.get("scope", "outcome"))
+                  for r in row.get("rubric_spec", [])]
         if not rubric:
             row["status"] = "judge_error"
             row["metrics"] = {**row.get("metrics", {}), "rejudge_error": "missing rubric_spec"}
@@ -110,6 +179,25 @@ def rejudge_run(run_dir: Path, judge_model: str, judge_base_url: str, *,
             metrics["rejudge_error"] = "missing memory state evidence"
             new_results.append(row)
             continue
+        preconditions = {} if preconditions_checked else check_preconditions(
+            rubric, pre if pre.exists() else None, cfg, cache
+        )
+        metrics.update(preconditions)
+        if preconditions and preconditions["preconditions_passed"] is not True:
+            unavailable = preconditions["preconditions_passed"] is None
+            row["status"] = "judge_error" if unavailable else "skipped"
+            if unavailable:
+                metrics["judge_error"] = preconditions["precondition_error"]
+            row["rubric"] = []
+            row["rubric_pass_count"] = 0
+            row["rubric_total"] = sum(item.scope == "outcome" for item in rubric)
+            metrics.update(success=None, agent_eligible=False, quality_score=None,
+                           failure_class="evaluation" if unavailable else "environment",
+                           first_failure_stage="evaluation" if unavailable else "setup")
+            new_results.append(row)
+            continue
+        rubric = [item for item in rubric if item.scope == "outcome"]
+        row["rubric_total"] = len(rubric)
         try:
             verdict = judge_task(
                 description=row.get("description_for_judge", ""),

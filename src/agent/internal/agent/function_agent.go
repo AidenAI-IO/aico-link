@@ -163,6 +163,9 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
 		caption += " " + summary
 	}
+	if grounding := screenshotGroundingCaption(result.Grounding); grounding != "" {
+		caption += "\n" + grounding
+	}
 	return toolContent, []llms.MessageContent{{
 		Role: llms.ChatMessageTypeHuman,
 		Parts: []llms.ContentPart{
@@ -174,6 +177,12 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 
 func screenshotObservationStatusSummary(toolName string, result postActionScreenshotResult) string {
 	var notes []string
+	// The image is already cropped to the phone screen, whether the crop came
+	// from the companion app's reported screen or from black-border detection,
+	// so its size is the frame every touch coordinate refers to.
+	if result.Width > 0 && result.Height > 0 {
+		notes = append(notes, fmt.Sprintf("Screenshot size: %dx%d px. Touch coordinates refer to this image.", result.Width, result.Height))
+	}
 	if strings.EqualFold(strings.TrimSpace(toolName), "wait_for_stable_screen") {
 		if result.FramesDiffered != nil {
 			if *result.FramesDiffered {
@@ -323,6 +332,9 @@ func attachmentAwarePrompt(text string, attachments []InputAttachment, descripti
 		}
 		if attachment.MIMEType != "" {
 			label += " (" + attachment.MIMEType + ")"
+		}
+		if attachment.Path != "" {
+			label += " path=" + attachment.Path
 		}
 		if attachment.Width > 0 && attachment.Height > 0 {
 			label += fmt.Sprintf(" width=%d height=%d", attachment.Width, attachment.Height)

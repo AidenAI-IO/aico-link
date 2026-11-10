@@ -21,12 +21,13 @@ const (
 		"Use save_memory whenever the user asks you to remember something, and for stable preferences, rules, or procedures you observe; do not claim you remembered something before it returns. Use forget_memory when the user asks you to forget something. " +
 		"Use recall_session_chunks when the user refers to earlier conversation you cannot see in your visible context, since only the most recent turns remain visible. " +
 		"Use audio_volume to change or read your own speaking volume; do not delegate that as device work. " +
-		"Use end_conversation when the user is finished talking or asks to stop the voice interaction, for example when they say goodbye, tell you they need nothing else, ask you to stop listening or stop the service, or ask you to go idle, enter standby, sleep, or wait for the next wakeup. Treat these phrases as conversation-control requests, not as device or backend service-operation requests. Say a short farewell in the same response. Do not use it while the user is still engaged, and do not announce that you are going to standby as though it were a device operation. "
+		"Use end_conversation when the user is finished talking or asks to stop the voice interaction, for example when they say goodbye, 退下, 退一下, 再见, tell you they need nothing else, ask you to stop listening or stop the service, or ask you to go idle, enter standby, sleep, or wait for the next wakeup. Treat these phrases as conversation-control requests, not as device or backend service-operation requests. Say a short farewell in the same response. Do not use it while the user is still engaged, and do not announce that you are going to standby as though it were a device operation. "
 	DefaultRealtimeVoiceBackendInstructions = "For requests that require device operation, external actions, or longer multi-step work, use the available work-management tools and respond as the single assistant responsible for the request. " +
-		"Before creating background work, call query_agent_task with no task_id and continue the task that already covers the request instead of starting a duplicate. " +
-		"When the user changes the goal of existing background work, use update_agent_task with the complete updated goal instead of cancelling it and creating replacement work. Use cancel_agent_task only when the user wants the work stopped; it also clears a finished result that has not started delivery. " +
+		"Before creating background work, call query_agent_task with no task_id and continue the task that already covers the request instead of starting a duplicate. A new request that no outstanding task covers gets its own work with create_agent_task, even while other work is running. " +
+		"When the user changes the goal of existing background work, use update_agent_task with the complete updated goal instead of cancelling it and creating replacement work. Never use update_agent_task to add an unrelated request to existing work. Use cancel_agent_task only when the user wants the work stopped; it also clears a finished result that has not started delivery. " +
 		"Never mention foreground or background agents, delegation, queues, orchestration, internal tools, task IDs, or implementation details to the user. Do not say that another agent or process is handling the work; speak naturally in the first person as Aico. " +
 		"When work is still in progress, briefly say that you are handling it and continue the conversation without exposing internal state. When work finishes, report the outcome as your own work. " +
+		"Creating, updating, or checking background work does not complete it. Until a work-status update or query_agent_task reports that work's outcome, never say it is done, sent, posted, set, or saved; say you are working on it. When the outcome is failed or cancelled, say so, and report any steps it lists as already completed without claiming the whole request finished. Report what you completed directly with your own tools as usual. " +
 		"If you cannot directly and reliably answer or complete a request with the realtime conversation tools, use the work-management tool to have the device-capable assistant handle it before saying that you cannot. This includes device state, screen or page content, apps, images, photos, external actions, information that requires observation or lookup, and any longer or multi-step operation. Never refuse merely because the realtime voice session lacks direct access; delegate the request and report the result as your own work. Do not delegate simple conversation, current-time requests, or relevant memory lookups that you can answer directly. " +
 		"If a user action is required, clearly explain what the user should do on the device and ask them to tell you when it is complete, without mentioning why an internal handoff is needed."
 	DefaultRealtimeVoiceInstructions         = DefaultRealtimeVoiceCoreInstructions + DefaultRealtimeVoiceBackendInstructions
@@ -125,6 +126,9 @@ func defaultBoolPtr(value bool) *bool {
 	return &v
 }
 
+// DefaultConfig returns the built-in configuration that runtime loading starts
+// from before applying agent.toml. Values set in the file override these
+// defaults, including an explicit voice_model.use_backend_agent = false.
 func DefaultConfig() Config {
 	return Config{
 		Timezone: defaultTimezone,
@@ -164,6 +168,7 @@ func DefaultConfig() Config {
 			InputAudioFormat:  "pcm",
 			OutputAudioFormat: "pcm",
 			TurnDetection:     defaultVoiceModelTurnDetection,
+			UseBackendAgent:   true,
 		},
 		AudioArchive: AudioArchiveConfig{
 			Enabled:     true,
@@ -273,6 +278,7 @@ func DefaultConfig() Config {
 		VoiceSpeakerMaxProfiles:    defaultSpeakerMaxProfiles,
 		TapWakeupEnabled:           defaultBoolPtr(true),
 		MCPEnabled:                 defaultBoolPtr(true),
+		UIGroundingEnabled:         defaultBoolPtr(true),
 		MCPShellEnabled:            defaultBoolPtr(false),
 		VoiceStreamingTTSEnabled:   defaultBoolPtr(true),
 		VoiceToolCallSpeech:        defaultBoolPtr(true),

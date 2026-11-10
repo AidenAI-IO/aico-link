@@ -61,6 +61,7 @@ type Runtime struct {
 	configPrepare           ConfigPrepareFunc
 	configContextRotate     atomic.Bool
 	configUserContextRotate atomic.Bool
+	configPromptRefresh     atomic.Bool
 	configStatusMu          sync.Mutex
 	configStatus            ConfigApplyStatus
 	configPending           *Config
@@ -730,6 +731,12 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
 	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
+	rt.tools.SetUIGroundingFunc(rt.uiGroundingEnabled)
+	if rt.tools != nil && cfg.UIGroundingEnabledOrDefault() {
+		// Load the detector now so the first grounded screenshot does not wait
+		// for it. Only the daemon's runtime has a tool set with real tools.
+		setUIGroundingResident(true)
+	}
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -1036,6 +1043,23 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if episodeID == "" && r.memoryPlane != nil {
 		episodeID = newTaskEpisodeID(startTime.UTC())
 	}
+	var runEmitter *streamEventEmitter
+	if req.StreamSink != nil {
+		runEmitter = newStreamEventEmitter(req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID)
+		runEmitter.emit(context.Background(), stream.EventRunStarted, stream.VisibilityInternal,
+			map[string]string{"episode_id": episodeID}, nil)
+		defer func() {
+			state := stream.TerminalCompleted
+			if runErr != nil {
+				state = stream.TerminalFailed
+				if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					state = stream.TerminalCancelled
+				}
+			}
+			runEmitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal,
+				map[string]string{"state": string(state), "error": streamErrorString(runErr)}, nil)
+		}()
+	}
 	currentHints := r.currentEnvironmentHints()
 	promptCapture := newTelemetryPromptCapture(r.ConfigSnapshot().Telemetry.EnabledOrDefault())
 	var episodeRecorder *EpisodeRecorder
@@ -1177,27 +1201,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			runID:        runID,
 			episode:      episodeRecorder,
 		}
-		if req.StreamSink != nil {
-			streamCallbackHandler.streamEmitter = newStreamEventEmitter(
-				req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID,
-			)
-			defer func(emitter *streamEventEmitter) {
-				state := stream.TerminalCompleted
-				if runErr != nil {
-					state = stream.TerminalFailed
-					if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-						state = stream.TerminalCancelled
-					}
-				}
-				// A cancellation-triggered run commonly reaches this defer with ctx
-				// already done. Terminal delivery is still required, so use a fresh
-				// bounded context for the observer instead of inheriting cancellation.
-				emitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
-					"state": string(state),
-					"error": streamErrorString(runErr),
-				}, nil)
-			}(streamCallbackHandler.streamEmitter)
-		}
+		streamCallbackHandler.streamEmitter = runEmitter
 	}
 	if streamCallbackHandler != nil && (req.StreamWriter != nil || req.StreamSink != nil) {
 		streamCallbackHandler.ResetStreaming(ctx)
@@ -1225,6 +1229,16 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		steerRecorder = tracker
 	}
 
+	// At startup, settle an offline model change before interrupted-run
+	// recovery loads the previous conversation. Recovery then sees the new
+	// conversation as current and only marks the interruption in the old
+	// transcript, as it does after history is cleared.
+	startup := r.contextManager == nil
+	if startup {
+		if err := startConversationForIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model), profile.SystemPrompt); err != nil {
+			return RunResult{}, err
+		}
+	}
 	if recoveredManager, err := recoverPendingBackendRunManager(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), r.contextManager); err != nil {
 		return RunResult{}, err
 	} else if recoveredManager != nil {
@@ -1234,12 +1248,13 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		r.contextManager = recoveredManager
 	}
 
-	// Configuration changes rotate at the next task boundary, preserving the
-	// complete old transcript and provider-specific continuation metadata.
+	// A model or provider change starts a new conversation at the next task
+	// boundary, preserving the complete old transcript and its
+	// provider-specific continuation metadata.
 	// setup context manager if not initialized
 	hadContextManager := r.contextManager != nil
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(profile.SystemPrompt, agentpath.ContextManagerSessionFolder(cfg.ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(cfg, profile.SystemPrompt)
 		if err != nil {
 			return RunResult{}, err
 		}
@@ -1252,9 +1267,24 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 		if resetErr = r.contextManager.Activate(candidate); resetErr != nil {
 			return RunResult{}, resetErr
 		}
+	} else if (r.configPromptRefresh.Load() || startup) && hadContextManager {
+		// A prompt setting saved since the last task, such as the response
+		// locale or time zone, rewrites the system message and keeps the
+		// conversation. At startup, a conversation supplied by interrupted-run
+		// recovery skipped InitializeContextManager, and no live flag reports a
+		// change saved while the Agent was stopped, so compare it here.
+		if err := syncSessionSystemPrompt(r.contextManager, profile.SystemPrompt); err != nil {
+			return RunResult{}, fmt.Errorf("refresh session system prompt: %w", err)
+		}
 	}
 	if r.configContextRotate.Load() {
 		r.configContextRotate.Store(false)
+	}
+	if err := recordConversationIdentity(agentpath.ContextManagerSessionFolder(cfg.ConfigDir), modelConversationIdentity(cfg.Model)); err != nil {
+		return RunResult{}, err
+	}
+	if r.configPromptRefresh.Load() {
+		r.configPromptRefresh.Store(false)
 	}
 	// The profile only enriches the prompt, so a read or refresh failure keeps
 	// the section the session already carries instead of failing the run.
@@ -1459,9 +1489,12 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				Message: &message,
 			}
 		}
+		// A user turn carries a fresh screenshot, grounded when UI Grounding
+		// is on, unless the user attached an image of their own.
 		var attachment *messages.Attachment
+		var grounding *screenshotGrounding
 		if !messageHasImageAttachment(message) {
-			attachment = r.captureStateScreenshot()
+			attachment, grounding = r.captureStateScreenshot()
 		}
 		entries := r.stateManager.GetAllStates()
 		// If neither runtime state nor a screenshot is available, just skip.
@@ -1481,6 +1514,9 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				continue
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
+		}
+		if caption := screenshotGroundingCaption(grounding); caption != "" {
+			formated.WriteString(caption + "\n")
 		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
@@ -1537,21 +1573,30 @@ func messageHasImageAttachment(message messages.Message) bool {
 	return false
 }
 
-func (r *Runtime) captureStateScreenshot() *messages.Attachment {
-	if r == nil || r.toolSnapshot() == nil || r.contextManager == nil {
-		return nil
+// uiGroundingEnabled reads the live ui_grounding_enabled setting.
+func (r *Runtime) uiGroundingEnabled() bool {
+	return r.ConfigSnapshot().UIGroundingEnabledOrDefault()
+}
+
+// captureStateScreenshot captures the screenshot attached to a user turn and,
+// when UI Grounding is on, its grounding result for the state message text.
+func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGrounding) {
+	tools := r.toolSnapshot()
+	if r == nil || tools == nil || r.contextManager == nil {
+		return nil, nil
 	}
-	screenshotTool, ok := r.toolSnapshot().Get("screenshot")
+	screenshotTool, ok := tools.Get("screenshot")
 	if !ok || screenshotTool == nil {
-		return nil
+		return nil, nil
 	}
 
+	ground := tools.UIGroundingEnabled()
 	var output string
 	var err error
 	if fastTool, ok := screenshotTool.(interface {
-		CallWithoutStartupWait(context.Context, string) (string, error)
+		CallWithoutStartupWait(context.Context, bool) (string, error)
 	}); ok {
-		output, err = fastTool.CallWithoutStartupWait(context.Background(), "{}")
+		output, err = fastTool.CallWithoutStartupWait(context.Background(), ground)
 	} else {
 		output, err = screenshotTool.Call(context.Background(), "{}")
 	}
@@ -1559,24 +1604,40 @@ func (r *Runtime) captureStateScreenshot() *messages.Attachment {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot unavailable: %v", err)
 		}
-		return nil
+		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
 	if !ok {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
 		}
-		return nil
+		return nil, nil
 	}
 	attachment, err := r.contextManager.StoreAttachment(observation.MIMEType, observation.ImageBytes)
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Debug("[state] failed to store screenshot attachment: %v", err)
 		}
-		return nil
+		return nil, nil
 	}
 	attachment.Source = messages.AttachmentSourceScreenshotObservation
-	return &attachment
+	grounding := observation.Result.Grounding
+	if r.usesVisualCoordinateProtocol() {
+		// touch_gesture takes screenshot pixels under the visual coordinate
+		// protocol; the tool path converts in its wrapper, this one here.
+		grounding = pixelGrounding(grounding, observation.Result.Width, observation.Result.Height)
+	}
+	return &attachment, grounding
+}
+
+// usesVisualCoordinateProtocol reports whether the current model takes
+// screenshot pixels for touch_gesture (see AgentLoop.Run).
+func (r *Runtime) usesVisualCoordinateProtocol() bool {
+	if r == nil || r.models == nil {
+		return false
+	}
+	spec := r.models.Spec()
+	return IsAnthropicModel(spec.Provider, spec.Name)
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {
@@ -1706,7 +1767,7 @@ func (r *Runtime) rotateUserContext(systemPrompt string) error {
 	if _, err := contextmanager.NewContextManager(folder, systemPrompt); err != nil {
 		return fmt.Errorf("create user context session: %w", err)
 	}
-	return nil
+	return recordConversationIdentity(folder, userConversationIdentity(r.ConfigSnapshot()))
 }
 
 func (r *Runtime) MarkSkillsDirty() {
@@ -1856,10 +1917,21 @@ func (r *Runtime) ReadContextAttachment(role, attachmentID string) ([]byte, stri
 	return data, mimeType, nil
 }
 
+// initializeContextManager loads the backend conversation, starting a new one
+// when the model changed since it was recorded, for example while the Agent
+// was stopped. A live model change rotates at the next task boundary instead.
+func (r *Runtime) initializeContextManager(cfg Config, systemPrompt string) (*contextmanager.ContextManager, error) {
+	folder := agentpath.ContextManagerSessionFolder(cfg.ConfigDir)
+	if err := startConversationForIdentity(folder, modelConversationIdentity(cfg.Model), systemPrompt); err != nil {
+		return nil, err
+	}
+	return InitializeContextManager(systemPrompt, folder, []contextmanager.AppendMessageHook{r.getStateHook()})
+}
+
 func (r *Runtime) rotateContext() error {
 	var err error
 	if r.contextManager == nil {
-		r.contextManager, err = InitializeContextManager(r.getSystemPrompt(), agentpath.ContextManagerSessionFolder(r.ConfigSnapshot().ConfigDir), []contextmanager.AppendMessageHook{r.getStateHook()})
+		r.contextManager, err = r.initializeContextManager(r.ConfigSnapshot(), r.getSystemPrompt())
 		if err != nil {
 			return err
 		}
@@ -1909,7 +1981,9 @@ func (r *Runtime) filterPhoneBridgeAgentTools(tools []langtools.Tool) []langtool
 	capabilities := bridge.bleCapabilities(ctx)
 	cancel()
 
-	openURLAvailable := phoneBridgeReadyForCommand(status, "open_app") || phoneBridgeCanRestoreFromReturnEntry(status)
+	// HTTP(S) URLs fall back to the visible browser, so open_url stays
+	// available whenever that route is configured.
+	openURLAvailable := openURLBridgeRouteAvailable(status) || r.toolSnapshot().openURLBrowserFallbackAvailable()
 	clipboardAvailable := phoneBridgeCommandAvailable(status, "clipboard_read", capabilities.Wake) ||
 		phoneBridgeCommandAvailable(status, "clipboard_write", capabilities.Wake)
 	calendarAvailable := phoneBridgeCommandAvailable(status, "calendar_create", capabilities.Wake) ||
@@ -2917,7 +2991,9 @@ func (r *Runtime) Close() error {
 	if r.routines != nil {
 		r.routines.Close()
 	}
+	defer removeShellScreenshotExports()
 	r.StopConfigReloads()
+	setUIGroundingResident(false)
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()
 	}

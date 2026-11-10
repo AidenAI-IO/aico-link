@@ -13,7 +13,7 @@ connectSSE();
 startResourcePolling();
 
 inputEl.addEventListener('input', autoResizeInput);
-imageInputEl.addEventListener('change', handleImageSelection);
+document.getElementById('fileInput').addEventListener('change', handleFileSelection);
 inputEl.addEventListener('paste', handleComposerPaste);
 stateModalCloseEl.addEventListener('click', closeStateDetails);
 stateModalEl.addEventListener('click', function(event) {

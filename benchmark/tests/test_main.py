@@ -20,6 +20,23 @@ import runner.suite as suite_module
 import runner.webui as webui
 
 
+@pytest.mark.parametrize("explicit", [False, True])
+def test_realtime_cli_reads_provider_routing_options(monkeypatch, explicit):
+    values = {"endpoint": "wss://gateway.example/v1/realtime", "protocol": "legacy",
+              "upstream_provider": "google", "auth_mode": "api_key"}
+    for key, value in values.items():
+        monkeypatch.setenv("AICO_BENCHMARK_REALTIME_" + key.upper(), "" if explicit else value)
+    captured = []
+    monkeypatch.setattr(main, "_cmd_run", lambda args: captured.append(args) or 0)
+    argv = ["run", "--suite", "synthetic.json", "--execution-mode", "realtime-text", "--auto-agent-setup"]
+    if explicit:
+        for key, value in values.items():
+            argv.extend(["--realtime-" + key.replace("_", "-"), value])
+    assert main.cli(argv) == 0
+    for key, value in values.items():
+        assert getattr(captured[0], "realtime_" + key) == value
+
+
 @pytest.mark.parametrize("bridge_type,skipped", [("mobilegym", False), ("adb_android", True), ("", True)])
 def test_mobilegym_seeded_task_is_skipped_on_other_bridges(monkeypatch, bridge_type, skipped):
     suite = suite_module.load_suite(Path(__file__).resolve().parents[1] / "suites/phone_control_v1.json")
@@ -1346,8 +1363,6 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
             "--environment-url",
             "http://127.0.0.1:19090",
             "--auto-agent-setup",
-            "--skill",
-            "device-operator",
             "--no-judge",
         ] + (["--android-phone-bridge-serial", "emulator-5554", "--max-concurrency", "1"]
              if bridge_mode != "none" else [])
@@ -1369,7 +1384,7 @@ def test_auto_agent_setup_injects_environment_url_as_bridge_endpoint(
     assert captured["kwargs"]["host_port"] == 0
     assert captured["kwargs"]["environment_bridge_endpoint"] == "http://host.docker.internal:19090"
     assert captured["kwargs"]["environment_bridge_mode"] is True
-    assert captured["task_kwargs"]["active_skills"] == ["device-operator"]
+    assert "active_skills" not in captured["task_kwargs"]
     assert "device_type" not in captured["prepare_config_kwargs"]
     assert captured["kwargs"]["device_type"] == "android"
     assert stale_clears == ["http://127.0.0.1:19090"]

@@ -12,6 +12,7 @@ except ModuleNotFoundError:
 
 from runner import config as runner_config
 from runner import webui
+from runner.skills_fingerprint import fingerprint_worker_configs
 
 
 def test_list_benchmark_suites_discovers_nested_benchmark(tmp_path: Path):
@@ -233,6 +234,22 @@ def test_prepare_run_config_renders_template(tmp_path: Path, monkeypatch):
     assert (dest / "control_token").exists()
     assert (dest / "memory").is_dir()
     assert (dest / "skill-state").is_dir()
+
+
+def test_prepared_config_fingerprint_reflects_a_replaced_skill(tmp_path: Path, monkeypatch):
+    """A candidate skill written into a prepared config must change the
+    fingerprint; this is how a SkillOpt override becomes attributable."""
+    config = tmp_path / "config"
+    skills = config / "skills"
+    (skills / "device-operator").mkdir(parents=True)
+    (skills / "device-operator" / "SKILL.md").write_text("original\n", encoding="utf-8")
+    before = fingerprint_worker_configs([config])
+
+    (skills / "device-operator" / "SKILL.md").write_text("candidate text\n", encoding="utf-8")
+    after = fingerprint_worker_configs([config])
+
+    assert before["sha256"] != after["sha256"]
+    assert before["skills"]["device-operator"] != after["skills"]["device-operator"]
 
 
 def test_prepare_run_config_ignores_legacy_agent_model_environment(tmp_path: Path, monkeypatch):
@@ -2257,6 +2274,23 @@ def test_daemon_compose_command_and_env_use_environment_bridge_providers(tmp_pat
     assert env["AICO_BENCHMARK_MOCK_TOOLS"] == "0"
     assert env["AICO_DEVICE_TYPE"] == "android"
     assert "host.docker.internal" in env["NO_PROXY"]
+
+
+@pytest.mark.parametrize("realtime", [False, True])
+def test_daemon_realtime_proxy_is_explicit_and_keeps_fixture_local(monkeypatch, realtime):
+    monkeypatch.setenv("https_proxy", "http://proxy.example:8080")
+    monkeypatch.setenv("HTTPS_PROXY", "http://other-proxy.example:8080")
+    monkeypatch.setenv("AICO_BENCHMARK_REALTIME_HTTPS_PROXY", "http://stale.example:8080")
+    monkeypatch.setenv("AICO_BENCHMARK_AGENT_BASE_URL", "https://backend.example/api/v1")
+    env = webui.daemon_compose_env(
+        image="test", benchmark_realtime_text=realtime,
+        environment_bridge_endpoint="http://host.docker.internal:18080")
+    assert env["AICO_BENCHMARK_REALTIME_HTTPS_PROXY"] == ("http://proxy.example:8080" if realtime else "")
+    assert "https_proxy" not in env and "HTTPS_PROXY" not in env
+    assert "host.docker.internal" in env["NO_PROXY"]
+    # The foreground-only proxy must not reroute the backend main model.
+    assert ("backend.example" in env["NO_PROXY"].split(",")) == realtime
+    assert env["no_proxy"] == env["NO_PROXY"]
 
 
 @pytest.mark.parametrize(

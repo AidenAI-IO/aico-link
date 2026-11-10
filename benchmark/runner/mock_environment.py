@@ -4,6 +4,8 @@ import base64
 import io
 import json
 import secrets
+import select
+import socket
 import threading
 import urllib.parse
 from datetime import datetime, timezone
@@ -16,6 +18,7 @@ from PIL import Image, ImageDraw
 from mnk_provider import execute_mnk_request
 from runner.matching import dict_contains
 from runner.suite import MockEnvironmentSpec, MockToolResponseSpec
+from runner.phone_data_fixture import PhoneDataFixture
 
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
 REQUEST_TIMEOUT_SECONDS = 5.0
@@ -40,12 +43,21 @@ class MockEnvironmentServer:
         self.auth_token = configured_token or secrets.token_urlsafe(32)
         self.base_path = f"/_aico_mock/{urllib.parse.quote(self.auth_token, safe='')}"
         self.base_url = ""
+        self.control_token = secrets.token_urlsafe(32)
         self.screen_text = spec.screen_text or "Mock phone environment ready."
         self.calls: list[dict[str, Any]] = []
         self._lock = threading.Lock()
         self._screenshot_seq = 0
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
+        self.collaboration_fixture: PhoneDataFixture | None = None
+        self._reset_collaboration_fixture()
+
+    def _reset_collaboration_fixture(self) -> None:
+        if self.collaboration_fixture is not None:
+            self.collaboration_fixture.close()
+        self.collaboration_fixture = (PhoneDataFixture(self.spec.collaboration_fixture)
+                                      if self.spec.collaboration_fixture is not None else None)
 
     @property
     def redacted_url(self) -> str:
@@ -71,6 +83,8 @@ class MockEnvironmentServer:
         return self.base_url
 
     def stop(self) -> None:
+        if self.collaboration_fixture is not None:
+            self.collaboration_fixture.close()
         if self._httpd is None:
             return
         self._httpd.shutdown()
@@ -89,11 +103,13 @@ class MockEnvironmentServer:
             self.spec = spec
             self.calls.clear()
             self.screen_text = spec.screen_text or "Mock phone environment ready."
+        self._reset_collaboration_fixture()
 
     def reset(self) -> None:
         with self._lock:
             self.calls.clear()
             self.screen_text = self.spec.screen_text or "Mock phone environment ready."
+        self._reset_collaboration_fixture()
 
     def invoke(self, tool_name: str, tool_input: dict[str, Any]) -> MockToolResponseSpec:
         with self._lock:
@@ -251,6 +267,10 @@ def _handler_for(server: MockEnvironmentServer):
             if path == "/api/state":
                 self._json(200, {"ok": True, "data": server.snapshot()})
                 return
+            if path == "/api/collaboration/state" and server.collaboration_fixture is not None:
+                if not self._fixture_authorized(): return
+                self._json(200, {"ok": True, "data": server.collaboration_fixture.snapshot()})
+                return
             self._json(
                 404,
                 {"ok": False, "error": {"code": "not_found", "message": path}},
@@ -273,7 +293,26 @@ def _handler_for(server: MockEnvironmentServer):
                 self._json(200, {"ok": True, "data": {"setup": True}})
                 return
             if path == "/api/release":
+                if server.collaboration_fixture is not None:
+                    server.collaboration_fixture.close()
                 self._json(200, {"ok": True, "data": {"released": True}})
+                return
+            if path == "/api/collaboration/freeze" and server.collaboration_fixture is not None:
+                if not self._fixture_authorized(): return
+                server.collaboration_fixture.close()
+                self._json(200, {"ok": True, "data": server.collaboration_fixture.snapshot()})
+                return
+            if path == "/api/collaboration/release" and server.collaboration_fixture is not None:
+                if not self._fixture_authorized(): return
+                payload = self._read_json()
+                if payload is None:
+                    return
+                try:
+                    server.collaboration_fixture.release(str(payload.get("gate", "")), payload.get("daemon_watermark"))
+                except ValueError as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
+                    return
+                self._json(200, {"ok": True})
                 return
             if path == "/api/providers/screenshot":
                 payload = self._read_json()
@@ -327,7 +366,21 @@ def _handler_for(server: MockEnvironmentServer):
                 if payload is None:
                     return
                 tool_input = _decode_tool_input(payload.get("input"))
-                response = server.invoke(tool_name, tool_input)
+                fixture = server.collaboration_fixture
+                if fixture is not None and tool_name in fixture.tools:
+                    def canceled() -> bool:
+                        try:
+                            readable, _, _ = select.select([self.connection], [], [], 0)
+                            return bool(readable) and self.connection.recv(1, socket.MSG_PEEK) == b""
+                        except OSError:
+                            return True
+                    result = fixture.invoke(tool_name, tool_input,
+                        task_id=self.headers.get("X-Aico-Backend-Task-ID", ""),
+                        call_id=self.headers.get("X-Aico-Benchmark-Call-ID", ""), canceled=canceled)
+                    response = MockToolResponseSpec(output=result, is_error=not result.get("ok", False),
+                                                    error=str(result.get("error", "")))
+                else:
+                    response = server.invoke(tool_name, tool_input)
                 output = (
                     response.output
                     if isinstance(response.output, str)
@@ -347,6 +400,12 @@ def _handler_for(server: MockEnvironmentServer):
                 404,
                 {"ok": False, "error": {"code": "not_found", "message": path}},
             )
+
+        def _fixture_authorized(self) -> bool:
+            if not secrets.compare_digest(self.headers.get("X-Aico-Fixture-Control", ""), server.control_token):
+                self._json(403, {"ok": False, "error": "fixture control authorization required"})
+                return False
+            return True
 
         def _authorized_path(self) -> str | None:
             path = urllib.parse.urlparse(self.path).path

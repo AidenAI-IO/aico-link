@@ -3,9 +3,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <deque>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <string>
+#include <unistd.h>
 
 namespace {
 class DelayedIdentity : public aico::DenoiseHop {
@@ -121,4 +126,31 @@ TEST_CASE("Missing DTLN runtime reports a recoverable initialization error") {
     std::string error;
     CHECK_FALSE(aico::create_dtln_denoiser("/nonexistent/aico-dtln-test", &error));
     CHECK_FALSE(error.empty());
+}
+
+TEST_CASE("A failed DTLN runtime load is retried by the next session") {
+    // The runtime cache is keyed by library path, so both sessions use the
+    // same directory. A cached failure would repeat the first error; a retry
+    // reaches the file placed after the first attempt and fails differently.
+    char pattern[] = "/tmp/aico-dtln-retry-XXXXXX";
+    const char* created = mkdtemp(pattern);
+    REQUIRE(created != nullptr);
+    const std::string directory(created);
+    const std::string library = directory + "/librknnmrt.so";
+
+    std::string missing;
+    CHECK_FALSE(aico::create_dtln_denoiser(directory, &missing));
+    CHECK(missing.find("librknnmrt.so") != std::string::npos);
+
+    {
+        std::ofstream invalid(library, std::ios::binary);
+        invalid << "not an ELF shared object";
+    }
+    std::string rejected;
+    CHECK_FALSE(aico::create_dtln_denoiser(directory, &rejected));
+    CHECK(rejected.find("librknnmrt.so") != std::string::npos);
+    CHECK(rejected != missing);
+
+    std::remove(library.c_str());
+    rmdir(directory.c_str());
 }

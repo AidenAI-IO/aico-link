@@ -181,7 +181,7 @@
     {
       "id": "save_correct_tags",
       "category": "memory",
-      "description_for_judge": "Agent must save the reimbursement rule with useful topical tags. Success = save_memory is called with tags related to reimbursement/OA and without unrelated tags.",
+      "description_for_judge": "Agent must save the reimbursement rule with useful topical tags. Success = save_memory is called with tags related to reimbursement or approval and without unrelated tags. Judge tags by meaning, in any language; no particular tag spelling is required.",
       "prompt": "记住，每次提到'报销'都要先确认金额超不超 5000，超了要走 OA 审批。",
       "rubric": [
         {
@@ -190,7 +190,7 @@
         },
         {
           "id": "tags_include_reimbursement_or_oa",
-          "check": "The save_memory input tags include 报销, OA, reimbursement, approval, or semantically equivalent topical tags."
+          "check": "At least one save_memory input tag names the reimbursement or approval topic in any language, for example 报销, 审批, OA, reimbursement, or approval. A tag with that meaning is sufficient; neither the literal OA nor any particular tag spelling is required."
         },
         {
           "id": "content_captures_threshold_rule",
@@ -834,7 +834,7 @@
     {
       "id": "multi_turn_overwrite_and_verify_last_value",
       "category": "memory",
-      "description_for_judge": "Across three user turns, save the initial office city, update it twice, and answer with the final value. The post-task memory_state must contain one current office-city memory for Chengdu. In-place update, supersession, or deleting and replacing an old record are all valid. The final answer may use the retained conversation context. Do not require a particular memory ID, tag spelling, language, or exact call count.",
+      "description_for_judge": "Across three user turns, save the initial office city, update it twice, and answer with the final value. The saves happen in setup turns, which are checked by evaluated memory assertions; the task trace contains only the final question. The post-task memory_state must contain one current office-city memory for Chengdu. In-place update, supersession, or deleting and replacing an old record are all valid. The final answer may use the retained conversation context. Do not require a particular memory ID, tag spelling, language, or exact call count.",
       "setup": [
         {
           "type": "agent_prompt",
@@ -843,10 +843,32 @@
           "clear_history_after": false
         },
         {
+          "type": "assert_memory",
+          "evaluate": true,
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {"content_contains_any": ["杭州", "Hangzhou"]}
+          ]
+        },
+        {
           "type": "agent_prompt",
           "prompt": "我改主意了，办公城市改成深圳。",
           "timeout_sec": 120,
           "clear_history_after": false
+        },
+        {
+          "type": "assert_memory",
+          "evaluate": true,
+          "query": {
+            "limit": 100
+          },
+          "expected_count": 1,
+          "expected": [
+            {"content_contains_any": ["深圳", "Shenzhen"]}
+          ]
         },
         {
           "type": "agent_prompt",
@@ -858,14 +880,6 @@
       "prompt": "我现在的办公城市是什么？",
       "rubric": [
         {
-          "id": "saved_initial_value",
-          "check": "A successful save records Hangzhou as the initial office city. Equivalent city names in any language are valid."
-        },
-        {
-          "id": "saved_mid_value",
-          "check": "A successful save or update records Shenzhen as the second office city. Equivalent city names in any language are valid."
-        },
-        {
           "id": "persisted_final_value",
           "check": "The post-task memory_state identifies Chengdu as the current office city, with no active obsolete office-city value. Historical wording is allowed."
         },
@@ -875,12 +889,8 @@
         }
       ],
       "hard_assertions": {
-        "min_tool_calls": 3,
         "must_complete_within_sec": 180,
-        "response_required": true,
-        "required_tools": [
-          "save_memory"
-        ]
+        "response_required": true
       },
       "memory_assertions": {
         "query": {
