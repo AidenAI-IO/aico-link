@@ -115,3 +115,52 @@ func TestMCPTokenValidation(t *testing.T) {
 		t.Fatal("a damaged token file must accept nothing")
 	}
 }
+
+func TestMCPNeedsATokenFromEveryClient(t *testing.T) {
+	state := newState(t)
+	_, secret, err := state.CreateMCPToken("direct", time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := guarded(state)
+	trustedMCP := func(remote, local string, usb bool, bearer string) *http.Request {
+		r := newRequest(remote, local, usb)
+		r.Method = http.MethodPost
+		r.URL.Path = MCPPath
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		return r
+	}
+	for name, r := range map[string]*http.Request{
+		"USB":      trustedMCP("192.168.42.100:5000", "192.168.42.1", true, ""),
+		"loopback": trustedMCP("127.0.0.1:5000", "127.0.0.1", false, ""),
+	} {
+		if code := serve(h, r); code != http.StatusUnauthorized {
+			t.Fatalf("%s /mcp without a token: %d", name, code)
+		}
+	}
+	// LAN access stays off: the USB link only spares the client from needing it.
+	if code := serve(h, trustedMCP("192.168.42.100:5000", "192.168.42.1", true, secret)); code != http.StatusNoContent {
+		t.Fatalf("USB /mcp with a token: %d", code)
+	}
+	if code := serve(h, mcpRequest(MCPPath, secret)); code != http.StatusForbidden {
+		t.Fatalf("LAN /mcp with a token while LAN access is off: %d", code)
+	}
+	// Other USB routes stay trusted without credentials.
+	other := newRequest("192.168.42.100:5000", "192.168.42.1", true)
+	if code := serve(h, other); code != http.StatusNoContent {
+		t.Fatalf("USB request to another route: %d", code)
+	}
+}
+
+func TestMCPRefusesSessionTokens(t *testing.T) {
+	state := enabledState(t)
+	session, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code := serve(guarded(state), mcpRequest(MCPPath, session)); code != http.StatusUnauthorized {
+		t.Fatalf("/mcp with a session token: %d", code)
+	}
+}

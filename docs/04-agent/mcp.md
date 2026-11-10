@@ -29,25 +29,30 @@ Point an external MCP client at that URL. If the board IP changes (DHCP), update
 | `mcp_shell_enabled` | `false` | `[conversation_settings.agent]` only (TOML; not on Config Web) |
 | `mcp_config_web_base_url` | `http://127.0.0.1` | Loopback HTTP only; used by `device_status` / `support_bundle` |
 
-When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port, but not with an MCP access token (see below).
+When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are unchanged. `mcp_shell_enabled` only gates `shell` over `/mcp`; `POST /api/tools/shell` remains separately reachable on the same Agent port under its own rules, never with an MCP access token.
 
 ## Authentication
 
-Every MCP client connects with an MCP access token. Create one in Config Web →
-Advanced → MCP → Create token; the secret is shown once, with ready-to-paste
-configuration. A token reaches only `/mcp`, does not expire, survives a
-device-password change, and is revoked on its own on the same page. See
+On the board, `/mcp` needs an MCP access token from every client: a computer
+plugged straight into Aico Link, one on Wi-Fi, and processes on the board
+itself. Create one in Config Web → Advanced → MCP → Create token; the secret is
+shown once, with ready-to-paste configuration. A token reaches only `/mcp`,
+does not expire, survives a device-password change, and is revoked on its own
+on the same page. A session token from `POST /api/auth/login` is not accepted
+on `/mcp`. See
 [MCP Access Tokens](../03-services/device-management-api.md#mcp-access-tokens)
 for the API.
 
-| Client | Result |
+| Client | Needs |
 | --- | --- |
-| LAN, LAN access on | Needs `Authorization: Bearer <MCP access token>` |
+| Plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`) | MCP access token |
+| LAN, LAN access on (`http://<board-ip>:8080/mcp`) | MCP access token |
 | LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
-| Computer plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`), the board itself, Docker or host runs without `-lan-guard` | Trusted; the token is not checked, so the same configuration works |
+| Docker or host runs without `-lan-guard` | Nothing |
 
-Aico Link is normally plugged into the phone, so a computer usually reaches it
-over Wi-Fi; the direct link is mainly for development.
+Without a valid token `/mcp` returns `401` with `"error": "mcp_token_required"`.
+Other Agent routes keep their own rules: USB and on-board clients need no
+credentials, LAN clients sign in with the device password.
 
 Claude Code:
 
@@ -70,9 +75,7 @@ Clients configured with JSON:
 }
 ```
 
-A session token from `POST /api/auth/login` also works but expires after 30
-days, is revoked whenever the password changes, and reaches every LAN
-service; prefer an MCP access token. Address the board by IP: the Agent
+Address the board by IP: the Agent
 refuses requests whose `Host` is a hostname (see
 [Cross-Site Requests](../03-services/device-management-api.md#cross-site-requests)).
 

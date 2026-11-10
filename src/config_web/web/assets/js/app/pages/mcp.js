@@ -3,13 +3,12 @@
  *
  *   /advanced/mcp   the MCP switch and MCP access tokens
  *
- * MCP clients are agents on a computer (Claude Code, Cursor). Every client
- * connects the same way: with an MCP access token, over Wi-Fi while LAN access
- * is on. A token reaches only the Agent's /mcp, does not expire, survives a
- * password change, and is revoked here on its own. The secret is shown once,
- * when it is created, together with a ready-to-paste client configuration.
- * (A computer plugged straight into Aico Link is trusted like the app and the
- * token is simply not checked; the same configuration still works.)
+ * Every MCP client needs an MCP access token, whether the computer is plugged
+ * straight into Aico Link or on the same Wi-Fi, so this page is the one place
+ * to set a client up. Over Wi-Fi, LAN access must also be on. A token reaches
+ * only the Agent's /mcp, does not expire, survives a password change, and is
+ * revoked here on its own. The secret is shown once, when it is created,
+ * together with a ready-to-paste client configuration.
  */
 
 import {adoptSaved, ensureSnapshot, request} from '../data.js';
@@ -43,13 +42,13 @@ function revokeToken(id) {
 }
 
 /**
- * The MCP URL a Wi-Fi client uses: the board's Wi-Fi address when it is known,
- * otherwise the address this page was opened on unless that is the USB link.
- * Empty when neither is known.
+ * The MCP URL shown with a new token: the board's Wi-Fi address when it is
+ * known, otherwise the address this page was opened on. A computer plugged
+ * straight into Aico Link uses 192.168.42.1 instead; the sheet says so.
  */
 export function wifiEndpoint(location = window.location, wifiAddress = '') {
-  const host = wifiAddress || (location.hostname !== '192.168.42.1' ? location.hostname : '');
-  return host ? `http://${host}:8080/mcp` : '';
+  const host = wifiAddress || location.hostname;
+  return `http://${host}:8080/mcp`;
 }
 
 /** Client configuration snippets for a new token. */
@@ -119,6 +118,7 @@ function showSecret(secret, endpoint) {
       codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
       text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
       codeBlock(snippets.json, 'copy-mcp-json'),
+      text(msg('mcp.direct_hint', '电脑用数据线直连 Aico Link 时，把地址换成 192.168.42.1。'), 'ds-code-sheet__label'),
     ])],
   }).open();
 }
@@ -191,7 +191,7 @@ export async function mcpPage(context) {
         view.close();
         await load();
         render();
-        showSecret(created.secret, wifiEndpoint(window.location, wifiAddress) || 'http://<board-ip>:8080/mcp');
+        showSecret(created.secret, wifiEndpoint(window.location, wifiAddress));
       } catch (failure) {
         error.hidden = false;
         error.textContent = failure && failure.message ? failure.message : resolve(msg('lan.save_failed', '保存失败'));
@@ -267,8 +267,8 @@ export async function mcpPage(context) {
     return group({
       rows,
       note: state.lan_access
-        ? msg('mcp.help', '电脑上的 MCP 客户端用令牌连接，电脑和设备需在同一个 Wi-Fi 下。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
-        : msg('mcp.lan_off', '令牌需要开启局域网访问才能使用。可以先创建，开启后生效。'),
+        ? msg('mcp.help', '所有 MCP 客户端都用令牌连接，直连 Aico Link 和通过 Wi-Fi 都一样。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
+        : msg('mcp.lan_off', '通过 Wi-Fi 连接还需要开启局域网访问；直连 Aico Link 时不需要。'),
     });
   }
 

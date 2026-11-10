@@ -271,9 +271,11 @@ const disabledPage = `<!doctype html><html><head><meta charset="utf-8"><meta nam
 
 // Guard admits requests from the USB link and the board itself. Other
 // requests are refused while LAN access is off; while it is on they need a
-// session token from the login endpoints, which Guard serves itself, or an
-// MCP access token on /mcp. Browser requests made on behalf of another site
-// are refused first, wherever they come from (see CrossSiteReason).
+// session token from the login endpoints, which Guard serves itself. MCP is
+// the exception: /mcp always needs an MCP access token, from every client,
+// so a computer plugged into Aico Link and one on Wi-Fi connect the same way
+// (see serveMCP). Browser requests made on behalf of another site are refused
+// first, wherever they come from (see CrossSiteReason).
 func Guard(state *State, next http.Handler) http.Handler {
 	auth := &authHandler{state: state, limiter: newLoginLimiter(), now: time.Now}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -283,6 +285,10 @@ func Guard(state *State, next http.Handler) http.Handler {
 		}
 		trusted := IsTrusted(r)
 		enabled := state.Enabled()
+		if r.URL.Path == MCPPath {
+			serveMCP(state, trusted, enabled, w, r, next)
+			return
+		}
 		switch {
 		case isAuthPath(r.URL.Path) && (trusted || enabled):
 			auth.serveLogin(w, r)
@@ -291,10 +297,6 @@ func Guard(state *State, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		case enabled:
-			if mcpTokenValid(state, r) {
-				next.ServeHTTP(w, r)
-				return
-			}
 			if sessionValid(state, w, r, auth.now()) {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), authenticatedContextKey{}, true)))
 				return
@@ -302,20 +304,45 @@ func Guard(state *State, next http.Handler) http.Handler {
 			rejectUnauthenticated(w, r)
 			return
 		}
+		rejectLANDisabled(w, r)
+	})
+}
+
+// serveMCP admits /mcp requests that carry an MCP access token. A session
+// token does not count, and neither does arriving over USB or from the board:
+// the USB link only spares the client from needing LAN access on.
+func serveMCP(state *State, trusted, enabled bool, w http.ResponseWriter, r *http.Request, next http.Handler) {
+	if !trusted && !enabled {
+		rejectLANDisabled(w, r)
+		return
+	}
+	if !mcpTokenValid(state, r) {
 		w.Header().Set("Cache-Control", "no-store")
-		if strings.Contains(r.Header.Get("Accept"), "text/html") {
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = io.WriteString(w, disabledPage)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		w.Header().Set("WWW-Authenticate", `Bearer realm="aico-mcp"`)
+		writeAuthJSON(w, http.StatusUnauthorized, map[string]any{
 			"ok":      false,
-			"error":   "lan_access_disabled",
-			"message": disabledMessage,
+			"error":   "mcp_token_required",
+			"message": "Create an MCP access token in Settings > Advanced > MCP and send it as Authorization: Bearer <token>.",
 		})
+		return
+	}
+	next.ServeHTTP(w, r)
+}
+
+func rejectLANDisabled(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	if strings.Contains(r.Header.Get("Accept"), "text/html") {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, disabledPage)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":      false,
+		"error":   "lan_access_disabled",
+		"message": disabledMessage,
 	})
 }
 

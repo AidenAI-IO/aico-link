@@ -285,10 +285,10 @@ link. It is off by default. While it is off:
   `/webtty/`, which follows the switch.
 
 While it is on, Config Web and the Agent require LAN clients to sign in with
-the device password (see [LAN Sign-In](#lan-sign-in)), or, for `/mcp` only, to
-send an [MCP access token](#mcp-access-tokens); SSH and the web terminal ask
-for the same password as the `aico` login password. USB clients and the board
-itself never sign in.
+the device password (see [LAN Sign-In](#lan-sign-in)); SSH and the web terminal
+ask for the same password as the `aico` login password. USB clients and the
+board itself never sign in. `/mcp` is the exception: every client, USB and
+on-board included, sends an [MCP access token](#mcp-access-tokens).
 
 ### Cross-Site Requests
 
@@ -410,9 +410,9 @@ successful sign-in clears the count.
 Requests authenticate with `Authorization: Bearer <token>` or the
 `aico_session` cookie. Cookies are scoped to the host, not the port, so a
 browser signed in on port 80 is also signed in on port 8080, including
-`/webtty/` and the Phone Bridge WebSocket. Scripts send the bearer token; MCP
-clients should use an [MCP access token](#mcp-access-tokens) instead, which
-does not expire and reaches only `/mcp`.
+`/webtty/` and the Phone Bridge WebSocket. Scripts send the bearer token. A
+session token does not reach `/mcp`; MCP clients use an
+[MCP access token](#mcp-access-tokens).
 
 A token is valid for 30 days. A browser that uses its cookie more than a day
 after it was issued receives a fresh 30-day cookie, so a browser in regular use
@@ -431,16 +431,18 @@ trusted networks.
 
 ### MCP Access Tokens
 
-An MCP access token lets an MCP client on the LAN reach the Agent's `/mcp`
-without the device password. Unlike a session token it:
+`/mcp` on the Agent needs an MCP access token from every client, including
+a computer plugged straight into Aico Link and processes on the board; USB
+and on-board clients are otherwise trusted without credentials, and a session
+token is not accepted there. An MCP access token:
 
 - reaches only `POST /mcp` on port 8080. It is refused everywhere else,
   including `/api/tools/*` (which would bypass the MCP tool allowlist and the
   `mcp_shell_enabled` gate), Config Web, backup, and the terminal;
 - does not expire, and survives a password change. Each token is named when
   it is created and revoked on its own;
-- still needs LAN access to be on. While it is off, `/mcp` refuses LAN
-  clients whatever they send.
+- over the LAN, still needs LAN access to be on. While it is off, `/mcp`
+  refuses LAN clients whatever they send; the USB link does not need it.
 
 Create and revoke tokens in Settings > Advanced > MCP, or with these
 endpoints. They are accepted over USB or from a LAN
