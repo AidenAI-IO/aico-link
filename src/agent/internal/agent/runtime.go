@@ -731,6 +731,12 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	skillManager.SetDeviceTypeFunc(rt.deviceTypeFromState)
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
 	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
+	rt.tools.SetUIGroundingFunc(rt.uiGroundingEnabled)
+	if rt.tools != nil && cfg.UIGroundingEnabledOrDefault() {
+		// Load the detector now so the first grounded screenshot does not wait
+		// for it. Only the daemon's runtime has a tool set with real tools.
+		setUIGroundingResident(true)
+	}
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -1486,9 +1492,12 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				Message: &message,
 			}
 		}
+		// A user turn carries a fresh screenshot, grounded when UI Grounding
+		// is on, unless the user attached an image of their own.
 		var attachment *messages.Attachment
+		var grounding *screenshotGrounding
 		if !messageHasImageAttachment(message) {
-			attachment = r.captureStateScreenshot()
+			attachment, grounding = r.captureStateScreenshot()
 		}
 		entries := r.stateManager.GetAllStates()
 		// If neither runtime state nor a screenshot is available, just skip.
@@ -1508,6 +1517,9 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				continue
 			}
 			fmt.Fprintf(&formated, "%s: %s\n", entry.Key, entry.Value)
+		}
+		if caption := screenshotGroundingCaption(grounding); caption != "" {
+			formated.WriteString(caption + "\n")
 		}
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
@@ -1564,21 +1576,30 @@ func messageHasImageAttachment(message messages.Message) bool {
 	return false
 }
 
-func (r *Runtime) captureStateScreenshot() *messages.Attachment {
-	if r == nil || r.toolSnapshot() == nil || r.contextManager == nil {
-		return nil
+// uiGroundingEnabled reads the live ui_grounding_enabled setting.
+func (r *Runtime) uiGroundingEnabled() bool {
+	return r.ConfigSnapshot().UIGroundingEnabledOrDefault()
+}
+
+// captureStateScreenshot captures the screenshot attached to a user turn and,
+// when UI Grounding is on, its grounding result for the state message text.
+func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGrounding) {
+	tools := r.toolSnapshot()
+	if r == nil || tools == nil || r.contextManager == nil {
+		return nil, nil
 	}
-	screenshotTool, ok := r.toolSnapshot().Get("screenshot")
+	screenshotTool, ok := tools.Get("screenshot")
 	if !ok || screenshotTool == nil {
-		return nil
+		return nil, nil
 	}
 
+	ground := tools.UIGroundingEnabled()
 	var output string
 	var err error
 	if fastTool, ok := screenshotTool.(interface {
-		CallWithoutStartupWait(context.Context, string) (string, error)
+		CallWithoutStartupWait(context.Context, bool) (string, error)
 	}); ok {
-		output, err = fastTool.CallWithoutStartupWait(context.Background(), "{}")
+		output, err = fastTool.CallWithoutStartupWait(context.Background(), ground)
 	} else {
 		output, err = screenshotTool.Call(context.Background(), "{}")
 	}
@@ -1586,24 +1607,40 @@ func (r *Runtime) captureStateScreenshot() *messages.Attachment {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot unavailable: %v", err)
 		}
-		return nil
+		return nil, nil
 	}
 	observation, ok := parseScreenshotObservation(output)
 	if !ok {
 		if r.logger != nil {
 			r.logger.Debug("[state] screenshot output is not a valid visual observation")
 		}
-		return nil
+		return nil, nil
 	}
 	attachment, err := r.contextManager.StoreAttachment(observation.MIMEType, observation.ImageBytes)
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Debug("[state] failed to store screenshot attachment: %v", err)
 		}
-		return nil
+		return nil, nil
 	}
 	attachment.Source = messages.AttachmentSourceScreenshotObservation
-	return &attachment
+	grounding := observation.Result.Grounding
+	if r.usesVisualCoordinateProtocol() {
+		// touch_gesture takes screenshot pixels under the visual coordinate
+		// protocol; the tool path converts in its wrapper, this one here.
+		grounding = pixelGrounding(grounding, observation.Result.Width, observation.Result.Height)
+	}
+	return &attachment, grounding
+}
+
+// usesVisualCoordinateProtocol reports whether the current model takes
+// screenshot pixels for touch_gesture (see AgentLoop.Run).
+func (r *Runtime) usesVisualCoordinateProtocol() bool {
+	if r == nil || r.models == nil {
+		return false
+	}
+	spec := r.models.Spec()
+	return IsAnthropicModel(spec.Provider, spec.Name)
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {
@@ -2959,6 +2996,7 @@ func (r *Runtime) Close() error {
 	}
 	defer removeShellScreenshotExports()
 	r.StopConfigReloads()
+	setUIGroundingResident(false)
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()
 	}

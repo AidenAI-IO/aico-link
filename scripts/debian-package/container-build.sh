@@ -9,7 +9,7 @@ readonly PACKAGE_VERSION=${VERSION}-${REVISION}
 readonly PACKAGE_NAME=aico-business
 readonly BINARIES=(
   agent audio_service audio_service_cli ble_service mcu_service cpu_vad frame_service
-  frame_service_cli rknn_vad smart_turn_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd
+  frame_service_cli rknn_vad smart_turn_helper ui_grounding_helper speaker_verify_fbank speaker_verify_rknn speaker_verify_tail ota abctl aico-environment ttyd
 )
 rm -rf "${PKG_ROOT}" "${OUTPUT_DIR}/${PACKAGE_NAME}_"*.deb
 install -d -m 0755 "${PKG_ROOT}/DEBIAN" "${PKG_ROOT}/usr/lib/aico" "${PKG_ROOT}/usr/share/aico/config-web" "${PKG_ROOT}/usr/share/aico/skills" "${PKG_ROOT}/usr/share/aico/audio" "${PKG_ROOT}/usr/lib/aico/models" "${PKG_ROOT}/usr/share/doc/${PACKAGE_NAME}"
@@ -22,6 +22,7 @@ rsync -aH --chown=0:0 "${REPO_ROOT}/src/agent/config/skills/" "${PKG_ROOT}/usr/s
 install -m 0644 "${REPO_ROOT}/src/agent/internal/agent/quick_actions.json" "${PKG_ROOT}/usr/share/aico/quick_actions.json"
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/audio/" "${PKG_ROOT}/usr/share/aico/audio/"
 (cd "${REPO_ROOT}/assets/business/models/dtln" && sha256sum --check SHA256SUMS)
+(cd "${REPO_ROOT}/assets/business/models/ui-detr" && sha256sum --check SHA256SUMS)
 rsync -aH --chown=0:0 "${REPO_ROOT}/assets/business/models/" "${PKG_ROOT}/usr/lib/aico/models/"
 # Vendor libraries are supplied by the platform rootfs through ld.so.conf.d.
 cat >"${PKG_ROOT}/DEBIAN/control" <<CTL

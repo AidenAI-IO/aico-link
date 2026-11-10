@@ -68,6 +68,18 @@ func TestRolePromptExplainsNotificationMemoryAndRawHistoryLookup(t *testing.T) {
 	}
 }
 
+// A model that does not see a secret in its context tends to deny ever saving
+// it. Sensitive memories never enter the profile, so the prompt must send a
+// denial through recall_memory first.
+func TestRolePromptRequiresRecallBeforeDenyingSavedMemory(t *testing.T) {
+	profile := testPromptProfile(AgentConfig{})
+	for _, want := range []string{"Before saying you do not know, did not save, or cannot provide", "sensitive memories", "absence from your context is not evidence"} {
+		if !strings.Contains(profile.SystemPrompt, want) {
+			t.Fatalf("system prompt missing recall-before-denial guidance %q:\n%s", want, profile.SystemPrompt)
+		}
+	}
+}
+
 func TestRolePromptRequiresRecallForNaturalLanguagePriorDeviceExperience(t *testing.T) {
 	profile := testPromptProfile(AgentConfig{})
 	for _, want := range []string{"## Device memory evidence", "must call recall_device_memory", "previously learned behavior", "prior device experience", "earlier workaround", "not a substitute for the saved evidence", "answer appears obvious", "not an unnecessary tool call"} {

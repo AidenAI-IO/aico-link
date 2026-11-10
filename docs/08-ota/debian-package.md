@@ -15,7 +15,7 @@ Package contents use standard Debian paths:
 
 ```text
 /usr/lib/aico/                 # Agent, frame/audio/BLE, OTA CLI, VAD helper, and runtime helper scripts
-/usr/lib/aico/models/          # RV1106 VAD models
+/usr/lib/aico/models/          # RV1106 audio and UI grounding models
 /usr/share/aico/config-web/    # Config Web static assets
 /usr/share/aico/skills/        # bundled skills
 /usr/share/aico/audio/         # Business audio assets
