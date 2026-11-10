@@ -64,7 +64,6 @@
               <form class="composer" onsubmit="event.preventDefault(); sendMessage();">
                 <div class="composer-shell">
                     <input type="file" id="fileInput" class="hidden-input" multiple />
-                    <input type="file" id="imageInput" class="hidden-input" accept="image/*" multiple />
                     <div class="draft-attachments" id="draftAttachments"></div>
                     <textarea
                         id="input"
@@ -74,9 +73,7 @@
                     ></textarea>
                     <div class="composer-footer">
                         <div class="composer-toolbar">
-                            <button type="button" class="composer-btn" id="imageBtn" onclick="openImagePicker()">Add image</button>
                             <button type="button" class="composer-btn" id="fileBtn" onclick="document.getElementById('fileInput').click()">Add file</button>
-                            <a class="composer-btn" href="/share/" target="_blank" rel="noopener">Shared files</a>
                             <div class="composer-hint" id="composerHint" aria-live="polite">Enter to send, Shift+Enter for newline</div>
                         </div>
                         <div class="composer-actions">

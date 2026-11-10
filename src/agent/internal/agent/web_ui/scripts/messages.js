@@ -329,11 +329,12 @@ function updateEmptyState() {
 function setComposerState(isLoading) {
     sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
     sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
-    const imageSlotsFull = getDraftImageCount() >= maxDraftImageAttachments || draftAttachments.length >= 16;
-    imageBtn.disabled = fileUploadPending || isLoading || imageSlotsFull;
+    const attachmentSlotsFull = draftAttachments.length >= maxDraftAttachments;
     const fileBtn = document.getElementById('fileBtn');
-    if (fileBtn) fileBtn.disabled = fileUploadPending || isLoading || draftAttachments.length >= 16;
-    imageBtn.title = imageSlotsFull ? 'Attachment limit reached' : 'Add image';
+    if (fileBtn) {
+        fileBtn.disabled = fileUploadPending || isLoading || attachmentSlotsFull;
+        fileBtn.title = attachmentSlotsFull ? 'Attachment limit reached' : 'Add file';
+    }
     stopRunBtn.disabled = !isLoading;
     if (!isLoading) {
         resetStopRunArm();
@@ -398,9 +399,4 @@ function formatTime(timestamp) {
     const date = new Date(timestamp);
     if (Number.isNaN(date.getTime())) return '';
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function openImagePicker() {
-    if (imageBtn.disabled) return;
-    imageInputEl.click();
 }
