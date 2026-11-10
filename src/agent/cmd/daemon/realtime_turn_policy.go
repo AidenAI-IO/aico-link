@@ -5,29 +5,29 @@ import (
 	"unicode"
 )
 
-// realtimeEmptyTurnGuard suppresses the provider response that follows an empty
-// or locally-handled user transcript. Server VAD may still create a response;
-// the session loop cancels or drops that output instead of playing it.
+// realtimeEmptyTurnGuard suppresses provider output that belongs to one empty
+// or locally-handled user audio turn. It is keyed by input-turn sequence so a
+// later chat, task-update, or notification CreateResponse is not canceled.
 type realtimeEmptyTurnGuard struct {
-	suppressResponse bool
+	armedTurn uint64
 }
 
-func (g *realtimeEmptyTurnGuard) suppress() {
-	if g == nil {
+func (g *realtimeEmptyTurnGuard) suppressTurn(turn uint64) {
+	if g == nil || turn == 0 {
 		return
 	}
-	g.suppressResponse = true
+	g.armedTurn = turn
 }
 
 func (g *realtimeEmptyTurnGuard) clear() {
 	if g == nil {
 		return
 	}
-	g.suppressResponse = false
+	g.armedTurn = 0
 }
 
-func (g *realtimeEmptyTurnGuard) shouldSuppress() bool {
-	return g != nil && g.suppressResponse
+func (g *realtimeEmptyTurnGuard) shouldSuppressTurn(turn uint64) bool {
+	return g != nil && g.armedTurn != 0 && turn != 0 && g.armedTurn == turn
 }
 
 // realtimeUserTranscriptIsEmpty reports whether a completed user transcript
@@ -39,7 +39,7 @@ func realtimeUserTranscriptIsEmpty(text string) bool {
 // realtimeConversationExitIntent reports whether a completed user transcript is
 // a short conversation-control request to end the voice session. Matching is
 // intentionally conservative: only normalized whole-utterance phrases qualify,
-// so ordinary requests that merely mention standby stay with the model.
+// and ambiguous answers like "不用了" stay with the model.
 func realtimeConversationExitIntent(text string) bool {
 	normalized := normalizeRealtimeExitTranscript(text)
 	if normalized == "" {
@@ -77,10 +77,6 @@ var realtimeConversationExitPhrases = map[string]struct{}{
 	"先退下吧":                 {},
 	"再见":                   {},
 	"拜拜":                   {},
-	"没事了":                  {},
-	"没有了":                  {},
-	"不用了":                  {},
-	"先这样":                  {},
 	"goodbye":              {},
 	"bye":                  {},
 	"stoplistening":        {},
@@ -88,6 +84,5 @@ var realtimeConversationExitPhrases = map[string]struct{}{
 	"goidle":               {},
 	"standby":              {},
 	"gotosleep":            {},
-	"sleep":                {},
 	"waitforthenextwakeup": {},
 }

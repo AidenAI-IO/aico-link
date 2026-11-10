@@ -45,6 +45,11 @@ func TestRealtimeConversationExitIntent(t *testing.T) {
 		{"您好", false},
 		{"退下之后帮我开门", false},
 		{"我想睡觉了但先别退下", false},
+		{"不用了", false},
+		{"没有了", false},
+		{"没事了", false},
+		{"先这样", false},
+		{"sleep", false},
 		{"", false},
 		{"谁抢？", false},
 		{"はいはい", false},
@@ -75,27 +80,22 @@ func TestRealtimeEndConversationToolMentionsChineseExitPhrases(t *testing.T) {
 	}
 }
 
-func TestRealtimeEmptyTurnGuard(t *testing.T) {
+func TestRealtimeEmptyTurnGuardScopesToTurn(t *testing.T) {
 	t.Parallel()
 	var guard realtimeEmptyTurnGuard
-	if guard.shouldSuppress() {
+	if guard.shouldSuppressTurn(1) {
 		t.Fatal("fresh guard should not suppress")
 	}
-	guard.suppress()
-	if !guard.shouldSuppress() {
-		t.Fatal("suppress() did not arm the guard")
+	guard.suppressTurn(2)
+	if guard.shouldSuppressTurn(1) {
+		t.Fatal("guard suppressed the wrong turn")
+	}
+	if !guard.shouldSuppressTurn(2) {
+		t.Fatal("suppressTurn() did not arm the expected turn")
 	}
 	guard.clear()
-	if guard.shouldSuppress() {
+	if guard.shouldSuppressTurn(2) {
 		t.Fatal("clear() left the guard armed")
-	}
-	// A later usable transcript must be able to clear a prior empty-turn arming
-	// even when the provider omits speech_started between turns.
-	guard.suppress()
-	guard.clear()
-	guard.suppress()
-	if !guard.shouldSuppress() {
-		t.Fatal("exit-intent re-arm failed after clear")
 	}
 }
 
@@ -104,7 +104,7 @@ func TestCancelRealtimeOutputForPolicyNoopsWithoutActiveResponse(t *testing.T) {
 	cancelPending := false
 	state := realtimeTurnState{}
 	playback := realtimePlaybackState{}
-	err := cancelRealtimeOutputForPolicy(
+	awaiting, err := cancelRealtimeOutputForPolicy(
 		context.Background(),
 		&state,
 		&cancelPending,
@@ -122,8 +122,8 @@ func TestCancelRealtimeOutputForPolicyNoopsWithoutActiveResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancelRealtimeOutputForPolicy() error = %v", err)
 	}
-	if cancelPending {
-		t.Fatal("cancelPending was set without an active response")
+	if awaiting || cancelPending {
+		t.Fatalf("awaiting=%t cancelPending=%t, want no provider wait", awaiting, cancelPending)
 	}
 }
 
@@ -138,7 +138,7 @@ func TestCancelRealtimeOutputForPolicyInterruptsActiveResponse(t *testing.T) {
 	if err := playback.beginResponse(audio, format); err != nil {
 		t.Fatalf("beginResponse: %v", err)
 	}
-	err := cancelRealtimeOutputForPolicy(
+	awaiting, err := cancelRealtimeOutputForPolicy(
 		context.Background(),
 		&state,
 		&cancelPending,
@@ -156,8 +156,8 @@ func TestCancelRealtimeOutputForPolicyInterruptsActiveResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cancelRealtimeOutputForPolicy() error = %v", err)
 	}
-	if !cancelPending {
-		t.Fatal("cancelPending was not set")
+	if !awaiting || !cancelPending {
+		t.Fatalf("awaiting=%t cancelPending=%t, want provider wait", awaiting, cancelPending)
 	}
 	if interrupter.calls != 1 {
 		t.Fatalf("Interrupt calls = %d, want 1", interrupter.calls)
@@ -170,8 +170,54 @@ func TestCancelRealtimeOutputForPolicyInterruptsActiveResponse(t *testing.T) {
 	}
 	finished := state
 	if !finished.responseFinished("resp-1") {
-		// Terminal cleanup must still accept the canceled response so standby
-		// drain can run after a local exit intent.
 		t.Fatal("canceled response lost terminal ownership")
+	}
+}
+
+func TestCancelRealtimeOutputForPolicyWithoutInterruptDoesNotWait(t *testing.T) {
+	t.Parallel()
+	cancelPending := false
+	state := realtimeTurnState{responseActive: true, responseID: "resp-1", responseRequestPending: true}
+	playback := realtimePlaybackState{}
+	audio := &fakeRealtimePlaybackAudio{}
+	format := agent.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16}
+	if err := playback.beginResponse(audio, format); err != nil {
+		t.Fatalf("beginResponse: %v", err)
+	}
+	awaiting, err := cancelRealtimeOutputForPolicy(
+		context.Background(),
+		&state,
+		&cancelPending,
+		func() { t.Fatal("cancel ack timer must not start without provider interrupt") },
+		func(string) {},
+		false,
+		nil,
+		&playback,
+		audio,
+		format,
+		nil,
+		&realtimeResponseWatchdog{},
+		"local conversation-exit intent",
+	)
+	if err != nil {
+		t.Fatalf("cancelRealtimeOutputForPolicy() error = %v", err)
+	}
+	if awaiting || cancelPending {
+		t.Fatalf("awaiting=%t cancelPending=%t, want local-only drop", awaiting, cancelPending)
+	}
+	if state.responseActive {
+		t.Fatal("responseInterrupted() did not clear responseActive")
+	}
+}
+
+func TestRealtimeTurnStateResponseOwnerTurn(t *testing.T) {
+	t.Parallel()
+	state := realtimeTurnState{inputTurnSequence: 4, responseRequestPending: true, responseRequestTurn: 2}
+	if got := state.responseOwnerTurn(); got != 2 {
+		t.Fatalf("responseOwnerTurn() = %d, want request turn 2", got)
+	}
+	state.responseRequestPending = false
+	if got := state.responseOwnerTurn(); got != 4 {
+		t.Fatalf("responseOwnerTurn() = %d, want input turn 4", got)
 	}
 }

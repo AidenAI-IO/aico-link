@@ -1635,6 +1635,11 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	}
 	defer cancelForegroundTools("")
 	requestResponse := func() {
+		// Explicit CreateResponse paths share the current input-turn sequence.
+		// Clear the empty/exit arm so chat, task updates, notifications, and
+		// tool continuations are not canceled; delayed empty transcripts are
+		// still scoped by turn id at response.created / cancel time.
+		emptyTurn.clear()
 		if semanticEmitter != nil {
 			semanticEmitter.nextResponseEpoch()
 		}
@@ -2159,11 +2164,13 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					if realtimeUserTranscriptIsEmpty(transcript) {
 						// Server VAD already admitted the turn. An empty transcript is
 						// not usable speech, so do not treat it as re-engagement and
-						// suppress any response the provider still emits for it.
-						emptyTurn.suppress()
-						logging.Infof("agent", "realtime", "Suppressing empty user transcript turn: provider=%s session_id=%s item_id=%s", providerName, info.ID, event.ItemID)
-						if err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "empty user transcript"); err != nil {
-							return err
+						// suppress only the response that still belongs to this turn.
+						emptyTurn.suppressTurn(turnState.ensureInputTurnSequence())
+						logging.Infof("agent", "realtime", "Suppressing empty user transcript turn: provider=%s session_id=%s item_id=%s turn=%d", providerName, info.ID, event.ItemID, turnState.inputTurnSequence)
+						if activeChat == nil && activeNotificationToken == "" && emptyTurn.shouldSuppressTurn(turnState.responseOwnerTurn()) {
+							if _, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "empty user transcript"); err != nil {
+								return err
+							}
 						}
 						continue
 					}
@@ -2179,14 +2186,20 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 						// High-precision local exit phrases must not depend on the
 						// model calling end_conversation. Request standby and drop
 						// any greeting/response already in flight for this turn.
-						emptyTurn.suppress()
+						emptyTurn.suppressTurn(turnState.ensureInputTurnSequence())
 						sleep.request()
 						logging.Infof("agent", "realtime", "Local conversation-exit intent: provider=%s session_id=%s transcript=%q", providerName, info.ID, transcript)
 						if turnState.responseActive || turnState.responseTerminalPending || turnState.responseRequestPending {
-							if err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "local conversation-exit intent"); err != nil {
+							awaitingProvider, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "local conversation-exit intent")
+							if err != nil {
 								return err
 							}
-							continue
+							if awaitingProvider {
+								continue
+							}
+							// No provider interrupt is available, so do not wait for a
+							// cancellation acknowledgement or tool round-trip that will
+							// never complete. Enter standby immediately.
 						}
 						logging.Infof("agent", "realtime", "Conversation ended by local exit intent, returning to standby")
 						return nil
@@ -2208,6 +2221,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					}
 				}
 			case realtimevoice.EventResponseStarted:
+				ownerTurn := turnState.responseOwnerTurn()
 				if !turnState.responseStarted(event.ResponseID) {
 					logging.Warnf("agent", "realtime", "Ignoring stale response.created: response_id=%s input_turn=%d request_turn=%d", event.ResponseID, turnState.inputTurnSequence, turnState.responseRequestTurn)
 					continue
@@ -2227,14 +2241,17 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				responseText.Reset()
 				responseTranscript.Reset()
 				assistantPersisted = false
-				if emptyTurn.shouldSuppress() && activeNotificationToken == "" && !responseSuppressed {
-					// Consume the guard with this user-turn response only. Voice
-					// notifications must still play, and a later usable transcript
-					// clears any leftover arming on providers without speech events.
+				if emptyTurn.shouldSuppressTurn(ownerTurn) && activeNotificationToken == "" && !responseSuppressed && activeChat == nil {
+					// Consume the arm only for the matching user-audio turn.
 					emptyTurn.clear()
-					logging.Infof("agent", "realtime", "Suppressing provider response for empty or local-exit turn: provider=%s session_id=%s response_id=%s", providerName, info.ID, event.ResponseID)
-					if err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "suppressed turn policy"); err != nil {
+					logging.Infof("agent", "realtime", "Suppressing provider response for empty or local-exit turn: provider=%s session_id=%s response_id=%s turn=%d", providerName, info.ID, event.ResponseID, ownerTurn)
+					awaitingProvider, err := cancelRealtimeOutputForPolicy(ctx, &turnState, &cancelPending, startCancelAckTimer, cancelForegroundTools, canInterrupt, responseInterrupter, &playback, playbackAudio, outputFormat, semanticEmitter, &watchdog, "suppressed turn policy")
+					if err != nil {
 						return err
+					}
+					if sleep.pending() && !awaitingProvider {
+						logging.Infof("agent", "realtime", "Conversation ended by local exit intent without provider interrupt, returning to standby")
+						return nil
 					}
 					continue
 				}
@@ -2605,6 +2622,24 @@ func (s *realtimeTurnState) canInjectResponse() bool {
 	return !s.responseActive && !s.responseTerminalPending && !s.inputSpeechActive && !s.inputTurnPending
 }
 
+// responseOwnerTurn identifies which input turn a newly arriving response
+// answers before responseStarted mutates request state.
+func (s *realtimeTurnState) responseOwnerTurn() uint64 {
+	if s.responseRequestPending {
+		return s.responseRequestTurn
+	}
+	return s.inputTurnSequence
+}
+
+// ensureInputTurnSequence gives empty/exit transcripts a stable turn id when
+// the provider omitted speech_started (for example Gemini Live).
+func (s *realtimeTurnState) ensureInputTurnSequence() uint64 {
+	if s.inputTurnSequence == 0 {
+		s.inputTurnSequence = 1
+	}
+	return s.inputTurnSequence
+}
+
 func (s *realtimeTurnState) responseRequested() {
 	s.responseTerminalPending = false
 	s.responseRequestPending = true
@@ -2816,9 +2851,11 @@ func interruptRealtimeResponse(ctx context.Context, responseActive bool, interru
 	return interrupter.Interrupt(ctx, interruption)
 }
 
-// cancelRealtimeOutputForPolicy cancels in-flight provider/local output for an
-// empty transcript or a local conversation-exit phrase. It is a no-op when no
-// response is active or a cancel is already pending.
+// cancelRealtimeOutputForPolicy drops in-flight provider/local output for an
+// empty transcript or a local conversation-exit phrase. awaitingProvider is
+// true only when the provider accepted an interrupt and the caller must wait
+// for a terminal event. Providers without interruption must not set
+// cancelPending: that would discard tool calls and hang until the watchdog.
 func cancelRealtimeOutputForPolicy(
 	ctx context.Context,
 	turnState *realtimeTurnState,
@@ -2833,27 +2870,23 @@ func cancelRealtimeOutputForPolicy(
 	semanticEmitter *realtimeSemanticEmitter,
 	watchdog *realtimeResponseWatchdog,
 	reason string,
-) error {
+) (awaitingProvider bool, err error) {
 	if turnState == nil || cancelPending == nil || *cancelPending {
-		return nil
+		return false, nil
 	}
 	if !turnState.responseActive && !turnState.responseTerminalPending && !turnState.responseRequestPending {
-		return nil
+		return false, nil
 	}
 	if canInterrupt {
 		if err := interruptRealtimeResponse(ctx, turnState.responseActive, responseInterrupter, playback.responseInterruption(outputFormat)); err != nil {
-			return markRealtimeProviderFailure(fmt.Errorf("interrupt realtime provider response (%s): %w", reason, err))
+			return false, markRealtimeProviderFailure(fmt.Errorf("interrupt realtime provider response (%s): %w", reason, err))
 		}
 	}
 	if err := playback.interrupt(playbackAudio, outputFormat); err != nil {
-		return fmt.Errorf("interrupt realtime playback (%s): %w", reason, err)
+		return false, fmt.Errorf("interrupt realtime playback (%s): %w", reason, err)
 	}
 	if semanticEmitter != nil {
 		semanticEmitter.invalidateOutput()
-	}
-	*cancelPending = true
-	if startCancelAckTimer != nil {
-		startCancelAckTimer()
 	}
 	if cancelForegroundTools != nil {
 		cancelForegroundTools(turnState.responseID)
@@ -2863,8 +2896,16 @@ func cancelRealtimeOutputForPolicy(
 	if watchdog != nil {
 		watchdog.progress()
 	}
-	logging.Infof("agent", "realtime", "Canceled in-flight response for turn policy: reason=%s response_id=%s", reason, turnState.responseID)
-	return nil
+	if canInterrupt {
+		*cancelPending = true
+		if startCancelAckTimer != nil {
+			startCancelAckTimer()
+		}
+		logging.Infof("agent", "realtime", "Canceled in-flight response for turn policy: reason=%s response_id=%s awaiting_provider=true", reason, turnState.responseID)
+		return true, nil
+	}
+	logging.Infof("agent", "realtime", "Dropped local in-flight response for turn policy without provider interrupt: reason=%s response_id=%s", reason, turnState.responseID)
+	return false, nil
 }
 
 // restoreRealtimePlaybackAfterInvalidTurn resumes an answer that server VAD
