@@ -1687,3 +1687,71 @@
 .ds-swipe__content--dragging:active {
   background-image: none;
 }
+
+/* A sheet of copyable values: inset to the page margin like every other
+   sheet field, with a muted label above each block. */
+.ds-code-sheet {
+  padding: 0 var(--layout-page-margin);
+}
+
+.ds-code-sheet__intro {
+  margin: 0 0 var(--space-lg);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-ink-secondary);
+}
+
+.ds-code-sheet__label {
+  margin: var(--space-lg) 0 var(--space-sm);
+  font-size: 13px;
+  color: var(--color-ink-secondary);
+}
+
+/* A copyable value, e.g. a new MCP access token: text with a small copy
+   button in its top-right corner. */
+.ds-code {
+  position: relative;
+  border-radius: var(--radius-field);
+  background: var(--color-canvas);
+}
+
+.ds-code__text {
+  margin: 0;
+  padding: var(--space-md) 44px var(--space-md) var(--space-lg);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.ds-code__copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--color-ink-secondary);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.ds-code__copy:hover,
+.ds-code__copy:focus-visible {
+  background: var(--color-pressed);
+  color: var(--color-ink);
+}
+
+.ds-code__copy--done {
+  color: var(--color-success);
+}

@@ -67,6 +67,9 @@ const (
 	apiRestoreApply
 	apiLANAccessGet
 	apiLANAccessPut
+	apiMCPTokensGet
+	apiMCPTokensCreate
+	apiMCPTokenRevoke
 )
 
 type routeVariant struct{ method, path string }
@@ -121,6 +124,8 @@ var apiRoutes = []apiRoute{
 	{apiRestoreJobs, routeVariant{http.MethodPost, apiPrefix + "/restore/jobs"}},
 	{apiLANAccessGet, routeVariant{http.MethodGet, apiPrefix + "/security/lan-access"}},
 	{apiLANAccessPut, routeVariant{http.MethodPut, apiPrefix + "/security/lan-access"}},
+	{apiMCPTokensGet, routeVariant{http.MethodGet, apiPrefix + "/security/mcp-tokens"}},
+	{apiMCPTokensCreate, routeVariant{http.MethodPost, apiPrefix + "/security/mcp-tokens"}},
 }
 
 type apiMatch struct {
@@ -184,6 +189,10 @@ func matchAPIRequest(r *http.Request) apiMatch {
 				return apiMatch{endpoint: apiRestoreApply, suffix: parts[0]}
 			}
 		}
+	}
+	const mcpTokenPrefix = apiPrefix + "/security/mcp-tokens/"
+	if id, ok := strings.CutPrefix(r.URL.Path, mcpTokenPrefix); ok && id != "" && !strings.Contains(id, "/") && r.Method == http.MethodDelete {
+		return apiMatch{endpoint: apiMCPTokenRevoke, suffix: id}
 	}
 	escapedPath := r.URL.EscapedPath()
 	const canonicalLogPrefix = apiPrefix + "/logs/llm/"
@@ -320,6 +329,12 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 		s.handleLANAccessStatus(w, r)
 	case apiLANAccessPut:
 		s.handleLANAccessUpdate(w, r)
+	case apiMCPTokensGet:
+		s.handleMCPTokensList(w, r)
+	case apiMCPTokensCreate:
+		s.handleMCPTokenCreate(w, r)
+	case apiMCPTokenRevoke:
+		s.handleMCPTokenRevoke(w, r, match.suffix)
 	}
 }
 

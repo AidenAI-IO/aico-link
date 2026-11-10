@@ -20,7 +20,7 @@ func newState(t *testing.T) *State {
 }
 
 func newRequest(remote, local string, trusted bool) *http.Request {
-	r := httptest.NewRequest(http.MethodGet, "http://board/api/tools", nil)
+	r := httptest.NewRequest(http.MethodGet, "http://"+local+"/api/tools", nil)
 	r.RemoteAddr = remote
 	ctx := context.WithValue(r.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP(local), Port: 8080})
 	if trusted {

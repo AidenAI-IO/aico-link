@@ -144,7 +144,7 @@ func newUSBTerminalServer(options Options) (*http.Server, error) {
 	}
 	return &http.Server{
 		Addr:              net.JoinHostPort(options.USBAddress, strconv.Itoa(options.USBTerminalPort)),
-		Handler:           agent.NewTerminalProxy(target),
+		Handler:           crossSiteGuard(agent.NewTerminalProxy(target)),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}, nil
@@ -173,4 +173,18 @@ func (s *Server) serveUSBTerminal() {
 	if err := s.usbTerminal.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logging.Warnf("config_web", "terminal", "USB terminal listener stopped: %v", err)
 	}
+}
+
+// crossSiteGuard refuses browser requests made on behalf of another site. The
+// USB terminal listener is trusted without credentials like the rest of the
+// USB link, so a page open on the connected phone or computer must not be
+// able to drive it.
+func crossSiteGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if reason := lanaccess.CrossSiteReason(r); reason != "" {
+			writeJSONError(w, http.StatusForbidden, "cross-site request rejected: "+reason)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

@@ -6,9 +6,9 @@
  * While LAN access is off, the settings page (80), the Agent (8080), the web
  * terminal and SSH answer only the USB link. Turning it on needs a device password, which also
  * becomes the password of the `aico` login used by the terminal and SSH.
- * Both can be changed only over USB (`via_usb`); on any other connection the
- * page shows the state read-only. A LAN client signed in with the device
- * password can sign out here.
+ * Both can be changed only over USB (`via_usb`); on any other connection
+ * tapping them shows a toast explaining why. A LAN client signed in with the
+ * device password can sign out here.
  */
 
 import {request} from '../data.js';
@@ -156,7 +156,17 @@ export async function lanAccessPage(context) {
     });
   }
 
+  function showUSBOnly() {
+    toast(msg('lan.usb_only', '只能通过 USB 连接修改'));
+  }
+
   function toggle(next, control) {
+    if (!state.via_usb) {
+      // Not disabled on LAN, so a tap reaches here and can explain itself.
+      setChecked(control, state.enabled);
+      showUSBOnly();
+      return;
+    }
     if (busy) {
       setChecked(control, state.enabled);
       return;
@@ -191,17 +201,19 @@ export async function lanAccessPage(context) {
       label: msg('lan.title', '局域网访问'),
       onChange: next => toggle(next, control),
     });
-    control.disabled = !editable || busy;
+    control.disabled = busy;
 
     const passwordRow = row({
       label: msg('lan.password', '设备密码'),
       value: state.password_set ? msg('lan.password_set', '已设置') : msg('lan.password_unset', '未设置'),
       chevron: editable,
       action: 'open-lan-password',
-      onPress: editable && !busy
-        ? () => askPassword(state.password_set ? msg('lan.change_password', '修改密码') : msg('lan.set_password', '设置密码'),
-          {}, msg('lan.password_saved', '设备密码已更新'))
-        : undefined,
+      onPress: !editable
+        ? showUSBOnly
+        : busy
+          ? undefined
+          : () => askPassword(state.password_set ? msg('lan.change_password', '修改密码') : msg('lan.set_password', '设置密码'),
+            {}, msg('lan.password_saved', '设备密码已更新')),
     });
 
     const signOut = editable ? null : group({rows: [row({
@@ -221,7 +233,7 @@ export async function lanAccessPage(context) {
       group({
         rows: [row({
           label: msg('lan.title', '局域网访问'),
-          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。'),
+          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。'),
           accessory: control,
           action: 'toggle-lan-access',
         })],
@@ -230,7 +242,6 @@ export async function lanAccessPage(context) {
         rows: [passwordRow],
         note: msg('lan.password_help', '局域网设备用这个密码登录，它同时是 aico 账号的密码，用于网页终端和 SSH。修改密码或关闭局域网访问会让所有局域网设备退出登录。'),
       }),
-      editable ? null : text(msg('lan.usb_only', '只能在通过 USB 连接时修改这些设置。'), 'page__note'),
       signOut,
     ].filter(Boolean));
     saver.refreshChrome();
