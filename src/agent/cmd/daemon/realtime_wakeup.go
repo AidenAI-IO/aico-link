@@ -2853,9 +2853,10 @@ func interruptRealtimeResponse(ctx context.Context, responseActive bool, interru
 
 // cancelRealtimeOutputForPolicy drops in-flight provider/local output for an
 // empty transcript or a local conversation-exit phrase. awaitingProvider is
-// true only when the provider accepted an interrupt and the caller must wait
-// for a terminal event. Providers without interruption must not set
-// cancelPending: that would discard tool calls and hang until the watchdog.
+// true only when an interrupt was actually sent and the caller must wait for a
+// terminal event. If responseActive is already false (for example after
+// EventInterruption), or the provider cannot interrupt, do not set
+// cancelPending: that would hang a local exit on an ack that never arrives.
 func cancelRealtimeOutputForPolicy(
 	ctx context.Context,
 	turnState *realtimeTurnState,
@@ -2877,8 +2878,13 @@ func cancelRealtimeOutputForPolicy(
 	if !turnState.responseActive && !turnState.responseTerminalPending && !turnState.responseRequestPending {
 		return false, nil
 	}
-	if canInterrupt {
-		if err := interruptRealtimeResponse(ctx, turnState.responseActive, responseInterrupter, playback.responseInterruption(outputFormat)); err != nil {
+	// Only wait for a provider terminal when an interrupt was actually sent.
+	// After EventInterruption, responseActive is already false while
+	// responseTerminalPending may still be set; starting an ack timer then
+	// would hang a local exit until Gemini's cancel timeout errors the session.
+	sentProviderInterrupt := canInterrupt && turnState.responseActive
+	if sentProviderInterrupt {
+		if err := interruptRealtimeResponse(ctx, true, responseInterrupter, playback.responseInterruption(outputFormat)); err != nil {
 			return false, markRealtimeProviderFailure(fmt.Errorf("interrupt realtime provider response (%s): %w", reason, err))
 		}
 	}
@@ -2896,7 +2902,7 @@ func cancelRealtimeOutputForPolicy(
 	if watchdog != nil {
 		watchdog.progress()
 	}
-	if canInterrupt {
+	if sentProviderInterrupt {
 		*cancelPending = true
 		if startCancelAckTimer != nil {
 			startCancelAckTimer()

@@ -210,6 +210,48 @@ func TestCancelRealtimeOutputForPolicyWithoutInterruptDoesNotWait(t *testing.T) 
 	}
 }
 
+func TestCancelRealtimeOutputForPolicySkipsAckWhenResponseAlreadyInactive(t *testing.T) {
+	t.Parallel()
+	cancelPending := false
+	state := realtimeTurnState{
+		responseActive:          false,
+		responseTerminalPending: true,
+		responseRequestPending:  true,
+		responseID:              "resp-1",
+	}
+	playback := realtimePlaybackState{}
+	interrupter := &fakeRealtimeResponseInterrupter{}
+	audio := &fakeRealtimePlaybackAudio{}
+	format := agent.AudioFormat{SampleRate: 24000, Channels: 1, BitWidth: 16}
+	if err := playback.beginResponse(audio, format); err != nil {
+		t.Fatalf("beginResponse: %v", err)
+	}
+	awaiting, err := cancelRealtimeOutputForPolicy(
+		context.Background(),
+		&state,
+		&cancelPending,
+		func() { t.Fatal("cancel ack timer must not start without a sent provider interrupt") },
+		func(string) {},
+		true,
+		interrupter,
+		&playback,
+		audio,
+		format,
+		nil,
+		&realtimeResponseWatchdog{},
+		"local conversation-exit intent",
+	)
+	if err != nil {
+		t.Fatalf("cancelRealtimeOutputForPolicy() error = %v", err)
+	}
+	if awaiting || cancelPending {
+		t.Fatalf("awaiting=%t cancelPending=%t, want no provider wait", awaiting, cancelPending)
+	}
+	if interrupter.calls != 0 {
+		t.Fatalf("Interrupt calls = %d, want 0", interrupter.calls)
+	}
+}
+
 func TestRealtimeTurnStateResponseOwnerTurn(t *testing.T) {
 	t.Parallel()
 	state := realtimeTurnState{inputTurnSequence: 4, responseRequestPending: true, responseRequestTurn: 2}
