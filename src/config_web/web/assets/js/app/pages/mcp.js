@@ -136,8 +136,8 @@ function showSecret(secret, endpoint) {
 
 function showUSBConfig() {
   configSheet({
-    title: msg('mcp.usb_title', '通过 USB 连接'),
-    intro: msg('mcp.usb_help', '用数据线把电脑连上设备，不需要令牌。'),
+    title: msg('mcp.usb_title', 'Aico Link 直连'),
+    intro: msg('mcp.usb_help', '用数据线把电脑直接连到 Aico Link，不需要令牌。'),
     endpoint: USB_MCP_ENDPOINT,
   });
 }
@@ -317,7 +317,7 @@ export async function mcpPage(context) {
         })],
       }),
       mcpDraft ? group({
-        caption: msg('mcp.usb_caption', '通过 USB 连接'),
+        caption: msg('mcp.usb_caption', 'Aico Link 直连'),
         rows: [row({
           label: msg('mcp.usb_config', '连接配置'),
           value: '192.168.42.1',
@@ -325,7 +325,7 @@ export async function mcpPage(context) {
           action: 'show-mcp-usb-config',
           onPress: showUSBConfig,
         })],
-        note: msg('mcp.usb_note', '数据线连接时不需要令牌。'),
+        note: msg('mcp.usb_note', '电脑用数据线直接连 Aico Link 时，不需要令牌。'),
       }) : null,
       mcpDraft ? tokenSection() : null,
     ].filter(Boolean));

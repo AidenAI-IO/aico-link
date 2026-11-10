@@ -39,7 +39,7 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 | LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
 | LAN, LAN access on | `Authorization: Bearer <MCP access token>` |
 
-Config Web → Advanced → MCP holds the MCP switch, the USB connection settings,
+Config Web → Advanced → MCP holds the MCP switch, the direct-connection settings ("Direct to Aico Link", over the USB cable),
 and the MCP access tokens. Create a token under "Over Wi-Fi" > Create token. The secret is shown once, with ready-to-paste
 configuration. A token reaches only `/mcp`, does not expire, survives a
 device-password change, and is revoked on its own on the same page. See
