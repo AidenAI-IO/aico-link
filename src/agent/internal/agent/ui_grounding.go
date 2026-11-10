@@ -24,8 +24,10 @@ const (
 	uiGroundingReadinessTimeout  = 30 * time.Second
 	uiGroundingDetectTimeout     = 10 * time.Second
 	uiGroundingShutdownTimeout   = 2 * time.Second
-	// The resident model holds about 40 MB of CMA, so the helper exits after
-	// this long without a request and starts again on the next one.
+	// While UI Grounding is on, the helper stays resident so no grounded
+	// screenshot waits for a model load. When it is off, a helper started by an
+	// explicit screenshot request exits after this long without a request,
+	// releasing its roughly 40 MB of CMA.
 	uiGroundingIdleTimeout = 2 * time.Minute
 	uiGroundingMaxElements = 50
 	// The detector's validated defaults (confidence 0, NMS IoU 0.8) favor
@@ -62,6 +64,24 @@ type helperUIGrounder struct {
 	stdout    *bufio.Reader
 	waitErr   chan error
 	idleTimer *time.Timer
+	// resident keeps the helper loaded with no idle exit, and loads it ahead
+	// of the first request. It follows the ui_grounding_enabled setting.
+	resident bool
+}
+
+// uiGroundingResidency is implemented by grounders that can keep their model
+// loaded between requests.
+type uiGroundingResidency interface {
+	SetResident(resident bool)
+}
+
+// setUIGroundingResident keeps the packaged detector loaded while UI
+// Grounding is on and releases it when the setting is turned off. It does
+// nothing on a device without the detector.
+func setUIGroundingResident(resident bool) {
+	if grounder, ok := defaultUIGrounder().(uiGroundingResidency); ok {
+		grounder.SetResident(resident)
+	}
 }
 
 // defaultUIGrounder returns the packaged grounder, or nil when the helper or
@@ -98,6 +118,16 @@ func (g *helperUIGrounder) Detect(ctx context.Context, rgb []byte, width, height
 		g.idleTimer.Stop()
 	}
 	defer g.scheduleIdleCloseLocked()
+	boxes, err := g.detectLocked(ctx, rgb, width, height)
+	if err != nil && g.resident && g.cmd == nil {
+		// The helper was stopped by this failure; load it again in the
+		// background so the next grounded screenshot does not wait for it.
+		go g.warm()
+	}
+	return boxes, err
+}
+
+func (g *helperUIGrounder) detectLocked(ctx context.Context, rgb []byte, width, height int) ([]uiElementBox, error) {
 	if err := g.ensureStartedLocked(); err != nil {
 		return nil, err
 	}
@@ -225,8 +255,42 @@ func (g *helperUIGrounder) ensureStartedLocked() error {
 	return nil
 }
 
+// SetResident switches between a resident helper, loaded now and kept until
+// the setting changes, and an on-demand one that exits when idle.
+func (g *helperUIGrounder) SetResident(resident bool) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	changed := g.resident != resident
+	g.resident = resident
+	if g.idleTimer != nil {
+		g.idleTimer.Stop()
+	}
+	if !resident && changed {
+		// Release the model's CMA as soon as grounding is turned off.
+		_ = g.closeLocked()
+	}
+	g.mu.Unlock()
+	if resident {
+		go g.warm()
+	}
+}
+
+// warm loads the helper ahead of the first request while resident.
+func (g *helperUIGrounder) warm() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if !g.resident {
+		return
+	}
+	if err := g.ensureStartedLocked(); err != nil {
+		logging.Warnf("agent", "ui_grounding", "preload grounding helper: %v", err)
+	}
+}
+
 func (g *helperUIGrounder) scheduleIdleCloseLocked() {
-	if g.cmd == nil || g.idleTimeout <= 0 {
+	if g.cmd == nil || g.idleTimeout <= 0 || g.resident {
 		return
 	}
 	if g.idleTimer == nil {

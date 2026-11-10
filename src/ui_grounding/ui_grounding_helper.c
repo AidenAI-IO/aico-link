@@ -24,6 +24,7 @@
  *   'Q'                              -> exit
  *   on errors                        -> "ERR <message>"
  */
+#define _DEFAULT_SOURCE /* sync() */
 #define _POSIX_C_SOURCE 200809L
 #include <dlfcn.h>
 #include <math.h>
@@ -32,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "rknn_api.h"
 
@@ -241,11 +243,41 @@ static int open_model(const char *model_path, char *err, size_t err_len) {
 }
 
 static void close_model(void) {
-    for (int i = 0; i < 3; i++)
+    for (int i = 0; i < 3; i++) {
         if (out_mem[i]) api.destroy_mem(ctx, out_mem[i]);
+        out_mem[i] = NULL;
+    }
     if (in_mem) api.destroy_mem(ctx, in_mem);
+    in_mem = NULL;
     if (ctx) api.destroy(ctx);
+    ctx = 0;
     free(candidates);
+    candidates = NULL;
+}
+
+/* The NPU buffers come from CMA, which has room, but the kernel also needs a
+ * physically contiguous order-4 block of ordinary memory to track them. On a
+ * board with a few MB free that block is often missing, and rknn_init fails
+ * with ENOMEM until the kernel compacts memory. Compacting on demand (root
+ * only) and retrying makes the load reliable without a fixed delay. */
+#define OPEN_ATTEMPTS 3
+
+static void compact_memory(void) {
+    sync();
+    FILE *f = fopen("/proc/sys/vm/compact_memory", "w");
+    if (!f) return;
+    fputs("1\n", f);
+    fclose(f);
+}
+
+static int open_model_with_retry(const char *model_path, char *err, size_t err_len) {
+    for (int attempt = 1;; attempt++) {
+        if (!open_model(model_path, err, err_len)) return 0;
+        close_model();
+        if (attempt == OPEN_ATTEMPTS) return -1;
+        fprintf(stderr, "model load attempt %d failed (%s); compacting memory and retrying\n", attempt, err);
+        compact_memory();
+    }
 }
 
 /* Half-pixel bilinear letterbox, RGB padding 114, centered. */
@@ -407,7 +439,7 @@ int main(int argc, char **argv) {
     }
     char err[256];
     if (load_runtime(runtime, err, sizeof err) || load_anchors(anchor_path, err, sizeof err) ||
-        open_model(model, err, sizeof err)) {
+        open_model_with_retry(model, err, sizeof err)) {
         printf("ERR %s\n", err);
         fflush(stdout);
         close_model();

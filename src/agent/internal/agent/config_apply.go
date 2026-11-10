@@ -335,6 +335,9 @@ func (r *Runtime) applyConfig(ctx context.Context, cfg Config) error {
 	r.config = cfg
 	r.tools = tools
 	r.configMu.Unlock()
+	if current.UIGroundingEnabledOrDefault() != cfg.UIGroundingEnabledOrDefault() {
+		setUIGroundingResident(cfg.UIGroundingEnabledOrDefault())
+	}
 	if current.HID != cfg.HID || current.Device != cfg.Device {
 		r.screenState.InvalidateCapture()
 	}

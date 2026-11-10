@@ -94,11 +94,25 @@ Runtime 2.5.0 in `/usr/lib/aico/models/ui-detr/`, because the model was compiled
 with Toolkit2 2.5.0. The static 2.3.2 runtime used by the audio helpers is not
 involved.
 
-The Agent starts the helper on the first grounding request and keeps it
-resident, so later requests skip model initialization. The loaded model holds
-about 40 MB of CMA, so the helper exits after two minutes without a request.
-A protocol error or failed inference also stops it; the next request starts a
-new one.
+While the UI Grounding setting is on, the model stays resident: the Agent
+loads the helper when it starts or when the setting is turned on, ahead of the
+first request, and keeps it with no idle exit. A protocol error or failed
+inference stops the helper, and the Agent loads it again in the background.
+Turning the setting off stops the helper and releases its roughly 40 MB of
+CMA. With the setting off, an explicit `screenshot` grounding request starts
+the helper on demand, and it exits after two minutes without a request.
+
+### Model load and memory compaction
+
+The NPU buffers come from CMA, which has room for them, but the kernel also
+needs one physically contiguous order-4 (64 KB) block of ordinary memory to
+track them. On a board with a few MB of free memory that block is often
+missing: `rknn_init` then fails with `-1`, the kernel logs
+`page allocation failure: order:4` and `RKNPU: dmabuf alloc failed`, and
+retrying alone does not help. The helper therefore compacts memory
+(`/proc/sys/vm/compact_memory`, which needs root, as the Agent runs) after a
+failed load and retries, up to three attempts. On the board, three plain
+retries failed and the first load after compaction succeeded.
 
 Protocol (stdin binary, little-endian; stdout text lines):
 

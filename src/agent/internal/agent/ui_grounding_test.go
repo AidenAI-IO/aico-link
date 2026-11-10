@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
@@ -166,6 +167,54 @@ func TestHelperUIGrounderProtocol(t *testing.T) {
 	if _, err := grounder.Detect(context.Background(), rgb, 3, 2); err == nil {
 		t.Fatal("Detect() accepted RGB data that does not match the size")
 	}
+}
+
+// While UI Grounding is on the helper is loaded ahead of the first request
+// and is never idled out; turning the setting off releases it.
+func TestHelperUIGrounderResidency(t *testing.T) {
+	dir := t.TempDir()
+	helper := filepath.Join(dir, "helper")
+	script := fmt.Sprintf("#!/bin/sh\nAICO_UI_GROUNDING_HELPER=1 exec %q -test.run='^TestUIGroundingHelperProcess$'\n", os.Args[0])
+	if err := os.WriteFile(helper, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	grounder := newHelperUIGrounder(helper, dir)
+	grounder.idleTimeout = 20 * time.Millisecond
+	defer grounder.Close()
+	running := func() bool {
+		grounder.mu.Lock()
+		defer grounder.mu.Unlock()
+		return grounder.cmd != nil
+	}
+	waitFor := func(want bool) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for running() != want {
+			if time.Now().After(deadline) {
+				t.Fatalf("helper running = %v, want %v", !want, want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	grounder.SetResident(true)
+	waitFor(true) // preloaded without any request
+	if _, err := grounder.Detect(context.Background(), make([]byte, 4*2*3), 4, 2); err != nil {
+		t.Fatalf("Detect() error = %v", err)
+	}
+	time.Sleep(10 * grounder.idleTimeout)
+	if !running() {
+		t.Fatal("resident helper exited after the idle timeout")
+	}
+
+	grounder.SetResident(false)
+	waitFor(false) // released when the setting is turned off
+
+	// On demand again: an explicit request starts it, and it idles out.
+	if _, err := grounder.Detect(context.Background(), make([]byte, 4*2*3), 4, 2); err != nil {
+		t.Fatalf("on-demand Detect() error = %v", err)
+	}
+	waitFor(false)
 }
 
 // TestUIGroundingHelperProcess is the fake helper started by TestHelperUIGrounderProtocol.

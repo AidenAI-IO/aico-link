@@ -732,6 +732,11 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 	rt.tools.SetRuntimeDeviceTypeFn(rt.deviceTypeFromState)
 	rt.tools.SetDecisionConfigFn(rt.decisionConfig)
 	rt.tools.SetUIGroundingFunc(rt.uiGroundingEnabled)
+	if rt.tools != nil && cfg.UIGroundingEnabledOrDefault() {
+		// Load the detector now so the first grounded screenshot does not wait
+		// for it. Only the daemon's runtime has a tool set with real tools.
+		setUIGroundingResident(true)
+	}
 	rt.sessionManager = newMemoryManagerSessionManager(memories)
 	rt.initRunGate()
 	return rt
@@ -2973,6 +2978,7 @@ func (r *Runtime) Close() error {
 	}
 	defer removeShellScreenshotExports()
 	r.StopConfigReloads()
+	setUIGroundingResident(false)
 	if r.phoneBridge != nil {
 		r.phoneBridge.Close()
 	}
