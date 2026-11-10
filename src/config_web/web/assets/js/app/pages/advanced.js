@@ -129,10 +129,6 @@ export async function advancedPage(context) {
             action: 'open-lan-access',
             onPress: () => context.navigate('/advanced/lan'),
           }),
-        ],
-      }),
-      group({
-        rows: [
           row({
             label: msg('advanced.mcp_enabled', 'MCP'),
             value: snapshot?.config?.agent?.mcp_enabled === false ? msg('lan.off', '已关闭') : msg('lan.on', '已开启'),

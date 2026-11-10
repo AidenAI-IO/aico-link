@@ -229,6 +229,93 @@ export async function mcpPage(context) {
     }
   }
 
+  function tokenSection() {
+    const caption = msg('mcp.wifi_caption', '通过 Wi-Fi 连接');
+    if (!state) {
+      return group({
+        caption,
+        rows: [row({
+          label: msg('mcp.title', 'MCP 访问令牌'),
+          value: msg('lan.unavailable', '无法读取'),
+          tone: 'danger',
+          description: loadError && loadError.message ? loadError.message : null,
+        })],
+      });
+    }
+    const tokens = Array.isArray(state.tokens) ? state.tokens : [];
+    const rows = [];
+    if (!state.lan_access) {
+      rows.push(row({
+        label: msg('lan.title', '局域网访问'),
+        value: msg('lan.off', '已关闭'),
+        tone: 'muted',
+        chevron: true,
+        action: 'open-lan-access',
+        onPress: () => context.navigate('/advanced/lan'),
+      }));
+    }
+    tokens.forEach(token => rows.push(row({
+      label: token.name,
+      description: new Date(token.created_at).toLocaleString(),
+      value: msg('mcp.revoke', '撤销'),
+      tone: 'danger',
+      action: 'revoke-mcp-token',
+      onPress: busy ? undefined : () => revoke(token),
+    })));
+    const full = tokens.length >= (state.max_tokens || 20);
+    rows.push(row({
+      label: msg('mcp.create', '创建令牌'),
+      labelTone: 'accent',
+      action: 'create-mcp-token',
+      onPress: busy ? undefined : () => (full ? toast(msg('mcp.limit', '令牌数量已达上限，请先撤销一个')) : askName()),
+    }));
+    return group({
+      caption,
+      rows,
+      note: state.lan_access
+        ? msg('mcp.help', '电脑和设备在同一个 Wi-Fi 下时，用令牌连接。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
+        : msg('mcp.lan_off', '通过 Wi-Fi 连接需要先开启局域网访问。令牌可以先创建，开启后生效。'),
+    });
+  }
+
+  function render() {
+    const mcpToggle = switchControl({
+      checked: mcpDraft,
+      label: msg('advanced.mcp_enabled', 'MCP'),
+      onChange: next => {
+        if (mcpSaving) {
+          setChecked(mcpToggle, mcpDraft);
+          return;
+        }
+        saveMCP(next);
+      },
+    });
+    if (mcpSaving) mcpToggle.disabled = true;
+    replace(body, [
+      group({
+        rows: [row({
+          label: msg('advanced.mcp_enabled', 'MCP'),
+          description: msg('advanced.mcp_enabled_help', '让电脑上的 AI 助手（如 Claude Code、Cursor）调用设备工具，例如截屏、点击和输入文字。'),
+          accessory: mcpToggle,
+          action: 'toggle-mcp-enabled',
+        })],
+      }),
+      mcpDraft ? group({
+        caption: msg('mcp.usb_caption', '通过 USB 连接'),
+        rows: [row({
+          label: msg('mcp.usb_config', '连接配置'),
+          value: '192.168.42.1',
+          chevron: true,
+          action: 'show-mcp-usb-config',
+          onPress: showUSBConfig,
+        })],
+        note: msg('mcp.usb_note', '数据线连接时不需要令牌。'),
+      }) : null,
+      mcpDraft ? tokenSection() : null,
+    ].filter(Boolean));
+    saver.refreshChrome();
+  }
+
   await load();
   render();
   return screen([body]);
