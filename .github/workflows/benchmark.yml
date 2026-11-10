@@ -383,14 +383,6 @@ jobs:
           --daemon-dockerfile "$DAEMON_DOCKERFILE"
           --mobilegym-image "$MOBILEGYM_IMAGE"
           --mobilegym-log "$PREPARE_LOG"
-      - name: Enable temporary Gemini protocol diagnostics
-        if: ${{ github.ref == 'refs/heads/fix/gemini-realtime-collaboration' && inputs.suite == 'suites/realtime_collaboration_v1.json' }}
-        run: |
-          cat >> benchmark/config/agent.toml.template <<'TOML'
-
-          [advanced_settings.log]
-          level = "debug"
-          TOML
       - name: Run benchmark cases
         working-directory: benchmark
         env:
