@@ -53,6 +53,7 @@ jobs:
       no_proxy: localhost,127.0.0.1,::1,host.docker.internal
     outputs:
       identity: ${{ steps.discover.outputs.identity }}
+      artifact: ${{ steps.artifact.outputs.name }}
       base: ${{ steps.base.outputs.sha }}
       mode: ${{ steps.mode.outputs.value }}
       publish: ${{ steps.mode.outputs.publish }}
@@ -68,8 +69,10 @@ jobs:
         env:
           AUTO_IMPROVE_WORK_ROOT: ${{ runner.tool_cache }}/aico-auto-improve/${{ github.repository }}
         run: |
-          mkdir -p "$AUTO_IMPROVE_WORK_ROOT"
+          mkdir -p "$AUTO_IMPROVE_WORK_ROOT/test-cache"
           echo "AUTO_IMPROVE_WORK_ROOT=$AUTO_IMPROVE_WORK_ROOT" >> "$GITHUB_ENV"
+          # Candidate checkouts are fresh clones; share Go/uv downloads across them and runs.
+          echo "AICO_TEST_CACHE_DIR=$AUTO_IMPROVE_WORK_ROOT/test-cache" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
@@ -185,12 +188,23 @@ jobs:
         run: |
           report="$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result/summary.md"
           if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Name the evidence artifact
+        id: artifact
+        if: always() && steps.discover.outputs.found == 'true'
+        working-directory: benchmark
+        env:
+          IDENTITY: ${{ steps.discover.outputs.identity }}
+        # Only a settled main run marks its sources processed; an errored, blocked or
+        # cancelled run is uploaded as auto-improve-retry-* so discovery retries it.
+        run: >-
+          uv run python -m ci.auto_improve.control artifact --ref "$GITHUB_REF" --identity "$IDENTITY"
+          --out "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result"
       - name: Retain evidence for fourteen days
         id: evidence
-        if: always() && steps.discover.outputs.found == 'true'
+        if: always() && steps.artifact.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.mode.outputs.artifact_prefix }}${{ steps.discover.outputs.identity }}
+          name: ${{ steps.artifact.outputs.name }}
           retention-days: 14
           # Do not upload clones, daemon configurations, CLI sessions, or emulator disks.
           path: |
@@ -240,7 +254,7 @@ jobs:
     # A blocked sibling cluster fails the improve job but must not discard a validated
     # candidate. Publish whenever one is ready; control.py revalidates everything.
     if: >-
-      !cancelled() && needs.improve.outputs.identity != '' &&
+      !cancelled() && needs.improve.outputs.artifact != '' &&
       needs.improve.outputs.publish == 'true' && fromJSON(needs.improve.outputs.ready || '0') > 0
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -256,7 +270,7 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@v4
         with:
-          name: auto-improve-source-${{ needs.improve.outputs.identity }}
+          name: ${{ needs.improve.outputs.artifact }}
           path: auto-improve-result
       - uses: astral-sh/setup-uv@v6
       - name: Install benchmark dependencies

@@ -10,6 +10,7 @@ import statistics
 from typing import Any
 
 from runner.metrics import status_fields
+from runner.trace import tool_result_failed
 
 REPEATS = 3
 BASE_BRANCH = "main"
@@ -22,6 +23,16 @@ BENCHMARK_EDIT_ROOTS = (
     "benchmark/mobilegym/bridge/", "benchmark/mobilegym/adapter/", "benchmark/mobilegym/docker/",
     "benchmark/mobilegym/scripts/", "src/agent/cmd/benchmark-mcu/")
 BENCHMARK_SUFFIXES = {".py", ".sh", ".json", ".go", ".yml", ".yaml"}
+# Benchmark files that are task data or run only inside disposable containers. Every
+# other benchmark file runs on the self-hosted runner, which holds model credentials
+# and the Docker socket; model-authored changes there are proposed, never executed.
+BENCHMARK_CONTAINED = (
+    "benchmark/suites/", "benchmark/ci/suites.json", "benchmark/docker/Dockerfile",
+    "benchmark/docker/agent-daemon-entrypoint.sh", "benchmark/mobilegym/bridge/",
+    "benchmark/mobilegym/adapter/", "benchmark/mobilegym/docker/",
+    "benchmark/mobilegym/scripts/start_simulator.py", "src/agent/cmd/benchmark-mcu/")
+# Final run states that settle a source window. Anything else is retried by a later run.
+SETTLED_STATUSES = {"completed", "diagnosed", "no_failures"}
 # Task fields that define how an outcome is scored. Changing them needs human judgment.
 SCORING_FIELDS = ("rubric", "hard_assertions", "environment_assertions", "memory_assertions",
                   "description_for_judge", "expected_answer", "answer_format",
@@ -29,8 +40,19 @@ SCORING_FIELDS = ("rubric", "hard_assertions", "environment_assertions", "memory
                   "expected_recall_from_consolidation")
 GRADING_CODE = ("benchmark/runner/judge.py", "benchmark/runner/assertions.py", "benchmark/runner/matching.py",
                 "benchmark/runner/metrics.py", "benchmark/runner/rejudge.py")
+# Code that writes the status, error, stage and trace fields a symptom is measured from.
+# A repair here could hide the symptom by changing what is recorded, so it needs human review.
+RESULT_RECORDING_CODE = ("benchmark/runner/main.py", "benchmark/runner/runtask.py", "benchmark/runner/scenario.py",
+                         "benchmark/runner/trace.py", "benchmark/runner/harness.py")
 SYMPTOM_KINDS = ("none", "setup_failure", "judge_error", "environment_failure", "tool_error",
                  "hard_assertion", "error_text")
+# Regression tolerance for three repeats per side: one lost pass per task is ordinary
+# model variance, so a task regresses only when it loses at least two of its passes.
+TASK_REGRESSION_DROP = 2
+
+
+class ProposalError(ValueError):
+    """A model proposal violates policy. The attempt is rejected; the run is not blocked."""
 
 
 def require_main_branch(branch: str) -> None:
@@ -76,8 +98,8 @@ def edit_target(path: str, domain: str = "agent") -> bool:
             or p.name.endswith("_test.go") or p.name.startswith("test_")):
         return False
     if domain == "agent":
-        # The benchmark MCU emulator is part of the evaluation environment.
-        if path.startswith("src/agent/cmd/benchmark-mcu/"):
+        # Benchmark mode and the MCU emulator are part of the evaluation environment.
+        if any(part.startswith("benchmark") for part in p.parts[2:]):
             return False
         return ((path.startswith(("src/agent/internal/", "src/agent/cmd/")) and p.suffix == ".go") or
                 (path.startswith("src/agent/config/skills/") and p.name == "SKILL.md"))
@@ -88,6 +110,19 @@ def edit_target(path: str, domain: str = "agent") -> bool:
         return (path.startswith(BENCHMARK_EDIT_ROOTS) and
                 (p.suffix in BENCHMARK_SUFFIXES or p.name.startswith("Dockerfile")))
     return False
+
+
+def runs_on_host(path: str) -> bool:
+    """Whether a benchmark file executes on the runner host rather than in a container."""
+    return not path.startswith(BENCHMARK_CONTAINED)
+
+
+def artifact_name(ref: str, identity: str, status: str) -> str:
+    """Only a settled main run marks its sources processed; failed runs stay eligible."""
+    if ref != f"refs/heads/{BASE_BRANCH}":
+        return f"auto-improve-test-source-{identity}"
+    prefix = "auto-improve-source-" if status in SETTLED_STATUSES else "auto-improve-retry-"
+    return prefix + identity
 
 
 def verification_commands(paths: list[str]) -> list[list[str]]:
@@ -102,20 +137,28 @@ def verification_commands(paths: list[str]) -> list[list[str]]:
 
 def validate_change(path: str, before: str, after: str, domain: str = "agent") -> None:
     if not edit_target(path, domain) or before == after:
-        raise ValueError(f"Not an allowed {domain} change: {path}")
+        raise ProposalError(f"Not an allowed {domain} change: {path}")
     if len(after.encode()) > 128 * 1024:
-        raise ValueError("Candidate file exceeds text budget")
+        raise ProposalError("Candidate file exceeds text budget")
+    # An agent fix must improve real behavior, not special-case the evaluation.
+    if domain == "agent" and len(BENCHMARK_REFERENCE.findall(after)) > len(BENCHMARK_REFERENCE.findall(before)):
+        raise ProposalError(f"Agent change adds benchmark-specific behavior: {path}")
     if path.endswith(".json"):
         try:
             json.loads(after)
         except ValueError as exc:
-            raise ValueError(f"Candidate JSON is invalid: {path}") from exc
+            raise ProposalError(f"Candidate JSON is invalid: {path}") from exc
+
+
+BENCHMARK_REFERENCE = re.compile(r"benchmark", re.IGNORECASE)
 
 
 def contract_changes(path: str, before: str, after: str) -> list[str]:
     """Name every change to what a task asks or how it is scored, for explicit human review."""
     if path in GRADING_CODE:
         return [f"{path}: grading code changed"]
+    if path in RESULT_RECORDING_CODE:
+        return [f"{path}: result recording code changed"]
     if path == "benchmark/ci/suites.json":
         old, new = json.loads(before), json.loads(after)
         old_cases = {c["id"]: c for c in old.get("cases", [])}
@@ -141,16 +184,16 @@ def contract_changes(path: str, before: str, after: str) -> list[str]:
 def validate_symptom(symptom: dict) -> None:
     """A benchmark repair needs a mechanically observable failure signature."""
     if not isinstance(symptom, dict) or symptom.get("kind") not in SYMPTOM_KINDS or symptom["kind"] == "none":
-        raise ValueError("Benchmark repair needs an observable symptom")
+        raise ProposalError("Benchmark repair needs an observable symptom")
     pattern = symptom.get("pattern", "")
     if not isinstance(pattern, str) or len(pattern) > 200:
-        raise ValueError("Symptom pattern must be a short string")
+        raise ProposalError("Symptom pattern must be a short string")
     if symptom["kind"] in {"tool_error", "hard_assertion", "error_text"} and not pattern:
-        raise ValueError(f"Symptom {symptom['kind']} requires a pattern")
+        raise ProposalError(f"Symptom {symptom['kind']} requires a pattern")
     try:
         re.compile(pattern)
     except re.error as exc:
-        raise ValueError("Symptom pattern is not a valid regular expression") from exc
+        raise ProposalError("Symptom pattern is not a valid regular expression") from exc
 
 
 def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
@@ -169,8 +212,9 @@ def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
         texts = [f"{f.get('id')}: {f.get('actual')}" for f in row.get("hard_assertion_failures") or []
                  if isinstance(f, dict)]
     elif kind == "tool_error":
+        # Only results the runner classifies as failed, not every tool output that happens to match.
         texts = [str(result.get("content")) for trace in traces for result in trace.get("tool_results") or []
-                 if isinstance(result, dict) and result.get("content")]
+                 if isinstance(result, dict) and result.get("content") and tool_result_failed(result)]
     else:
         texts = errors
     return [text[:300] for text in texts if pattern.search(text)][:3]
@@ -179,22 +223,22 @@ def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
 def apply_edits(root: Path, edits: list[dict], domain: str = "agent") -> list[str]:
     """Apply exact replacements after validating the entire patch, without partial writes."""
     if not isinstance(edits, list) or not 1 <= len(edits) <= 8:
-        raise ValueError("Expected 1-8 text edits")
+        raise ProposalError("Expected 1-8 text edits")
     original, modified = {}, {}
     for edit in edits:
         path = edit["path"]
         if not edit_target(path, domain):
-            raise ValueError(f"Forbidden edit: {path}")
+            raise ProposalError(f"Forbidden edit: {path}")
         target = root / path
         if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
-            raise ValueError("Candidate path escapes checkout")
+            raise ProposalError("Candidate path escapes checkout")
         if path not in original:
             original[path] = modified[path] = target.read_text()
         old, new = edit["old"], edit["new"]
         if not isinstance(old, str) or not old or not isinstance(new, str):
-            raise ValueError("Edits require nonempty old text and string new text")
+            raise ProposalError("Edits require nonempty old text and string new text")
         if modified[path].count(old) != 1:
-            raise ValueError(f"Replacement is not unique: {path}")
+            raise ProposalError(f"Replacement is not unique: {path}")
         modified[path] = modified[path].replace(old, new, 1)
     for path, text in modified.items():
         validate_change(path, original[path], text, domain)
@@ -302,8 +346,14 @@ def prune_reproduction(plan: dict[str, list[str]], audit: dict,
 
 def compare(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
             candidate: dict[str, list[dict]]) -> dict:
-    """Fail closed on missing, duplicate, ineligible, or unmeasured outcomes."""
+    """Fail closed on missing, duplicate, ineligible, or unmeasured outcomes.
+
+    Three repeats per side cannot separate a one-pass drop from model variance, so a
+    task regresses when it loses TASK_REGRESSION_DROP passes, and the non-target set
+    regresses when its total drops by more than max(2, 5%) of its attempts.
+    """
     reasons, table, fixed = [], [], []
+    totals = {"baseline": 0, "candidate": 0, "attempts": 0}
     for group, keys in plan.items():
         for key in keys:
             pair = []
@@ -315,10 +365,18 @@ def compare(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
                 pair.append(sum(status_fields(r)[0] is True for r in rows))
             before, after = pair
             table.append({"task": key, "group": group, "baseline": before, "candidate": after})
-            if after < before:
+            if before - after >= TASK_REGRESSION_DROP:
                 reasons.append(f"{key}: observed regression {before}/3 -> {after}/3")
             if group == "targets" and before <= 1 and after >= 2:
                 fixed.append(key)
+            if group != "targets":
+                totals["baseline"] += before
+                totals["candidate"] += after
+                totals["attempts"] += REPEATS
+    tolerance = max(2, math.ceil(0.05 * totals["attempts"]))
+    if totals["baseline"] - totals["candidate"] > tolerance:
+        reasons.append(f"regression set: passes dropped {totals['baseline']} -> {totals['candidate']} "
+                       f"(tolerance {tolerance})")
     if not fixed:
         reasons.append("No reproduced target improved to at least 2/3 passes")
     efficiency = {}
@@ -352,6 +410,7 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
 
     Every row carries symptom_evidence, recorded by the driver from that attempt's own trace.
     A target the candidate removed from the catalog is accepted only as a flagged contract change.
+    A tool_error target must also lose failed tool results, not merely change their wording.
     """
     validate_symptom(symptom)
     reasons, table, fixed = [], [], []
@@ -368,11 +427,14 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
                     continue
                 if len(rows) != REPEATS or {r.get("repeat") for r in rows} != set(range(1, REPEATS + 1)):
                     reasons.append(f"{key}: incomplete {side} repeats")
-                if any(not isinstance(r.get("symptom_evidence"), list) for r in rows):
+                if any(not isinstance(r.get("symptom_evidence"), list) or isinstance(r.get("tool_failures"), bool)
+                       or not isinstance(r.get("tool_failures"), int) for r in rows):
                     reasons.append(f"{key}: {side} symptom not measured")
                 entry[side] = {"passed": sum(status_fields(r)[0] is True for r in rows),
                                "symptom": sum(bool(r.get("symptom_evidence")) for r in rows),
-                               "unevaluable": sum(unevaluable(r) for r in rows)}
+                               "unevaluable": sum(unevaluable(r) for r in rows),
+                               "tool_failures": sum(r.get("tool_failures") if isinstance(r.get("tool_failures"), int)
+                                                    else 0 for r in rows)}
             table.append(entry)
             before, after = entry.get("baseline"), entry.get("candidate")
             if before is None:
@@ -380,6 +442,10 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
             if group == "targets":
                 if before["symptom"] < 2:
                     reasons.append(f"{key}: symptom reproduced only {before['symptom']}/3 on baseline")
+                elif (symptom["kind"] == "tool_error" and after is not None
+                      and after["tool_failures"] >= before["tool_failures"]):
+                    reasons.append(f"{key}: failed tool results did not decrease "
+                                   f"({before['tool_failures']} -> {after['tool_failures']})")
                 elif after is None or (after["symptom"] == 0 and after["unevaluable"] == 0):
                     fixed.append(key)
                 else:

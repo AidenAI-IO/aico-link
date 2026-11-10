@@ -151,7 +151,13 @@ emulates only the MCU firmware peer behind the real `mcu_service` code, so the
 `schedule` tool arms and cancels a real countdown and a due routine receives an RTC
 wakeup, as on a device. Battery reads return a fixed charge. LEDs are unsupported,
 and suspend and poweroff are refused. Bridged, MobileGym, and ADB environments do
-not start it.
+not start it. The entrypoint restarts the emulator if it exits; if it does not
+start, the daemon runs without an MCU service rather than failing every task.
+
+Because the socket is present, headless daemons take the MCU wakeup path instead of
+reporting "socket unavailable", and `schedule` arms a real countdown instead of
+returning a socket error. Results for schedule-related tasks are not comparable
+with daily runs from before this change.
 
 For iOS background without PiP, a reachable Dynamic Island return entry keeps the
 data tools visible. The Agent calls the requested `bridge_*` tool directly; the

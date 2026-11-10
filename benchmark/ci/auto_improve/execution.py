@@ -63,8 +63,12 @@ def resource_snapshot(log: Path, label: str) -> None:
 
 
 def check_environment() -> dict[str, str]:
-    """Repository checks run in the pinned image with in-memory test scratch space."""
-    return {**benchmark_environment(), "AICO_TEST_TMPFS": "1"}
+    """Repository checks run in the pinned image with in-memory test scratch space.
+
+    They execute candidate code, so they never receive model credentials.
+    """
+    env = {k: v for k, v in benchmark_environment().items() if not k.endswith("_API_KEY")}
+    return {**env, "AICO_TEST_TMPFS": "1"}
 
 
 def benchmark_environment() -> dict[str, str]:

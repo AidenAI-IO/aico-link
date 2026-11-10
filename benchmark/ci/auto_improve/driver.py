@@ -16,6 +16,11 @@ from runner.environment import MOBILEGYM_SUBMODULE_PATH
 from runner.metrics import status_fields
 
 
+# Attempt states the publisher acts on: a draft PR, an external-code issue, or a
+# benchmark proposal that must be verified by a person before it runs on a host.
+PUBLISHABLE = {"ready", "issue_ready", "proposal_ready"}
+
+
 def progress(stage: str) -> None:
     print(f"[auto-improve] {stage}", flush=True)
 
@@ -187,6 +192,14 @@ def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
     return sorted(set(checked))
 
 
+def valid_symptom(cluster: dict) -> bool:
+    try:
+        policy.validate_symptom(cluster.get("symptom"))
+    except policy.ProposalError:
+        return False
+    return True
+
+
 def audit(out: Path, name: str, repo: Path, payload: dict, deadline: float) -> dict:
     return ask(out, name, repo, payload,
                "Audit ALL listed task outcomes, including successes, against rubric, judge reasons and actual "
@@ -229,10 +242,12 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         failures, warnings = evidence.source_failures(source_dir, str(source["run"]["id"]),
                                                     str(source["run"].get("run_attempt", 1)), tasks)
     # Source rows remain individually addressable; repeated failures across days are not independent
-    # baseline reproductions. Agent eligibility is true only if at least one observation is eligible.
+    # baseline reproductions. A failure is agent-eligible only if one of its failed observations is:
+    # a passing day says nothing about whether the failing ones were the agent's fault.
     for failure in failures:
         if "observations" in failure:
-            failure["agent_eligible"] = any(o["agent_eligible"] for o in failure["observations"])
+            failure["agent_eligible"] = any(o["agent_eligible"] for o in failure["observations"]
+                                            if status_fields(o)[0] is not True)
     warnings += [f"Missing artifact for source {s}" for s in source.get("missing_artifacts", [])]
     history = evidence.read_json(source_dir / "history.json") if (source_dir / "history.json").is_file() else {}
     feedback = evidence.read_json(source_dir / "feedback.json") if (source_dir / "feedback.json").is_file() else []
@@ -300,8 +315,9 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         evaluation_issues = {item["task"]: item for item in diagnosis.get("evaluation_issues", [])}
         count = 0
         domain_counts = {d: 0 for d in policy.REPAIR_DOMAINS}
+        # Only a repairable benchmark defect defers agent work; an invalid proposal is rejected below.
         benchmark_targets = {key for c in diagnosis["clusters"] if policy.domain_of(c) == "benchmark"
-                             and c["judge_review"] == "supported" for key in c["targets"]}
+                             and c["judge_review"] == "supported" and valid_symptom(c) for key in c["targets"]}
         for cluster in diagnosis["clusters"]:
             attempt = {"title": cluster["title"], "status": "report_only", "cluster": cluster}
             state["attempts"].append(attempt)
@@ -342,14 +358,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                                 "reason": "Runner cannot reproduce environments: " + ", ".join(unavailable)})
                 continue
             domain_targets = allowed_targets if domain == "agent" else {f["key"] for f in failures if f["key"] in executable_tasks}
-            if cluster["targets"] and set(cluster["targets"]).issubset(domain_targets):
+            # Invalid model proposals are rejected before they consume a repair slot or block the run.
+            if not cluster["targets"] or not set(cluster["targets"]).issubset(domain_targets):
+                attempt.update({"status": "invalid_proposal",
+                                "reason": "Repair targets must be observed eligible failures"})
+                continue
+            if domain == "benchmark":
                 try:
-                    plan = policy.select_tasks(cluster, executable_tasks,
-                                               max_tasks=int(os.environ.get("AUTO_IMPROVE_MAX_TASKS", "32")),
-                                               exposed_tasks={f["key"] for f in failures})
-                except ValueError as exc:
-                    attempt.update({"status": "deferred", "reason": str(exc)})
+                    policy.validate_symptom(cluster.get("symptom"))
+                except policy.ProposalError as exc:
+                    attempt.update({"status": "invalid_proposal", "reason": str(exc)})
                     continue
+            try:
+                plan = policy.select_tasks(cluster, executable_tasks,
+                                           max_tasks=int(os.environ.get("AUTO_IMPROVE_MAX_TASKS", "32")),
+                                           exposed_tasks={f["key"] for f in failures})
+            except ValueError as exc:
+                attempt.update({"status": "deferred", "reason": str(exc)})
+                continue
             if domain_counts[domain] >= 2:
                 attempt["status"] = "deferred"
                 continue
@@ -358,8 +384,6 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             cluster_dir = out / f"cluster-{count}"
             cluster_dir.mkdir()
             try:
-                if plan is None:
-                    raise ValueError("Repair targets must be observed eligible failures")
                 source_paths = validated_source_paths(repo, cluster)
                 if domain == "benchmark" and source_paths:
                     suite_paths = ["benchmark/" + tasks[k]["suite"] for k in cluster["targets"]
@@ -447,7 +471,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     attempt["status"] = "no_fix"
                     continue
                 if not all(e["path"] in source_paths for e in patch["edits"]):
-                    raise ValueError("Patch escapes diagnosed paths")
+                    raise policy.ProposalError("Patch escapes diagnosed paths")
                 changed = policy.apply_edits(candidate_repo, patch["edits"])
                 checks = policy.verification_commands(changed)
                 for index, check in enumerate(checks):
@@ -517,6 +541,9 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             except InterruptedError:
                 attempt["status"] = "interrupted"
                 raise
+            except policy.ProposalError as exc:
+                # The model proposed something policy forbids; reject it without blocking siblings.
+                attempt.update({"status": "invalid_proposal", "error": str(exc)})
             except (ValueError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
                 attempt.update({"status": "inconclusive", "error": str(exc)})
             finally:
@@ -593,7 +620,7 @@ def cli() -> int:
     # the workflow publishes whenever ready > 0, and the publisher revalidates every one.
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-            stream.write(f"ready={sum(a['status'] in {'ready', 'issue_ready'} for a in state['attempts'])}\n")
+            stream.write(f"ready={sum(a['status'] in PUBLISHABLE for a in state['attempts'])}\n")
     return 1 if state["status"] in {"blocked", "error", "interrupted", "insufficient_evidence"} else 0
 
 

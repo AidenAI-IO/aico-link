@@ -54,8 +54,11 @@ def run_identity(run: dict) -> str:
     return f"{run['id']}-{run.get('run_attempt', 1)}"
 
 
-def extract_archive(data: bytes, destination: Path) -> None:
-    """Treat artifacts as data, rejecting zip-slip, symlinks, and oversized entries."""
+def extract_archive(data: bytes, destination: Path, members: set[str] | None = None) -> None:
+    """Treat artifacts as data, rejecting zip-slip, symlinks, and oversized entries.
+
+    With members, only those top-level files are extracted.
+    """
     destination.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         if sum(info.file_size for info in archive.infolist()) > MAX_ARCHIVE_BYTES:
@@ -66,7 +69,8 @@ def extract_archive(data: bytes, destination: Path) -> None:
             if (path.is_absolute() or ".." in path.parts or "\\" in info.filename or
                     (stat.S_IFMT(mode) not in {0, stat.S_IFREG, stat.S_IFDIR})):
                 raise ValueError("Unsafe artifact path")
-        archive.extractall(destination)
+        archive.extractall(destination, members=None if members is None else
+                           [info for info in archive.infolist() if info.filename in members])
 
 
 class GitHub:
@@ -111,7 +115,18 @@ class GitHub:
                 item["reviews"] = self.pages(f"pulls/{item['number']}/reviews")
         return list(items.values())
 
-    def download(self, artifact: dict, destination: Path) -> None:
+    def auto_improve_artifacts(self, cutoff: datetime) -> list[dict]:
+        """Artifacts of recent auto-improve runs, newest first.
+
+        Listing these runs is bounded by the auto-improve schedule; paging the
+        repository-wide artifact list would scale with every other workflow.
+        """
+        created = urllib.parse.quote(">=" + cutoff.strftime("%Y-%m-%d"))
+        runs = self.pages(f"actions/workflows/auto-improve.yml/runs?created={created}", "workflow_runs")
+        return [artifact for run in runs
+                for artifact in self.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")]
+
+    def download(self, artifact: dict, destination: Path, members: set[str] | None = None) -> None:
         if artifact.get("expired") or artifact.get("size_in_bytes", 0) > MAX_ARCHIVE_BYTES:
             raise ValueError("Artifact expired or exceeds transfer budget")
         # GitHub redirects to a signed blob URL. Do not forward its bearer token there.
@@ -133,7 +148,7 @@ class GitHub:
             data = response.read(MAX_ARCHIVE_BYTES + 1)
         if len(data) > MAX_ARCHIVE_BYTES:
             raise ValueError("Artifact exceeds transfer budget")
-        extract_archive(data, destination)
+        extract_archive(data, destination, members)
 
     def discover(self, branch: str, requested: tuple[str, ...] = (), delay_hours: float = 3,
                  *, include_processed: bool = False, limit: int = 13) -> dict | None:
@@ -141,8 +156,8 @@ class GitHub:
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         created = urllib.parse.quote(">=" + cutoff.strftime("%Y-%m-%d"))
         runs = self.pages(f"actions/workflows/benchmark.yml/runs?event=schedule&created={created}", "workflow_runs")
-        # Artifacts are newest first; old expired entries do not affect recent claims.
-        artifacts = self.pages("actions/artifacts", "artifacts", cutoff=cutoff)
+        artifacts = self.auto_improve_artifacts(cutoff)
+        # Only a settled run claims its sources; auto-improve-retry-* artifacts keep them eligible.
         processed = {identity for a in artifacts
                      if not a.get("expired") and a["name"].startswith("auto-improve-source-")
                      for identity in a["name"].removeprefix("auto-improve-source-").split("__")}

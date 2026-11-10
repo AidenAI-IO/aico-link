@@ -6,12 +6,15 @@ import subprocess
 import time
 
 from ci.auto_improve import evidence, execution, policy, review
+from runner.trace import tool_result_failed
 
 
 def measure(row: dict, symptom: dict) -> dict:
     root = Path(row["evidence"])
     traces = [evidence.read_json(p) for p in sorted(root.glob("tasks/**/trace.json"))]
-    return {**row, "symptom_evidence": policy.symptom_matches(symptom, row, traces)}
+    failures = sum(isinstance(result, dict) and tool_result_failed(result)
+                   for trace in traces for result in trace.get("tool_results") or [])
+    return {**row, "symptom_evidence": policy.symptom_matches(symptom, row, traces), "tool_failures": failures}
 
 
 def repair(repo: Path, base: str, out: Path, attempt: dict, tasks: dict,
@@ -67,27 +70,39 @@ def repair(repo: Path, base: str, out: Path, attempt: dict, tasks: dict,
             attempt["status"] = "no_fix"
             return
         if any(e["path"] not in paths for e in patch["edits"]):
-            raise ValueError("Patch escapes diagnosed paths")
+            raise policy.ProposalError("Patch escapes diagnosed paths")
         # The diagnosed files alone are editable; extra target suites are review context.
         if any(e["path"] not in cluster["source_paths"] for e in patch["edits"]):
-            raise ValueError("Benchmark patch escapes diagnosed source files")
+            raise policy.ProposalError("Benchmark patch escapes diagnosed source files")
         changed = policy.apply_edits(candidate_repo, patch["edits"], "benchmark")
         contracts = [change for p in changed for change in policy.contract_changes(
             p, (baseline_repo / p).read_text(), (candidate_repo / p).read_text())]
         candidate_tasks = evidence.catalog_tasks(candidate_repo)
         removed = sorted(k for keys in plan.values() for k in keys if k not in candidate_tasks)
         if set(removed) - set(plan["targets"]):
-            raise ValueError("Benchmark patch removes regression coverage")
+            raise policy.ProposalError("Benchmark patch removes regression coverage")
         if removed and not contracts:
-            raise ValueError("Task removal lacks a recorded contract change")
+            raise policy.ProposalError("Task removal lacks a recorded contract change")
         attempt.update({"contract_changes": contracts, "removed_tasks": removed})
         agent_diff = subprocess.check_output(["git", "diff", "--name-only", "--", "src/agent"], cwd=candidate_repo, text=True).splitlines()
         if any(not p.startswith("src/agent/cmd/benchmark-mcu/") for p in agent_diff):
-            raise ValueError("Benchmark repair changed the agent")
+            raise policy.ProposalError("Benchmark repair changed the agent")
         checks = policy.verification_commands(changed)
+        # Repository checks run inside the pinned test container, without credentials.
         for index, check in enumerate(checks):
             execution.command(check, cwd=candidate_repo, log=out / f"check-{index}.log",
                               timeout=deadline - time.monotonic(), env=execution.check_environment())
+        patch_path = out / "candidate.patch"
+        patch_path.write_text(subprocess.check_output(["git", "diff", "--binary", "--", *changed], cwd=candidate_repo, text=True))
+        attempt.update({"patch": str(patch_path.relative_to(out.parent)), "patch_sha256": policy.digest(patch_path.read_text()),
+                        "paths": changed, "check_passed": True, "checks": checks,
+                        "reproduction": {k: sum(bool(r["symptom_evidence"]) for r in rows) for k, rows in baseline.items()}})
+        host_paths = [p for p in changed if policy.runs_on_host(p)]
+        if host_paths:
+            # Executing this candidate would run model-authored code on the runner host with
+            # credentials and Docker. A person verifies it instead; nothing below runs it.
+            attempt.update({"status": "proposal_ready", "host_paths": host_paths})
+            return
         execution.prepare(candidate_repo, images[1], environments, out / "candidate-build", deadline - time.monotonic(),
                           mobilegym_image=mobile_images[1] if mobile_images else None)
         for group, keys in plan.items():
@@ -102,8 +117,6 @@ def repair(repo: Path, base: str, out: Path, attempt: dict, tasks: dict,
         if not comparison["passed"]:
             attempt["status"] = "rejected"
             return
-        patch_path = out / "candidate.patch"
-        patch_path.write_text(subprocess.check_output(["git", "diff", "--binary", "--", *changed], cwd=candidate_repo, text=True))
         verdict = ask(out, "verification-review", repo,
             {"domain": "benchmark", "allowed_paths": paths, "cluster": cluster, "plan": plan,
              "candidate_diff": patch_path.read_text(), "comparison": comparison, "baseline": baseline,
@@ -118,9 +131,7 @@ def repair(repo: Path, base: str, out: Path, attempt: dict, tasks: dict,
         if not verdict["supported"]:
             attempt["status"] = "grading_disputed"
             return
-        attempt.update({"status": "ready", "patch": str(patch_path.relative_to(out.parent)),
-                        "patch_sha256": policy.digest(patch_path.read_text()), "paths": changed,
-                        "audit": verdict, "check_passed": True, "checks": checks})
+        attempt.update({"status": "ready", "audit": verdict})
     finally:
         warning = execution.remove_images(images + mobile_images)
         if warning:

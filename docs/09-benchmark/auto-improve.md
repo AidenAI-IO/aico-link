@@ -39,8 +39,8 @@ Diagnosis routes supported findings into separate domains:
 
 | Domain | Scope | Acceptance | Publication |
 | --- | --- | --- | --- |
-| Agent | Existing agent Go implementation and skills | Unmodified benchmark; paired task passes improve with no observed regression | Draft agent PR |
-| Benchmark | Runner, CI helpers, environment bridges/images, MCU emulator and suite definitions | Same agent/settings; diagnosed symptom occurs in at least 2/3 baseline attempts and 0/3 candidate attempts; regression tasks gain no symptom or unevaluable outcomes | Separate draft benchmark PR and evidence issue |
+| Agent | Existing agent Go implementation and skills, excluding benchmark-mode code | Unmodified benchmark; paired task passes improve with no regression beyond three-repeat variance | Draft agent PR |
+| Benchmark | Runner, CI helpers, environment bridges/images, MCU emulator and suite definitions | Same agent/settings; diagnosed symptom occurs in at least 2/3 baseline attempts and 0/3 candidate attempts; regression tasks gain no symptom or unevaluable outcomes. Changes to host-executed code are not run (see below) | Separate draft benchmark PR and evidence issue |
 | External code | Hardware services, firmware, apps or other code whose effect cannot be verified here | Supported diagnosis with source/evidence references | Issue only |
 
 At most two repair clusters per domain share the existing five-hour execution
@@ -50,11 +50,29 @@ agent candidate never consumes a benchmark candidate's changes. Neither domain
 can edit this pipeline, workflow files, tests, dependencies or vendored content.
 
 Benchmark repairs declare a concrete symptom: setup failure, judge error,
-environment failure, matching tool-result text, hard assertion, or metrics error
-text. Three fresh baseline attempts must reproduce it before patching. Judge
+environment failure, matching failed-tool-result text, hard assertion, or metrics
+error text. Three fresh baseline attempts must reproduce it before patching. Judge
 errors are not rejudged on this track. Baseline and candidate have independent
 checkouts and daemon/MobileGym image tags. Checks include `make check` and the
-full `benchmark-python` suite; Go edits also require `go-unit`.
+full `benchmark-python` suite; Go edits also require `go-unit`. Checks run in the
+pinned test container and receive no model credentials. A `tool_error` symptom
+counts only results the runner classifies as failed, and the fix must also reduce
+the number of failed tool results, so rewording an error message is not a repair.
+
+Benchmark code splits by where it runs. Suite data, daemon images, the daemon
+entrypoint, the MCU emulator, and MobileGym bridge code run only inside disposable
+containers; repairs there are executed and verified as described. The runner,
+CI helpers, and the ADB, desktop, and vPhone bridges run on the self-hosted runner,
+which holds model credentials and the Docker socket. Model-authored changes there
+are never executed: after the reproduction audit and checks pass, the candidate is
+`proposal_ready` and is published as a draft PR marked "Not executed: human
+verification required", listing the host-executed files and the publisher's
+recomputed baseline reproduction. The publisher refuses a host-path change that
+claims to have been executed.
+
+Changes to code that records the measured fields (`runner/main.py`, `runtask.py`,
+`scenario.py`, `trace.py`, `harness.py`), like grading code, are listed as
+evaluation-contract changes, because they could hide a symptom without fixing it.
 
 The same agent runs candidate tasks after the repair. Pass rates are reported,
 not used as the benchmark acceptance criterion. Final review inspects every task
@@ -69,6 +87,14 @@ only for a reproduced target; removing regression coverage blocks the candidate.
 A supported scenario-value review is required before a removal can become ready.
 No PR is merged automatically. Publication is bounded to two PRs per domain per
 invocation; issue markers make retries idempotent.
+
+Only a settled run marks its sources processed. A main run whose final status is
+`completed`, `diagnosed`, or `no_failures` uploads `auto-improve-source-<identity>`;
+an errored, blocked, interrupted, or cancelled run uploads `auto-improve-retry-<identity>`,
+which keeps the same sources eligible for the next run. A cluster whose diagnosis
+violates policy (unobserved or ineligible targets, no observable benchmark symptom,
+a patch outside its paths) is recorded as `invalid_proposal`. It uses no repair
+slot and does not block the run; only execution failures block.
 
 ```mermaid
 flowchart TD
@@ -127,7 +153,8 @@ Use `auto-improve-test/diagnose/initial` for diagnosis and
 never publish PRs, even when reproduction and verification pass.
 Test artifacts use `auto-improve-test-source-<run_id>-<attempt>` and do not mark
 main's production runs processed. Repeated branch tests may reuse an already
-processed source. Production artifacts use `auto-improve-source-...`.
+processed source. Production artifacts use `auto-improve-source-...`, or
+`auto-improve-retry-...` when the run did not settle.
 
 1. Configure the review model/key/endpoint as described below and push the
    implementation to the diagnosis test branch. Discovery requires an available
@@ -314,8 +341,16 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   container, and synchronous-write latency snapshot without command arguments, to
   distinguish runner contention from candidate regressions. Checks set
   `AICO_TEST_TMPFS=1`, so test scratch files and Go test binaries use an in-memory
-  directory inside the pinned test container. Test commands and assertions are
+  directory inside the pinned test container. `AICO_TEST_CACHE_DIR` points every
+  candidate checkout at one persistent Go and uv download cache on the runner. Test commands and assertions are
   unchanged; this removes host disk-sync latency from timing-sensitive tests.
+- Paired comparison uses three repeats per side, which cannot separate a single
+  lost pass from model variance. A task regresses when it loses two or more passes;
+  the neighbor and held-out set regresses when its total passes drop by more than
+  max(2, 5% of its attempts). Targets must still reach at least 2/3.
+- Agent fixes cannot edit benchmark-mode files (any `benchmark*` path under
+  `src/agent`) or add references to the benchmark, so a fix cannot special-case
+  evaluation.
 - Every candidate runs `make check`. Any Go file change also requires
   `bash scripts/run_tests_in_docker.sh --suite go-unit`, because the quick
   profile does not exercise the full Go unit suite. The publisher independently
@@ -359,8 +394,12 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   gaps that could hide a regression or explain a fix remain blocking.
   This is a regression holdback, not a new statistically representative baseline.
 - Publication independently recomputes the gate and validates the patch against
-  the tested base. If `main` advanced, publication stops and requires
-  a fresh run. This conservative first version does not rebase automatically.
+  the tested base. If `main` advanced during the run, the publisher three-way
+  merges each validated file onto main's current version; when that merges cleanly
+  and passes the same content checks, the commit is created on top of the current
+  `main` and the PR states which base the checks and paired tasks ran on, so CI
+  checks the new base. A conflict, including an edit on an adjacent line, requires
+  a fresh run.
 - Reports go to the Actions job summary and artifacts. The summary explicitly
   states execution status and validated-candidate count. A checkout/build/task
   execution error marks the run `blocked` and returns a nonzero exit code;

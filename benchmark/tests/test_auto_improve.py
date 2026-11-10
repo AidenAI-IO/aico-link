@@ -1,6 +1,7 @@
 """Behavioral contracts for unattended improvements, using synthetic evidence only."""
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta, timezone
 import io
 import json
@@ -57,6 +58,29 @@ def test_window_keeps_each_days_outcome_and_exact_task_definition(tmp_path):
         ("41-1", "failed", ["41"]), ("42-1", "passed", ["42"])]
 
 
+@pytest.mark.parametrize("failed_eligible", [False, True])
+def test_passing_days_do_not_make_a_failure_agent_eligible(tmp_path, monkeypatch, failed_eligible):
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    source = tmp_path / "source"
+    source.mkdir()
+    (source / "source.json").write_text(json.dumps({"sources": [
+        {"run": {"id": i, "run_attempt": 1, "head_sha": "s", "head_branch": "main"}} for i in (41, 42)]}))
+    failed = {"status": "failed" if failed_eligible else "judge_error",
+              "metrics": {"agent_eligible": failed_eligible}}
+    observations = [{**failed, "source": "41-1"}, {"status": "passed", "metrics": {}, "source": "42-1"}]
+    monkeypatch.setattr(driver, "git", lambda *a: "base")
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: {})
+    monkeypatch.setattr(driver.evidence, "source_failures_window", lambda *a: (
+        [{"key": "a:t", "observations": [dict(o, agent_eligible=driver.status_fields(o)[2]) for o in observations]}], []))
+    seen = {}
+    monkeypatch.setattr(driver, "ask", lambda _o, _n, _r, payload, *a, **k: seen.update(payload) or {
+        "summary": "s", "clusters": []})
+    driver.run(tmp_path, source, tmp_path / "out", mode="diagnose")
+    assert seen["failures"][0]["agent_eligible"] is failed_eligible
+
+
 @pytest.mark.parametrize("path,domain,allowed", [
     ("benchmark/runner/judge.py", "benchmark", True),
     ("benchmark/suites/example.json", "benchmark", True),
@@ -72,14 +96,17 @@ def test_repair_domains_cannot_change_each_other_or_their_acceptance_gate(path, 
     assert policy.edit_target(path, domain) is allowed
 
 
-@pytest.mark.parametrize("mutation", [None, "not_reproduced", "remaining", "missing", "new_error", "scores_drop"])
+@pytest.mark.parametrize("mutation", [None, "not_reproduced", "remaining", "missing", "new_error", "scores_drop",
+                                      "reworded"])
 def test_benchmark_acceptance_measures_symptom_not_pass_rate(mutation):
     plan, baseline, candidate = pair()
     symptom = {"kind": "tool_error", "pattern": "socket missing"}
     for side in (baseline, candidate):
         for key, rows in side.items():
             for r in rows:
-                r["symptom_evidence"] = ["socket missing"] if side is baseline and key == "phone:tap" else []
+                failing = side is baseline and key == "phone:tap"
+                r["symptom_evidence"] = ["socket missing"] if failing else []
+                r["tool_failures"] = int(failing)
     if mutation == "not_reproduced":
         baseline["phone:tap"][0]["symptom_evidence"] = []
         baseline["phone:tap"][1]["symptom_evidence"] = []
@@ -93,6 +120,10 @@ def test_benchmark_acceptance_measures_symptom_not_pass_rate(mutation):
         for rows in candidate.values():
             for r in rows:
                 r.update(status="failed", metrics={"success": False, "agent_eligible": True})
+    elif mutation == "reworded":
+        # Changing the error text hides the pattern but leaves the tool failing.
+        for r in candidate["phone:tap"]:
+            r["tool_failures"] = 1
     verdict = policy.compare_symptom(plan, symptom, baseline, candidate, [])
     assert verdict["passed"] is (mutation in {None, "scores_drop"})
 
@@ -103,6 +134,17 @@ def test_contract_changes_flag_task_removal_and_scoring_changes():
     changes = policy.contract_changes("benchmark/suites/example.json", json.dumps(before), json.dumps(after))
     assert any("removed task removed" in c for c in changes)
     assert any("changed expected_answer" in c for c in changes)
+    # Code that records the measured fields could hide a symptom without fixing it.
+    assert policy.contract_changes("benchmark/runner/main.py", "a = 1\n", "a = 2\n")
+    assert not policy.contract_changes("benchmark/runner/environment.py", "a = 1\n", "a = 2\n")
+
+
+def test_tool_error_symptom_matches_only_failed_tool_results():
+    symptom = {"kind": "tool_error", "pattern": "socket"}
+    ok = {"content": json.dumps({"ok": True, "text": "socket ready"})}
+    failed = {"content": json.dumps({"ok": False, "error": "socket missing"})}
+    assert policy.symptom_matches(symptom, {}, [{"tool_results": [ok]}]) == []
+    assert policy.symptom_matches(symptom, {}, [{"tool_results": [ok, failed]}]) == [failed["content"]]
 
 
 def test_gate_requires_complete_paired_evidence():
@@ -112,6 +154,22 @@ def test_gate_requires_complete_paired_evidence():
     result = policy.compare(plan, baseline, candidate)
     assert not result["passed"]
     assert any("incomplete" in reason for reason in result["reasons"])
+
+
+def test_gate_tolerates_single_pass_variance_but_not_systematic_regressions():
+    plan, baseline, candidate = pair()
+    plan["held_out"] = [f"memory:{i}" for i in range(20)]
+    for key in plan["held_out"]:
+        baseline[key] = [row(i) for i in range(1, 4)]
+        candidate[key] = [row(i) for i in range(1, 4)]
+    # One lost pass on each of two tasks is ordinary three-repeat noise.
+    candidate["memory:0"][0] = row(1, False)
+    candidate["phone:type"][0] = row(1, False)
+    assert policy.compare(plan, baseline, candidate)["passed"]
+    # Many single-pass losses together are a regression even though no task lost two.
+    for key in plan["held_out"][1:4]:
+        candidate[key][0] = row(1, False)
+    assert any("regression set" in r for r in policy.compare(plan, baseline, candidate)["reasons"])
 
 
 @pytest.mark.parametrize("mutation", ["duplicate", "judge", "infra", "regression", "missing_cost", "cost", "no_improvement"])
@@ -125,6 +183,7 @@ def test_gate_rejects_unmeasured_or_regressing_changes(mutation):
         candidate["phone:tap"][0]["metrics"]["agent_eligible"] = False
     elif mutation == "regression":
         candidate["phone:type"][0] = row(1, False)
+        candidate["phone:type"][1] = row(2, False)
     elif mutation == "missing_cost":
         candidate["phone:tap"][0]["metrics"]["total_tokens"] = None
     elif mutation == "cost":
@@ -158,10 +217,18 @@ def test_code_patches_are_allowed_and_atomic(tmp_path, path):
     "src/agent/internal/../go.mod", "src/agent/internal/vendor/dep/code.go",
     "src/agent/internal/testdata/example.go", "src/agent/internal//agent/code.go",
     "src/agent/internal/agent/.cache/code.go", "benchmark/runner/judge.py",
-    "src/agent/cmd/benchmark-mcu/main.go",
+    "src/agent/cmd/benchmark-mcu/main.go", "src/agent/internal/agent/benchmark_mock_tools.go",
     ".github/workflows/ci.yml", "scripts/run_tests_in_docker.sh"])
 def test_edit_scope_preserves_evaluators_tests_dependencies_and_ci(path):
     assert not policy.edit_target(path)
+
+
+def test_agent_changes_cannot_special_case_the_benchmark():
+    path = "src/agent/internal/agent/memory.go"
+    before = "package agent\nfunc save() bool { return false }\n"
+    with pytest.raises(policy.ProposalError, match="benchmark-specific"):
+        policy.validate_change(path, before, before.replace("return false", "return cfg.Benchmark.Token != \"\""))
+    policy.validate_change(path, before, before.replace("false", "true"))
 
 
 def test_selection_defers_instead_of_dropping_neighbors():
@@ -229,6 +296,18 @@ def test_execution_rejects_unintended_triggers(event, ref):
         policy.execution_policy(event, ref, "diagnose")
 
 
+@pytest.mark.parametrize("ref,status,expected", [
+    ("refs/heads/main", "completed", "auto-improve-source-"),
+    ("refs/heads/main", "diagnosed", "auto-improve-source-"),
+    ("refs/heads/main", "blocked", "auto-improve-retry-"),
+    ("refs/heads/main", "error", "auto-improve-retry-"),
+    ("refs/heads/main", "", "auto-improve-retry-"),
+    ("refs/heads/auto-improve-test/improve/x", "completed", "auto-improve-test-source-"),
+])
+def test_only_settled_main_runs_mark_sources_processed(ref, status, expected):
+    assert policy.artifact_name(ref, "41-1__42-1", status) == expected + "41-1__42-1"
+
+
 def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
@@ -238,7 +317,7 @@ def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypat
                                     "refs/heads/auto-improve-test/diagnose/first", "--mode", "improve"])
     assert control.cli() == 0
     values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-    assert values == {"value": "diagnose", "publish": "false", "artifact_prefix": "auto-improve-test-source-"}
+    assert values == {"value": "diagnose", "publish": "false"}
 
 
 def git_fixture(*args, cwd):
@@ -309,7 +388,7 @@ def test_driver_reports_checkout_timeout_as_blocked(tmp_path, monkeypatch, branc
 
 
 def test_unrunnable_clusters_do_not_consume_repair_slots(tmp_path, monkeypatch):
-    """An ADB cluster without a fixture or an oversized plan is skipped before checkout."""
+    """Unrunnable or invalid clusters are skipped before checkout and never block the run."""
     for kind in ("AGENT", "JUDGE"):
         for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
             monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
@@ -324,7 +403,10 @@ def test_unrunnable_clusters_do_not_consume_repair_slots(tmp_path, monkeypatch):
                   "other:held": {"case_id": "other", "environment": "isolated", "runnable": True, "task": {}}})
     clusters = [{"title": title, "category": "task", "cause": "cause", "judge_review": "supported",
                  "fix_target": "go_code", "targets": targets, "neighbors": [], "source_paths": ["x.go"],
-                 "evidence": ["trace"]} for title, targets in (("phone", ["phone:type"]), ("big", ["big:0"]))]
+                 "evidence": ["trace"]} for title, targets in (("phone", ["phone:type"]), ("big", ["big:0"]),
+                                                               ("unobserved", ["other:held"]))]
+    clusters.append({**clusters[1], "title": "no symptom", "fix_target": "benchmark_code",
+                     "symptom": {"kind": "none", "pattern": ""}})
     seen = {}
     monkeypatch.setattr(driver, "git", lambda *a: "base")
     monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
@@ -337,7 +419,8 @@ def test_unrunnable_clusters_do_not_consume_repair_slots(tmp_path, monkeypatch):
     monkeypatch.setattr(driver, "checkout", lambda *a, **k: pytest.fail("must not prepare a checkout"))
     state = driver.run(repo, source, out, mode="improve")
     assert seen["diagnosis"]["repairable_environments"] == ["isolated", "mobilegym"]
-    assert [a["status"] for a in state["attempts"]] == ["environment_unavailable", "deferred"]
+    assert [a["status"] for a in state["attempts"]] == ["environment_unavailable", "deferred",
+                                                        "invalid_proposal", "invalid_proposal"]
     assert "adb" in state["attempts"][0]["reason"] and "budget" in state["attempts"][1]["reason"]
     assert state["status"] == "completed" and not list(out.glob("cluster-*"))
 
@@ -679,14 +762,19 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
                               for n in (1, 2)]
 
 
-@pytest.mark.parametrize("remove_task", [False, True])
-def test_benchmark_repair_keeps_agent_fixed_and_verifies_before_ready(tmp_path, monkeypatch, remove_task):
+FAILED_TOOL = {"is_error": True, "content": "socket missing"}
+
+
+@pytest.mark.parametrize("change", ["contained", "remove_task", "host"])
+def test_benchmark_repair_keeps_agent_fixed_and_verifies_before_ready(tmp_path, monkeypatch, change):
     from ci.auto_improve.benchmark_repair import repair
+    remove_task = change == "remove_task"
     repo, out = tmp_path / "repo", tmp_path / "result/cluster-1"
     repo.mkdir(); out.mkdir(parents=True)
-    path = "benchmark/suites/example.json" if remove_task else "benchmark/runner/environment.py"
-    before = json.dumps({"tasks": [{"id": "t", "rubric": []}]}) if remove_task else "message = 'socket missing'\n"
-    after = json.dumps({"tasks": []}) if remove_task else "message = 'ready'\n"
+    path = {"remove_task": "benchmark/suites/example.json", "host": "benchmark/runner/environment.py",
+            "contained": "benchmark/docker/agent-daemon-entrypoint.sh"}[change]
+    before = json.dumps({"tasks": [{"id": "t", "rubric": []}]}) if remove_task else "message='socket missing'\n"
+    after = json.dumps({"tasks": []}) if remove_task else "message='ready'\n"
     file = repo / path
     file.parent.mkdir(parents=True); file.write_text(before)
     plan = {"targets": ["a:t"], "neighbors": ["a:n"], "held_out": ["b:h"]}
@@ -708,8 +796,8 @@ def test_benchmark_repair_keeps_agent_fixed_and_verifies_before_ready(tmp_path, 
         events.append(f"run:{root.name}:{key}")
         evidence_dir = dest / "evidence/tasks/t"
         evidence_dir.mkdir(parents=True)
-        content = "socket missing" if root.name == "baseline" and key == "a:t" else "ready"
-        (evidence_dir / "trace.json").write_text(json.dumps({"tool_results": [{"content": content}]}))
+        result = FAILED_TOOL if root.name == "baseline" and key == "a:t" else {"content": "ready"}
+        (evidence_dir / "trace.json").write_text(json.dumps({"tool_results": [result]}))
         return {**row(repeat), "evidence": str(dest / "evidence")}
     monkeypatch.setattr(driver, "checkout", checkout)
     monkeypatch.setattr(driver, "ask", ask)
@@ -720,11 +808,17 @@ def test_benchmark_repair_keeps_agent_fixed_and_verifies_before_ready(tmp_path, 
     monkeypatch.setattr(evidence, "catalog_tasks", lambda _: {k: v for k, v in tasks.items() if not (remove_task and k == "a:t")})
     monkeypatch.setattr(subprocess, "check_output", lambda cmd, **kw: "" if "--name-only" in cmd else "diff\n")
     repair(repo, "base", out, attempt, tasks, [path], time.monotonic() + 1000)
+    assert attempt["check_passed"] and attempt["reproduction"] == {"a:t": 3}
+    assert not (out / "baseline").exists() and not (out / "candidate").exists()
+    if change == "host":
+        # Model-authored host code is proposed for human verification, never executed.
+        assert attempt["status"] == "proposal_ready" and attempt["host_paths"] == [path]
+        assert not any(e.startswith("run:candidate") for e in events) and "verification-review" not in events
+        return
     assert attempt["status"] == "ready" and attempt["comparison"]["passed"]
     assert events.index("run:baseline:a:t") < events.index("fix") < events.index("check") < events.index("verification-review")
     assert bool(attempt["contract_changes"]) is remove_task
     assert attempt["removed_tasks"] == (["a:t"] if remove_task else [])
-    assert not (out / "baseline").exists() and not (out / "candidate").exists()
 
 
 def test_raw_artifact_paths_cannot_escape_run(tmp_path):
@@ -894,6 +988,8 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branc
             return []
         def pages(self, *args, **kwargs):
             return []
+        def auto_improve_artifacts(self, cutoff):
+            return []
     out = tmp_path / "source"
     result = control.discover(API(), out, "", "main")
     assert result["identity"] == "41-1__42-1"
@@ -901,8 +997,9 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branc
     assert json.loads((out / "history.json").read_text()) == {"history": [42]}
 
 
-@pytest.mark.parametrize("go_code,benchmark", [(False, False), (True, False), (False, True)])
-def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkeypatch, go_code, benchmark):
+@pytest.mark.parametrize("go_code,benchmark,proposal", [(False, False, False), (True, False, False),
+                                                       (False, True, False), (False, True, True)])
+def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkeypatch, go_code, benchmark, proposal):
     repo = tmp_path / "repo"
     repo.mkdir()
     import os
@@ -912,10 +1009,10 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
     def local_git(*args):
         return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
     local_git("init", "-q")
-    path = ("benchmark/runner/environment.py" if benchmark else
+    path = ("benchmark/runner/environment.py" if proposal else "benchmark/docker/agent-daemon-entrypoint.sh" if benchmark else
             "src/agent/internal/agent/navigation.go" if go_code else "src/agent/config/skills/test/SKILL.md")
-    before = "package agent\nfunc retries() int { return 0 }\n" if go_code else "Observe first.\n"
-    after = before.replace("return 0", "return 1") if go_code else "Observe and verify first.\n"
+    before = "package agent\nfunc retries() int { return 0 }\n" if go_code else "Observe first.\n\nKeep it short.\n"
+    after = before.replace("return 0", "return 1") if go_code else before.replace("Observe", "Observe and verify")
     target = repo / path
     target.parent.mkdir(parents=True)
     target.write_text(before)
@@ -939,10 +1036,12 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
                     directory = out / "cluster-1" / f"{side}-runs" / policy.digest(key)[:12] / str(r["repeat"]) / "evidence"
                     task = directory / "tasks/t"
                     task.mkdir(parents=True)
-                    content = "socket missing" if side == "baseline" and key in plan["targets"] else "ready"
-                    (task / "trace.json").write_text(json.dumps({"tool_results": [{"content": content}]}))
+                    failing = side == "baseline" and key in plan["targets"]
+                    result = FAILED_TOOL if failing else {"content": "ready"}
+                    (task / "trace.json").write_text(json.dumps({"tool_results": [result]}))
                     (directory / "results.jsonl").write_text(json.dumps(r) + "\n")
-                    r.update(evidence=str(directory), symptom_evidence=[content] if content == "socket missing" else [])
+                    r.update(evidence=str(directory), symptom_evidence=[result["content"]] if failing else [],
+                             tool_failures=int(failing))
         comparison = policy.compare_symptom(plan, cluster["symptom"], baseline, candidate, [])
         monkeypatch.setattr(evidence, "catalog_tasks", lambda _: {k: {} for keys in plan.values() for k in keys})
     else:
@@ -952,22 +1051,35 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
                               "patch": "candidate.patch", "patch_sha256": policy.digest(patch), "paths": [path],
                               "check_passed": True, "checks": policy.verification_commands([path]),
                               "audit": {"supported": True}, "plan": plan, "comparison": comparison}]}
-    for name, value in (("manifest", manifest), ("baseline", baseline), ("candidate", candidate), ("verification-review", {"supported": True})):
+    if proposal:
+        # Only targets are reproduced; a proposal never runs the candidate or regression tasks.
+        baseline = {key: baseline[key] for key in plan["targets"]}
+        manifest["attempts"][0].update(status="proposal_ready", host_paths=[path], reproduction={"phone:tap": 3},
+                                       audit={}, comparison={})
+    for name, value in (("manifest", manifest), ("baseline", baseline), ("candidate", candidate),
+                        ("verification-review", {"supported": True}), ("reproduction-review", {"supported": True})):
         (out / f"{name}.json").write_text(json.dumps(value))
     calls = []
+    main = {"sha": base, "content": before}
     class API:
         repository = "org/repo"
         def issues(self): return []
         def pages(self, *args): return []
         def request(self, endpoint, payload=None):
             calls.append((endpoint, payload))
-            if endpoint == "git/ref/heads/main": return {"object": {"sha": base}}
+            if endpoint == "git/ref/heads/main": return {"object": {"sha": main["sha"]}}
+            if endpoint.startswith("contents/"):
+                assert endpoint.endswith(f"?ref={main['sha']}")
+                return {"type": "file", "encoding": "base64",
+                        "content": base64.b64encode(main["content"].encode()).decode()}
             if endpoint.startswith("git/commits/"): return {"tree": {"sha": "old-tree"}}
             if endpoint == "git/blobs":
-                assert payload["content"] == after
+                assert payload["content"] == main.get("expected", after)
                 return {"sha": "blob"}
             if endpoint == "git/trees": return {"sha": "tree"}
-            if endpoint == "git/commits": return {"sha": "commit"}
+            if endpoint == "git/commits":
+                assert payload["parents"] == [main["sha"]]
+                return {"sha": "commit"}
             if endpoint == "git/refs":
                 assert payload["ref"].startswith("refs/heads/auto-improve/")
                 return {}
@@ -980,6 +1092,27 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
             pytest.fail(endpoint)
     assert control.publish(API(), repo, out, "main") == ["https://github.com/org/repo/pull/1"]
     assert target.read_text() == before
+    body = next(payload for endpoint, payload in calls if endpoint == "pulls")["body"]
+    assert ("Not executed: human verification required" in body) is proposal
+    if not (go_code or benchmark):
+        # main advanced during the run: the same patch lands on the new main when it applies.
+        main.update(sha="newer", content=before + "Footer added on main.\n",
+                    expected=after + "Footer added on main.\n")
+        calls.clear()
+        assert control.publish(API(), repo, out, "main") == ["https://github.com/org/repo/pull/1"]
+        assert "`main` advanced to `newer`" in next(p for e, p in calls if e == "pulls")["body"]
+        main.update(content="Observe nothing.\n\nKeep it short.\n")
+        with pytest.raises(ValueError, match="rerun validation"):
+            control.publish(API(), repo, out, "main")
+        main.update(sha=base, content=before)
+        main.pop("expected")
+    if proposal:
+        # A host-path change claiming to have been executed is refused.
+        manifest["attempts"][0]["status"] = "ready"
+        (out / "manifest.json").write_text(json.dumps(manifest))
+        with pytest.raises(ValueError, match="only be published as a proposal"):
+            control.publish(API(), repo, out, "main")
+        return
     if benchmark:
         assert any(endpoint == "issues" for endpoint, _ in calls)
         # Tampering with an embedded status must fail against retained raw execution evidence.

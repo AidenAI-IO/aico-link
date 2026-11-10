@@ -68,7 +68,7 @@ func run(ctx context.Context, socket string) error {
 type firmware struct {
 	port net.Conn
 	now  func() time.Time
-	mu   sync.Mutex // serializes frame writes and the timer state
+	mu   sync.Mutex // guards the timer state and event sequence; net.Pipe serializes writes
 	due  time.Time  // zero while the wake timer is inactive
 	seq  byte
 }
