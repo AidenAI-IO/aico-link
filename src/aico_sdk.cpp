@@ -974,6 +974,25 @@ public:
 AudioPlayer::AudioPlayer() : impl_(new AudioPlayerImpl()) {}
 AudioPlayer::~AudioPlayer() { stop(); }
 
+namespace {
+
+// Rates the rv1106-acodec ALSA device accepts exactly on current boards.
+// 12 kHz/24 kHz are advertised by the IP but fall back to 11.025/22.05 here, and
+// rockit's tinyalsa path rejects that mismatch with EINVAL.
+int ao_exact_device_sample_rate(int input_rate) {
+    static const int kExactRates[] = {8000, 16000, 32000, 44100, 48000};
+    for (int rate : kExactRates) {
+        if (rate == input_rate) {
+            return input_rate;
+        }
+    }
+    // Keep AO hardware on 16 kHz so digital loopback stays aligned with the
+    // 16 kHz mic/VQE path while MPI resamples provider-native 24 kHz input.
+    return 16000;
+}
+
+}  // namespace
+
 bool AudioPlayer::init(const AudioConfig& config) {
     if (impl_->initialized) {
         stop();
@@ -1013,12 +1032,17 @@ bool AudioPlayer::init(const AudioConfig& config) {
         strncpy((char*)impl_->attr.u8CardName, config.device_name, sizeof(impl_->attr.u8CardName) - 1);
     }
 
-    // Hardware always opens with 2 channels (rv1106-acodec minimum)
+    const int input_rate = config.sample_rate;
+    const int device_rate = ao_exact_device_sample_rate(input_rate);
+
+    // Hardware always opens with 2 channels (rv1106-acodec minimum).
+    // soundCard.sampleRate is the ALSA/device rate; enSamplerate is the PCM
+    // rate callers push (may differ; EnableReSmp bridges them).
     impl_->attr.soundCard.channels = 2;
-    impl_->attr.soundCard.sampleRate = config.sample_rate;
+    impl_->attr.soundCard.sampleRate = device_rate;
     impl_->attr.soundCard.bitWidth = to_bit_width(config.bit_width);
     impl_->attr.enBitwidth = to_bit_width(config.bit_width);
-    impl_->attr.enSamplerate = (AUDIO_SAMPLE_RATE_E)config.sample_rate;
+    impl_->attr.enSamplerate = (AUDIO_SAMPLE_RATE_E)input_rate;
     impl_->attr.enSoundmode = (config.channels == 1) ? AUDIO_SOUND_MODE_MONO : AUDIO_SOUND_MODE_STEREO;
     impl_->attr.u32PtNumPerFrm = 1024;
     impl_->attr.u32FrmNum = 4;
@@ -1056,12 +1080,16 @@ bool AudioPlayer::init(const AudioConfig& config) {
     chn_enabled = true;
 
     ret = RK_MPI_AO_EnableReSmp(impl_->dev_id, impl_->chn_id,
-                                (AUDIO_SAMPLE_RATE_E)config.sample_rate);
+                                (AUDIO_SAMPLE_RATE_E)input_rate);
     if (ret != RK_SUCCESS) {
         rollback_init();
         return false;
     }
     resmp_enabled = true;
+    if (device_rate != input_rate) {
+        AICO_LOG_INFO("playback", "ao_resampler_enabled",
+                      "input_rate=%d device_rate=%d", input_rate, device_rate);
+    }
 
     if (!configure_ao_volume_curve(impl_->dev_id)) {
         rollback_init();

@@ -1347,8 +1347,9 @@ func realtimeVoiceDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 }
 
 // realtimeVoicePlaybackDeviceFormat leaves SampleRate unset so the managed
-// realtime session follows the provider's native output rate. That avoids
-// userspace 24k/48k→16k resampling on the weak board during playback.
+// realtime session follows the provider's native output rate. audio_service
+// opens an exact ALSA device rate and uses Rockchip AO resampler for 24 kHz
+// input; that keeps the Go userspace 24k→16k resampler off the hot path.
 func realtimeVoicePlaybackDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	format := realtimeVoiceDeviceFormat(cfg)
 	format.SampleRate = 0
@@ -1478,8 +1479,8 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	go streamRealtimeAudio(ctx, recordingAudio, recording.SessionID, chunks, readErrs)
 
 	// Play at the negotiated device output rate. With an unset configured
-	// playback rate above, that matches the provider native rate and keeps
-	// PCM off the userspace resampler.
+	// playback rate above, that matches the provider native rate; audio_service
+	// owns any hardware-rate conversion.
 	outputFormat := realtimeAgentAudioFormat(info.OutputFormatOrDefault(int(cfg.Audio.SampleRateOrDefault())))
 	if outputFormat.SampleRate == 0 {
 		outputFormat = realtimePlaybackOutputFormat(cfg)
