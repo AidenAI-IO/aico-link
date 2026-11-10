@@ -412,8 +412,11 @@ type geminiSession struct {
 	responseMu          sync.Mutex
 	responseActive      bool
 	responseInterrupted bool
-	toolMu              sync.Mutex
-	toolNames           map[string]string
+	// A tool generation ends before the server's automatic tool continuation.
+	// Its turnComplete must not finish the user interaction.
+	toolTurnPending bool
+	toolMu          sync.Mutex
+	toolNames       map[string]string
 	// userTranscript accumulates inputTranscription deltas for the current user
 	// turn. Gemini Live never marks an input transcript as finished, so the turn
 	// boundary is the only place a final transcript can be emitted.
@@ -643,6 +646,7 @@ func (s *geminiSession) translate(body []byte) []Event {
 			s.responseMu.Lock()
 			s.responseActive = false
 			s.responseInterrupted = true
+			s.toolTurnPending = false
 			s.responseMu.Unlock()
 			active = false
 		}
@@ -719,8 +723,13 @@ func (s *geminiSession) translate(body []byte) []Event {
 					s.responseInterrupted = false
 				}
 				// IN_PROGRESS or an absent status keeps the interaction open.
+			} else if s.toolTurnPending && !s.responseInterrupted {
+				// Gemini emits turnComplete for the tool generation, then resumes
+				// automatically after toolResponse. Keep the response owner across
+				// query -> create (and other chained calls) until the final answer.
+				s.toolTurnPending = false
 			} else {
-				// Regular Gemini Live models complete directly on turnComplete.
+				// A regular non-tool generation completes the interaction.
 				if s.responseInterrupted {
 					events = append(events, Event{Kind: EventResponseCancelled, Status: "cancelled"})
 				} else {
@@ -734,6 +743,7 @@ func (s *geminiSession) translate(body []byte) []Event {
 	}
 	if envelope.ToolCall != nil {
 		s.responseMu.Lock()
+		s.toolTurnPending = len(envelope.ToolCall.FunctionCalls) > 0
 		if !s.responseActive {
 			if final, ok := s.finalUserTranscriptEvent(); ok {
 				events = append(events, final)

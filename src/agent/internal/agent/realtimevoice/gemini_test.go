@@ -76,6 +76,7 @@ func TestGeminiProviderNormalizesLiveSession(t *testing.T) {
 					"outputTranscription": map[string]any{"text": "hello", "finished": false},
 				}})
 				_ = conn.WriteJSON(map[string]any{"toolCall": map[string]any{"functionCalls": []any{map[string]any{"id": "call_1", "name": "clock", "args": map[string]any{"timezone": "UTC"}}}}})
+				_ = conn.WriteJSON(map[string]any{"serverContent": map[string]any{"turnComplete": true}})
 			case event["toolResponse"] != nil:
 				response := event["toolResponse"].(map[string]any)
 				if len(response["functionResponses"].([]any)) != 1 {
@@ -643,6 +644,33 @@ func TestGeminiExtendedThinkingLifecycleUsesModelCapability(t *testing.T) {
 	}
 	if s.responseActive || s.responseInterrupted {
 		t.Fatal("REQUIRES_ACTION left the response open")
+	}
+}
+
+func TestGeminiToolTurnsKeepResponseOwnership(t *testing.T) {
+	s := &geminiSession{toolNames: map[string]string{}}
+	var starts, terminals int
+	observe := func(raw string) {
+		for _, event := range s.translate([]byte(raw)) {
+			switch event.Kind {
+			case EventResponseStarted:
+				starts++
+			case EventResponseDone:
+				terminals++
+			}
+		}
+	}
+	for _, name := range []string{"query_agent_task", "create_agent_task"} {
+		observe(`{"toolCall":{"functionCalls":[{"id":"` + name + `","name":"` + name + `","args":{}}]}}`)
+		observe(`{"serverContent":{"turnComplete":true}}`)
+		if terminals != 0 || !s.responseActive {
+			t.Fatalf("%s tool boundary ended the interaction: terminals=%d active=%t", name, terminals, s.responseActive)
+		}
+	}
+	observe(`{"serverContent":{"modelTurn":{"parts":[{"text":"I'm working on that."}]}}}`)
+	observe(`{"serverContent":{"turnComplete":true}}`)
+	if starts != 1 || terminals != 1 || s.responseActive {
+		t.Fatalf("interaction lifecycle: starts=%d terminals=%d active=%t", starts, terminals, s.responseActive)
 	}
 }
 
