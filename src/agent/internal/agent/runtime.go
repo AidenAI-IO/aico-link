@@ -1624,7 +1624,23 @@ func (r *Runtime) captureStateScreenshot() (*messages.Attachment, *screenshotGro
 		return nil, nil
 	}
 	attachment.Source = messages.AttachmentSourceScreenshotObservation
-	return &attachment, observation.Result.Grounding
+	grounding := observation.Result.Grounding
+	if r.usesVisualCoordinateProtocol() {
+		// touch_gesture takes screenshot pixels under the visual coordinate
+		// protocol; the tool path converts in its wrapper, this one here.
+		grounding = pixelGrounding(grounding, observation.Result.Width, observation.Result.Height)
+	}
+	return &attachment, grounding
+}
+
+// usesVisualCoordinateProtocol reports whether the current model takes
+// screenshot pixels for touch_gesture (see AgentLoop.Run).
+func (r *Runtime) usesVisualCoordinateProtocol() bool {
+	if r == nil || r.models == nil {
+		return false
+	}
+	spec := r.models.Spec()
+	return IsAnthropicModel(spec.Provider, spec.Name)
 }
 
 func (r *Runtime) beginSession(ctx context.Context, req SessionBeginRequest) (SessionBeginResult, error) {

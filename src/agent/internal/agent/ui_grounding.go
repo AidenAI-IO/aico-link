@@ -58,15 +58,30 @@ type helperUIGrounder struct {
 	anchorsPath string
 	idleTimeout time.Duration
 
+	// mu serializes helper use: start, detection and shutdown. A start can
+	// hold it for the whole model load, so nothing that must stay responsive
+	// (config apply, shutdown) waits on it; those use stateMu instead.
 	mu        sync.Mutex
 	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	stdout    *bufio.Reader
 	waitErr   chan error
 	idleTimer *time.Timer
+
+	// stateMu guards resident and starting, never held across blocking work.
+	stateMu sync.Mutex
 	// resident keeps the helper loaded with no idle exit, and loads it ahead
 	// of the first request. It follows the ui_grounding_enabled setting.
 	resident bool
+	// starting is the helper being started, so SetResident(false) can kill a
+	// load in progress instead of waiting for it.
+	starting *exec.Cmd
+}
+
+func (g *helperUIGrounder) isResident() bool {
+	g.stateMu.Lock()
+	defer g.stateMu.Unlock()
+	return g.resident
 }
 
 // uiGroundingResidency is implemented by grounders that can keep their model
@@ -119,7 +134,7 @@ func (g *helperUIGrounder) Detect(ctx context.Context, rgb []byte, width, height
 	}
 	defer g.scheduleIdleCloseLocked()
 	boxes, err := g.detectLocked(ctx, rgb, width, height)
-	if err != nil && g.resident && g.cmd == nil {
+	if err != nil && g.cmd == nil && g.isResident() {
 		// The helper was stopped by this failure; load it again in the
 		// background so the next grounded screenshot does not wait for it.
 		go g.warm()
@@ -128,7 +143,15 @@ func (g *helperUIGrounder) Detect(ctx context.Context, rgb []byte, width, height
 }
 
 func (g *helperUIGrounder) detectLocked(ctx context.Context, rgb []byte, width, height int) ([]uiElementBox, error) {
+	// A request nobody waits for must not reach the helper: its read would
+	// time out at once and kill a resident model that then has to reload.
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err := g.ensureStartedLocked(); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -231,6 +254,14 @@ func (g *helperUIGrounder) ensureStartedLocked() error {
 		_ = stdin.Close()
 		return fmt.Errorf("start grounding helper %q: %w", g.helperPath, err)
 	}
+	g.stateMu.Lock()
+	g.starting = cmd
+	g.stateMu.Unlock()
+	defer func() {
+		g.stateMu.Lock()
+		g.starting = nil
+		g.stateMu.Unlock()
+	}()
 	go logUIGroundingHelperStderr(stderrPipe)
 
 	reader := bufio.NewReader(stdoutPipe)
@@ -256,41 +287,67 @@ func (g *helperUIGrounder) ensureStartedLocked() error {
 }
 
 // SetResident switches between a resident helper, loaded now and kept until
-// the setting changes, and an on-demand one that exits when idle.
+// the setting changes, and an on-demand one that exits when idle. It never
+// waits for a model load or a detection: config apply and shutdown call it.
 func (g *helperUIGrounder) SetResident(resident bool) {
 	if g == nil {
 		return
 	}
-	g.mu.Lock()
+	g.stateMu.Lock()
 	changed := g.resident != resident
 	g.resident = resident
+	starting := g.starting
+	g.stateMu.Unlock()
+	if resident {
+		go g.warm()
+		return
+	}
+	if !changed {
+		return
+	}
+	// Release the model's CMA as soon as grounding is turned off: abort a
+	// load in progress, then stop a loaded helper once its current request,
+	// if any, finishes.
+	if starting != nil && starting.Process != nil {
+		_ = starting.Process.Kill()
+	}
+	go g.releaseIfNotResident()
+}
+
+func (g *helperUIGrounder) releaseIfNotResident() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.isResident() {
+		return
+	}
 	if g.idleTimer != nil {
 		g.idleTimer.Stop()
 	}
-	if !resident && changed {
-		// Release the model's CMA as soon as grounding is turned off.
-		_ = g.closeLocked()
-	}
-	g.mu.Unlock()
-	if resident {
-		go g.warm()
-	}
+	_ = g.closeLocked()
 }
 
 // warm loads the helper ahead of the first request while resident.
 func (g *helperUIGrounder) warm() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if !g.resident {
+	if !g.isResident() {
 		return
+	}
+	if g.idleTimer != nil {
+		g.idleTimer.Stop()
 	}
 	if err := g.ensureStartedLocked(); err != nil {
 		logging.Warnf("agent", "ui_grounding", "preload grounding helper: %v", err)
+		return
+	}
+	// Residency may have been turned off while the model loaded.
+	if !g.isResident() {
+		_ = g.closeLocked()
 	}
 }
 
 func (g *helperUIGrounder) scheduleIdleCloseLocked() {
-	if g.cmd == nil || g.idleTimeout <= 0 || g.resident {
+	if g.cmd == nil || g.idleTimeout <= 0 || g.isResident() {
 		return
 	}
 	if g.idleTimer == nil {

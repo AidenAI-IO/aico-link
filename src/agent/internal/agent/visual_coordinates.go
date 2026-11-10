@@ -89,9 +89,15 @@ func (v *visualCoordinates) wrap(tools []langtools.Tool) []langtools.Tool {
 	for i, tool := range out {
 		switch tool.Name() {
 		case "touch_gesture", "mouse_move", "enter_text":
+			// Their own outputs are converted inside visualCoordinateTool.Call.
 			out[i] = &visualCoordinateTool{Tool: tool, frames: v}
-		case "screenshot":
-			out[i] = &visualScreenshotTool{Tool: tool}
+		default:
+			// Every other visual tool (screenshot, keyboard_tap, quick_action,
+			// mouse_scroll, open_app, open_url, ...) may return a grounded
+			// screenshot whose coordinates must be pixels too.
+			if visual, ok := tool.(visualObservationTool); ok && visual.ReturnsVisualObservation() {
+				out[i] = &visualScreenshotTool{Tool: tool}
+			}
 		}
 	}
 	return out
@@ -250,11 +256,19 @@ func convertVisualArguments(args map[string]any, frame visualFrame) error {
 	return nil
 }
 
-// visualScreenshotTool converts screenshot grounding from touch_gesture's
-// native 0-1000 coordinates to pixels of the returned screenshot, so the
-// element centers can be passed to the wrapped touch_gesture unchanged.
+// visualScreenshotTool converts the grounding of a visual tool's screenshot
+// from touch_gesture's native 0-1000 coordinates to pixels of the returned
+// screenshot, so the element centers can be passed to the wrapped
+// touch_gesture unchanged.
 type visualScreenshotTool struct {
 	langtools.Tool
+}
+
+func (t *visualScreenshotTool) DynamicExampleInput() string {
+	if provider, ok := t.Tool.(dynamicExampleInputProvider); ok {
+		return provider.DynamicExampleInput()
+	}
+	return ""
 }
 
 func (t *visualScreenshotTool) ReturnsVisualObservation() bool {
@@ -296,17 +310,7 @@ func pixelGroundingOutput(output string) string {
 		json.Unmarshal(fields["grounding"], &grounding) != nil {
 		return output
 	}
-	for i, e := range grounding.Elements {
-		grounding.Elements[i] = uiGroundingElement{
-			ID:     e.ID,
-			Center: [2]float64{visualGroundingPixel(e.Center[0], size.Width), visualGroundingPixel(e.Center[1], size.Height)},
-			Box: [4]float64{
-				visualGroundingPixel(e.Box[0], size.Width), visualGroundingPixel(e.Box[1], size.Height),
-				visualGroundingPixel(e.Box[2], size.Width), visualGroundingPixel(e.Box[3], size.Height),
-			},
-		}
-	}
-	data, err := json.Marshal(grounding)
+	data, err := json.Marshal(pixelGrounding(&grounding, size.Width, size.Height))
 	if err != nil {
 		return output
 	}
@@ -316,6 +320,27 @@ func pixelGroundingOutput(output string) string {
 		return output
 	}
 	return string(rewritten)
+}
+
+// pixelGrounding converts a grounding result from 0-1000 coordinates to
+// pixels of a width x height screenshot, for the user-turn screenshot, which
+// reaches the model in a state message rather than through a tool.
+func pixelGrounding(grounding *screenshotGrounding, width, height int) *screenshotGrounding {
+	if grounding == nil || width < 1 || height < 1 {
+		return grounding
+	}
+	out := &screenshotGrounding{Error: grounding.Error, Elements: make([]uiGroundingElement, len(grounding.Elements))}
+	for i, e := range grounding.Elements {
+		out.Elements[i] = uiGroundingElement{
+			ID:     e.ID,
+			Center: [2]float64{visualGroundingPixel(e.Center[0], width), visualGroundingPixel(e.Center[1], height)},
+			Box: [4]float64{
+				visualGroundingPixel(e.Box[0], width), visualGroundingPixel(e.Box[1], height),
+				visualGroundingPixel(e.Box[2], width), visualGroundingPixel(e.Box[3], height),
+			},
+		}
+	}
+	return out
 }
 
 // visualGroundingPixel is the inverse of normalizeVisualAxis, kept inside the

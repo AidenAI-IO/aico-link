@@ -207,6 +207,16 @@ func TestHelperUIGrounderResidency(t *testing.T) {
 		t.Fatal("resident helper exited after the idle timeout")
 	}
 
+	// A request whose context already ended must not kill the resident helper.
+	expired, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := grounder.Detect(expired, make([]byte, 4*2*3), 4, 2); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Detect() with an expired context error = %v, want context.Canceled", err)
+	}
+	if !running() {
+		t.Fatal("an expired request stopped the resident helper")
+	}
+
 	grounder.SetResident(false)
 	waitFor(false) // released when the setting is turned off
 
@@ -293,6 +303,29 @@ func TestVisualCoordinatesGroundingUsesTouchGestureUnits(t *testing.T) {
 	y, _ := point["y"].(float64)
 	if math.Abs(x-508.5) > 0.1 || math.Abs(y-252.1) > 0.1 {
 		t.Fatalf("device point = %v, want the normalized element center (508.5, 252.1)", point)
+	}
+
+	// Other visual tools (keyboard_tap, quick_action, open_app, ...) return
+	// grounded post-action screenshots too; they are converted the same way.
+	grounded := `{"width":60,"height":120,"format":"jpeg","size":1,"data":"YQ==","action_output":"ok",` +
+		`"grounding":{"elements":[{"id":1,"center":[508.5,252.1],"box":[169.5,168.1,847.5,336.1]}]}}`
+	keyboard := frames.wrap([]langtools.Tool{&stubTool{name: "keyboard_tap", visual: true, output: grounded}})[0]
+	output, err = keyboard.Call(context.Background(), `{"keys":["enter"]}`)
+	if err != nil {
+		t.Fatalf("wrapped keyboard_tap Call() error = %v", err)
+	}
+	var keyed postActionScreenshotResult
+	if err := json.Unmarshal([]byte(output), &keyed); err != nil || keyed.Grounding == nil ||
+		keyed.Grounding.Elements[0].Center != [2]float64{30, 30} {
+		t.Fatalf("keyboard_tap output %q, %v; want the pixel center (30,30)", output, err)
+	}
+	if !keyboard.(visualObservationTool).ReturnsVisualObservation() {
+		t.Fatal("wrapping keyboard_tap lost its visual observation capability")
+	}
+	if plain := frames.wrap([]langtools.Tool{&stubTool{name: "shell"}})[0]; plain.Name() != "shell" {
+		t.Fatalf("non-visual tool = %T", plain)
+	} else if _, wrapped := plain.(*visualScreenshotTool); wrapped {
+		t.Fatal("non-visual tool was wrapped")
 	}
 
 	// A grounded post-action observation coming back through the wrapped
@@ -421,15 +454,25 @@ func TestPostActionScreenshotFollowsUIGroundingSetting(t *testing.T) {
 }
 
 // The screenshot attached to a user turn follows the live UI Grounding
-// setting, and its element list goes into the state message text.
+// setting, and its element list goes into the state message text in the
+// coordinates touch_gesture takes for the current model.
 func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 	const width, height = 60, 120
 	jpegData, err := encodeJPEG(bytes.Repeat([]byte{240, 240, 240}, width*height), width, height, screenshotJPEGQuality)
 	if err != nil {
 		t.Fatalf("encodeJPEG() error = %v", err)
 	}
-	for _, enabled := range []bool{true, false} {
-		t.Run(fmt.Sprintf("enabled=%v", enabled), func(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		enabled    bool
+		provider   string
+		wantCenter string // "" means no grounding
+	}{
+		{name: "on, normalized model", enabled: true, provider: "openai", wantCenter: `"center":[508.5,252.1]`},
+		{name: "on, visual coordinate protocol", enabled: true, provider: "anthropic", wantCenter: `"center":[30,30]`},
+		{name: "off", enabled: false, provider: "openai"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			grounder := &fakeUIGrounder{boxes: []uiElementBox{{X1: 10, Y1: 20, X2: 50, Y2: 40, Score: 0.9}}}
 			screenshot := &ScreenshotTool{
 				client: &fakeScreenshotFrameClient{
@@ -441,8 +484,10 @@ func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 				deviceTypeFn: func() string { return "macos" },
 			}
 			tools := &ToolSet{tools: map[string]langtools.Tool{"screenshot": screenshot}}
+			enabled := tc.enabled
 			// The runtime installs the live ui_grounding_enabled setting.
 			runtime := NewRuntimeWithDeps(Config{UIGroundingEnabled: &enabled}, nil, nil, tools, NewSkillIndex())
+			runtime.models = NewModelManager(ModelConfig{Provider: tc.provider, Model: "test-model"}, ProxyConfig{})
 			manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), nil)
 			if err != nil {
 				t.Fatal(err)
@@ -456,9 +501,14 @@ func TestStateHookGroundsUserTurnScreenshotWhenEnabled(t *testing.T) {
 			if state.Role != messages.MessageRoleState || len(state.Attachments) != 1 {
 				t.Fatalf("state message = %#v, want one screenshot attachment", state)
 			}
-			grounded := strings.Contains(state.Content, "UI grounding:") && strings.Contains(state.Content, `"center":[508.5,252.1]`)
-			if grounded != enabled || (grounder.width != 0) != enabled {
-				t.Fatalf("state content %q, detector ran = %v; want grounding = %v", state.Content, grounder.width != 0, enabled)
+			if tc.wantCenter == "" {
+				if strings.Contains(state.Content, "UI grounding") || grounder.width != 0 {
+					t.Fatalf("state content %q, detector ran = %v; want no grounding", state.Content, grounder.width != 0)
+				}
+				return
+			}
+			if !strings.Contains(state.Content, "UI grounding:") || !strings.Contains(state.Content, tc.wantCenter) {
+				t.Fatalf("state content %q, want grounding with %s", state.Content, tc.wantCenter)
 			}
 		})
 	}
