@@ -114,12 +114,12 @@ function configSheet({title, intro, endpoint, secret}) {
   const snippets = mcpClientSnippets(endpoint, secret);
   sheet({
     title,
-    body: [el('div', {}, [
-      text(intro, 'page__note'),
+    body: [el('div', {class: 'ds-code-sheet'}, [
+      text(intro, 'ds-code-sheet__intro'),
       secret ? codeBlock(secret, 'copy-mcp-token') : null,
-      text(msg('mcp.claude_code', 'Claude Code'), 'ds-field__help'),
+      text(msg('mcp.claude_code', 'Claude Code'), 'ds-code-sheet__label'),
       codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
-      text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-field__help'),
+      text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
       codeBlock(snippets.json, 'copy-mcp-json'),
     ].filter(Boolean))],
   }).open();

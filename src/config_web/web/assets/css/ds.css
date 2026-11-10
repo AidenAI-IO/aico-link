@@ -1688,18 +1688,36 @@
   background-image: none;
 }
 
+/* A sheet of copyable values: inset to the page margin like every other
+   sheet field, with a muted label above each block. */
+.ds-code-sheet {
+  padding: 0 var(--layout-page-margin);
+}
+
+.ds-code-sheet__intro {
+  margin: 0 0 var(--space-lg);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-ink-secondary);
+}
+
+.ds-code-sheet__label {
+  margin: var(--space-lg) 0 var(--space-sm);
+  font-size: 13px;
+  color: var(--color-ink-secondary);
+}
+
 /* A copyable value, e.g. a new MCP access token: text with a small copy
    button in its top-right corner. */
 .ds-code {
   position: relative;
-  margin: var(--space-xs) 0 var(--space-md);
   border-radius: var(--radius-field);
   background: var(--color-canvas);
 }
 
 .ds-code__text {
   margin: 0;
-  padding: var(--space-md) 40px var(--space-md) var(--space-md);
+  padding: var(--space-md) 44px var(--space-md) var(--space-lg);
   font-family: var(--font-family-mono);
   font-size: 12px;
   line-height: 1.55;
@@ -1712,8 +1730,8 @@
 
 .ds-code__copy {
   position: absolute;
-  top: 6px;
-  right: 6px;
+  top: 8px;
+  right: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
