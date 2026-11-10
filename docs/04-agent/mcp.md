@@ -33,18 +33,21 @@ When `mcp_enabled=false`, `POST /mcp` returns 404. Voice and other HTTP APIs are
 
 ## Authentication
 
-| Client | Needs |
-| --- | --- |
-| USB (`http://192.168.42.1:8080/mcp`), the board itself, Docker or host runs without `-lan-guard` | Nothing |
-| LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
-| LAN, LAN access on | `Authorization: Bearer <MCP access token>` |
-
-Config Web → Advanced → MCP holds the MCP switch, the direct-connection settings ("Direct to Aico Link", over the USB cable),
-and the MCP access tokens. Create a token under "Over Wi-Fi" > Create token. The secret is shown once, with ready-to-paste
+Every MCP client connects with an MCP access token. Create one in Config Web →
+Advanced → MCP → Create token; the secret is shown once, with ready-to-paste
 configuration. A token reaches only `/mcp`, does not expire, survives a
 device-password change, and is revoked on its own on the same page. See
 [MCP Access Tokens](../03-services/device-management-api.md#mcp-access-tokens)
 for the API.
+
+| Client | Result |
+| --- | --- |
+| LAN, LAN access on | Needs `Authorization: Bearer <MCP access token>` |
+| LAN, LAN access off (the default) | Refused (`403 lan_access_disabled`); turn LAN access on over USB first |
+| Computer plugged straight into Aico Link (`http://192.168.42.1:8080/mcp`), the board itself, Docker or host runs without `-lan-guard` | Trusted; the token is not checked, so the same configuration works |
+
+Aico Link is normally plugged into the phone, so a computer usually reaches it
+over Wi-Fi; the direct link is mainly for development.
 
 Claude Code:
 

@@ -633,9 +633,10 @@ process.stdout.write('config web UI component tests passed\n');
       (node.childNodes || []).forEach(walk);
     };
     walk(page);
-    for (const action of ['toggle-mcp-enabled', 'show-mcp-usb-config', 'open-lan-access', 'revoke-mcp-token', 'create-mcp-token']) {
+    for (const action of ['toggle-mcp-enabled', 'open-lan-access', 'revoke-mcp-token', 'create-mcp-token']) {
       assert.ok(actions.includes(action), `the MCP page shows ${action}`);
     }
+    assert.ok(!actions.includes('show-mcp-usb-config'), 'there is no separate direct-connection section');
 
     const off = await mcpPage({snapshot: {config: {agent: {mcp_enabled: false}}}, header() {}, navigate() {}});
     const offActions = [];

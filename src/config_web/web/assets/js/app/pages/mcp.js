@@ -1,14 +1,15 @@
 /**
  * MCP route.
  *
- *   /advanced/mcp   the MCP switch, how to connect, and MCP access tokens
+ *   /advanced/mcp   the MCP switch and MCP access tokens
  *
- * MCP clients are usually agents on a computer (Claude Code, Cursor). Over the
- * USB cable they connect to 192.168.42.1 with no credentials. Over Wi-Fi they
- * need LAN access on and an MCP access token: a token reaches only the Agent's
- * /mcp, does not expire, survives a password change, and is revoked here on its
- * own. The secret is shown once, when it is created, together with a
- * ready-to-paste client configuration.
+ * MCP clients are agents on a computer (Claude Code, Cursor). Every client
+ * connects the same way: with an MCP access token, over Wi-Fi while LAN access
+ * is on. A token reaches only the Agent's /mcp, does not expire, survives a
+ * password change, and is revoked here on its own. The secret is shown once,
+ * when it is created, together with a ready-to-paste client configuration.
+ * (A computer plugged straight into Aico Link is trusted like the app and the
+ * token is simply not checked; the same configuration still works.)
  */
 
 import {adoptSaved, ensureSnapshot, request} from '../data.js';
@@ -24,7 +25,6 @@ import {msg, resolve, text} from '../../ui/text.js';
 import {toast} from '../../ui/toast.js';
 
 const MCP_TOKENS_API = '/api/security/mcp-tokens';
-const USB_MCP_ENDPOINT = 'http://192.168.42.1:8080/mcp';
 
 function fetchTokens() {
   return request(MCP_TOKENS_API, {cache: 'no-store'});
@@ -52,13 +52,11 @@ export function wifiEndpoint(location = window.location, wifiAddress = '') {
   return host ? `http://${host}:8080/mcp` : '';
 }
 
-/** Client configuration snippets; `secret` is omitted for the USB link. */
-export function mcpClientSnippets(endpoint, secret = '') {
-  const header = secret ? ` --header "Authorization: Bearer ${secret}"` : '';
-  const server = {type: 'http', url: endpoint};
-  if (secret) server.headers = {Authorization: `Bearer ${secret}`};
+/** Client configuration snippets for a new token. */
+export function mcpClientSnippets(endpoint, secret) {
+  const server = {type: 'http', url: endpoint, headers: {Authorization: `Bearer ${secret}`}};
   return {
-    claudeCode: `claude mcp add --transport http aico ${endpoint}${header}`,
+    claudeCode: `claude mcp add --transport http aico ${endpoint} --header "Authorization: Bearer ${secret}"`,
     json: JSON.stringify({mcpServers: {aico: server}}, null, 1),
   };
 }
@@ -110,36 +108,19 @@ function nameInput() {
   });
 }
 
-function configSheet({title, intro, endpoint, secret}) {
+function showSecret(secret, endpoint) {
   const snippets = mcpClientSnippets(endpoint, secret);
   sheet({
-    title,
+    title: msg('mcp.created_title', '令牌已创建'),
     body: [el('div', {class: 'ds-code-sheet'}, [
-      text(intro, 'ds-code-sheet__intro'),
-      secret ? codeBlock(secret, 'copy-mcp-token') : null,
+      text(msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。'), 'ds-code-sheet__intro'),
+      codeBlock(secret, 'copy-mcp-token'),
       text(msg('mcp.claude_code', 'Claude Code'), 'ds-code-sheet__label'),
       codeBlock(snippets.claudeCode, 'copy-mcp-claude'),
       text(msg('mcp.json_config', '其他客户端（JSON 配置）'), 'ds-code-sheet__label'),
       codeBlock(snippets.json, 'copy-mcp-json'),
-    ].filter(Boolean))],
+    ])],
   }).open();
-}
-
-function showSecret(secret, endpoint) {
-  configSheet({
-    title: msg('mcp.created_title', '令牌已创建'),
-    intro: msg('mcp.created_help', '令牌只显示这一次，请现在复制保存。'),
-    endpoint,
-    secret,
-  });
-}
-
-function showUSBConfig() {
-  configSheet({
-    title: msg('mcp.usb_title', 'Aico Link 直连'),
-    intro: msg('mcp.usb_help', '用数据线把电脑直接连到 Aico Link，不需要令牌。'),
-    endpoint: USB_MCP_ENDPOINT,
-  });
 }
 
 export async function mcpPage(context) {
@@ -246,10 +227,8 @@ export async function mcpPage(context) {
   }
 
   function tokenSection() {
-    const caption = msg('mcp.wifi_caption', '通过 Wi-Fi 连接');
     if (!state) {
       return group({
-        caption,
         rows: [row({
           label: msg('mcp.title', 'MCP 访问令牌'),
           value: msg('lan.unavailable', '无法读取'),
@@ -286,11 +265,10 @@ export async function mcpPage(context) {
       onPress: busy ? undefined : () => (full ? toast(msg('mcp.limit', '令牌数量已达上限，请先撤销一个')) : askName()),
     }));
     return group({
-      caption,
       rows,
       note: state.lan_access
-        ? msg('mcp.help', '电脑和设备在同一个 Wi-Fi 下时，用令牌连接。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
-        : msg('mcp.lan_off', '通过 Wi-Fi 连接需要先开启局域网访问。令牌可以先创建，开启后生效。'),
+        ? msg('mcp.help', '电脑上的 MCP 客户端用令牌连接，电脑和设备需在同一个 Wi-Fi 下。令牌只能访问 MCP，不会过期，修改设备密码也不会失效；不再使用时请在这里撤销。')
+        : msg('mcp.lan_off', '令牌需要开启局域网访问才能使用。可以先创建，开启后生效。'),
     });
   }
 
@@ -316,17 +294,6 @@ export async function mcpPage(context) {
           action: 'toggle-mcp-enabled',
         })],
       }),
-      mcpDraft ? group({
-        caption: msg('mcp.usb_caption', 'Aico Link 直连'),
-        rows: [row({
-          label: msg('mcp.usb_config', '连接配置'),
-          value: '192.168.42.1',
-          chevron: true,
-          action: 'show-mcp-usb-config',
-          onPress: showUSBConfig,
-        })],
-        note: msg('mcp.usb_note', '电脑用数据线直接连 Aico Link 时，不需要令牌。'),
-      }) : null,
       mcpDraft ? tokenSection() : null,
     ].filter(Boolean));
     saver.refreshChrome();
