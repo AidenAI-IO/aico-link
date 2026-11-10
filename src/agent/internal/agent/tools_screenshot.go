@@ -403,6 +403,8 @@ type screenshotArgs struct {
 	autoGround bool
 }
 
+// parseScreenshotArgs accepts an empty input, "" or a JSON object; grounding
+// defaults to false.
 func parseScreenshotArgs(input string) (screenshotArgs, error) {
 	var args screenshotArgs
 	input = strings.TrimSpace(input)

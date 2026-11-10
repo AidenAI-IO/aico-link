@@ -2346,6 +2346,8 @@ func (c Config) TapWakeupEnabledOrDefault() bool {
 	return true
 }
 
+// UIGroundingEnabledOrDefault reports ui_grounding_enabled, which defaults to
+// true when the key is omitted.
 func (c Config) UIGroundingEnabledOrDefault() bool {
 	if c.UIGroundingEnabled != nil {
 		return *c.UIGroundingEnabled

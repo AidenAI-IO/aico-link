@@ -325,6 +325,8 @@ func (s *ToolSet) UIGroundingEnabled() bool {
 	return s != nil && s.uiGrounding != nil && s.uiGrounding()
 }
 
+// applyUIGrounding hands the live setting to every registered post-action
+// screenshot tool. Callers that register such a tool later call it again.
 func (s *ToolSet) applyUIGrounding() {
 	if s == nil {
 		return

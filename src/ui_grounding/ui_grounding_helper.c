@@ -79,6 +79,7 @@ static double now_ms(void) {
     return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
 }
 
+/* Opens the RKNN runtime at path and resolves every entry point used here. */
 static int load_runtime(const char *path, char *err, size_t err_len) {
     void *lib = dlopen(path, RTLD_NOW | RTLD_LOCAL);
     if (!lib) {
@@ -104,6 +105,7 @@ static int load_runtime(const char *path, char *err, size_t err_len) {
     return 0;
 }
 
+/* Reads the 18 positive anchor sizes: 3 strides x 3 anchors x (w, h). */
 static int load_anchors(const char *path, char *err, size_t err_len) {
     FILE *f = fopen(path, "r");
     if (!f) {
@@ -121,6 +123,7 @@ static int load_anchors(const char *path, char *err, size_t err_len) {
     return 0;
 }
 
+/* Reads a head's grid height, width and channels from its NCHW or NHWC dims. */
 static int head_shape(const rknn_tensor_attr *a, int *h, int *w, int *ch) {
     if (a->n_dims != 4 || a->dims[0] != 1) return -1;
     if (a->fmt == RKNN_TENSOR_NCHW) {
@@ -137,6 +140,7 @@ static int head_shape(const rknn_tensor_attr *a, int *h, int *w, int *ch) {
     return 0;
 }
 
+/* Reads a whole file into a malloc'd buffer; NULL on failure. */
 static void *read_file(const char *path, size_t *size) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
@@ -152,6 +156,8 @@ static void *read_file(const char *path, size_t *size) {
     return buf;
 }
 
+/* Loads the model, checks its one input and three one-class heads, and binds
+ * zero-copy input and output memory. On failure the caller runs close_model. */
 static int open_model(const char *model_path, char *err, size_t err_len) {
     size_t model_size = 0;
     void *model = read_file(model_path, &model_size);
@@ -242,6 +248,7 @@ static int open_model(const char *model_path, char *err, size_t err_len) {
     return 0;
 }
 
+/* Releases the context and buffers; safe on a partial or repeated open. */
 static void close_model(void) {
     for (int i = 0; i < 3; i++) {
         if (out_mem[i]) api.destroy_mem(ctx, out_mem[i]);
@@ -262,6 +269,7 @@ static void close_model(void) {
  * only) and retrying makes the load reliable without a fixed delay. */
 #define OPEN_ATTEMPTS 3
 
+/* Asks the kernel to compact memory; silently does nothing without root. */
 static void compact_memory(void) {
     sync();
     FILE *f = fopen("/proc/sys/vm/compact_memory", "w");
@@ -270,6 +278,7 @@ static void compact_memory(void) {
     fclose(f);
 }
 
+/* open_model, compacting memory between up to OPEN_ATTEMPTS attempts. */
 static int open_model_with_retry(const char *model_path, char *err, size_t err_len) {
     for (int attempt = 1;; attempt++) {
         if (!open_model(model_path, err, err_len)) return 0;
@@ -324,12 +333,14 @@ static float head_value(const rknn_tensor_attr *a, const void *buf, int c, int y
     return fmaxf(0.0f, fminf(1.0f, f));
 }
 
+/* qsort order: score descending, then raw index for a stable tie break. */
 static int by_score(const void *pa, const void *pb) {
     const Detection *a = pa, *b = pb;
     int order = (a->score < b->score) - (a->score > b->score);
     return order ? order : (a->raw_index > b->raw_index) - (a->raw_index < b->raw_index);
 }
 
+/* Intersection over union of two boxes; 0 when either is empty. */
 static float iou(const Detection *a, const Detection *b) {
     float iw = fmaxf(0, fminf(a->x2, b->x2) - fmaxf(a->x1, b->x1));
     float ih = fmaxf(0, fminf(a->y2, b->y2) - fmaxf(a->y1, b->y1));
@@ -348,6 +359,8 @@ static void normalize(Detection *d, Letterbox b, int sw, int sh) {
     d->y2 = fmaxf(0, fminf(1, ((d->y2 - half_y) / scale) / (float)sh));
 }
 
+/* Decodes every anchor of the three heads, sorts by score, and keeps at most
+ * MAX_KEPT boxes after NMS, in source pixels. */
 static void postprocess(Letterbox b, int sw, int sh) {
     candidate_count = 0;
     kept_count = 0;
@@ -392,6 +405,7 @@ static void postprocess(Letterbox b, int sw, int sh) {
     }
 }
 
+/* Runs one image through preprocess, the NPU and postprocess. */
 static int detect(const uint8_t *rgb, int sw, int sh, double *infer_ms) {
     Letterbox b = preprocess(rgb, sw, sh, in_mem->virt_addr);
     double start = now_ms();
@@ -409,6 +423,7 @@ static void print_detections(double infer_ms) {
     fflush(stdout);
 }
 
+/* Reads exactly n bytes from stdin; false on a short read. */
 static int read_exact(void *dst, size_t n) { return fread(dst, 1, n, stdin) == n; }
 
 /* Parses a decimal in [0,1]; returns -1 on anything else. */
@@ -420,6 +435,7 @@ static int unit_interval(const char *text, float *out) {
     return 0;
 }
 
+/* Loads the model once, then serves the stdin protocol described at the top. */
 int main(int argc, char **argv) {
     const char *runtime = NULL, *model = NULL, *anchor_path = NULL;
     int self_test = 0, bad_args = 0;

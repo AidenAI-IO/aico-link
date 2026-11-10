@@ -94,6 +94,8 @@ func groundScreenshot(ctx context.Context, grounder uiGrounder, jpegData []byte)
 // not tap targets, and their tags sit on top of the controls inside them.
 const somMaxAreaRatio = 0.5
 
+// dropScreenSizedBoxes keeps the boxes no larger than somMaxAreaRatio of the
+// width x height screen, in their original order.
 func dropScreenSizedBoxes(boxes []uiElementBox, width, height int) []uiElementBox {
 	limit := somMaxAreaRatio * float64(width) * float64(height)
 	kept := boxes[:0:0]
@@ -105,6 +107,7 @@ func dropScreenSizedBoxes(boxes []uiElementBox, width, height int) []uiElementBo
 	return kept
 }
 
+// drawSoMOutline draws a two-pixel outline just inside rect.
 func drawSoMOutline(img *image.RGBA, rect image.Rectangle, c color.RGBA) {
 	const thickness = 2
 	if rect.Empty() {
@@ -195,6 +198,8 @@ func normalizeGroundingElements(elements []uiGroundingElement, width, height int
 	return out
 }
 
+// newScreenshotGrounding builds the grounding field: the elements, or an empty
+// list and the error when detection failed.
 func newScreenshotGrounding(elements []uiGroundingElement, groundingErr error) *screenshotGrounding {
 	grounding := &screenshotGrounding{Elements: elements}
 	if grounding.Elements == nil {

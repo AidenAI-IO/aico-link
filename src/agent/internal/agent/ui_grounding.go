@@ -78,6 +78,7 @@ type helperUIGrounder struct {
 	starting *exec.Cmd
 }
 
+// isResident reads the residency setting under stateMu.
 func (g *helperUIGrounder) isResident() bool {
 	g.stateMu.Lock()
 	defer g.stateMu.Unlock()
@@ -113,6 +114,8 @@ var defaultUIGrounder = sync.OnceValue(func() uiGrounder {
 	return grounder
 })
 
+// newHelperUIGrounder returns an on-demand grounder for the helper and the
+// model files in modelDir; SetResident(true) makes it resident.
 func newHelperUIGrounder(helperPath, modelDir string) *helperUIGrounder {
 	return &helperUIGrounder{
 		helperPath:  helperPath,
@@ -123,6 +126,9 @@ func newHelperUIGrounder(helperPath, modelDir string) *helperUIGrounder {
 	}
 }
 
+// Detect returns the detected components of a width x height RGB888 image in
+// its pixels, highest score first. A failure stops the helper; a resident one
+// is reloaded in the background.
 func (g *helperUIGrounder) Detect(ctx context.Context, rgb []byte, width, height int) ([]uiElementBox, error) {
 	if width <= 0 || height <= 0 || len(rgb) != width*height*3 {
 		return nil, fmt.Errorf("grounding input must be %dx%d RGB888", width, height)
@@ -142,6 +148,8 @@ func (g *helperUIGrounder) Detect(ctx context.Context, rgb []byte, width, height
 	return boxes, err
 }
 
+// detectLocked sends one request and reads its reply. The caller holds g.mu.
+// Any protocol error stops the helper, since the stream is then out of sync.
 func (g *helperUIGrounder) detectLocked(ctx context.Context, rgb []byte, width, height int) ([]uiElementBox, error) {
 	// A request nobody waits for must not reach the helper: its read would
 	// time out at once and kill a resident model that then has to reload.
@@ -209,6 +217,8 @@ func (g *helperUIGrounder) detectLocked(ctx context.Context, rgb []byte, width, 
 	return boxes, nil
 }
 
+// parseUIElementBox parses one "x1 y1 x2 y2 score" line and rejects a box
+// outside the width x height image.
 func parseUIElementBox(line string, width, height int) (uiElementBox, error) {
 	fields := strings.Fields(line)
 	if len(fields) != 5 {
@@ -230,6 +240,9 @@ func parseUIElementBox(line string, width, height int) (uiElementBox, error) {
 	return box, nil
 }
 
+// ensureStartedLocked starts the helper unless it is running and waits for
+// READY, which includes the model load. The caller holds g.mu. The process is
+// recorded in g.starting meanwhile, so SetResident(false) can abort the load.
 func (g *helperUIGrounder) ensureStartedLocked() error {
 	if g.cmd != nil {
 		return nil
@@ -314,6 +327,8 @@ func (g *helperUIGrounder) SetResident(resident bool) {
 	go g.releaseIfNotResident()
 }
 
+// releaseIfNotResident stops the helper after the current request, if any,
+// unless residency was turned back on in the meantime.
 func (g *helperUIGrounder) releaseIfNotResident() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -346,6 +361,8 @@ func (g *helperUIGrounder) warm() {
 	}
 }
 
+// scheduleIdleCloseLocked arms the idle exit of an on-demand helper. A
+// resident helper has none. The caller holds g.mu.
 func (g *helperUIGrounder) scheduleIdleCloseLocked() {
 	if g.cmd == nil || g.idleTimeout <= 0 || g.isResident() {
 		return
@@ -374,6 +391,8 @@ func (g *helperUIGrounder) Close() error {
 	return g.closeLocked()
 }
 
+// closeLocked asks the helper to exit and kills it if it does not within
+// uiGroundingShutdownTimeout. The caller holds g.mu.
 func (g *helperUIGrounder) closeLocked() error {
 	if g.cmd == nil {
 		return nil
@@ -395,6 +414,8 @@ func (g *helperUIGrounder) closeLocked() error {
 	}
 }
 
+// logUIGroundingHelperStderr forwards the helper's diagnostics, such as model
+// load retries, to the Agent log.
 func logUIGroundingHelperStderr(stderr io.Reader) {
 	scanner := bufio.NewScanner(stderr)
 	for scanner.Scan() {

@@ -140,6 +140,7 @@ func (t *postActionScreenshotTool) SetUIGroundingFunc(enabled func() bool) {
 	}
 }
 
+// groundingEnabled reports the live setting; false when none is installed.
 func (t *postActionScreenshotTool) groundingEnabled() bool {
 	return t != nil && t.grounding != nil && t.grounding()
 }
