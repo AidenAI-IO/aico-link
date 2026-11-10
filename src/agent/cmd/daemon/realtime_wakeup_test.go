@@ -849,6 +849,17 @@ func TestRealtimePlaybackOutputFormatUsesConfiguredDeviceFormat(t *testing.T) {
 	}
 }
 
+func TestRealtimeVoicePlaybackDeviceFormatFollowsProviderRate(t *testing.T) {
+	format := realtimeVoicePlaybackDeviceFormat(agent.Config{Audio: agent.AudioConfig{
+		SampleRate: 16000,
+		Channels:   1,
+		BitWidth:   16,
+	}})
+	if format.SampleRate != 0 || format.Channels != 1 || format.BitDepth != 16 || format.Encoding != "pcm_s16le" {
+		t.Fatalf("format = %+v, want unset sample rate with mono pcm16", format)
+	}
+}
+
 func TestRealtimeProviderAudioFormatPrefersNegotiatedFormat(t *testing.T) {
 	got := realtimeProviderAudioFormat(realtimevoice.AudioFormat{
 		Encoding: "pcm_s16le", SampleRate: 24000, Channels: 2, BitDepth: 24,
