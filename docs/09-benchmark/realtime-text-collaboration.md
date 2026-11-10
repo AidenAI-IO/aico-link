@@ -159,10 +159,15 @@ overrides and are not inferred from the endpoint. For example,
 variables must not contain credentials.
 
 To investigate a provider protocol problem, set `level = "debug"` under
-`[advanced_settings.log]` in the Agent configuration. Workers retain this
-setting in the uploaded `daemon.log`, including raw realtime provider frames
-with transcripts and tool arguments. The default level is `info`; restore it
-after the investigation.
+`[advanced_settings.log]` in the Agent configuration. For a manual CI dispatch,
+edit `benchmark/config/agent.toml.template` on the dispatched branch, or
+`benchmark/config/agent.toml` if present (it takes precedence). CI does not pass
+`--agent-config`, so editing another Agent configuration will not affect workers.
+Worker logs are uploaded as `daemon.log`. At debug level, the Gemini adapter logs
+incoming raw frames, which may contain transcripts, tool arguments, and audio;
+frames longer than 4,000 bytes are truncated to their first 4,000 bytes. The OpenAI
+adapter and shared WebSocket transport do not log raw frames at debug level.
+The default level is `info`; restore it after the investigation.
 
 When the runner has an HTTPS proxy, realtime-text workers forward it to the
 daemon for the foreground provider. The backend model endpoint is added to
