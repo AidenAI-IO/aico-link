@@ -7,14 +7,17 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"aico-agent/internal/stream"
 )
 
 type fakeRunner struct {
-	mu      sync.Mutex
-	started chan string
-	release chan struct{}
-	result  string
-	err     error
+	mu           sync.Mutex
+	started      chan string
+	release      chan struct{}
+	result       string
+	err          error
+	cancelResult string
 }
 
 type recordedRun struct {
@@ -52,7 +55,7 @@ func (r *fakeRunner) Run(ctx context.Context, prompt string) (string, error) {
 		select {
 		case <-r.release:
 		case <-ctx.Done():
-			return "", ctx.Err()
+			return r.cancelResult, ctx.Err()
 		}
 	}
 	r.mu.Lock()
@@ -90,7 +93,9 @@ func TestManagerCompletesQueuedTask(t *testing.T) {
 }
 
 func TestManagerCancelsRunningTask(t *testing.T) {
-	runner := &fakeRunner{started: make(chan string, 1), release: make(chan struct{})}
+	// A cancelled run keeps its account of effects that already happened.
+	partial := CancelledResult([]CompletedStep{{Tool: "bridge_clipboard", Input: `{"action":"write"}`, Output: "ok"}})
+	runner := &fakeRunner{started: make(chan string, 1), release: make(chan struct{}), cancelResult: partial}
 	manager := newManager(runner, 4, time.Now)
 	defer manager.Close()
 
@@ -111,6 +116,14 @@ func TestManagerCancelsRunningTask(t *testing.T) {
 		t.Fatalf("cancel status = %q, want cancelling", cancelled.Status)
 	}
 	waitForStatus(t, manager, task.ID, StatusCancelled)
+	terminal := waitForTerminalTasks(t, manager)
+	if len(terminal) != 1 || terminal[0].Result != partial ||
+		!strings.Contains(partial, "not undone") || !strings.Contains(partial, "bridge_clipboard") {
+		t.Fatalf("cancelled result = %+v", terminal)
+	}
+	if CancelledResult(nil) != "" {
+		t.Fatal("a run with no completed steps must report no result")
+	}
 }
 
 func TestManagerMarksRunnerFailure(t *testing.T) {
@@ -438,6 +451,8 @@ func TestManagerRerunsWhenUpdateWasNotConsumed(t *testing.T) {
 	runner := &revisionRunner{started: make(chan string, 2), release: make(chan struct{})}
 	manager := newManager(runner, 4, time.Now)
 	defer manager.Close()
+	sink := &phaseSink{}
+	manager.SetEventSink(sink)
 	task, err := manager.Create("old goal")
 	if err != nil {
 		t.Fatal(err)
@@ -459,6 +474,34 @@ func TestManagerRerunsWhenUpdateWasNotConsumed(t *testing.T) {
 	if completed.Result != "fresh result" {
 		t.Fatalf("task completed with stale result: %+v", completed)
 	}
+	// The rerun applied revision 2; observers waiting for it must see goal_applied.
+	if applied := sink.appliedRevisions("goal_applied"); len(applied) != 1 || applied[0] != 2 {
+		t.Fatalf("goal_applied revisions = %v, want [2]", applied)
+	}
+}
+
+type phaseSink struct {
+	mu     sync.Mutex
+	events []stream.Event
+}
+
+func (s *phaseSink) Emit(_ context.Context, event stream.Event) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *phaseSink) appliedRevisions(phase string) []uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var revisions []uint64
+	for _, event := range s.events {
+		if payload, ok := event.Payload.(map[string]any); ok && payload["phase"] == phase {
+			revisions = append(revisions, event.Collaboration.AppliedRevision)
+		}
+	}
+	return revisions
 }
 
 type userActionRunner struct {

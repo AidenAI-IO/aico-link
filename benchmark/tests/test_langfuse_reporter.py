@@ -239,6 +239,85 @@ def test_publish_run_does_not_attach_to_unverified_execution_trace(tmp_path: Pat
     assert output["execution_trace_status"] == "pending_or_missing"
 
 
+def _realtime_attempt(run_dir: Path) -> None:
+    """Turn the fixture's only attempt into a realtime-text attempt with captured events."""
+    path = run_dir / "results.jsonl"
+    row = json.loads(path.read_text().splitlines()[0])
+    row["metrics"].update(execution_mode="realtime-text", collaboration_models={
+        "foreground": ["openai", "gpt-realtime-2"], "backend": ["openrouter", "m"]})
+    path.write_text(json.dumps(row) + "\n")
+    attempt = run_dir / "tasks" / "task-a"
+    attempt.mkdir(parents=True, exist_ok=True)
+    def event(sequence, kind, actor, second, **fields):
+        return {"event_id": f"e{sequence}", "sequence": sequence, "kind": kind,
+                "received_at": f"2026-11-08T14:30:{second:02d}.123456789Z",
+                "collaboration": {"actor": actor}, **fields}
+    events = [
+        event(1, "turn.committed", "foreground", 0, turn_id="t", payload={"text": "Post Delivery."}),
+        event(2, "response.started", "foreground", 1, turn_id="t", response_id="r"),
+        event(3, "tool.call_ready", "foreground", 1, turn_id="t", response_id="r", call_id="c",
+              payload={"Name": "create_agent_task", "Arguments": '{"task":"Post"}'}),
+        event(4, "task.updated", "task_manager", 2, task_id="T",
+              payload={"phase": "created", "status": "queued", "task": {"prompt": "Post"}}),
+        event(5, "tool.completed", "foreground", 2, payload={"call_id": "c", "output": '{"id":"T"}'}),
+        event(6, "run.started", "backend", 2, task_id="T", run_id="run-1", payload={"episode_id": "episode-a"}),
+        event(7, "text.delta", "foreground", 3, response_id="r", payload={"Text": "Done, "}),
+        event(8, "text.delta", "foreground", 3, response_id="r", payload={"Text": "posted."}),
+        event(9, "response.terminal", "foreground", 4, response_id="r",
+              payload={"Usage": {"InputTokens": 10, "OutputTokens": 2, "TotalTokens": 12}}),
+        event(10, "turn.settled", "foreground", 4, turn_id="t", payload={"status": "completed", "text": "Done, posted."}),
+        event(11, "run.terminal", "backend", 5, task_id="T", run_id="run-1", payload={"state": "completed", "error": ""}),
+    ]
+    (attempt / "collaboration-events.jsonl").write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    (attempt / "collaboration-evaluation.json").write_text(json.dumps({"outcome": "fail", "claims": [
+        {"event_id": "e8", "response_id": "r", "quote": "posted.", "start": 6, "operation": "bridge_notification",
+         "verdict": "unsupported", "category": "completion_before_effect", "task_id": "T"}]}))
+
+
+def test_publish_run_exports_foreground_trace_only_for_realtime_attempts(tmp_path: Path):
+    exported = []
+    backend_only = publish_run(_write_run(tmp_path / "backend"), client=ExecutionLangfuse(),
+                               foreground_exporter=exported.append)
+    assert backend_only.item_count == 1 and exported == []
+
+    run_dir = _write_run(tmp_path / "realtime")
+    _realtime_attempt(run_dir)
+    client = ExecutionLangfuse()
+    publish_run(run_dir, client=client, foreground_exporter=exported.append)
+    [spans] = exported
+    by_name = {}
+    for span in spans:
+        by_name.setdefault(span["name"], []).append(span)
+    [root] = by_name["realtime-foreground"]
+    trace_id = root["trace_id"]
+    # Original timestamps survive; the response nests under its user turn and the tool under the response.
+    assert root["start"] == 1794148200123456789 and root["input"] == "Post Delivery."
+    [turn], [response], [tool] = by_name["user-turn"], by_name["foreground-response"], by_name["create_agent_task"]
+    assert response["parent_id"] == turn["span_id"] and tool["parent_id"] == response["span_id"]
+    assert response["output"] == "Done, posted." and response["usage"] == {"input": 10, "output": 2, "total": 12}
+    assert tool["input"] == {"task": "Post"} and tool["output"] == {"id": "T"}
+    # The backend run links to its exported agent-run trace; the false claim is flagged on the reply.
+    [run] = by_name["backend-run"]
+    assert run["metadata"]["backend_trace_id"] == _agent_trace_id("episode-a")
+    [claim] = by_name["completion-claim"]
+    assert claim["parent_id"] == response["span_id"] and claim["level"] == "WARNING"
+    assert {span["trace"]["session_id"] for span in spans} == {"run-a:task-a:1"}
+    output = client.execution_observations[0]["output"]
+    assert output["foreground_trace_status"] == "exported" and output["foreground_trace_id"] == trace_id
+    assert client.experiment is None  # still attached to the backend execution trace
+
+    # A failed trace export is recorded on the item and never blocks the scores.
+    def failing(_spans):
+        raise RuntimeError("otlp unavailable")
+    failed_dir = _write_run(tmp_path / "export-failed")
+    _realtime_attempt(failed_dir)
+    failed_client = ExecutionLangfuse()
+    assert publish_run(failed_dir, client=failed_client, foreground_exporter=failing).item_count == 1
+    output = failed_client.execution_observations[0]["output"]
+    assert output["foreground_trace_status"] == "export_failed"
+    assert "otlp unavailable" in output["foreground_trace_error"]
+
+
 def test_publish_run_without_episode_keeps_failure_replay(tmp_path: Path):
     run_dir = _write_run(tmp_path)
     path = run_dir / "results.jsonl"
@@ -924,3 +1003,10 @@ def test_reporting_metadata_preserves_old_publication_retry_identity():
     with pytest.raises(LangfusePublishError, match="conflicts"):
         _validate_existing_run_metadata(SimpleNamespace(metadata=old),
                                         {**added, "artifact_sha256": "changed"}, "run")
+    # realtime-text runs published before the mode was recorded can be retried;
+    # a recorded mode must still match.
+    realtime = {**added, "execution_mode": "realtime-text", "foreground_model": "openai/m"}
+    _validate_existing_run_metadata(SimpleNamespace(metadata=old), realtime, "run")
+    with pytest.raises(LangfusePublishError, match="conflicts"):
+        _validate_existing_run_metadata(
+            SimpleNamespace(metadata={**old, "execution_mode": "backend-text"}), realtime, "run")

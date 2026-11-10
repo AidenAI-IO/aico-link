@@ -79,12 +79,23 @@ func (p GeminiProvider) Open(ctx context.Context, cfg SessionConfig) (Session, e
 	if d == nil {
 		d = websocket.DefaultDialer
 	}
+	// Observe the actual dialer's selection without logging credential-bearing URLs
+	// or mutating the shared default dialer.
+	dialer := *d
+	if d.Proxy != nil {
+		selectProxy := d.Proxy
+		dialer.Proxy = func(req *http.Request) (*url.URL, error) {
+			selected, proxyErr := selectProxy(req)
+			logging.Infof("agent", "gemini", "realtime connection route: proxy_selected=%t proxy_selection_failed=%t", selected != nil, proxyErr != nil)
+			return selected, proxyErr
+		}
+	} else {
+		logging.Infof("agent", "gemini", "realtime connection route: proxy_selected=false")
+	}
+	d = &dialer
 	conn, resp, err := d.DialContext(ctx, endpoint, p.headers(cfg.APIKey))
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf("gemini live websocket connect: %w", err)
+		return nil, dialError("gemini live", resp, err)
 	}
 	inputRate := cfg.InputSampleRate
 	if inputRate <= 0 {

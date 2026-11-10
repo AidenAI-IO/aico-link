@@ -94,7 +94,8 @@ def _change(current: float | None, previous: float | None) -> float | None:
 
 # Settings that explain a score change, in reading order; hashes are shortened.
 CONFIG_LABELS = {
-    "agent_model": "agent model", "judge_model": "judge model",
+    "agent_model": "agent model", "foreground_model": "foreground model",
+    "execution_mode": "execution mode", "judge_model": "judge model",
     "judge_prompt_version": "judge prompt", "judge_provider": "judge provider",
     "suite_sha256": "suite", "workload_sha256": "workload",
     "metrics_schema_version": "metrics schema", "metrics_k": "k",
@@ -144,6 +145,7 @@ CAPABILITY_SUITES = {
                            "aico_app_android_bridge_capabilities_v1",
                            "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
+    "Realtime collaboration": ("realtime_collaboration_v1",),
 }
 DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"

@@ -510,7 +510,17 @@ def run_one_task(
     environment_url: str | None = None,
     benchmark_task_id: str | None = None,
     after_setup: Callable[[], None] | None = None,
+    execution_mode: str = "backend-text",
+    fixture_token: str = "",
 ) -> TaskResult:
+    if task.scenario is not None:
+        if execution_mode != "realtime-text":
+            raise ValueError("scenario tasks require realtime-text")
+        if after_setup:
+            raise ValueError("scenario tasks do not support device setup callbacks")
+        from runner.scenario import execute_scenario
+        return execute_scenario(client, suite, task, attempt, artifact_dir, run_id,
+                                environment_url or "", judge_cfg, benchmark_task_id, fixture_token)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     started = now_iso()
     started_mono = time.monotonic()

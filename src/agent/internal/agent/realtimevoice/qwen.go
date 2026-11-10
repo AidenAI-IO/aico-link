@@ -49,10 +49,7 @@ func (p QwenProvider) Open(ctx context.Context, cfg SessionConfig) (Session, err
 	}
 	conn, resp, err := dialer.DialContext(ctx, endpoint, header)
 	if err != nil {
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		return nil, fmt.Errorf("qwen realtime websocket connect: %w", err)
+		return nil, dialError("qwen realtime", resp, err)
 	}
 	transport := newJSONWebSocketTransport(conn, "qwen realtime", p.EventBuffer)
 	session := &qwenSession{
@@ -146,8 +143,12 @@ type qwenFunctionDefinition struct {
 }
 
 func buildQwenSessionUpdate(cfg SessionConfig) qwenSessionUpdate {
+	modalities := []string{"audio", "text"}
+	if cfg.TextOutputOnly {
+		modalities = []string{"text"}
+	}
 	settings := qwenSessionSettings{
-		Modalities:          []string{"audio", "text"},
+		Modalities:          modalities,
 		Voice:               cfg.Voice,
 		EnableSpeechEmotion: cfg.EnableSpeechEmotion,
 		Instructions:        cfg.Instructions,

@@ -1043,6 +1043,23 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 	if episodeID == "" && r.memoryPlane != nil {
 		episodeID = newTaskEpisodeID(startTime.UTC())
 	}
+	var runEmitter *streamEventEmitter
+	if req.StreamSink != nil {
+		runEmitter = newStreamEventEmitter(req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID)
+		runEmitter.emit(context.Background(), stream.EventRunStarted, stream.VisibilityInternal,
+			map[string]string{"episode_id": episodeID}, nil)
+		defer func() {
+			state := stream.TerminalCompleted
+			if runErr != nil {
+				state = stream.TerminalFailed
+				if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
+					state = stream.TerminalCancelled
+				}
+			}
+			runEmitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal,
+				map[string]string{"state": string(state), "error": streamErrorString(runErr)}, nil)
+		}()
+	}
 	currentHints := r.currentEnvironmentHints()
 	promptCapture := newTelemetryPromptCapture(r.ConfigSnapshot().Telemetry.EnabledOrDefault())
 	var episodeRecorder *EpisodeRecorder
@@ -1184,27 +1201,7 @@ func (r *Runtime) run(ctx context.Context, req RunRequest) (result RunResult, ru
 			runID:        runID,
 			episode:      episodeRecorder,
 		}
-		if req.StreamSink != nil {
-			streamCallbackHandler.streamEmitter = newStreamEventEmitter(
-				req.StreamSink, req.StreamScope, req.RequestID, runID, episodeID,
-			)
-			defer func(emitter *streamEventEmitter) {
-				state := stream.TerminalCompleted
-				if runErr != nil {
-					state = stream.TerminalFailed
-					if errors.Is(runErr, context.Canceled) || errors.Is(ctx.Err(), context.Canceled) {
-						state = stream.TerminalCancelled
-					}
-				}
-				// A cancellation-triggered run commonly reaches this defer with ctx
-				// already done. Terminal delivery is still required, so use a fresh
-				// bounded context for the observer instead of inheriting cancellation.
-				emitter.emit(context.Background(), stream.EventRunTerminal, stream.VisibilityInternal, map[string]string{
-					"state": string(state),
-					"error": streamErrorString(runErr),
-				}, nil)
-			}(streamCallbackHandler.streamEmitter)
-		}
+		streamCallbackHandler.streamEmitter = runEmitter
 	}
 	if streamCallbackHandler != nil && (req.StreamWriter != nil || req.StreamSink != nil) {
 		streamCallbackHandler.ResetStreaming(ctx)

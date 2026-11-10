@@ -51,6 +51,7 @@ const (
 	EventStreamError         EventKind = "stream.error"
 	EventUsageUpdated        EventKind = "usage.updated"
 	EventStateUpdated        EventKind = "state.updated"
+	EventRunStarted          EventKind = "run.started"
 	EventRunTerminal         EventKind = "run.terminal"
 	EventReasoningDelta      EventKind = "reasoning.delta"
 	EventReasoningReset      EventKind = "reasoning.reset"
@@ -142,12 +143,29 @@ func (i EventIdentity) StaleFor(currentOutputEpoch uint64) bool {
 type Event struct {
 	SchemaVersion uint16 `json:"schema_version"`
 	EventIdentity
-	Kind       EventKind  `json:"kind"`
-	Origin     string     `json:"origin,omitempty"`
-	Visibility Visibility `json:"visibility,omitempty"`
-	OccurredAt time.Time  `json:"occurred_at,omitempty"`
-	ReceivedAt time.Time  `json:"received_at,omitempty"`
-	Payload    any        `json:"payload,omitempty"`
+	Kind          EventKind      `json:"kind"`
+	Origin        string         `json:"origin,omitempty"`
+	Visibility    Visibility     `json:"visibility,omitempty"`
+	OccurredAt    time.Time      `json:"occurred_at,omitempty"`
+	ReceivedAt    time.Time      `json:"received_at,omitempty"`
+	Payload       any            `json:"payload,omitempty"`
+	Collaboration *Collaboration `json:"collaboration,omitempty"`
+}
+
+// Collaboration is optional observer metadata. It never controls execution or
+// enters model-visible tool arguments.
+type Collaboration struct {
+	Version           uint16   `json:"version"`
+	SourceSequence    uint64   `json:"source_sequence,omitempty"`
+	Actor             string   `json:"actor"`
+	ClockID           string   `json:"clock_id,omitempty"`
+	ObservedElapsedNS int64    `json:"observed_elapsed_ns"`
+	GoalRevision      uint64   `json:"goal_revision,omitempty"`
+	AppliedRevision   uint64   `json:"applied_revision,omitempty"`
+	EpisodeID         string   `json:"episode_id,omitempty"`
+	ProviderSessionID string   `json:"provider_session_id,omitempty"`
+	ResponseRequestID string   `json:"response_request_id,omitempty"`
+	UpdateIDs         []string `json:"update_ids,omitempty"`
 }
 
 // NewEvent builds an event with the current schema version.  Callers may

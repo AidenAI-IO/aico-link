@@ -30,7 +30,12 @@ type SessionConfig struct {
 	EnableSpeechEmotion    *bool
 	// ThinkingLevel sets thinkingConfig; only models that support thinking use it.
 	ThinkingLevel string
-	Tools         []Tool
+	// TextOutputOnly asks the provider for text replies instead of speech.
+	// Benchmarks that evaluate coordination rather than audio use it; providers
+	// whose models only produce audio (Gemini Live native audio) ignore it and
+	// keep reporting the output transcript.
+	TextOutputOnly bool
+	Tools          []Tool
 }
 
 // AudioFormat describes the media exchanged with a realtime provider. The
