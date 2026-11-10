@@ -16,6 +16,82 @@ smallest fix, and verifies it before opening a draft pull request for human
 review. Processing may happen later that day or on a subsequent day. Nothing
 merges automatically.
 
+## Window processing and repair domains
+
+The worker is scheduled at 01:37 UTC on odd calendar days (`37 1 */2 * *`).
+This reduces workflow invocations; month boundaries can produce consecutive days.
+Each invocation analyzes **all pending eligible daily runs**, including one-off
+failures, rather than selecting one day's results. Daily benchmark execution stays
+unchanged. Every task retains its individual outcomes, source revision, task
+snapshot and trace references across the window. Failure frequency counts distinct
+source runs; it is not a substitute for fresh baseline reproduction.
+
+Production artifact names encode every included identity, for example
+`auto-improve-source-41-1__42-1`. Discovery deduplicates those identities separately,
+so a late-finishing older run or an artifact previously missing remains eligible.
+The three-hour completion delay and 13-day evidence age bound still apply. The
+window accepts at most 13 runs; exceeding its budget blocks instead of silently
+dropping evidence. Missing artifacts are reported in `source-window.json`.
+Manual `source_run` accepts comma-separated IDs. Branch tests can reuse processed
+runs and never publish issues or PRs.
+
+Diagnosis routes supported findings into separate domains:
+
+| Domain | Scope | Acceptance | Publication |
+| --- | --- | --- | --- |
+| Agent | Existing agent Go implementation and skills | Unmodified benchmark; paired task passes improve with no observed regression | Draft agent PR |
+| Benchmark | Runner, CI helpers, environment bridges/images, MCU emulator and suite definitions | Same agent/settings; diagnosed symptom occurs in at least 2/3 baseline attempts and 0/3 candidate attempts; regression tasks gain no symptom or unevaluable outcomes | Separate draft benchmark PR and evidence issue |
+| External code | Hardware services, firmware, apps or other code whose effect cannot be verified here | Supported diagnosis with source/evidence references | Issue only |
+
+At most two repair clusters per domain share the existing five-hour execution
+budget. Agent targets affected by a supported benchmark defect are deferred until
+evaluation is repaired. All candidates start from the same base revision: an
+agent candidate never consumes a benchmark candidate's changes. Neither domain
+can edit this pipeline, workflow files, tests, dependencies or vendored content.
+
+Benchmark repairs declare a concrete symptom: setup failure, judge error,
+environment failure, matching tool-result text, hard assertion, or metrics error
+text. Three fresh baseline attempts must reproduce it before patching. Judge
+errors are not rejudged on this track. Baseline and candidate have independent
+checkouts and daemon/MobileGym image tags. Checks include `make check` and the
+full `benchmark-python` suite; Go edits also require `go-unit`.
+
+The same agent runs candidate tasks after the repair. Pass rates are reported,
+not used as the benchmark acceptance criterion. Final review inspects every task
+for errors that could replace the original symptom. The publisher independently
+recomputes symptom matches from retained traces and checks result rows against
+retained execution output before creating a PR.
+
+Rubric, assertions and expected values are preserved by default. Necessary
+changes to those fields, grading code, or task removals are listed explicitly in
+the PR with the repair rationale for human judgment. Removing a task is allowed
+only for a reproduced target; removing regression coverage blocks the candidate.
+A supported scenario-value review is required before a removal can become ready.
+No PR is merged automatically. Publication is bounded to two PRs per domain per
+invocation; issue markers make retries idempotent.
+
+```mermaid
+flowchart TD
+    A["Odd-day trigger"] --> B["Collect pending daily runs and task observations"]
+    B --> C["Diagnose all failures and inspect source"]
+    C --> D["Agent: reproduce and repair"]
+    C --> E["Benchmark: reproduce defect and repair"]
+    C --> F["External code: supported issue finding"]
+    D --> G["Unmodified benchmark and paired validation"]
+    E --> H["Same agent and symptom verification"]
+    G --> I["Final evidence audit"]
+    H --> I
+    I --> J["Publisher revalidates artifacts and patch"]
+    J --> K["Separate draft PRs; benchmark evidence issue"]
+    F --> L["Issue only"]
+```
+
+This section describes the current window/domain implementation. The detailed
+initial agent design below remains useful for the agent track; its original
+agent-only scope and single-source scheduling restrictions are superseded here.
+Real runner/model/publication validation of the window and benchmark track is
+pending. Local synthetic tests do not establish live acceptance.
+
 ## Running the initial implementation
 
 The entry points are
@@ -68,7 +144,7 @@ processed source. Production artifacts use `auto-improve-source-...`.
 4. Merge through normal review after the branch tests are satisfactory. Configure
    PR permission before enabling publication, then test on `main` with an
    explicit source ID, `mode=improve`, and `publish_pr=true`.
-5. Enable `AUTO_IMPROVE_ENABLED=true` for daily execution (01:37 UTC). Scheduled
+5. Enable `AUTO_IMPROVE_ENABLED=true` for odd-day execution (01:37 UTC). Scheduled
    main runs default to `improve`; set `AUTO_IMPROVE_MODE=diagnose` only for an
    explicit read-only run. Nothing in this change enables the schedule,
    alters repository permissions, installs a fixture, or merges automatically.

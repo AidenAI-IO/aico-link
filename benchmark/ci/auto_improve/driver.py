@@ -46,7 +46,10 @@ def workspace(out: Path, name: str, repo: Path, payload: dict, *, include_code: 
     path = out / name
     path.mkdir(parents=True, exist_ok=False)
     if include_code:
-        review.stage_code(repo, path)
+        scopes = (("agent", "benchmark", "external") if name == "diagnosis" else
+                  ("agent", "benchmark") if payload.get("domain") == "benchmark" else ("agent",))
+        extra = tuple(payload.get("allowed_paths", [])) if payload.get("domain") == "benchmark" else ()
+        review.stage_code(repo, path, scopes=scopes, extra=extra)
     # Evidence images must be accessible within restricted file-tool roots.
     def materialize(value):
         if isinstance(value, dict):
@@ -87,7 +90,7 @@ def workspace(out: Path, name: str, repo: Path, payload: dict, *, include_code: 
             detail_file = f"details/failure-{number:03d}.json"
             write(path / detail_file, failure)
             summary = {key: failure.get(key) for key in
-                       ("key", "status", "failure_class", "agent_eligible", "rubric",
+                       ("key", "failure_count", "run_count", "status", "failure_class", "agent_eligible", "rubric",
                         "hard_assertion_failures", "final_response") if key in failure}
             summary["detail_file"] = detail_file
             indexed.append(summary)
@@ -175,7 +178,7 @@ def validated_source_paths(repo: Path, cluster: dict) -> list[str]:
         return []
     checked = []
     for path in paths:
-        if not policy.edit_target(path):
+        if not policy.edit_target(path, policy.domain_of(cluster)):
             return []
         target = repo / path
         if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(repo.resolve()):
@@ -202,8 +205,10 @@ def audit(out: Path, name: str, repo: Path, payload: dict, deadline: float) -> d
 
 def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> dict:
     source = evidence.read_json(source_dir / "source.json")
-    policy.require_main_branch(source["run"].get("head_branch", ""))
-    identity = evidence.source_identity(str(source["run"]["id"]), str(source["run"].get("run_attempt", 1)))
+    sources = source.get("sources", [source])
+    for entry in sources:
+        policy.require_main_branch(entry["run"].get("head_branch", ""))
+    identity = "__".join(evidence.source_identity(str(s["run"]["id"]), str(s["run"].get("run_attempt", 1))) for s in sources)
     base = git(repo, "rev-parse", "HEAD")
     # Local/branch tests retain their identity and can never masquerade as a main run.
     execution_ref = os.environ.get("GITHUB_REF", "local")
@@ -217,12 +222,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
             raise ValueError("Missing benchmark configuration: " + ", ".join(missing))
     deadline = time.monotonic() + int(os.environ.get("AUTO_IMPROVE_TIMEOUT_SECONDS", "18000"))
     tasks = evidence.catalog_tasks(repo)
-    failures, warnings = evidence.source_failures(source_dir, str(source["run"]["id"]),
-                                                str(source["run"].get("run_attempt", 1)), tasks)
+    if "sources" in source:
+        failures, warnings = evidence.source_failures_window(source_dir,
+            [(str(s["run"]["id"]), str(s["run"].get("run_attempt", 1))) for s in sources], tasks)
+    else:
+        failures, warnings = evidence.source_failures(source_dir, str(source["run"]["id"]),
+                                                    str(source["run"].get("run_attempt", 1)), tasks)
+    # Source rows remain individually addressable; repeated failures across days are not independent
+    # baseline reproductions. Agent eligibility is true only if at least one observation is eligible.
+    for failure in failures:
+        if "observations" in failure:
+            failure["agent_eligible"] = any(o["agent_eligible"] for o in failure["observations"])
+    warnings += [f"Missing artifact for source {s}" for s in source.get("missing_artifacts", [])]
     history = evidence.read_json(source_dir / "history.json") if (source_dir / "history.json").is_file() else {}
     feedback = evidence.read_json(source_dir / "feedback.json") if (source_dir / "feedback.json").is_file() else []
     previous = evidence.read_json(source_dir / "previous.json") if (source_dir / "previous.json").is_file() else []
-    state = {"schema": 1, "source": identity, "source_sha": source["run"]["head_sha"], "base_sha": base,
+    state = {"schema": 1, "source": identity, "source_sha": sources[-1]["run"]["head_sha"],
+             "sources": [{"identity": evidence.source_identity(str(s["run"]["id"]), str(s["run"].get("run_attempt", 1))),
+                          "sha": s["run"]["head_sha"]} for s in sources], "base_sha": base,
              "mode": mode, "warnings": warnings, "attempts": [], "status": "running", "base_branch": policy.BASE_BRANCH,
              "execution_ref": execution_ref,
              "configuration": {k: v for k, v in execution.benchmark_environment().items()
@@ -230,6 +247,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
              "avd_fixture": os.environ.get("AUTO_IMPROVE_AVD_SHA256", "")}
     out.mkdir(parents=True, exist_ok=False)
     write(out / "manifest.json", state)
+    write(out / "source-window.json", source)
     # Every cluster compares against the same pinned base, so one unmodified
     # checkout serves them all; each candidate keeps its own isolated tree.
     baseline_repo = out / "baseline"
@@ -251,16 +269,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                         "Review every failure and its judge evidence, cluster supported common root causes, "
                         "and cite exact case_id:task_id keys. List neighbors only when known; the driver expands "
                         "coverage. Inspect source code before claiming a repairable root cause. source_paths must "
-                        "contain exact existing agent Go files or SKILL.md paths, never details/trace/history files. "
+                        "contain exact existing repository source files, never details/trace/history files. "
                         "Cite code locations and trace/screenshot locations separately in evidence. Use source_paths=[] "
                         "and fix_target=unknown if the source cause is not established. Inspect supplied images for visual "
                         "claims; absent images or unresolved coordinate/fixture alternatives mean insufficient_evidence. "
                         "Report evaluator/environment issues and missing evidence. Do not propose edits. "
                         "List every failure you attribute to grading/evaluator scoping or setup/environment in "
-                        "evaluation_issues, and never use those tasks as cluster targets. "
+                        "evaluation_issues. These tasks may be benchmark_code/task_definition targets, never agent targets. "
+                        "For benchmark repairs, identify an observable symptom using setup_failure, judge_error, "
+                        "environment_failure, tool_error (matching tool result text), hard_assertion (matching id/actual), "
+                        "or error_text (matching metrics error). Use a short literal or simple regex pattern. For agent "
+                        "or external_code use symptom kind=none, pattern=''. External hardware/app/service code that "
+                        "this benchmark cannot verify is external_code: report evidence for an issue, do not repair. "
+                        "Review task scenario value; unjustified tasks may be proposed for removal via task_definition. "
                         "Only targets in repairable_environments can be reproduced in this run; keep each cluster "
                         "within one suite when possible and report other causes without making them repair targets. "
-                        "Return no more than two repairable clusters.", review.DIAGNOSIS, deadline,
+                        "Return at most two clusters per repair domain (agent, benchmark), plus supported external_code findings. "
+                        "Each failure detail contains observations from all selected daily runs; inspect every observation, "
+                        "prioritize persistent causes without dropping one-off failures. ", review.DIAGNOSIS, deadline,
                         image_root=source_dir / "benchmark/runs")
         write(out / "diagnosis.json", diagnosis)
         if mode == "diagnose":
@@ -273,14 +299,31 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
         # task can never be a repair target, only an explicit regression check.
         evaluation_issues = {item["task"]: item for item in diagnosis.get("evaluation_issues", [])}
         count = 0
+        domain_counts = {d: 0 for d in policy.REPAIR_DOMAINS}
+        benchmark_targets = {key for c in diagnosis["clusters"] if policy.domain_of(c) == "benchmark"
+                             and c["judge_review"] == "supported" for key in c["targets"]}
         for cluster in diagnosis["clusters"]:
             attempt = {"title": cluster["title"], "status": "report_only", "cluster": cluster}
             state["attempts"].append(attempt)
             plan, images = None, []
-            if (cluster["judge_review"] != "supported" or cluster["fix_target"] not in {"skill", "prompt", "tool_description", "go_code"}):
+            domain = policy.domain_of(cluster)
+            attempt["domain"] = domain
+            if cluster["judge_review"] != "supported":
+                continue
+            if domain == "external":
+                if (not cluster["targets"] or not set(cluster["targets"]).issubset({f["key"] for f in failures})
+                        or not cluster["evidence"] or not cluster["source_paths"]):
+                    attempt["reason"] = "External finding lacks observed targets, source paths or evidence"
+                    continue
+                attempt.update({"status": "issue_ready", "signature": policy.signature(cluster)})
+                continue
+            if domain not in policy.REPAIR_DOMAINS:
+                continue
+            if domain == "agent" and set(cluster["targets"]) & benchmark_targets:
+                attempt.update({"status": "deferred", "reason": "Benchmark defect affects target; repair evaluation before agent"})
                 continue
             quarantined = sorted(set(cluster["targets"]) & set(evaluation_issues))
-            if quarantined:
+            if quarantined and domain == "agent":
                 attempt["quarantined_targets"] = quarantined
                 cluster = {**cluster, "targets": [k for k in cluster["targets"] if k not in evaluation_issues],
                            "neighbors": sorted(set(cluster["neighbors"]) | set(quarantined))}
@@ -298,7 +341,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 attempt.update({"status": "environment_unavailable",
                                 "reason": "Runner cannot reproduce environments: " + ", ".join(unavailable)})
                 continue
-            if cluster["targets"] and set(cluster["targets"]).issubset(allowed_targets):
+            domain_targets = allowed_targets if domain == "agent" else {f["key"] for f in failures if f["key"] in executable_tasks}
+            if cluster["targets"] and set(cluster["targets"]).issubset(domain_targets):
                 try:
                     plan = policy.select_tasks(cluster, executable_tasks,
                                                max_tasks=int(os.environ.get("AUTO_IMPROVE_MAX_TASKS", "32")),
@@ -306,16 +350,24 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 except ValueError as exc:
                     attempt.update({"status": "deferred", "reason": str(exc)})
                     continue
-            if count >= 2:
+            if domain_counts[domain] >= 2:
                 attempt["status"] = "deferred"
                 continue
             count += 1
+            domain_counts[domain] += 1
             cluster_dir = out / f"cluster-{count}"
             cluster_dir.mkdir()
             try:
                 if plan is None:
                     raise ValueError("Repair targets must be observed eligible failures")
                 source_paths = validated_source_paths(repo, cluster)
+                if domain == "benchmark" and source_paths:
+                    suite_paths = ["benchmark/" + tasks[k]["suite"] for k in cluster["targets"]
+                                   if k in tasks and tasks[k].get("suite")]
+                    source_paths = sorted(set(source_paths + suite_paths))
+                    if any(not (repo / path).is_file() or (repo / path).is_symlink() or
+                           not (repo / path).resolve().is_relative_to(repo.resolve()) for path in source_paths):
+                        source_paths = []
                 if not source_paths:
                     attempt["status"] = "no_verified_source_path"
                     continue
@@ -326,6 +378,10 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     continue
                 write(cluster_dir / "plan.json", plan)
                 attempt["plan"] = plan
+                if domain == "benchmark":
+                    from ci.auto_improve.benchmark_repair import repair
+                    repair(repo, base, cluster_dir, attempt, tasks, source_paths, deadline)
+                    continue
                 candidate_repo = cluster_dir / "candidate"
                 if not baseline_ready:
                     if baseline_repo.exists():
@@ -335,7 +391,7 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 require_unmodified(baseline_repo)
                 checkout(repo, candidate_repo, base, deadline=deadline)
                 environments = {tasks[k]["environment"] for keys in plan.values() for k in keys}
-                image_prefix = f"aico-auto-improve:{identity}-{count}"
+                image_prefix = f"aico-auto-improve:{policy.digest(identity)[:20]}-{count}"
                 images = [image_prefix + "-base", image_prefix + "-candidate"]
                 progress(f"cluster {count}: build baseline")
                 execution.prepare(baseline_repo, image_prefix + "-base", environments, cluster_dir / "base-build", deadline - time.monotonic())
@@ -456,8 +512,8 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                 attempt.update({"status": "ready", "patch": str(patch_path.relative_to(out)),
                                 "patch_sha256": policy.digest(patch_path.read_text()), "paths": changed,
                                 "audit": verdict, "check_passed": True, "checks": checks,
-                                "source_configuration": [f["manifest"] for f in failures
-                                                         if f["key"] in plan["targets"] and "manifest" in f]})
+                                "source_configuration": [o["manifest"] for f in failures if f["key"] in plan["targets"]
+                                                         for o in f.get("observations", [f]) if "manifest" in o]})
             except InterruptedError:
                 attempt["status"] = "interrupted"
                 raise
@@ -537,7 +593,7 @@ def cli() -> int:
     # the workflow publishes whenever ready > 0, and the publisher revalidates every one.
     if os.environ.get("GITHUB_OUTPUT"):
         with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-            stream.write(f"ready={sum(a['status'] == 'ready' for a in state['attempts'])}\n")
+            stream.write(f"ready={sum(a['status'] in {'ready', 'issue_ready'} for a in state['attempts'])}\n")
     return 1 if state["status"] in {"blocked", "error", "interrupted", "insufficient_evidence"} else 0
 
 

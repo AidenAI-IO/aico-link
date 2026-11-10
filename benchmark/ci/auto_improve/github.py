@@ -20,25 +20,38 @@ def timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def choose_source(runs: list[dict], processed: set[str], *, branch: str, now: datetime,
-                  delay_hours: float = 3, requested: str = "", prefer_latest: bool = False) -> dict | None:
+def choose_window(runs: list[dict], processed: set[str], *, branch: str, now: datetime,
+                  delay_hours: float = 3, requested: tuple[str, ...] = (), limit: int = 13,
+                  include_processed: bool = False) -> tuple[list[dict], list[dict]]:
+    """Select the complete pending window, oldest first; never silently drop a run."""
     require_main_branch(branch)
+    if not 1 <= limit <= 13:
+        raise ValueError("Window limit must be between 1 and 13")
     eligible = []
     for run in runs:
-        identity = f"{run['id']}-{run.get('run_attempt', 1)}"
         if (run.get("status") != "completed" or run.get("event") != "schedule" or
                 run.get("head_branch") != branch or run.get("conclusion") == "cancelled"):
             continue
-        if requested and str(run["id"]) != requested:
+        if requested and str(run["id"]) not in requested:
             continue
         age = now - timestamp(run["updated_at"])
         if age < timedelta(hours=delay_hours) or age > timedelta(days=13):
             continue
-        if not requested and identity in processed:
-            continue
         eligible.append(run)
-    select = max if prefer_latest else min
-    return select(eligible, key=lambda r: r["created_at"]) if eligible else None
+    eligible.sort(key=lambda r: r["created_at"])
+    if requested:
+        if {str(r["id"]) for r in eligible} != set(requested):
+            return [], []
+        return eligible, []
+    if not include_processed:
+        eligible = [r for r in eligible if run_identity(r) not in processed]
+    if len(eligible) > limit:
+        raise ValueError("Pending window exceeds run budget; explicitly select sources to investigate")
+    return eligible, []
+
+
+def run_identity(run: dict) -> str:
+    return f"{run['id']}-{run.get('run_attempt', 1)}"
 
 
 def extract_archive(data: bytes, destination: Path) -> None:
@@ -88,7 +101,7 @@ class GitHub:
     def issues(self) -> list[dict]:
         # Fetch labeled records and search body markers to cover failed labeling.
         labeled = self.pages("issues?state=all&labels=auto-improve")
-        query = urllib.parse.quote(f'repo:{self.repository} "auto-improve:" in:body')
+        query = urllib.parse.quote(f'repo:{self.repository} "auto-improve" in:body')
         found = self.pages(f"search/issues?q={query}&sort=created&order=desc", "items")
         items = {item["number"]: item for item in labeled + found}
         for item in items.values():
@@ -122,26 +135,36 @@ class GitHub:
             raise ValueError("Artifact exceeds transfer budget")
         extract_archive(data, destination)
 
-    def discover(self, branch: str, requested: str = "", delay_hours: float = 3,
-                 *, include_processed: bool = False) -> dict | None:
+    def discover(self, branch: str, requested: tuple[str, ...] = (), delay_hours: float = 3,
+                 *, include_processed: bool = False, limit: int = 13) -> dict | None:
         require_main_branch(branch)
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         created = urllib.parse.quote(">=" + cutoff.strftime("%Y-%m-%d"))
         runs = self.pages(f"actions/workflows/benchmark.yml/runs?event=schedule&created={created}", "workflow_runs")
         # Artifacts are newest first; old expired entries do not affect recent claims.
         artifacts = self.pages("actions/artifacts", "artifacts", cutoff=cutoff)
-        processed = {a["name"].removeprefix("auto-improve-source-") for a in artifacts
-                     if not a.get("expired") and a["name"].startswith("auto-improve-source-")}
-        source = choose_source(runs, processed if not include_processed else set(),
-                               branch=branch, now=datetime.now(timezone.utc),
-                               requested=requested, delay_hours=delay_hours, prefer_latest=include_processed)
-        if not source:
-            if requested:
-                raise ValueError("Requested source is not a completed eligible daily run")
+        processed = {identity for a in artifacts
+                     if not a.get("expired") and a["name"].startswith("auto-improve-source-")
+                     for identity in a["name"].removeprefix("auto-improve-source-").split("__")}
+        window, skipped = choose_window(runs, processed, branch=branch, now=datetime.now(timezone.utc),
+                                        requested=requested, delay_hours=delay_hours, limit=limit,
+                                        include_processed=include_processed)
+        if requested and not window:
+            raise ValueError("Requested sources are not completed eligible daily runs")
+        sources, missing = [], []
+        for run in window:
+            identity = run_identity(run)
+            matches = [a for a in self.pages(f"actions/runs/{run['id']}/artifacts", "artifacts")
+                       if a["name"] == f"benchmark-{identity}" and not a.get("expired")]
+            if len(matches) == 1:
+                sources.append({"run": run, "artifact": matches[0], "identity": identity})
+            elif requested:
+                raise ValueError(f"Source {identity} has no unique available benchmark artifact")
+            else:
+                missing.append(identity)
+        if not sources:
             return None
-        identity = f"{source['id']}-{source.get('run_attempt', 1)}"
-        matches = [a for a in self.pages(f"actions/runs/{source['id']}/artifacts", "artifacts")
-                   if a["name"] == f"benchmark-{identity}" and not a.get("expired")]
-        if len(matches) != 1:
-            raise ValueError(f"Source {identity} has no unique available benchmark artifact")
-        return {"run": source, "artifact": matches[0], "identity": identity}
+        # Encode every included identity, not a time watermark: late-finishing or missing
+        # artifacts must remain selectable even after a newer run has been processed.
+        return {"identity": "__".join(s["identity"] for s in sources), "sources": sources,
+                "skipped": [run_identity(r) for r in skipped], "missing_artifacts": missing}

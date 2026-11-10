@@ -42,6 +42,69 @@ def pair():
     return plan, baseline, candidate
 
 
+def test_window_keeps_each_days_outcome_and_exact_task_definition(tmp_path):
+    for number, status in ((41, "failed"), (42, "passed")):
+        run = tmp_path / f"benchmark/runs/ci-{number}-1-case"
+        run.mkdir(parents=True)
+        (run / "manifest.json").write_text(json.dumps({"git_sha": str(number)}))
+        (run / "suite.json").write_text(json.dumps({"tasks": [{"id": "t", "rubric": [str(number)]}]}))
+        (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": status}) + "\n")
+    failures, warnings = evidence.source_failures_window(tmp_path, [("41", "1"), ("42", "1")], {})
+    assert not warnings and len(failures) == 1
+    f = failures[0]
+    assert (f["failure_count"], f["run_count"]) == (1, 2)
+    assert [(o["source"], o["status"], o["task"]["rubric"]) for o in f["observations"]] == [
+        ("41-1", "failed", ["41"]), ("42-1", "passed", ["42"])]
+
+
+@pytest.mark.parametrize("path,domain,allowed", [
+    ("benchmark/runner/judge.py", "benchmark", True),
+    ("benchmark/suites/example.json", "benchmark", True),
+    ("src/agent/cmd/benchmark-mcu/main.go", "benchmark", True),
+    ("src/agent/internal/agent/main.go", "benchmark", False),
+    ("benchmark/ci/auto_improve/policy.py", "benchmark", False),
+    ("benchmark/tests/test_example.py", "benchmark", False),
+    ("benchmark/mobilegym/vendor/main.py", "benchmark", False),
+    ("benchmark/vphone/local.env", "benchmark", False),
+    (".github/workflows/benchmark.yml", "benchmark", False),
+])
+def test_repair_domains_cannot_change_each_other_or_their_acceptance_gate(path, domain, allowed):
+    assert policy.edit_target(path, domain) is allowed
+
+
+@pytest.mark.parametrize("mutation", [None, "not_reproduced", "remaining", "missing", "new_error", "scores_drop"])
+def test_benchmark_acceptance_measures_symptom_not_pass_rate(mutation):
+    plan, baseline, candidate = pair()
+    symptom = {"kind": "tool_error", "pattern": "socket missing"}
+    for side in (baseline, candidate):
+        for key, rows in side.items():
+            for r in rows:
+                r["symptom_evidence"] = ["socket missing"] if side is baseline and key == "phone:tap" else []
+    if mutation == "not_reproduced":
+        baseline["phone:tap"][0]["symptom_evidence"] = []
+        baseline["phone:tap"][1]["symptom_evidence"] = []
+    elif mutation == "remaining":
+        candidate["phone:tap"][0]["symptom_evidence"] = ["socket missing"]
+    elif mutation == "missing":
+        candidate["phone:tap"].pop()
+    elif mutation == "new_error":
+        candidate["phone:type"][0].update(status="judge_error", metrics={"agent_eligible": False})
+    elif mutation == "scores_drop":
+        for rows in candidate.values():
+            for r in rows:
+                r.update(status="failed", metrics={"success": False, "agent_eligible": True})
+    verdict = policy.compare_symptom(plan, symptom, baseline, candidate, [])
+    assert verdict["passed"] is (mutation in {None, "scores_drop"})
+
+
+def test_contract_changes_flag_task_removal_and_scoring_changes():
+    before = {"tasks": [{"id": "removed", "rubric": []}, {"id": "kept", "expected_answer": "old"}]}
+    after = {"tasks": [{"id": "kept", "expected_answer": "new"}]}
+    changes = policy.contract_changes("benchmark/suites/example.json", json.dumps(before), json.dumps(after))
+    assert any("removed task removed" in c for c in changes)
+    assert any("changed expected_answer" in c for c in changes)
+
+
 def test_gate_requires_complete_paired_evidence():
     plan, baseline, candidate = pair()
     assert policy.compare(plan, baseline, candidate)["passed"]
@@ -119,19 +182,22 @@ def test_source_selection_delays_and_deduplicates():
                 "conclusion": "success", "created_at": (now - timedelta(hours=hours + 1)).isoformat(),
                 "updated_at": (now - timedelta(hours=hours)).isoformat(), **extra}
     runs = [run(1, 4), run(2, 2), run(3, 6, event="pull_request"), run(4, 6, head_branch="fork"), run(5, 24 * 15), run(6, 5)]
-    selected = github.choose_source(runs, {"6-1"}, branch="main", now=now)
-    assert selected["id"] == 1
-    assert github.choose_source(runs, {"1-1", "6-1"}, branch="main", now=now) is None
-    assert github.choose_source(runs, set(), branch="main", now=now, requested="4") is None
-    assert github.choose_source(runs, {"1-1"}, branch="main", now=now, requested="1")["id"] == 1
-    assert github.choose_source(runs, set(), branch="main", now=now, prefer_latest=True)["id"] == 1
+    selected, skipped = github.choose_window(runs, set(), branch="main", now=now)
+    assert [r["id"] for r in selected] == [6, 1] and not skipped
+    assert github.choose_window(runs, {"1-1", "6-1"}, branch="main", now=now) == ([], [])
+    assert github.choose_window(runs, set(), branch="main", now=now, requested=("4",)) == ([], [])
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now, requested=("1",))[0][0]["id"] == 1
+    # Older late-finishing runs must not be lost behind a newer processed run.
+    assert github.choose_window(runs, {"1-1"}, branch="main", now=now)[0][0]["id"] == 6
+    with pytest.raises(ValueError, match="budget"):
+        github.choose_window(runs, set(), branch="main", now=now, limit=1)
 
 
 @pytest.mark.parametrize("branch", ["release", "develop", "refs/heads/main", ""])
 def test_non_main_discovery_and_publication_are_rejected_before_side_effects(tmp_path, branch):
     now = datetime.now(timezone.utc)
     with pytest.raises(ValueError, match="only supports main"):
-        github.choose_source([], set(), branch=branch, now=now)
+        github.choose_window([], set(), branch=branch, now=now)
     with pytest.raises(ValueError, match="only supports main"):
         control.discover(None, tmp_path / "source", "42", branch)
     with pytest.raises(ValueError, match="only supports main"):
@@ -435,8 +501,8 @@ def test_failure_evidence_uses_source_rubric_and_keeps_unknown_tasks(tmp_path):
     (run / "results.jsonl").write_text(json.dumps({"task_id": "tap", "attempt": 1, "status": "failed"}) + "\n")
     failures, warnings = evidence.source_failures(tmp_path, "42", "1", {})
     assert not warnings
-    assert failures[0]["task"]["rubric"] == ["original rule"]
-    assert failures[0]["current_task"] is None
+    assert failures[0]["observations"][0]["task"]["rubric"] == ["original rule"]
+    assert failures[0]["observations"][0]["current_task"] is None
 
 
 def test_benchmark_environment_excludes_review_and_github_secrets(monkeypatch):
@@ -609,8 +675,56 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     assert all(policy.signature(a["cluster"]) == a["signature"] for a in result["attempts"])
     # Known evaluation issues follow the task into any plan that contains it.
     assert all([i["task"] for i in a["known_evaluation_issues"]] == ["b:graded"] for a in audits)
-    assert removed_images == [[f"aico-auto-improve:42-1-{n}-base", f"aico-auto-improve:42-1-{n}-candidate"]
+    assert removed_images == [[f"aico-auto-improve:{policy.digest('42-1')[:20]}-{n}-base", f"aico-auto-improve:{policy.digest('42-1')[:20]}-{n}-candidate"]
                               for n in (1, 2)]
+
+
+@pytest.mark.parametrize("remove_task", [False, True])
+def test_benchmark_repair_keeps_agent_fixed_and_verifies_before_ready(tmp_path, monkeypatch, remove_task):
+    from ci.auto_improve.benchmark_repair import repair
+    repo, out = tmp_path / "repo", tmp_path / "result/cluster-1"
+    repo.mkdir(); out.mkdir(parents=True)
+    path = "benchmark/suites/example.json" if remove_task else "benchmark/runner/environment.py"
+    before = json.dumps({"tasks": [{"id": "t", "rubric": []}]}) if remove_task else "message = 'socket missing'\n"
+    after = json.dumps({"tasks": []}) if remove_task else "message = 'ready'\n"
+    file = repo / path
+    file.parent.mkdir(parents=True); file.write_text(before)
+    plan = {"targets": ["a:t"], "neighbors": ["a:n"], "held_out": ["b:h"]}
+    tasks = {k: {"environment": "isolated", "task": {}} for keys in plan.values() for k in keys}
+    cluster = {"title": "Fix setup", "category": "setup", "judge_review": "supported", "fix_target": "benchmark_code",
+               "source_paths": [path], "targets": plan["targets"], "symptom": {"kind": "tool_error", "pattern": "socket missing"}}
+    attempt = {"cluster": cluster, "plan": plan}
+    events = []
+    def checkout(_repo, dest, _base, **kwargs):
+        (dest / path).parent.mkdir(parents=True)
+        (dest / path).write_text(before)
+    def ask(_out, stage, _repo, payload, *args, **kwargs):
+        events.append(stage)
+        if stage == "fix":
+            return {"summary": "repair scenario", "edits": [{"path": path, "old": before, "new": after}]}
+        return {"supported": True, "reason": "evidence", "evidence": []}
+    def run(root, key, repeat, image, dest, **kwargs):
+        assert kwargs["rejudge"] is False
+        events.append(f"run:{root.name}:{key}")
+        evidence_dir = dest / "evidence/tasks/t"
+        evidence_dir.mkdir(parents=True)
+        content = "socket missing" if root.name == "baseline" and key == "a:t" else "ready"
+        (evidence_dir / "trace.json").write_text(json.dumps({"tool_results": [{"content": content}]}))
+        return {**row(repeat), "evidence": str(dest / "evidence")}
+    monkeypatch.setattr(driver, "checkout", checkout)
+    monkeypatch.setattr(driver, "ask", ask)
+    monkeypatch.setattr(execution, "prepare", lambda *a, **kw: None)
+    monkeypatch.setattr(execution, "remove_images", lambda *a: None)
+    monkeypatch.setattr(execution, "run_task", run)
+    monkeypatch.setattr(execution, "command", lambda *a, **kw: events.append("check"))
+    monkeypatch.setattr(evidence, "catalog_tasks", lambda _: {k: v for k, v in tasks.items() if not (remove_task and k == "a:t")})
+    monkeypatch.setattr(subprocess, "check_output", lambda cmd, **kw: "" if "--name-only" in cmd else "diff\n")
+    repair(repo, "base", out, attempt, tasks, [path], time.monotonic() + 1000)
+    assert attempt["status"] == "ready" and attempt["comparison"]["passed"]
+    assert events.index("run:baseline:a:t") < events.index("fix") < events.index("check") < events.index("verification-review")
+    assert bool(attempt["contract_changes"]) is remove_task
+    assert attempt["removed_tasks"] == (["a:t"] if remove_task else [])
+    assert not (out / "baseline").exists() and not (out / "candidate").exists()
 
 
 def test_raw_artifact_paths_cannot_escape_run(tmp_path):
@@ -621,6 +735,25 @@ def test_raw_artifact_paths_cannot_escape_run(tmp_path):
     failures, warnings = evidence.source_failures(tmp_path, "42", "1", {})
     assert not failures
     assert warnings
+
+
+def test_issue_publication_is_idempotent_and_requires_supported_diagnosis():
+    cluster = {"targets": ["a:t"], "source_paths": ["src/device.cpp"], "category": "device",
+               "fix_target": "external_code", "judge_review": "supported", "cause": "Broken device transport",
+               "evidence": ["trace step 2"]}
+    attempt = {"cluster": cluster, "signature": policy.signature(cluster), "title": "Fix transport"}
+    feedback, calls = [], []
+    class API:
+        def request(self, path, payload):
+            calls.append((path, payload))
+            return {"html_url": "https://example.invalid/issue/1", "body": payload["body"]}
+    manifest = {"source": "41-1__42-1"}
+    assert control.publish_issue(API(), manifest, attempt, feedback) == "https://example.invalid/issue/1"
+    control.publish_issue(API(), manifest, attempt, feedback)
+    assert len(calls) == 1
+    cluster["judge_review"] = "insufficient_evidence"
+    with pytest.raises(ValueError, match="supported diagnosis"):
+        control.publish_issue(API(), manifest, attempt, feedback)
 
 
 def test_publisher_recomputes_gate_before_touching_remote(tmp_path, monkeypatch):
@@ -751,24 +884,25 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branc
     class API:
         def discover(self, *args, **kwargs):
             assert kwargs["include_processed"] is branch_test
-            return {"artifact": {"id": 1}, "identity": "42-1", "run": {"id": 42}}
+            return {"identity": "41-1__42-1", "sources": [
+                {"artifact": {"id": i}, "identity": f"{i}-1", "run": {"id": i}} for i in (41, 42)]}
         def download(self, artifact, destination):
             root = destination / "benchmark" if nested else destination
-            (root / "runs").mkdir(parents=True)
-            (root / "dashboard-data.json").write_text('{"history": []}')
+            (root / "runs" / f"ci-{artifact['id']}-1-a").mkdir(parents=True)
+            (root / "dashboard-data.json").write_text(json.dumps({"history": [artifact["id"]]}))
         def issues(self):
             return []
         def pages(self, *args, **kwargs):
             return []
     out = tmp_path / "source"
     result = control.discover(API(), out, "", "main")
-    assert result["identity"] == "42-1"
-    assert (out / "benchmark/runs").is_dir()
-    assert json.loads((out / "history.json").read_text()) == {"history": []}
+    assert result["identity"] == "41-1__42-1"
+    assert sorted(p.name for p in (out / "benchmark/runs").iterdir()) == ["ci-41-1-a", "ci-42-1-a"]
+    assert json.loads((out / "history.json").read_text()) == {"history": [42]}
 
 
-@pytest.mark.parametrize("go_code", [False, True])
-def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkeypatch, go_code):
+@pytest.mark.parametrize("go_code,benchmark", [(False, False), (True, False), (False, True)])
+def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkeypatch, go_code, benchmark):
     repo = tmp_path / "repo"
     repo.mkdir()
     import os
@@ -778,7 +912,8 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
     def local_git(*args):
         return subprocess.check_output(["git", *args], cwd=repo, env=env, text=True).strip()
     local_git("init", "-q")
-    path = "src/agent/internal/agent/navigation.go" if go_code else "src/agent/config/skills/test/SKILL.md"
+    path = ("benchmark/runner/environment.py" if benchmark else
+            "src/agent/internal/agent/navigation.go" if go_code else "src/agent/config/skills/test/SKILL.md")
     before = "package agent\nfunc retries() int { return 0 }\n" if go_code else "Observe first.\n"
     after = before.replace("return 0", "return 1") if go_code else "Observe and verify first.\n"
     target = repo / path
@@ -795,7 +930,23 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
     out = tmp_path / "artifact"
     out.mkdir()
     (out / "candidate.patch").write_text(patch)
-    comparison = policy.compare(plan, baseline, candidate)
+    if benchmark:
+        cluster.update(fix_target="benchmark_code", judge_review="supported",
+                       symptom={"kind": "tool_error", "pattern": "socket missing"})
+        for side, data in (("baseline", baseline), ("candidate", candidate)):
+            for key, rows in data.items():
+                for r in rows:
+                    directory = out / "cluster-1" / f"{side}-runs" / policy.digest(key)[:12] / str(r["repeat"]) / "evidence"
+                    task = directory / "tasks/t"
+                    task.mkdir(parents=True)
+                    content = "socket missing" if side == "baseline" and key in plan["targets"] else "ready"
+                    (task / "trace.json").write_text(json.dumps({"tool_results": [{"content": content}]}))
+                    (directory / "results.jsonl").write_text(json.dumps(r) + "\n")
+                    r.update(evidence=str(directory), symptom_evidence=[content] if content == "socket missing" else [])
+        comparison = policy.compare_symptom(plan, cluster["symptom"], baseline, candidate, [])
+        monkeypatch.setattr(evidence, "catalog_tasks", lambda _: {k: {} for keys in plan.values() for k in keys})
+    else:
+        comparison = policy.compare(plan, baseline, candidate)
     manifest = {"base_sha": base, "base_branch": "main", "execution_ref": "refs/heads/main", "source_sha": base, "source": "42-1", "configuration": {}, "avd_fixture": "",
                 "attempts": [{"status": "ready", "title": "Verify actions", "cluster": cluster, "signature": policy.signature(cluster),
                               "patch": "candidate.patch", "patch_sha256": policy.digest(patch), "paths": [path],
@@ -824,9 +975,18 @@ def test_publisher_creates_only_verified_draft_from_exact_patch(tmp_path, monkey
                 assert payload["draft"] is True and payload["base"] == "main"
                 return {"number": 1, "html_url": "https://github.com/org/repo/pull/1"}
             if endpoint == "issues/1/labels": return {}
+            if endpoint == "issues":
+                return {"html_url": "https://github.com/org/repo/issues/2", "body": payload["body"]}
             pytest.fail(endpoint)
     assert control.publish(API(), repo, out, "main") == ["https://github.com/org/repo/pull/1"]
     assert target.read_text() == before
+    if benchmark:
+        assert any(endpoint == "issues" for endpoint, _ in calls)
+        # Tampering with an embedded status must fail against retained raw execution evidence.
+        baseline[plan["targets"][0]][0]["status"] = "passed"
+        (out / "baseline.json").write_text(json.dumps(baseline))
+        with pytest.raises(ValueError, match="retained execution"):
+            control.publish(API(), repo, out, "main")
     if go_code:
         manifest["attempts"][0]["checks"] = [["make", "check"]]
         (out / "manifest.json").write_text(json.dumps(manifest))

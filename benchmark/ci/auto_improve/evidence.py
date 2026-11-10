@@ -52,16 +52,25 @@ def catalog_tasks(root: Path) -> dict[str, dict]:
 
 
 def source_failures(artifact: Path, source_id: str, attempt: str, tasks: dict[str, dict]) -> tuple[list[dict], list[str]]:
-    prefix = f"ci-{source_id}-{attempt}-"
-    failures, warnings = [], []
+    return source_failures_window(artifact, [(source_id, attempt)], tasks)
+
+
+def source_failures_window(artifact: Path, sources: list[tuple[str, str]],
+                           tasks: dict[str, dict]) -> tuple[list[dict], list[str]]:
+    """Aggregate each task's observations across every daily run in the selected window."""
+    prefixes = {f"ci-{source_id}-{attempt}-": f"{source_id}-{attempt}" for source_id, attempt in sources}
+    grouped: dict[str, list[dict]] = {}
+    warnings = []
     runs = artifact / "benchmark/runs"
     if not runs.is_dir():
         raise ValueError("Benchmark artifact has no run directories")
-    manifests = 0
-    for run_dir in sorted(runs.glob(f"{prefix}*")):
-        if not (run_dir / "manifest.json").is_file():
+    manifests: set[str] = set()
+    for run_dir in sorted(runs.iterdir()):
+        prefix = next((p for p in prefixes if run_dir.name.startswith(p)), None)
+        if prefix is None or not (run_dir / "manifest.json").is_file():
             continue
-        manifests += 1
+        source_identity = prefixes[prefix]
+        manifests.add(source_identity)
         manifest = read_json(run_dir / "manifest.json")
         case_id = run_dir.name[len(prefix):]
         suite_file = run_dir / "suite.json"
@@ -69,34 +78,32 @@ def source_failures(artifact: Path, source_id: str, attempt: str, tasks: dict[st
         try:
             rows = results(run_dir / "results.jsonl")
         except (OSError, ValueError) as exc:
-            warnings.append(f"{case_id}: results unavailable: {exc}")
+            warnings.append(f"{run_dir.name}: results unavailable: {exc}")
             continue
         for row in rows:
             task_id = row.get("task_id")
             if (not isinstance(task_id, str) or not task_id or Path(task_id).name != task_id
                     or task_id in {".", ".."} or "\\" in task_id):
-                warnings.append(f"{case_id}: invalid task identity")
+                warnings.append(f"{run_dir.name}: invalid task identity")
                 continue
             try:
                 repeat = int(row.get("attempt", 1))
                 if repeat < 1:
                     raise ValueError()
             except (ValueError, TypeError):
-                warnings.append(f"{case_id}:{task_id}: invalid attempt identity")
+                warnings.append(f"{run_dir.name}:{task_id}: invalid attempt identity")
                 continue
             key = f"{case_id}:{task_id}"
             success, failure_class, eligible = status_fields(row)
-            if success is True:
-                continue
-            item = {"key": key, "status": row.get("status"), "failure_class": failure_class,
-                    "agent_eligible": eligible, "metrics": row.get("metrics"),
-                    "rubric": row.get("rubric"), "hard_assertion_failures": row.get("hard_assertion_failures"),
-                    "final_response": row.get("final_response"), "task": source_tasks.get(row.get("task_id")),
+            item = {"key": key, "source": source_identity, "status": row.get("status"),
+                    "failure_class": failure_class, "agent_eligible": eligible, "repeat": repeat,
+                    "metrics": row.get("metrics"), "rubric": row.get("rubric"),
+                    "hard_assertion_failures": row.get("hard_assertion_failures"),
+                    "final_response": row.get("final_response"), "task": source_tasks.get(task_id),
                     "current_task": tasks.get(key, {}).get("task"),
                     "manifest": {k: manifest.get(k) for k in ("git_sha", "agent_model", "judge_config",
                                   "suite_sha256", "target_platform", "execution_environment")}}
-            # Each evidence path is scoped to the downloaded artifact, never to the runner's host.
-            local_dir = run_dir / "tasks" / row["task_id"]
+            local_dir = run_dir / "tasks" / task_id
             if repeat > 1 or (local_dir / "attempt_1").is_dir():
                 local_dir /= f"attempt_{repeat}"
             for name in ("judge.json", "trace.json", "history.json", "environment_state.json"):
@@ -110,10 +117,20 @@ def source_failures(artifact: Path, source_id: str, attempt: str, tasks: dict[st
                 path = local_dir / name
                 if path.is_file():
                     item[name.removesuffix(".jpg") + "_image"] = str(path)
-            failures.append(sanitize(item))
+            grouped.setdefault(key, []).append(sanitize(item))
+    failures = []
+    for key, observations in sorted(grouped.items()):
+        failed = [o for o in observations if status_fields(o)[0] is not True]
+        if not failed:
+            continue
+        failures.append({"key": key, "failure_count": len({o["source"] for o in failed}),
+                         "run_count": len({o["source"] for o in observations}), "observations": observations})
+    missing = sorted(set(prefixes.values()) - manifests)
+    warnings.extend(f"No completed suite manifests for source run {identity}" for identity in missing)
     if not manifests:
-        warnings.append("No completed suite manifests in source artifact")
+        warnings.append("No completed suite manifests in source window")
     return failures, warnings
+
 
 
 def source_identity(source_id: str, attempt: str) -> str:

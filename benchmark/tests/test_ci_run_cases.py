@@ -20,6 +20,18 @@ def _case(case_id: str, environment: str) -> SuiteCase:
     )
 
 
+def test_mobilegym_environment_uses_the_selected_side_image(monkeypatch):
+    captured = []
+    def fake_json(command, **kwargs):
+        captured.append(command)
+        return {"environment_url": "http://localhost:1234"}
+    monkeypatch.setattr(run_case_module, "_run_json", fake_json)
+    for side in ("baseline", "candidate"):
+        run_case_module._environment_url(_case("phone", "mobilegym"), run_id=side,
+            environment={"MOBILEGYM_IMAGE": f"private:{side}", "BENCHMARK_CI_IMAGES_PREPARED": "1"})
+    assert [c[c.index("--mobilegym-image") + 1] for c in captured] == ["private:baseline", "private:candidate"]
+
+
 @pytest.mark.parametrize("repeats", ["1", "3"])
 def test_run_case_forwards_configured_repeat_count(monkeypatch, tmp_path, repeats):
     commands: list[list[str]] = []

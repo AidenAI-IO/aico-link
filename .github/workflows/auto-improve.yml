@@ -3,8 +3,9 @@ run-name: Auto-improve ${{ inputs.source_run || 'scheduled discovery' }}
 
 on:
   schedule:
-    # Discovery enforces at least three hours since source completion.
-    - cron: '37 1 * * *'
+    # Odd calendar days (09:37 Asia/Shanghai); discovery aggregates all pending daily runs.
+    # Month boundaries can produce consecutive days; sources are deduplicated individually.
+    - cron: '37 1 */2 * *'
   push:
     branches:
       # Explicit pre-merge testing; never publishes a PR.
@@ -13,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       source_run:
-        description: Optional completed scheduled Benchmark run ID from main only
+        description: Optional comma-separated completed scheduled Benchmark run IDs from main
         type: string
         default: ''
       mode:
@@ -114,7 +115,7 @@ jobs:
           docker info >/dev/null
           docker compose version
       - id: discover
-        name: Find an unprocessed completed main daily run
+        name: Collect the unprocessed main daily benchmark window
         working-directory: benchmark
         env:
           GH_TOKEN: ${{ github.token }}
@@ -194,6 +195,8 @@ jobs:
           # Do not upload clones, daemon configurations, CLI sessions, or emulator disks.
           path: |
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/manifest.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/source-window.json
+            ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/cluster-*/check-*.log
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/summary.md
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis.json
             ${{ env.AUTO_IMPROVE_WORK_ROOT }}/auto-improve-${{ github.run_id }}-${{ github.run_attempt }}/result/diagnosis-error.log

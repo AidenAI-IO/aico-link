@@ -80,12 +80,13 @@ def benchmark_environment() -> dict[str, str]:
     return env
 
 
-def prepare(root: Path, image: str, environments: set[str], out: Path, timeout: float) -> None:
+def prepare(root: Path, image: str, environments: set[str], out: Path, timeout: float,
+            *, mobilegym_image: str | None = None) -> None:
     command([sys.executable, "-m", "ci.prepare_images", "--matrix-json",
              json.dumps({"include": [{"environment": e} for e in sorted(environments)]}),
              "--daemon-image", image, "--daemon-dockerfile",
              os.environ.get("DAEMON_DOCKERFILE", "benchmark/docker/Dockerfile.agent-daemon.cn"),
-             "--mobilegym-image", os.environ.get("MOBILEGYM_IMAGE", "aico-mobilegym-simulator:py311"),
+             "--mobilegym-image", mobilegym_image or os.environ.get("MOBILEGYM_IMAGE", "aico-mobilegym-simulator:py311"),
              "--mobilegym-log", str(out / "mobilegym-build.log")], cwd=root / "benchmark",
             log=out / "build.log", timeout=timeout, env=benchmark_environment())
 
@@ -145,7 +146,7 @@ def rejudge_transient_errors(run: Path, *, deadline: float, delays: tuple[float,
         (run / "results.rejudged.jsonl").replace(results)
 
 
-def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float) -> dict:
+def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float, rejudge: bool = True, mobilegym_image: str | None = None) -> dict:
     case_id, task_id = key.split(":", 1)
     catalog = load_catalog(catalog_path=root / "benchmark/ci/suites.json", suites_dir=root / "benchmark/suites")
     case = next(case for case in catalog.cases if case.id == case_id)
@@ -156,6 +157,8 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
     run_id = f"ai-{digest(str(out))[:16]}-{repeat}"
     env = benchmark_environment()
     env["DAEMON_IMAGE"] = image
+    if mobilegym_image:
+        env["MOBILEGYM_IMAGE"] = mobilegym_image
     out.mkdir(parents=True, exist_ok=True)
     case_file = out / "case.json"
     case_file.write_text(json.dumps(case.matrix_entry()))
@@ -190,7 +193,7 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
             # Rejudging waits 30/90 s, so only rejudge a completed run (a judge_error run still
             # exits 0 through run_case); never wait while a failure or cancellation propagates.
             try:
-                if sys.exc_info()[0] is None and (run / "results.jsonl").is_file():
+                if rejudge and sys.exc_info()[0] is None and (run / "results.jsonl").is_file():
                     try:
                         rejudge_transient_errors(run, deadline=deadline)
                     except InterruptedError:

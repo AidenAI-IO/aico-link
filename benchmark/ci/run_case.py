@@ -118,6 +118,8 @@ def _environment_url(
             str(case.max_concurrency),
             "--json",
         ]
+        if environment.get("MOBILEGYM_IMAGE"):
+            command.extend(["--mobilegym-image", environment["MOBILEGYM_IMAGE"]])
         if _images_prepared(environment):
             command.append("--no-build-mobilegym-image")
         payload = _run_json(
