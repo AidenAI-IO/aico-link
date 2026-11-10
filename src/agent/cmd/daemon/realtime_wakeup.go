@@ -939,7 +939,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewForgetMemoryTool(nil),
-			"Delete a saved memory when the user asks you to forget it. First call recall_memory to find the memory id, then pass that id here. Never expose the id to the user.",
+			"Delete a saved memory when the user asks you to forget it. First call recall_memory to find the memory id, then pass that id here. Do not tell the user it was forgotten until this tool returns successfully. Never expose the id to the user.",
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewRecallSessionChunksTool(nil),
@@ -947,7 +947,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewAudioVolumeTool(""),
-			"Get or set your own speaking volume. Omit volume to read the current value. This controls your playback volume only, not the phone's system volume.",
+			"Get or set your own speaking volume. Omit volume to read the current value. When setting volume, do not tell the user it changed until this tool returns. This controls your playback volume only, not the phone's system volume.",
 		),
 		realtimeVoiceToolDefinition(
 			realtimeEndConversationTool,
@@ -981,7 +981,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. Present the work to the user as your own responsibility.",
+				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -992,7 +992,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeCancelTaskTool,
-				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification.",
+				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. Do not tell the user the work is stopped until this tool returns.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1003,7 +1003,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this when the user changes an existing request instead of cancelling it and creating another task.",
+				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this when the user changes an existing request instead of cancelling it and creating another task. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{

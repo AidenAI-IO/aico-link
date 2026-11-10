@@ -513,6 +513,53 @@ func TestRealtimeInstructionsCoverMemoryWritesAndStandby(t *testing.T) {
 	}
 }
 
+func TestRealtimeInstructionsGateOutcomeClaimsUntilEvidence(t *testing.T) {
+	const (
+		coreRule    = "A tool result that only says work was accepted, queued, or started is not outcome evidence"
+		backendRule = "report success or failure only from a task update or query_agent_task result whose status is completed or failed"
+		directRule  = "Until a direct tool returns, do not claim device or external state has changed"
+		createRule  = "until a task update or query_agent_task result shows status completed or failed"
+		cancelRule  = "Do not tell the user the work is stopped until this tool returns"
+		updateRule  = "do not treat the update itself as completion of the device work"
+		saveRule    = "Do not tell the user you remembered it until this tool returns"
+		forgetRule  = "Do not tell the user it was forgotten until this tool returns successfully"
+		volumeRule  = "do not tell the user it changed until this tool returns"
+	)
+	if !strings.Contains(agent.DefaultRealtimeVoiceCoreInstructions, coreRule) {
+		t.Fatalf("realtime core instructions missing outcome-claim gate: %s", agent.DefaultRealtimeVoiceCoreInstructions)
+	}
+	if !strings.Contains(agent.DefaultRealtimeVoiceInstructions, backendRule) {
+		t.Fatalf("realtime backend instructions missing queued-vs-completed gate: %s", agent.DefaultRealtimeVoiceInstructions)
+	}
+	if !strings.Contains(agent.DefaultRealtimeToolExecutionInstructions, coreRule) {
+		t.Fatalf("direct-tool instructions missing shared outcome-claim gate: %s", agent.DefaultRealtimeToolExecutionInstructions)
+	}
+	if !strings.Contains(agent.DefaultRealtimeToolExecutionInstructions, directRule) {
+		t.Fatalf("direct-tool instructions missing direct-tool outcome gate: %s", agent.DefaultRealtimeToolExecutionInstructions)
+	}
+
+	definitions := make(map[string]realtimevoice.Tool)
+	for _, definition := range realtimeVoiceToolDefinitions(agent.Config{VoiceModel: agent.VoiceModelConfig{UseBackendAgent: true}}, nil) {
+		definitions[definition.Name] = definition
+	}
+	for _, check := range []struct {
+		name string
+		rule string
+	}{
+		{realtimeCreateTaskTool, createRule},
+		{realtimeCancelTaskTool, cancelRule},
+		{realtimeUpdateTaskTool, updateRule},
+		{realtimeSaveMemoryTool, saveRule},
+		{realtimeForgetMemoryTool, forgetRule},
+		{realtimeAudioVolumeTool, volumeRule},
+	} {
+		tool, ok := definitions[check.name]
+		if !ok || !strings.Contains(tool.Description, check.rule) {
+			t.Fatalf("%s description missing outcome gate %q: %s", check.name, check.rule, tool.Description)
+		}
+	}
+}
+
 func TestRealtimeAgentTaskToolsAreNonBlocking(t *testing.T) {
 	runner := &fakeBackgroundTaskRunner{
 		started: make(chan string, 1),
