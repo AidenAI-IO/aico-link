@@ -47,6 +47,7 @@ readonly -a APP_PAYLOAD=(
     bin/image_process
     bin/rknn_vad
     bin/smart_turn_helper
+    bin/ui_grounding_helper
     bin/speaker_verify_fbank
     bin/speaker_verify_rknn
     bin/speaker_verify_tail

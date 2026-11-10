@@ -163,6 +163,9 @@ func (a *FunctionAgent) observationMessagesForStep(step schema.AgentStep) (strin
 	if summary := screenshotObservationStatusSummary(step.Action.Tool, result); summary != "" {
 		caption += " " + summary
 	}
+	if grounding := screenshotGroundingCaption(result.Grounding); grounding != "" {
+		caption += "\n" + grounding
+	}
 	return toolContent, []llms.MessageContent{{
 		Role: llms.ChatMessageTypeHuman,
 		Parts: []llms.ContentPart{

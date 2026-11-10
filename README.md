@@ -174,6 +174,7 @@ The full documentation is organized under [docs/](docs/README.md):
 - [Go Agent](docs/04-agent/overview.md)
 - [Agent Configuration Reference](docs/04-agent/configuration.md)
 - [Tools HTTP API](docs/04-agent/tools-http-api.md)
+- [UI Grounding](docs/04-agent/ui-grounding.md)
 - [OTA](docs/08-ota/README.md)
 - [Benchmark](docs/09-benchmark/README.md)
 - [SkillOpt](docs/10-skillopt/README.md)

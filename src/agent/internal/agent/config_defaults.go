@@ -277,6 +277,7 @@ func DefaultConfig() Config {
 		VoiceSpeakerMaxProfiles:    defaultSpeakerMaxProfiles,
 		TapWakeupEnabled:           defaultBoolPtr(true),
 		MCPEnabled:                 defaultBoolPtr(true),
+		UIGroundingEnabled:         defaultBoolPtr(true),
 		MCPShellEnabled:            defaultBoolPtr(false),
 		VoiceStreamingTTSEnabled:   defaultBoolPtr(true),
 		VoiceToolCallSpeech:        defaultBoolPtr(true),

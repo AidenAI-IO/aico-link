@@ -45,7 +45,7 @@ sidebar_position: 4
 | --- | --- |
 | `/usr/lib/aico/` | Packaged applications and base-owned service helpers |
 | `/usr/lib/aico/platform/lib/` | Vendor and application runtime libraries |
-| `/usr/lib/aico/models/` | VAD models and weights |
+| `/usr/lib/aico/models/` | VAD, turn detection, denoiser and UI grounding models |
 | `/usr/share/aico/config-web/` | Config Web static assets served by `agent config-web` |
 | `/userdata/agent/agent.toml` | Agent configuration |
 | `/userdata/agent/python/` | Persistent pip userbase |
