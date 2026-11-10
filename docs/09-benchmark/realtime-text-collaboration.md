@@ -164,6 +164,18 @@ setting in the uploaded `daemon.log`, including raw realtime provider frames
 with transcripts and tool arguments. The default level is `info`; restore it
 after the investigation.
 
+A raw-wire comparison on runner2 in [run 42790018442](https://github.com/AidenAI-IO/aico-link/actions/runs/42790018442)
+used the same key and harmless echo request once per variant. Extended Thinking
+emitted no tool call with separate or grouped function declarations, or with a
+combined text turn; standard `gemini-3.8-live` emitted an identified echo call.
+The Extended Thinking replies included a spoken system-error message without an
+API error. This matches [upstream report 3015](https://github.com/googleapis/python-genai/issues/3015),
+but does not establish a failure rate or account-independent cause. Use standard
+Live as a diagnostic comparison before changing task-manager behavior.
+`ci/probe_gemini_live.py` reproduces these four variants without device actions;
+it requires `websockets==15.0.1` and `BENCHMARK_REALTIME_API_KEY` in the process
+environment, and prints only tool calls, statuses, and transcription.
+
 When the runner has an HTTPS proxy, realtime-text workers forward it to the
 daemon for the foreground provider. The backend model endpoint is added to
 `NO_PROXY` and keeps the direct route used in every other mode.
