@@ -17,10 +17,11 @@ import (
 	"testing"
 	"time"
 
+	"aico-agent/internal/usbuplink"
 	xproxy "golang.org/x/net/proxy"
 )
 
-func startTestProxy(t *testing.T, config Config, fallback Upstreams) (*Server, *url.URL) {
+func startTestProxy(t *testing.T, config Config, fallback Upstreams, usb ...*usbuplink.Manager) (*Server, *url.URL) {
 	t.Helper()
 	configPath := filepath.Join(t.TempDir(), "wifi-proxies.json")
 	if err := Save(configPath, config); err != nil {
@@ -29,6 +30,9 @@ func startTestProxy(t *testing.T, config Config, fallback Upstreams) (*Server, *
 	server, err := NewServer(DefaultListenAddress, configPath, "missing-test-interface", fallback)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(usb) > 0 {
+		server.usbInternet = usb[0]
 	}
 	server.SetEnvironmentPath("")
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -98,7 +102,7 @@ func TestLocalSOCKS5EntryUsesSOCKS5Upstream(t *testing.T) {
 	}
 }
 
-func startSOCKS5TestServer(t *testing.T) (string, *atomic.Int32) {
+func startSOCKS5TestServer(t *testing.T, targets ...string) (string, *atomic.Int32) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -139,7 +143,11 @@ func startSOCKS5TestServer(t *testing.T) (string, *atomic.Int32) {
 				if _, err := io.ReadFull(client, port[:]); err != nil {
 					return
 				}
-				remote, err := net.Dial("tcp", net.JoinHostPort(host, fmt.Sprintf("%d", binary.BigEndian.Uint16(port[:]))))
+				target := net.JoinHostPort(host, fmt.Sprintf("%d", binary.BigEndian.Uint16(port[:])))
+				if len(targets) > 0 {
+					target = targets[0]
+				}
+				remote, err := net.Dial("tcp", target)
 				if err != nil {
 					_ = writeSOCKS5Reply(client, 0x05)
 					return
@@ -569,5 +577,57 @@ func TestSSIDCustomHTTPProxySupportsAuthenticatedHTTPSConnect(t *testing.T) {
 	body, _ := io.ReadAll(response.Body)
 	if string(body) != "secure through upstream" || connects.Load() != 1 {
 		t.Fatalf("body=%q upstream CONNECTs=%d", body, connects.Load())
+	}
+}
+
+func TestUSBInternetOverridesSSIDAndDisablingStopsProxyTraffic(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "USB response") }))
+	defer origin.Close()
+	originURL, _ := url.Parse(origin.URL)
+	address, handshakes := startSOCKS5TestServer(t, originURL.Host)
+	manager, err := usbuplink.New(filepath.Join(t.TempDir(), "usb.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer manager.Close()
+	if err := manager.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Register(usbuplink.Request{ID: strings.Repeat("a", 32), Host: "mac", Peer: "127.0.0.1"}); err != nil {
+		t.Fatal(err)
+	}
+	manager.Current().Upstream.Host = address // Ephemeral fixture port, before serving any requests.
+	config := EmptyConfig()
+	config.Networks["Office"] = Network{Mode: ModeDirect}
+	local, proxyURL := startTestProxy(t, config, Upstreams{}, manager)
+	local.SetCurrentSSID("Office")
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 2 * time.Second}
+	response, err := client.Get("http://usb-only.invalid/download")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(response.Body)
+	response.Body.Close()
+	if response.StatusCode != 200 || string(data) != "USB response" || handshakes.Load() != 1 {
+		t.Fatal(response.StatusCode, string(data), handshakes.Load())
+	}
+	if err := manager.SetEnabled(false); err != nil {
+		t.Fatal(err)
+	}
+	response, err = client.Get("http://usb-only.invalid/download")
+	if err == nil {
+		response.Body.Close()
+		if response.StatusCode == 200 {
+			t.Fatal("USB still forwards while disabled")
+		}
+	}
+	if handshakes.Load() != 1 {
+		t.Fatal("disabled session dialed the host")
+	}
+	upstream, err := local.upstreamFor(&url.URL{Scheme: "https", Host: "example.com:443"})
+	if err != nil || upstream != nil {
+		t.Fatal("SSID direct policy not restored", err)
 	}
 }

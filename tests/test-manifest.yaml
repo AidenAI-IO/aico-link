@@ -61,7 +61,10 @@ suites:
     workdir: src/agent
     command: go test -count=1 -timeout=10m ./...
     quick: true
-    quick_command: go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
+    quick_command: |
+      go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
+      go test -race -count=1 -timeout=2m ./internal/usbuplink ./internal/wifiproxy
+      go test -race -count=1 -timeout=2m -run '^TestUSBInternet' ./internal/configweb
     dependencies: [go]
     required: true
     timeout_seconds: 900

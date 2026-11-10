@@ -33,6 +33,8 @@ AI Agent that runs on it. The official website is [aico.link](https://aico.link)
 - [Protocols](06-protocols/uds-protocol.md): Unix domain socket and service protocol contracts.
 - [Wi-Fi Regulatory Domain](02-architecture/wifi-regulatory-domain.md): country-code
   configuration, runtime application, and rollback behavior.
+- [Internet over USB](07-operations/usb-internet.md): Mac and Android Internet
+  sharing controlled by the default-off Config Web setting.
 - [User Data Backup and Restore](07-operations/backup-restore.md): supported
   backup components, compatibility rules, and transactional restore behavior.
 - [OTA](08-ota/README.md): signed releases, A/B updates, rollback, verification, and custom distribution.
