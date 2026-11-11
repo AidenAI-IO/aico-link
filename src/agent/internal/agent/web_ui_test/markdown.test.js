@@ -128,9 +128,9 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     }
     context.document = {createElement: () => new Element()};
     context.window = {};
-    const line = (key, text, kind = 'speech:0') => {
+    const line = (key, text, kind = 'speech:0', group = '') => {
         const block = context.createCollapsibleLine({className: 'tts-block', iconClass: 'tts-icon', textClass: 'tts-text',
-            label: 'Spoken aloud', kind, text, expandKey: key});
+            label: 'Spoken aloud', kind, group, text, expandKey: key});
         block.isConnected = true;
         return block;
     };
@@ -173,6 +173,20 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     const historySecond = line('context-2\u001f1', 'Twice.', 'speech:1');
     context.migrateExpandedLines();
     assert.deepEqual([expanded(historyFirst), expanded(historySecond)], [false, true]);
+
+    // The same spoken text in two different messages: the second stays open.
+    historySecond.click();
+    context.migrateExpandedLines();
+    const runA = line('run-a\u001f0', 'Done.', 'speech:0', 'Done. Volume is 0.');
+    const runB = line('run-b\u001f0', 'Done.', 'speech:0', 'Done. Lights are off.');
+    context.migrateExpandedLines();
+    runB.click();
+    runA.isConnected = false;
+    runB.isConnected = false;
+    const contextA = line('context-a\u001f0', 'Done.', 'speech:0', 'Done. Volume is 0.');
+    const contextB = line('context-b\u001f0', 'Done.', 'speech:0', 'Done. Lights are off.');
+    context.migrateExpandedLines();
+    assert.deepEqual([expanded(contextA), expanded(contextB)], [false, true]);
 }
 
 console.log('markdown tests passed');

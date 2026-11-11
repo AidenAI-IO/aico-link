@@ -31,6 +31,7 @@ function createMessageNode(msg) {
             textClass: 'reasoning-text',
             label: 'Reasoning',
             text: msg.reasoning_content,
+            group: msg.content || '',
             kind: 'reasoning',
             expandKey: messageIdentity(msg) + '\u001freasoning'
         }));
@@ -132,12 +133,15 @@ function migrateExpandedLines() {
     Array.from(expandedLines).forEach(function([key, entry]) {
         if (entry.block.isConnected) return;
         expandedLines.delete(key);
-        // Kind includes the row's slot in its message, so of two identical
-        // spoken rows the same one stays open.
-        const index = fresh.findIndex(block => block._lineKind === entry.kind && block._lineText === entry.text);
+        // Kind is the row's slot in its message and group is the message's
+        // whole text, so identical rows in one message or in different
+        // messages keep their own state. Fully identical messages match in
+        // page order.
+        const index = fresh.findIndex(block => block._lineKind === entry.kind &&
+            block._lineText === entry.text && block._lineGroup === entry.group);
         if (index < 0) return;
         const target = fresh.splice(index, 1)[0];
-        expandedLines.set(target._lineKey, {kind: entry.kind, text: entry.text, block: target});
+        expandedLines.set(target._lineKey, {kind: entry.kind, text: entry.text, group: entry.group, block: target});
         target._syncExpanded(true);
     });
 }
@@ -236,7 +240,7 @@ function renderSpeechText(element, text, key) {
     splitSpeechText(text).forEach(function(segment) {
         if (segment.speech) {
             const slot = speechIndex++;
-            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + slot, 'speech:' + slot));
+            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + slot, 'speech:' + slot, text));
             return;
         }
         if (!segment.text.trim()) return;
@@ -248,13 +252,14 @@ function renderSpeechText(element, text, key) {
 }
 
 // Spoken text shows one line; clicking toggles the full text.
-function createSpeechBlock(segment, expandKey, kind) {
+function createSpeechBlock(segment, expandKey, kind, group) {
     return createCollapsibleLine({
         className: 'tts-block' + (segment.open ? ' streaming' : ''),
         iconClass: 'tts-icon',
         textClass: 'tts-text',
         label: 'Spoken aloud',
         kind,
+        group,
         text: segment.text.trim(),
         expandKey
     });
@@ -270,11 +275,13 @@ function createCollapsibleLine(options) {
     if (entry) {
         // A streaming re-render: keep one entry, now pointing at this row.
         entry.text = options.text;
+        entry.group = options.group;
         entry.block = block;
     } else {
         block._lineKey = key;
         block._lineKind = options.kind;
         block._lineText = options.text;
+        block._lineGroup = options.group;
         freshCollapsibleLines.push(block);
         if (freshCollapsibleLines.length > 400) freshCollapsibleLines.splice(0, 200);
     }
@@ -300,7 +307,7 @@ function createCollapsibleLine(options) {
         const selection = window.getSelection ? window.getSelection() : null;
         if (selection && !selection.isCollapsed && block.contains(selection.anchorNode)) return;
         const open = !block.classList.contains('expanded');
-        if (open) expandedLines.set(key, {kind: options.kind, text: options.text, block});
+        if (open) expandedLines.set(key, {kind: options.kind, text: options.text, group: options.group, block});
         else expandedLines.delete(key);
         sync(open);
     }
