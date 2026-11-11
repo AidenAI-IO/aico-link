@@ -206,6 +206,10 @@ signature, image hashes, and tag-pinned download URLs. Any history change during
 publication aborts public release. Published versions cannot be overwritten. After an
 upload failure, retain the original `channel-release-assets` artifact and rerun
 `publish` with the same files; a draft with different build contents is not overwritten.
+Drafts are not planning baselines, so a later run may plan the same version from a newer
+commit. When the existing tag of an unpublished version points elsewhere, the publisher
+deletes that tag and its draft and recreates them at the planned commit instead of
+blocking the channel. Read-only GitHub history requests are retried before failing.
 Rebuilding changes build times and signatures and cannot replace the original assets
 when resuming the same draft.
 

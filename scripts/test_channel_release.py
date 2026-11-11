@@ -714,9 +714,9 @@ class AssetTests(GitFixture):
                 if corrupt:
                     (directory / "RELEASE-NOTES.md").write_text("corrupt")
         histories = [self.history, [*self.history, self.record]] if stale else [self.history, self.history]
-        existing = [{"tag_name": self.record["tag"], "draft": True,
+        existing = [{"id": 7, "tag_name": self.record["tag"], "draft": True,
                      "assets": [{"name": "release.json", "id": 1}]}] if draft else []
-        fails = corrupt or stale or conflicting_draft or wrong_tag
+        fails = corrupt or stale or conflicting_draft
         with patch.object(release, "command", side_effect=command), patch.object(release, "gh_retry", side_effect=transport), \
              patch.object(release, "github_history", side_effect=histories), patch.object(release, "github_releases", return_value=existing):
             if fails:
@@ -726,8 +726,20 @@ class AssetTests(GitFixture):
                 release.publish(self.assets)
         edits = [call for call in calls if call[:3] == ("gh", "release", "edit")]
         self.assertEqual(len(edits), 0 if fails else 1)
-        if draft:
-            self.assertFalse(any(call[:3] == ("gh", "release", "create") for call in calls))
+        deletes = [call[-1] for call in calls if "DELETE" in call]
+        created = any(call[:3] == ("gh", "release", "create") for call in calls)
+        if wrong_tag:
+            # The stale unpublished tag (and its draft) is replaced at the planned commit.
+            self.assertEqual(deletes, [f"repos/{REPO}/releases/7"] * draft
+                             + [f"repos/{REPO}/git/refs/tags/{self.record['tag']}"])
+            self.assertIn(("gh", "api", "--method", "POST", f"repos/{REPO}/git/refs",
+                           "-f", "ref=refs/tags/" + self.record["tag"],
+                           "-f", "sha=" + self.record["source_commit"]), calls)
+            self.assertTrue(created)
+        else:
+            self.assertEqual(deletes, [])
+            if draft:
+                self.assertFalse(created)
         if edits:
             self.assertIn("--prerelease=true", edits[0])
             self.assertIn("--latest=false", edits[0])
@@ -747,8 +759,11 @@ class AssetTests(GitFixture):
     def test_draft_from_different_build_cannot_be_overwritten(self):
         self.exercise_publish(draft=True, conflicting_draft=True)
 
-    def test_tag_from_different_commit_cannot_be_overwritten(self):
+    def test_unpublished_tag_from_different_commit_is_replaced(self):
         self.exercise_publish(wrong_tag=True)
+
+    def test_stale_draft_from_different_commit_is_replaced(self):
+        self.exercise_publish(draft=True, wrong_tag=True)
 
 
 if __name__ == "__main__":

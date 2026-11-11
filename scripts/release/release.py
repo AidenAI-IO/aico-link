@@ -248,10 +248,20 @@ def publish(directory):
     if existing and not existing["draft"]:
         raise ValueError("Published releases are immutable")
     refs = json.loads(command("gh", "api", f"repos/{repo}/git/matching-refs/tags/{tag}"))
-    if any(ref["ref"] == "refs/tags/" + tag for ref in refs):
-        if command("gh", "api", f"repos/{repo}/commits/{tag}", "--jq", ".sha") != commit:
-            raise ValueError("Existing release tag points to a different commit")
-    else:
+    tagged = any(ref["ref"] == "refs/tags/" + tag for ref in refs)
+    if tagged:
+        target = command("gh", "api", f"repos/{repo}/commits/{tag}", "--jq", ".sha")
+        if target != commit:
+            # An unpublished tag is never a planning baseline, so the planner reuses
+            # its version for a newer source commit. Without this, one interrupted
+            # publication would block every later run of the channel.
+            print(f"Replacing unpublished {tag} at {target} with {commit}", file=sys.stderr)
+            if existing:
+                command("gh", "api", "--method", "DELETE", f"repos/{repo}/releases/{existing['id']}")
+                existing = None
+            command("gh", "api", "--method", "DELETE", f"repos/{repo}/git/refs/tags/{tag}")
+            tagged = False
+    if not tagged:
         command("gh", "api", "--method", "POST", f"repos/{repo}/git/refs",
                 "-f", "ref=refs/tags/" + tag, "-f", "sha=" + commit)
     if existing:
