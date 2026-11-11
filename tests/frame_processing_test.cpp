@@ -383,6 +383,21 @@ TEST_CASE("dark landscape screen keeps landscape when the sampled border score t
     CHECK(resolved.crop_height < height);
 }
 
+TEST_CASE("a stray bright pixel does not pick the orientation of a dark frame") {
+    // One bright pixel in a row a landscape crop removes is noise, not a
+    // portrait status bar: the orientation stays with the geometry fallback.
+    const uint32_t width = 1920;
+    const uint32_t height = 1080;
+    FrameMetadata metadata = nv12_meta(width, height);
+    std::vector<uint8_t> frame = dark_frame_nv12(width, height);
+    frame[static_cast<size_t>(40) * width + 1000] = 235;
+    FrameMetadata resolved;
+
+    REQUIRE(resolve_frame_center_aspect_auto_crop(metadata, frame, 440, 956, &resolved));
+    CHECK(resolved.crop_x == 0);
+    CHECK(resolved.crop_width == width);
+}
+
 TEST_CASE("known screen ratio retains one column to make portrait crop even") {
     FrameMetadata metadata = frame_meta(16, 12, "uyvy");
     std::vector<uint8_t> luma(192, 16);

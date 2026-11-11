@@ -596,12 +596,18 @@ bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
         const bool scored = cross_region_border_scores(
             metadata, frame, portrait_width, portrait_height, landscape_width,
             landscape_height, &portrait_cross, &landscape_cross);
-        const uint64_t portrait_cross_weighted =
-            static_cast<uint64_t>(portrait_cross.black) * landscape_cross.total;
-        const uint64_t landscape_cross_weighted =
-            static_cast<uint64_t>(landscape_cross.black) * portrait_cross.total;
-        if (scored && landscape_cross_weighted != portrait_cross_weighted) {
-            use_landscape = landscape_cross_weighted > portrait_cross_weighted;
+        // Only a run of non-black lines counts as content a crop would cut;
+        // one stray bright pixel or a speck of noise must not pick the
+        // orientation. Status bar text alone spans ~18 rows at 1080p, so
+        // 1/128 of the short side (8 lines there) keeps sparse content.
+        const uint32_t min_content_lines =
+            std::max<uint32_t>(2, std::min(metadata.width, metadata.height) / 128U);
+        const bool portrait_cuts_content =
+            scored && portrait_cross.total - portrait_cross.black >= min_content_lines;
+        const bool landscape_cuts_content =
+            scored && landscape_cross.total - landscape_cross.black >= min_content_lines;
+        if (portrait_cuts_content != landscape_cuts_content) {
+            use_landscape = portrait_cuts_content;
         } else {
             // Still ambiguous (for example an all-black frame): derive the
             // orientation from this frame's geometry.
