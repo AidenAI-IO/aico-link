@@ -51,17 +51,59 @@ func mirrorWindow(_ request: [String: Any]) throws -> MirrorWindow {
     throw BridgeError("No visible iPhone Mirroring window; restore it and connect the iPhone")
 }
 
+func matchesMirrorWindow(_ element: AXUIElement, _ window: MirrorWindow) -> Bool {
+    var title: CFTypeRef?, position: CFTypeRef?, size: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &title) == .success,
+          let name = title as? String,
+          name == window.app.localizedName || name == "iPhone Mirroring",
+          AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &position) == .success,
+          AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &size) == .success,
+          let position, let size,
+          CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID() else { return false }
+    var point = CGPoint.zero
+    var dimensions = CGSize.zero
+    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+          AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else { return false }
+    // Public AX APIs expose window geometry, not the CGWindowID. Match the
+    // selected CG window's title and bounds, and reject ambiguous matches.
+    return abs(point.x - window.frame.minX) < 1 && abs(point.y - window.frame.minY) < 1 &&
+           abs(dimensions.width - window.frame.width) < 1 && abs(dimensions.height - window.frame.height) < 1
+}
+
+func focusedMirrorWindow(_ window: MirrorWindow) -> AXUIElement? {
+    guard window.app.isActive else { return nil }
+    var focused: CFTypeRef?
+    let app = AXUIElementCreateApplication(window.app.processIdentifier)
+    guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &focused) == .success,
+          let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+    let element = focused as! AXUIElement
+    return matchesMirrorWindow(element, window) ? element : nil
+}
+
+func hasInputFocus(_ window: MirrorWindow) -> Bool {
+    AXIsProcessTrusted() && CGPreflightPostEventAccess() && focusedMirrorWindow(window) != nil
+}
+
 func focus(_ window: MirrorWindow) throws {
     guard AXIsProcessTrusted() && CGPreflightPostEventAccess() else {
         throw BridgeError("Accessibility permission is required for the terminal/bridge executable")
     }
     let target = AXUIElementCreateApplication(window.app.processIdentifier)
+    var value: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(target, kAXWindowsAttribute as CFString, &value) == .success,
+          let windows = value as? [AXUIElement] else {
+        throw BridgeError("Cannot identify the iPhone Mirroring window; input was not sent")
+    }
+    let matches = windows.filter { matchesMirrorWindow($0, window) }
+    guard matches.count == 1, let selected = matches.first,
+          AXUIElementPerformAction(selected, kAXRaiseAction as CFString) == .success else {
+        throw BridgeError("Cannot raise the selected iPhone Mirroring window; input was not sent")
+    }
+    _ = AXUIElementSetAttributeValue(selected, kAXMainAttribute as CFString, kCFBooleanTrue)
     _ = AXUIElementSetAttributeValue(target, kAXFrontmostAttribute as CFString, kCFBooleanTrue)
-    window.app.activate(options: [.activateAllWindows])
+    window.app.activate(options: [])
     for _ in 0..<20 {
-        var frontmost: CFTypeRef?
-        if AXUIElementCopyAttributeValue(target, kAXFrontmostAttribute as CFString, &frontmost) == .success,
-           (frontmost as? Bool) == true { return }
+        if let focused = focusedMirrorWindow(window), CFEqual(focused, selected) { return }
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.025))
     }
     throw BridgeError("Cannot focus iPhone Mirroring; input was not sent")
@@ -163,7 +205,7 @@ func scroll(_ dx: Double, _ dy: Double, at location: CGPoint, duration: Double) 
     end?.post(tap: .cghidEventTap)
 }
 
-func typeText(_ text: String) throws {
+func typeText(_ text: String, window: MirrorWindow) throws {
     guard !text.isEmpty, text.utf16.count <= 4096 else { throw BridgeError("text must contain 1–4096 UTF-16 units") }
     let shifted: [Character: String] = ["!": "1", "@": "2", "#": "3", "$": "4", "%": "5", "^": "6",
         "&": "7", "*": "8", "(": "9", ")": "0", "_": "-", "+": "=", "{": "[", "}": "]",
@@ -172,6 +214,9 @@ func typeText(_ text: String) throws {
     // Unicode events avoid Universal Clipboard synchronization and preserve
     // the user's clipboard; their delivery still needs device verification.
     for character in text {
+        guard hasInputFocus(window) else {
+            throw BridgeError("Input permission or mirror window focus was lost; inspect the field before retrying")
+        }
         let name = String(character)
         if let base = shifted[character], let code = keycodes[base] {
             key(code, flags: .maskShift)
@@ -221,14 +266,14 @@ func insertText(_ text: String, replace: Bool, window: MirrorWindow) throws {
         throw BridgeError("macOS input source did not change; no text was sent")
     }
     if replace {
-        guard AXIsProcessTrusted(), CGPreflightPostEventAccess(), window.app.isActive else {
+        guard hasInputFocus(window) else {
             throw BridgeError("Input permission or mirror focus was lost; no replacement was sent")
         }
         try press(["meta", "a"])
         RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
     }
     for character in text {
-        guard AXIsProcessTrusted(), CGPreflightPostEventAccess(), window.app.isActive else {
+        guard hasInputFocus(window) else {
             throw BridgeError("Input permission or mirror focus was lost; text may be partially inserted. Inspect the field before retrying")
         }
         let units = Array(String(character).utf16)
@@ -334,7 +379,7 @@ func input(_ request: [String: Any], command: String, window: MirrorWindow) thro
         scroll(max(-2000, min(2000, number(request["dx"]))), max(-2000, min(2000, number(request["dy"]))),
                at: location, duration: max(0.1, min(2, number(request["duration"], 0.4))))
     case "keypress": try press(request["keys"] as? [String] ?? [])
-    case "text": try typeText(request["text"] as? String ?? "")
+    case "text": try typeText(request["text"] as? String ?? "", window: window)
     case "insert_text": try insertText(request["text"] as? String ?? "", replace: request["replace"] as? Bool ?? false, window: window)
     default: throw BridgeError("unsupported native command: \(command)")
     }

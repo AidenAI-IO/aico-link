@@ -121,11 +121,14 @@ before planning text-entry experiments.
 ### iPhone Through macOS iPhone Mirroring
 
 Connect the phone in Apple's iPhone Mirroring app and keep the phone locked.
-Use the mirror's dedicated quick actions in this target's data directory:
+Install the mirror's default quick actions only on first use, preserving any
+customizations in this target's data directory:
 
 ```bash
-cp "$AICO_REPO/benchmark/iphone_mirroring/quick_actions.json" \
-  "$AICO_AGENT_DATA/quick_actions.json"
+if [ ! -e "$AICO_AGENT_DATA/quick_actions.json" ]; then
+  cp "$AICO_REPO/benchmark/iphone_mirroring/quick_actions.json" \
+    "$AICO_AGENT_DATA/quick_actions.json"
+fi
 cd "$AICO_REPO/benchmark"
 python3 -m iphone_mirroring --probe
 ```

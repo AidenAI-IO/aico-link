@@ -95,6 +95,13 @@ func (s *Server) handleGetDeviceSnapshot(w http.ResponseWriter, _ *http.Request)
 		return
 	}
 	if result.ExitCode != 0 {
+		if s.options.LocalAgent {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"ok": false, "code": "config_read_failed", "error": "Agent configuration could not be read",
+				"paths": map[string]string{"agent_config": s.options.AgentConfigPath},
+			})
+			return
+		}
 		writeJSONError(w, http.StatusServiceUnavailable, "agent config unavailable")
 		return
 	}

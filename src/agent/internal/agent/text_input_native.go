@@ -22,11 +22,18 @@ func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textI
 	if err := mnk.ValidateInsertionText(args.Text); err != nil {
 		return textInputResult{Reason: err.Error()}, true
 	}
-	if e.vision == nil {
+	if e.vision == nil || e.hw.screenshot == nil {
 		return textInputResult{Reason: "native text verification is not configured"}, true
 	}
 	if err := e.applyFocus(ctx, args.Focus); err != nil {
 		return textInputFailure(err), true
+	}
+	if !args.ReplaceField {
+		before, err := e.captureScreenshot(ctx)
+		if err != nil {
+			return textInputResult{Reason: "cannot capture the insertion point before typing: " + err.Error()}, true
+		}
+		args.InsertionBefore = &before
 	}
 	// Never fall back or replay after insertion: a timeout or permission failure
 	// can occur after partial delivery. The caller must inspect the field first.
@@ -36,7 +43,7 @@ func (e *textInputEngine) runNativeTextInsertion(ctx context.Context, args textI
 	if err := e.sleepFor(ctx, 350*time.Millisecond); err != nil {
 		return textInputResult{Reason: err.Error(), TextMayBeInserted: true}, true
 	}
-	args.VerifyTextSuffix = !args.ReplaceField
+	args.VerifyTextSuffix = false
 	analysis, _, err := e.analyzeScreen(ctx, e.hw.platform(), args, nil)
 	if err != nil {
 		return textInputResult{Reason: fmt.Sprintf("text was sent but verification failed: %v", err), TextMayBeInserted: true}, true

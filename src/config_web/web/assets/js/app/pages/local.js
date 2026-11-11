@@ -47,6 +47,7 @@ export async function localOverviewPage(context) {
   const provider = (config.model_providers || {})[model.provider];
   const configured = Boolean(provider?.has_api_key);
   const initialStatus = snapshot.agent_status || {};
+  const readError = snapshot.snapshot_error;
   if (context.header) context.header({title: msg('local.overview', '运行概览')});
 
   function showStatus(status) {
@@ -55,7 +56,8 @@ export async function localOverviewPage(context) {
       row({label: msg('advanced.agent_status', 'Agent 状态'),
         value: running ? msg('advanced.agent_running', '运行中') : msg('local.offline', '无法连接'),
         tone: running ? 'success' : 'danger',
-        description: running ? status.url : msg('local.offline_help', '可以保存配置；Agent 启动后会加载它。')}),
+        description: running ? status.url : readError ? msg('local.config_read_unavailable', '请先恢复配置读取，再保存设置。')
+          : msg('local.offline_help', '可以保存配置；Agent 启动后会加载它。')}),
       row({label: msg('local.target', '当前目标设备'), value: status.device_type || '—',
         description: msg('local.target_help', '由 Agent 启动参数决定；设备连接状态请在 Agent 界面查看。')}),
     ]})]);
@@ -73,7 +75,10 @@ export async function localOverviewPage(context) {
       text(msg('local.title', '本机 Agent'), 'page__title'),
       text(msg('local.intro', '管理模型、对话和运行偏好。设置会保存到本机，并自动应用到正在运行的 Agent。'), 'page__description'),
     ]),
-    snapshot.config_valid === false ? group({rows: [row({label: msg('local.config_invalid', '配置需要修复'),
+    readError ? group({rows: [row({label: msg('local.config_read_failed', '无法读取配置'), tone: 'danger',
+      description: readError.code === 'config_read_failed'
+        ? msg('local.config_read_help', '请在配置界面之外修复 TOML 配置文件，然后刷新此页面。') : readError.message})]}) : null,
+    !readError && snapshot.config_valid === false ? group({rows: [row({label: msg('local.config_invalid', '配置需要修复'),
       description: (snapshot.config_errors || []).map(error => error.message).join('\n'), tone: 'danger'})]}) : null,
     statusHost,
     mirroring.element,

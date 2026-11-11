@@ -69,11 +69,12 @@ type textInputEngine struct {
 }
 
 type textInputArgs struct {
-	Text             string         `json:"text"`
-	Focus            focusPointArgs `json:"focus"`
-	CurrentIMEPart   string         `json:"-"`
-	VerifyTextSuffix bool           `json:"-"`
-	ReplaceField     bool           `json:"-"`
+	Text             string            `json:"text"`
+	Focus            focusPointArgs    `json:"focus"`
+	CurrentIMEPart   string            `json:"-"`
+	VerifyTextSuffix bool              `json:"-"`
+	ReplaceField     bool              `json:"-"`
+	InsertionBefore  *screenshotResult `json:"-"`
 }
 
 type textInputResult struct {
@@ -654,6 +655,7 @@ func (e *textInputEngine) analyzeScreen(ctx context.Context, platform string, ar
 		Platform:        platform,
 		TargetText:      args.Text,
 		MatchTextSuffix: args.VerifyTextSuffix,
+		InsertionBefore: args.InsertionBefore,
 		Focus:           args.Focus,
 		Segments:        segments,
 	}

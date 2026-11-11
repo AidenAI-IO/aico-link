@@ -166,6 +166,27 @@ func TestLocalAgentConfigRoundTrip(t *testing.T) {
 	}
 }
 
+func TestLocalAgentUnreadableConfigReportsRepairState(t *testing.T) {
+	s := localTestServer(t, "http://127.0.0.1:1")
+	if err := os.WriteFile(s.options.AgentConfigPath, []byte("[broken"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	w := localRequest(s, "GET", "/api/device/snapshot", "")
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	var response struct {
+		Code  string            `json:"code"`
+		Paths map[string]string `json:"paths"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != "config_read_failed" || response.Paths["agent_config"] != s.options.AgentConfigPath {
+		t.Fatalf("missing repair state: %s", w.Body)
+	}
+}
+
 func TestLocalAgentRejectsBoardOperations(t *testing.T) {
 	s := localTestServer(t, "http://127.0.0.1:1")
 	before, _ := os.ReadFile(s.options.AgentConfigPath)

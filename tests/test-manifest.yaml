@@ -64,7 +64,7 @@ suites:
     quick_command: |
       go test -count=1 -timeout=2m -run '^TestShared' ./internal/ota
       go test -count=1 -timeout=2m -run '^TestSourceLstat' ./internal/backup
-      go test -count=1 -timeout=2m -run '^Test(NativeText|EnterText|HTTPHandler|HTTPProvider|GoEnvironmentBridge|EnvironmentBridge|IPhoneMirroring)' ./internal/agent ./internal/agent/mnk
+      go test -count=1 -timeout=2m -run '^Test(NativeText|EnterText|HandleProviderMNK|HTTPHandler|HTTPProvider|GoEnvironmentBridge|EnvironmentBridge|IPhoneMirroring)' ./internal/agent ./internal/agent/mnk
       go test -race -count=1 -timeout=2m ./internal/usbuplink ./internal/wifiproxy
       go test -race -count=1 -timeout=2m -run '^Test(USBInternet|LocalAgent)' ./internal/configweb
     dependencies: [go, gcc]

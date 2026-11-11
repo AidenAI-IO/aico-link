@@ -77,7 +77,7 @@ function savedLocally(snapshot, error) {
   throw error;
 }
 
-async function saveLanguage(snapshot, locale) {
+export async function saveLanguage(snapshot, locale) {
   const payload = await request('/api/config/locale', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({locale}),
@@ -85,16 +85,16 @@ async function saveLanguage(snapshot, locale) {
   applyLocale(payload.locale || locale, true);
   snapshot.config = snapshot.config || {};
   snapshot.config.agent = {...(snapshot.config.agent || {}), locale: payload.locale || locale};
-  toast(msg('basic.language_saved', '语言已保存'));
+  toast(payload.ok === false ? msg('local.saved_unapplied', '已保存到本机，尚未应用到 Agent') : msg('basic.language_saved', '语言已保存'));
 }
 
-async function saveTimezone(snapshot, timezone) {
+export async function saveTimezone(snapshot, timezone) {
   const payload = await request('/api/config', {
     method: 'PATCH', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({config: {agent: {timezone}}}),
   }).catch(error => savedLocally(snapshot, error));
   snapshot.config = payload.config || {...(snapshot.config || {}), agent: {...(snapshot.config?.agent || {}), timezone}};
-  toast(msg('basic.timezone_saved', '时区已保存'));
+  toast(payload.ok === false ? msg('local.saved_unapplied', '已保存到本机，尚未应用到 Agent') : msg('basic.timezone_saved', '时区已保存'));
 }
 
 /** Language and time zone detail page. Both controls apply immediately. */

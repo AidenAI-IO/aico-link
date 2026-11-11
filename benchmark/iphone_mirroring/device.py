@@ -81,6 +81,8 @@ class MirroringDevice:
     def swipe(self, start, end, duration=0.4):
         with self.lock:
             info = self._call("status")
+            if not info["window_visible"]:
+                raise DesktopDeviceError(info.get("window_error", "No visible iPhone Mirroring window"))
             # Finger movement maps to continuous pixel scroll, not mouse drag.
             self._call("scroll", x=start[0], y=start[1],
                        dx=(end[0] - start[0]) * info["width"] / 1000,

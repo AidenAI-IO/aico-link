@@ -612,6 +612,57 @@ const countByClass = (node, className) => {
 
 process.stdout.write('config web UI component tests passed\n');
 
+/* ------------------------------------------------ Local Agent feedback --- */
+
+{
+  const {localOverviewPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/local.js')).href);
+  const {saveLanguage, saveTimezone} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/basic.js')).href);
+  const {dismiss} = await load('toast');
+  const {t} = await import(pathToFileURL(path.join(uiRoot, '../config/i18n.js')).href);
+  const realFetch = globalThis.fetch;
+  const realSetTimeout = globalThis.setTimeout;
+  const realById = document.getElementById;
+  const realQuery = document.querySelectorAll;
+  globalThis.setTimeout = () => 0;
+  document.getElementById = () => null;
+  document.querySelectorAll = () => [];
+  let savingFails = false;
+  globalThis.fetch = async (url, options) => {
+    let payload = {ok: true, supported: false};
+    let status = 200;
+    if (url === '/api/device/snapshot') {
+      status = 503;
+      payload = {ok: false, code: 'config_read_failed', error: 'Could not read configuration', paths: {agent_config: '/tmp/agent.toml'}};
+    } else if (options?.method) {
+      status = savingFails ? 503 : 200;
+      payload = {ok: !savingFails, persisted: true, applied: !savingFails, locale: 'en-US', error: savingFails ? 'reload failed' : undefined};
+    }
+    return {ok: status === 200, status, text: async () => JSON.stringify(payload)};
+  };
+  try {
+    const page = await localOverviewPage({header() {}, navigate() {}});
+    assert.ok(page.textContent.includes(t('local.config_read_help')));
+    assert.ok(page.textContent.includes('/tmp/agent.toml'));
+    assert.ok(!page.textContent.includes(t('local.offline_help')), 'unreadable configuration must not promise saves');
+    for (const failed of [false, true]) {
+      savingFails = failed;
+      const snapshot = {profile: 'local', config: {}};
+      await saveLanguage(snapshot, 'en-US');
+      assert.equal(snapshot.config.agent.locale, 'en-US');
+      assert.equal(body.querySelector('.ds-toast').textContent, t(failed ? 'local.saved_unapplied' : 'basic.language_saved'));
+      await saveTimezone(snapshot, 'UTC');
+      assert.equal(snapshot.config.agent.timezone, 'UTC');
+      assert.equal(body.querySelector('.ds-toast').textContent, t(failed ? 'local.saved_unapplied' : 'basic.timezone_saved'));
+    }
+  } finally {
+    dismiss();
+    globalThis.fetch = realFetch;
+    globalThis.setTimeout = realSetTimeout;
+    document.getElementById = realById;
+    document.querySelectorAll = realQuery;
+  }
+}
+
 /* -------------------------------------------------------------- MCP page --- */
 
 {

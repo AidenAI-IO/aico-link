@@ -39,7 +39,7 @@ export async function fetchSnapshot() {
  * read it still renders, with an empty config.
  */
 export async function ensureSnapshot(context) {
-  return context.snapshot || fetchSnapshot().catch(() => ({config: {}}));
+  return context.snapshot || fetchSnapshot().catch(error => ({config: {}, snapshot_error: error, paths: error.paths}));
 }
 
 /**

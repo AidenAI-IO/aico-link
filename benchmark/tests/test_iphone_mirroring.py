@@ -97,6 +97,20 @@ def test_swipes_use_current_window_size_and_never_mouse_drag(mirror):
     assert len(device.calls) == before
 
 
+def test_swipe_reports_a_disappearing_window_without_sending_input(monkeypatch):
+    device = MirroringDevice(Path("helper"))
+    calls = []
+
+    def unavailable(command, **params):
+        calls.append(command)
+        return {"window_visible": False, "window_error": "Restore the mirror window"}
+
+    monkeypatch.setattr(device, "_call", unavailable)
+    with pytest.raises(DesktopDeviceError, match="Restore the mirror window"):
+        device.swipe((500, 750), (500, 250))
+    assert calls == ["status"]
+
+
 @pytest.mark.parametrize("payload", [
     {"operation": "insert_text", "insert_text": {"text": "\u0000"}},
     {"operation": "insert_text", "insert_text": {"text": "\u007f"}},

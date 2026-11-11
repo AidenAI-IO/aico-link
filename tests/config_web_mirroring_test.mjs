@@ -65,3 +65,58 @@ test('failed reconnect preserves the action and reports the failure for retry', 
   assert.equal(model.state.restored, false);
   assert.equal(model.state.error, 'session_busy');
 });
+
+test('status recovery clears errors and lost support invalidates verified frames', async () => {
+  let supported = true, fail = false;
+  const model = mirroringConnection(async (_url, options) => {
+    if (options) return {ok: true, restored: true, screenshot_available: true};
+    if (fail) throw Object.assign(new Error('unavailable'), {code: 'bridge_unavailable'});
+    return {ok: true, supported};
+  }, () => {});
+  await model.load();
+  await model.reconnect();
+  await model.load();
+  assert.equal(model.state.restored, true, 'unchanged support preserves verification');
+  fail = true;
+  await model.load();
+  assert.equal(model.state.readError, 'bridge_unavailable');
+  fail = false;
+  await model.load();
+  assert.equal(model.state.readError, null);
+  assert.equal(model.state.restored, false);
+  await model.reconnect();
+  supported = false;
+  await model.load();
+  assert.equal(model.state.restored, false);
+  supported = true;
+  await model.load();
+  assert.equal(model.state.restored, false, 'a new session needs verification');
+});
+
+for (const code of ['input_permission_required', 'session_busy', 'capture_failed']) {
+  test(`status recovery preserves reconnect failure: ${code}`, async () => {
+    let failRead = false, recovered = false;
+    const model = mirroringConnection(async (_url, options) => {
+      if (options) return recovered
+        ? {ok: true, restored: true, screenshot_available: true}
+        : {ok: false, code};
+      if (failRead) throw Object.assign(new Error('unavailable'), {code: 'agent_unavailable'});
+      return {ok: true, supported: true};
+    }, () => {});
+    await model.load();
+    await model.reconnect();
+    await model.load();
+    assert.equal(model.state.error, code, 'support checks do not verify reconnection');
+    failRead = true;
+    await model.load();
+    assert.equal(model.state.readError, 'agent_unavailable');
+    failRead = false;
+    await model.load();
+    assert.equal(model.state.readError, null);
+    assert.equal(model.state.error, code, 'read recovery preserves the reconnect failure');
+    recovered = true;
+    await model.reconnect();
+    assert.equal(model.state.error, null);
+    assert.equal(model.state.restored, true);
+  });
+}

@@ -5,7 +5,7 @@ import {group, row} from '../../ui/list.js';
 import {msg} from '../../ui/text.js';
 
 export function mirroringConnection(send, changed) {
-  const state = {supported: false, busy: false, restored: false, error: null};
+  const state = {supported: false, busy: false, restored: false, error: null, readError: null};
   let generation = 0;
   const update = patch => {
     const next = {...state, ...patch};
@@ -21,15 +21,16 @@ export function mirroringConnection(send, changed) {
       try {
         const result = await send('/api/device/iphone-mirroring');
         if (current !== generation) return;
-        update({supported: result.ok === true && result.supported === true});
+        const supported = result.ok === true && result.supported === true;
+        update({supported, readError: null, restored: supported && state.supported && state.restored});
       } catch (error) {
-        if (current === generation) update({error: error.code || 'agent_unavailable', restored: false});
+        if (current === generation) update({readError: error.code || 'agent_unavailable', restored: false});
       }
     },
     async reconnect() {
       if (state.busy || !state.supported) return;
       generation++;
-      update({busy: true, restored: false, error: null});
+      update({busy: true, restored: false, error: null, readError: null});
       try {
         const result = await send('/api/device/iphone-mirroring/reconnect', {
           method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}',
@@ -62,7 +63,8 @@ export function iphoneMirroringCard() {
   const element = el('div');
   const model = mirroringConnection(request, state => {
     if (!state.supported) { replace(element, []); return; }
-    const description = state.error ? errors[state.error] || errors.setup_failed
+    const error = state.readError || state.error;
+    const description = error ? errors[error] || errors.setup_failed
       : state.restored ? msg('local.mirror_restored', '会话已恢复，并已获取镜像画面。')
       : msg('local.mirror_help', '请先在 Mac 上连接 iPhone 镜像。空闲后无法操作时，可在这里恢复连接。');
     replace(element, [group({rows: [
