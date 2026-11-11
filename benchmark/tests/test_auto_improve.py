@@ -507,7 +507,7 @@ def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp
     assert state["status"] == "completed" and runs == ["a:one"] and analyze.rejudge == [True]
     assert [f["status"] for f in state["findings"]] == ["issue_ready"]
     [draft] = drafts
-    assert draft["action"] == "create" and draft["labels"] == ["auto-improve", "domain:agent"]
+    assert draft["action"] == "create" and draft["labels"] == ["auto-improve"]
     assert draft["title"] == "[auto-improve][agent] Saves one-off plans"
     body = draft["body"]
     meta = policy.issue_metadata({"user": {"login": "bot"}, "body": body}, {"bot"})
@@ -556,7 +556,7 @@ def test_benchmark_findings_reproduce_their_symptom_without_rejudging(tmp_path, 
                         {"reproduced": True, "symptom_excerpts": ["judge_error"], "reason": "symptom observed"})
     state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="benchmark_code", symptom=symptom,
                                                                   source_paths=["benchmark/runner/judge.py"])])
-    assert seen == [("benchmark", symptom)] and drafts[0]["labels"] == ["auto-improve", "domain:benchmark"]
+    assert seen == [("benchmark", symptom)] and drafts[0]["title"].startswith("[auto-improve][benchmark]")
     # Rejudging would hide the judge failure the finding is about.
     assert analyze.rejudge == [False]
 

@@ -75,7 +75,7 @@ def valid_draft(draft: dict) -> bool:
     return (meta is not None and policy.finding_key(meta["domain"], meta["targets"]) == key
             and isinstance(draft.get("title"), str) and draft["title"].startswith("[auto-improve]")
             and isinstance(draft.get("observation"), str)
-            and draft.get("labels") == ["auto-improve", f"domain:{key['domain']}"])
+            and draft.get("labels") == ["auto-improve"])
 
 
 def publish(client: GitHub, artifacts: Path, branch: str) -> list[str]:

@@ -94,7 +94,7 @@ issue written by someone else cannot suppress or redirect findings.
 
 ## Issue content
 
-Each issue is labeled `auto-improve` and `domain:<domain>` and contains:
+Each issue is labeled `auto-improve`, its title starts with `[auto-improve][<domain>]`, and it contains:
 
 - a summary and the user-visible impact;
 - a table of the affected tasks with their environment, how many daily runs

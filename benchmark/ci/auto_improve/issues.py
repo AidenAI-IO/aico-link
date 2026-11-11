@@ -48,7 +48,8 @@ def title(finding: dict) -> str:
 
 
 def labels(finding: dict) -> list[str]:
-    return ["auto-improve", f"domain:{finding['key']['domain']}"]
+    # The domain is already in the title; one label keeps filtering simple.
+    return ["auto-improve"]
 
 
 def body(finding: dict, manifest: dict, run_url: str) -> str:
