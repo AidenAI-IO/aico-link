@@ -183,8 +183,8 @@ The native UI suites contain 40 distinct tasks:
   search, creation, editing, and deletion.
 
 The `adb` CI profile runs six cases and 70 task attempts per repeat. Basic and
-text-editing each run with and without AidenBridge (40 attempts), built-in apps
-run without AidenBridge (20 attempts), and the dedicated
+text-editing each run with and without Aico App (40 attempts), built-in apps
+run without Aico App (20 attempts), and the dedicated
 `suites/aico_app/android_bridge_capabilities_v1.json` suite adds 10 tasks.
 The daily `runnable` profile includes the five UI cases (60 attempts); the
 dedicated Bridge capability case remains manual.

@@ -47,8 +47,12 @@ type resourceSnapshot struct {
 	CPU         *resourceCPU   `json:"cpu"`
 	NPUPercent  *float64       `json:"npu_percent"`
 	Memory      *resourceUsage `json:"memory"`
+	CMA         *resourceUsage `json:"cma"`
 	Disks       []resourceDisk `json:"disks"`
 }
+
+// resourceMeminfoPath is a variable so tests can supply a meminfo fixture.
+var resourceMeminfoPath = "/proc/meminfo"
 
 // This read-only snapshot is available wherever the Web UI is reachable.
 // MCU control endpoints retain their USB/loopback restriction.
@@ -60,12 +64,14 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	meminfo := parseResourceMeminfo(readResourceFile(resourceMeminfoPath))
 	snapshot := resourceSnapshot{
 		SampledAtMS: time.Now().UnixMilli(),
 		BootID:      strings.TrimSpace(readResourceFile("/proc/sys/kernel/random/boot_id")),
 		WiFi:        readResourceWiFi(),
 		CPU:         parseResourceCPU(readResourceFile("/proc/stat")),
-		Memory:      parseResourceMemory(readResourceFile("/proc/meminfo")),
+		Memory:      resourceMemory(meminfo),
+		CMA:         resourceCMA(meminfo),
 		Disks:       readResourceDisks(),
 	}
 	for _, path := range []string{"/sys/kernel/debug/rknpu/load", "/proc/rknpu/load"} {
@@ -112,7 +118,8 @@ func parseResourceCPU(data string) *resourceCPU {
 	return sample
 }
 
-func parseResourceMemory(data string) *resourceUsage {
+// parseResourceMeminfo returns /proc/meminfo kB fields in bytes.
+func parseResourceMeminfo(data string) map[string]uint64 {
 	values := map[string]uint64{}
 	for _, line := range strings.Split(data, "\n") {
 		fields := strings.Fields(line)
@@ -123,11 +130,36 @@ func parseResourceMemory(data string) *resourceUsage {
 			values[strings.TrimSuffix(fields[0], ":")] = value * 1024
 		}
 	}
+	return values
+}
+
+func resourceMemory(values map[string]uint64) *resourceUsage {
 	total, available := values["MemTotal"], values["MemAvailable"]
 	if _, ok := values["MemAvailable"]; !ok || total == 0 || available > total {
 		return nil
 	}
 	return &resourceUsage{TotalBytes: total, UsedBytes: total - available}
+}
+
+// The RV1106 kernel uses CONFIG_CMA_INACTIVE, which keeps CMA pages out of
+// the buddy allocator so CmaFree stays zero. Rockchip's CmaAllocated counts
+// the CMA bitmap directly; CmaFree is only a fallback for other kernels.
+func resourceCMA(values map[string]uint64) *resourceUsage {
+	total := values["CmaTotal"]
+	if total == 0 {
+		return nil
+	}
+	if used, ok := values["CmaAllocated"]; ok {
+		if used > total {
+			return nil
+		}
+		return &resourceUsage{TotalBytes: total, UsedBytes: used}
+	}
+	free, ok := values["CmaFree"]
+	if !ok || free > total {
+		return nil
+	}
+	return &resourceUsage{TotalBytes: total, UsedBytes: total - free}
 }
 
 // Rockchip prints a blank number for zero load ("NPU load:  %").

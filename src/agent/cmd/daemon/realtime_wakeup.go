@@ -746,10 +746,7 @@ func drainRealtimeWakeups(events <-chan struct{}, failureAnnouncementPending boo
 }
 
 func realtimeProviderType(cfg agent.Config) string {
-	provider := strings.ToLower(strings.TrimSpace(cfg.VoiceModel.Provider))
-	if record, ok := cfg.VoiceModelProviders[provider]; ok && strings.TrimSpace(record.Type) != "" {
-		provider = strings.ToLower(strings.TrimSpace(record.Type))
-	}
+	provider := cfg.RealtimeProviderType()
 	if provider == "" {
 		return "qwen"
 	}
@@ -761,7 +758,7 @@ func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) rea
 }
 
 func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Runtime, runtimeTools []langtools.Tool) realtimevoice.SessionConfig {
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	voice := cfg.VoiceModel.Voice
 	inputFormat := cfg.VoiceModel.InputAudioFormat
 	if inputFormat == "" {
@@ -961,7 +958,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewForgetMemoryTool(nil),
-			"Delete a saved memory when the user asks you to forget it. First call recall_memory to find the memory id, then pass that id here. Never expose the id to the user.",
+			"Delete a saved memory when the user asks you to forget it. First call recall_memory to find the memory id, then pass that id here. Do not tell the user it was forgotten until this tool returns successfully. Never expose the id to the user.",
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewRecallSessionChunksTool(nil),
@@ -969,7 +966,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		),
 		realtimeDelegatedVoiceToolDefinition(
 			agent.NewAudioVolumeTool(""),
-			"Get or set your own speaking volume. Omit volume to read the current value. This controls your playback volume only, not the phone's system volume.",
+			"Get or set your own speaking volume. Omit volume to read the current value. When setting volume, do not tell the user it changed until this tool returns. This controls your playback volume only, not the phone's system volume.",
 		),
 		realtimeVoiceToolDefinition(
 			realtimeEndConversationTool,
@@ -977,7 +974,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			map[string]any{"type": "object", "properties": map[string]any{}},
 		),
 	}
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	if !usesBackendAgent {
 		if runtime != nil {
 			if runtimeTools == nil {
@@ -1003,7 +1000,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 		tools = append(tools,
 			realtimeVoiceToolDefinition(
 				realtimeCreateTaskTool,
-				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. It returns as soon as the work is queued, before anything has been done, so do not tell the user the work is complete until its result arrives. Present the work to the user as your own responsibility.",
+				"Handle any request you cannot directly and reliably answer or complete with the realtime conversation tools, including device state, visual inspection, external actions, lookups, or longer multi-step work. Call query_agent_task with no task_id first and continue the task that already covers the request instead of creating a duplicate. A new request that no outstanding task covers gets its own task, even while other work is running; never fold it into unrelated work with update_agent_task. Present the work to the user as your own responsibility. You may say you are handling it immediately; its result only means the work was accepted, so do not claim the underlying device or external outcome succeeded or failed until a task update or query_agent_task result shows status completed or failed. If this tool returns an error, tell the user you could not start the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1014,7 +1011,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeCancelTaskTool,
-				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification.",
+				"Cancel work that you previously started when the user asks you to stop it. If the work already finished but its result has not started delivery, this clears that stale result notification. A status of cancelling means cancellation is in progress, not finished; do not tell the user the work is stopped until a task update or query_agent_task result shows status cancelled.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1025,7 +1022,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			),
 			realtimeVoiceToolDefinition(
 				realtimeUpdateTaskTool,
-				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that.",
+				"Replace the complete goal of work that is queued, running, or waiting for user action. Use this only when the user changes or corrects that same request, instead of cancelling it and creating another task. Do not use it to add an unrelated request; create a separate task for that. Confirm the goal update from this tool's result; do not treat the update itself as completion of the device work. If this tool returns an error, tell the user you could not update the work.",
 				map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -1370,12 +1367,22 @@ func realtimeVoiceDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	}
 }
 
-// realtimeVoicePlaybackDeviceFormat leaves SampleRate unset so the managed
-// realtime session follows the provider's native output rate. audio_service
-// opens an exact ALSA device rate and uses Rockchip AO resampler for 24 kHz
-// input; that keeps the Go userspace 24k→16k resampler off the hot path.
+// realtimeVoicePlaybackDeviceFormat chooses the PCM rate the managed session
+// exposes to audio_service.
+//
+// For most providers SampleRate stays unset so the session follows the
+// provider-native rate and audio_service/AO owns conversion (notably Qwen's
+// 24 kHz→16 kHz path, which keeps Go userspace resampling off the hot path).
+//
+// Moss Live is native 48 kHz. Pushing that PCM through audio_service and
+// relying on AO 48→16 underruns on current boards, so keep the board capture
+// rate here and let the managed session resample 48→16 in userspace — the path
+// that previously played smoothly.
 func realtimeVoicePlaybackDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	format := realtimeVoiceDeviceFormat(cfg)
+	if realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
+		return format
+	}
 	format.SampleRate = 0
 	return format
 }
@@ -1415,7 +1422,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var runtimeTools []langtools.Tool
-	if !cfg.VoiceModel.UseBackendAgent && runtime != nil {
+	if !cfg.UseBackendAgentEffective() && runtime != nil {
 		runtimeTools = runtime.AvailableTools()
 	}
 	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools)
@@ -1465,6 +1472,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
@@ -1989,7 +1997,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(call.ResponseID) {
 				requestResponse()
-				if err := textSession.CreateResponse(ctx); err != nil {
+				if responseContinuer == nil {
+					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+				}
+				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
 			}
@@ -2459,7 +2470,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				// discard other tools that the provider is still waiting for.
 				if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(tool.responseID) {
 					requestResponse()
-					if err := textSession.CreateResponse(ctx); err != nil {
+					if responseContinuer == nil {
+						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+					}
+					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
 				}
@@ -2521,10 +2535,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 							continue
 						}
 						requestResponse()
-						if !supportsText {
+						if responseContinuer == nil {
 							continue
 						}
-						if err := textSession.CreateResponse(ctx); err != nil {
+						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
 						continue

@@ -89,6 +89,7 @@ them:
 | xAI | JSON WebSocket | xAI realtime event aliases are normalized to the shared event model |
 | Gemini | Gemini Live WebSocket | `setup`/`serverContent` protocol; input/output transcription and function responses; server VAD does not expose Aico speech boundary events |
 | Speko S2S | HTTP mint + delegated provider WebSocket | Mints a short-lived provider credential, then uses the selected Gemini or xAI adapter; OpenAI/WebRTC routing is intentionally rejected |
+| Moss | JSON + binary WebSocket | MOSS-LIVE (`moss-live-1.0`); 16 kHz PCM uplink / 48 kHz PCM downlink; immediate playback chunk acks; client tools via `delegation=client` + OpenAI-style `function_call_output` / deferred `session.continue` (`ResponseContinuer`, not text injection); reserved names such as `web_search` are exported under an `aico_` alias; client tools are capped at 32; voice-only (no `/api/chat` text inject, no configurable `voice`, no camera/screen frames yet). `use_backend_agent` is ignored at runtime (effective `false`, stored value unchanged; Config Web hides the toggle). |
 
 Speko is a control-plane adapter, not another PCM relay. Its lease wrapper
 emits `ErrSessionRotated` before expiry so the daemon can reconnect and replay
@@ -115,6 +116,23 @@ non-suppressed response. Tool calls are executed by the background-capable
 realtime tool executor; tool results are sent back through
 `ToolResultSender`, and providers that require explicit continuation receive a
 new `CreateResponse` after all results for that response have arrived.
+
+Speech and tool or background-task execution can overlap in one response, so
+the realtime instructions require an outcome-claim gate: before a result showing
+the actual outcome is available, the model may only acknowledge that it is
+handling the request; it must report success or failure from that evidence
+afterward. A tool result that only says work was accepted, queued, or started
+does not count. A tool error does count as failure to start or update the work,
+so the model must report that instead of continuing to say it is handling the
+request. In backend mode the successful `create_agent_task` result is only an
+acknowledgement, so outcomes of accepted work come from a task update or
+`query_agent_task` result whose status is `completed` or `failed`. Cancellation
+is separate: `cancelling` means the stop is still in progress, and only
+`cancelled` confirms that the work stopped; that status is not a success or
+failure of the original work. Unrelated requests must start their own task
+instead of folding into existing work. Direct-tool mode
+(`use_backend_agent = false`) applies the gate to runtime tools such as
+`open_app` until they return.
 
 Task updates and voice notifications are injected only when the session is
 idle. Notification responses are private speech responses: they are played

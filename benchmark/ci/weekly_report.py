@@ -154,7 +154,7 @@ _CAPABILITY_BY_SUITE = {suite: group for group, suites in CAPABILITY_SUITES.item
 AREA_ORDER = (*CAPABILITY_SUITES, DIAGNOSTIC_AREA, OTHER_CAPABILITY)
 ENVIRONMENT_LABELS = {
     "scripted": "Scripted", "mobilegym": "Simulator", "isolated": "Isolated",
-    "adb": "ADB device", "adb_aidenbridge": "ADB + AidenBridge",
+    "adb": "ADB device", "adb_aidenbridge": "ADB + Aico App",
     "external": "External device", "mixed": "Mixed",
 }
 

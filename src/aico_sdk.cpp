@@ -976,18 +976,21 @@ AudioPlayer::~AudioPlayer() { stop(); }
 
 namespace {
 
-// Rates the rv1106-acodec ALSA device accepts exactly on current boards.
-// 12 kHz/24 kHz are advertised by the IP but fall back to 11.025/22.05 here, and
-// rockit's tinyalsa path rejects that mismatch with EINVAL.
+// Rates the rv1106-acodec ALSA device accepts exactly on current boards while
+// capture stays on the 16 kHz mic/VQE path. 12/24 kHz are advertised by the IP
+// but fall back to 11.025/22.05 and rockit's tinyalsa path rejects that with
+// EINVAL. 48 kHz is also advertised, but opening AO at 48 kHz fails the same
+// way on current boards (Moss Live and other provider-native 48 kHz playback),
+// so keep those inputs on the AO resampler toward 16 kHz instead.
 int ao_exact_device_sample_rate(int input_rate) {
-    static const int kExactRates[] = {8000, 16000, 32000, 44100, 48000};
+    static const int kExactRates[] = {8000, 16000, 32000, 44100};
     for (int rate : kExactRates) {
         if (rate == input_rate) {
             return input_rate;
         }
     }
     // Keep AO hardware on 16 kHz so digital loopback stays aligned with the
-    // 16 kHz mic/VQE path while MPI resamples provider-native 24 kHz input.
+    // 16 kHz mic/VQE path while MPI resamples provider-native 24/48 kHz input.
     return 16000;
 }
 

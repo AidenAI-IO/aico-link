@@ -477,8 +477,38 @@ type VoiceModelConfig struct {
 	// the backend agent. When disabled, the runtime tools that the backend agent
 	// would otherwise use are exposed directly to the realtime model. Provider
 	// reasoning is determined independently by the provider/model.
+	// Runtime decisions should use Config.UseBackendAgentEffective so providers
+	// that cannot support backend delegation (Moss Live) stay foreground-only
+	// without rewriting this stored value.
 	UseBackendAgent      bool   `toml:"use_backend_agent,omitempty"`
 	ActiveProviderRecord string `toml:"-"`
+}
+
+// RealtimeProviderType returns the canonical realtime provider type for the
+// active voice_model.provider reference, or the bare provider name when no
+// named record is selected.
+func (c Config) RealtimeProviderType() string {
+	provider := strings.ToLower(strings.TrimSpace(c.VoiceModel.Provider))
+	if record, ok := c.VoiceModelProviders[provider]; ok {
+		if typ := strings.ToLower(strings.TrimSpace(record.Type)); typ != "" {
+			return typ
+		}
+	}
+	return provider
+}
+
+// UseBackendAgentEffective reports whether the realtime session should use the
+// backend agent. The stored use_backend_agent value is preserved; Moss Live
+// cannot inject task-update text, so it always runs as false without rewriting
+// config.
+func (c Config) UseBackendAgentEffective() bool {
+	if !c.VoiceModel.UseBackendAgent {
+		return false
+	}
+	if c.RealtimeProviderType() == realtimevoice.ProviderMoss {
+		return false
+	}
+	return true
 }
 
 func (c VoiceModelConfig) Enabled() bool { return strings.TrimSpace(c.APIKey) != "" }

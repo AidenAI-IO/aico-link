@@ -15,6 +15,50 @@ func TestDefaultConfigEnablesBackendAgent(t *testing.T) {
 	}
 }
 
+func TestUseBackendAgentEffectiveIgnoresMossWithoutRewriting(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		cfg        Config
+		want       bool
+		keepStored bool
+	}{
+		{
+			name: "gemini keeps stored true",
+			cfg:  Config{VoiceModel: VoiceModelConfig{Provider: "gemini", UseBackendAgent: true}},
+			want: true,
+		},
+		{
+			name:       "moss bare provider forces false",
+			cfg:        Config{VoiceModel: VoiceModelConfig{Provider: "moss", UseBackendAgent: true}},
+			want:       false,
+			keepStored: true,
+		},
+		{
+			name: "moss named provider forces false",
+			cfg: Config{
+				VoiceModel:          VoiceModelConfig{Provider: "moss-main", UseBackendAgent: true},
+				VoiceModelProviders: map[string]VoiceModelProvider{"moss-main": {Type: "moss"}},
+			},
+			want:       false,
+			keepStored: true,
+		},
+		{
+			name: "stored false stays false",
+			cfg:  Config{VoiceModel: VoiceModelConfig{Provider: "gemini", UseBackendAgent: false}},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.cfg.UseBackendAgentEffective(); got != tc.want {
+				t.Fatalf("UseBackendAgentEffective() = %v, want %v", got, tc.want)
+			}
+			if tc.keepStored && !tc.cfg.VoiceModel.UseBackendAgent {
+				t.Fatal("stored UseBackendAgent was rewritten; want preserved true")
+			}
+		})
+	}
+}
+
 func TestLoadRuntimeConfigBackendAgentDefaultFollowsModelCredential(t *testing.T) {
 	t.Setenv("BACKEND_AGENT_TEST_MODEL_KEY", "")
 	for _, tc := range []struct {

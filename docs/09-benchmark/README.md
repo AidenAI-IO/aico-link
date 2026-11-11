@@ -595,25 +595,25 @@ ADB case starts, the workflow waits up to ten minutes for the device and
 `sys.boot_completed`; a device that never finishes booting fails the job
 early.
 
-When any selected case enables AidenBridge, CI reads the current release
+When any selected case enables Aico App, CI reads the current release
 filename from the unversioned distribution URL and compares its `versionCode`
 with the `link.aico.app` package already installed on the emulator. It downloads
 and installs the APK only when the versions differ. The job summary records the
 release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
 `versionCode` is treated as the same release. Installation runs once per job.
-When installation or emulator routing fails, only the AidenBridge cases fail
+When installation or emulator routing fails, only the Aico App cases fail
 with `aidenbridge_setup_failed`; every other case still runs and publishes,
 and the job still fails.
 
 The text-editing suite runs as a matched pair using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:
 
-| Suite | Without AidenBridge | With AidenBridge |
+| Suite | Without Aico App | With Aico App |
 | --- | --- | --- |
 | `adb_android_text_editing.json` (4 tasks) | `adb_android_text_editing` | `adb_android_text_editing-aidenbridge` |
 
-`adb_android_basic.json` (16 tasks) runs only without AidenBridge. Its
+`adb_android_basic.json` (16 tasks) runs only without Aico App. Its
 navigation, back, recents, and scroll tasks use ADB screenshots and input in
 both variants, and its `open_app` calls fall back to visible search whenever
 the companion App is in the background, so a connected variant measured the
@@ -667,12 +667,12 @@ runs without background Bridge tasks never create the link.
 
 Run IDs distinguish the variants, and `manifest.json`/Langfuse metadata records
 `execution_environment` as `adb` or `adb_aidenbridge`. The dashboard shows
-**ADB device** and **ADB + AidenBridge** in its configuration comparison and
+**ADB device** and **ADB + Aico App** in its configuration comparison and
 run history. Compare matching tasks from the same workflow attempt/model/repeat
 count using pass rates, tool calls, task time, and token/cost metrics. Historical
 runs with different suite hashes are not a controlled Bridge comparison.
 
-`aico_app/android_bridge_capabilities_v1.json` is the connected AidenBridge
+`aico_app/android_bridge_capabilities_v1.json` is the connected Aico App
 suite. It tests Bridge-specific APIs rather than serving as the no-Bridge
 comparison workload. It explicitly starts its tasks with the companion App in
 the foreground. It runs with a rooted Android emulator and one Agent worker, checks the

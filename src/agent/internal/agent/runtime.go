@@ -968,7 +968,7 @@ func (r *Runtime) Run(ctx context.Context, req RunRequest) (result RunResult, ru
 	// transferred tools itself. Take the decision under the same config snapshot
 	// the rest of the run reads, so a reload cannot flip it mid-run.
 	cfg := r.ConfigSnapshot()
-	if cfg.InputModeOrDefault() == "realtime" && !cfg.VoiceModel.UseBackendAgent {
+	if cfg.InputModeOrDefault() == "realtime" && !cfg.UseBackendAgentEffective() {
 		return RunResult{}, fmt.Errorf("backend agent is disabled for this realtime session; all processing should be handled by the realtime voice session")
 	}
 

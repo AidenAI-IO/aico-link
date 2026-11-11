@@ -124,7 +124,7 @@ def cli(argv: list[str] | None = None) -> int:
     p_run.add_argument("--auto-agent-setup", action="store_true",
                        help="Start isolated agent daemons automatically and ignore --agent-url; concurrency is read from environment bridge /api/concurrent")
     p_run.add_argument("--android-phone-bridge-serial", default="",
-                       help="Connect a rooted Android emulator's AidenBridge app to each isolated Agent")
+                       help="Connect a rooted Android emulator's Aico App to each isolated Agent")
     p_run.add_argument("--max-concurrency", type=int, default=0,
                        help="Cap auto-agent-setup worker concurrency; 0 means no explicit cap")
     p_run.add_argument("--daemon-image", default=os.environ.get("AICO_DAEMON_IMAGE", "aico-agent-daemon:local"))
@@ -924,7 +924,7 @@ def _cmd_run_auto_agent_setup_inner(
                         result.hard_assertion_failures.append(HardAssertionFailure(
                             id="android_bridge_input",
                             label="Android Bridge Input",
-                            requirement="AidenBridge clipboard write and exact text in a non-Bridge editable field",
+                            requirement="Aico App clipboard write and exact text in a non-Bridge editable field",
                             actual=json.dumps(evidence, ensure_ascii=False),
                         ))
                         if result.status == "passed":
