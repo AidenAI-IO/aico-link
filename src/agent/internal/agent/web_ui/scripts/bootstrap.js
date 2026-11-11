@@ -5,6 +5,8 @@ setInterval(function() {
     if (!document.hidden) loadHistory();
 }, 2000);
 conversationEl.addEventListener('scroll', loadOlderHistoryNearTop, {passive: true});
+// A floating thumbnail preview would detach from its row while scrolling.
+conversationEl.addEventListener('scroll', hideThumbPreview, {passive: true});
 refreshCurrentLiveActivity();
 setInterval(refreshCurrentLiveActivity, 2000);
 loadToolCatalog();

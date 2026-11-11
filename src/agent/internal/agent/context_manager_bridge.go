@@ -123,6 +123,7 @@ func toolResultMessage(toolCallID, toolName string, prepared PreparedToolResult)
 				ObservationComplete: prepared.ObservationComplete,
 				ProcessingErrorCode: prepared.ProcessingErrorCode,
 				ArtifactStoreError:  prepared.ArtifactStoreError,
+				IsError:             prepared.IsError,
 				RequiresComplete:    prepared.RequiresComplete,
 			},
 		}},

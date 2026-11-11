@@ -60,6 +60,85 @@ function isContextMarkerMessage(msg) {
     return type === 'state' || type === 'notice' || msg.role === 'state' || msg.role === 'notice';
 }
 
+function isToolMessage(msg) {
+    const type = normalizeType((msg || {}).type);
+    return type === 'tool_call' || type === 'tool_result';
+}
+
+// State markers directly before a user turn are that turn's context, not
+// output of the preceding tool calls.
+function startsUserTurnContext(messages, index) {
+    for (let i = index; i < messages.length; i++) {
+        const msg = messages[i];
+        if (!isContextMarkerMessage(msg)) {
+            const type = normalizeType(msg.type);
+            return type === 'user' || type === 'steer';
+        }
+    }
+    return false;
+}
+
+// Consecutive tool calls, their results, and the state they produce render
+// as one collapsible activity group. Notices stay visible as dividers.
+function groupConversationItems(messages) {
+    const items = [];
+    let group = null;
+    messages.forEach(function(msg, index) {
+        if (isToolMessage(msg) ||
+            (group && isContextMarkerMessage(msg) && contextMarkerType(msg) === 'state' &&
+                !startsUserTurnContext(messages, index))) {
+            if (!group) {
+                group = {type: 'tools', key: messageIdentity(msg), messages: []};
+                items.push(group);
+            }
+            group.messages.push(msg);
+            return;
+        }
+        group = null;
+        items.push({type: 'message', message: msg});
+    });
+    return items;
+}
+
+// Pair each result with the earliest open call of the same tool so one entry
+// shows the call and its result together. Markers keep their own entries.
+function toolGroupEntries(messages) {
+    const entries = [];
+    messages.forEach(function(msg) {
+        const type = normalizeType(msg.type);
+        if (type === 'tool_result') {
+            const name = msg.tool_name || '';
+            const call = entries.find(function(entry) {
+                return entry.call && !entry.result && (!name || (entry.call.tool_name || '') === name);
+            });
+            if (call) {
+                call.result = msg;
+                return;
+            }
+            entries.push({kind: 'tool', key: messageIdentity(msg), call: null, result: msg});
+            return;
+        }
+        if (type === 'tool_call') {
+            entries.push({kind: 'tool', key: messageIdentity(msg), call: msg, result: null});
+            return;
+        }
+        entries.push({kind: 'marker', key: messageIdentity(msg), message: msg});
+    });
+    return entries;
+}
+
+// A live turn-start marker belongs before its user message only until the
+// turn produces output; later markers come from that output.
+function contextMarkerAnchorIndex(messages, beforeRequestId) {
+    if (!beforeRequestId) return -1;
+    const index = messages.findIndex(item => normalizeType(item.type) === 'user' && item.request_id === beforeRequestId);
+    if (index < 0) return -1;
+    for (let i = index + 1; i < messages.length; i++) {
+        if (!isContextMarkerMessage(messages[i])) return -1;
+    }
+    return index;
+}
+
 function projectConversationMessages(current, action) {
     current = Array.isArray(current) ? current : [];
     if (action.type === 'history') {
@@ -91,24 +170,19 @@ function projectConversationMessages(current, action) {
     }
     if (action.type !== 'live') return current;
     const projectedMessage = normalizeType(message.type) === 'assistant' ? Object.assign({}, message) : message;
+    const anchorIndex = isContextMarkerMessage(message)
+        ? contextMarkerAnchorIndex(current, action.beforeRequestId) : -1;
     if (index < 0) {
-        const beforeIndex = action.beforeRequestId && isContextMarkerMessage(message)
-            ? current.findIndex(item => normalizeType(item.type) === 'user' && item.request_id === action.beforeRequestId)
-            : -1;
-        if (beforeIndex < 0) return current.concat(projectedMessage);
+        if (anchorIndex < 0) return current.concat(projectedMessage);
         const next = current.slice();
-        next.splice(beforeIndex, 0, projectedMessage);
+        next.splice(anchorIndex, 0, projectedMessage);
         return next;
     }
-    if (action.beforeRequestId && isContextMarkerMessage(message)) {
-        const beforeIndex = current.findIndex(item => normalizeType(item.type) === 'user' &&
-            item.request_id === action.beforeRequestId);
-        if (beforeIndex >= 0 && index > beforeIndex) {
-            const next = current.slice();
-            next.splice(index, 1);
-            next.splice(beforeIndex, 0, message);
-            return next;
-        }
+    if (anchorIndex >= 0 && index > anchorIndex) {
+        const next = current.slice();
+        next.splice(index, 1);
+        next.splice(anchorIndex, 0, message);
+        return next;
     }
     if (normalizeType(message.type) !== 'assistant') return current;
     const next = current.slice();
