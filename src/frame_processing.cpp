@@ -499,8 +499,9 @@ static BorderScore centered_crop_border_score(const FrameMetadata& metadata,
 // lines black either way (its few bright pixels average out across 1920),
 // but the lines a wrong crop would cut still carry the phone's content
 // inside the true screen area, so this separates the two where the sampled
-// whole-line score ties.
-static void cross_region_border_scores(const FrameMetadata& metadata,
+// whole-line score ties. Bounds come from centered_crop_rect so the scored
+// regions match the even-aligned rectangles that are actually cropped.
+static bool cross_region_border_scores(const FrameMetadata& metadata,
                                        const std::vector<uint8_t>& frame,
                                        uint32_t portrait_width,
                                        uint32_t portrait_height,
@@ -508,10 +509,16 @@ static void cross_region_border_scores(const FrameMetadata& metadata,
                                        uint32_t landscape_height,
                                        BorderScore* portrait,
                                        BorderScore* landscape) {
-    const uint32_t portrait_x = (metadata.width - portrait_width) / 2U;
-    const uint32_t portrait_y = (metadata.height - portrait_height) / 2U;
-    const uint32_t landscape_x = (metadata.width - landscape_width) / 2U;
-    const uint32_t landscape_y = (metadata.height - landscape_height) / 2U;
+    CenterCropRect portrait_rect;
+    CenterCropRect landscape_rect;
+    if (!centered_crop_rect(metadata, portrait_width, portrait_height, &portrait_rect) ||
+        !centered_crop_rect(metadata, landscape_width, landscape_height, &landscape_rect)) {
+        return false;
+    }
+    const uint32_t portrait_x = portrait_rect.x;
+    portrait_width = portrait_rect.width;
+    const uint32_t landscape_y = landscape_rect.y;
+    landscape_height = landscape_rect.height;
     *portrait = {0, 0};
     *landscape = {0, 0};
     // Portrait removes side columns; test them inside the landscape rows.
@@ -532,6 +539,7 @@ static void cross_region_border_scores(const FrameMetadata& metadata,
                                                portrait_x + portrait_width);
         ++landscape->total;
     }
+    return true;
 }
 
 bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
@@ -583,16 +591,16 @@ bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
         // across the full width, so landscape looked as plausible as portrait
         // and the geometry fallback cut the top and bottom off. Compare every
         // removed line within the other orientation's region instead.
-        BorderScore portrait_cross;
-        BorderScore landscape_cross;
-        cross_region_border_scores(metadata, frame, portrait_width, portrait_height,
-                                   landscape_width, landscape_height,
-                                   &portrait_cross, &landscape_cross);
+        BorderScore portrait_cross = {0, 0};
+        BorderScore landscape_cross = {0, 0};
+        const bool scored = cross_region_border_scores(
+            metadata, frame, portrait_width, portrait_height, landscape_width,
+            landscape_height, &portrait_cross, &landscape_cross);
         const uint64_t portrait_cross_weighted =
             static_cast<uint64_t>(portrait_cross.black) * landscape_cross.total;
         const uint64_t landscape_cross_weighted =
             static_cast<uint64_t>(landscape_cross.black) * portrait_cross.total;
-        if (landscape_cross_weighted != portrait_cross_weighted) {
+        if (scored && landscape_cross_weighted != portrait_cross_weighted) {
             use_landscape = landscape_cross_weighted > portrait_cross_weighted;
         } else {
             // Still ambiguous (for example an all-black frame): derive the
