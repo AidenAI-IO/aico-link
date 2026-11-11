@@ -132,6 +132,8 @@ function migrateExpandedLines() {
     Array.from(expandedLines).forEach(function([key, entry]) {
         if (entry.block.isConnected) return;
         expandedLines.delete(key);
+        // Kind includes the row's slot in its message, so of two identical
+        // spoken rows the same one stays open.
         const index = fresh.findIndex(block => block._lineKind === entry.kind && block._lineText === entry.text);
         if (index < 0) return;
         const target = fresh.splice(index, 1)[0];
@@ -233,7 +235,8 @@ function renderSpeechText(element, text, key) {
     let speechIndex = 0;
     splitSpeechText(text).forEach(function(segment) {
         if (segment.speech) {
-            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + speechIndex++));
+            const slot = speechIndex++;
+            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + slot, 'speech:' + slot));
             return;
         }
         if (!segment.text.trim()) return;
@@ -245,13 +248,13 @@ function renderSpeechText(element, text, key) {
 }
 
 // Spoken text shows one line; clicking toggles the full text.
-function createSpeechBlock(segment, expandKey) {
+function createSpeechBlock(segment, expandKey, kind) {
     return createCollapsibleLine({
         className: 'tts-block' + (segment.open ? ' streaming' : ''),
         iconClass: 'tts-icon',
         textClass: 'tts-text',
         label: 'Spoken aloud',
-        kind: 'speech',
+        kind,
         text: segment.text.trim(),
         expandKey
     });

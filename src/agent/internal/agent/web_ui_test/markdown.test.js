@@ -128,9 +128,9 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     }
     context.document = {createElement: () => new Element()};
     context.window = {};
-    const line = (key, text) => {
+    const line = (key, text, kind = 'speech:0') => {
         const block = context.createCollapsibleLine({className: 'tts-block', iconClass: 'tts-icon', textClass: 'tts-text',
-            label: 'Spoken aloud', kind: 'speech', text, expandKey: key});
+            label: 'Spoken aloud', kind, text, expandKey: key});
         block.isConnected = true;
         return block;
     };
@@ -159,6 +159,20 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     context.migrateExpandedLines();
     assert.ok(expanded(fromHistory), 'history replacing the live row keeps it expanded');
     assert.deepEqual(Array.from(expandedLines().keys()), ['context-1']);
+
+    // Two identical spoken rows in one message: the second stays the open one.
+    fromHistory.click();
+    context.migrateExpandedLines();
+    const liveFirst = line('run\u001f0', 'Twice.', 'speech:0');
+    const liveSecond = line('run\u001f1', 'Twice.', 'speech:1');
+    context.migrateExpandedLines();
+    liveSecond.click();
+    liveFirst.isConnected = false;
+    liveSecond.isConnected = false;
+    const historyFirst = line('context-2\u001f0', 'Twice.', 'speech:0');
+    const historySecond = line('context-2\u001f1', 'Twice.', 'speech:1');
+    context.migrateExpandedLines();
+    assert.deepEqual([expanded(historyFirst), expanded(historySecond)], [false, true]);
 }
 
 console.log('markdown tests passed');
