@@ -12,7 +12,10 @@ from typing import Any
 from runner.metrics import status_fields
 from runner.trace import tool_result_failed
 
+# Targets need three attempts per side to tell a reproducible failure or fix from noise.
 REPEATS = 3
+# Regression tasks are screened once per side; only one that looks worse is rerun to REPEATS.
+SCREEN_REPEATS = 1
 BASE_BRANCH = "main"
 # Repair domains. agent and benchmark changes are verified differently and published as
 # separate draft PRs; external code cannot be verified by the benchmark and only gets an issue.
@@ -344,39 +347,72 @@ def prune_reproduction(plan: dict[str, list[str]], audit: dict,
     return pruned, {"targets": uncertain_targets}
 
 
+def complete(rows: list[dict], repeats: int) -> bool:
+    return len(rows) == repeats and {r.get("repeat") for r in rows} == set(range(1, repeats + 1))
+
+
+def needs_rerun(baseline: list[dict], candidate: list[dict], *, symptom: bool = False) -> bool:
+    """Whether a screened regression task looks worse on the candidate and needs REPEATS attempts.
+
+    Agent repairs gate on passes; benchmark repairs gate on the symptom and evaluability.
+    """
+    if symptom:
+        return (any(r.get("symptom_evidence") for r in candidate) and not any(r.get("symptom_evidence") for r in baseline)
+                or sum(map(unevaluable, candidate)) > sum(map(unevaluable, baseline)))
+    return (sum(status_fields(r)[0] is True for r in candidate) < sum(status_fields(r)[0] is True for r in baseline))
+
+
+def task_repeats(group: str, candidate: list[dict] | None) -> int:
+    """Targets always use REPEATS; a regression task uses REPEATS only once it was rerun."""
+    return REPEATS if group == "targets" or (candidate is not None and len(candidate) > SCREEN_REPEATS) else SCREEN_REPEATS
+
+
+def fixed_targets(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
+                  candidate: dict[str, list[dict]]) -> list[str]:
+    """Targets that failed at least 2/3 on baseline and passed at least 2/3 on the candidate."""
+    return [key for key in plan["targets"]
+            if sum(status_fields(r)[0] is True for r in baseline.get(key, [])) <= 1
+            and sum(status_fields(r)[0] is True for r in candidate.get(key, [])) >= 2]
+
+
 def compare(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
             candidate: dict[str, list[dict]]) -> dict:
     """Fail closed on missing, duplicate, ineligible, or unmeasured outcomes.
 
-    Three repeats per side cannot separate a one-pass drop from model variance, so a
-    task regresses when it loses TASK_REGRESSION_DROP passes, and the non-target set
-    regresses when its total drops by more than max(2, 5%) of its attempts.
+    Targets run REPEATS times per side. Regression tasks are screened once per side
+    and rerun to REPEATS only when the candidate looks worse; a single-attempt drop that
+    was not rerun is rejected. Three repeats cannot separate a one-pass drop from model
+    variance, so a rerun task regresses when it loses TASK_REGRESSION_DROP passes, and
+    the regression set regresses when more than max(1, 5%) of its tasks lose any pass.
     """
-    reasons, table, fixed = [], [], []
-    totals = {"baseline": 0, "candidate": 0, "attempts": 0}
+    reasons, table, worse = [], [], []
+    regression_tasks = 0
     for group, keys in plan.items():
         for key in keys:
+            rows = {"baseline": baseline.get(key, []), "candidate": candidate.get(key, [])}
+            repeats = task_repeats(group, rows["candidate"])
             pair = []
-            for side, rows in (("baseline", baseline.get(key, [])), ("candidate", candidate.get(key, []))):
-                if len(rows) != REPEATS or {r.get("repeat") for r in rows} != set(range(1, REPEATS + 1)):
+            for side, side_rows in rows.items():
+                if not complete(side_rows, repeats):
                     reasons.append(f"{key}: incomplete {side} repeats")
-                if any(status_fields(r)[0] is None or not status_fields(r)[2] for r in rows):
+                if any(status_fields(r)[0] is None or not status_fields(r)[2] for r in side_rows):
                     reasons.append(f"{key}: unevaluable {side} outcome")
-                pair.append(sum(status_fields(r)[0] is True for r in rows))
+                pair.append(sum(status_fields(r)[0] is True for r in side_rows))
             before, after = pair
-            table.append({"task": key, "group": group, "baseline": before, "candidate": after})
+            table.append({"task": key, "group": group, "baseline": before, "candidate": after, "repeats": repeats})
             if before - after >= TASK_REGRESSION_DROP:
-                reasons.append(f"{key}: observed regression {before}/3 -> {after}/3")
-            if group == "targets" and before <= 1 and after >= 2:
-                fixed.append(key)
-            if group != "targets":
-                totals["baseline"] += before
-                totals["candidate"] += after
-                totals["attempts"] += REPEATS
-    tolerance = max(2, math.ceil(0.05 * totals["attempts"]))
-    if totals["baseline"] - totals["candidate"] > tolerance:
-        reasons.append(f"regression set: passes dropped {totals['baseline']} -> {totals['candidate']} "
-                       f"(tolerance {tolerance})")
+                reasons.append(f"{key}: observed regression {before}/{repeats} -> {after}/{repeats}")
+            if group == "targets":
+                continue
+            regression_tasks += 1
+            if repeats == SCREEN_REPEATS and needs_rerun(rows["baseline"], rows["candidate"]):
+                reasons.append(f"{key}: screening drop was not rerun")
+            elif after < before:
+                worse.append(key)
+    tolerance = max(1, math.ceil(0.05 * regression_tasks))
+    if len(worse) > tolerance:
+        reasons.append(f"regression set: {len(worse)} tasks lost passes (tolerance {tolerance})")
+    fixed = fixed_targets(plan, baseline, candidate)
     if not fixed:
         reasons.append("No reproduced target improved to at least 2/3 passes")
     efficiency = {}
@@ -408,6 +444,8 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
                     candidate: dict[str, list[dict]], removed: list[str]) -> dict:
     """Benchmark repairs: the same agent shows the symptom before and never after; pass rates are reported only.
 
+    Targets run REPEATS times per side; regression tasks are screened as in compare().
+
     Every row carries symptom_evidence, recorded by the driver from that attempt's own trace.
     A target the candidate removed from the catalog is accepted only as a flagged contract change.
     A tool_error target must also lose failed tool results, not merely change their wording.
@@ -421,11 +459,12 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
                 if group != "targets" or sides["candidate"]:
                     reasons.append(f"{key}: only a target can be removed, and it must not run")
                 sides["candidate"] = None
-            entry = {"task": key, "group": group, "removed": key in removed}
+            repeats = task_repeats(group, sides["candidate"])
+            entry = {"task": key, "group": group, "removed": key in removed, "repeats": repeats}
             for side, rows in sides.items():
                 if rows is None:
                     continue
-                if len(rows) != REPEATS or {r.get("repeat") for r in rows} != set(range(1, REPEATS + 1)):
+                if not complete(rows, repeats):
                     reasons.append(f"{key}: incomplete {side} repeats")
                 if any(not isinstance(r.get("symptom_evidence"), list) or isinstance(r.get("tool_failures"), bool)
                        or not isinstance(r.get("tool_failures"), int) for r in rows):
@@ -451,6 +490,9 @@ def compare_symptom(plan: dict[str, list[str]], symptom: dict, baseline: dict[st
                 else:
                     reasons.append(f"{key}: candidate still shows the symptom {after['symptom']}/3 "
                                    f"or has {after['unevaluable']}/3 unevaluable attempts")
+            elif after is not None and repeats == SCREEN_REPEATS:
+                if needs_rerun(sides["baseline"], sides["candidate"], symptom=True):
+                    reasons.append(f"{key}: screening symptom or unevaluable attempt was not rerun")
             elif after is not None:
                 # Other tasks must not gain the symptom or become unevaluable; pass rates are not gated.
                 if after["symptom"] > before["symptom"]:

@@ -255,7 +255,7 @@ with contents/pull-requests/issues write access, store it as
 label before publication. Neither credential option is needed for branch tests.
 
 The initial operational bounds are at most two clusters, three attempts per
-task/side, 48 turns and 15 minutes per review session, a five-hour driver budget,
+target and side (one screening attempt per regression task and side, three when rerun), 48 turns and 15 minutes per review session, a five-hour driver budget,
 and a six-hour job ceiling. There is **no Claude Code model-cost cap**; the CLI's
 `total_cost_usd` estimate is recorded for each session and summarized in the
 job output/PR. A target baseline is stale when more than one hour passed between
@@ -344,10 +344,16 @@ resource cleanup; interrupted/failed uploads retain work for inspection.
   directory inside the pinned test container. `AICO_TEST_CACHE_DIR` points every
   candidate checkout at one persistent Go and uv download cache on the runner. Test commands and assertions are
   unchanged; this removes host disk-sync latency from timing-sensitive tests.
-- Paired comparison uses three repeats per side, which cannot separate a single
-  lost pass from model variance. A task regresses when it loses two or more passes;
-  the neighbor and held-out set regresses when its total passes drop by more than
-  max(2, 5% of its attempts). Targets must still reach at least 2/3.
+- Targets run three times per side: reproduction needs at least 2/3 failures and a
+  fix needs at least 2/3 passes. The candidate's targets run first, right after its
+  image is built; if no target reaches 2/3 the attempt is rejected before repository
+  checks and the regression set.
+- Neighbor and held-out tasks are screened once per side. Only a task that looks
+  worse on the candidate (fewer passes; for benchmark repairs, a new symptom or
+  unevaluable attempt) is rerun to three per side. A rerun task regresses when it
+  loses two or more passes, and the set regresses when more than max(1, 5%) of its
+  tasks lose any pass. A screening drop that was not rerun is always rejected. The
+  daily benchmark remains the broad regression check after merge.
 - Agent fixes cannot edit benchmark-mode files (any `benchmark*` path under
   `src/agent`) or add references to the benchmark, so a fix cannot special-case
   evaluation.
@@ -597,8 +603,8 @@ daily benchmark supplies broader regression coverage after merge.
 | --- | --- | --- | --- | --- |
 | Reproduce | Target tasks | Baseline | 3 | Check whether the failure recurs |
 | Verify: target | Target tasks | Candidate | 3 | Confirm the fix |
-| Verify: neighbors | Neighbor tasks | Baseline and candidate | 3 each | Catch fixing one task by breaking a similar one |
-| Verify: held-out | Up to ten deterministic same-environment tasks not exposed in diagnosis/fixing | Baseline and candidate | 3 each | Guard against overfitting to the failures |
+| Verify: neighbors | Neighbor tasks | Baseline and candidate | 1 each; 3 if worse | Catch fixing one task by breaking a similar one |
+| Verify: held-out | Up to ten deterministic same-environment tasks not exposed in diagnosis/fixing | Baseline and candidate | 1 each; 3 if worse | Guard against overfitting to the failures |
 
 Reuse the reproduction results as the target baseline when their task set,
 configuration, environment reset, and collection window remain comparable.

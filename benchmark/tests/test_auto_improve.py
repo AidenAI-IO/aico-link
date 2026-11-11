@@ -37,9 +37,11 @@ def row(repeat, success=True, **metrics):
 
 
 def pair():
+    """Targets have three attempts per side; stable regression tasks were screened once."""
     plan = {"targets": ["phone:tap"], "neighbors": ["phone:type"], "held_out": ["memory:recall"]}
-    baseline = {k: [row(i, k != "phone:tap") for i in range(1, 4)] for keys in plan.values() for k in keys}
-    candidate = {k: [row(i) for i in range(1, 4)] for k in baseline}
+    baseline = {k: [row(i, k != "phone:tap") for i in range(1, 4 if k == "phone:tap" else 2)]
+                for keys in plan.values() for k in keys}
+    candidate = {k: [row(i) for i in range(1, len(rows) + 1)] for k, rows in baseline.items()}
     return plan, baseline, candidate
 
 
@@ -156,19 +158,27 @@ def test_gate_requires_complete_paired_evidence():
     assert any("incomplete" in reason for reason in result["reasons"])
 
 
-def test_gate_tolerates_single_pass_variance_but_not_systematic_regressions():
+def test_regression_tasks_are_screened_once_and_rerun_only_when_worse():
     plan, baseline, candidate = pair()
     plan["held_out"] = [f"memory:{i}" for i in range(20)]
     for key in plan["held_out"]:
-        baseline[key] = [row(i) for i in range(1, 4)]
-        candidate[key] = [row(i) for i in range(1, 4)]
-    # One lost pass on each of two tasks is ordinary three-repeat noise.
-    candidate["memory:0"][0] = row(1, False)
-    candidate["phone:type"][0] = row(1, False)
+        baseline[key], candidate[key] = [row(1)], [row(1)]
     assert policy.compare(plan, baseline, candidate)["passed"]
+    # A screening drop must be rerun; an unrerun drop is never accepted.
+    candidate["memory:0"] = [row(1, False)]
+    assert policy.needs_rerun(baseline["memory:0"], candidate["memory:0"])
+    assert any("not rerun" in r for r in policy.compare(plan, baseline, candidate)["reasons"])
+    # Rerun to three: one lost pass is ordinary variance, two is a regression.
+    baseline["memory:0"] = [row(i) for i in range(1, 4)]
+    candidate["memory:0"] = [row(1, False), row(2), row(3)]
+    assert policy.compare(plan, baseline, candidate)["passed"]
+    candidate["memory:0"][1] = row(2, False)
+    assert any("observed regression" in r for r in policy.compare(plan, baseline, candidate)["reasons"])
     # Many single-pass losses together are a regression even though no task lost two.
-    for key in plan["held_out"][1:4]:
-        candidate[key][0] = row(1, False)
+    candidate["memory:0"][1] = row(2)
+    for key in plan["held_out"][1:3]:
+        baseline[key] = [row(i) for i in range(1, 4)]
+        candidate[key] = [row(1, False), row(2), row(3)]
     assert any("regression set" in r for r in policy.compare(plan, baseline, candidate)["reasons"])
 
 
@@ -182,8 +192,8 @@ def test_gate_rejects_unmeasured_or_regressing_changes(mutation):
     elif mutation == "infra":
         candidate["phone:tap"][0]["metrics"]["agent_eligible"] = False
     elif mutation == "regression":
-        candidate["phone:type"][0] = row(1, False)
-        candidate["phone:type"][1] = row(2, False)
+        baseline["phone:type"] = [row(i) for i in range(1, 4)]
+        candidate["phone:type"] = [row(1, False), row(2, False), row(3)]
     elif mutation == "missing_cost":
         candidate["phone:tap"][0]["metrics"]["total_tokens"] = None
     elif mutation == "cost":
@@ -758,8 +768,12 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
     assert checks == policy.verification_commands([path]) * 2
     assert result["attempts"][0]["checks"] == policy.verification_commands([path])
     assert result["execution_ref"] == ref
-    assert events.index("run:baseline:a:target") < events.index("fix") < events.index("check")
-    assert events.index("check") < events.index("run:candidate:a:target")
+    # The target is checked first; repository checks gate the regression set.
+    assert events.index("run:baseline:a:target") < events.index("fix") < events.index("run:candidate:a:target")
+    assert events.index("run:candidate:a:target") < events.index("check") < events.index("run:candidate:a:neighbor")
+    # Stable regression tasks are screened once per side; targets use three attempts.
+    assert events.count("run:candidate:a:neighbor") == events.count("run:baseline:a:neighbor") == 2
+    assert events.count("run:candidate:a:target") == 6
     assert not (out / "cluster-1/candidate").exists()
     assert not (out / "baseline").exists()
     assert (out / "cluster-1/candidate.patch").read_text() == "diff\n"
@@ -777,6 +791,45 @@ def test_driver_reproduces_before_edit_and_verifies_before_ready(tmp_path, monke
 
 
 FAILED_TOOL = {"is_error": True, "content": "socket missing"}
+
+
+def test_driver_stops_before_checks_when_the_patch_does_not_fix_a_target(tmp_path, monkeypatch):
+    for kind in ("AGENT", "JUDGE"):
+        for field in ("MODEL", "PROVIDER", "BASE_URL", "API_KEY"):
+            monkeypatch.setenv(f"BENCHMARK_{kind}_{field}", "synthetic")
+    repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
+    repo.mkdir(); source.mkdir()
+    path = "src/agent/config/skills/test/SKILL.md"
+    (repo / path).parent.mkdir(parents=True)
+    (repo / path).write_text("Observe.\n")
+    (source / "source.json").write_text(json.dumps({"run": {"id": 42, "run_attempt": 1, "head_sha": "s", "head_branch": "main"}}))
+    tasks = {k: {"case_id": k.split(":")[0], "environment": "isolated", "runnable": True, "task": {"category": "c"}}
+             for k in ("a:target", "a:neighbor", "b:held")}
+    cluster = {"title": "t", "category": "c", "cause": "c", "judge_review": "supported", "fix_target": "skill",
+               "targets": ["a:target"], "neighbors": [], "source_paths": [path], "evidence": ["e"]}
+    def fake_ask(_out, name, *args, **kwargs):
+        if name == "diagnosis":
+            return {"summary": "s", "clusters": [cluster]}
+        if name == "reproduction-review":
+            return {"summary": "s", "tasks": [{"task": "a:target", "disposition": "agent_failure",
+                                               "reason": "r", "evidence": ["e"]}]}
+        return {"summary": "s", "edits": [{"path": path, "old": "Observe.", "new": "Observe twice."}]}
+    def fake_checkout(_, dest, base, *, deadline):
+        (dest / path).parent.mkdir(parents=True)
+        (dest / path).write_text("Observe.\n")
+    runs = []
+    monkeypatch.setattr(driver, "git", lambda _root, *a: "" if a[0] == "status" else "base")
+    monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda *_: tasks)
+    monkeypatch.setattr(driver.evidence, "source_failures", lambda *a: ([{"key": "a:target", "agent_eligible": True}], []))
+    monkeypatch.setattr(driver, "ask", fake_ask)
+    monkeypatch.setattr(driver, "checkout", fake_checkout)
+    monkeypatch.setattr(driver.execution, "prepare", lambda *a: None)
+    monkeypatch.setattr(driver.execution, "remove_images", lambda images: None)
+    monkeypatch.setattr(driver.execution, "run_task", lambda root, key, repeat, *a, **k: runs.append((root.name, key)) or row(repeat, False))
+    monkeypatch.setattr(driver.execution, "command", lambda *a, **k: pytest.fail("checks must not run"))
+    state = driver.run(repo, source, out, mode="improve")
+    assert state["attempts"][0]["status"] == "rejected" and state["status"] == "completed"
+    assert {key for _, key in runs} == {"a:target"} and runs.count(("candidate", "a:target")) == 3
 
 
 @pytest.mark.parametrize("change", ["contained", "remove_task", "host"])

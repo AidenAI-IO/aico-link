@@ -330,11 +330,11 @@ def publish(client: GitHub, repo: Path, artifacts: Path, branch: str) -> list[st
             if domain == "benchmark":
                 lines[-3:-3] = ["Same agent; pass-rate changes are informational only.",
                                 "Baseline/candidate columns below report symptom counts, not passes."]
-                lines.extend(f"| `{r['task']}` | {r['group']} | {r['baseline']['symptom']}/3 | "
-                             + ("removed" if r["removed"] else f"{r['candidate']['symptom']}/3") + " |"
+                lines.extend(f"| `{r['task']}` | {r['group']} | {r['baseline']['symptom']}/{r['repeats']} | "
+                             + ("removed" if r["removed"] else f"{r['candidate']['symptom']}/{r['repeats']}") + " |"
                              for r in comparison["tasks"])
             else:
-                lines.extend(f"| `{r['task']}` | {r['group']} | {r['baseline']}/3 | {r['candidate']}/3 |"
+                lines.extend(f"| `{r['task']}` | {r['group']} | {r['baseline']}/{r['repeats']} | {r['candidate']}/{r['repeats']} |"
                              for r in comparison["tasks"])
         if domain == "benchmark":
             lines.extend(["", "## Human review required: evaluation contract", attempt.get("repair_reason", ""),
@@ -350,7 +350,8 @@ def publish(client: GitHub, repo: Path, artifacts: Path, branch: str) -> list[st
                       "CLI estimate, not a provider invoice; no model-cost limit imposed."])
         if not proposal:
             lines.extend(["Judge evidence audited before and after the change.",
-                          "Three repeats are screening evidence, not statistical proof of improvement."])
+                          "Targets ran three times per side; regression tasks ran once and were rerun three times "
+                          "only when they looked worse. This is screening evidence, not statistical proof."])
         lines.extend(["", "## Configuration and efficiency", "```json",
                       json.dumps({"configuration": manifest["configuration"], "source_configuration": attempt.get("source_configuration"),
                                   "avd_fixture": manifest["avd_fixture"],

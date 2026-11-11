@@ -105,11 +105,18 @@ def repair(repo: Path, base: str, out: Path, attempt: dict, tasks: dict,
             return
         execution.prepare(candidate_repo, images[1], environments, out / "candidate-build", deadline - time.monotonic(),
                           mobilegym_image=mobile_images[1] if mobile_images else None)
-        for group, keys in plan.items():
-            for key in keys:
-                if group != "targets":
-                    baseline[key] = [run(baseline_repo, images[0], "baseline", key, r) for r in range(1, 4)]
-                candidate[key] = [] if key in removed else [run(candidate_repo, images[1], "candidate", key, r) for r in range(1, 4)]
+        for key in plan["targets"]:
+            candidate[key] = [] if key in removed else [run(candidate_repo, images[1], "candidate", key, r)
+                                                        for r in range(1, policy.REPEATS + 1)]
+        # Regression tasks are screened once per side and rerun only when they look worse.
+        for group in ("neighbors", "held_out"):
+            for key in plan[group]:
+                baseline[key] = [run(baseline_repo, images[0], "baseline", key, 1)]
+                candidate[key] = [run(candidate_repo, images[1], "candidate", key, 1)]
+                if policy.needs_rerun(baseline[key], candidate[key], symptom=True):
+                    for r in range(2, policy.REPEATS + 1):
+                        baseline[key].append(run(baseline_repo, images[0], "baseline", key, r))
+                        candidate[key].append(run(candidate_repo, images[1], "candidate", key, r))
         comparison = policy.compare_symptom(plan, symptom, baseline, candidate, removed)
         for name, value in (("baseline", baseline), ("candidate", candidate), ("comparison", comparison)):
             write(out / f"{name}.json", value)

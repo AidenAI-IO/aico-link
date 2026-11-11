@@ -474,6 +474,26 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                     raise policy.ProposalError("Patch escapes diagnosed paths")
                 changed = policy.apply_edits(candidate_repo, patch["edits"])
                 checks = policy.verification_commands(changed)
+                # Agent code runs only inside the candidate daemon container, so the cheap
+                # target check can precede repository checks and the regression set.
+                progress(f"cluster {count}: build candidate")
+                execution.prepare(candidate_repo, image_prefix + "-candidate", environments,
+                                  cluster_dir / "candidate-build", deadline - time.monotonic())
+                if time.monotonic() - reproduction_started > 3600:
+                    raise TimeoutError("Target baseline is more than one hour old; rerun instead of comparing stale evidence")
+                def run_side(side: str, key: str, repeat: int) -> dict:
+                    root, image = ((baseline_repo, image_prefix + "-base") if side == "baseline"
+                                   else (candidate_repo, image_prefix + "-candidate"))
+                    return execution.run_task(root, key, repeat, image, cluster_dir / f"{side}-runs"
+                                              / policy.digest(key)[:12] / str(repeat), deadline=deadline)
+                for key in plan["targets"]:
+                    progress(f"cluster {count}: verify target {key} ({policy.REPEATS} attempts)")
+                    candidate[key] = [run_side("candidate", key, r) for r in range(1, policy.REPEATS + 1)]
+                if not policy.fixed_targets(plan, baseline, candidate):
+                    write(cluster_dir / "candidate.json", candidate)
+                    attempt.update({"status": "rejected",
+                                    "reason": "No reproduced target improved to at least 2/3 passes"})
+                    continue
                 for index, check in enumerate(checks):
                     progress(f"cluster {count}: check {' '.join(check)}")
                     resources = cluster_dir / "check-resources.log"
@@ -497,22 +517,21 @@ def run(repo: Path, source_dir: Path, out: Path, *, mode: str = "diagnose") -> d
                             attempt["baseline_check_passed"] = False
                             attempt["baseline_check_error"] = str(baseline_error)
                         raise
-                progress(f"cluster {count}: build candidate")
-                execution.prepare(candidate_repo, image_prefix + "-candidate", environments,
-                                  cluster_dir / "candidate-build", deadline - time.monotonic())
-                if time.monotonic() - reproduction_started > 3600:
-                    raise TimeoutError("Target baseline is more than one hour old; rerun instead of comparing stale evidence")
-                for group, keys in plan.items():
-                    for key in keys:
-                        progress(f"cluster {count}: verify {group} task {key} (3 attempts per side)")
-                        baseline.setdefault(key, [])
-                        candidate[key] = []
-                        for repeat in range(1, 4):
-                            if key not in original_targets:
-                                baseline[key].append(execution.run_task(baseline_repo, key, repeat, image_prefix + "-base",
-                                    cluster_dir / "baseline-runs" / policy.digest(key)[:12] / str(repeat), deadline=deadline))
-                            candidate[key].append(execution.run_task(candidate_repo, key, repeat, image_prefix + "-candidate",
-                                cluster_dir / "candidate-runs" / policy.digest(key)[:12] / str(repeat), deadline=deadline))
+                # Regression tasks are screened once per side. A task that looks worse, or a
+                # pruned target that already has full baseline evidence, gets REPEATS attempts.
+                for group in ("neighbors", "held_out"):
+                    for key in plan[group]:
+                        full = len(baseline.get(key, [])) == policy.REPEATS
+                        progress(f"cluster {count}: screen {group} task {key}")
+                        if not full:
+                            baseline[key] = [run_side("baseline", key, 1)]
+                        candidate[key] = [run_side("candidate", key, 1)]
+                        if full or policy.needs_rerun(baseline[key], candidate[key]):
+                            progress(f"cluster {count}: rerun {group} task {key} ({policy.REPEATS} attempts)")
+                            for repeat in range(2, policy.REPEATS + 1):
+                                if not full:
+                                    baseline[key].append(run_side("baseline", key, repeat))
+                                candidate[key].append(run_side("candidate", key, repeat))
                 comparison = policy.compare(plan, baseline, candidate)
                 write(cluster_dir / "baseline.json", baseline)
                 write(cluster_dir / "candidate.json", candidate)
