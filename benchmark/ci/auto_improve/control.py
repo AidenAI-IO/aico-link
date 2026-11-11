@@ -51,10 +51,14 @@ def discover(client: GitHub, out: Path, requested: str, branch: str) -> dict | N
         client.download(source["artifact"], download)
         # upload-artifact strips the least common ancestor (benchmark/) from paths.
         root = download / "benchmark" if (download / "benchmark/runs").is_dir() else download
-        if not (root / "runs").is_dir():
-            raise ValueError(f"Source artifact {source['identity']} contains no benchmark runs")
+        # A daily run that failed before any task ran uploads only its dashboard. It stays in
+        # the window identity, so it is settled with the rest instead of retried, and the
+        # driver reports it as a source without completed suite manifests.
+        run_dirs = list((root / "runs").iterdir()) if (root / "runs").is_dir() else []
+        if not run_dirs:
+            window.setdefault("empty_artifacts", []).append(source["identity"])
         # Run directories are prefixed ci-<run>-<attempt>-, so artifacts never collide.
-        for run_dir in (root / "runs").iterdir():
+        for run_dir in run_dirs:
             if not run_dir.name.startswith(f"ci-{source['identity']}-") or run_dir.is_symlink():
                 continue
             run_dir.rename(runs / run_dir.name)

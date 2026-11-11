@@ -978,11 +978,14 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branc
     class API:
         def discover(self, *args, **kwargs):
             assert kwargs["include_processed"] is branch_test
-            return {"identity": "41-1__42-1", "sources": [
-                {"artifact": {"id": i}, "identity": f"{i}-1", "run": {"id": i}} for i in (41, 42)]}
+            return {"identity": "40-1__41-1__42-1", "sources": [
+                {"artifact": {"id": i}, "identity": f"{i}-1", "run": {"id": i}} for i in (40, 41, 42)]}
         def download(self, artifact, destination):
             root = destination / "benchmark" if nested else destination
-            (root / "runs" / f"ci-{artifact['id']}-1-a").mkdir(parents=True)
+            # Run 40 failed before any task ran, so its artifact holds only the dashboard.
+            if artifact["id"] != 40:
+                (root / "runs" / f"ci-{artifact['id']}-1-a").mkdir(parents=True)
+            root.mkdir(parents=True, exist_ok=True)
             (root / "dashboard-data.json").write_text(json.dumps({"history": [artifact["id"]]}))
         def issues(self):
             return []
@@ -992,7 +995,7 @@ def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branc
             return []
     out = tmp_path / "source"
     result = control.discover(API(), out, "", "main")
-    assert result["identity"] == "41-1__42-1"
+    assert result["identity"] == "40-1__41-1__42-1" and result["empty_artifacts"] == ["40-1"]
     assert sorted(p.name for p in (out / "benchmark/runs").iterdir()) == ["ci-41-1-a", "ci-42-1-a"]
     assert json.loads((out / "history.json").read_text()) == {"history": [42]}
 
