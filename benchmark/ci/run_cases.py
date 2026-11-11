@@ -34,7 +34,7 @@ from ci.run_case import _incomplete_run_reasons, run_case
 
 DEFAULT_MAX_PARALLEL = 2
 LOG_TAIL_LINES = 40
-# Set to "0" by the workflow when the shared AidenBridge install failed.
+# Set to "0" by the workflow when the shared Aico App install failed.
 AIDENBRIDGE_READY_ENV = "AIDENBRIDGE_READY"
 
 
@@ -169,7 +169,7 @@ def run_cases(
     def execute(case: SuiteCase) -> CaseOutcome:
         run_id = f"{run_id_prefix}-{case.id}"
         if case.android_phone_bridge and environment.get(AIDENBRIDGE_READY_ENV) == "0":
-            # The workflow installs AidenBridge once for every case that needs it.
+            # The workflow installs Aico App once for every case that needs it.
             # Retain invalid setup attempts without attributing them to the Agent.
             summary = "aidenbridge_setup_failed"
             log_path = BENCHMARK_ROOT / "runs" / run_id / "ci-case.log"
@@ -181,7 +181,7 @@ def run_cases(
                 emit(f"ERROR   {case.id}: could not record setup failure: {exc}")
             with print_lock:
                 print(f"::error title=Benchmark case {case.id}::{summary}", flush=True)
-            emit(f"SKIP    {case.id}: AidenBridge device setup failed")
+            emit(f"SKIP    {case.id}: Aico App device setup failed")
             return CaseOutcome(
                 case_id=case.id,
                 run_id=run_id,

@@ -746,10 +746,7 @@ func drainRealtimeWakeups(events <-chan struct{}, failureAnnouncementPending boo
 }
 
 func realtimeProviderType(cfg agent.Config) string {
-	provider := strings.ToLower(strings.TrimSpace(cfg.VoiceModel.Provider))
-	if record, ok := cfg.VoiceModelProviders[provider]; ok && strings.TrimSpace(record.Type) != "" {
-		provider = strings.ToLower(strings.TrimSpace(record.Type))
-	}
+	provider := cfg.RealtimeProviderType()
 	if provider == "" {
 		return "qwen"
 	}
@@ -761,7 +758,7 @@ func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) rea
 }
 
 func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Runtime, runtimeTools []langtools.Tool) realtimevoice.SessionConfig {
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	voice := cfg.VoiceModel.Voice
 	inputFormat := cfg.VoiceModel.InputAudioFormat
 	if inputFormat == "" {
@@ -977,7 +974,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			map[string]any{"type": "object", "properties": map[string]any{}},
 		),
 	}
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	if !usesBackendAgent {
 		if runtime != nil {
 			if runtimeTools == nil {
@@ -1370,12 +1367,22 @@ func realtimeVoiceDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	}
 }
 
-// realtimeVoicePlaybackDeviceFormat leaves SampleRate unset so the managed
-// realtime session follows the provider's native output rate. audio_service
-// opens an exact ALSA device rate and uses Rockchip AO resampler for 24 kHz
-// input; that keeps the Go userspace 24k→16k resampler off the hot path.
+// realtimeVoicePlaybackDeviceFormat chooses the PCM rate the managed session
+// exposes to audio_service.
+//
+// For most providers SampleRate stays unset so the session follows the
+// provider-native rate and audio_service/AO owns conversion (notably Qwen's
+// 24 kHz→16 kHz path, which keeps Go userspace resampling off the hot path).
+//
+// Moss Live is native 48 kHz. Pushing that PCM through audio_service and
+// relying on AO 48→16 underruns on current boards, so keep the board capture
+// rate here and let the managed session resample 48→16 in userspace — the path
+// that previously played smoothly.
 func realtimeVoicePlaybackDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	format := realtimeVoiceDeviceFormat(cfg)
+	if realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
+		return format
+	}
 	format.SampleRate = 0
 	return format
 }
@@ -1415,7 +1422,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var runtimeTools []langtools.Tool
-	if !cfg.VoiceModel.UseBackendAgent && runtime != nil {
+	if !cfg.UseBackendAgentEffective() && runtime != nil {
 		runtimeTools = runtime.AvailableTools()
 	}
 	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools)
@@ -1465,6 +1472,7 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	canInterrupt := responseInterrupter != nil
 	toolResultSender := session.ToolResultSender
 	canSendToolResult := toolResultSender != nil
+	responseContinuer := session.ResponseContinuer
 	textSession := session.TextSession
 	supportsText := textSession != nil
 	contextReplayer := session.ContextReplayer
@@ -1989,7 +1997,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 			}
 			if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(call.ResponseID) {
 				requestResponse()
-				if err := textSession.CreateResponse(ctx); err != nil {
+				if responseContinuer == nil {
+					return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+				}
+				if err := responseContinuer.CreateResponse(ctx); err != nil {
 					return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 				}
 			}
@@ -2459,7 +2470,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				// discard other tools that the provider is still waiting for.
 				if info.Capabilities.ExplicitToolContinuation && toolTracker.complete(tool.responseID) {
 					requestResponse()
-					if err := textSession.CreateResponse(ctx); err != nil {
+					if responseContinuer == nil {
+						return fmt.Errorf("realtime provider %s cannot continue tool responses", providerName)
+					}
+					if err := responseContinuer.CreateResponse(ctx); err != nil {
 						return fmt.Errorf("continue realtime response after tool cancellation: %w", err)
 					}
 				}
@@ -2521,10 +2535,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 							continue
 						}
 						requestResponse()
-						if !supportsText {
+						if responseContinuer == nil {
 							continue
 						}
-						if err := textSession.CreateResponse(ctx); err != nil {
+						if err := responseContinuer.CreateResponse(ctx); err != nil {
 							return markRealtimeProviderFailure(fmt.Errorf("continue realtime response after tool call: %w", err))
 						}
 						continue

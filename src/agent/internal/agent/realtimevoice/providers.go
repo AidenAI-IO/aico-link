@@ -6,6 +6,7 @@ const (
 	ProviderOpenAI = "openai"
 	ProviderGemini = "gemini"
 	ProviderXAI    = "xai"
+	ProviderMoss   = "moss"
 )
 
 type ProviderDescriptor struct {
@@ -21,6 +22,7 @@ var providerDescriptors = []ProviderDescriptor{
 	{Name: ProviderOpenAI, Label: "OpenAI Realtime", ModelPlaceholder: DefaultOpenAIRealtimeModel, VoicePlaceholder: "alloy"},
 	{Name: ProviderGemini, Label: "Google Gemini Live", ModelPlaceholder: DefaultGeminiLiveModel, VoicePlaceholder: "Puck"},
 	{Name: ProviderXAI, Label: "xAI Grok Voice", ModelPlaceholder: DefaultXAIRealtimeModel, VoicePlaceholder: "eve"},
+	{Name: ProviderMoss, Label: "MOSS Live", ModelPlaceholder: DefaultMossLiveModel},
 }
 
 func ProviderDescriptors() []ProviderDescriptor {

@@ -1,4 +1,4 @@
-"""Route the fixed AidenBridge board address to a per-task Agent on a rooted emulator."""
+"""Route the fixed Aico App board address to a per-task Agent on a rooted emulator."""
 
 from __future__ import annotations
 
@@ -81,7 +81,7 @@ def wait_for_android_phone_bridge(
             pass
         time.sleep(2)
     raise RuntimeError(
-        "AidenBridge did not become ready on the task Agent; "
+        "Aico App did not become ready on the task Agent; "
         f"last status: {last_status}"
     )
 

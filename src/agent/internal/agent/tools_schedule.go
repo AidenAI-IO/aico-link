@@ -105,7 +105,7 @@ func (t *ScheduleTool) Call(ctx context.Context, input string) (string, error) {
 			return "", errors.New("provide exactly one of delay_s (1..604800) or run_at")
 		}
 		cfg := t.runtime.ConfigSnapshot()
-		if cfg.InputModeOrDefault() == "realtime" && !cfg.VoiceModel.UseBackendAgent {
+		if cfg.InputModeOrDefault() == "realtime" && !cfg.UseBackendAgentEffective() {
 			return "", errors.New("scheduled execution requires the backend agent to be enabled")
 		}
 		at := t.now().Add(time.Duration(args.DelayS) * time.Second)

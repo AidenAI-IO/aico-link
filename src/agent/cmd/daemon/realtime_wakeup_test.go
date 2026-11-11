@@ -860,6 +860,24 @@ func TestRealtimeVoicePlaybackDeviceFormatFollowsProviderRate(t *testing.T) {
 	}
 }
 
+func TestRealtimeVoicePlaybackDeviceFormatKeepsMossAtBoardRate(t *testing.T) {
+	format := realtimeVoicePlaybackDeviceFormat(agent.Config{
+		Audio:      agent.AudioConfig{SampleRate: 16000, Channels: 1, BitWidth: 16},
+		VoiceModel: agent.VoiceModelConfig{Provider: "moss"},
+	})
+	if format.SampleRate != 16000 || format.Channels != 1 || format.BitDepth != 16 || format.Encoding != "pcm_s16le" {
+		t.Fatalf("format = %+v, want board-rate mono pcm16 for Moss", format)
+	}
+	named := realtimeVoicePlaybackDeviceFormat(agent.Config{
+		Audio:               agent.AudioConfig{SampleRate: 16000, Channels: 1, BitWidth: 16},
+		VoiceModel:          agent.VoiceModelConfig{Provider: "moss-main"},
+		VoiceModelProviders: map[string]agent.VoiceModelProvider{"moss-main": {Type: "moss"}},
+	})
+	if named.SampleRate != 16000 {
+		t.Fatalf("named moss format sample rate = %d, want 16000", named.SampleRate)
+	}
+}
+
 func TestRealtimeProviderAudioFormatPrefersNegotiatedFormat(t *testing.T) {
 	got := realtimeProviderAudioFormat(realtimevoice.AudioFormat{
 		Encoding: "pcm_s16le", SampleRate: 24000, Channels: 2, BitDepth: 24,

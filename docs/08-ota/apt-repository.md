@@ -35,6 +35,11 @@ Packages for a new contract do not appear as candidates for an old contract. A d
 switches to the repository for the new base contract only after installing the new OTA.
 The package's preinst still checks the channel, contract, base release tag, and system fingerprint.
 
+The firmware page shows the installed business release beside the base firmware
+version (for example, `dev-v0.0.77 + aico-business-v0.0.78`). It reads the
+configured package from dpkg, so a business-only upgrade changes the displayed
+version without changing the base firmware version.
+
 Config Web's "Check and install updates" action (`POST /api/ota/updates`) starts
 `aico-hybrid-update.service`, which proceeds in this order:
 

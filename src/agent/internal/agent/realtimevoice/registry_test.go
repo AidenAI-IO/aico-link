@@ -27,7 +27,7 @@ func TestProviderRegistrySupportsNamedFactories(t *testing.T) {
 
 func TestDefaultProviderRegistryContainsRealtimeProviders(t *testing.T) {
 	registry := DefaultProviderRegistry()
-	for _, name := range []string{"qwen", "speko", "openai", "gemini", "xai"} {
+	for _, name := range []string{"qwen", "speko", "openai", "gemini", "xai", "moss"} {
 		if _, err := registry.New(name, ProviderConfig{}); err != nil {
 			t.Fatalf("default registry missing %q: %v", name, err)
 		}

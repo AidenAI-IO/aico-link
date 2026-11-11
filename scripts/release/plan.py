@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import time
 
 CHANNELS = ("dev", "staging", "prod")
 VERSION = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -26,6 +27,17 @@ CONFIG_BOUNDARY = json.loads((Path(__file__).resolve().parents[1] / "debian-syst
 
 def command(*args, cwd=None):
     return subprocess.check_output(args, cwd=cwd, text=True, timeout=300).strip()
+
+
+def github_read(*args, attempts=3):
+    """Run a read-only `gh api` call, retrying transient GitHub failures."""
+    for attempt in range(attempts):
+        try:
+            return command("gh", "api", *args)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            if attempt == attempts - 1:
+                raise
+            time.sleep(5)
 
 
 def canonical(value):
@@ -120,8 +132,7 @@ def validate_history(records, repo):
 
 
 def github_releases(repo):
-    pages = json.loads(command("gh", "api", "--paginate", "--slurp",
-                               f"repos/{repo}/releases?per_page=100"))
+    pages = json.loads(github_read("--paginate", "--slurp", f"repos/{repo}/releases?per_page=100"))
     return [release for page in pages for release in page]
 
 
@@ -133,9 +144,9 @@ def github_history(repo):
         assets = [a for a in release["assets"] if a["name"] == "release.json"]
         if len(assets) != 1 or assets[0]["size"] > RELEASE_RECORD_LIMIT:
             raise ValueError(f"Missing/invalid release.json: {release['tag_name']}")
-        record = json.loads(command("gh", "api", "-H", "Accept: application/octet-stream",
-                                    f"repos/{repo}/releases/assets/{assets[0]['id']}"))
-        sha = command("gh", "api", f"repos/{repo}/commits/{release['tag_name']}", "--jq", ".sha")
+        record = json.loads(github_read("-H", "Accept: application/octet-stream",
+                                        f"repos/{repo}/releases/assets/{assets[0]['id']}"))
+        sha = github_read(f"repos/{repo}/commits/{release['tag_name']}", "--jq", ".sha")
         if record["tag"] != release["tag_name"] or record["source_commit"] != sha:
             raise ValueError("Published release record does not match its Git tag")
         records.append(record)
