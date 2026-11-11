@@ -746,21 +746,11 @@ func drainRealtimeWakeups(events <-chan struct{}, failureAnnouncementPending boo
 }
 
 func realtimeProviderType(cfg agent.Config) string {
-	provider := strings.ToLower(strings.TrimSpace(cfg.VoiceModel.Provider))
-	if record, ok := cfg.VoiceModelProviders[provider]; ok && strings.TrimSpace(record.Type) != "" {
-		provider = strings.ToLower(strings.TrimSpace(record.Type))
-	}
+	provider := cfg.RealtimeProviderType()
 	if provider == "" {
 		return "qwen"
 	}
 	return provider
-}
-
-func errIfMossBackendAgentUnsupported(cfg agent.Config) error {
-	if cfg.VoiceModel.UseBackendAgent && realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
-		return fmt.Errorf("moss live does not support use_backend_agent: task updates require text injection")
-	}
-	return nil
 }
 
 func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) realtimevoice.SessionConfig {
@@ -768,7 +758,7 @@ func realtimeProviderSessionConfig(cfg agent.Config, runtime *agent.Runtime) rea
 }
 
 func realtimeProviderSessionConfigWithTools(cfg agent.Config, runtime *agent.Runtime, runtimeTools []langtools.Tool) realtimevoice.SessionConfig {
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	voice := cfg.VoiceModel.Voice
 	inputFormat := cfg.VoiceModel.InputAudioFormat
 	if inputFormat == "" {
@@ -984,7 +974,7 @@ func realtimeVoiceToolDefinitionsWithTools(cfg agent.Config, runtime *agent.Runt
 			map[string]any{"type": "object", "properties": map[string]any{}},
 		),
 	}
-	usesBackendAgent := cfg.VoiceModel.UseBackendAgent
+	usesBackendAgent := cfg.UseBackendAgentEffective()
 	if !usesBackendAgent {
 		if runtime != nil {
 			if runtimeTools == nil {
@@ -1419,13 +1409,10 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 	if len(chatBridges) > 0 {
 		chatBridge = chatBridges[0]
 	}
-	if err := errIfMossBackendAgentUnsupported(cfg); err != nil {
-		return err
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var runtimeTools []langtools.Tool
-	if !cfg.VoiceModel.UseBackendAgent && runtime != nil {
+	if !cfg.UseBackendAgentEffective() && runtime != nil {
 		runtimeTools = runtime.AvailableTools()
 	}
 	sessionConfig := realtimeProviderSessionConfigWithTools(cfg, runtime, runtimeTools)
