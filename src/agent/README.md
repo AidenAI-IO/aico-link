@@ -13,4 +13,5 @@ The full documentation is available here:
 - [Agent configuration reference](../../docs/04-agent/configuration.md)
 - [Tools HTTP API](../../docs/04-agent/tools-http-api.md)
 - [Voice capabilities: VAD / STT / TTS](../../docs/04-agent/audio-features.md)
+- [Shared file uploads and downloads](../../docs/04-agent/shared-files.md)
 - [Skills mechanism](../../docs/04-agent/skills.md)

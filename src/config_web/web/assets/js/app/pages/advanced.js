@@ -1,7 +1,7 @@
 /**
  * Advanced routes.
  *
- *   /advanced             entries: logs, manual configuration
+ *   /advanced             entries: logs, manual configuration, terminal, LAN access, MCP
  *   /advanced/logs        live logs, raw model HTTP logging, log level, retention, export
  *   /advanced/logs/agent  the Agent log, tailed live, with the Agent's run state
  *   /advanced/logs/level  log level choice
@@ -18,6 +18,8 @@ import {adoptSaved, ensureSnapshot, request, t} from '../data.js';
 import {isEmbedded} from '../../ui/environment.js';
 import {postToHost} from '../host.js';
 import {createSaver} from '../saver.js';
+import {fetchLANAccess} from './lan-access.js';
+import {usbInternetSettings} from './usb-internet.js';
 import {choiceSheet} from '../../ui/choice-sheet.js';
 import {el, replace} from '../../ui/dom.js';
 import {icon} from '../../ui/icon.js';
@@ -95,39 +97,15 @@ export async function advancedPage(context) {
     root: body,
     onSaved: adoptSaved(snapshot, () => render()),
   });
-  const mcpSaved = () => snapshot?.config?.agent?.mcp_enabled !== false;
-  let mcpDraft = mcpSaved();
-  let mcpSaving = false;
-
-  async function saveMCP(next) {
-    if (mcpSaving) return;
-    const previous = mcpDraft;
-    mcpDraft = next;
-    mcpSaving = true;
+  const usbInternet = usbInternetSettings();
+  // The row still opens its page when the state cannot be read; the page
+  // reports the error itself.
+  let lanAccess = null;
+  fetchLANAccess().then(state => {
+    lanAccess = state;
     render();
-    try {
-      const outcome = await saver.change('agent.mcp_enabled', {agent: {mcp_enabled: next}});
-      if (outcome === 'invalid' || outcome === 'failed') mcpDraft = previous;
-      else mcpDraft = mcpSaved();
-    } finally {
-      mcpSaving = false;
-      render();
-    }
-  }
-
+  }).catch(() => {});
   function render() {
-    const mcpToggle = switchControl({
-      checked: mcpDraft,
-      label: msg('advanced.mcp_enabled', 'MCP'),
-      onChange: next => {
-        if (mcpSaving) {
-          setChecked(mcpToggle, mcpDraft);
-          return;
-        }
-        saveMCP(next);
-      },
-    });
-    if (mcpSaving) mcpToggle.disabled = true;
     replace(body, [
       group({
         rows: [
@@ -146,18 +124,23 @@ export async function advancedPage(context) {
             onPress: () => context.navigate('/advanced/config'),
           }),
           terminalRow(),
-        ],
-      }),
-      group({
-        rows: [
+          row({
+            label: msg('lan.title', '局域网访问'),
+            value: lanAccess == null ? null : (lanAccess.enabled ? msg('lan.on', '已开启') : msg('lan.off', '已关闭')),
+            chevron: true,
+            action: 'open-lan-access',
+            onPress: () => context.navigate('/advanced/lan'),
+          }),
           row({
             label: msg('advanced.mcp_enabled', 'MCP'),
-            description: msg('advanced.mcp_enabled_help', '开启后可通过 MCP 调用 Agent 工具。'),
-            accessory: mcpToggle,
-            action: 'toggle-mcp-enabled',
+            value: snapshot?.config?.agent?.mcp_enabled === false ? msg('lan.off', '已关闭') : msg('lan.on', '已开启'),
+            chevron: true,
+            action: 'open-mcp',
+            onPress: () => context.navigate('/advanced/mcp'),
           }),
         ],
       }),
+      usbInternet,
     ]);
     saver.refreshChrome();
   }

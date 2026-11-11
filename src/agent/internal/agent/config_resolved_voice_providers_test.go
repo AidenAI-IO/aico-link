@@ -90,6 +90,45 @@ language = "zh"
 	}
 }
 
+func TestLoadRuntimeConfigKeepsBackendAndResolvesBenchmarkForegroundProvider(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "agent.toml")
+	body := `
+[model_settings.model]
+provider = "openai"
+model = "fixed-backend-model"
+api_key = "backend-key"
+
+[voice_settings.mode]
+input_mode = "realtime"
+
+[voice_settings.realtime]
+provider = "benchmark-foreground"
+use_backend_agent = true
+
+[voice_settings.realtime.providers.benchmark-foreground]
+type = "openai"
+model = "realtime-model"
+api_key = "realtime-key"
+`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	cfg, err := LoadRuntimeConfig(path)
+	if err != nil {
+		t.Fatalf("LoadRuntimeConfig: %v", err)
+	}
+	if cfg.Model.Provider != "openai" || cfg.Model.Model != "fixed-backend-model" || cfg.Model.APIKey != "backend-key" {
+		t.Fatalf("backend model changed: %+v", cfg.Model)
+	}
+	if cfg.InputModeOrDefault() != "realtime" || !cfg.VoiceModel.UseBackendAgent || cfg.VoiceModel.Provider != "openai" || cfg.VoiceModel.ActiveProviderRecord != "benchmark-foreground" {
+		t.Fatalf("realtime delegation was not resolved: mode=%s voice=%+v", cfg.InputModeOrDefault(), cfg.VoiceModel)
+	}
+	record, ok := cfg.VoiceModelProviders["benchmark-foreground"]
+	if !ok || record.Type != "openai" || record.Model != "realtime-model" || record.APIKey != "realtime-key" {
+		t.Fatalf("foreground provider record = %+v, present=%v", record, ok)
+	}
+}
+
 func TestLoadResolvedConfigMigratesLegacyQwenTurnDetectionToProvider(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "agent.toml")
 	body := `

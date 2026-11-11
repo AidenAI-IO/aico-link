@@ -25,6 +25,7 @@ from typing import Any, Callable, Mapping
 from runner.agent_client import AgentClient
 from runner.analysis import AnalysisResult, analyze_run, config_from_env
 from runner.capture import DEFAULT_SCREENSHOT_TIMEOUT_SEC
+from runner.config import BENCHMARK_AGENT_BASE_URL_ENV
 from runner.environment_endpoint import EnvironmentEndpoint
 from runner.html_report import generate_report_html
 from runner.judge import DEFAULT_JUDGE_API_KEY_ENV, JudgeConfig
@@ -485,6 +486,11 @@ class BenchmarkWebApp:
         suite_paths = [
             resolve_suite_path(self.config.suites_dir, key) for key in suite_keys
         ]
+        for path in suite_paths:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+            if any(isinstance(task, dict) and task.get("scenario") is not None
+                   for task in metadata.get("tasks", [])):
+                raise ValueError("Run realtime-text collaboration suites through CLI/CI with --auto-agent-setup")
         mock_suite_flags = [suite_uses_mock_environment(path) for path in suite_paths]
         if any(mock_suite_flags) and not all(mock_suite_flags):
             raise ValueError(
@@ -2069,11 +2075,12 @@ def container_boot_failure_detail(container_name: str) -> str:
     return "\n".join(detail)
 
 
-def docker_no_proxy(endpoint: str) -> str:
+def docker_no_proxy(endpoint: str, *extra_urls: str) -> str:
     base = ["localhost", "127.0.0.1", "host.docker.internal"]
-    host = urllib.parse.urlparse(endpoint).hostname
-    if host and host not in base:
-        base.append(host)
+    for url in (endpoint, *extra_urls):
+        host = urllib.parse.urlparse(url).hostname
+        if host and host not in base:
+            base.append(host)
     existing = os.getenv("NO_PROXY") or os.getenv("no_proxy") or ""
     for item in existing.split(","):
         item = item.strip()
@@ -2176,8 +2183,11 @@ def daemon_compose_env(
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
     benchmark_local_phone_bridge: bool = False,
+    benchmark_realtime_text: bool = False,
 ) -> dict[str, str]:
     env = dict(os.environ)
+    realtime_proxy = (env.get("https_proxy") or env.get("HTTPS_PROXY") or "") if benchmark_realtime_text else ""
+    env["AICO_BENCHMARK_REALTIME_HTTPS_PROXY"] = realtime_proxy
     # Strip general host proxies so builds and model/device traffic do not
     # inherit them. The explicitly configured telemetry-only proxy is retained.
     # NO_PROXY is a bypass list, not a proxy, and is set explicitly below.
@@ -2187,6 +2197,7 @@ def daemon_compose_env(
     env["AICO_DAEMON_IMAGE"] = image
     env["AICO_BENCHMARK_MOCK_TOOLS"] = "1" if benchmark_mock_tools else "0"
     env["AICO_BENCHMARK_LOCAL_PHONE_BRIDGE"] = "1" if benchmark_local_phone_bridge else "0"
+    env["AICO_BENCHMARK_REALTIME_TEXT"] = "1" if benchmark_realtime_text else "0"
     bridge_enabled = bool(environment_bridge_endpoint) if environment_bridge_mode is None else bool(environment_bridge_mode)
     env["AICO_ENVIRONMENT_BRIDGE_MODE"] = "1" if bridge_enabled else "0"
     if host_port is not None:
@@ -2199,7 +2210,11 @@ def daemon_compose_env(
         env["AICO_BENCHMARK_TOKEN_FILE"] = "/config/control_token"
     if environment_bridge_endpoint:
         env["ENVIRONMENT_BRIDGE_ENDPOINT"] = environment_bridge_endpoint
-        no_proxy = docker_no_proxy(environment_bridge_endpoint)
+    # The realtime proxy is for the foreground provider only: the backend main
+    # model keeps the direct route it uses in every other benchmark mode.
+    backend_url = env.get(BENCHMARK_AGENT_BASE_URL_ENV, "") if realtime_proxy else ""
+    if environment_bridge_endpoint or backend_url:
+        no_proxy = docker_no_proxy(environment_bridge_endpoint, backend_url)
         env["NO_PROXY"] = no_proxy
         env["no_proxy"] = no_proxy
     if benchmark_task_id:
@@ -2222,6 +2237,7 @@ def start_daemon_compose(
     environment_bridge_mode: bool | None = None,
     benchmark_mock_tools: bool = False,
     benchmark_local_phone_bridge: bool = False,
+    benchmark_realtime_text: bool = False,
     stop_requested: Callable[[], bool] | None = None,
 ) -> str:
     project = daemon_compose_project(job)
@@ -2238,6 +2254,7 @@ def start_daemon_compose(
         environment_bridge_mode=environment_bridge_mode,
         benchmark_mock_tools=benchmark_mock_tools,
         benchmark_local_phone_bridge=benchmark_local_phone_bridge,
+        benchmark_realtime_text=benchmark_realtime_text,
     )
     run_logged_command(
         daemon_compose_command(

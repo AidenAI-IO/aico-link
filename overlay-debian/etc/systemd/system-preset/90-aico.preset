@@ -13,6 +13,7 @@ enable aico-userdata-migrate.service
 enable aico-machine-id.service
 enable aico-root-home.service
 enable aico-ssh-identity.service
+enable aico-lan-access.service
 enable aico-platform-ldconfig.service
 enable aico-environment.service
 enable aico-zram.service

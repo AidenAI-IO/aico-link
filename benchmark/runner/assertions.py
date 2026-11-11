@@ -111,7 +111,6 @@ def evaluate_environment_state_assertions(
 def evaluate_trace_observations(
     trace: Trace,
     specs: list[TraceObservationSpec],
-    active_skills: list[str] | None = None,
 ) -> list[TraceObservationResult]:
     results: list[TraceObservationResult] = []
     for spec in specs:

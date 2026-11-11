@@ -279,6 +279,48 @@ def derive_episode_metrics(episode: Mapping[str, Any] | None) -> dict[str, Any]:
     return metrics
 
 
+# Episode metrics that add up across the backend runs of one attempt.
+_ADDITIVE_EPISODE_METRICS = (
+    "input_tokens", "output_tokens", "total_tokens", "cached_input_tokens", "reasoning_tokens",
+    "llm_calls", "llm_time_ms", "cost_usd", "device_execution_ms", "tool_errors", "replan_count",
+)
+
+
+def combine_episode_metrics(episodes: list[Mapping[str, Any] | None]) -> dict[str, Any]:
+    """Backend usage of an attempt that ran several episodes (realtime-text).
+
+    Totals are summed only when every episode reports them; one missing or
+    unreadable episode makes the total unknown rather than an undercount.
+    """
+    if not episodes:
+        return {}
+    derived = [derive_episode_metrics(episode) if isinstance(episode, Mapping) else None for episode in episodes]
+    metrics: dict[str, Any] = {}
+    for key in _ADDITIVE_EPISODE_METRICS:
+        values = [item.get(key) if item is not None else None for item in derived]
+        metrics[key] = sum(values) if all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                          for v in values) else None
+    if metrics["cost_usd"] is not None:
+        sources = {item.get("cost_source") for item in derived if item is not None} - {None}
+        metrics["cost_source"] = sources.pop() if len(sources) == 1 else "episode_reported"
+    first = derived[0]
+    if first is not None and first.get("time_to_first_token_ms") is not None:
+        metrics["time_to_first_token_ms"] = first["time_to_first_token_ms"]
+    return metrics
+
+
+def count_backend_actions(events: list[Mapping[str, Any]]) -> dict[str, int]:
+    """Backend tool calls and device actions observed in collaboration events."""
+    calls = [event for event in events if event.get("kind") == "tool.call_ready"
+             and (event.get("collaboration") or {}).get("actor") == "backend"]
+    return {
+        "tool_calls": len(calls),
+        "device_actions": sum(
+            _is_device_action(str((event.get("payload") or {}).get("tool_name") or ""),
+                              (event.get("payload") or {}).get("tool_input")) for event in calls),
+    }
+
+
 def _percentile(values: list[float], pct: float) -> float:
     if not values:
         return 0.0

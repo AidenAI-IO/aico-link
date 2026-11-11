@@ -32,8 +32,9 @@ type EnvironmentBridgeConfig struct {
 }
 
 type BenchmarkConfig struct {
-	Headless  bool `toml:"-"` // Benchmark container without a device or environment bridge.
-	MockTools bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+	Headless     bool `toml:"-"` // Benchmark container without a device or environment bridge.
+	MockTools    bool `toml:"-"` // Explicit scripted policy fixture mode; requires Token and EnvironmentBridge.
+	RealtimeText bool `toml:"-"` // Text-driven realtime collaboration, without physical audio devices.
 
 	Token string `toml:"-"` // Only set via benchmark runner CLI flags, never from config file
 }
@@ -335,15 +336,19 @@ type Config struct {
 	VoiceMaxTurns                  int     `toml:"voice_max_turns,omitempty"`
 	VoiceInterruptOnWakeup         *bool   `toml:"voice_interrupt_on_wakeup,omitempty"`
 	// Classic owner-only speaker gate (ERes2Net). Default off: no enrollment required.
-	VoiceSpeakerGateEnabled    *bool                   `toml:"voice_speaker_gate_enabled,omitempty"`
-	VoiceSpeakerThreshold      float64                 `toml:"voice_speaker_threshold,omitempty"`
-	VoiceSpeakerToolsDir       string                  `toml:"voice_speaker_tools_dir,omitempty"`
-	VoiceSpeakerModelDir       string                  `toml:"voice_speaker_model_dir,omitempty"`
-	VoiceSpeakerStoreDir       string                  `toml:"voice_speaker_store_dir,omitempty"`
-	VoiceSpeakerMaxProfiles    int                     `toml:"voice_speaker_max_profiles,omitempty"`
-	TapWakeupEnabled           *bool                   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
-	MCPEnabled                 *bool                   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
-	MCPShellEnabled            *bool                   `toml:"mcp_shell_enabled,omitempty"`  // expose shell via MCP; default false
+	VoiceSpeakerGateEnabled *bool   `toml:"voice_speaker_gate_enabled,omitempty"`
+	VoiceSpeakerThreshold   float64 `toml:"voice_speaker_threshold,omitempty"`
+	VoiceSpeakerToolsDir    string  `toml:"voice_speaker_tools_dir,omitempty"`
+	VoiceSpeakerModelDir    string  `toml:"voice_speaker_model_dir,omitempty"`
+	VoiceSpeakerStoreDir    string  `toml:"voice_speaker_store_dir,omitempty"`
+	VoiceSpeakerMaxProfiles int     `toml:"voice_speaker_max_profiles,omitempty"`
+	TapWakeupEnabled        *bool   `toml:"tap_wakeup_enabled,omitempty"` // hardware tap-button wakeup; default true
+	MCPEnabled              *bool   `toml:"mcp_enabled,omitempty"`        // Streamable HTTP /mcp; default true
+	// UIGroundingEnabled marks detected interface components on every
+	// screenshot the Agent takes for the model by itself: after input tools
+	// and with each user message. The screenshot tool grounds only when asked.
+	UIGroundingEnabled         *bool                   `toml:"ui_grounding_enabled,omitempty"` // default true
+	MCPShellEnabled            *bool                   `toml:"mcp_shell_enabled,omitempty"`    // expose shell via MCP; default false
 	MCPConfigWebBaseURL        string                  `toml:"mcp_config_web_base_url,omitempty"`
 	VoiceStreamingTTSEnabled   *bool                   `toml:"voice_streaming_tts_enabled,omitempty"`
 	VoiceToolCallSpeech        *bool                   `toml:"voice_tool_call_speech,omitempty"`
@@ -997,6 +1002,7 @@ func LoadRuntimeConfig(path string) (Config, error) {
 	if err := applyRuntimeModelProviders(&cfg); err != nil {
 		return Config{}, err
 	}
+	applyBackendAgentDefault(&cfg, metadata)
 
 	// base_url belongs to [model_providers.*]. Drop provider-record values for
 	// provider types whose model builders pin their own endpoint.
@@ -1209,6 +1215,33 @@ func applyVoiceModelProviderDefaults(cfg *Config, metadata toml.MetaData) {
 	if !metadata.IsDefined("voice_model", "turn_detection_silence_ms") {
 		cfg.VoiceModel.TurnDetectionSilenceMs = 0
 	}
+}
+
+// applyBackendAgentDefault keeps realtime tools on the realtime model when
+// voice_model.use_backend_agent is omitted and the backend model has no
+// credential, because delegated tasks would fail when the backend model starts.
+// An explicit use_backend_agent value is always preserved.
+func applyBackendAgentDefault(cfg *Config, metadata toml.MetaData) {
+	if cfg == nil || metadata.IsDefined("voice_model", "use_backend_agent") {
+		return
+	}
+	if !modelCredentialConfigured(cfg.Model) {
+		cfg.VoiceModel.UseBackendAgent = false
+	}
+}
+
+// modelCredentialConfigured reports whether the resolved backend model can
+// authenticate. Local providers need no credential; Anthropic also accepts its
+// standard environment variables.
+func modelCredentialConfigured(m ModelConfig) bool {
+	switch strings.ToLower(strings.TrimSpace(m.Provider)) {
+	case "ollama", "fake":
+		return true
+	case "anthropic":
+		token, _ := resolveAnthropicToken(m.APIKey)
+		return token != ""
+	}
+	return ProviderAPIKeyConfigured(m.APIKey)
 }
 
 func clearNonAllowedModelBaseURL(m *ModelConfig) {
@@ -2310,6 +2343,15 @@ func (c Config) VoiceSpeakerMaxProfilesOrDefault() int {
 func (c Config) TapWakeupEnabledOrDefault() bool {
 	if c.TapWakeupEnabled != nil {
 		return *c.TapWakeupEnabled
+	}
+	return true
+}
+
+// UIGroundingEnabledOrDefault reports ui_grounding_enabled, which defaults to
+// true when the key is omitted.
+func (c Config) UIGroundingEnabledOrDefault() bool {
+	if c.UIGroundingEnabled != nil {
+		return *c.UIGroundingEnabled
 	}
 	return true
 }

@@ -611,3 +611,70 @@ const countByClass = (node, className) => {
 }
 
 process.stdout.write('config web UI component tests passed\n');
+
+/* -------------------------------------------------------------- MCP page --- */
+
+{
+  const {mcpPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/mcp.js')).href);
+  const realFetch = globalThis.fetch;
+  const respond = body => ({ok: true, status: 200, text: async () => JSON.stringify(body)});
+  globalThis.fetch = async url => {
+    if (url === '/api/security/mcp-tokens') {
+      return respond({ok: true, max_tokens: 20, tokens: [{id: 'a1', name: 'MacBook', created_at: '2026-11-10T08:00:00Z'}]});
+    }
+    return respond({});
+  };
+  try {
+    const snapshot = {config: {agent: {mcp_enabled: true}}, wifi_status: {ip_address: '192.168.50.76'}};
+    const page = await mcpPage({snapshot, header() {}, navigate() {}});
+    const actions = [];
+    const walk = node => {
+      if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));
+      (node.childNodes || []).forEach(walk);
+    };
+    walk(page);
+    for (const action of ['toggle-mcp-enabled', 'revoke-mcp-token', 'create-mcp-token']) {
+      assert.ok(actions.includes(action), `the MCP page shows ${action}`);
+    }
+    assert.ok(!actions.includes('show-mcp-usb-config'), 'there is no separate direct-connection section');
+    assert.ok(!actions.includes('open-lan-access'), 'MCP does not send the user to LAN access');
+
+    const off = await mcpPage({snapshot: {config: {agent: {mcp_enabled: false}}}, header() {}, navigate() {}});
+    const offActions = [];
+    const walkOff = node => {
+      if (node.getAttribute && node.getAttribute('data-action')) offActions.push(node.getAttribute('data-action'));
+      (node.childNodes || []).forEach(walkOff);
+    };
+    walkOff(off);
+    assert.ok(offActions.includes('toggle-mcp-enabled'));
+    assert.ok(!offActions.includes('create-mcp-token'), 'tokens are hidden while MCP is off');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
+/* ----------------------------------------------- Advanced → MCP entry --- */
+
+{
+  const {advancedPage} = await import(pathToFileURL(path.join(uiRoot, '../app/pages/advanced.js')).href);
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ok: true, status: 200, text: async () => JSON.stringify({ok: true, enabled: false})});
+  try {
+    const page = await advancedPage({snapshot: {config: {agent: {mcp_enabled: true}}}, header() {}, navigate() {}});
+    const cards = [];
+    const walk = node => {
+      if (node.className && String(node.className).split(' ').includes('ds-group')) cards.push(node);
+      (node.childNodes || []).forEach(walk);
+    };
+    walk(page);
+    const actions = [];
+    const collect = node => {
+      if (node.getAttribute && node.getAttribute('data-action')) actions.push(node.getAttribute('data-action'));
+      (node.childNodes || []).forEach(collect);
+    };
+    collect(cards[0]);
+    assert.deepEqual(actions.filter(a => a === 'open-lan-access' || a === 'open-mcp'), ['open-lan-access', 'open-mcp']);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}

@@ -19,7 +19,7 @@ from runner.assertions import (
 )
 from runner.capture import take_environment_screenshot
 from runner.environment_state import read_environment_state
-from runner.judge import judge_task, JudgeConfig
+from runner.judge import judge_task, JudgeConfig, check_preconditions
 from runner.metrics import derive_episode_metrics, derive_history_metrics
 from runner.models import HardAssertionFailure, HardAssertionResults, RubricVerdict, TaskResult
 from runner.recovery import prepare_task_isolation, recover_agent_after_timeout
@@ -82,7 +82,7 @@ def skipped_task_result(
         status="skipped",
         rubric=[],
         rubric_pass_count=0,
-        rubric_total=len(task.rubric),
+        rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
         finished_at=started,
@@ -145,12 +145,12 @@ def evaluate_task_history(
     post_screenshot: Path | None = None,
     started_at: str | None = None,
     started_mono: float | None = None,
-    active_skills: list[str] | None = None,
     episode: dict[str, Any] | None = None,
     memory_state: list[dict[str, Any]] | None = None,
     memory_state_error: str = "",
 ) -> TaskResult:
     artifact_dir.mkdir(parents=True, exist_ok=True)
+    outcome_rubric = [item for item in task.rubric if item.scope == "outcome"]
     started = started_at or now_iso()
     base = TaskResult(
         suite=suite.name,
@@ -161,7 +161,7 @@ def evaluate_task_history(
         status="failed",
         rubric=[],
         rubric_pass_count=0,
-        rubric_total=len(task.rubric),
+        rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir),
         started_at=started,
         task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
@@ -194,14 +194,10 @@ def evaluate_task_history(
         wall_ms = None
     else:
         wall_ms = int((time.monotonic() - started_mono) * 1000)
-    active_skills = _normalise_active_skills(active_skills)
-    if active_skills:
-        base.metrics["active_skills"] = active_skills
     if suite.trace_observations:
         observation_results = evaluate_trace_observations(
             trace,
             suite.trace_observations,
-            active_skills=active_skills,
         )
         base.metrics["trace_observations"] = [
             {
@@ -260,6 +256,55 @@ def evaluate_task_history(
     outcome = evaluate_hard_assertions(trace, task.hard_assertions, timed_out=timed_out)
     base.hard_assertions = outcome.results
     base.hard_assertion_failures = list(outcome.failures)
+    if judge_cfg is None and any(item.scope == "precondition" for item in task.rubric):
+        # Reuse ordinary deterministic scoring with visual checks removed, then
+        # defer attribution. Persist evaluation errors as well as assertion failures.
+        result = evaluate_task_history(
+            suite=suite, task=dc.replace(task, rubric=outcome_rubric), history=history,
+            attempt=attempt, artifact_dir=artifact_dir, judge_cfg=None, judge_cache_dir=judge_cache_dir,
+            run_id=run_id, timed_out=timed_out, metrics=metrics, pre_screenshot=pre_screenshot,
+            post_screenshot=post_screenshot, started_at=started, started_mono=started_mono,
+            episode=episode, memory_state=memory_state,
+            memory_state_error=memory_state_error,
+        )
+        # Ordinary scoring can stop at an earlier hard gate. Record the remaining
+        # answer/recall evidence too so offline judging cannot turn it into success.
+        if task.expected_answer is not None:
+            answer = evaluate_expected_answer(trace.final_response, task.expected_answer, task.answer_format or "option_letter")
+            result.hard_assertions.expected_answer = answer.passed
+            result.metrics.update(expected_answer=answer.expected_answer, predicted_answer=answer.predicted_answer,
+                                  expected_answer_match=answer.passed)
+        if recall_outcome is not None:
+            result.hard_assertions.expected_recalled_memory = recall_outcome.passed
+        result.metrics["deterministic_outcome"] = {
+            "status": result.status,
+            "metrics": {k: result.metrics.get(k) for k in
+                        ("success", "agent_eligible", "quality_score", "failure_class", "first_failure_stage")},
+        }
+        if (recall_outcome is not None and recall_outcome.passed is None):
+            result.metrics["deterministic_outcome"].update(status="judge_error", metrics={
+                "success": None, "agent_eligible": False, "quality_score": None,
+                "failure_class": "evaluation", "first_failure_stage": "evaluation"})
+        result.rubric_spec = [dc.asdict(r) for r in task.rubric]
+        result.status = "skipped"
+        result.metrics.update(judging_disabled=True, preconditions_pending=True,
+                              error="Precondition and outcome judging disabled; run rejudge to score this attempt.",
+                              quality_score=None)
+        _set_outcome_metrics(result, success=None, eligible=False, failure_class="skipped", stage="evaluation")
+        return result
+    preconditions = check_preconditions(task.rubric, pre_screenshot, judge_cfg, judge_cache_dir)
+    base.metrics.update(preconditions)
+    if preconditions and preconditions["preconditions_passed"] is not True:
+        unavailable = preconditions["preconditions_passed"] is None
+        base.status = "judge_error" if unavailable else "skipped"
+        base.metrics["quality_score"] = None
+        if unavailable:
+            base.metrics["judge_error"] = preconditions["precondition_error"]
+        _set_outcome_metrics(base, success=None, eligible=False,
+                             failure_class="evaluation" if unavailable else "environment",
+                             stage="evaluation" if unavailable else "setup")
+        base.finished_at = now_iso()
+        return base
     if task.memory_assertions is not None and not timed_out and not base.metrics.get("agent_error"):
         if memory_state_error or memory_state is None:
             base.status = "judge_error"
@@ -396,7 +441,7 @@ def evaluate_task_history(
             base.finished_at = now_iso()
             return base
     # Tasks without a rubric are fully decided by their deterministic assertions.
-    if not task.rubric:
+    if not outcome_rubric:
         base.status = "passed"
         base.metrics["quality_score"] = 1.0
         _set_outcome_metrics(base, success=True, eligible=True)
@@ -415,7 +460,7 @@ def evaluate_task_history(
         verdict = judge_task(
             description=task.description_for_judge,
             task_prompt=base.task_prompt,
-            rubric=task.rubric,
+            rubric=outcome_rubric,
             pre_screenshot=pre_screenshot if pre_screenshot and pre_screenshot.exists() else None,
             post_screenshot=last_shot_path,
             trace=trace_dict,
@@ -464,23 +509,31 @@ def run_one_task(
     run_id: str,
     environment_url: str | None = None,
     benchmark_task_id: str | None = None,
-    active_skills: list[str] | None = None,
     after_setup: Callable[[], None] | None = None,
+    execution_mode: str = "backend-text",
+    fixture_token: str = "",
 ) -> TaskResult:
+    if task.scenario is not None:
+        if execution_mode != "realtime-text":
+            raise ValueError("scenario tasks require realtime-text")
+        if after_setup:
+            raise ValueError("scenario tasks do not support device setup callbacks")
+        from runner.scenario import execute_scenario
+        return execute_scenario(client, suite, task, attempt, artifact_dir, run_id,
+                                environment_url or "", judge_cfg, benchmark_task_id, fixture_token)
     artifact_dir.mkdir(parents=True, exist_ok=True)
     started = now_iso()
     started_mono = time.monotonic()
     base = TaskResult(
         suite=suite.name, run_id=run_id, task_id=task.id, category=task.category,
         attempt=attempt, status="failed",
-        rubric=[], rubric_pass_count=0, rubric_total=len(task.rubric),
+        rubric=[], rubric_pass_count=0, rubric_total=sum(item.scope == "outcome" for item in task.rubric),
         artifact_dir=str(artifact_dir), started_at=started,
         task_prompt=f"{suite.prompt_prefix.rstrip()}\n\n{task.prompt}".strip(),
         description_for_judge=task.description_for_judge,
         rubric_spec=[dc.asdict(r) for r in task.rubric],
         metrics=_attempt_metric_defaults(),
     )
-    active_skills = _normalise_active_skills(active_skills)
     setup_result: dict[str, Any] | None = None
     try:
         setup_started_mono = time.monotonic()
@@ -582,6 +635,10 @@ def run_one_task(
                 json.dumps(setup_result, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
+            if "device_prepare" in setup_result:
+                base.metrics["setup_path"] = "device_prepare"
+            elif "device_prepare_fallback" in setup_result:
+                base.metrics["setup_path"] = "agent_fallback"
     effective_task = task
     if task.expected_recall_from_consolidation:
         consolidation = setup_result.get("consolidation") if isinstance(setup_result, dict) else None
@@ -676,8 +733,6 @@ def run_one_task(
             "timeout_sec": task.hard_assertions.must_complete_within_sec,
             "attachments": attachments,
         }
-        if active_skills:
-            chat_kwargs["skills"] = active_skills
         chat = client.chat(prompt, **chat_kwargs)
         base.metrics["task_wall_ms"] = int((time.monotonic() - task_started_mono) * 1000)
         history = chat.history
@@ -767,7 +822,6 @@ def run_one_task(
         post_screenshot=post_path if post_path and post_path.exists() else None,
         started_at=started,
         started_mono=None,
-        active_skills=active_skills,
         episode=episode,
         memory_state=memory_state,
         memory_state_error=memory_state_error,
@@ -821,7 +875,11 @@ def _apply_environment_assertions(
                     actual=f"Observed {check.actual!r}.",
                 )
             )
-        if result.status == "passed" or (result.status == "skipped" and result.metrics.get("judging_disabled")):
+        if result.status == "passed" or (
+            result.status == "skipped"
+            and result.metrics.get("judging_disabled")
+            and not result.metrics.get("preconditions_pending")
+        ):
             if result.metrics.pop("judging_disabled", False):
                 result.metrics.pop("error", None)
                 result.metrics["first_failure_stage"] = "unknown"
@@ -862,15 +920,3 @@ def _request_episode_id(client: AgentClient, error: Exception) -> str | None:
             # Correlation must not replace the original execution failure.
             pass
     return None
-
-
-def _normalise_active_skills(skills: list[str] | None) -> list[str]:
-    seen = set()
-    out = []
-    for item in skills or []:
-        name = str(item).strip()
-        if not name or name in seen:
-            continue
-        seen.add(name)
-        out.append(name)
-    return out

@@ -35,7 +35,7 @@ REPORT_SCORE_NAMES = tuple(dict.fromkeys((
 COMPARISON_FIELDS = (
     "git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
     "metrics_k", "agent_model", "judge_provider", "judge_model", "execution_environment",
-    "judge_prompt_version", "target_platform", "active_skills",
+    "judge_prompt_version", "target_platform", "skills_fingerprint", "execution_mode", "foreground_model",
 )
 
 
@@ -54,6 +54,10 @@ def comparison_key(record: dict[str, Any]) -> tuple[Any, ...] | None:
     required = ("git_branch", "suite_sha256", "workload_sha256", "metrics_schema_version",
                 "metrics_k", "agent_model")
     if any(record.get(key) in (None, "") for key in required):
+        return None
+    # Only a content digest establishes identity, not missing metadata or source labels.
+    fingerprint = record.get("skills_fingerprint")
+    if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
         return None
     return tuple(str(record.get(key) or "") for key in COMPARISON_FIELDS)
 
@@ -220,6 +224,11 @@ def parse_timestamp(value: Any) -> datetime | None:
 def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
             scores: dict[str, float], experiment_id: str | None, source: str) -> dict[str, Any]:
     match = re.fullmatch(r"ci-(\d+)-(\d+)-.+", run_id)
+    failure_classes = {
+        key.removeprefix("failures.class."): value
+        for key, value in scores.items()
+        if key.startswith("failures.class.")
+    }
     record = {
         **{key: metadata.get(key) for key in COMPARISON_FIELDS},
         "run_id": run_id,
@@ -261,8 +270,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         "cost_usd_p50": scores.get("efficiency.cost_usd.p50"),
         "cost_usd_sum": scores.get("efficiency.cost_usd.sum"),
         "total_tokens_sum": scores.get("efficiency.total_tokens.sum"),
-        "failure_classes": {k.removeprefix("failures.class."): v for k, v in scores.items()
-                            if k.startswith("failures.class.")},
+        "failure_classes": failure_classes,
     }
     missing = [key for key in ("tasks", "eligible_tasks", "passed") if record[key] is None]
     if not missing:
@@ -271,6 +279,17 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         rate = record["pass_at_1"]
         if not valid or (eligible and (rate is None or not math.isclose(rate, passed / eligible))):
             missing.append("pass_at_1")
+    # Fixture and evaluation errors are not Agent failures, but a workflow
+    # containing them must not advertise a complete capability measurement.
+    if any(record["failure_classes"].get(kind, 0) > 0
+           for kind in ("environment", "evaluation")):
+        missing.append("evaluation_coverage")
+    required_failure_counts = ("environment", "evaluation")
+    missing_failure_counts = [kind for kind in required_failure_counts
+                              if (value := _number(scores.get(f"failures.class.{kind}"))) is None
+                              or value < 0 or not value.is_integer()]
+    if missing_failure_counts:
+        missing.append("failure_class_counts")
     record["missing_metrics"] = missing
     if missing or not record["eligible_tasks"]:
         record["pass_at_1"] = None
@@ -280,7 +299,7 @@ def _record(*, metadata: dict[str, Any], run_id: str, timestamp: datetime,
         rate = record[metric]
         valid = all(v is not None and v >= 0 and float(v).is_integer()
                     for v in (total, eligible, successes))
-        if not valid or not (0 <= successes <= eligible <= total) or not eligible or rate is None or not math.isclose(rate, successes / eligible):
+        if missing or not valid or not (0 <= successes <= eligible <= total) or not eligible or rate is None or not math.isclose(rate, successes / eligible):
             record[metric] = None
     return record
 

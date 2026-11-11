@@ -39,6 +39,7 @@ import (
 	_ "aico-agent/internal/agent/tts/adapters/openrouter"
 	_ "aico-agent/internal/agent/tts/adapters/volcengine"
 	"aico-agent/internal/ble"
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/mcu"
 	streamcontract "aico-agent/internal/stream"
 )
@@ -58,7 +59,12 @@ type Server struct {
 	closing                 atomic.Bool
 	httpMu                  sync.Mutex
 	httpServer              *http.Server
+	shareServer             *http.Server
 	httpListener            net.Listener
+	usbListeners            []net.Listener
+	usbListenStops          []chan struct{}
+	lanAccess               *lanaccess.State
+	usbIngress              USBIngress
 	runtime                 *Runtime
 	addr                    string
 	logger                  *Logger
@@ -105,6 +111,7 @@ type Server struct {
 	steersMu                sync.Mutex
 	eventBroadcaster        *EventBroadcaster
 	semanticEvents          *semanticEventBroadcaster
+	collaboration           *CollaborationRecorder
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
@@ -123,17 +130,18 @@ func (s *Server) RealtimeEventSink() streamcontract.EventSink {
 const maxChatImageAttachments = 4
 
 type MessageAttachment struct {
-	Kind       string `json:"kind"`
-	Name       string `json:"name,omitempty"`
-	MIMEType   string `json:"mime_type,omitempty"`
-	Width      int    `json:"width,omitempty"`
-	Height     int    `json:"height,omitempty"`
-	Path       string `json:"path,omitempty"`
-	Data       string `json:"data,omitempty"`
-	Size       int    `json:"size,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
-	Transcript string `json:"transcript,omitempty"`
-	PreviewURL string `json:"preview_url,omitempty"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name,omitempty"`
+	MIMEType    string `json:"mime_type,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	Path        string `json:"path,omitempty"`
+	Data        string `json:"data,omitempty"`
+	Size        int    `json:"size,omitempty"`
+	DurationMS  int64  `json:"duration_ms,omitempty"`
+	Transcript  string `json:"transcript,omitempty"`
+	PreviewURL  string `json:"preview_url,omitempty"`
+	DownloadURL string `json:"download_url,omitempty"`
 }
 
 // Message represents a public chat or tool event.
@@ -323,11 +331,13 @@ type RealtimeChatRequest struct {
 // streamed to clients; done contains the complete response; error terminates
 // the request with an error message.
 type RealtimeChatEvent struct {
-	Type             string
-	Delta            string
-	Response         string
-	ReasoningContent string
-	Error            string
+	Type              string
+	Delta             string
+	Response          string
+	ResponseID        string
+	ProviderSessionID string
+	ReasoningContent  string
+	Error             string
 }
 
 const (
@@ -504,6 +514,9 @@ func NewServer(runtime *Runtime, addr string) *Server {
 		s.sttClient = sttClient
 	}
 
+	if cfg.Benchmark.RealtimeText {
+		s.collaboration = NewCollaborationRecorder("benchmark-daemon")
+	}
 	// Share the process-wide TTS provider manager with every runtime entrypoint.
 	s.ttsManager = runtime.ttsProviderManager()
 	if manager := s.currentTTSManager(); manager != nil {
@@ -545,6 +558,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	// API endpoints
+	mux.Handle("/api/files", s.sharedFilesHandler())
+	mux.Handle("/share/", s.sharedFilesHandler())
 	mux.HandleFunc("/api/chat", s.handleChat)
 	mux.HandleFunc("/api/chat/cancel", s.handleChatCancel)
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
@@ -566,6 +581,8 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("/api/benchmark/seed_notification", s.handleBenchmarkSeedNotification)
 		mux.HandleFunc("/api/benchmark/notification-memory/process", s.handleBenchmarkProcessNotificationMemory)
 		mux.HandleFunc("/api/benchmark/phone_bridge_state", s.handleBenchmarkPhoneBridgeState)
+		mux.HandleFunc("/api/benchmark/collaboration", s.handleCollaboration)
+		mux.HandleFunc("/api/benchmark/collaboration/events", s.handleCollaboration)
 	}
 	mux.HandleFunc("/api/clear", s.handleClear)
 	mux.HandleFunc("/api/clear-all", s.handleClearAll)
@@ -636,8 +653,18 @@ func (s *Server) Handler() http.Handler {
 	})
 }
 
+// TerminalTarget is where ttyd listens. It is bound to loopback on the board,
+// so only the guarded front ends can reach it.
+const TerminalTarget = "http://127.0.0.1:3000"
+
 func newTerminalReverseProxy() *httputil.ReverseProxy {
-	target, _ := url.Parse("http://127.0.0.1:3000")
+	target, _ := url.Parse(TerminalTarget)
+	return newTerminalReverseProxyForTarget(target)
+}
+
+// NewTerminalProxy returns the ttyd reverse proxy for another front end, such
+// as Config Web's USB terminal listener.
+func NewTerminalProxy(target *url.URL) http.Handler {
 	return newTerminalReverseProxyForTarget(target)
 }
 
@@ -693,6 +720,9 @@ func (s *Server) Start() error {
 		return nil
 	}
 	handler := s.Handler()
+	if s.lanAccess != nil {
+		handler = lanaccess.Guard(s.lanAccess, handler)
+	}
 
 	srv := &http.Server{
 		Addr:              s.addr,
@@ -700,13 +730,14 @@ func (s *Server) Start() error {
 		ReadHeaderTimeout: agentHTTPReadHeaderTimeout,
 		ReadTimeout:       agentHTTPReadTimeout,
 		IdleTimeout:       agentHTTPIdleTimeout,
+		ConnContext:       lanaccess.ConnContext,
 	}
 
 	// Bind explicitly rather than letting ListenAndServe do it, so the readiness
 	// milestone is recorded only once the port is actually held. Marking before
 	// the bind would report the agent Web UI as listening even when startup
 	// failed on, say, an address already in use.
-	listener, err := net.Listen("tcp", s.addr)
+	listener, err := s.listenMain()
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", s.addr, err)
 	}
@@ -722,6 +753,25 @@ func (s *Server) Start() error {
 		_ = listener.Close()
 		return nil
 	}
+	var shareListener net.Listener
+	if addr := strings.TrimSpace(os.Getenv("AICO_SHARE_ADDR")); addr != "" {
+		shareErr := os.MkdirAll(sharedFilesDir(), 0755)
+		if shareErr == nil {
+			shareListener, shareErr = s.listenShare(addr)
+		}
+		if shareErr != nil {
+			if s.logger != nil {
+				s.logger.Warn("Shared file listener unavailable; use the Agent HTTP port: %v", shareErr)
+			}
+		} else {
+			shareHandler := s.sharedFilesHandler()
+			if s.lanAccess != nil {
+				shareHandler = lanaccess.Guard(s.lanAccess, shareHandler)
+			}
+			s.shareServer = &http.Server{Addr: addr, Handler: shareHandler, ReadHeaderTimeout: agentHTTPReadHeaderTimeout, ReadTimeout: 5 * time.Minute, IdleTimeout: agentHTTPIdleTimeout, ConnContext: lanaccess.ConnContext}
+		}
+	}
+	shareServer := s.shareServer
 	s.httpServer = srv
 	s.httpListener = listener
 	s.httpMu.Unlock()
@@ -735,6 +785,17 @@ func (s *Server) Start() error {
 	MarkBootTimeline("agent:listening")
 
 	errCh := make(chan error, 1)
+	defer s.Close()
+	s.startUSBListener(srv)
+	if shareServer != nil {
+		s.startUSBListener(shareServer)
+		go func() {
+			err := shareServer.Serve(shareListener)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
+				s.logger.Warn("Shared file listener stopped; use the Agent HTTP port: %v", err)
+			}
+		}()
+	}
 	go func() {
 		err := srv.Serve(listener)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
@@ -770,14 +831,29 @@ func (s *Server) Close() {
 	s.closeOnce.Do(func() {
 		s.httpMu.Lock()
 		srv := s.httpServer
+		shareServer := s.shareServer
 		listener := s.httpListener
+		usbListeners := s.usbListeners
+		for _, stop := range s.usbListenStops {
+			close(stop)
+		}
+		s.usbListenStops = nil
 		s.httpMu.Unlock()
 		if listener != nil {
 			_ = listener.Close()
 		}
+		for _, usbListener := range usbListeners {
+			_ = usbListener.Close()
+		}
 
+		if shareServer != nil {
+			_ = shareServer.Close()
+		}
 		s.cancelAllActiveRuns()
 		s.interruptAllActiveOutputs()
+		if s.collaboration != nil {
+			s.collaboration.Close()
+		}
 
 		if srv != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), agentHTTPShutdownTimeout)
@@ -891,6 +967,10 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.handleRealtimeChatAsync(w, req, turnInput)
+		return
+	}
+	if s.runtime.ConfigSnapshot().Benchmark.RealtimeText {
+		http.Error(w, "realtime benchmark handler unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	episodeID := s.runtime.NewEpisodeID()
@@ -2762,7 +2842,11 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
-	if s == nil || s.semanticEvents == nil {
+	serveSemanticEvents(w, r, s.semanticEvents)
+}
+
+func serveSemanticEvents(w http.ResponseWriter, r *http.Request, events *semanticEventBroadcaster) {
+	if events == nil {
 		http.Error(w, "semantic event stream unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -2776,14 +2860,14 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 	var ch <-chan streamcontract.Event
 	var unsubscribe func()
 	if rawSince == "latest" {
-		replay, ch, unsubscribe = s.semanticEvents.SubscribeLatest()
+		replay, ch, unsubscribe = events.SubscribeLatest()
 	} else {
 		cursor, err := parseSemanticEventCursor(rawSince, rawEpoch)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		replay, ch, unsubscribe = s.semanticEvents.Subscribe(cursor)
+		replay, ch, unsubscribe = events.Subscribe(cursor)
 	}
 	defer unsubscribe()
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -2802,7 +2886,9 @@ func (s *Server) handleSemanticEvents(w http.ResponseWriter, r *http.Request) {
 		}
 		// Keep the session epoch in Last-Event-ID so EventSource reconnects
 		// preserve the complete replay cursor across session rotations.
-		_, _ = fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data)
+		if _, err := fmt.Fprintf(w, "id: %d:%d\ndata: %s\n\n", event.SessionEpoch, event.Sequence, data); err != nil {
+			return false
+		}
 		flusher.Flush()
 		return true
 	}
@@ -3885,6 +3971,9 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		message.Type = "assistant"
 	}
 	message.Role = string(item.Role)
+	for _, file := range item.SharedFiles {
+		message.Attachments = append(message.Attachments, MessageAttachment{Kind: "file", Name: file.Name, MIMEType: file.MIMEType, Path: file.Path, Size: int(file.Size), DownloadURL: sharedDownloadURL(file.Path)})
+	}
 	for _, attachment := range item.Attachments {
 		name := filepath.Base(attachment.FilePath)
 		if name == "." || name == string(filepath.Separator) || name == "" {
@@ -3963,11 +4052,23 @@ func (s *Server) webAudioInputMode() string {
 }
 
 func decodeMessageAttachments(payloads []MessageAttachment) ([]InputAttachment, []MessageAttachment, error) {
+	if len(payloads) > 16 {
+		return nil, nil, fmt.Errorf("at most 16 attachments are supported")
+	}
 	decoded := make([]InputAttachment, 0, len(payloads))
 	history := make([]MessageAttachment, 0, len(payloads))
 	imageCount := 0
 
 	for _, payload := range payloads {
+		if strings.EqualFold(strings.TrimSpace(payload.Kind), "file") && (payload.Path != "" || strings.TrimSpace(payload.Data) == "") {
+			item, err := sharedFileMetadata(payload.Path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("shared file is unavailable; upload it through /api/files first")
+			}
+			decoded = append(decoded, InputAttachment{Kind: "file", Name: item.Name, MIMEType: item.MIMEType, Path: item.Path, Size: item.Size})
+			history = append(history, MessageAttachment{Kind: "file", Name: item.Name, MIMEType: item.MIMEType, Path: item.Path, Size: int(item.Size), DownloadURL: item.DownloadURL})
+			continue
+		}
 		data := strings.TrimSpace(payload.Data)
 		if data == "" {
 			return nil, nil, fmt.Errorf("attachment %q is missing data", payload.Name)

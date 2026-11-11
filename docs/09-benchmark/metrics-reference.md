@@ -30,7 +30,7 @@ Use these artifacts together:
 
 | Artifact | Question it answers |
 | --- | --- |
-| `manifest.json`, `suite.json` | Which code, suite, model, judge, platform, active skills, and repeat plan were evaluated? |
+| `manifest.json`, `suite.json` | Which code, suite, model, judge, platform, skill text, and repeat plan were evaluated? |
 | `results.jsonl` | What happened in each task attempt, including eligibility, assertions, and scores? |
 | `metrics.json` | What are the aggregate and per-task results? |
 | `tasks/<task>/history.json`, `trace.json`, optional `episode.json` | What did the Agent observe, decide, and execute? Use the row's `artifact_dir` for repeated attempts. |
@@ -81,8 +81,16 @@ Attempt fields below are exported as `benchmark.<field>` scores unless noted.
 | `agent_eligible` | Whether this attempt participates in Agent capability metrics | Always inspect it alongside success rates. |
 | `failure_class` | `agent`, `environment`, `evaluation`, `skipped`, or `unknown` | Separate capability failures from invalid measurements. |
 | `quality_score` | Usually the fraction of judge rubric checks passed; hard-gate failures receive zero; unavailable evaluation receives unknown | Indicates partial completion, not necessarily task success. With `--no-judge`, unevaluated rubric tasks have unknown quality; tasks without a rubric receive 1 when deterministic assertions pass. |
-| `rubric_pass_rate` | Passed rubric checks divided by rubric count | Inspect individual verdicts: hard-gate failure may prevent the judge from running. |
+| `rubric_pass_rate` | Passed outcome rubric checks divided by outcome rubric count; precondition checks are not part of the Agent score | Inspect individual verdicts: hard-gate failure may prevent the judge from running. |
 | `expected_answer_match`, `expected_recalled_memory_match` | Deterministic checks when the suite configures them | Not automatically present in every memory task. |
+
+A rubric item with `scope: "precondition"` checks only the pre-screenshot.
+Its verdict is recorded in `metrics.precondition_verdicts`. If the starting
+state fails, the attempt is `skipped`, `failure_class=environment`, and
+`agent_eligible=false`, even if later Agent actions appear to succeed. If the
+pre-screenshot or judge is unavailable, the attempt is `judge_error` and
+ineligible. Offline rejudging applies the same gate. These verdicts are not
+included in the outcome rubric denominator.
 
 The runner explicitly sets eligibility. Do not rebuild the denominator from
 `status` alone: a `failed` setup assertion can still be ineligible, and a timeout
@@ -222,6 +230,7 @@ and retries instead use the `reliability.` prefix.
 | --- | --- |
 | `task_wall_ms` | Elapsed time around the task's Agent chat request. Excludes setup, judge time, post-run artifact collection, and timeout recovery. Legacy `wall_ms` mirrors it in current results. |
 | `setup_ms` | Task isolation/setup work. Report separately from task execution. |
+| `setup_path` | How an `agent_prompt` start state with `device_prepare` was built: `device_prepare` (recipe confirmed it) or `agent_fallback` (recipe failed; the Agent built it). Absent for other setups. |
 | `llm_time_ms` | Episode sum of elapsed time around wrapped model calls, including failed calls and compaction. Older episodes fall back to recorded durations on usage-bearing assistant/tool-call messages; unavailable when those durations are incomplete. Provider-internal retries are included in elapsed time, not separately counted. |
 | `vision_llm_calls`, `vision_llm_time_ms` | Calls inferred from image/screenshot observations preceding model messages. This is an instrumentation heuristic, not an exact provider billing category. |
 | `time_to_first_token_ms` | Episode's reported first-token timing, when available. |
@@ -269,7 +278,7 @@ serving every user request.
 | `screenshot_capture_source/cost_source` | Source metadata in results, not independent numeric Langfuse scores. |
 | `error/agent_error/judge_error/environment_state_error` | Details needed to interpret coarse failure labels. |
 | `episode_error/pre_screenshot_error/post_screenshot_error` | Artifact acquisition errors; may reduce evidence/metrics without necessarily failing every task. |
-| `episode_id/active_skills` | Telemetry correlation and activated skill names; names alone do not establish content identity. |
+| `episode_id/skills_fingerprint` | Telemetry correlation and the content digest of the skill text each worker loaded. Compare `manifest.skills_fingerprint.sha256` for like-for-like runs; `source` distinguishes an observed tree from an unobservable external daemon. |
 | `started_at/finished_at` | Result timestamps, whose difference is not interchangeable with task-only wall time. |
 | `environment_state_assertions/trace_observations` | Individual configured state checks / behavioral observations. |
 

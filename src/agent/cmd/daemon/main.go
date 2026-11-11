@@ -18,6 +18,7 @@ import (
 	"aico-agent/internal/backup"
 	"aico-agent/internal/configupdate"
 	"aico-agent/internal/configweb"
+	"aico-agent/internal/lanaccess"
 	"aico-agent/internal/logging"
 	"aico-agent/internal/wifiproxy"
 )
@@ -85,6 +86,11 @@ func main() {
 		benchmarkMockTools        = flag.Bool("benchmark-mock-tools", false, "Use scripted device tools for benchmark policy fixtures (requires benchmark token and environment bridge)")
 		benchmarkLocalPhoneBridge = flag.Bool("benchmark-local-phone-bridge", false, "Keep Phone Bridge local while a benchmark environment bridge handles screen and input")
 		benchmarkTokenFile        = flag.String("benchmark-token-file", "", "Path to benchmark API bearer token file. Enables benchmark-only mutation endpoints.")
+		benchmarkRealtimeText     = flag.Bool("benchmark-realtime-text", false, "Run realtime collaboration through text without audio devices (requires benchmark token and realtime backend delegation)")
+		lanGuard                  = flag.Bool("lan-guard", false, "Refuse HTTP requests that do not arrive over the USB link or from the board while LAN access is off")
+		lanAccessFile             = flag.String("lan-access-file", lanaccess.DefaultEnabledPath, "LAN access marker used by -lan-guard")
+		usbInterface              = flag.String("usb-interface", "usb0", "USB link interface trusted by -lan-guard")
+		usbAddress                = flag.String("usb-address", "192.168.42.1", "Board address on the USB link trusted by -lan-guard")
 	)
 	flag.Parse()
 	environmentPath := os.Getenv("AICO_SYSTEM_ENV")
@@ -149,6 +155,13 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if *benchmarkRealtimeText {
+		if cfg.Benchmark.Token == "" || cfg.InputModeOrDefault() != "realtime" || !cfg.VoiceModel.UseBackendAgent {
+			fmt.Fprintln(os.Stderr, "benchmark-realtime-text requires a benchmark token, realtime input mode and use_backend_agent=true")
+			os.Exit(1)
+		}
+		cfg.Benchmark.RealtimeText = true
+	}
 	if *benchmarkHeadless {
 		if cfg.Benchmark.Token == "" || cfg.EnvironmentBridge.Enabled {
 			fmt.Fprintln(os.Stderr, "benchmark-headless requires benchmark-token-file and no environment bridge")
@@ -212,6 +225,9 @@ func main() {
 		logging.Errorf("agent", "routines", "startup failed; schedules are disabled: %v", err)
 	}
 	server := agent.NewServer(runtime, *addr)
+	if *lanGuard {
+		server.EnableLANGuard(lanaccess.NewState(*lanAccessFile, "", ""), agent.USBIngress{Interface: *usbInterface, Address: *usbAddress})
+	}
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)
 	if err := inputs.Start(cfg); err != nil {

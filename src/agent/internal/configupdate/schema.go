@@ -486,6 +486,7 @@ type Agent struct {
 	VoiceSpeakerMaxProfiles        int     `json:"voice_speaker_max_profiles"`
 	TapWakeupEnabled               bool    `json:"tap_wakeup_enabled"`
 	MCPEnabled                     bool    `json:"mcp_enabled"`
+	UIGroundingEnabled             bool    `json:"ui_grounding_enabled"`
 	VoiceStreamingTTSEnabled       bool    `json:"voice_streaming_tts_enabled"`
 	VoiceToolCallSpeech            bool    `json:"voice_tool_call_speech"`
 	VoiceProgressSpeechEnabled     bool    `json:"voice_progress_speech_enabled"`
@@ -729,6 +730,7 @@ func (d Config) ToAgentConfig() agent.Config {
 		VoiceSpeakerMaxProfiles:        d.Agent.VoiceSpeakerMaxProfiles,
 		TapWakeupEnabled:               boolPtr(d.Agent.TapWakeupEnabled),
 		MCPEnabled:                     boolPtr(d.Agent.MCPEnabled),
+		UIGroundingEnabled:             boolPtr(d.Agent.UIGroundingEnabled),
 		VoiceStreamingTTSEnabled:       boolPtr(d.Agent.VoiceStreamingTTSEnabled),
 		VoiceToolCallSpeech:            boolPtr(d.Agent.VoiceToolCallSpeech),
 		VoiceProgressSpeechEnabled:     boolPtr(d.Agent.VoiceProgressSpeechEnabled),
@@ -1150,6 +1152,7 @@ func FromAgentConfig(cfg agent.Config) Config {
 			VoiceSpeakerMaxProfiles:        cfg.VoiceSpeakerMaxProfilesOrDefault(),
 			TapWakeupEnabled:               cfg.TapWakeupEnabledOrDefault(),
 			MCPEnabled:                     cfg.MCPEnabledOrDefault(),
+			UIGroundingEnabled:             cfg.UIGroundingEnabledOrDefault(),
 			VoiceStreamingTTSEnabled:       cfg.VoiceStreamingTTSEnabledOrDefault(),
 			VoiceToolCallSpeech:            cfg.VoiceToolCallSpeechOrDefault(),
 			VoiceProgressSpeechEnabled:     cfg.VoiceProgressSpeechEnabledOrDefault(),

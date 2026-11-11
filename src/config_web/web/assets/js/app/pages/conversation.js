@@ -1,7 +1,7 @@
 /**
  * Conversation & tools routes.
  *
- *   /conversation                            prompt entry, loop and context limits, tools, reset
+ *   /conversation                            prompt entry, loop and context limits, UI Grounding, tools, reset
  *   /conversation/prompt                     the supplementary prompt
  *   /conversation/tools                      Web search: provider and API key
  *   /conversation/tools/provider             Web search provider choice
@@ -24,6 +24,7 @@ import {el, replace} from '../../ui/dom.js';
 import {group, row, screen} from '../../ui/list.js';
 import {icon, searchTile} from '../../ui/icon.js';
 import {msg, resolve, text} from '../../ui/text.js';
+import {setChecked, switchControl} from '../../ui/switch.js';
 import {toast} from '../../ui/toast.js';
 
 export const SEARCH_PROVIDERS = [
@@ -86,6 +87,30 @@ function limitRow(field, snapshot, saver) {
   });
 }
 
+/**
+ * Marks detected interface components on the screenshots the Agent takes by
+ * itself (after input tools and with each user message), called UI Grounding
+ * in the docs. The page names it by what the user sees, not by that term. The
+ * Agent reads `agent.ui_grounding_enabled` live, and it defaults to on.
+ */
+function groundingGroup(snapshot, saver) {
+  const enabled = agentValue(snapshot, 'ui_grounding_enabled') !== false;
+  const toggle = switchControl({
+    checked: enabled,
+    label: msg('conversation.ui_grounding', '自动标注可点击元素'),
+    onChange: async next => {
+      const outcome = await saver.change('agent.ui_grounding_enabled', {agent: {ui_grounding_enabled: next}});
+      if (outcome === 'invalid' || outcome === 'failed') setChecked(toggle, !next);
+    },
+  });
+  const card = group({rows: [row({label: msg('conversation.ui_grounding', '自动标注可点击元素'), accessory: toggle})]});
+  card.classList.add('ds-group--noted');
+  return el('div', {}, [
+    card,
+    text(msg('conversation.ui_grounding_help', '帮助 Aico 更准确地点击屏幕上的按钮和输入框。'), 'page__note page__note--below'),
+  ]);
+}
+
 function badge(name) {
   return icon(name, {class: 'ds-row__badge'});
 }
@@ -131,6 +156,7 @@ export async function conversationPage(context) {
         ...LIMIT_FIELDS.map(field => limitRow(field, snapshot, saver)),
       ],
     }),
+    groundingGroup(snapshot, saver),
     group({
       rows: [
         row({

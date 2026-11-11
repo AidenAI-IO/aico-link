@@ -6,7 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
+
+	"aico-agent/internal/lanaccess"
 )
 
 func TestMaintenanceSessionRejectsNonUSBIngress(t *testing.T) {
@@ -57,4 +61,48 @@ func TestHTTPMaintenanceCookieAcceptsUUIDv4Fallback(t *testing.T) {
 		}
 	}
 	server.backupJobs.cancelAll()
+}
+
+// A LAN client that the LAN guard admitted with a device-password session may
+// open a maintenance session; the same LAN request without one may not.
+func TestMaintenanceSessionAdmitsSignedInLANClient(t *testing.T) {
+	server := newRestoreTestServer(t, t.TempDir())
+	if err := os.WriteFile(server.options.HardwareIDPath, []byte("board-lan-test"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	newRequest := func() *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "http://192.168.50.76/api/maintenance/sessions", nil)
+		req.RemoteAddr = "192.168.50.20:5000"
+		req.Header.Set("X-Aico-Client", "config-web/1.0")
+		return req.WithContext(context.WithValue(req.Context(), usbIngressContextKey{}, false))
+	}
+
+	response := httptest.NewRecorder()
+	server.ServeHTTP(response, newRequest())
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("LAN without a session: status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	state := lanaccess.NewState(
+		filepath.Join(t.TempDir(), "enabled"),
+		filepath.Join(t.TempDir(), "password"),
+		filepath.Join(t.TempDir(), "secret"),
+	)
+	if err := state.SetPassword("correct horse"); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.SetEnabled(true); err != nil {
+		t.Fatal(err)
+	}
+	token, _, err := state.IssueToken(time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := newRequest()
+	req.Header.Set("Authorization", "Bearer "+token)
+	response = httptest.NewRecorder()
+	lanaccess.Guard(state, server).ServeHTTP(response, req)
+	if response.Code != http.StatusOK {
+		t.Fatalf("signed-in LAN client: status=%d body=%s", response.Code, response.Body.String())
+	}
 }

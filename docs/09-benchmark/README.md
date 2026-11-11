@@ -200,12 +200,17 @@ Reports include:
 Judge uses only the pre/post screenshots plus trace/final response. It does not
 consume every intermediate screenshot.
 
-CI treats a benchmark as complete when every planned task has a result row and
-the manifest totals match those rows. Task-level `failed`, `skipped`,
-`judge_error`, `timeout`, setup, environment, and agent errors remain visible in
-`summary.md` and `report.html`, but do not fail the workflow. A missing or
+CI requires every planned task to have a result row and the manifest totals to
+match those rows. A `judge_error` or a failed visual precondition
+(`preconditions_passed=false`) also fails the workflow: complete artifacts do
+not make unavailable scoring or an invalid starting state a valid measurement.
+Artifacts and publication still
+run so the unscored attempts can be inspected and rejudged without repeating device
+actions. Task-level `failed`, `skipped`, and `timeout` remain visible in
+`summary.md` and `report.html` without automatically failing the workflow;
+inspect eligibility and coverage before interpreting the score. A missing or
 invalid manifest, missing result rows, inconsistent totals, or a killed runner
-still fails the workflow because no complete report exists.
+also fails the workflow because no complete report exists.
 
 When artifact upload succeeds, the Actions job summary links the report bundle.
 To expose the same self-contained, interactive `report.html` directly from CI, configure
@@ -272,6 +277,7 @@ Common options:
 - `--no-judge` - Only run hard assertions. Tasks with an unevaluated rubric are `skipped` and excluded from success rates until rejudged; assertion failures still fail.
 - `--task-id ID` / `--task-ids A,B` - Run selected tasks.
 - `--repeats N` - Override task repeats.
+- `--execution-mode MODE` - `backend-text` (default) or `realtime-text`. See [Realtime Collaboration Benchmark](./realtime-text-collaboration.md).
 - `--state-file PATH` - Write progress JSON for WebUI or scripts.
 - `--verbose` - Print detailed rubric results.
 
@@ -297,8 +303,29 @@ daemon `host-gateway-ip`, or Docker Desktop on Linux (`127.0.0.1`). Host-side
 Auto-started workers receive the bundled skill files under `config/skills`.
 The Go Agent exposes their catalog summaries and the `skill_read` tool to the
 model; skill bodies enter the conversation only when that tool is called.
-The runner's requested `skills` field does not preload skills through the Go
-Agent chat API. Use recorded `skill_read` calls to verify actual skill use.
+There is no runner option that preloads a skill: the Agent decides on its own
+whether to read one, and `skill_discovery_v1` measures exactly that decision.
+Use recorded `skill_read` calls to verify actual skill use.
+
+Because skill text changes Agent behavior, every run records a
+`skills_fingerprint` in `manifest.json`:
+
+```json
+"skills_fingerprint": {
+  "sha256": "...",
+  "skills": {"device-operator": "..."},
+  "source": "worker-config"
+}
+```
+
+The digest is computed from each worker's copied skill tree when the run
+finishes, so an `--agent-config` or a SkillOpt candidate that replaced a
+`SKILL.md` is what gets recorded, not the repository checkout. `source` is
+`worker-config` when every worker agreed, `mixed` when workers disagreed (the
+null run digest keeps every per-skill digest seen, naming the diverging
+skill), and `external-daemon` for `--agent-url` runs, whose skill
+tree this process never configured and therefore cannot observe. An
+`external-daemon` run is not a like-for-like capability comparison.
 
 The phone-control suite forbids `request_user_action` through each task's
 existing `hard_assertions.forbidden_tools`: these tasks require autonomous
@@ -346,6 +373,16 @@ benchmark scores. Updating a suite upserts new Dataset Item versions instead of
 creating a new Dataset. Each new run also stores `suite.json` beside its manifest,
 so it remains publishable after the source suite changes.
 
+The publisher writes explicit `failures.class.environment` and
+`failures.class.evaluation` counts, including zero, before capability scores.
+History requires both valid counts before accepting a capability measurement;
+missing counts are unknown, not zero. Older or partially published runs remain
+visible with a missing-metrics warning but no capability rate. Republish their
+original artifacts with the current publisher to restore verified history without
+rerunning device actions. Nonzero environment or evaluation counts mark coverage
+incomplete: workflow-level pass@1, pass@k, and pass^k are withheld, and weekly
+matched comparisons exclude datasets with incomplete window totals.
+
 ```bash
 cd benchmark
 export LANGFUSE_PUBLIC_KEY="pk-lf-..."
@@ -359,7 +396,8 @@ Runs with the same suite name appear in the same Dataset. The experiment metadat
 records the Git SHA, suite hash, workload hash, model, judge, platform, metrics
 schema, and fixed `k`. The workload hash covers only task and attempt keys. For a
 like-for-like regression, require matching suite hash, workload hash, `k`, Agent
-model, judge provider/model/prompt version, target platform, and active skills.
+model, judge provider/model/prompt version, target platform, and skill
+fingerprint.
 When comparing models or judges intentionally, treat that changed field as the
 experiment axis and keep the other score-affecting metadata fixed. Runs from
 different suite versions can still be inspected in Langfuse, but their aggregate
@@ -523,6 +561,10 @@ below.
 - Secrets: `BENCHMARK_AGENT_API_KEY`, `BENCHMARK_JUDGE_API_KEY`,
   `LANGFUSE_PUBLIC_KEY`, and `LANGFUSE_SECRET_KEY`.
 
+The realtime collaboration suite also uses the `BENCHMARK_REALTIME_*`
+settings described in
+[Realtime Collaboration Benchmark](./realtime-text-collaboration.md#ci).
+
 Set the repository variable `BENCHMARK_REPEATS` to a positive integer such as
 `3` to repeat each task in scheduled and manual runs. A nonempty manual
 `repeats` input overrides that variable for one run; leave it blank to use the
@@ -545,7 +587,10 @@ with the `link.aico.app` package already installed on the emulator. It downloads
 and installs the APK only when the versions differ. The job summary records the
 release filename, installed `versionCode`, and whether installation was reused; when an APK is
 downloaded, it also records its SHA-256. A republished APK with the same
-`versionCode` is treated as the same release.
+`versionCode` is treated as the same release. Installation runs once per job.
+When installation or emulator routing fails, only the AidenBridge cases fail
+with `aidenbridge_setup_failed`; every other case still runs and publishes,
+and the job still fails.
 
 The text-editing suite runs as a matched pair using the same JSON tasks,
 setup, prompts, rubrics, repeat count, and one worker:
@@ -682,12 +727,16 @@ credentials.
 - WebUI: manages suites, jobs, environments, workers, task screens, logs, and persisted job records.
 
 The benchmark suite format is shared across physical devices and MobileGym.
+Independently of these daemon setups, `--execution-mode` selects the agent
+path under test: `backend-text` (default) for the backend Agent alone, or
+`realtime-text` for realtime foreground and backend collaboration.
 SkillOpt is independent and lives under `skillopt/`; it may call benchmark
 runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 
 ## Related Documentation
 
 - [Architecture Design](./architecture.md)
+- [Realtime Collaboration Benchmark](./realtime-text-collaboration.md)
 - [Detailed Guide](./quickstart.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)

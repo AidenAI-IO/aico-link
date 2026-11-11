@@ -7,7 +7,6 @@ from typing import Any
 
 from ci.fetch_langfuse_history import COMPARISON_FIELDS, parse_timestamp
 
-
 def _complete_resource_sum(records: list[dict[str, Any]], metric: str) -> float | None:
     # Run sums contain only measured eligible attempts. A present sum alone
     # does not establish full coverage of the window's attempts.
@@ -28,10 +27,12 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
     # eligible_tasks sums every run in the window. task_count is the distinct
     # task count (each suite's latest run) and run_count the workflow runs, so
     # readers can tell many tasks from many repetitions.
+    # Repeated attempts of a task share one count: each dataset's latest run.
     latest: dict[str, dict[str, Any]] = {}
     for r in measured:
-        if r["suite"] not in latest or parse_timestamp(r["timestamp"]) > parse_timestamp(latest[r["suite"]]["timestamp"]):
-            latest[r["suite"]] = r
+        key = r.get("dataset", r["suite"])
+        if key not in latest or parse_timestamp(r["timestamp"]) > parse_timestamp(latest[key]["timestamp"]):
+            latest[key] = r
     return {
         "suite_runs": len(records),
         "measured_suite_runs": len(measured),
@@ -41,7 +42,8 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
         "run_count": len({(r["workflow_run_id"], r.get("workflow_run_attempt")) if r.get("workflow_run_id")
                           else (r.get("run_id") or r["timestamp"], None) for r in measured}),
         "passed": sum(r["passed"] for r in measured),
-        "pass_at_1": sum(r["passed"] for r in measured) / eligible if eligible else None,
+        "pass_at_1": sum(r["passed"] for r in measured) / eligible
+            if eligible and len(measured) == len(records) else None,
         # Missing cost/token measurements must not silently become zero.
         **{f"{metric}_sum": _complete_resource_sum(records, metric)
            for metric in ("cost_usd", "total_tokens")},
@@ -51,8 +53,39 @@ def _totals(records: list[dict[str, Any]]) -> dict[str, Any]:
 def _by_suite(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for record in records:
-        groups.setdefault(record["suite"], []).append(record)
+        groups.setdefault(record["dataset"], []).append(record)
     return groups
+
+
+def _label_datasets(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Name each record's dataset: its suite, plus its environment when the
+    same suite also ran in another environment, so those results never merge."""
+    environments: dict[str, set[str]] = {}
+    for record in history:
+        environments.setdefault(record["suite"], set()).add(record.get("execution_environment") or "unknown")
+    labelled = []
+    for record in history:
+        suite = record["suite"]
+        environment = record.get("execution_environment") or "unknown"
+        split = len(environments[suite]) > 1
+        labelled.append({**record, "dataset": f"{suite} [{environment}]" if split else suite})
+    return labelled
+
+
+def _comparison(current: list[dict[str, Any]], previous: list[dict[str, Any]]) -> dict[str, Any]:
+    """Descriptive change over the datasets measured in both windows.
+
+    A dataset that is new or retired would otherwise move the total through the
+    task mix alone."""
+    def measured(records: list[dict[str, Any]]) -> set[str]:
+        return {dataset for dataset, group in _by_suite(records).items()
+                if _totals(group)["pass_at_1"] is not None}
+
+    common = measured(current) & measured(previous)
+    now = _totals([r for r in current if r["dataset"] in common])
+    before = _totals([r for r in previous if r["dataset"] in common])
+    change = _change(now["pass_at_1"], before["pass_at_1"])
+    return {"change": change, "compared_datasets": len(common)}
 
 
 def _change(current: float | None, previous: float | None) -> float | None:
@@ -61,11 +94,12 @@ def _change(current: float | None, previous: float | None) -> float | None:
 
 # Settings that explain a score change, in reading order; hashes are shortened.
 CONFIG_LABELS = {
-    "agent_model": "agent model", "judge_model": "judge model",
+    "agent_model": "agent model", "foreground_model": "foreground model",
+    "execution_mode": "execution mode", "judge_model": "judge model",
     "judge_prompt_version": "judge prompt", "judge_provider": "judge provider",
     "suite_sha256": "suite", "workload_sha256": "workload",
     "metrics_schema_version": "metrics schema", "metrics_k": "k",
-    "target_platform": "platform", "active_skills": "skills", "git_branch": "branch",
+    "target_platform": "platform", "skills_fingerprint": "skills", "git_branch": "branch",
     "execution_environment": "environment",
 }
 assert sorted(CONFIG_LABELS) == sorted(COMPARISON_FIELDS)
@@ -111,6 +145,7 @@ CAPABILITY_SUITES = {
                            "aico_app_android_bridge_capabilities_v1",
                            "aico_app_phone_bridge_data_policy_v1", "aico_app_notes_entry_policy_v1"),
     "Shell utilities": ("shell_utility_v1",),
+    "Realtime collaboration": ("realtime_collaboration_v1",),
 }
 DIAGNOSTIC_SUITES = ("skill_discovery_v1", "tool_recovery_v1")
 DIAGNOSTIC_AREA = "Diagnostics"
@@ -162,12 +197,14 @@ def describe_config_changes(changes: list[dict[str, str]]) -> str:
 def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = None) -> dict[str, Any]:
     """Summarize the last seven days in UTC and their change from the seven before.
 
-    Rates are descriptive totals over each window's task mix. A suite's change
-    compares its own two windows; it is unknown when either window has no rate.
+    Rates are descriptive totals over each window's datasets. A change compares
+    only datasets measured in both windows, so a new or retired dataset cannot
+    move it. Changes are descriptive, not statistical significance claims.
     """
     end = end or datetime.now(timezone.utc)
     start = end - timedelta(days=7)
     previous_start = start - timedelta(days=7)
+    history = _label_datasets(history)
     current = [r for r in history if start <= parse_timestamp(r["timestamp"]) < end]
     previous = [r for r in history if previous_start <= parse_timestamp(r["timestamp"]) < start]
     previous_by_suite = _by_suite(previous)
@@ -176,15 +213,14 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     for name, group in _by_suite(current).items():
         totals = _totals(group)
         prior = previous_by_suite.get(name, [])
-        before = _totals(prior)["pass_at_1"]
-        if name in DIAGNOSTIC_SUITES:
+        if group[0]["suite"] in DIAGNOSTIC_SUITES:
             observation = skill_discovery_totals(group)
             previous_observation = skill_discovery_totals(prior)
             diagnostics.append({"suite": name, **observation,
                                 "change": _change(observation["rate"], previous_observation["rate"])})
             continue
-        suites.append({"suite": name, **totals, "previous_pass_at_1": before,
-                       "change": _change(totals["pass_at_1"], before),
+        suites.append({"suite": name, **totals, "previous_pass_at_1": _totals(prior)["pass_at_1"],
+                       **_comparison(group, prior),
                        "config_changes": _config_changes(group, prior)})
     # Weakest suites first; unknown rates last.
     suites.sort(key=lambda s: (s["pass_at_1"] is None, s["pass_at_1"] or 0.0, s["suite"]))
@@ -194,16 +230,17 @@ def summarize_weekly(history: list[dict[str, Any]], *, end: datetime | None = No
     order = AREA_ORDER
     for name in sorted(current_by_capability, key=order.index):
         group = current_by_capability[name]
-        totals = _totals(group)
-        before = _totals(previous_by_capability.get(name, []))["pass_at_1"]
-        capabilities.append({"capability": name, **totals, "previous_pass_at_1": before,
-                             "change": _change(totals["pass_at_1"], before),
-                             "suites": sorted({r["suite"] for r in group})})
-    totals = _totals([r for r in current if r["suite"] not in DIAGNOSTIC_SUITES])
-    previous_totals = _totals([r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES])
+        prior = previous_by_capability.get(name, [])
+        capabilities.append({"capability": name, **_totals(group), "previous_pass_at_1": _totals(prior)["pass_at_1"],
+                             **_comparison(group, prior),
+                             "suites": sorted({r["dataset"] for r in group})})
+    scored_current = [r for r in current if r["suite"] not in DIAGNOSTIC_SUITES]
+    scored_previous = [r for r in previous if r["suite"] not in DIAGNOSTIC_SUITES]
+    totals = _totals(scored_current)
+    previous_totals = _totals(scored_previous)
     return {"start": start.isoformat(), "end": end.isoformat(), "previous_start": previous_start.isoformat(),
             "totals": totals, "previous_totals": previous_totals,
-            "change": _change(totals["pass_at_1"], previous_totals["pass_at_1"]),
+            **_comparison(scored_current, scored_previous),
             "capabilities": capabilities, "suites": suites, "diagnostics": diagnostics}
 
 
@@ -239,7 +276,8 @@ def render_weekly(report: dict[str, Any], warnings: list[str]) -> str:
         "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
         f"| {totals['suite_runs']} | {totals['measured_suite_runs']} | {totals['eligible_tasks']:.0f} / {totals['tasks']:.0f} | "
         f"{_pct(totals['pass_at_1'])} | {_pp(report['change'])} | {cost} | {tokens} |",
-        "", "Rates are descriptive totals over each window's task mix, not matched-run comparisons.",
+        "", "Rates are descriptive totals over each window's datasets. Changes compare only datasets measured in both windows;",
+        "changes are descriptive, not statistical significance claims.",
         "Configuration changes compare all recorded values in the two windows.", "",
         "### By test area", "",
         "| Test area | Suites | Tasks | Runs | Eligible first attempts | pass@1 | Previous 7 days | Change |",
