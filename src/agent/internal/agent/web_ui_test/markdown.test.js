@@ -107,4 +107,58 @@ assert.deepEqual(speech('<tts>Config.</tts>\n\n```toml\n[tts]\nvoice = "a"\n```'
     ['S:Config.', 'T:```toml\n[tts]\nvoice = "a"\n```']);
 assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
 
+// Expanded spoken/reasoning rows, against the real createCollapsibleLine.
+{
+    class Element {
+        constructor() {
+            this.children = [];
+            this.classes = new Set();
+            this.handlers = {};
+            this.isConnected = false;
+            this.classList = {
+                contains: name => this.classes.has(name),
+                toggle: (name, on) => (on ? this.classes.add(name) : this.classes.delete(name))
+            };
+        }
+        set className(value) { this.classes = new Set(String(value).split(/\s+/).filter(Boolean)); }
+        setAttribute() {}
+        appendChild(child) { this.children.push(child); return child; }
+        addEventListener(type, handler) { this.handlers[type] = handler; }
+        click() { this.handlers.click(); }
+    }
+    context.document = {createElement: () => new Element()};
+    context.window = {};
+    const line = (key, text) => {
+        const block = context.createCollapsibleLine({className: 'tts-block', iconClass: 'tts-icon', textClass: 'tts-text',
+            label: 'Spoken aloud', kind: 'speech', text, expandKey: key});
+        block.isConnected = true;
+        return block;
+    };
+    const expanded = block => block.classList.contains('expanded');
+    const expandedLines = () => vm.runInContext('expandedLines', context);
+    const entries = () => Array.from(expandedLines().values()).map(entry => entry.text);
+
+    let row = line('live', 'Hel');
+    row.click();
+    row.isConnected = false;
+    row = line('live', 'Hello there');
+    assert.ok(expanded(row), 'a streaming re-render keeps the row expanded');
+    assert.deepEqual(entries(), ['Hello there'], 'only the latest text is retained');
+    row.click();
+    assert.deepEqual(entries(), [], 'collapsing releases the row');
+
+    const first = line('a', 'Same words.');
+    const second = line('b', 'Same words.');
+    context.migrateExpandedLines();
+    first.click();
+    assert.equal(expanded(line('b', 'Same words.')), false, 'identical text in another row does not expand it');
+
+    first.isConnected = false;
+    second.isConnected = false;
+    const fromHistory = line('context-1', 'Same words.');
+    context.migrateExpandedLines();
+    assert.ok(expanded(fromHistory), 'history replacing the live row keeps it expanded');
+    assert.deepEqual(Array.from(expandedLines().keys()), ['context-1']);
+}
+
 console.log('markdown tests passed');

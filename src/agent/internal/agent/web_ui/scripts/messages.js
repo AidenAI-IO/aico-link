@@ -31,7 +31,8 @@ function createMessageNode(msg) {
             textClass: 'reasoning-text',
             label: 'Reasoning',
             text: msg.reasoning_content,
-            expandKeys: [messageIdentity(msg) + '\u001freasoning', 'reasoning\u001f' + msg.reasoning_content]
+            kind: 'reasoning',
+            expandKey: messageIdentity(msg) + '\u001freasoning'
         }));
     }
 
@@ -110,9 +111,34 @@ function createMessageNode(msg) {
 
 const speechTagPairs = [['<tts>', '</tts>'], ['[tts]', '[/tts]']];
 
-// Spoken and reasoning rows the user expanded, by message and text, so streaming
-// re-renders and history refreshes keep them open.
-const expandedLineKeys = new Set();
+// Spoken and reasoning rows the user expanded: one entry per row, keyed by
+// message identity, holding the row's latest text and element. Streaming
+// re-renders reuse the key. When history replaces a live message (its run ID
+// becomes a context ID), migrateExpandedLines moves the entry from the
+// removed row to the new row with the same text.
+const expandedLines = new Map();
+// Rows rendered since the last migration. Only rows whose key is new (history
+// re-keys a replaced message) can inherit an entry, so a re-render of another
+// row with identical text never expands.
+let freshCollapsibleLines = [];
+const knownLineKeys = new Set();
+
+function migrateExpandedLines() {
+    const fresh = freshCollapsibleLines.filter(block => block.isConnected &&
+        !expandedLines.has(block._lineKey) && !knownLineKeys.has(block._lineKey));
+    freshCollapsibleLines.forEach(block => knownLineKeys.add(block._lineKey));
+    if (knownLineKeys.size > 2000) knownLineKeys.clear();
+    freshCollapsibleLines = [];
+    Array.from(expandedLines).forEach(function([key, entry]) {
+        if (entry.block.isConnected) return;
+        expandedLines.delete(key);
+        const index = fresh.findIndex(block => block._lineKind === entry.kind && block._lineText === entry.text);
+        if (index < 0) return;
+        const target = fresh.splice(index, 1)[0];
+        expandedLines.set(target._lineKey, {kind: entry.kind, text: entry.text, block: target});
+        target._syncExpanded(true);
+    });
+}
 
 function createSpeechTextTarget(element, key) {
     let text = '';
@@ -207,8 +233,7 @@ function renderSpeechText(element, text, key) {
     let speechIndex = 0;
     splitSpeechText(text).forEach(function(segment) {
         if (segment.speech) {
-            element.appendChild(createSpeechBlock(segment, [(key || '') + '\u001f' + speechIndex++,
-                'speech\u001f' + segment.text.trim()]));
+            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + speechIndex++));
             return;
         }
         if (!segment.text.trim()) return;
@@ -220,14 +245,15 @@ function renderSpeechText(element, text, key) {
 }
 
 // Spoken text shows one line; clicking toggles the full text.
-function createSpeechBlock(segment, expandKeys) {
+function createSpeechBlock(segment, expandKey) {
     return createCollapsibleLine({
         className: 'tts-block' + (segment.open ? ' streaming' : ''),
         iconClass: 'tts-icon',
         textClass: 'tts-text',
         label: 'Spoken aloud',
+        kind: 'speech',
         text: segment.text.trim(),
-        expandKeys
+        expandKey
     });
 }
 
@@ -235,11 +261,20 @@ function createSpeechBlock(segment, expandKeys) {
 // full text on click or Enter. Expanded rows stay open across re-renders.
 function createCollapsibleLine(options) {
     const block = document.createElement('div');
-    // Live messages carry run IDs that history later replaces, so a row is
-    // also keyed by its text; an expanded row records every current key.
-    const expandKeys = options.expandKeys;
-    const expanded = expandKeys.some(key => expandedLineKeys.has(key));
-    if (expanded) expandKeys.forEach(key => expandedLineKeys.add(key));
+    const key = options.expandKey;
+    const entry = expandedLines.get(key);
+    const expanded = !!entry;
+    if (entry) {
+        // A streaming re-render: keep one entry, now pointing at this row.
+        entry.text = options.text;
+        entry.block = block;
+    } else {
+        block._lineKey = key;
+        block._lineKind = options.kind;
+        block._lineText = options.text;
+        freshCollapsibleLines.push(block);
+        if (freshCollapsibleLines.length > 400) freshCollapsibleLines.splice(0, 200);
+    }
     block.className = 'collapsible-line ' + options.className + (expanded ? ' expanded' : '');
     block.tabIndex = 0;
     block.setAttribute('role', 'button');
@@ -262,9 +297,11 @@ function createCollapsibleLine(options) {
         const selection = window.getSelection ? window.getSelection() : null;
         if (selection && !selection.isCollapsed && block.contains(selection.anchorNode)) return;
         const open = !block.classList.contains('expanded');
-        expandKeys.forEach(key => open ? expandedLineKeys.add(key) : expandedLineKeys.delete(key));
+        if (open) expandedLines.set(key, {kind: options.kind, text: options.text, block});
+        else expandedLines.delete(key);
         sync(open);
     }
+    block._syncExpanded = sync;
     sync(expanded);
     block.addEventListener('click', toggle);
     block.addEventListener('keydown', function(event) {

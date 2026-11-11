@@ -684,6 +684,8 @@ function reconcileConversation(messages, live) {
             messagesDiv.insertBefore(node, messagesDiv.children[index] || null);
         }
     });
+    // After insertion: an expanded row replaced by a re-keyed one stays open.
+    migrateExpandedLines();
     updateEmptyState();
     if (shouldStickToBottom) {
         scrollToBottom();

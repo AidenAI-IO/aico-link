@@ -166,6 +166,7 @@ Object.assign(global, {
     updateToolGroupNode,
     contextMarkerSummary,
     setContextMarkerPreview: (button, msg, index) => { button.title = contextMarkerSummary(msg, index); },
+    migrateExpandedLines: () => {},
     contextMarkerType: () => 'state',
     formatTime: timestamp => timestamp ? String(timestamp) : '',
     normalizeType: type => type || 'assistant',
