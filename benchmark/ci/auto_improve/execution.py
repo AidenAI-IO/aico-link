@@ -37,40 +37,6 @@ def command(args: list[str], *, cwd: Path, log: Path, timeout: float, env: dict 
         raise RuntimeError(f"Command failed ({code}); see {log.name}")
 
 
-def resource_snapshot(log: Path, label: str) -> None:
-    """Append host load and storage-latency evidence without process arguments."""
-    probe = log.parent / ".sync-probe"
-    probes = [
-        ["nproc"], ["cat", "/proc/loadavg"], ["free", "-m"],
-        ["ps", "-eo", "pcpu,pmem,etimes,comm", "--sort=-pcpu"],
-        ["docker", "ps", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}"],
-        # 100 synchronous 4 KiB writes: elapsed/100 approximates fsync latency.
-        ["dd", "if=/dev/zero", f"of={probe}", "bs=4k", "count=100", "oflag=dsync"],
-    ]
-    log.parent.mkdir(parents=True, exist_ok=True)
-    with log.open("a") as stream:
-        stream.write(f"## {label} at {time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}\n")
-        for args in probes:
-            stream.write("$ " + " ".join(args) + "\n")
-            try:
-                result = subprocess.run(args, capture_output=True, text=True, timeout=60)
-                lines = (result.stdout + result.stderr).splitlines()
-                stream.write("\n".join(lines[:40]) + "\n")
-            except (OSError, subprocess.SubprocessError) as exc:
-                stream.write(f"unavailable: {exc}\n")
-        probe.unlink(missing_ok=True)
-        stream.write("\n")
-
-
-def check_environment() -> dict[str, str]:
-    """Repository checks run in the pinned image with in-memory test scratch space.
-
-    They execute candidate code, so they never receive model credentials.
-    """
-    env = {k: v for k, v in benchmark_environment().items() if not k.endswith("_API_KEY")}
-    return {**env, "AICO_TEST_TMPFS": "1"}
-
-
 def benchmark_environment() -> dict[str, str]:
     names = {"PATH", "HOME", "LANG", "DOCKER_HOST", "DOCKER_CONFIG", "ANDROID_HOME", "ANDROID_SDK_ROOT",
              "https_proxy", "no_proxy", "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy",

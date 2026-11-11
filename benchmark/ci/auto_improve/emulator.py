@@ -166,7 +166,7 @@ def process_start(pid: int) -> str:
 def cleanup_orphans(root: Path) -> None:
     """Recover SIGKILL leftovers only when PID, start time, and unique AVD name match."""
     import signal
-    for owner in root.glob("*/result/cluster-*/*-runs/*/*/emulator/owner.json"):
+    for owner in root.glob("*/result/finding-*/reproduction-runs/*/*/emulator/owner.json"):
         record = json.loads(owner.read_text())
         pid, name = int(record["pid"]), record["name"]
         avds = owner.parent / "avds"
@@ -202,7 +202,7 @@ def cleanup_completed_work(root: Path, run_name: str) -> None:
     work = root / run_name
     if work.is_symlink() or not work.resolve().is_relative_to(root.resolve()):
         raise ValueError("Workflow directory escapes work root")
-    if any(work.glob("result/cluster-*/*-runs/*/*/emulator/owner.json")):
+    if any(work.glob("result/finding-*/reproduction-runs/*/*/emulator/owner.json")):
         raise RuntimeError("Retain workflow directory until its emulator ownership records are resolved")
     shutil.rmtree(work, ignore_errors=True)
 
