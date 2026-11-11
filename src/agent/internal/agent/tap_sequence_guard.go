@@ -14,6 +14,8 @@ import (
 	"aico-agent/internal/agent/screen"
 	"aico-agent/internal/agent/screenprovider"
 	"aico-agent/internal/logging"
+
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 // A tap_sequence is planned from one screenshot, so it stays valid only while
@@ -165,7 +167,13 @@ func tapSequenceInput(input string) (points []normalizedPoint, ok bool) {
 // taps again: the pointer and press highlight stay well below the threshold.
 // A whole-screen comparison backs this up for layouts whose remaining targets
 // all happen to sit outside the changed area.
-func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint) mnk.TapSequenceGuard {
+//
+// A changed target is not always a changed layout: a suggestion row can dim
+// the keypad past the threshold. When confirm is set, it gets the final say on
+// a target change (never on a whole-screen change); a pass makes the current
+// frame the new baseline, so the same accepted change does not stop the next
+// check.
+func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState, baseline lumaFrame, points []normalizedPoint, confirm tapSequenceConfirmer) mnk.TapSequenceGuard {
 	return func(ctx context.Context, executed int) (bool, string, error) {
 		started := time.Now()
 		current, err := capture(ctx)
@@ -180,10 +188,48 @@ func newTapSequenceGuard(capture frameCapturer, screenState *screen.ScreenState,
 		case !comparable || ratio > tapSequenceLayoutChangeRatio:
 			return true, fmt.Sprintf("screen layout changed after tap %d (%.0f%% of the screen changed); remaining taps were not sent", executed, ratio*100), nil
 		case target >= 0:
+			if confirm != nil && confirm(ctx, points[executed:]).Pass {
+				baseline = current
+				return false, "", nil
+			}
 			return true, fmt.Sprintf("target %d changed after tap %d, so the planned layout no longer matches; remaining taps were not sent", target+1, executed), nil
 		}
 		return false, "", nil
 	}
+}
+
+// tapSequenceConfirmer asks whether the remaining targets are still in place
+// after the pixel check saw one of them change.
+type tapSequenceConfirmer func(ctx context.Context, remaining []normalizedPoint) stepGateResult
+
+// newTapSequenceConfirmer returns a confirmer backed by the decision model, or
+// nil when there is no decision model or screenshot tool to ask with. The
+// decision model's setting is read on each check, so a disabled decision model
+// leaves the pixel check's stop in place.
+func newTapSequenceConfirmer(decider *decisionAdvisor, screenshot langtools.Tool) tapSequenceConfirmer {
+	if decider == nil || screenshot == nil {
+		return nil
+	}
+	return func(ctx context.Context, remaining []normalizedPoint) stepGateResult {
+		if _, _, ok := decider.settings(); !ok {
+			return stepGateResult{}
+		}
+		shot, err := captureScreenshotResult(ctx, screenshot)
+		if err != nil {
+			return stepGateResult{}
+		}
+		return decider.gate(ctx, shot, tapSequenceExpectation(remaining))
+	}
+}
+
+// tapSequenceExpectation describes the state a tap_sequence still relies on.
+func tapSequenceExpectation(remaining []normalizedPoint) string {
+	at := make([]string, len(remaining))
+	for i, point := range remaining {
+		at[i] = fmt.Sprintf("(%.0f, %.0f)", point.X, point.Y)
+	}
+	return "The same screen as before these taps, with the tappable controls at " + strings.Join(at, ", ") +
+		" on a 0-1000 grid still visible, uncovered, and in place. A keypad dimmed or nudged by a suggestion row still counts; a new page, dialog, menu or sheet over those points does not."
 }
 
 // tapSequenceChangedTarget returns the index of the first remaining target

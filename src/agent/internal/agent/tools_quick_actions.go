@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 	"unicode"
+
+	langtools "github.com/tmc/langchaingo/tools"
 )
 
 //go:embed quick_actions.json
@@ -47,6 +49,11 @@ type quickActionStep struct {
 	Input        json.RawMessage `json:"input"`
 	DelayMsAfter int             `json:"delay_ms_after,omitempty"`
 	Note         string          `json:"note,omitempty"`
+	// Expect describes the screen state this step should leave behind. When
+	// the decision model is on, it checks that state before a later step runs
+	// and the sequence stops unless it confidently matches. It has no effect
+	// on the last step, whose screen the caller inspects anyway.
+	Expect string `json:"expect,omitempty"`
 }
 
 type quickActionDefinition struct {
@@ -322,6 +329,10 @@ type QuickActionTool struct {
 	touch                *TouchGestureTool
 	deviceTypeFn         func() string
 	iosKeyboardIsolation *iosKeyboardIsolationController
+	// decider and screenshot check step expectations between steps; a nil
+	// or disabled decider leaves sequences unchecked.
+	decider    *decisionAdvisor
+	screenshot langtools.Tool
 }
 
 func (t *QuickActionTool) Name() string { return "quick_action" }
@@ -555,6 +566,28 @@ func (t *QuickActionTool) call(ctx context.Context, input string) (string, error
 			if err := sleepQuickActionDelay(ctx, step.DelayMsAfter); err != nil {
 				return "", err
 			}
+			if i == len(selected.Steps)-1 {
+				continue
+			}
+			if gate := t.checkStepExpectation(ctx, step); gate.Checked && !gate.Pass {
+				stepResult["expect"] = step.Expect
+				stepResult["expect_met"] = false
+				te := NewToolErrorWithDetails(CodeStepExpectationUnmet,
+					fmt.Sprintf("stopped after step %d of %d: the screen does not confirm the expected state %q; take a screenshot before continuing", i+1, len(selected.Steps), step.Expect),
+					map[string]any{
+						"source":      "tool:quick_action",
+						"action":      actionID,
+						"label":       action.Label,
+						"platform":    platform,
+						"binding":     selectedSource,
+						"failed_step": i + 1,
+						"expect":      step.Expect,
+						"confidence":  gate.Confidence,
+						"steps":       stepResults,
+					})
+				SetToolError(ctx, te)
+				return toolErrorString(te), nil
+			}
 		}
 	} else {
 		if toolName == "" {
@@ -688,6 +721,24 @@ func (t *QuickActionTool) delegate(ctx context.Context, toolName, payload string
 		touchscreenRCALogf("quick_action delegate completed tool=%q output_len=%d mapping_after={%s}", toolName, len(output), formatTouchscreenRCAQuickActionMappingSummary(t))
 	}
 	return output, nil, nil
+}
+
+// checkStepExpectation asks the decision model whether the screen after step
+// shows step.Expect. It reports Checked=false when the step declares nothing,
+// the decision model is off, or no screenshot could be taken.
+func (t *QuickActionTool) checkStepExpectation(ctx context.Context, step quickActionStep) stepGateResult {
+	expect := strings.TrimSpace(step.Expect)
+	if expect == "" || t.screenshot == nil {
+		return stepGateResult{}
+	}
+	if _, _, ok := t.decider.settings(); !ok {
+		return stepGateResult{}
+	}
+	shot, err := captureScreenshotResult(ctx, t.screenshot)
+	if err != nil {
+		return stepGateResult{}
+	}
+	return t.decider.gate(ctx, shot, expect)
 }
 
 var sleepQuickActionDelay = realSleepQuickActionDelay

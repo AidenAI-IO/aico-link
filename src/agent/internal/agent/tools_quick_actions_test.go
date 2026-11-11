@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -569,4 +570,71 @@ func quickActionResultOK(t *testing.T, out string) bool {
 		t.Fatalf("invalid json: %v", err)
 	}
 	return payload["ok"] == true
+}
+
+// stepGateScreenshotTool returns a fixed screenshot and counts captures.
+type stepGateScreenshotTool struct {
+	shot  screenshotResult
+	calls int
+}
+
+func (s *stepGateScreenshotTool) Name() string        { return "screenshot" }
+func (s *stepGateScreenshotTool) Description() string { return "test screenshot" }
+func (s *stepGateScreenshotTool) Call(context.Context, string) (string, error) {
+	s.calls++
+	return jsonString(s.shot), nil
+}
+
+// A step's expect lets the batch continue only on a confident "yes"; "no", an
+// unsure answer, and a disabled decision model each behave as specified.
+func TestQuickActionStepExpectGatesSequence(t *testing.T) {
+	cases := []struct {
+		name        string
+		enabled     bool
+		noul        float64
+		wantReports int
+		wantStop    bool
+		wantShots   int
+	}{
+		{name: "confident yes continues", enabled: true, noul: 0.95, wantReports: 10, wantShots: 1},
+		{name: "confident no stops", enabled: true, noul: 0.05, wantReports: 2, wantStop: true, wantShots: 1},
+		{name: "unsure stops", enabled: true, noul: 0.6, wantReports: 2, wantStop: true, wantShots: 1},
+		{name: "disabled runs unchecked", enabled: false, wantReports: 10, wantShots: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			skipHIDSleeps(t)
+			skipQuickActionDelays(t)
+			server := newDecisionServer(t, fmt.Sprintf(`{"answers":{"met":{"type":"noul","noul":%g}}}`, tc.noul))
+			advisor := &decisionAdvisor{}
+			advisor.setConfig(func() DecisionModelConfig {
+				return DecisionModelConfig{Enabled: tc.enabled, APIKey: "ts-key", BaseURL: server.URL}
+			})
+			shots := &stepGateScreenshotTool{shot: decisionTestScreenshot(t)}
+			dev, path := newTestHIDDevice(t)
+			tool := &QuickActionTool{
+				keyboard:     testKeyboardTapTool(t, testMNKOpts{keyboard: dev}),
+				deviceTypeFn: func() string { return "iOS" },
+				decider:      advisor,
+				screenshot:   shots,
+			}
+			ctx, _ := WithToolError(context.Background())
+			if _, err := tool.Call(ctx, `{"action":"spotlight_search"}`); err != nil {
+				t.Fatalf("Call failed: %v", err)
+			}
+			te := ToolErrorFromContext(ctx)
+			if stopped := te != nil && te.Code == CodeStepExpectationUnmet; stopped != tc.wantStop {
+				t.Fatalf("tool error = %+v, want stop=%v", te, tc.wantStop)
+			}
+			if tc.wantStop && te.Details["failed_step"] != 1 {
+				t.Fatalf("failed_step = %v, want 1", te.Details["failed_step"])
+			}
+			if got := len(readKeyboardReports(t, dev, path)); got != tc.wantReports {
+				t.Fatalf("keyboard reports = %d, want %d", got, tc.wantReports)
+			}
+			if shots.calls != tc.wantShots || server.requestCount() != tc.wantShots {
+				t.Fatalf("screenshots = %d, decision requests = %d, want %d", shots.calls, server.requestCount(), tc.wantShots)
+			}
+		})
+	}
 }

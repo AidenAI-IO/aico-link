@@ -846,6 +846,26 @@ opened" from the second screenshot alone. `app_search` trusts only "found": a
 screenshot taken before the results settle, or after the app already opened,
 reads as "not found", and the main model then rechecks.
 
+The `step_gate` op is different: it has no main-model counterpart. It checks
+a multi-step `quick_action` between steps. A step in `quick_actions.json` may
+declare `expect`, a description of the screen state it should leave behind;
+for example, the first `spotlight_search` step expects Spotlight to be open
+before Cmd+A and Backspace clear its field. When the decision model is on, the
+runtime takes a screenshot after that step and asks whether it shows the
+expected state. Nothing mid-batch can fall back to the main model, so only a
+confident "yes" continues; "no" or an unsure answer stops the sequence with
+`step_expectation_unmet`, listing the steps that ran, and the main model takes
+over from a fresh screenshot. A failed request or screenshot, or a disabled
+decision model, leaves the sequence unchecked. `expect` on the last step has
+no effect.
+
+`touch_gesture` `tap_sequence` also logs `step_gate`. Its pixel check still
+runs between taps; when it sees a remaining target change (not a whole-screen
+change, which always stops), the decision model is asked whether the
+remaining targets are still visible and in place. A confident "yes" continues
+and makes that frame the new baseline; anything else, including a disabled
+decision model, stops the sequence as before.
+
 Every decision writes one Agent log line under the `decision` component:
 `op=... provider=... dm={...} conf=... llm={...} agree=... dm_ms=... llm_ms=... fallback=...`,
 where `dm` is the decision model's answer; `llm` and `agree` are filled in

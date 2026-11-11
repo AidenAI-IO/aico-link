@@ -91,7 +91,7 @@ func TestTapSequenceGuardIgnoresChangesAwayFromRemainingTargets(t *testing.T) {
 	// tapped again next, so it is still compared.
 	display := image.Rect(0, 80, 400, 330)
 	frame := tapSequencePressed(tapSequenceKeypadFrame(0, 0, display), image.Rect(180, 340, 220, 380))
-	guard := newTapSequenceGuard(tapSequenceFrames(frame), nil, baseline, tapSequenceTestPoints)
+	guard := newTapSequenceGuard(tapSequenceFrames(frame), nil, baseline, tapSequenceTestPoints, nil)
 	if stop, reason, err := guard(context.Background(), 2); err != nil || stop {
 		t.Fatalf("stop=%v reason=%q err=%v, want continue", stop, reason, err)
 	}
@@ -104,7 +104,7 @@ func TestTapSequenceGuardChecksARepeatedKeyFromTheFirstTap(t *testing.T) {
 	key := tapSequenceTestKeys[4]
 	points := []normalizedPoint{key, key, key, key}
 	popup := image.Rect(170, 440, 230, 510)
-	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, popup)), nil, baseline, points)
+	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, popup)), nil, baseline, points, nil)
 	stop, reason, err := guard(context.Background(), 1)
 	if err != nil || !stop || !strings.Contains(reason, "target 2 changed after tap 1") {
 		t.Fatalf("stop=%v reason=%q err=%v, want the repeated key checked after the first tap", stop, reason, err)
@@ -115,7 +115,7 @@ func TestTapSequenceGuardStopsWhenARemainingTargetIsCovered(t *testing.T) {
 	baseline := tapSequenceKeypadFrame(0, 0)
 	// A small menu over one key is far below any whole-screen ratio.
 	menu := image.Rect(270, 460, 330, 500)
-	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, menu)), nil, baseline, tapSequenceTestPoints)
+	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, menu)), nil, baseline, tapSequenceTestPoints, nil)
 	stop, reason, err := guard(context.Background(), 2)
 	if err != nil || !stop {
 		t.Fatalf("stop=%v err=%v, want stop", stop, err)
@@ -125,13 +125,64 @@ func TestTapSequenceGuardStopsWhenARemainingTargetIsCovered(t *testing.T) {
 	}
 }
 
+// A target change the pixel check sees goes to the decision model: a pass
+// continues and accepts the change as the new baseline, anything else stops,
+// and a whole-screen change never asks.
+func TestTapSequenceGuardConfirmerDecidesTargetChanges(t *testing.T) {
+	menu := image.Rect(270, 460, 330, 500)
+	sheet := image.Rect(0, 0, 400, 500)
+	cases := []struct {
+		name      string
+		frames    []lumaFrame
+		points    []normalizedPoint
+		answer    stepGateResult
+		wantStops []bool
+		wantAsks  int
+	}{
+		{
+			name: "confirmed change continues and becomes the baseline",
+			// The second check sees the same accepted change and must not ask again.
+			frames:    []lumaFrame{tapSequenceKeypadFrame(0, 0, menu), tapSequenceKeypadFrame(0, 0, menu)},
+			points:    tapSequenceTestPoints,
+			answer:    stepGateResult{Checked: true, Pass: true},
+			wantStops: []bool{false, false},
+			wantAsks:  1,
+		},
+		{name: "rejected change stops", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, menu)}, points: tapSequenceTestPoints,
+			answer: stepGateResult{Checked: true}, wantStops: []bool{true}, wantAsks: 1},
+		{name: "unchecked change stops", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, menu)}, points: tapSequenceTestPoints,
+			wantStops: []bool{true}, wantAsks: 1},
+		{name: "whole-screen change never asks", frames: []lumaFrame{tapSequenceKeypadFrame(0, 0, sheet)},
+			points: []normalizedPoint{tapSequenceTestKeys[0], tapSequenceTestKeys[8]}, answer: stepGateResult{Checked: true, Pass: true},
+			wantStops: []bool{true}, wantAsks: 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			asks := 0
+			confirm := func(_ context.Context, remaining []normalizedPoint) stepGateResult {
+				asks++
+				return tc.answer
+			}
+			guard := newTapSequenceGuard(tapSequenceFrames(tc.frames...), nil, tapSequenceKeypadFrame(0, 0), tc.points, confirm)
+			for i, want := range tc.wantStops {
+				if stop, reason, err := guard(context.Background(), 1+i); err != nil || stop != want {
+					t.Fatalf("check %d: stop=%v reason=%q err=%v, want stop=%v", i+1, stop, reason, err, want)
+				}
+			}
+			if asks != tc.wantAsks {
+				t.Fatalf("decision model asked %d times, want %d", asks, tc.wantAsks)
+			}
+		})
+	}
+}
+
 func TestTapSequenceGuardToleratesOnePixelLayoutNudge(t *testing.T) {
 	baseline := tapSequenceKeypadFrame(0, 0)
-	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(1, 2)), nil, baseline, tapSequenceTestPoints)
+	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(1, 2)), nil, baseline, tapSequenceTestPoints, nil)
 	if stop, reason, err := guard(context.Background(), 1); err != nil || stop {
 		t.Fatalf("stop=%v reason=%q err=%v, want continue", stop, reason, err)
 	}
-	guard = newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 12)), nil, baseline, tapSequenceTestPoints)
+	guard = newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 12)), nil, baseline, tapSequenceTestPoints, nil)
 	if stop, _, err := guard(context.Background(), 1); err != nil || !stop {
 		t.Fatalf("stop=%v err=%v, want stop when keys moved", stop, err)
 	}
@@ -141,7 +192,7 @@ func TestTapSequenceGuardStopsWhenMostOfTheScreenChanges(t *testing.T) {
 	baseline := tapSequenceKeypadFrame(0, 0)
 	// Remaining targets sit below the changed area, so only the backstop sees it.
 	sheet := image.Rect(0, 0, 400, 500)
-	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, sheet)), nil, baseline, []normalizedPoint{tapSequenceTestKeys[0], tapSequenceTestKeys[8]})
+	guard := newTapSequenceGuard(tapSequenceFrames(tapSequenceKeypadFrame(0, 0, sheet)), nil, baseline, []normalizedPoint{tapSequenceTestKeys[0], tapSequenceTestKeys[8]}, nil)
 	stop, reason, err := guard(context.Background(), 1)
 	if err != nil || !stop || !strings.Contains(reason, "screen layout changed after tap 1") {
 		t.Fatalf("stop=%v reason=%q err=%v, want backstop stop", stop, reason, err)
@@ -151,7 +202,7 @@ func TestTapSequenceGuardStopsWhenMostOfTheScreenChanges(t *testing.T) {
 func TestTapSequenceGuardTreatsResizedFrameAsLayoutChange(t *testing.T) {
 	baseline := tapSequenceTestFrame(tapSequenceTestBase, image.Rectangle{})
 	resized := tapSequenceTestFrameSized(800, 400, tapSequenceTestBase, image.Rectangle{})
-	guard := newTapSequenceGuard(tapSequenceFrames(resized), nil, baseline, tapSequenceTestPoints)
+	guard := newTapSequenceGuard(tapSequenceFrames(resized), nil, baseline, tapSequenceTestPoints, nil)
 	if stop, _, err := guard(context.Background(), 1); err != nil || !stop {
 		t.Fatalf("stop=%v err=%v, want stop for a resized frame", stop, err)
 	}
@@ -170,7 +221,7 @@ func TestTapSequenceGuardComparesInsidePhoneActiveArea(t *testing.T) {
 
 	// Point (500,500) of the phone is frame pixel (330,539), not the frame center.
 	covered := tapSequenceTestFrameSized(frameW, frameH, 0, image.Rect(310, 520, 350, 560))
-	guard := newTapSequenceGuard(tapSequenceFrames(covered), state, baseline, points)
+	guard := newTapSequenceGuard(tapSequenceFrames(covered), state, baseline, points, nil)
 	if stop, reason, err := guard(context.Background(), 1); err != nil || !stop || !strings.Contains(reason, "target 2") {
 		t.Fatalf("stop=%v reason=%q err=%v, want the target located inside the phone", stop, reason, err)
 	}
@@ -178,7 +229,7 @@ func TestTapSequenceGuardComparesInsidePhoneActiveArea(t *testing.T) {
 	if ratio, _ := tapSequenceFrameChange(baseline, tapSequenceTestFrameSized(frameW, frameH, 0, phone), image.Rect(0, 0, frameW, frameH)); ratio > tapSequenceLayoutChangeRatio {
 		t.Fatalf("whole-frame ratio = %.3f; the regression this test guards needs it diluted below the threshold", ratio)
 	}
-	guard = newTapSequenceGuard(tapSequenceFrames(tapSequenceTestFrameSized(frameW, frameH, 0, phone)), state, baseline, []normalizedPoint{{X: 100, Y: 100}, {X: 120, Y: 120}})
+	guard = newTapSequenceGuard(tapSequenceFrames(tapSequenceTestFrameSized(frameW, frameH, 0, phone)), state, baseline, []normalizedPoint{{X: 100, Y: 100}, {X: 120, Y: 120}}, nil)
 	if stop, _, err := guard(context.Background(), 1); err != nil || !stop {
 		t.Fatalf("stop=%v err=%v, want stop for a full phone-screen change", stop, err)
 	}
