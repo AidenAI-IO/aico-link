@@ -34,6 +34,15 @@ def reproduce_command(task: dict, key: str) -> str:
             "  --agent-url http://127.0.0.1:8080")
 
 
+def window(manifest: dict) -> str:
+    """A readable daily window; the exact run identities stay in hidden markers."""
+    dates = sorted(d for d in (s.get("date") for s in manifest.get("sources", [])) if d)
+    count = len(manifest.get("sources", [])) or len(manifest["source"].split("__"))
+    span = (f"{dates[0]}" if dates[0] == dates[-1] else f"{dates[0]} to {dates[-1]}") if dates else "the latest window"
+    empty = len(manifest.get("empty_sources", []))
+    return f"{count} daily run{'s' if count != 1 else ''} ({span}" + (f"; {empty} ran no tasks)" if empty else ")")
+
+
 def title(finding: dict) -> str:
     return clean(f"[auto-improve][{finding['key']['domain']}] {finding['issue']['title']}", 200).replace("\n", " ")
 
@@ -67,11 +76,12 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
     lines += ["", clean(issue["reproduction"]), "", "## Expected", clean(issue["expected"]), "",
               "## Actual", clean(issue["actual"]), "", "## Root cause", clean(issue["root_cause"]), "",
               "## Code locations", *[f"- `{loc}`" for loc in finding["code_locations"]], "",
-              "## Evidence", *bullets(issue["evidence"]), "", "## Acceptance criteria", *bullets(issue["acceptance_criteria"])]
+              "## Evidence", "Paths under `finding-*/` are in the run's evidence artifact linked below.", "",
+              *bullets(issue["evidence"]), "", "## Acceptance criteria", *bullets(issue["acceptance_criteria"])]
     if issue.get("fix_direction"):
         lines += ["", "## Suggested direction", "Non-binding; verify against the code before following it.", "",
                   clean(issue["fix_direction"])]
-    lines += ["", "---", f"Filed by benchmark auto-improve from daily window `{manifest['source']}` on `main` "
+    lines += ["", "---", f"Filed by benchmark auto-improve from {window(manifest)} on `main` "
               f"`{manifest['base_sha'][:12]}`. An independent read-only audit confirmed this finding against "
               "the fresh reproduction and retained traces.",
               f"Evidence artifacts (14-day retention): {run_url}" if run_url else "",
@@ -85,7 +95,7 @@ def observation(finding: dict, manifest: dict, run_url: str) -> str:
     """A follow-up on an existing open issue; the marker keeps it to one comment per window."""
     reproduced = [t for t, r in finding.get("reproduction", {}).items() if r["reproduced"]]
     lines = [f"<!-- auto-improve-observation:{manifest['source']} -->",
-             f"Still observed in daily window `{manifest['source']}` on `main` `{manifest['base_sha'][:12]}`.", ""]
+             f"Still observed in {window(manifest)} on `main` `{manifest['base_sha'][:12]}`.", ""]
     for target in finding["key"]["targets"]:
         lines.append(f"- `{target}`: failed in {finding['failures_by_target'].get(target, 0)}/{finding['window_runs']} "
                      f"daily runs" + ("; reproduced on main" if target in reproduced else ""))

@@ -456,8 +456,9 @@ def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, fe
         monkeypatch.setenv("AUTO_IMPROVE_MAX_ISSUES", str(max_issues))
     repo, source, out = tmp_path / "repo", tmp_path / "source", tmp_path / "out"
     repo.mkdir(); source.mkdir()
-    (source / "source.json").write_text(json.dumps({"sources": [
-        {"run": {"id": i, "run_attempt": 1, "head_sha": "s", "head_branch": "main"}} for i in (41, 42)]}))
+    (source / "source.json").write_text(json.dumps({"empty_artifacts": ["40-1"], "sources": [
+        {"run": {"id": i, "run_attempt": 1, "head_sha": "s", "head_branch": "main",
+                 "created_at": f"2026-11-{i - 31:02d}T18:00:00Z"}} for i in (40, 41, 42)]}))
     (source / "feedback.json").write_text(json.dumps(list(feedback)))
     keys = sorted({"a:one", *(t for c in clusters for t in c["targets"] if not t.startswith("z:"))})
     tasks = {k: {"case_id": k.split(":")[0], "environment": "isolated", "runnable": True,
@@ -480,7 +481,12 @@ def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, fe
         if name == "diagnosis":
             return {"summary": "Window summary", "clusters": clusters, "evaluation_issues": [
                 {"task": t, "kind": "evaluator", "reason": "r", "evidence": []} for t in evaluation_issues]}
-        return audit(payload) if callable(audit) else {**AUDIT_OUTPUT, **(audit or {})}
+        if callable(audit):
+            return audit(payload)
+        # Like a real auditor, cite the staged fresh attempt and a historical detail file.
+        staged = next((r["row"]["evidence"] for r in payload["reproduction"].values() if r.get("row")), None)
+        cited = ([f"attempts/{policy.digest(staged)[:20]}/tasks/one/trace.json: saved once"] if staged else [])
+        return {**AUDIT_OUTPUT, "evidence": cited + ["details/failure-001.json: 2/2 failures"], **(audit or {})}
     monkeypatch.setattr(driver, "git", lambda *a: "0123456789abcdef")
     monkeypatch.setattr(driver, "tracked_files", lambda _repo: {"src/agent/memory.go", "benchmark/runner/judge.py"})
     monkeypatch.setattr(driver.evidence, "catalog_tasks", lambda _repo: tasks)
@@ -508,6 +514,10 @@ def test_reproduced_and_audited_finding_becomes_one_issue_for_a_coding_agent(tmp
     assert "--suite suites/memory_v1.json --task-id one" in body
     assert "| `a:one` | isolated | 2/2 | yes |" in body
     assert "- `src/agent/memory.go:12`" in body and "The task passes 2/3 attempts" in body
+    # Evidence points at files in the uploaded artifact, not the audit's temporary workspace.
+    assert "attempts/" not in body and "details/failure" not in body
+    assert "finding-1/reproduction-runs/" in body and "daily-run observations of a:one: 2/2 failures" in body
+    assert "from 3 daily runs (2026-11-09 to 2026-11-11; 1 ran no tasks)" in body
     assert (out / "issues/01-create.md").is_file()
 
 
@@ -588,7 +598,7 @@ def test_existing_issues_are_updated_and_rejected_findings_are_not_refiled(tmp_p
     assert [d["action"] for d in drafts] == ([action] if action else [])
     assert (runs == ["a:one"]) is reproduced
     if action == "comment":
-        assert drafts[0]["number"] == 7 and "auto-improve-observation:41-1__42-1" in drafts[0]["observation"]
+        assert drafts[0]["number"] == 7 and "auto-improve-observation:40-1__41-1__42-1" in drafts[0]["observation"]
     if action == "create" and existing["user"]["login"] == "github-actions[bot]":
         assert "Possibly a regression of #7" in drafts[0]["body"]
     if action is None:

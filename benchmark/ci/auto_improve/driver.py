@@ -183,6 +183,29 @@ AUDIT_PROMPT = (
     "non-binding hint; leave it empty when unsure. Do not quote secrets.")
 
 
+def cite_artifacts(verdict: dict, finding: dict, out: Path) -> dict:
+    """Rewrite paths from the audit's temporary workspace into ones a developer can find.
+
+    Fresh attempts are staged as attempts/<digest>; in the uploaded artifact they live
+    under finding-N/reproduction-runs/. Historical detail files are not uploaded, so they
+    are named by the task whose daily observations they hold.
+    """
+    replacements = {}
+    for record in finding.get("reproduction", {}).values():
+        directory = (record.get("row") or {}).get("evidence")
+        if directory:
+            replacements["attempts/" + policy.digest(directory)[:20]] = Path(directory).relative_to(out).as_posix()
+    for index, target in enumerate(finding["key"]["targets"], 1):
+        replacements[f"details/failure-{index:03d}.json"] = f"daily-run observations of {target}"
+    def rewrite(value):
+        if isinstance(value, str):
+            for staged, cited in replacements.items():
+                value = value.replace(staged, cited)
+            return value
+        return [rewrite(item) for item in value] if isinstance(value, list) else value
+    return {key: rewrite(value) for key, value in verdict.items()}
+
+
 def screen(cluster: dict, failures: list[dict], evaluation_issues: dict, tracked: set[str]) -> dict:
     """Mechanical evidence checks; raise InvalidFinding rather than file an unsupported issue."""
     domain = policy.domain_of(cluster)
@@ -241,9 +264,11 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
     trusted = trusted_authors()
     max_new = int(os.environ.get("AUTO_IMPROVE_MAX_ISSUES", str(policy.DEFAULT_MAX_NEW_ISSUES)))
     state = {"schema": 2, "source": identity, "source_sha": sources[-1]["run"]["head_sha"],
-             "sources": [{"identity": i, "sha": s["run"]["head_sha"]} for i, s in zip(identities, sources)],
+             "sources": [{"identity": i, "sha": s["run"]["head_sha"], "date": str(s["run"].get("created_at", ""))[:10]}
+                         for i, s in zip(identities, sources)],
              "base_sha": base, "base_branch": policy.BASE_BRANCH, "execution_ref": execution_ref,
              "warnings": warnings, "findings": [], "status": "running", "max_new_issues": max_new,
+             "empty_sources": source.get("empty_artifacts", []),
              "configuration": {k: v for k, v in execution.benchmark_environment().items()
                                if k.endswith(("_MODEL", "_BASE_URL", "_PROVIDER"))}}
     out.mkdir(parents=True, exist_ok=False)
@@ -339,6 +364,7 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
                                            if set(row["targets"]) & set(finding["key"]["targets"])]}
             verdict = ask(out, f"audit-{finding['number']}", repo, payload, AUDIT_PROMPT, review.ISSUE_AUDIT, deadline,
                           image_root=source_dir / "benchmark/runs")
+            verdict = cite_artifacts(verdict, finding, out)
             finding["audit"] = {"verdict": verdict["verdict"], "reason": verdict["reason"]}
             locations = []
             for value in verdict["code_locations"]:
