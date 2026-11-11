@@ -2383,8 +2383,14 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 					pendingResponseRequestID = ""
 					pendingResponseUpdateIDs = nil
 				}
-				if semanticEmitter != nil && collaboration != nil {
+				if semanticEmitter != nil {
+					// Observers tie the response to the chat request that
+					// started it; without the turn ID the Web UI shows the
+					// request's own reply a second time under the provider's
+					// response ID. Voice turns have no request and keep it empty.
 					semanticEmitter.turnID = currentTurnID
+				}
+				if semanticEmitter != nil && collaboration != nil {
 					semanticEmitter.collaboration = &streamcontract.Collaboration{Version: 1,
 						ResponseRequestID: responseRequestID, UpdateIDs: append([]string(nil), responseUpdateIDs...), ProviderSessionID: info.ID}
 				}

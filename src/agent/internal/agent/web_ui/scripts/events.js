@@ -226,8 +226,14 @@ function semanticEpisodeID(event, payload) {
         semanticField(payload, 'response_id', 'ResponseID', 'item_id', 'ItemID', 'session_id', 'SessionID');
 }
 
+// occurred_at is the provider's time and is often unset; Go encodes an unset
+// time as year 1 rather than omitting it, so fall back past it.
 function semanticTimestamp(event) {
-    return semanticField(event, 'occurred_at', 'received_at') || new Date().toISOString();
+    for (const name of ['occurred_at', 'received_at']) {
+        const value = semanticField(event, name);
+        if (value && Date.parse(value) > 0) return value;
+    }
+    return new Date().toISOString();
 }
 
 function semanticText(payload) {
