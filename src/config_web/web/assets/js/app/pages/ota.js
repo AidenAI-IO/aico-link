@@ -7,7 +7,7 @@
 import {fetchSnapshot, request, t} from '../data.js';
 import {waitForReboot} from '../apply.js';
 import {postToHost} from '../host.js';
-import {parseOtaLog, shortVersion} from '../ota-progress.js';
+import {businessReleaseVersion, parseOtaLog, shortVersion} from '../ota-progress.js';
 import {createSaver} from '../saver.js';
 import {button} from '../../ui/button.js';
 import {confirmSheet} from '../../ui/confirm.js';
@@ -167,6 +167,11 @@ export async function otaPage(context) {
     const live = busy && p.state !== 'failed' && p.state !== 'up_to_date' && p.state !== 'completed';
     const shown = rebooting ? 'rebooting' : busy ? 'running' : p.state;
     const version = fw.current_version || fw.version || '';
+    const businessVersion = businessReleaseVersion(fw.business_version);
+    const displayVersion = [
+      shortVersion(version),
+      businessVersion ? `aico-business-v${businessVersion}` : '',
+    ].filter(Boolean).join(' + ');
 
     const update = button({label: msg('ota.update', '检查并安装更新'), block: true, action: 'start-ota', onPress: start});
     update.disabled = busy;
@@ -211,7 +216,7 @@ export async function otaPage(context) {
             el('span', {class: 'ds-product__tile', attrs: {'aria-hidden': 'true'}}, [icon('chip', {size: 22})]),
             el('div', {class: 'ds-product__body'}, [
               text(msg('ota.current_firmware', '当前固件'), 'ds-product__name'),
-              text(shortVersion(version) || '—', 'ds-product__version'),
+              text(displayVersion || '—', 'ds-product__version'),
             ]),
             statusPill(shown),
           ]),

@@ -234,7 +234,8 @@ func emptyFirmwareInfo() map[string]any {
 		"version": "", "build_time": "", "phase": "", "health_status": "", "health_error": "",
 		"current_version": "", "current_build_time": "", "target_version": "", "target_build_time": "",
 		"previous_version": "", "previous_build_time": "", "running_slot": "", "target_slot": "",
-		"components": map[string]string{"boot": "", "rootfs": ""},
+		"business_version": "",
+		"components":       map[string]string{"boot": "", "rootfs": ""},
 	}
 }
 
@@ -251,16 +252,23 @@ func firmwareComponentVersions(state map[string]any, slot string) map[string]str
 }
 
 func (s *Server) firmwareInfo() map[string]any {
+	businessVersion := s.businessPackageVersion()
 	data, err := readFileLimited(s.options.OTAStatePath, maxAgentConfigSize)
 	if os.IsNotExist(err) {
-		return s.factoryFirmwareInfo()
+		info := s.factoryFirmwareInfo()
+		info["business_version"] = businessVersion
+		return info
 	}
 	if err != nil {
-		return emptyFirmwareInfo()
+		info := emptyFirmwareInfo()
+		info["business_version"] = businessVersion
+		return info
 	}
 	var state map[string]any
 	if json.Unmarshal(data, &state) != nil {
-		return emptyFirmwareInfo()
+		info := emptyFirmwareInfo()
+		info["business_version"] = businessVersion
+		return info
 	}
 	currentVersion := jsonString(state, "current_version")
 	currentBuild := jsonString(state, "current_build_time")
@@ -302,13 +310,30 @@ func (s *Server) firmwareInfo() map[string]any {
 	}
 	return map[string]any{
 		"version": version, "build_time": build, "phase": phase,
-		"current_version": currentVersion, "current_build_time": currentBuild,
+		"business_version": businessVersion,
+		"current_version":  currentVersion, "current_build_time": currentBuild,
 		"target_version": targetVersion, "target_build_time": targetBuild,
 		"previous_version": previousVersion, "previous_build_time": previousBuild,
 		"running_slot": runningSlot, "target_slot": targetSlot,
 		"health_status": health, "health_error": healthError,
 		"components": components,
 	}
+}
+
+func (s *Server) businessPackageVersion() string {
+	binary := strings.TrimSpace(s.options.BusinessPackageQueryBinary)
+	if binary == "" {
+		binary = "dpkg-query"
+	}
+	result := runCommand(2*time.Second, nil, nil, binary, "-W", "-f=${Status}\t${Version}", "aico-business")
+	if result.ExitCode != 0 {
+		return ""
+	}
+	status, version, found := strings.Cut(strings.TrimSpace(string(result.Output)), "\t")
+	if !found || status != "install ok installed" {
+		return ""
+	}
+	return strings.TrimSpace(version)
 }
 
 // A fresh factory image has no OTA transaction state yet. Read its shipped

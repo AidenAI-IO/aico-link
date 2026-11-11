@@ -8,6 +8,10 @@ import (
 
 func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 	options := testOptions(t)
+	options.BusinessPackageQueryBinary = filepath.Join(t.TempDir(), "dpkg-query")
+	if err := os.WriteFile(options.BusinessPackageQueryBinary, []byte("#!/bin/sh\nprintf 'install ok installed\\t0.0.10-2\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	options.OTAConfigPath = filepath.Join(t.TempDir(), "ota-config.json")
 	const config = `{"factory_version":"dev-v0.0.10","factory_build_time":"2026-09-29T01:00:00Z"}`
 	if err := os.WriteFile(options.OTAConfigPath, []byte(config), 0600); err != nil {
@@ -21,7 +25,8 @@ func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 	for key, want := range map[string]string{
 		"version": "dev-v0.0.10", "current_version": "dev-v0.0.10",
 		"build_time": "2026-09-29T01:00:00Z", "current_build_time": "2026-09-29T01:00:00Z",
-		"phase": "factory", "running_slot": "b", "health_status": "", "target_version": "",
+		"business_version": "0.0.10-2",
+		"phase":            "factory", "running_slot": "b", "health_status": "", "target_version": "",
 	} {
 		if got := info[key]; got != want {
 			t.Errorf("%s=%v, want %q", key, got, want)
@@ -45,12 +50,26 @@ func TestFirmwareInfoBeforeFirstOTA(t *testing.T) {
 		t.Fatal(err)
 	}
 	info = server.firmwareInfo()
-	if info["version"] != "dev-v0.0.11" || info["build_time"] != "2026-09-30T01:00:00Z" || info["health_status"] != "success" {
+	if info["version"] != "dev-v0.0.11" || info["build_time"] != "2026-09-30T01:00:00Z" || info["health_status"] != "success" || info["business_version"] != "0.0.10-2" {
 		t.Fatalf("OTA state did not supersede factory baseline: %v", info)
 	}
 	components = info["components"].(map[string]string)
 	if components["boot"] != "boot-v11" || components["rootfs"] != "rootfs-v11" {
 		t.Fatalf("OTA components=%v", components)
+	}
+}
+
+func TestBusinessPackageVersionRequiresInstalledState(t *testing.T) {
+	options := testOptions(t)
+	options.BusinessPackageQueryBinary = filepath.Join(t.TempDir(), "dpkg-query")
+	server := &Server{options: options}
+	for _, output := range []string{"install ok unpacked\t0.0.78-1", "deinstall ok config-files\t0.0.77-1", ""} {
+		if err := os.WriteFile(options.BusinessPackageQueryBinary, []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if version := server.businessPackageVersion(); version != "" {
+			t.Fatalf("state %q returned version %q", output, version)
+		}
 	}
 }
 

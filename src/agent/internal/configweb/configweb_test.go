@@ -2012,7 +2012,7 @@ func TestWiFiCountryValidation(t *testing.T) {
 
 func TestEmptyFirmwareInfoMatchesSuccessShape(t *testing.T) {
 	info := emptyFirmwareInfo()
-	for _, key := range []string{"version", "build_time", "current_version", "current_build_time", "target_version", "target_build_time", "previous_version", "previous_build_time", "phase", "running_slot", "target_slot", "health_status", "health_error"} {
+	for _, key := range []string{"version", "build_time", "current_version", "current_build_time", "target_version", "target_build_time", "previous_version", "previous_build_time", "business_version", "phase", "running_slot", "target_slot", "health_status", "health_error"} {
 		if value, exists := info[key]; !exists || value != "" {
 			t.Errorf("%s=%#v exists=%v", key, value, exists)
 		}
