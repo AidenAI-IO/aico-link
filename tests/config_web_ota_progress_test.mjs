@@ -8,7 +8,11 @@ import path from 'node:path';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const {parseOtaLog} = await import(pathToFileURL(path.join(root, 'src/config_web/web/assets/js/app/ota-progress.js')).href);
+const {businessReleaseVersion, parseOtaLog} = await import(pathToFileURL(path.join(root, 'src/config_web/web/assets/js/app/ota-progress.js')).href);
+
+assert.equal(businessReleaseVersion('0.0.78-1'), '0.0.78');
+assert.equal(businessReleaseVersion('1:0.0.78-1'), '0.0.78');
+assert.equal(businessReleaseVersion(''), '');
 
 const line = (time, message) => `${time} [INFO][ota][updater] log_message message="${message}"`;
 const run = [
