@@ -145,6 +145,33 @@ static bool is_black_luma_line(const FrameMetadata& metadata,
     return mean <= 30.0 && std::sqrt(variance) <= 6.0;
 }
 
+// Like is_black_luma_line, but only over [begin, end) along the line. Used
+// to test a removed band against the region the other orientation would
+// keep, where a phone's content actually sits.
+static bool is_black_luma_span(const FrameMetadata& metadata,
+                               const std::vector<uint8_t>& frame,
+                               bool vertical,
+                               uint32_t position,
+                               uint32_t begin,
+                               uint32_t end) {
+    if (begin >= end) {
+        return true;
+    }
+    double sum = 0.0;
+    double squared_sum = 0.0;
+    for (uint32_t i = begin; i < end; ++i) {
+        const uint8_t luma = vertical
+                                 ? frame_luma_at(metadata, frame, position, i)
+                                 : frame_luma_at(metadata, frame, i, position);
+        sum += luma;
+        squared_sum += static_cast<double>(luma) * luma;
+    }
+    const double length = static_cast<double>(end - begin);
+    const double mean = sum / length;
+    const double variance = std::max(0.0, squared_sum / length - mean * mean);
+    return mean <= 30.0 && std::sqrt(variance) <= 6.0;
+}
+
 struct AxisCrop {
     int first;
     int last;
@@ -467,6 +494,46 @@ static BorderScore centered_crop_border_score(const FrameMetadata& metadata,
     return score;
 }
 
+// Scores every removed line of each orientation, measured only across the
+// other orientation's kept region. A dark phone screen leaves whole frame
+// lines black either way (its few bright pixels average out across 1920),
+// but the lines a wrong crop would cut still carry the phone's content
+// inside the true screen area, so this separates the two where the sampled
+// whole-line score ties.
+static void cross_region_border_scores(const FrameMetadata& metadata,
+                                       const std::vector<uint8_t>& frame,
+                                       uint32_t portrait_width,
+                                       uint32_t portrait_height,
+                                       uint32_t landscape_width,
+                                       uint32_t landscape_height,
+                                       BorderScore* portrait,
+                                       BorderScore* landscape) {
+    const uint32_t portrait_x = (metadata.width - portrait_width) / 2U;
+    const uint32_t portrait_y = (metadata.height - portrait_height) / 2U;
+    const uint32_t landscape_x = (metadata.width - landscape_width) / 2U;
+    const uint32_t landscape_y = (metadata.height - landscape_height) / 2U;
+    *portrait = {0, 0};
+    *landscape = {0, 0};
+    // Portrait removes side columns; test them inside the landscape rows.
+    for (uint32_t x = 0; x < metadata.width; ++x) {
+        if (x >= portrait_x && x < portrait_x + portrait_width) {
+            continue;
+        }
+        portrait->black += is_black_luma_span(metadata, frame, true, x, landscape_y,
+                                              landscape_y + landscape_height);
+        ++portrait->total;
+    }
+    // Landscape removes top and bottom rows; test them inside the portrait columns.
+    for (uint32_t y = 0; y < metadata.height; ++y) {
+        if (y >= landscape_y && y < landscape_y + landscape_height) {
+            continue;
+        }
+        landscape->black += is_black_luma_span(metadata, frame, false, y, portrait_x,
+                                               portrait_x + portrait_width);
+        ++landscape->total;
+    }
+}
+
 bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
                                            const std::vector<uint8_t>& frame,
                                            uint32_t screen_width,
@@ -511,9 +578,27 @@ bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
     if (landscape_weighted != portrait_weighted) {
         use_landscape = landscape_weighted > portrait_weighted;
     } else {
-        // When the pixels are ambiguous, derive orientation from this frame's
-        // geometry rather than from the cached width/height ordering.
-        use_landscape = metadata.width >= metadata.height;
+        // A dark screen ties the sampled whole-line score: with a portrait
+        // phone on a 1920x1080 frame, the dark status bar rows read as black
+        // across the full width, so landscape looked as plausible as portrait
+        // and the geometry fallback cut the top and bottom off. Compare every
+        // removed line within the other orientation's region instead.
+        BorderScore portrait_cross;
+        BorderScore landscape_cross;
+        cross_region_border_scores(metadata, frame, portrait_width, portrait_height,
+                                   landscape_width, landscape_height,
+                                   &portrait_cross, &landscape_cross);
+        const uint64_t portrait_cross_weighted =
+            static_cast<uint64_t>(portrait_cross.black) * landscape_cross.total;
+        const uint64_t landscape_cross_weighted =
+            static_cast<uint64_t>(landscape_cross.black) * portrait_cross.total;
+        if (landscape_cross_weighted != portrait_cross_weighted) {
+            use_landscape = landscape_cross_weighted > portrait_cross_weighted;
+        } else {
+            // Still ambiguous (for example an all-black frame): derive the
+            // orientation from this frame's geometry.
+            use_landscape = metadata.width >= metadata.height;
+        }
     }
 
     return use_landscape
