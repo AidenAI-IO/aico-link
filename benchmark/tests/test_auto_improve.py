@@ -484,7 +484,9 @@ def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, fe
         if callable(audit):
             return audit(payload)
         # Like a real auditor, cite the staged fresh attempt and a historical detail file.
-        staged = next((r["row"]["evidence"] for r in payload["reproduction"].values() if r.get("row")), None)
+        staged = next((r["evidence"] for r in payload["reproduction"].values() if r["evidence"]), None)
+        assert all(set(r) == {"reproduced", "reason", "symptom_excerpts", "result", "evidence"}
+                   for r in payload["reproduction"].values())
         cited = ([f"attempts/{policy.digest(staged)[:20]}/tasks/one/trace.json: saved once"] if staged else [])
         return {**AUDIT_OUTPUT, "evidence": cited + ["details/failure-001.json: 2/2 failures"], **(audit or {})}
     monkeypatch.setattr(driver, "git", lambda *a: "0123456789abcdef")
@@ -551,7 +553,7 @@ def test_benchmark_findings_reproduce_their_symptom_without_rejudging(tmp_path, 
     assert not real("benchmark", row(1, False), symptom, [])["reproduced"]
     seen = []
     monkeypatch.setattr(policy, "reproduction", lambda domain, row, s, traces: seen.append((domain, s)) or
-                        {"reproduced": True, "evidence": ["judge_error"], "reason": "symptom observed"})
+                        {"reproduced": True, "symptom_excerpts": ["judge_error"], "reason": "symptom observed"})
     state, drafts, _, _ = analyze(tmp_path, monkeypatch, [cluster(fix_target="benchmark_code", symptom=symptom,
                                                                   source_paths=["benchmark/runner/judge.py"])])
     assert seen == [("benchmark", symptom)] and drafts[0]["labels"] == ["auto-improve", "domain:benchmark"]

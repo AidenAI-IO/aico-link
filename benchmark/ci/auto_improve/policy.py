@@ -142,14 +142,14 @@ def reproduction(domain: str, row: dict, symptom: dict | None, traces: list[dict
     success, failure_class, eligible = status_fields(row)
     if domain == "benchmark":
         matches = symptom_matches(symptom or {}, row, traces)
-        return {"reproduced": bool(matches), "evidence": matches,
+        return {"reproduced": bool(matches), "symptom_excerpts": matches,
                 "reason": "symptom observed" if matches else "symptom not observed on main"}
     if success is True:
-        return {"reproduced": False, "evidence": [], "reason": "passed on main"}
+        return {"reproduced": False, "symptom_excerpts": [], "reason": "passed on main"}
     if success is None or not eligible:
-        return {"reproduced": False, "evidence": [],
+        return {"reproduced": False, "symptom_excerpts": [],
                 "reason": f"unevaluable on main ({row.get('status')}, {failure_class})"}
-    return {"reproduced": True, "evidence": [], "reason": "failed on main"}
+    return {"reproduced": True, "symptom_excerpts": [], "reason": "failed on main"}
 
 
 def failing_runs(failures: list[dict], targets: list[str]) -> int:

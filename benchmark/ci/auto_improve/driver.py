@@ -169,8 +169,11 @@ DIAGNOSIS_PROMPT = (
 AUDIT_PROMPT = (
     "You are the independent auditor deciding whether this finding becomes a GitHub issue. A wrong issue "
     "costs more than a missed one, so try to refute it first. reproduction holds ONE fresh attempt per target "
-    "on current main with its evidence directory (see evidence-index.json); failures holds the historical "
-    "observations from the daily window. Check, citing evidence: does the failure reproduce for the stated "
+    "on current main: its classification, a result summary, and `evidence`, the attempt's directory under "
+    "attempts/ (evidence-index.json lists every file; tasks/<task_id>/trace.json and history.json hold the tool "
+    "calls, results and final reply). failures lists the daily-window observations; each detail_file holds a "
+    "target's full history. Before deciding, open the fresh trace of every target and its detail_file; a "
+    "verdict that cites only summaries is incomplete. Check, citing evidence: does the failure reproduce for the stated "
     "reason; is it an agent, benchmark or external defect as claimed, or actually evaluator scoping, setup, "
     "environment or model flakiness; do the cited code locations really implement the failing behavior? "
     "Return verdict=confirmed only if the evidence establishes both the failure and its cause; refuted if the "
@@ -181,6 +184,20 @@ AUDIT_PROMPT = (
     ":line, evidence as short citations of trace/judge/screenshot files, and acceptance_criteria that a fix must "
     "meet (for example the target tasks passing at least 2 of 3 attempts). fix_direction is an optional, "
     "non-binding hint; leave it empty when unsure. Do not quote secrets.")
+
+
+def audit_attempt(record: dict) -> dict:
+    """One fresh attempt as the auditor sees it: classification, result, and its trace directory.
+
+    `evidence` is the attempt's directory and is staged as attempts/<digest>; the other
+    fields summarize the result so the auditor knows what to look for in it.
+    """
+    row = record.get("row") or {}
+    result = {key: row.get(key) for key in ("status", "hard_assertion_failures", "rubric", "final_response")}
+    result["metrics"] = {key: (row.get("metrics") or {}).get(key) for key in
+                         ("success", "failure_class", "first_failure_stage", "error", "tool_calls", "judge_error")}
+    return {"reproduced": record["reproduced"], "reason": record["reason"],
+            "symptom_excerpts": record["symptom_excerpts"], "result": result, "evidence": row.get("evidence")}
 
 
 def cite_artifacts(verdict: dict, finding: dict, out: Path) -> dict:
@@ -344,7 +361,7 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
                                                      rejudge=not benchmark)
                         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError, TimeoutError) as exc:
                             execution_errors.append(f"{target}: {exc}")
-                            attempts[cache] = {"reproduced": False, "evidence": [], "reason": f"execution failed: {exc}"}
+                            attempts[cache] = {"reproduced": False, "symptom_excerpts": [], "reason": f"execution failed: {exc}"}
                         else:
                             traces = [evidence.read_json(p) for p in sorted(Path(row["evidence"]).glob("tasks/**/trace.json"))]
                             attempts[cache] = {**policy.reproduction(finding["key"]["domain"], row, symptom, traces),
@@ -359,7 +376,7 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
             payload = {"finding": finding["cluster"], "domain": finding["key"]["domain"],
                        "targets": finding["key"]["targets"], "tasks": {t: tasks.get(t) for t in finding["key"]["targets"]},
                        "failures": [observed[t] for t in finding["key"]["targets"]],
-                       "reproduction": finding.get("reproduction", {}),
+                       "reproduction": {t: audit_attempt(r) for t, r in finding.get("reproduction", {}).items()},
                        "existing_issues": [row for row in compact_issues(feedback, trusted)
                                            if set(row["targets"]) & set(finding["key"]["targets"])]}
             verdict = ask(out, f"audit-{finding['number']}", repo, payload, AUDIT_PROMPT, review.ISSUE_AUDIT, deadline,
