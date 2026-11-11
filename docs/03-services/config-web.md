@@ -22,9 +22,17 @@ and USB-ECM access use the same API behavior.
 | Parameter | Default Value |
 | --- | --- |
 | Port | `80` |
+| HTTPS port | `443` |
+| TLS directory | `/userdata/agent/tls` |
 | Config | `/userdata/agent/agent.toml` |
 | Binary | `/usr/lib/aico/agent config-web` |
 | Web root | `/usr/share/aico/config-web` |
+
+Config Web is also served over HTTPS on port `443` with a certificate from the
+board's local certificate authority, which the Agent Web UI shares on port
+`8443`. Port `80` stays available for compatibility. See
+[HTTPS for browser audio](../04-agent/realtime-voice.md#https-for-browser-audio)
+for how certificates are issued and trusted.
 
 ## Startup
 

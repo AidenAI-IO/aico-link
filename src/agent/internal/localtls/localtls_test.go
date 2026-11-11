@@ -1,4 +1,4 @@
-package agent
+package localtls
 
 import (
 	"crypto/tls"
@@ -10,21 +10,34 @@ import (
 	"aico-agent/internal/lanaccess"
 )
 
-// A client that trusts the board's local authority must accept the HTTPS
-// listener when it connects by IP address, and the authority must survive a
-// restart so a browser that trusted it keeps trusting the board.
-func TestHTTPSCertificatesServeTrustedIPCertificate(t *testing.T) {
+// A browser that trusts the board authority must accept a connection by IP
+// address; a browser that accepted the warning instead must see the same
+// certificate after a restart; and the authority must not vouch for public
+// addresses.
+func TestAuthorityServesStableTrustedIPCertificates(t *testing.T) {
 	dir := t.TempDir()
-	certificates, err := loadHTTPSCertificates(dir)
+	first, err := Load(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reloaded, err := loadHTTPSCertificates(dir)
+	firstLeaf, err := first.CertificateFor(net.ParseIP("192.168.42.1"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reloaded.caCert.Equal(certificates.caCert) {
-		t.Fatal("restart replaced the TLS authority; trusted browsers would see a warning again")
+
+	restarted, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !restarted.Certificate().Equal(first.Certificate()) {
+		t.Fatal("restart replaced the authority; trusted browsers would see a warning again")
+	}
+	again, err := restarted.CertificateFor(net.ParseIP("192.168.42.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !again.Leaf.Equal(firstLeaf.Leaf) {
+		t.Fatal("restart issued a new certificate; browsers that accepted the warning would be asked again")
 	}
 
 	var trusted bool
@@ -32,7 +45,7 @@ func TestHTTPSCertificatesServeTrustedIPCertificate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Serve like startUSBListener does: trust marker under the TLS layer.
+	// Serve as the USB listeners do: trust marker under the TLS layer.
 	srv := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			trusted = lanaccess.IsTrusted(r)
@@ -40,11 +53,12 @@ func TestHTTPSCertificatesServeTrustedIPCertificate(t *testing.T) {
 		}),
 		ConnContext: lanaccess.ConnContext,
 	}
-	go func() { _ = srv.Serve(tls.NewListener(lanaccess.TrustListener(listener), reloaded.tlsConfig())) }()
+	DisableHTTP2(srv)
+	go func() { _ = srv.Serve(tls.NewListener(lanaccess.TrustListener(listener), restarted.TLSConfig())) }()
 	defer srv.Close()
 
 	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(certificates.caPEM)
+	pool.AppendCertsFromPEM(first.PEM())
 	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool}}}
 	// Connecting by IP sends no server name, as a browser at 192.168.42.1 does.
 	resp, err := client.Get("https://" + listener.Addr().String())
@@ -56,8 +70,7 @@ func TestHTTPSCertificatesServeTrustedIPCertificate(t *testing.T) {
 		t.Fatal("a request on a trusted (USB) listener lost its trust over TLS")
 	}
 
-	// The authority's name constraints keep it from vouching for public sites.
-	public, err := certificates.issue(net.ParseIP("8.8.8.8"), certificates.now())
+	public, _, err := restarted.issue(net.ParseIP("8.8.8.8"), restarted.now())
 	if err != nil {
 		t.Fatal(err)
 	}

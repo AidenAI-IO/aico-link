@@ -183,16 +183,26 @@ announcement.
 ### HTTPS for browser audio
 
 Browsers expose the microphone only to a secure context, which means HTTPS or
-`localhost`. The Agent therefore also serves the Web UI and API over HTTPS
-when started with `-https-addr`; the shipped `aico-agent.service` uses
-`0.0.0.0:8443`. The HTTPS listener follows the same LAN access rules as port
-8080, and requests over the USB link are trusted on both.
+`localhost`. The board's web services therefore listen on both HTTP and HTTPS:
+
+| Service | HTTP | HTTPS |
+| --- | --- | --- |
+| Config Web | `http://192.168.42.1` (80) | `https://192.168.42.1` (443) |
+| Agent Web UI | `http://192.168.42.1:8080` | `https://192.168.42.1:8443` |
+
+The same ports apply on the board's Wi-Fi address. The HTTP ports stay for
+compatibility. Each HTTPS port follows the same LAN access rules as its HTTP
+port, and requests over the USB link are trusted on both. The Agent enables
+HTTPS with `-https-addr`, and Config Web with `--https-port` and `--tls-dir`;
+the shipped systemd units set them.
 
 The board has no public DNS name, so it cannot use a publicly trusted
-certificate. On first start the Agent creates a local certificate authority in
-`/userdata/agent/tls/` (`ca.pem` and the private `ca-key.pem`), and issues a
-certificate for whichever address a client connects to, such as
-`192.168.42.1`, a Wi-Fi address, or `localhost`. The authority is
+certificate. Instead the board keeps a local certificate authority in
+`/userdata/agent/tls/` (`ca.pem` and the private `ca-key.pem`), shared by both
+services. Whichever service starts first creates it. Each service issues a
+certificate for the address a client connects to, such as `192.168.42.1`, a
+Wi-Fi address, or `localhost`, and stores it under `certs/` so it stays the
+same across restarts until shortly before it expires. The authority is
 name-constrained to loopback, private, and link-local addresses and to
 `localhost`, so trusting it cannot make a browser accept a certificate for a
 public site. It is kept in user data so it survives firmware updates.
@@ -202,14 +212,20 @@ To use browser voice:
 1. Open `https://192.168.42.1:8443` (or the board's Wi-Fi address on port
    8443). Pressing the voice button on a plain HTTP page opens this address
    automatically.
-2. Either accept the browser's certificate warning for this site, or install
-   the authority from `https://192.168.42.1:8443/tls/ca.pem` (also served on
-   port 8080) as a trusted root to remove the warning. On macOS, open the file
-   in Keychain Access and set it to Always Trust. Firefox keeps its own
+2. Accept the browser's certificate warning for this address. Installing the
+   authority is not required: the page is still a secure context after the
+   warning is accepted. Each address is a separate site, so USB and Wi-Fi
+   addresses each need their own confirmation, and some browsers ask again
+   after some time.
+3. Optionally, install the authority as a trusted root to remove the warning
+   on that device. Download it from `/tls/ca.pem` on any of the four ports,
+   for example `http://192.168.42.1/tls/ca.pem`. On macOS, open the file in
+   Keychain Access and set it to Always Trust. Firefox keeps its own
    certificate store, so import it there as well.
 
-Deleting `/userdata/agent/tls/` makes the Agent create a new authority on its
-next start; browsers that trusted the old one then show the warning again.
+Deleting `/userdata/agent/tls/` makes the board create a new authority on the
+next service start; browsers that trusted the old one then show the warning
+again.
 
 ## Configuration
 

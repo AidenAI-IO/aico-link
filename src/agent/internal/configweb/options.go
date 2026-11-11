@@ -76,6 +76,12 @@ type Options struct {
 	USBTerminalPort    int
 	TerminalTarget     string
 
+	// HTTPSPort also serves the portal over HTTPS (0 disables it), with
+	// certificates from the board's local authority in TLSDir, which the
+	// Agent shares.
+	HTTPSPort int
+	TLSDir    string
+
 	AgentBinary            string
 	AgentInitScript        string
 	FrameServiceInitScript string
@@ -181,6 +187,9 @@ func (o Options) Validate() error {
 	}
 	if o.Port < 1 || o.Port > 65535 {
 		return fmt.Errorf("port must be between 1 and 65535")
+	}
+	if o.HTTPSPort < 0 || o.HTTPSPort > 65535 || (o.HTTPSPort != 0 && o.HTTPSPort == o.Port) {
+		return fmt.Errorf("https-port must be 0 or a port between 1 and 65535 other than port")
 	}
 	if o.WiFiBackend != "legacy" && o.WiFiBackend != "systemd-networkd" {
 		return fmt.Errorf("unsupported Wi-Fi backend %q", o.WiFiBackend)

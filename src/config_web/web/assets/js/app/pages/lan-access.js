@@ -3,7 +3,7 @@
  *
  *   /advanced/lan   the LAN access switch and the device password
  *
- * While LAN access is off, the settings page (80), the Agent (8080), the web
+ * While LAN access is off, the settings page (80/443), the Agent (8080/8443), the web
  * terminal and SSH answer only the USB link. Turning it on needs a device password, which also
  * becomes the password of the `aico` login used by the terminal and SSH.
  * Both can be changed only over USB (`via_usb`); on any other connection
@@ -233,7 +233,7 @@ export async function lanAccessPage(context) {
       group({
         rows: [row({
           label: msg('lan.title', '局域网访问'),
-          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 端口）、Agent（8080 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。'),
+          description: msg('lan.help', '开启后，同一局域网内的设备输入设备密码登录后，可以访问设置页（80 和 443 端口）、Agent（8080 和 8443 端口）、网页终端和 SSH。关闭时只有 USB 连接可以访问。MCP 使用单独的令牌，不受这个开关影响。'),
           accessory: control,
           action: 'toggle-lan-access',
         })],
