@@ -54,7 +54,7 @@ def test_adb_bridge_pair_keeps_same_workload_and_distinct_environment():
     summary, = _summarize_suites(runs)
     assert summary["changed_fields"] == ["execution_environment"]
     assert summary["previous"]["environment_label"] == "ADB device"
-    assert summary["latest"]["environment_label"] == "ADB + AidenBridge"
+    assert summary["latest"]["environment_label"] == "ADB + Aico App"
     assert summary["delta"] == 0.25
     assert len(summary["points"]) == 2
 

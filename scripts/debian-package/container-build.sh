@@ -31,7 +31,7 @@ Version: ${PACKAGE_VERSION}
 Section: misc
 Priority: optional
 Architecture: armhf
-Maintainer: Aico <firmware@aiden.ai>
+Maintainer: Aico <contact@aico.link>
 Pre-Depends: python3
 Depends: libc6, systemd, sudo
 Homepage: https://aico.link
