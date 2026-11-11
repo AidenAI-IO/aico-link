@@ -1337,14 +1337,17 @@ button, textarea, select, .tool-block, .tool-lab-input {
     .message.steer .message-body { max-width: 92%; }
 }
 .message.assistant .message-body,
+.message.proactive .message-body,
 .message.role_output .message-body,
 .message.episode_status .message-body { flex: 1; padding: 0 2px; }
+.message.proactive .message-body,
 .message.role_output .message-body,
 .message.episode_status .message-body {
     padding: 10px 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
 }
+.message.proactive .message-body { border-left: 3px solid var(--accent); }
 .message-role {
     margin-bottom: 6px;
     color: var(--muted);

@@ -51,7 +51,7 @@ function createMessageNode(msg) {
         body.appendChild(contentDiv);
     }
 
-    if (msg.type === 'assistant') {
+    if (msg.type === 'assistant' || msg.type === 'proactive') {
         const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
         if (downloads) body.appendChild(downloads);
     }
@@ -715,6 +715,7 @@ function getRoleLabel(type, toolName, role) {
     if (type === 'tool_call') return toolName ? 'Tool Call · ' + toolName : 'Tool Call';
     if (type === 'tool_result') return toolName ? 'Tool Result · ' + toolName : 'Tool Result';
     if (type === 'state') return 'State';
+    if (type === 'proactive') return 'Aico · Proactive';
     return 'Aico';
 }
 
