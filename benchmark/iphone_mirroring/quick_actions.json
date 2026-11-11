@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "actions": {
+    "home": {
+      "label": "Home", "aliases": ["home_screen", "go_home"], "category": "navigation",
+      "platforms": {"ios": {"status": "active", "tool": "keyboard_tap", "input": {"keys": ["meta", "1"]}}}
+    },
+    "app_switch": {
+      "label": "App Switcher", "category": "navigation",
+      "platforms": {"ios": {"status": "active", "tool": "keyboard_tap", "input": {"keys": ["meta", "2"]}}}
+    },
+    "spotlight_search": {
+      "label": "Global Search", "aliases": ["spotlight", "global_search"], "category": "navigation",
+      "platforms": {"ios": {"status": "active", "steps": [
+        {"tool": "keyboard_tap", "input": {"keys": ["meta", "3"]}, "delay_ms_after": 600},
+        {"tool": "keyboard_tap", "input": {"keys": ["meta", "a"]}},
+        {"tool": "keyboard_tap", "input": {"keys": ["backspace"]}}
+      ]}}
+    }
+  }
+}

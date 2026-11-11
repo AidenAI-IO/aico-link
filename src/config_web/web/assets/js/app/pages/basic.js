@@ -64,19 +64,24 @@ function setHeader(context, {title, back}) {
   if (context.header) context.header({title, onBack: () => context.navigate(back)});
 }
 
-function languageIntro() {
+function languageIntro(localAgent = false) {
   return el('div', {class: 'basic-intro'}, [
     languageTile(),
     text(msg('basic.language_title', '语言与时区'), 'page__title'),
-    text(msg('basic.language_description', '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
+    text(localAgent ? msg('local.language_help', '设置 Agent 和配置界面的语言，以及任务使用的时区。') : msg('basic.language_description', '连接后，Aico 可实现消息推送、信息捕捉，还能学习你的操作方式，借助自动化能力简化重复任务。'), 'page__description'),
   ]);
+}
+
+function savedLocally(snapshot, error) {
+  if (snapshot.profile === 'local' && error.persisted) return error;
+  throw error;
 }
 
 async function saveLanguage(snapshot, locale) {
   const payload = await request('/api/config/locale', {
     method: 'PUT', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({locale}),
-  });
+  }).catch(error => savedLocally(snapshot, error));
   applyLocale(payload.locale || locale, true);
   snapshot.config = snapshot.config || {};
   snapshot.config.agent = {...(snapshot.config.agent || {}), locale: payload.locale || locale};
@@ -87,7 +92,7 @@ async function saveTimezone(snapshot, timezone) {
   const payload = await request('/api/config', {
     method: 'PATCH', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({config: {agent: {timezone}}}),
-  });
+  }).catch(error => savedLocally(snapshot, error));
   snapshot.config = payload.config || {...(snapshot.config || {}), agent: {...(snapshot.config?.agent || {}), timezone}};
   toast(msg('basic.timezone_saved', '时区已保存'));
 }
@@ -109,7 +114,7 @@ export async function languagePage(context) {
 
   const body = el('div');
   const render = () => {
-    setHeader(context, {title: msg('basic.language_title', '语言与时区'), back: '/basic'});
+    setHeader(context, {title: msg('basic.language_title', '语言与时区'), back: context.localAgent ? '/' : '/basic'});
     const languageRows = localeOptions.map((option, index) => [
       index ? separator() : null,
       row({
@@ -133,7 +138,7 @@ export async function languagePage(context) {
         try { await saveTimezone(snapshot, value); render(); } catch (error) { toast(error.message || resolve(msg('basic.save_failed', '保存失败'))); }
       },
     });
-    replace(body, [group({rows: [languageIntro(), ...languageRows]}), timezoneField]);
+    replace(body, [group({rows: [languageIntro(context.localAgent), ...languageRows]}), timezoneField]);
     notifyHost(msg('basic.language_title', '语言与时区'), false);
   };
   render();

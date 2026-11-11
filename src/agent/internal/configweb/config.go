@@ -83,7 +83,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, _ *http.Request) {
 	valid, validationErrors := configValidationState(s.options.AgentConfigPath)
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true, "config": config,
+		"ok": true, "config": s.projectConfig(config),
 		"config_valid": valid, "config_errors": validationErrors,
 	})
 }
@@ -104,6 +104,10 @@ func (s *Server) handleGetDeviceSnapshot(w http.ResponseWriter, _ *http.Request)
 		return
 	}
 	valid, validationErrors := configValidationState(s.options.AgentConfigPath)
+	if s.options.LocalAgent {
+		s.writeLocalSnapshot(w, config, valid, validationErrors)
+		return
+	}
 	wifi, wifiErr := loadWiFiConfig(s.options.WiFiConfigPath)
 	wifiProxy, wifiProxyErr := wifiproxy.Load(s.options.WiFiProxyConfigPath)
 	systemEnv := ""
@@ -155,12 +159,20 @@ func (s *Server) handleConfigMeta(w http.ResponseWriter, _ *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "config metadata unavailable")
 		return
 	}
+	if s.options.LocalAgent {
+		metadata = localAgentMetadata(metadata)
+	}
 	writeJSON(w, http.StatusOK, metadata)
 }
 
 // updateConfig runs `agent config-update` on a patch. Extra flags such as
 // `--dry-run` are passed through.
 func (s *Server) updateConfig(config json.RawMessage, flags ...string) (map[string]any, int, error) {
+	if s.options.LocalAgent {
+		if err := validateLocalConfigPatch(config); err != nil {
+			return nil, http.StatusBadRequest, err
+		}
+	}
 	body, err := json.Marshal(map[string]json.RawMessage{"config": config})
 	if err != nil {
 		return nil, http.StatusInternalServerError, err
@@ -189,6 +201,9 @@ func (s *Server) updateConfig(config json.RawMessage, flags ...string) (map[stri
 			status = http.StatusInternalServerError
 		}
 		return nil, status, fmt.Errorf("%s", message)
+	}
+	if value, ok := response["config"].(map[string]any); ok {
+		response["config"] = s.projectConfig(value)
 	}
 	return response, http.StatusOK, nil
 }

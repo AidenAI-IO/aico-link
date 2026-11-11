@@ -222,6 +222,7 @@ func newHardwareToolSet(hidCfg HIDConfig, audioCfg AudioConfig, searchCfg Search
 		quickAction:  quickAction,
 		screenshot:   screenshot,
 	}
+	textInputHW.textInsertion, _ = mnkProvider.(mnk.TextInsertionProvider)
 
 	// A touchscreen has no pointer; an absolute mouse leaves one on screen.
 	var pointerTrack *pointerTracker

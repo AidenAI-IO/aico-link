@@ -12,6 +12,28 @@ Implementations in this repository:
   Android emulator or physical device through adb; fixed concurrency `1`.
 - Desktop bridge (`benchmark/desktop/`): drives the host macOS, Linux, or
   Windows desktop through `pyautogui`; fixed concurrency `1`.
+- [iPhone Mirroring bridge](iphone_mirroring/README.md): captures and controls
+  Apple's iPhone Mirroring window on macOS; fixed concurrency `1`, platform `ios`.
+
+## Optional Native Text Insertion
+
+`GET /api/providers/mnk` may return
+`{"capabilities":{"insert_text":true}}` when the backend can insert committed
+Unicode through its host OS. Missing capability, HTTP 404, 405, or 501 retains
+the Agent's existing Phone Bridge/HID/IME flow. Other discovery failures stop
+the operation before changing the field.
+
+For a supporting bridge, the Agent uses `POST /api/providers/mnk` with
+`{"operation":"insert_text","insert_text":{"text":"中文ABC🔋","replace":false}}`.
+The usual `benchmark-task-id` routing and `{"success":true}` response apply.
+`replace:true` selects the entire focused field before insertion; the default
+inserts at the current caret/selection. This is distinct from the existing
+ASCII keystroke primitive `keyboard_text`. Text must be valid Unicode with
+1–4096 UTF-16 units, without controls other than newline/tab.
+
+The Agent keeps `enter_text` local, focuses its target and verifies the result
+through screenshots. Once native insertion has started, failures do not trigger
+an automatic replay or IME fallback because delivery can be partial.
 
 ## Required Endpoints
 

@@ -6,6 +6,10 @@ description: Run and develop Aico locally without a development board.
 
 # Try Aico on PC
 
+For a native Agent running directly on your computer with a real Android phone
+or iPhone, start with [Local Agent with a Real Phone](local-agent-real-phone.md).
+That guide provides the complete Config Web and phone-bridge startup sequence.
+
 The Docker sandbox is the fastest way to run Aico without a Luckfox
 board. It starts the same configuration and Agent web experiences used during
 device development, while keeping configuration and Agent state in a Docker
@@ -81,6 +85,41 @@ image and replace the running container.
 
 Starting the sandbox preserves the `aico-data` volume. Use `make sandbox-logs`
 to follow the Agent logs and `make sandbox-stop` to stop the sandbox.
+
+## Configure a Native Local Agent
+
+For an Agent running directly on macOS or Linux, use Config Web's host profile.
+Build the native binary, then start the portal from the repository root:
+
+```bash
+(cd src/agent && go build -o /absolute/path/to/agent ./cmd/daemon)
+```
+
+```bash
+/absolute/path/to/agent config-web --local-agent \
+  --config /absolute/path/to/agent-data/agent.toml \
+  --web-root "$PWD/src/config_web/web" \
+  --agent-url http://127.0.0.1:8080
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Use the same `agent.toml`
+as the running daemon's `-dir`. `--local-agent` defaults to port 8000 and only
+accepts a loopback bind. `--port` and `--agent-url` support other local ports.
+The command inherits the host process environment, including explicit proxy
+settings; it does not load the board's system environment or Wi-Fi proxy.
+
+The host profile provides model providers and credential tests, the main and
+decision models, prompts and context limits, web search, language, time zone,
+and Agent/model logs. API keys remain write-only. Both the API and navigation
+exclude board Wi-Fi, GPIO, voice hardware, storage maintenance, firmware, and
+system-service controls. Device type and environment bridge connections remain
+launch arguments; the overview reports the running Agent's actual target type.
+
+Saves preserve other configuration sections and request a live reload. The
+status bar distinguishes saved, pending, applied, and failed configuration.
+When the Agent is offline, configuration can still be saved; start it with the
+same data directory to load the saved values. The portal does not start or
+restart the daemon. Existing board and Docker sandbox profiles are unchanged.
 
 ## Connect an Environment Bridge
 
@@ -215,6 +254,16 @@ The environment bridge is the control boundary: the sandbox does not gain direct
 access to an arbitrary virtual machine merely because the VM is running. For the
 project's virtual iPhone workflow, use `AICO_DEVICE_TYPE=iOS` and see the
 [vphone CLI setup guide](../09-benchmark/vphone-cli-setup-guide-en.md).
+
+### Real iPhone Through macOS iPhone Mirroring
+
+The experimental [iPhone Mirroring bridge](../../benchmark/iphone_mirroring/README.md)
+lets a native Mac Agent use the real iPhone already connected to Apple's
+iPhone Mirroring app. It captures the phone window and maps Agent coordinates
+to that window. Start it from `benchmark/` with
+`python3 -m iphone_mirroring`, then use the native Agent flags and dedicated
+quick-action mapping in its README. This bridge binds to Mac loopback; the
+documented workflow runs the Agent on the Mac, not in the Docker sandbox.
 
 ### Host Desktop
 

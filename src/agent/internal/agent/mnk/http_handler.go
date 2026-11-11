@@ -29,6 +29,20 @@ func NewHTTPHandler(provider Provider, textProvider ...TextProvider) *HTTPHandle
 // ServeHTTP handles HTTP requests for MNK operations
 // POST /api/providers/mnk
 func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		supported := false
+		if provider, ok := h.provider.(TextInsertionProvider); ok {
+			var err error
+			supported, err = provider.SupportsTextInsertion(r.Context())
+			if err != nil {
+				h.writeError(w, http.StatusBadGateway, "text insertion capability unavailable")
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"capabilities": map[string]bool{"insert_text": supported}})
+		return
+	}
 	// Only accept POST requests
 	if r.Method != http.MethodPost {
 		h.writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -74,6 +88,24 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		execErr = h.handleKeypress(reqCtx, req.Keypress)
 	case "keyboard_text":
 		execErr = h.handleKeyboardText(reqCtx, req.KeyboardText)
+	case "insert_text":
+		if req.InsertText == nil {
+			execErr = InvalidArguments("insert_text params required")
+		} else if execErr = ValidateInsertionText(req.InsertText.Text); execErr == nil {
+			provider, ok := h.provider.(TextInsertionProvider)
+			if !ok {
+				execErr = ModuleUnavailable("native text insertion is not supported by this provider")
+			} else {
+				var supported bool
+				supported, execErr = provider.SupportsTextInsertion(reqCtx)
+				if execErr == nil && !supported {
+					execErr = ModuleUnavailable("native text insertion is not supported by this provider")
+				}
+				if execErr == nil {
+					execErr = provider.InsertText(reqCtx, req.InsertText.Text, req.InsertText.Replace)
+				}
+			}
+		}
 	case "move":
 		execErr = h.handleMove(reqCtx, req.Move)
 	case "scroll":

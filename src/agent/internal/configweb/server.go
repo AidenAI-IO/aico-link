@@ -79,6 +79,14 @@ type Server struct {
 }
 
 func NewServer(options Options) (*Server, error) {
+	if options.LocalAgent {
+		if err := options.Validate(); err != nil {
+			return nil, err
+		}
+		s := &Server{options: options}
+		s.http = configHTTPServer(options.Addr(), s, false)
+		return s, nil
+	}
 	if options.USBInternetSocketPath == "" {
 		options.USBInternetSocketPath = usbuplink.DefaultSocketPath
 	}
@@ -152,7 +160,7 @@ func NewServer(options Options) (*Server, error) {
 // USB maintenance and terminal listeners in the background. It returns nil
 // after Shutdown.
 func (s *Server) ListenAndServe() error {
-	if s.storage == nil {
+	if !s.options.LocalAgent && s.storage == nil {
 		if err := s.initializeStorageManager(); err != nil {
 			return fmt.Errorf("initialize storage manager: %w", err)
 		}
@@ -160,7 +168,9 @@ func (s *Server) ListenAndServe() error {
 	s.logAgentRecoveryState()
 	// A Config Web crash mid-restore leaves staging or a half-committed
 	// transaction behind; finish or discard it before serving requests.
-	s.recoverRestoreTransactions()
+	if !s.options.LocalAgent {
+		s.recoverRestoreTransactions()
+	}
 	logging.Infof("config_web", "config_web", "listening on %s", s.options.Addr())
 	// A separate SO_BINDTODEVICE socket establishes the USB ingress boundary.
 	// The wildcard portal remains available on Wi-Fi, but its connections are
@@ -176,7 +186,7 @@ func (s *Server) ListenAndServe() error {
 		go s.serveUSBListener(errorsCh)
 	}
 	device := ""
-	if s.options.BindAddress == s.options.USBAddress {
+	if !s.options.LocalAgent && s.options.BindAddress == s.options.USBAddress {
 		device = s.options.USBInterface
 	}
 	listener, err := lanaccess.ListenOnDevice("tcp4", s.http.Addr, device)
@@ -225,7 +235,9 @@ func (s *Server) stopUSBRetry() {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
-	s.usbInternetClient.CloseIdleConnections()
+	if s.usbInternetClient != nil {
+		s.usbInternetClient.CloseIdleConnections()
+	}
 	s.stopUSBRetry()
 	if s.backupJobs != nil {
 		s.backupJobs.cancelAll()
@@ -257,6 +269,9 @@ func (s *Server) Shutdown(ctx context.Context) error {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if s.options.LocalAgent && !s.allowLocalRequest(w, r) {
+		return
+	}
 	if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
 		s.APIHandler().ServeHTTP(w, r)
 		return
@@ -288,6 +303,12 @@ func (s *Server) serveStatic(w http.ResponseWriter, r *http.Request) bool {
 		relative, entry = "index.html", true
 	default:
 		return false
+	}
+	if s.options.LocalAgent && entry && relative == "index.html" {
+		if !isLocalSettingsRoute(r.URL.Path) {
+			return false
+		}
+		relative = "local.html"
 	}
 	if r.Method != http.MethodGet {
 		w.Header().Set("Allow", http.MethodGet)

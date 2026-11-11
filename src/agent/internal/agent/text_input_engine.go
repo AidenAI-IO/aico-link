@@ -15,13 +15,14 @@ import (
 )
 
 type textInputHardwareDeps struct {
-	pointerMode  string
-	deviceTypeFn func() string
-	touchGesture langtools.Tool
-	keyboardTap  langtools.Tool
-	keyboardText langtools.Tool
-	quickAction  langtools.Tool
-	screenshot   langtools.Tool
+	textInsertion mnk.TextInsertionProvider
+	pointerMode   string
+	deviceTypeFn  func() string
+	touchGesture  langtools.Tool
+	keyboardTap   langtools.Tool
+	keyboardText  langtools.Tool
+	quickAction   langtools.Tool
+	screenshot    langtools.Tool
 }
 
 func normalizeTextInputPlatform(platform string) string {
@@ -76,6 +77,7 @@ type textInputArgs struct {
 }
 
 type textInputResult struct {
+	TextMayBeInserted bool   `json:"-"`
 	OK                bool   `json:"ok"`
 	Committed         bool   `json:"committed"`
 	FieldText         string `json:"field_text,omitempty"`

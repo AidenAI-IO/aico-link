@@ -54,6 +54,7 @@ const (
 
 // Server provides HTTP API for agent interactions
 type Server struct {
+	mirroringReconnectMu    sync.Mutex
 	configDepsMu            sync.RWMutex
 	closeOnce               sync.Once
 	closing                 atomic.Bool
@@ -596,6 +597,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/health", s.handleHealth)
 	mux.HandleFunc("/api/tool-skills", s.handleToolSkills)
 	mux.HandleFunc("/api/internal/config/reload", s.handleInternalConfigReload)
+	mux.HandleFunc("/api/internal/iphone-mirroring", s.handleInternalIPhoneMirroring)
 	mux.HandleFunc("/api/speaker/", s.handleSpeakerAPI)
 	mux.HandleFunc("/api/speaker", s.handleSpeakerAPI)
 	mux.HandleFunc("/api/audio/", s.handleAudioFile)

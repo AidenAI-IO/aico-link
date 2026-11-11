@@ -308,7 +308,7 @@ func TestHTTPHandlerMethodNotAllowed(t *testing.T) {
 	mockProvider := NewMockProvider()
 	handler := NewHTTPHandler(mockProvider)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/providers/mnk", nil)
+	req := httptest.NewRequest(http.MethodPut, "/api/providers/mnk", nil)
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)

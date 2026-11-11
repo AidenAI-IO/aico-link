@@ -15,10 +15,12 @@ from .tools_api import DesktopToolsAPIHandler, MAX_REQUEST_BODY_BYTES
 
 
 class DesktopBridgeServer:
-    def __init__(self, device: DesktopDevice | None = None, host: str = "127.0.0.1", port: int = 0, action_settle_sec: float = 0.2):
+    def __init__(self, device: DesktopDevice | None = None, host: str = "127.0.0.1", port: int = 0, action_settle_sec: float = 0.2, *, tools_factory=DesktopToolsAPIHandler, mnk_executor=execute_mnk_request):
         self.state = DesktopBridgeState(device=device or DesktopDevice())
         self.host, self.port = host, int(port)
-        self.tools_api = DesktopToolsAPIHandler(self.state, action_settle_sec)
+        self.tools_api = tools_factory(self.state, action_settle_sec)
+        self.mnk_executor = mnk_executor
+        self.bridge_type = getattr(self.state.device, "bridge_type", "desktop")
         self.setup_tokens = SetupTokenRegistry()
         self._httpd: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -43,12 +45,14 @@ def _handler_for(bridge: DesktopBridgeServer):
 
         def do_GET(self) -> None:
             path = self.path.split("?", 1)[0]
+            if path == "/api/providers/mnk":
+                self._send(200, {"capabilities": getattr(bridge.state.device, "mnk_capabilities", {})}); return
             if path == "/api/tools": bridge.tools_api.handle_request(self, path); return
-            if path == "/api/concurrent": self._send(200, bridge_ok({"bridge_type": "desktop", "concurrent": 1, "env_count": 1, "active_task_id": bridge.state.active_task_id})); return
+            if path == "/api/concurrent": self._send(200, bridge_ok({"bridge_type": bridge.bridge_type, "concurrent": 1, "env_count": 1, "active_task_id": bridge.state.active_task_id})); return
             if path == "/health":
                 try: info = bridge.state.device.check_device()
                 except Exception as exc: self._send_error(503, "desktop_unavailable", str(exc)); return
-                self._send(200, bridge_ok({"status": "ok", "bridge_type": "desktop", "platform": bridge.state.device.platform, "env_count": 1, "concurrent": 1, "active_task_id": bridge.state.active_task_id, "active_episode_id": bridge.state.active_episode_id, "active_task_lease_state": bridge.state.active_task_lease_state(), "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/release", "/api/concurrent"], **info})); return
+                self._send(200, bridge_ok({"status": "ok", "bridge_type": bridge.bridge_type, "platform": bridge.state.device.platform, "env_count": 1, "concurrent": 1, "active_task_id": bridge.state.active_task_id, "active_episode_id": bridge.state.active_episode_id, "active_task_lease_state": bridge.state.active_task_lease_state(), "interfaces": ["/api/tools", "/api/providers/screenshot", "/api/providers/mnk", "/api/setup", "/api/release", "/api/concurrent"], **info})); return
             self._send_error(404, "not_found", "unknown endpoint")
 
         def do_POST(self) -> None:
@@ -104,7 +108,7 @@ def _handler_for(bridge: DesktopBridgeServer):
             self._send(200, bridge_ok(encode_provider_frame(image, width=width, height=height, seq=bridge.state.screenshot_seq, backend=getattr(bridge.state.device, "backend", "desktop"))))
 
         def _mnk(self, payload: dict[str, Any]) -> None:
-            task_id = benchmark_task_id_from_headers(self.headers); bridge.state.check_task_access(task_id); status, response = execute_mnk_request(payload, lambda name, data: bridge.tools_api.invoke(name, data)); self._send(status, response)
+            task_id = benchmark_task_id_from_headers(self.headers); bridge.state.check_task_access(task_id); status, response = bridge.mnk_executor(payload, bridge.tools_api.invoke); self._send(status, response)
 
         def _read_json(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length", "0") or "0")

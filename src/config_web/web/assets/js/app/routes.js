@@ -5,6 +5,7 @@
  * the right-hand panel empty on the list itself.
  */
 
+import {localOverviewPage} from './pages/local.js';
 import {homePage} from './pages/home.js';
 import {wifiDetailPage, wifiPage} from './pages/wifi.js';
 import {basicPage, languagePage} from './pages/basic.js';
@@ -56,4 +57,10 @@ export const routes = [
   {path: '/advanced/mcp', name: 'advanced-mcp', page: mcpPage},
   {path: '/firmware', name: 'firmware', page: otaPage},
   {path: '/firmware/log', name: 'firmware-log', page: otaLogPage},
+];
+
+export const localRoutes = [
+  {path: '/', name: 'local-home', page: localOverviewPage},
+  ...routes.filter(route => route.path.startsWith('/model') || route.path.startsWith('/conversation') ||
+    route.path === '/basic/language' || route.path.startsWith('/advanced/logs')),
 ];
