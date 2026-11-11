@@ -254,6 +254,7 @@ function handleSemanticEvent(event) {
         return;
     }
 
+    if (typeof handleRealtimeVoiceEvent === 'function') handleRealtimeVoiceEvent(event);
     const payload = event.payload || {};
     const requestId = semanticRequestID(event, payload);
     const episodeId = semanticEpisodeID(event, payload);

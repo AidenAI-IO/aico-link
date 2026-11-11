@@ -139,6 +139,50 @@ idle. Notification responses are private speech responses: they are played
 through the speaker and acknowledged only after playback drains, but they are
 not added to user-visible conversation history.
 
+## Audio routes and the Web UI voice mode
+
+A realtime session takes its audio from a `RealtimeAudioIO` endpoint
+(`src/agent/internal/agent/realtime_voice.go`): a recording backend for the
+microphone and a playback backend for the reply, in the formats negotiated with
+the provider. The conversation, tools, transcripts, and history are the same
+for every endpoint; only the audio path differs.
+
+| Route | Started by | Microphone and speaker |
+| --- | --- | --- |
+| `device` | Wake word, MCU wakeup, task update, or a `/api/chat` message | Board audio through `audio_service` (or the local host backend) |
+| `web` | The voice button in the Web UI | The browser that pressed it, over `/api/realtime/voice/ws` |
+
+The Web UI shows the same voice mode for both routes: an orb above the
+composer, a mute button, and an end button. Text typed in the composer during
+the session is injected into the live session as before. Only the tab that
+started a `web` session captures and plays audio; other tabs, and every tab
+during a `device` session, only display it.
+
+The Web UI uses these endpoints:
+
+- `GET /api/realtime/voice` returns `available` (realtime input mode is
+  active), `state` (`idle`, `connecting`, or `active`), `route`, and `muted`.
+- `POST /api/realtime/voice/stop` ends the session on either route and returns
+  the daemon to standby.
+- `POST /api/realtime/voice/mute` with `{"muted": true}` replaces microphone
+  input with silence for the rest of the session. The provider keeps receiving
+  a continuous stream, so its turn detection sees silence instead of a stall.
+- `GET /api/realtime/voice/ws` starts a `web` session. Binary frames carry
+  signed 16-bit little-endian PCM in both directions. The agent sends JSON
+  control messages: `capture_start` and `playback_start` carry the PCM format,
+  `playback_stop` drops queued speech after a barge-in, and `ended` carries the
+  reason the session ended. Closing the socket ends the session. Only one
+  session runs at a time, so the endpoint rejects a start while another
+  session is connecting or active.
+
+Browsers expose the microphone only to a secure context, which means HTTPS or
+`localhost`. A page opened over plain HTTP by IP address, such as
+`http://192.168.42.1`, cannot start a `web` session; it can still display and
+control a `device` session. Browser echo cancellation is not guaranteed to
+remove speech played through Web Audio, so use headphones if the reply
+interrupts itself. A failed `web` session reports its error in the Web UI and
+does not play the device failure announcement.
+
 ## Configuration
 
 Use `[voice_settings.mode].input_mode = "realtime"` and select a named provider record:

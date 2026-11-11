@@ -1,0 +1,337 @@
+package agent
+
+import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"aico-agent/internal/agent/tts"
+)
+
+// RealtimeAudioRoute names where a realtime voice session captures and plays
+// its audio. The conversation, its transcripts and its Web UI presentation do
+// not depend on the route.
+type RealtimeAudioRoute string
+
+const (
+	// RealtimeAudioRouteDevice uses the board microphone and speaker.
+	RealtimeAudioRouteDevice RealtimeAudioRoute = "device"
+	// RealtimeAudioRouteWeb uses the microphone and speaker of the browser
+	// that started the session.
+	RealtimeAudioRouteWeb RealtimeAudioRoute = "web"
+)
+
+// RealtimeAudioIO is the media endpoint of one realtime voice session. The
+// session reads microphone PCM from Recording and writes response PCM to
+// Playback in the formats it negotiated with the provider; the endpoint owns
+// any transport between those calls and the actual audio hardware.
+type RealtimeAudioIO interface {
+	Route() RealtimeAudioRoute
+	Recording() AudioRecordingBackend
+	Playback() tts.AudioServiceBackend
+	// Close releases the endpoint once the session that used it has ended.
+	// reason is empty for a normal end.
+	Close(reason string)
+}
+
+type deviceRealtimeAudio struct {
+	recording AudioRecordingBackend
+	playback  tts.AudioServiceBackend
+}
+
+// NewDeviceRealtimeAudioIO returns the board audio endpoint selected by the
+// audio configuration (audio_service or the local host backend).
+func NewDeviceRealtimeAudioIO(cfg Config) RealtimeAudioIO {
+	service := NewAudioServiceClient(cfg.Audio.SocketOrDefault())
+	return deviceRealtimeAudio{
+		recording: NewConfiguredAudioRecordingBackend(cfg, service, nil),
+		playback:  NewConfiguredAudioPlaybackBackend(cfg, service, nil),
+	}
+}
+
+func (deviceRealtimeAudio) Route() RealtimeAudioRoute           { return RealtimeAudioRouteDevice }
+func (d deviceRealtimeAudio) Recording() AudioRecordingBackend  { return d.recording }
+func (d deviceRealtimeAudio) Playback() tts.AudioServiceBackend { return d.playback }
+func (deviceRealtimeAudio) Close(string)                        {}
+
+// RealtimeVoiceSession is the control surface of one running realtime voice
+// session. The daemon owns the session loop; the Web UI reads its status and
+// asks it to stop or to mute the microphone through the Server.
+type RealtimeVoiceSession struct {
+	route     RealtimeAudioRoute
+	audio     RealtimeAudioIO
+	startedAt time.Time
+	ready     atomic.Bool
+	muted     atomic.Bool
+	stop      chan struct{}
+	stopOnce  sync.Once
+}
+
+// Route reports where this session captures and plays audio.
+func (v *RealtimeVoiceSession) Route() RealtimeAudioRoute {
+	if v == nil {
+		return RealtimeAudioRouteDevice
+	}
+	return v.route
+}
+
+// MarkReady records that the provider session is connected.
+func (v *RealtimeVoiceSession) MarkReady() {
+	if v != nil {
+		v.ready.Store(true)
+	}
+}
+
+// Muted reports whether microphone input should be replaced by silence.
+func (v *RealtimeVoiceSession) Muted() bool {
+	return v != nil && v.muted.Load()
+}
+
+// StopRequested is closed when a user asks to end the session.
+func (v *RealtimeVoiceSession) StopRequested() <-chan struct{} {
+	if v == nil {
+		return nil
+	}
+	return v.stop
+}
+
+func (v *RealtimeVoiceSession) requestStop() {
+	v.stopOnce.Do(func() { close(v.stop) })
+}
+
+// RealtimeVoiceStatus is the public state of the realtime voice mode.
+type RealtimeVoiceStatus struct {
+	// Available is true while the agent runs in realtime input mode and can
+	// open a voice session.
+	Available bool `json:"available"`
+	// State is idle, connecting or active.
+	State     string             `json:"state"`
+	Route     RealtimeAudioRoute `json:"route,omitempty"`
+	Muted     bool               `json:"muted"`
+	StartedAt *time.Time         `json:"started_at,omitempty"`
+}
+
+// realtimeVoiceController joins Web UI requests with the realtime session
+// loop. Its zero value is ready for use.
+type realtimeVoiceController struct {
+	mu       sync.Mutex
+	activate func()
+	pending  *webRealtimeAudio
+	active   *RealtimeVoiceSession
+}
+
+var (
+	errRealtimeVoiceUnavailable = errors.New("realtime voice is not enabled; set the input mode to realtime")
+	errRealtimeVoiceBusy        = errors.New("a realtime voice session is already active")
+)
+
+// SetRealtimeVoiceActivation installs the callback that wakes the realtime
+// session loop. Passing nil marks realtime voice as unavailable and rejects a
+// browser session still waiting to start.
+func (s *Server) SetRealtimeVoiceActivation(activate func()) {
+	if s == nil {
+		return
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	c.activate = activate
+	pending := c.pending
+	if activate == nil {
+		c.pending = nil
+	}
+	c.mu.Unlock()
+	if activate == nil && pending != nil {
+		pending.Close(errRealtimeVoiceUnavailable.Error())
+	}
+}
+
+// TakeRealtimeAudioIO returns the audio endpoint for the session about to
+// open: a browser waiting to start a voice session, otherwise the device.
+func (s *Server) TakeRealtimeAudioIO(cfg Config) RealtimeAudioIO {
+	if s != nil {
+		c := &s.realtimeVoice
+		c.mu.Lock()
+		pending := c.pending
+		c.pending = nil
+		c.mu.Unlock()
+		if pending != nil && !pending.closed() {
+			return pending
+		}
+	}
+	return NewDeviceRealtimeAudioIO(cfg)
+}
+
+// RequeueRealtimeAudioIO keeps a browser endpoint for the next session when
+// the provider rotates the current one. It reports whether the endpoint was
+// kept; the caller closes it otherwise.
+func (s *Server) RequeueRealtimeAudioIO(audio RealtimeAudioIO) bool {
+	web, ok := audio.(*webRealtimeAudio)
+	if s == nil || !ok || web.closed() {
+		return false
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.pending != nil || c.activate == nil {
+		return false
+	}
+	c.pending = web
+	return true
+}
+
+// BeginRealtimeVoiceSession publishes a session that is connecting with the
+// given audio endpoint. The caller must call EndRealtimeVoiceSession.
+func (s *Server) BeginRealtimeVoiceSession(audio RealtimeAudioIO) *RealtimeVoiceSession {
+	session := &RealtimeVoiceSession{route: audio.Route(), audio: audio, startedAt: time.Now(), stop: make(chan struct{})}
+	if s == nil {
+		return session
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	c.active = session
+	c.mu.Unlock()
+	return session
+}
+
+// EndRealtimeVoiceSession withdraws session from the published status.
+func (s *Server) EndRealtimeVoiceSession(session *RealtimeVoiceSession) {
+	if s == nil || session == nil {
+		return
+	}
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	if c.active == session {
+		c.active = nil
+	}
+	c.mu.Unlock()
+}
+
+// RealtimeVoiceStatus reports the current realtime voice state.
+func (s *Server) RealtimeVoiceStatus() RealtimeVoiceStatus {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	status := RealtimeVoiceStatus{Available: c.activate != nil, State: "idle"}
+	switch {
+	case c.active != nil:
+		status.State = "connecting"
+		if c.active.ready.Load() {
+			status.State = "active"
+		}
+		status.Route = c.active.route
+		status.Muted = c.active.muted.Load()
+		startedAt := c.active.startedAt
+		status.StartedAt = &startedAt
+	case c.pending != nil:
+		status.State = "connecting"
+		status.Route = RealtimeAudioRouteWeb
+	}
+	return status
+}
+
+// startWebRealtimeVoice queues a browser endpoint and wakes the session loop.
+func (s *Server) startWebRealtimeVoice(web *webRealtimeAudio) error {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	if c.activate == nil {
+		c.mu.Unlock()
+		return errRealtimeVoiceUnavailable
+	}
+	if c.active != nil || c.pending != nil {
+		c.mu.Unlock()
+		return errRealtimeVoiceBusy
+	}
+	c.pending = web
+	activate := c.activate
+	c.mu.Unlock()
+	activate()
+	return nil
+}
+
+// releaseWebRealtimeVoice ends whatever the disconnected browser endpoint was
+// part of: a queued start, or the running session that uses it.
+func (s *Server) releaseWebRealtimeVoice(web *webRealtimeAudio) {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	if c.pending == web {
+		c.pending = nil
+	}
+	active := c.active
+	c.mu.Unlock()
+	if active != nil && active.audio == web {
+		active.requestStop()
+	}
+}
+
+func (s *Server) stopRealtimeVoice() bool {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	active := c.active
+	pending := c.pending
+	c.pending = nil
+	c.mu.Unlock()
+	if pending != nil {
+		pending.Close("")
+	}
+	if active != nil {
+		active.requestStop()
+	}
+	return active != nil || pending != nil
+}
+
+func (s *Server) setRealtimeVoiceMuted(muted bool) bool {
+	c := &s.realtimeVoice
+	c.mu.Lock()
+	active := c.active
+	c.mu.Unlock()
+	if active == nil {
+		return false
+	}
+	active.muted.Store(muted)
+	return true
+}
+
+// handleRealtimeVoice serves GET /api/realtime/voice.
+func (s *Server) handleRealtimeVoice(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, s.RealtimeVoiceStatus())
+}
+
+// handleRealtimeVoiceStop serves POST /api/realtime/voice/stop. It ends the
+// session whichever route it uses.
+func (s *Server) handleRealtimeVoiceStop(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	s.stopRealtimeVoice()
+	writeJSON(w, s.RealtimeVoiceStatus())
+}
+
+// handleRealtimeVoiceMute serves POST /api/realtime/voice/mute with a
+// {"muted": bool} body.
+func (s *Server) handleRealtimeVoiceMute(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		Muted bool `json:"muted"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if !s.setRealtimeVoiceMuted(body.Muted) {
+		http.Error(w, "no realtime voice session is active", http.StatusConflict)
+		return
+	}
+	writeJSON(w, s.RealtimeVoiceStatus())
+}

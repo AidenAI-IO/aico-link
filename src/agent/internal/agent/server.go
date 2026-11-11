@@ -115,6 +115,7 @@ type Server struct {
 	storageMonitor          *StorageMonitor
 	realtimeChatMu          sync.RWMutex
 	realtimeChatHandler     RealtimeChatHandler
+	realtimeVoice           realtimeVoiceController
 }
 
 // RealtimeEventSink returns the semantic v2 sink used by the HTTP observer
@@ -565,6 +566,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	mux.HandleFunc("/api/realtime/voice", s.handleRealtimeVoice)
+	mux.HandleFunc("/api/realtime/voice/stop", s.handleRealtimeVoiceStop)
+	mux.HandleFunc("/api/realtime/voice/mute", s.handleRealtimeVoiceMute)
+	mux.HandleFunc("/api/realtime/voice/ws", s.handleRealtimeVoiceSocket)
 	mux.HandleFunc("/api/live-activity/status", s.handleLiveActivityStatus)
 	mux.HandleFunc("/api/live-activity/current", s.handleLiveActivityCurrent)
 	mux.HandleFunc("/api/events", s.handleEvents)

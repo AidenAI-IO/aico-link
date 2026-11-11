@@ -61,6 +61,14 @@
                 <button type="button" class="stop-run-btn" id="cancelSteerBtn" onclick="cancelPendingSteer()">Cancel</button>
             </div>
 
+              <section class="voice-stage hidden" id="voiceStage" aria-live="polite">
+                <div class="voice-orb" id="voiceOrb" data-activity="connecting" aria-hidden="true">
+                    <span class="voice-orb-cloud"></span>
+                    <span class="voice-orb-cloud voice-orb-cloud-alt"></span>
+                </div>
+                <div class="voice-status" id="voiceStatus">Connecting…</div>
+              </section>
+
               <form class="composer" onsubmit="event.preventDefault(); sendMessage();">
                 <div class="composer-shell">
                     <input type="file" id="fileInput" class="hidden-input" multiple />
@@ -78,6 +86,16 @@
                         </div>
                         <div class="composer-actions">
                             <button type="submit" class="send-btn" id="sendBtn">Send</button>
+                            <button type="button" class="voice-btn voice-mute-btn hidden" id="voiceMuteBtn" onclick="toggleRealtimeVoiceMute()" title="Mute microphone" aria-label="Mute microphone" aria-pressed="false">
+                                <svg class="voice-icon-mic" viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg>
+                                <svg class="voice-icon-mic-off" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 9.5V6a3 3 0 0 0-5.7-1.3M9 9v2a3 3 0 0 0 4.6 2.5M5.5 11a6.5 6.5 0 0 0 10.4 5.2M18.5 11c0 .9-.2 1.8-.5 2.6M12 17.5V21M4 4l16 16"/></svg>
+                            </button>
+                            <button type="button" class="voice-btn voice-end-btn hidden" id="voiceEndBtn" onclick="endRealtimeVoice()" title="End voice" aria-label="End voice">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                            </button>
+                            <button type="button" class="voice-btn voice-start-btn hidden" id="voiceStartBtn" onclick="startRealtimeVoice()" title="Start voice" aria-label="Start voice">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10.5v3"/></svg>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -195,6 +213,7 @@
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>
     <script defer src="/web-ui/scripts/resources.js"></script>
+    <script defer src="/web-ui/scripts/voice.js"></script>
     <script defer src="/web-ui/scripts/bootstrap.js"></script>
 </body>
 </html>

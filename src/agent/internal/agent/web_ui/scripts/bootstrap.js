@@ -11,6 +11,7 @@ loadToolCatalog();
 autoResizeInput();
 connectSSE();
 startResourcePolling();
+startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);
 document.getElementById('fileInput').addEventListener('change', handleFileSelection);
