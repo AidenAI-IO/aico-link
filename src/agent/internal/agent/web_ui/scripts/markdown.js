@@ -10,7 +10,18 @@ const mdListPattern = /^( *)([-*+]|\d{1,9}[.)])(?:[ \t]+(.*))?$/;
 const mdTableDelimiterPattern = /^ *\|? *:?-+:? *(?:\| *:?-+:? *)*\|? *$/;
 
 function parseMarkdown(text) {
-    const lines = String(text || '').replace(/\r\n?/g, '\n').replace(/\t/g, '    ').split('\n');
+    // Tabs become spaces for block structure, but fenced code keeps them
+    // (a Makefile recipe needs its tab).
+    let fence = null;
+    const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n').map(function(line) {
+        const match = line.match(mdFencePattern);
+        if (fence) {
+            if (fence.test(line)) fence = null;
+            return line;
+        }
+        if (match) fence = new RegExp('^ {0,3}' + match[1][0] + '{' + match[1].length + ',}\\s*$');
+        return line.replace(/\t/g, '    ');
+    });
     return parseMarkdownBlocks(lines);
 }
 

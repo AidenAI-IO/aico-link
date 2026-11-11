@@ -31,7 +31,7 @@ function createMessageNode(msg) {
             textClass: 'reasoning-text',
             label: 'Reasoning',
             text: msg.reasoning_content,
-            expandKey: messageIdentity(msg) + '\u001freasoning'
+            expandKeys: [messageIdentity(msg) + '\u001freasoning', 'reasoning\u001f' + msg.reasoning_content]
         }));
     }
 
@@ -110,7 +110,7 @@ function createMessageNode(msg) {
 
 const speechTagPairs = [['<tts>', '</tts>'], ['[tts]', '[/tts]']];
 
-// Spoken and reasoning rows the user expanded, by message, so streaming
+// Spoken and reasoning rows the user expanded, by message and text, so streaming
 // re-renders and history refreshes keep them open.
 const expandedLineKeys = new Set();
 
@@ -131,11 +131,11 @@ function splitSpeechText(text) {
     const segments = [];
     let rest = String(text || '');
     while (rest) {
-        const lower = rest.toLowerCase();
+        const code = markdownCodeRanges(rest);
         let start = -1;
         let pair = null;
         speechTagPairs.forEach(function(candidate) {
-            const index = lower.indexOf(candidate[0]);
+            const index = indexOutsideCode(rest, candidate[0], 0, code);
             if (index >= 0 && (start < 0 || index < start)) {
                 start = index;
                 pair = candidate;
@@ -158,6 +158,39 @@ function splitSpeechText(text) {
     return segments.filter(segment => segment.speech || segment.text);
 }
 
+// [start, end) ranges of fenced code blocks and inline code spans, so a
+// documented <tts> or a TOML [tts] section is not taken as speech markup.
+// An unclosed fence runs to the end (it may still be streaming).
+function markdownCodeRanges(text) {
+    const ranges = [];
+    const fence = /^ {0,3}(`{3,}|~{3,})[^\n]*$/gm;
+    let match;
+    while ((match = fence.exec(text))) {
+        const closing = new RegExp('^ {0,3}' + match[1][0] + '{' + match[1].length + ',}[ \\t]*$', 'gm');
+        closing.lastIndex = match.index + match[0].length;
+        const close = closing.exec(text);
+        const end = close ? close.index + close[0].length : text.length;
+        ranges.push([match.index, end]);
+        fence.lastIndex = end;
+    }
+    const inline = /(`+)[^`\n]*?\1/g;
+    while ((match = inline.exec(text))) {
+        const start = match.index;
+        if (!ranges.some(range => start >= range[0] && start < range[1])) {
+            ranges.push([start, start + match[0].length]);
+        }
+    }
+    return ranges;
+}
+
+function indexOutsideCode(text, tag, from, ranges) {
+    const lower = text.toLowerCase();
+    for (let index = lower.indexOf(tag, from); index >= 0; index = lower.indexOf(tag, index + 1)) {
+        if (!ranges.some(range => index >= range[0] && index < range[1])) return index;
+    }
+    return -1;
+}
+
 function trimPartialTag(text, tags) {
     const lower = text.toLowerCase();
     for (let length = Math.min(text.length, 6); length > 0; length--) {
@@ -174,7 +207,8 @@ function renderSpeechText(element, text, key) {
     let speechIndex = 0;
     splitSpeechText(text).forEach(function(segment) {
         if (segment.speech) {
-            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + speechIndex++));
+            element.appendChild(createSpeechBlock(segment, [(key || '') + '\u001f' + speechIndex++,
+                'speech\u001f' + segment.text.trim()]));
             return;
         }
         if (!segment.text.trim()) return;
@@ -186,14 +220,14 @@ function renderSpeechText(element, text, key) {
 }
 
 // Spoken text shows one line; clicking toggles the full text.
-function createSpeechBlock(segment, expandKey) {
+function createSpeechBlock(segment, expandKeys) {
     return createCollapsibleLine({
         className: 'tts-block' + (segment.open ? ' streaming' : ''),
         iconClass: 'tts-icon',
         textClass: 'tts-text',
         label: 'Spoken aloud',
         text: segment.text.trim(),
-        expandKey
+        expandKeys
     });
 }
 
@@ -201,8 +235,11 @@ function createSpeechBlock(segment, expandKey) {
 // full text on click or Enter. Expanded rows stay open across re-renders.
 function createCollapsibleLine(options) {
     const block = document.createElement('div');
-    const expandKey = options.expandKey;
-    const expanded = expandedLineKeys.has(expandKey);
+    // Live messages carry run IDs that history later replaces, so a row is
+    // also keyed by its text; an expanded row records every current key.
+    const expandKeys = options.expandKeys;
+    const expanded = expandKeys.some(key => expandedLineKeys.has(key));
+    if (expanded) expandKeys.forEach(key => expandedLineKeys.add(key));
     block.className = 'collapsible-line ' + options.className + (expanded ? ' expanded' : '');
     block.tabIndex = 0;
     block.setAttribute('role', 'button');
@@ -225,8 +262,7 @@ function createCollapsibleLine(options) {
         const selection = window.getSelection ? window.getSelection() : null;
         if (selection && !selection.isCollapsed && block.contains(selection.anchorNode)) return;
         const open = !block.classList.contains('expanded');
-        if (open) expandedLineKeys.add(expandKey);
-        else expandedLineKeys.delete(expandKey);
+        expandKeys.forEach(key => open ? expandedLineKeys.add(key) : expandedLineKeys.delete(key));
         sync(open);
     }
     sync(expanded);

@@ -185,8 +185,15 @@ function renderMessageAttachments(attachments) {
             image.alt = attachment.name || 'Image attachment';
             image.src = attachmentDataURL(attachment);
             image.className = 'zoomable';
-            image.addEventListener('click', function() {
-                openImageViewer([{src: image.src, caption: attachment.name || 'Image'}], 0);
+            image.tabIndex = 0;
+            image.setAttribute('role', 'button');
+            image.setAttribute('aria-label', 'View ' + (attachment.name || 'image') + ' full size');
+            const zoom = () => openImageViewer([{src: image.src, caption: attachment.name || 'Image'}], 0);
+            image.addEventListener('click', zoom);
+            image.addEventListener('keydown', function(event) {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                zoom();
             });
             card.appendChild(image);
         } else if (attachment.kind === 'audio') {

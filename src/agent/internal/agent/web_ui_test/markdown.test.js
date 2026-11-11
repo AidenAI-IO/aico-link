@@ -4,8 +4,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const context = {};
-vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'web_ui', 'scripts', 'markdown.js'), 'utf8'), context);
-const {parseMarkdown, parseMarkdownInline} = context;
+const scripts = path.join(__dirname, '..', 'web_ui', 'scripts');
+vm.runInNewContext(fs.readFileSync(path.join(scripts, 'markdown.js'), 'utf8'), context);
+vm.runInNewContext(fs.readFileSync(path.join(scripts, 'messages.js'), 'utf8'), context);
+const {parseMarkdown, parseMarkdownInline, splitSpeechText} = context;
 const plain = value => JSON.parse(JSON.stringify(value));
 
 // Inline nodes as compact strings: **x** -> strong(x), [a](u) -> link(u:a).
@@ -91,5 +93,18 @@ for (const unsafe of ['javascript:alert(1)', 'data:text/html,x', '//evil.example
 
     assert.equal(plain(parseMarkdown('a | b')).length, 1, 'a pipe without a delimiter row is not a table');
 }
+
+{
+    const makefile = plain(parseMarkdown('```make\nall:\n\tgcc main.c\n```\n\n\tindented'));
+    assert.equal(makefile[0].text, 'all:\n\tgcc main.c', 'fenced code keeps its tabs');
+    assert.equal(makefile[1].type, 'paragraph', 'tabs outside fences still count as indentation');
+}
+
+// Speech markup is only recognized outside Markdown code.
+const speech = text => plain(splitSpeechText(text)).map(part => (part.speech ? 'S:' : 'T:') + part.text.trim());
+assert.deepEqual(speech('<tts>Hi.</tts>\n\nUse `<tts>x</tts>` here.'), ['S:Hi.', 'T:Use `<tts>x</tts>` here.']);
+assert.deepEqual(speech('<tts>Config.</tts>\n\n```toml\n[tts]\nvoice = "a"\n```'),
+    ['S:Config.', 'T:```toml\n[tts]\nvoice = "a"\n```']);
+assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
 
 console.log('markdown tests passed');

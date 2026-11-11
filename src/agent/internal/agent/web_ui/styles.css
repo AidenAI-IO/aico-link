@@ -1219,11 +1219,6 @@ details.tool-details summary {
         border-radius: 16px;
     }
 
-    .message.user .message-body,
-    .message.steer .message-body {
-        max-width: 92%;
-    }
-
     .state-modal {
         padding: 12px;
     }
@@ -1337,6 +1332,10 @@ button, textarea, select, .tool-block, .tool-lab-input {
     border: 1px solid var(--user-bubble-line);
 }
 .message.steer .message-body { border-style: dashed; }
+@media (max-width: 720px) {
+    .message.user .message-body,
+    .message.steer .message-body { max-width: 92%; }
+}
 .message.assistant .message-body,
 .message.role_output .message-body,
 .message.episode_status .message-body { flex: 1; padding: 0 2px; }

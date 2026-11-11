@@ -110,8 +110,10 @@ const maxGroupThumbs = 3;
 // Thumbnails of the group's images (state screenshots and screenshot tool
 // results), newest last, so the collapsed row shows what the tools saw.
 function renderToolGroupThumbs(node) {
+    // Event order, not entry order: a result pairs with an earlier call, so
+    // its screenshot can come after state images that precede it in entries.
     const images = [];
-    node._entries.forEach(entry => images.push.apply(images, toolEntryImages(entry)));
+    node._toolGroup.messages.forEach(msg => images.push.apply(images, toolMessageImages(msg)));
     node._images = images;
     const container = node._thumbs;
     container.innerHTML = '';
@@ -132,19 +134,24 @@ function renderToolGroupThumbs(node) {
 }
 
 function toolEntryImages(entry) {
-    if (entry.kind !== 'tool') {
-        return (entry.message.attachments || []).filter(item => item.kind === 'image').map(function(attachment) {
+    if (entry.kind !== 'tool') return toolMessageImages(entry.message);
+    return entry.result ? toolMessageImages(entry.result, entryToolName(entry)) : [];
+}
+
+function toolMessageImages(msg, toolName) {
+    if (isContextMarkerMessage(msg)) {
+        return (msg.attachments || []).filter(item => item.kind === 'image').map(function(attachment) {
             return {
                 src: attachmentDataURL(attachment),
-                caption: (contextMarkerType(entry.message) === 'notice' ? 'Notice' : 'State') + ' · ' + (attachment.name || 'image')
+                caption: (contextMarkerType(msg) === 'notice' ? 'Notice' : 'State') + ' · ' + (attachment.name || 'image')
             };
         }).filter(image => image.src);
     }
-    const screenshot = entry.result && parseScreenshotPayload(entry.result);
+    const screenshot = normalizeType(msg.type) === 'tool_result' && parseScreenshotPayload(msg);
     if (!screenshot) return [];
     return [{
         src: 'data:image/' + (screenshot.format || 'jpeg') + ';base64,' + screenshot.data,
-        caption: entryToolName(entry) + ' · ' + screenshot.width + '×' + screenshot.height
+        caption: (toolName || msg.tool_name || 'tool') + ' · ' + screenshot.width + '×' + screenshot.height
     }];
 }
 
@@ -304,6 +311,13 @@ function createImageViewer() {
         if (event.key === 'Escape') {
             event.stopImmediatePropagation();
             closeImageViewer();
+        } else if (event.key === 'Tab') {
+            // aria-modal: keep focus on the viewer's own buttons.
+            const controls = [viewer.close, viewer.prev, viewer.next].filter(control => !control.hidden);
+            const at = controls.indexOf(document.activeElement);
+            const next = at < 0 ? 0 : (at + (event.shiftKey ? -1 : 1) + controls.length) % controls.length;
+            event.preventDefault();
+            controls[next].focus();
         } else if (event.key === 'ArrowLeft' && viewer.images.length > 1) {
             showImageViewerImage(viewer.index - 1);
         } else if (event.key === 'ArrowRight' && viewer.images.length > 1) {
@@ -365,7 +379,10 @@ function createToolEntryNode(groupNode, entry, index) {
     row.addEventListener('click', function() {
         if (groupNode._openEntries.has(index)) groupNode._openEntries.delete(index);
         else groupNode._openEntries.add(index);
-        item.replaceWith(createToolEntryNode(groupNode, entry, index));
+        const hadFocus = document.activeElement === row;
+        const replacement = createToolEntryNode(groupNode, entry, index);
+        item.replaceWith(replacement);
+        if (hadFocus) replacement.querySelector('.tool-entry-row').focus();
     });
     const head = document.createElement('div');
     head.className = 'tool-entry-head';
