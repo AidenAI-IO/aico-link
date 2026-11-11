@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -83,6 +85,16 @@ func TestResourceDiskPaths(t *testing.T) {
 }
 
 func TestResourcesHTTP(t *testing.T) {
+	meminfo := filepath.Join(t.TempDir(), "meminfo")
+	writeMeminfo := func(data string) {
+		if err := os.WriteFile(meminfo, []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeMeminfo("MemTotal: 2048 kB\nMemAvailable: 1024 kB\nCmaTotal: 1024 kB\nCmaAllocated: 256 kB\nCmaFree: 0 kB\n")
+	oldMeminfo := resourceMeminfoPath
+	resourceMeminfoPath = meminfo
+	t.Cleanup(func() { resourceMeminfoPath = oldMeminfo })
 	percent, voltage := byte(75), uint16(3980)
 	calls := 0
 	s := &Server{
@@ -108,6 +120,9 @@ func TestResourcesHTTP(t *testing.T) {
 	if snapshot.Battery == nil || *snapshot.Battery.Percent != percent || *snapshot.Battery.Millivolts != voltage || snapshot.SampledAtMS <= 0 {
 		t.Fatalf("snapshot missing readings: %+v", snapshot)
 	}
+	if snapshot.CMA == nil || snapshot.CMA.TotalBytes != 1024*1024 || snapshot.CMA.UsedBytes != 256*1024 {
+		t.Fatalf("snapshot CMA = %+v", snapshot.CMA)
+	}
 	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("snapshot headers: %v", w.Header())
 	}
@@ -124,5 +139,11 @@ func TestResourcesHTTP(t *testing.T) {
 	handler.ServeHTTP(w, r)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"battery":null`) || !strings.Contains(w.Body.String(), `"disks":`) {
 		t.Fatalf("missing MCU must preserve other metrics: %s", w.Body.String())
+	}
+	writeMeminfo("MemTotal: 2048 kB\nMemAvailable: 1024 kB\n")
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"cma":null`) || !strings.Contains(w.Body.String(), `"memory":{`) {
+		t.Fatalf("kernel without CMA must report cma as null: %s", w.Body.String())
 	}
 }

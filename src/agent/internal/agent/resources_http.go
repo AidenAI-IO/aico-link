@@ -51,6 +51,9 @@ type resourceSnapshot struct {
 	Disks       []resourceDisk `json:"disks"`
 }
 
+// resourceMeminfoPath is a variable so tests can supply a meminfo fixture.
+var resourceMeminfoPath = "/proc/meminfo"
+
 // This read-only snapshot is available wherever the Web UI is reachable.
 // MCU control endpoints retain their USB/loopback restriction.
 func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
@@ -61,7 +64,7 @@ func (s *Server) handleResources(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	meminfo := parseResourceMeminfo(readResourceFile("/proc/meminfo"))
+	meminfo := parseResourceMeminfo(readResourceFile(resourceMeminfoPath))
 	snapshot := resourceSnapshot{
 		SampledAtMS: time.Now().UnixMilli(),
 		BootID:      strings.TrimSpace(readResourceFile("/proc/sys/kernel/random/boot_id")),
