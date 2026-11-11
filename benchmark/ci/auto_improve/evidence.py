@@ -56,7 +56,7 @@ def source_failures(artifact: Path, source_id: str, attempt: str, tasks: dict[st
 
 
 def source_failures_window(artifact: Path, sources: list[tuple[str, str]],
-                           tasks: dict[str, dict]) -> tuple[list[dict], list[str]]:
+                           tasks: dict[str, dict], *, empty: frozenset[str] = frozenset()) -> tuple[list[dict], list[str]]:
     """Aggregate each task's observations across every daily run in the selected window."""
     prefixes = {f"ci-{source_id}-{attempt}-": f"{source_id}-{attempt}" for source_id, attempt in sources}
     grouped: dict[str, list[dict]] = {}
@@ -125,9 +125,10 @@ def source_failures_window(artifact: Path, sources: list[tuple[str, str]],
             continue
         failures.append({"key": key, "failure_count": len({o["source"] for o in failed}),
                          "run_count": len({o["source"] for o in observations}), "observations": observations})
-    missing = sorted(set(prefixes.values()) - manifests)
+    # A dashboard-only source ran no task: that is known, not missing evidence.
+    missing = sorted(set(prefixes.values()) - manifests - empty)
     warnings.extend(f"No completed suite manifests for source run {identity}" for identity in missing)
-    if not manifests:
+    if not manifests and set(prefixes.values()) - empty:
         warnings.append("No completed suite manifests in source window")
     return failures, warnings
 

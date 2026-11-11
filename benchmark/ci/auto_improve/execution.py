@@ -115,6 +115,17 @@ def rejudge_transient_errors(run: Path, *, deadline: float, delays: tuple[float,
         (run / "results.rejudged.jsonl").replace(results)
 
 
+def judge_error_only(run: Path, task_id: str) -> bool:
+    """A finished one-task run whose only defect is its judge call: the agent's evidence is complete."""
+    try:
+        totals = json.loads((run / "manifest.json").read_text())["totals"]
+        rows = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines() if line.strip()]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return (len(rows) == 1 and rows[0].get("task_id") == task_id and rows[0].get("status") == "judge_error"
+            and totals.get("tasks") == 1 and totals.get("judge_error") == 1)
+
+
 def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float, rejudge: bool = True) -> dict:
     case_id, task_id = key.split(":", 1)
     catalog = load_catalog(catalog_path=root / "benchmark/ci/suites.json", suites_dir=root / "benchmark/suites")
@@ -150,15 +161,20 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
                     "case=SuiteCase(**json.load(open(sys.argv[1]))); "
                     "raise SystemExit(run_case(case,run_id=sys.argv[2],environment=os.environ,"
                     "timeout_seconds=float(sys.argv[3])))")
-            command([sys.executable, "-c", code, str(case_file), run_id,
-                     str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
-                    log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
+            try:
+                command([sys.executable, "-c", code, str(case_file), run_id,
+                         str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
+                        log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
+            except RuntimeError:
+                # run_case exits 1 for a judge error; a complete judge-error result is data.
+                if not judge_error_only(root / "benchmark/runs" / run_id, task_id):
+                    raise
     finally:
         # Keep evidence even on timeout; no generated agent configuration is copied.
         run = root / "benchmark/runs" / run_id
         if run.is_dir():
-            # Rejudging waits 30/90 s, so only rejudge a completed run (a judge_error run still
-            # exits 0 through run_case); never wait while a failure or cancellation propagates.
+            # Rejudging waits 30/90 s, so only rejudge a completed run, including one whose only
+            # defect is a judge error; never wait while a failure or cancellation propagates.
             try:
                 if rejudge and sys.exc_info()[0] is None and (run / "results.jsonl").is_file():
                     try:

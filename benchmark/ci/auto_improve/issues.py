@@ -17,8 +17,11 @@ def clean(text: object, limit: int = FIELD_LIMIT) -> str:
     """Keep model text inert: no notifications, hidden markers, or unbounded length."""
     value = str(text or "").replace("\r", "")
     value = value.replace("<!--", "&lt;!--").replace("-->", "--&gt;")
-    # Break @mentions and #/issue references to other repositories without changing meaning.
-    value = re.sub(r"(?<![\w`])@(?=[A-Za-z0-9])", "@​", value)
+    # Break @mentions and links to other issues so filing creates no notification or backlink.
+    value = re.sub(r"(?<![\w`])@(?=[A-Za-z0-9])", "@\u200b", value)
+    value = re.sub(r"\b([\w.-]+/[\w.-]+)#(\d+)", "\\1#\u200b\\2", value)
+    value = re.sub(r"https?://github\.com/([\w.-]+/[\w.-]+)/(issues|pull)/(\d+)",
+                   "github.com/\\1/\\2/\u200b\\3", value)
     return value if len(value) <= limit else value[:limit] + " …"
 
 
@@ -86,7 +89,7 @@ def body(finding: dict, manifest: dict, run_url: str) -> str:
               f"`{manifest['base_sha'][:12]}`. An independent read-only audit confirmed this finding against "
               "the fresh reproduction and retained traces.",
               f"Evidence artifacts (14-day retention): {run_url}" if run_url else "",
-              "Close as not planned or label `auto-improve:false-positive` if the finding is wrong; "
+              "If the finding is wrong, close the issue as not planned (or label it `auto-improve:false-positive` and close it); "
               "the pipeline will not file these tasks again."]
     text = "\n".join(lines)
     return text if len(text) <= BODY_LIMIT else text[:BODY_LIMIT] + "\n\n(truncated)"

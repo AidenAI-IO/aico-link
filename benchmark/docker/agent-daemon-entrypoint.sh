@@ -73,15 +73,15 @@ if [ -n "${AICO_BENCHMARK_TOKEN_FILE:-}" ] && [ "$bridge_enabled" -eq 0 ]; then
                 sleep 1
             done
         ) &
+        # The supervisor keeps retrying, so the daemon must know the socket even if startup is slow.
+        export AICO_MCU_SERVICE_SOCKET="$mcu_socket"
     fi
     waited=0
     while command -v benchmark-mcu >/dev/null 2>&1 && [ ! -S "$mcu_socket" ] && [ "$waited" -lt 100 ]; do
         sleep 0.1
         waited=$((waited + 1))
     done
-    if [ -S "$mcu_socket" ]; then
-        export AICO_MCU_SERVICE_SOCKET="$mcu_socket"
-    else
+    if command -v benchmark-mcu >/dev/null 2>&1 && ! [ -S "$mcu_socket" ]; then
         # Only schedule tasks need the peer; do not fail every other headless task.
         echo "benchmark MCU emulator did not start; continuing without an MCU service" >&2
     fi

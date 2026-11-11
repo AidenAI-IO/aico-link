@@ -268,7 +268,8 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
     deadline = time.monotonic() + int(os.environ.get("AUTO_IMPROVE_TIMEOUT_SECONDS", "7200"))
     tasks = evidence.catalog_tasks(repo)
     failures, warnings = evidence.source_failures_window(
-        source_dir, [tuple(i.split("-")) for i in identities], tasks)
+        source_dir, [tuple(i.split("-")) for i in identities], tasks,
+        empty=frozenset(source.get("empty_artifacts", [])))
     # Agent eligibility comes from failed observations only: a passing day says nothing
     # about whether the failing ones were the agent's fault.
     for failure in failures:
@@ -352,6 +353,7 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
                 benchmark = finding["key"]["domain"] == "benchmark"
                 finding["reproduction"] = {}
                 for target in finding["key"]["targets"]:
+                    # One run per task and rejudge mode; each finding classifies it against its own symptom.
                     cache = (target, benchmark)
                     if cache not in attempts:
                         progress(f"finding {finding['number']}: reproduce {target}")
@@ -360,14 +362,23 @@ def run(repo: Path, source_dir: Path, out: Path) -> dict:
                             # Benchmark findings must observe judge failures, never hide them by rejudging.
                             row = execution.run_task(repo, target, 1, image, directory, deadline=deadline,
                                                      rejudge=not benchmark)
+                        except InterruptedError:
+                            # Cancellation must stop the run and clean up, not count as an execution error.
+                            raise
                         except (ValueError, RuntimeError, OSError, subprocess.SubprocessError, TimeoutError) as exc:
                             execution_errors.append(f"{target}: {exc}")
-                            attempts[cache] = {"reproduced": False, "symptom_excerpts": [], "reason": f"execution failed: {exc}"}
+                            attempts[cache] = {"error": str(exc)}
                         else:
                             traces = [evidence.read_json(p) for p in sorted(Path(row["evidence"]).glob("tasks/**/trace.json"))]
-                            attempts[cache] = {**policy.reproduction(finding["key"]["domain"], row, symptom, traces),
-                                               "row": row}
-                    finding["reproduction"][target] = attempts[cache]
+                            attempts[cache] = {"row": row, "traces": traces}
+                    run = attempts[cache]
+                    if "error" in run:
+                        finding["reproduction"][target] = {"reproduced": False, "symptom_excerpts": [],
+                                                           "reason": f"execution failed: {run['error']}"}
+                    else:
+                        finding["reproduction"][target] = {
+                            **policy.reproduction(finding["key"]["domain"], run["row"], symptom, run["traces"]),
+                            "row": run["row"]}
                 finding["reproduced_targets"] = [t for t, r in finding["reproduction"].items() if r["reproduced"]]
                 if finding["reproduced_targets"]:
                     finding["status"] = "persistence"
