@@ -2,7 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"aico-agent/internal/agent/contextmanager"
@@ -81,6 +85,46 @@ func TestStateHookTurnDecisionScreenshot(t *testing.T) {
 			}
 			if got := len(state.Attachments) == 1; got != tc.wantScreenshot {
 				t.Fatalf("screenshot attached = %v, want %v (state %#v)", got, tc.wantScreenshot, state)
+			}
+		})
+	}
+}
+
+// Confidently relevant memories are added to the turn's state message in the
+// same request; unsure ones and a failed request add nothing.
+func TestStateHookTurnDecisionRecallsMemories(t *testing.T) {
+	answers := func(recall0, recall1 float64) string {
+		return fmt.Sprintf(`{"answers":{"screen":{"type":"noul","noul":0.95},"recall_memory_0":{"type":"noul","noul":%g},"recall_memory_1":{"type":"noul","noul":%g}}}`, recall0, recall1)
+	}
+	cases := []struct {
+		name         string
+		body         string
+		wantRecalled []string
+	}{
+		{name: "one relevant", body: answers(0.9, 0.1), wantRecalled: []string{"Daughter"}},
+		{name: "both relevant", body: answers(0.9, 0.95), wantRecalled: []string{"Daughter", "Coffee"}},
+		{name: "unsure recalls nothing", body: answers(0.6, 0.5)},
+		{name: "failed request recalls nothing", body: `not json`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newDecisionServer(t, tc.body)
+			store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+			for i, title := range []string{"Daughter", "Coffee"} {
+				if _, err := store.AddMemory(context.Background(), MemoryItem{
+					ID: fmt.Sprintf("mem_170000000000000000%d_test", i), Type: "fact", Priority: 90 - i, Confidence: 1,
+					Title: title, Content: title + " note", EvidenceExcerpts: []string{title},
+				}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			_, manager := turnDecisionHookRuntime(t, true, server.URL, NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(store)))
+			state := turnStateMessage(t, manager, "what is my daughter's name")
+			for _, title := range []string{"Daughter", "Coffee"} {
+				want := slices.Contains(tc.wantRecalled, title)
+				if got := strings.Contains(state.Content, title+" note"); got != want {
+					t.Fatalf("memory %q in state = %v, want %v; content %q", title, got, want, state.Content)
+				}
 			}
 		})
 	}

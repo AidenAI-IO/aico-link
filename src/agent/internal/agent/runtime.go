@@ -1502,9 +1502,10 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 				return !turn().SkipScreenshot
 			})
 		}
+		recalled := recalledMemoriesText(turn().Recalled)
 		entries := r.stateManager.GetAllStates()
 		// If neither runtime state nor a screenshot is available, just skip.
-		if len(entries) == 0 && attachment == nil {
+		if len(entries) == 0 && attachment == nil && recalled == "" {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,
 			}
@@ -1524,6 +1525,7 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		if caption := screenshotGroundingCaption(grounding); caption != "" {
 			formated.WriteString(caption + "\n")
 		}
+		formated.WriteString(recalled)
 		if formated.Len() == 0 && attachment == nil {
 			return contextmanager.AppendMessageHookResult{
 				Message: &message,

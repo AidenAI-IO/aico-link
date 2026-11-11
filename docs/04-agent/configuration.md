@@ -859,6 +859,13 @@ model can still call `screenshot`. The request is bounded at 4 seconds, and an
 unsure answer, a failed request or a disabled decision model keeps the
 screenshot.
 
+The same request also decides which saved memories bear on the request
+(`memory_recall`). Up to 20 of the highest-priority long-term memories are
+asked about, and up to 5 confidently relevant ones are added to the turn's
+state message. Sensitive memories are never offered this way; `recall_memory`
+still finds them, and any memory not recalled automatically, by topic. An
+unsure answer or a failed request recalls nothing.
+
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
 the Agent reaches both providers through the same proxy environment it uses for
 other model providers.
