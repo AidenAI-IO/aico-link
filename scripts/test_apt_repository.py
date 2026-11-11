@@ -176,7 +176,7 @@ class RepositoryTests(unittest.TestCase):
         self.release("0.0.6")
         suites = self.build()
         self.assertEqual(set(suites), {"dev-c1", "staging-c2", "dev-c3"})
-        self.assertEqual(suites["dev-c1"], ["dev-v0.0.2", "dev-v0.0.3"])
+        self.assertEqual(suites["dev-c1"], ["dev-v0.0.3"])
         with self.serve() as url:
             root = self.apt_fixture(device, url)
             system = self.site / "system"
@@ -305,14 +305,24 @@ class RepositoryTests(unittest.TestCase):
             self.build()
         self.assertFalse(self.site.exists())
 
-    def test_retention_preserves_old_contract_suites(self):
+    def test_retention_trims_superseded_contracts_to_fit_budget(self):
         self.release("0.0.2", kind="ota", contract=1)
         for version in ("0.0.3", "0.0.4", "0.0.5"):
             self.release(version)
         self.release("0.0.6", kind="ota", contract=2)
-        selected = repository.select_records(self.history, REPO)
-        self.assertEqual([r["version"] for r in selected["dev-c1"]], ["0.0.3", "0.0.4", "0.0.5"])
-        self.assertEqual([r["version"] for r in selected["dev-c2"]], ["0.0.6"])
+        self.release("0.0.7", kind="ota", contract=3)
+        for version in ("0.0.8", "0.0.9", "0.0.10"):
+            self.release(version)
+        versions = lambda selected: {suite: [r["version"] for r in items] for suite, items in selected.items()}
+        self.assertEqual(versions(repository.select_records(self.history, REPO)),
+                         {"dev-c1": ["0.0.5"], "dev-c2": ["0.0.6"], "dev-c3": ["0.0.8", "0.0.9", "0.0.10"]})
+        # The oldest superseded contract goes first; the current contract is never trimmed.
+        size = lambda *names: repository.package_size(r for r in self.history if r["version"] in names)
+        current = ("0.0.8", "0.0.9", "0.0.10")
+        self.assertEqual(versions(repository.select_records(self.history, REPO, budget=size("0.0.6", *current))),
+                         {"dev-c2": ["0.0.6"], "dev-c3": list(current)})
+        with self.assertRaisesRegex(ValueError, "Current platform contracts alone exceed"):
+            repository.select_records(self.history, REPO, budget=size(*current) - 1)
 
 
 class ConfigurationTests(unittest.TestCase):
