@@ -347,6 +347,12 @@ def prune_reproduction(plan: dict[str, list[str]], audit: dict,
     return pruned, {"targets": uncertain_targets}
 
 
+def stopped_at_setup(row: dict) -> bool:
+    """A failed attempt whose first failure was its setup step, before any agent turn ran."""
+    metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
+    return status_fields(row)[0] is False and metrics.get("first_failure_stage") == "setup"
+
+
 def complete(rows: list[dict], repeats: int) -> bool:
     return len(rows) == repeats and {r.get("repeat") for r in rows} == set(range(1, repeats + 1))
 
@@ -419,8 +425,11 @@ def compare(plan: dict[str, list[str]], baseline: dict[str, list[dict]],
     for metric in ("tool_calls", "total_tokens"):
         medians = []
         for side, data in (("baseline", baseline), ("candidate", candidate)):
-            values = [r.get("metrics", {}).get(metric)
-                      for keys in plan.values() for key in keys for r in data.get(key, [])]
+            # An attempt that failed its setup assertion never reached the agent turn, so it
+            # has no agent cost to measure; every other attempt must be measured.
+            rows = [r for keys in plan.values() for key in keys for r in data.get(key, [])
+                    if not stopped_at_setup(r)]
+            values = [r.get("metrics", {}).get(metric) for r in rows]
             if not values or any(isinstance(v, bool) or not isinstance(v, (int, float))
                                  or not math.isfinite(v) or v < 0 for v in values):
                 reasons.append(f"{side}: missing {metric} measurements")

@@ -182,6 +182,17 @@ def test_regression_tasks_are_screened_once_and_rerun_only_when_worse():
     assert any("regression set" in r for r in policy.compare(plan, baseline, candidate)["reasons"])
 
 
+def test_setup_scored_failures_need_no_agent_cost_measurement():
+    plan, baseline, candidate = pair()
+    # The baseline target failed its setup assertion, so no agent turn ran or was measured.
+    baseline["phone:tap"] = [row(i, False, tool_calls=None, total_tokens=None, first_failure_stage="setup")
+                             for i in range(1, 4)]
+    assert policy.compare(plan, baseline, candidate)["passed"]
+    # An unmeasured attempt that reached the agent turn still fails closed.
+    baseline["phone:tap"][0]["metrics"]["first_failure_stage"] = "planning"
+    assert not policy.compare(plan, baseline, candidate)["passed"]
+
+
 @pytest.mark.parametrize("mutation", ["duplicate", "judge", "infra", "regression", "missing_cost", "cost", "no_improvement"])
 def test_gate_rejects_unmeasured_or_regressing_changes(mutation):
     plan, baseline, candidate = pair()
