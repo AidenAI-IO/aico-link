@@ -394,11 +394,11 @@ def cli() -> int:
         print(name)
         return 0
     if args.operation == "policy":
-        policy = execution_policy(args.event, args.ref, args.mode,
-                                  args.publish_requested.lower() == "true")
+        decision = execution_policy(args.event, args.ref, args.mode,
+                                    args.publish_requested.lower() == "true")
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
-                for key, value in policy.items():
+                for key, value in decision.items():
                     stream.write(f"{key if key != 'mode' else 'value'}={str(value).lower() if isinstance(value, bool) else value}\n")
         return 0
     if args.out is None or (args.operation == "publish" and args.repo is None):

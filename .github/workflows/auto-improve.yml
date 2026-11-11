@@ -201,10 +201,12 @@ jobs:
           --out "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result"
       - name: Retain evidence for fourteen days
         id: evidence
-        if: always() && steps.artifact.outcome == 'success'
+        if: always() && steps.discover.outputs.found == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ steps.artifact.outputs.name }}
+          # If naming fails, still keep the evidence under a name nothing consumes:
+          # it neither marks sources processed nor enables publication.
+          name: ${{ steps.artifact.outputs.name || format('auto-improve-unnamed-{0}-{1}', github.run_id, github.run_attempt) }}
           retention-days: 14
           # Do not upload clones, daemon configurations, CLI sessions, or emulator disks.
           path: |

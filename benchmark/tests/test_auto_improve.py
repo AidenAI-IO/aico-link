@@ -308,6 +308,20 @@ def test_only_settled_main_runs_mark_sources_processed(ref, status, expected):
     assert policy.artifact_name(ref, "41-1__42-1", status) == expected + "41-1__42-1"
 
 
+@pytest.mark.parametrize("manifest,expected", [({"status": "completed"}, "auto-improve-source-"),
+                                               ({"status": "blocked"}, "auto-improve-retry-"),
+                                               (None, "auto-improve-retry-")])
+def test_artifact_command_names_by_settled_status(tmp_path, monkeypatch, manifest, expected):
+    if manifest is not None:
+        (tmp_path / "manifest.json").write_text(json.dumps(manifest))
+    output = tmp_path / "output"
+    monkeypatch.setenv("GITHUB_OUTPUT", str(output))
+    monkeypatch.setattr("sys.argv", ["control", "artifact", "--ref", "refs/heads/main",
+                                    "--identity", "41-1__42-1", "--out", str(tmp_path)])
+    assert control.cli() == 0
+    assert output.read_text() == f"name={expected}41-1__42-1\n"
+
+
 def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypatch):
     monkeypatch.delenv("GH_TOKEN", raising=False)
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
