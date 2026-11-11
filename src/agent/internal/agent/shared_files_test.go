@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -405,5 +406,84 @@ func TestSharedFilesListenerHonorsLANGuard(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("shutdown timed out")
+	}
+}
+
+func TestSharedFilesDelete(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AICO_SHARE_DIR", dir)
+	write := func(rel, content string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, rel)), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, rel), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("报告 (final).txt", "x")
+	write("outputs/report.pdf", "x")
+	write(".upload-partial", "x")
+	if err := os.Mkdir(filepath.Join(dir, "empty"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "private.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "escape.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Dir(outside), filepath.Join(dir, "linkdir")); err != nil {
+		t.Fatal(err)
+	}
+	handler := (&Server{}).sharedFilesHandler()
+	del := func(path, origin string) int {
+		request := httptest.NewRequest(http.MethodDelete, "http://board:8080/api/files?path="+url.QueryEscape(path), nil)
+		if origin != "" {
+			request.Header.Set("Origin", origin)
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response.Code
+	}
+	exists := func(rel string) bool {
+		_, err := os.Lstat(filepath.Join(dir, rel))
+		return err == nil
+	}
+
+	cases := []struct {
+		name, path, origin string
+		want               int
+		stays              string
+	}{
+		{"cross-origin browser", "报告 (final).txt", "https://untrusted.example", http.StatusForbidden, "报告 (final).txt"},
+		{"root", "", "", http.StatusBadRequest, "outputs"},
+		{"non-empty folder", "outputs", "", http.StatusConflict, "outputs/report.pdf"},
+		{"hidden entry", ".upload-partial", "", http.StatusNotFound, ".upload-partial"},
+		{"symlink to a file outside", "escape.txt", "", http.StatusNotFound, "escape.txt"},
+		{"through a symlinked folder", "linkdir/private.txt", "", http.StatusNotFound, "linkdir"},
+		{"traversal", "outputs/../../private.txt", "", http.StatusNotFound, "outputs"},
+		{"missing", "nope.txt", "", http.StatusNotFound, ""},
+		{"same-origin browser file", "报告 (final).txt", "http://board:8080", http.StatusNoContent, ""},
+		{"nested file", "outputs/report.pdf", "", http.StatusNoContent, ""},
+		{"emptied folder", "outputs", "", http.StatusNoContent, ""},
+		{"empty folder, trailing slash", "empty/", "", http.StatusNoContent, ""},
+	}
+	for _, tc := range cases {
+		if got := del(tc.path, tc.origin); got != tc.want {
+			t.Fatalf("%s: DELETE %q = %d, want %d", tc.name, tc.path, got, tc.want)
+		}
+		if tc.stays != "" && !exists(tc.stays) {
+			t.Fatalf("%s: %q was removed", tc.name, tc.stays)
+		}
+	}
+	for _, gone := range []string{"报告 (final).txt", "outputs", "empty"} {
+		if exists(gone) {
+			t.Fatalf("%q still exists after delete", gone)
+		}
+	}
+	if data, err := os.ReadFile(outside); err != nil || string(data) != "secret" {
+		t.Fatalf("file outside the shared root changed: %q %v", data, err)
 	}
 }

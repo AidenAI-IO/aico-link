@@ -14,9 +14,10 @@ local paths and to Web/App users as downloads.
 This uses the existing persistent userdata filesystem; it does not repartition
 or format the device. Files survive Agent restarts and rootfs slot updates.
 They consume userdata capacity and are not removed by clearing chat history.
-Delete files explicitly with normal device administration when no longer needed.
+Delete them through `DELETE /api/files`; see [Deleting files](#deleting-files).
 
-The Agent serves `POST /api/files`, `GET /api/files`, and `/share/` on its existing
+The Agent serves `POST /api/files`, `GET /api/files`, `DELETE /api/files`, and
+`/share/` on its existing
 HTTP port (8080). The device service also sets `AICO_SHARE_ADDR=0.0.0.0:8000` to
 start a listener exposing only these file routes. Both listeners follow the
 device's LAN access switch: requests from the USB link and the board are
@@ -120,6 +121,26 @@ to a temporary file and opens the system share sheet (including Save to Files);
 Android opens the system save-document picker and streams to the selected
 location. Neither platform requires broad storage access. Transfer errors are
 shown in the UI; selecting or canceling a picker does not send a chat turn.
+
+## Deleting files
+
+`DELETE /api/files?path=<relative path>` removes one regular file, or one empty
+folder, below the shared root. The path uses the same form as listings, for
+example `path=outputs/report.pdf`.
+
+| Response | Meaning |
+|---|---|
+| `204` | Deleted |
+| `400` | `path` is empty; the shared root itself cannot be deleted |
+| `404` | Not found, or not deletable: hidden entries, symbolic links (at any depth), special files, and paths outside the shared root all answer as absent |
+| `409` | The folder still has entries; delete its contents first |
+| `403` | A cross-origin browser request; same-origin Web pages and native clients are allowed |
+
+Deletion never removes a tree in one request and never follows a symbolic
+link, so a link inside `/share` cannot be used to delete files elsewhere.
+Chat messages that already reference a deleted file keep their download card;
+downloading it then fails with `404`. Deletion uses the same access rules as
+uploads (see below).
 
 Both ports use the same `lanaccess.Guard` as the Agent. LAN clients sign in at
 `/login` or `POST /api/auth/login`; browsers send the `aico_session` cookie and
