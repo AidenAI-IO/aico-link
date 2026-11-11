@@ -8,6 +8,9 @@ sidebar_position: 5
 > policy and orchestration tests exist; live model, Docker, GitHub publication,
 > and real-emulator acceptance still require deployment validation. The workflow
 > runs the full improve pipeline on enabled scheduled main runs and never auto-merges.
+>
+> A proposed successor that splits discovery and repair at an issue is described
+> in [Issue-Driven Auto-Fix Design](./issue-driven-auto-fix.md).
 
 Auto-improve turns the daily benchmark into a closed improvement loop: a
 separately scheduled worker consumes completed daily runs, diagnoses their

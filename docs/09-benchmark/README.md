@@ -753,5 +753,6 @@ runner APIs, but benchmark does not expose SkillOpt runs, suites, or reports.
 - [Realtime Collaboration Benchmark](./realtime-text-collaboration.md)
 - [Detailed Guide](./quickstart.md)
 - [Auto-Improve Workflow and Setup](./auto-improve.md)
+- [Issue-Driven Auto-Fix Design](./issue-driven-auto-fix.md)
 - [Environment Bridge Protocol](../../benchmark/environment_bridge.md)
 - [Full Manual](../../benchmark/manual.md)
