@@ -251,7 +251,7 @@ def test_environment_is_independent_of_suite_objective():
     assert environment_of({"suite": "phone_control_v1", "execution_environment": "external"}) == "External device"
     assert environment_of({"suite": "mobilegym_basic"}) == "Unknown"
     assert environment_of({"execution_environment": "adb"}) == "ADB device"
-    assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + AidenBridge"
+    assert environment_of({"execution_environment": "adb_aidenbridge"}) == "ADB + Aico App"
 
 
 @pytest.mark.parametrize("known_environment", [None, "adb"])

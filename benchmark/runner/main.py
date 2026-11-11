@@ -924,7 +924,7 @@ def _cmd_run_auto_agent_setup_inner(
                         result.hard_assertion_failures.append(HardAssertionFailure(
                             id="android_bridge_input",
                             label="Android Bridge Input",
-                            requirement="AidenBridge clipboard write and exact text in a non-Bridge editable field",
+                            requirement="Aico App clipboard write and exact text in a non-Bridge editable field",
                             actual=json.dumps(evidence, ensure_ascii=False),
                         ))
                         if result.status == "passed":
