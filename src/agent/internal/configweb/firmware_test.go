@@ -63,13 +63,22 @@ func TestBusinessPackageVersionRequiresInstalledState(t *testing.T) {
 	options := testOptions(t)
 	options.BusinessPackageQueryBinary = filepath.Join(t.TempDir(), "dpkg-query")
 	server := &Server{options: options}
-	for _, output := range []string{"install ok unpacked\t0.0.78-1", "deinstall ok config-files\t0.0.77-1", ""} {
-		if err := os.WriteFile(options.BusinessPackageQueryBinary, []byte("#!/bin/sh\nprintf '%s\\n' '"+output+"'\n"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if version := server.businessPackageVersion(); version != "" {
-			t.Fatalf("state %q returned version %q", output, version)
-		}
+	for _, test := range []struct{ output, want string }{
+		{"install ok installed\t0.0.78-1", "0.0.78-1"},
+		{"hold ok installed\t0.0.78-1", "0.0.78-1"},
+		{"install ok unpacked\t0.0.78-1", ""},
+		{"hold ok unpacked\t0.0.78-1", ""},
+		{"deinstall ok config-files\t0.0.77-1", ""},
+		{"", ""},
+	} {
+		t.Run(test.output, func(t *testing.T) {
+			if err := os.WriteFile(options.BusinessPackageQueryBinary, []byte("#!/bin/sh\nprintf '%s\\n' '"+test.output+"'\n"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if version := server.businessPackageVersion(); version != test.want {
+				t.Fatalf("state %q returned version %q, want %q", test.output, version, test.want)
+			}
+		})
 	}
 }
 

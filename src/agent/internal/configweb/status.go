@@ -330,7 +330,7 @@ func (s *Server) businessPackageVersion() string {
 		return ""
 	}
 	status, version, found := strings.Cut(strings.TrimSpace(string(result.Output)), "\t")
-	if !found || status != "install ok installed" {
+	if !found || (status != "install ok installed" && status != "hold ok installed") {
 		return ""
 	}
 	return strings.TrimSpace(version)

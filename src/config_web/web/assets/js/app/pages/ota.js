@@ -45,10 +45,8 @@ function localTime(value) {
 
 
 async function readStatus() {
-  const [ota, snapshot] = await Promise.all([
-    request('/api/ota/status'),
-    fetchSnapshot().catch(() => ({})),
-  ]);
+  const ota = await request('/api/ota/status');
+  const snapshot = await fetchSnapshot().catch(() => ({}));
   return {ota, firmware: (snapshot && snapshot.firmware) || {}};
 }
 
