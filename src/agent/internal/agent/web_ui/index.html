@@ -120,6 +120,10 @@
                     <div class="resource-reading"><span>Memory</span><span id="resourceMemory">Unavailable</span></div>
                     <meter id="resourceMemoryMeter" min="0" max="100" value="0" aria-label="Memory usage" hidden></meter>
                 </div>
+                <div class="resource-gauge">
+                    <div class="resource-reading"><span title="Contiguous memory reserved for camera, NPU and other DMA buffers">CMA</span><span id="resourceCMA">Unavailable</span></div>
+                    <meter id="resourceCMAMeter" min="0" max="100" value="0" aria-label="CMA usage" hidden></meter>
+                </div>
                 <div class="resource-storage">
                     <div class="resource-caption">Storage</div>
                     <div id="resourceDisks">Unavailable</div>
@@ -130,6 +134,7 @@
                         <dt>Network addresses</dt><dd id="resourceAddresses">Unavailable</dd>
                         <dt>Traffic totals · RX / TX</dt><dd id="resourceTotals">Unavailable</dd>
                         <dt>Memory · used / total</dt><dd id="resourceMemoryDetail">Unavailable</dd>
+                        <dt>CMA · allocated / reserved</dt><dd id="resourceCMADetail">Unavailable</dd>
                         <dt>Storage · used / total</dt><dd id="resourceDiskDetails">Unavailable</dd>
                     </dl>
                 </details>

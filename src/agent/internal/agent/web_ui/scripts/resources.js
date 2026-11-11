@@ -107,9 +107,11 @@ function renderResources(snapshot) {
     }
     gauge('CPU', cpu, cpu === null && snapshot.cpu ? 'Sampling…' : resourcePercent(cpu));
     gauge('NPU', snapshot.npu_percent);
-    gauge('Memory', resourceUsagePercent(snapshot.memory));
-    document.getElementById('resourceMemoryMeter').title = resourceUsageText(snapshot.memory);
-    set('MemoryDetail', resourceUsageText(snapshot.memory));
+    for (const [name, usage] of [['Memory', snapshot.memory], ['CMA', snapshot.cma]]) {
+        gauge(name, resourceUsagePercent(usage));
+        document.getElementById('resource' + name + 'Meter').title = resourceUsageText(usage);
+        set(name + 'Detail', resourceUsageText(usage));
+    }
     renderResourceDisks(snapshot.disks || []);
     set('DiskDetails', (snapshot.disks || []).map(disk => disk.path + ': ' + resourceUsageText(disk.usage)).join('\n') || 'Unavailable');
     set('Status', 'Live · 1s');

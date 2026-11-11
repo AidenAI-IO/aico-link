@@ -43,9 +43,10 @@ In the firmware, it is installed by default to:
 
 The sidebar refreshes hardware resources every second while the page is visible:
 Wi-Fi interface IP addresses, RX/TX rates and cumulative byte counters, battery
-percentage and voltage, CPU and NPU utilization, memory usage, and disk usage
-for the root filesystem and mounted local block devices (including userdata and
-mounted SD cards). Battery, CPU, NPU, memory, and disk usage use compact meters.
+percentage and voltage, CPU and NPU utilization, memory and CMA usage, and disk
+usage for the root filesystem and mounted local block devices (including userdata
+and mounted SD cards). Battery, CPU, NPU, memory, CMA, and disk usage use compact
+meters.
 Voltage appears alongside battery level; full network addresses, traffic totals,
 and exact storage sizes are available under **Details**. Bind mounts of the same
 block device share one disk entry. The terminal opens in a separate tab through `/webtty/`.
@@ -54,7 +55,11 @@ block device share one disk entry. The terminal opens in a separate tab through 
 and sysfs provide CPU counters, memory and Wi-Fi statistics; Rockchip's
 `/sys/kernel/debug/rknpu/load` (or `/proc/rknpu/load`) provides NPU utilization.
 Memory usage excludes available memory, disk usage excludes free blocks, and
-NPU utilization is the mean across reported cores. Battery readings come from
+NPU utilization is the mean across reported cores. CMA usage is the contiguous
+memory allocated from the reserved CMA pool (camera, NPU, and other DMA
+buffers); it comes from `CmaAllocated` in `/proc/meminfo` because the RV1106
+kernel keeps CMA inactive (`CONFIG_CMA_INACTIVE`), which leaves `CmaFree` at
+zero. Kernels without `CmaAllocated` fall back to `CmaTotal - CmaFree`. Battery readings come from
 the MCU service with a bounded timeout. Missing or unreadable metrics appear as
 `Unavailable`; CPU and network rates need two samples. Requests never overlap,
 hidden pages pause polling, and failed requests clear stale readings and retry.
