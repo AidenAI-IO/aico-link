@@ -38,6 +38,7 @@ func TestAppendToolExecutionMessagesPersistsPreparedContentAndMetadata(t *testin
 		ArtifactComplete: true,
 		Reason:           ToolResultReasonIntrinsicLarge,
 		Summary:          "exit_code=1",
+		IsError:          true,
 	}
 	step := schema.AgentStep{
 		Action:      schema.AgentAction{ToolID: "call_1", Tool: "shell"},
@@ -62,6 +63,10 @@ func TestAppendToolExecutionMessagesPersistsPreparedContentAndMetadata(t *testin
 	}
 	if stored.Meta == nil || stored.Meta.ArtifactPath != prepared.ArtifactPath || stored.Meta.Summary != prepared.Summary {
 		t.Fatalf("stored metadata = %#v", stored.Meta)
+	}
+	// History must report the failure the live stream showed.
+	if history, ok := webMessageFromContextMessage(storedMessages[1], "backend"); !ok || !history.IsError {
+		t.Fatalf("history tool result = %#v, want is_error", history)
 	}
 }
 
