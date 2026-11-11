@@ -50,6 +50,7 @@ function sample(overrides = {}) {
         battery: {percent: 0, millivolts: 3700},
         cpu: {total: 100, idle: 50}, npu_percent: 0,
         memory: {used_bytes: 1024, total_bytes: 2048},
+        cma: {used_bytes: 1024, total_bytes: 4096},
         disks: [{path: '/userdata', usage: {used_bytes: 1024, total_bytes: 4096}}],
         ...overrides,
     };
@@ -67,6 +68,8 @@ test('resources render actual utilization, rates, totals and unavailable metrics
     assert.equal(h.text('Memory'), '50%');
     assert.equal(h.text('MemoryDetail'), '1.0 KiB / 2.0 KiB (50%)');
     assert.equal(h.document.getElementById('resourceMemoryMeter').value, 50);
+    assert.equal(h.text('CMA'), '25%');
+    assert.equal(h.text('CMADetail'), '1.0 KiB / 4.0 KiB (25%)');
     assert.equal(h.document.getElementById('resourceBatteryMeter').hidden, false);
     assert.equal(h.document.getElementById('resourceBatteryMeter').value, 0);
     assert.equal(h.text('Disks'), 'Data25%');
@@ -77,8 +80,8 @@ test('resources render actual utilization, rates, totals and unavailable metrics
     assert.equal(h.text('RX'), '2.0 KiB/s');
     assert.equal(h.text('TX'), '1.0 KiB/s');
     h.context.renderResources(sample({sampled_at_ms: 4000, battery: null, cpu: null,
-        npu_percent: null, memory: null, wifi: [], disks: []}));
-    for (const name of ['Battery', 'CPU', 'NPU', 'Memory', 'WiFi', 'RX', 'TX', 'Disks']) {
+        npu_percent: null, memory: null, cma: null, wifi: [], disks: []}));
+    for (const name of ['Battery', 'CPU', 'NPU', 'Memory', 'CMA', 'WiFi', 'RX', 'TX', 'Disks']) {
         assert.equal(h.text(name), 'Unavailable', name);
     }
 });
