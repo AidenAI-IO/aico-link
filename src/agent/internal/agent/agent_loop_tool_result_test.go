@@ -23,7 +23,8 @@ import (
 )
 
 func TestAppendToolExecutionMessagesPersistsPreparedContentAndMetadata(t *testing.T) {
-	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), nil)
+	sessionFolder := t.TempDir()
+	manager, err := contextmanager.NewContextManagerFromMessageList(sessionFolder, nil)
 	if err != nil {
 		t.Fatalf("NewContextManagerFromMessageList() error = %v", err)
 	}
@@ -64,9 +65,17 @@ func TestAppendToolExecutionMessagesPersistsPreparedContentAndMetadata(t *testin
 	if stored.Meta == nil || stored.Meta.ArtifactPath != prepared.ArtifactPath || stored.Meta.Summary != prepared.Summary {
 		t.Fatalf("stored metadata = %#v", stored.Meta)
 	}
-	// History must report the failure the live stream showed.
-	if history, ok := webMessageFromContextMessage(storedMessages[1], "backend"); !ok || !history.IsError {
-		t.Fatalf("history tool result = %#v, want is_error", history)
+	// History, reloaded from disk, must report the failure the live stream showed.
+	reloaded, err := contextmanager.LoadContextManagerFromSessionID(sessionFolder, manager.GetSessionID())
+	if err != nil {
+		t.Fatalf("LoadContextManagerFromSessionID() error = %v", err)
+	}
+	reloadedMessages := reloaded.CloneMessageList()
+	if len(reloadedMessages) != 2 {
+		t.Fatalf("reloaded messages = %#v, want tool call and result", reloadedMessages)
+	}
+	if history, ok := webMessageFromContextMessage(reloadedMessages[1], "backend"); !ok || !history.IsError {
+		t.Fatalf("reloaded history tool result = %#v, want is_error", history)
 	}
 }
 
