@@ -53,7 +53,7 @@ aico-link-firmware/
 | `cmd/benchmark-http` | Standalone LLM endpoint latency probe |
 | `cmd/test-warmup` | Connection warmup measurement harness |
 | `internal/agent/runtime.go` | Model invocation, tool loop, and runtime lifecycle |
-| `internal/agent/realtimevoice` | Provider-neutral realtime voice session seam and native Qwen, OpenAI, xAI, Gemini, and Speko adapters |
+| `internal/agent/realtimevoice` | Provider-neutral realtime voice session seam and native Qwen, OpenAI, xAI, Gemini, Speko, and Moss adapters |
 | `internal/agent/server.go` | HTTP server, Web UI, and tool API |
 | `internal/agent/tools*.go` | HID, screenshot, audio, shell, and other tools |
 | `internal/agent/stt.go`, `internal/agent/tts/`, `vad.go` | Voice pipeline |

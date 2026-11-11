@@ -200,7 +200,7 @@ func (s *Server) handleCollaboration(w http.ResponseWriter, req *http.Request) {
 	status["execution_mode"] = "realtime-text"
 	status["handler_ready"] = s.realtimeChatHandlerSnapshot() != nil
 	status["input_mode"] = cfg.InputModeOrDefault()
-	status["use_backend_agent"] = cfg.VoiceModel.UseBackendAgent
+	status["use_backend_agent"] = cfg.UseBackendAgentEffective()
 	status["foreground_provider"] = cfg.VoiceModel.Provider
 	status["foreground_model"] = cfg.VoiceModel.Model
 	status["backend_provider"] = cfg.Model.Provider

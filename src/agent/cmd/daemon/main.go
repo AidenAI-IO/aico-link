@@ -156,7 +156,7 @@ func main() {
 		}
 	}
 	if *benchmarkRealtimeText {
-		if cfg.Benchmark.Token == "" || cfg.InputModeOrDefault() != "realtime" || !cfg.VoiceModel.UseBackendAgent {
+		if cfg.Benchmark.Token == "" || cfg.InputModeOrDefault() != "realtime" || !cfg.UseBackendAgentEffective() {
 			fmt.Fprintln(os.Stderr, "benchmark-realtime-text requires a benchmark token, realtime input mode and use_backend_agent=true")
 			os.Exit(1)
 		}

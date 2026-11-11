@@ -93,6 +93,9 @@ func DefaultProviderRegistry() *ProviderRegistry {
 	r.Register(ProviderXAI, func(c ProviderConfig) Provider {
 		return XAIProvider{Endpoint: c.Endpoint}
 	})
+	r.Register(ProviderMoss, func(c ProviderConfig) Provider {
+		return MossProvider{Endpoint: c.Endpoint}
+	})
 	return r
 }
 

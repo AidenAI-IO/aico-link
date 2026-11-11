@@ -304,10 +304,10 @@ jobs:
           echo "$ANDROID_SERIAL did not finish booting" >&2
           adb devices >&2
           exit 1
-      - name: Install AidenBridge on Android device
+      - name: Install Aico App on Android device
         id: aidenbridge_install
         if: ${{ contains(needs.plan.outputs.matrix, '"android_phone_bridge":true') }}
-        # Only AidenBridge cases need the app. A failed install marks those
+        # Only Aico App cases need the app. A failed install marks those
         # cases as failed in ci.run_cases instead of stopping every other case.
         continue-on-error: true
         run: |
@@ -316,7 +316,7 @@ jobs:
           release_name="$(curl --fail --silent --show-error --location --head --retry 3 --max-time 30 "$AIDENBRIDGE_APK_URL" |
             tr -d '\r' | sed -n 's/^[Cc]ontent-[Dd]isposition:.*filename="\([^"]*\)".*/\1/p' | tail -n 1)"
           [[ "$release_name" =~ -([0-9]+)\.apk$ ]] || {
-            echo "Cannot determine AidenBridge version from release filename: $release_name" >&2
+            echo "Cannot determine Aico App version from release filename: $release_name" >&2
             exit 1
           }
           release_version="${BASH_REMATCH[1]}"
@@ -334,7 +334,7 @@ jobs:
             echo "Downloading $release_name"
             curl --fail --location --retry 3 --max-time 180 "$AIDENBRIDGE_APK_URL" --output "$apk_path"
             apk_sha256="$(sha256sum "$apk_path" | cut -d ' ' -f 1)"
-            echo "AidenBridge APK SHA-256: $apk_sha256"
+            echo "Aico App APK SHA-256: $apk_sha256"
             adb -s "$ANDROID_SERIAL" install -r "$apk_path"
             installed_version="$(adb -s "$ANDROID_SERIAL" shell dumpsys package "$AIDENBRIDGE_PACKAGE" |
               sed -n 's/^[[:space:]]*versionCode=\([0-9][0-9]*\).*/\1/p')"
@@ -346,7 +346,7 @@ jobs:
             echo "Installed $AIDENBRIDGE_PACKAGE version $installed_version"
           fi
           {
-            echo "### AidenBridge APK"
+            echo "### Aico App APK"
             echo "Source: $AIDENBRIDGE_APK_URL"
             echo "Release: $release_name"
             echo "Installed versionCode: $installed_version"
@@ -355,7 +355,7 @@ jobs:
               echo "SHA-256: $apk_sha256"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
-      - name: Enable emulator routing for AidenBridge cases
+      - name: Enable emulator routing for Aico App cases
         id: aidenbridge_routing
         if: ${{ steps.aidenbridge_install.outcome == 'success' }}
         continue-on-error: true
@@ -364,7 +364,7 @@ jobs:
           adb -s "$ANDROID_SERIAL" root
           timeout 60 adb -s "$ANDROID_SERIAL" wait-for-device
           [[ "$(adb -s "$ANDROID_SERIAL" shell id -u | tr -d '\r')" == "0" ]] || {
-            echo "AidenBridge capability benchmark requires a rooted Android emulator" >&2
+            echo "Aico App capability benchmark requires a rooted Android emulator" >&2
             exit 1
           }
           adb -s "$ANDROID_SERIAL" shell iptables -t nat -L OUTPUT -n >/dev/null
@@ -388,7 +388,7 @@ jobs:
         env:
           MATRIX: ${{ needs.plan.outputs.matrix }}
           RUN_ID_PREFIX: ci-${{ github.run_id }}-${{ github.run_attempt }}
-          # 0 only when AidenBridge cases are planned and their device setup failed.
+          # 0 only when Aico App cases are planned and their device setup failed.
           AIDENBRIDGE_READY: ${{ (steps.aidenbridge_install.outcome == 'failure' || steps.aidenbridge_routing.outcome == 'failure') && '0' || '1' }}
         run: >-
           uv run python -m ci.run_cases

@@ -115,7 +115,8 @@ func TestManagedSessionHidesProviderMediaFormat(t *testing.T) {
 		t.Fatalf("provider formats = %+v/%+v, want native 24000", info.ProviderInputAudioFormat, info.ProviderOutputAudioFormat)
 	}
 	if !info.Capabilities.CanCommitInputTurn || !info.Capabilities.CanInterruptResponse ||
-		!info.Capabilities.CanSendToolResult || !info.Capabilities.CanSendText || !info.Capabilities.CanReplayContext {
+		!info.Capabilities.CanSendToolResult || !info.Capabilities.CanContinueResponse ||
+		!info.Capabilities.CanSendText || !info.Capabilities.CanReplayContext {
 		t.Fatalf("managed capabilities = %+v, want all test capabilities", info.Capabilities)
 	}
 

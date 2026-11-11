@@ -1,7 +1,7 @@
 {
   "name": "aico_app_android_bridge_capabilities_v1",
   "suite_category": "Aiden App / Real Connection",
-  "description": "Verify AidenBridge clipboard, launch, calendar, contacts, notification, and text-entry behavior on the connected Android emulator.",
+  "description": "Verify Aico App clipboard, launch, calendar, contacts, notification, and text-entry behavior on the connected Android emulator.",
   "prompt_prefix": "",
   "global_reset": {},
   "tasks": [
@@ -34,7 +34,7 @@
       "id": "open_url_through_bridge",
       "foreground_app_id": "link.aico.app",
       "category": "single_step",
-      "description_for_judge": "Open the exact URL through the connected AidenBridge semantic command, without Android UI navigation.",
+      "description_for_judge": "Open the exact URL through the connected Aico App semantic command, without Android UI navigation.",
       "prompt": "Open https://example.com/ directly through the connected phone's Bridge. Do not operate the browser UI manually.",
       "rubric": [
         {"id": "url_command_succeeded", "check": "The Agent calls open_url for exactly https://example.com/ and the Phone Bridge result succeeds."},
@@ -55,7 +55,7 @@
       "id": "open_app_through_bridge",
       "foreground_app_id": "link.aico.app",
       "category": "single_step",
-      "description_for_judge": "Launch Android Settings through the foreground AidenBridge semantic app command.",
+      "description_for_judge": "Launch Android Settings through the foreground Aico App semantic app command.",
       "prompt": "Open Android Settings through the connected phone's Bridge. Do not tap an app icon or search for the app on screen.",
       "rubric": [
         {"id": "app_command_succeeded", "check": "open_app launches Settings successfully through the foreground Phone Bridge route."},
@@ -208,7 +208,7 @@
       "id": "settings_search_unicode_input",
       "foreground_app_id": "link.aico.app",
       "category": "device_operation",
-      "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new AidenBridge clipboard write and exact UIAutomator field text.",
+      "description_for_judge": "Use enter_text in Android Settings search; the harness also requires a new Aico App clipboard write and exact UIAutomator field text.",
       "prompt": "Open Android Settings, tap its search field, and enter exactly this text without submitting the search: Aiden résumé check #42. Use enter_text once the editable field is visible, then leave that field on screen.",
       "android_bridge_input_text": "Aiden résumé check #42",
       "rubric": [
