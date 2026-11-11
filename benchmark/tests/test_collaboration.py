@@ -180,6 +180,16 @@ def test_claim_extraction_times_claims_by_first_visible_prefix_and_keeps_correct
     with pytest.raises(ValueError, match="every foreground output"):
         validate_claims(parsed, outputs, {"A"})
 
+    # Gemini Live returns no response IDs: replies are told apart by the daemon's
+    # response request identity instead of being merged into one output.
+    def untagged(sequence, request, text):
+        item = foreground(sequence, "text.delta", text)
+        item["response_id"] = ""
+        item["collaboration"]["response_request_id"] = request
+        return item
+    replies = foreground_outputs([untagged(5, "req-1", "Working on it."), untagged(6, "req-2", "Posted.")])
+    assert [(o["response_id"], o["text"]) for o in replies] == [("req-1", "Working on it."), ("req-2", "Posted.")]
+
 
 def test_collector_replays_only_after_durable_cursor_and_rejects_gaps(tmp_path):
     collector = CollaborationEventCollector(None, tmp_path / "events.jsonl")
