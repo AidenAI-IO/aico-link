@@ -124,25 +124,43 @@ const expandedLines = new Map();
 let freshCollapsibleLines = [];
 const knownLineKeys = new Set();
 
+// A row's signature: its slot in the message, the message's text, and its own
+// text. Rows sharing one are told apart by their position on the page.
+function lineSignature(options) {
+    return [options.kind, options.group, options.text].join('\u001e');
+}
+
+function sameSignatureLines(signature) {
+    return Array.from(document.querySelectorAll('.collapsible-line'))
+        .filter(block => block._lineSignature === signature);
+}
+
 function migrateExpandedLines() {
-    const fresh = freshCollapsibleLines.filter(block => block.isConnected &&
-        !expandedLines.has(block._lineKey) && !knownLineKeys.has(block._lineKey));
+    const fresh = new Set(freshCollapsibleLines.filter(block => block.isConnected &&
+        !expandedLines.has(block._lineKey) && !knownLineKeys.has(block._lineKey)));
     freshCollapsibleLines.forEach(block => knownLineKeys.add(block._lineKey));
     if (knownLineKeys.size > 2000) knownLineKeys.clear();
     freshCollapsibleLines = [];
-    Array.from(expandedLines).forEach(function([key, entry]) {
+    const moved = [];
+    expandedLines.forEach(function(entry, key) {
         if (entry.block.isConnected) return;
         expandedLines.delete(key);
-        // Kind is the row's slot in its message and group is the message's
-        // whole text, so identical rows in one message or in different
-        // messages keep their own state. Fully identical messages match in
-        // page order.
-        const index = fresh.findIndex(block => block._lineKind === entry.kind &&
-            block._lineText === entry.text && block._lineGroup === entry.group);
-        if (index < 0) return;
-        const target = fresh.splice(index, 1)[0];
-        expandedLines.set(target._lineKey, {kind: entry.kind, text: entry.text, group: entry.group, block: target});
+        // Prefer the replacement at the removed row's position among rows
+        // with the same signature, so of identical messages the same one
+        // stays open.
+        const rows = sameSignatureLines(entry.signature);
+        const target = fresh.has(rows[entry.position]) ? rows[entry.position] : rows.find(block => fresh.has(block));
+        if (!target) return;
+        fresh.delete(target);
+        moved.push([target, entry]);
+    });
+    moved.forEach(function([target, entry]) {
+        expandedLines.set(target._lineKey, Object.assign({}, entry, {block: target}));
         target._syncExpanded(true);
+    });
+    // Messages arriving or leaving shift positions; keep them current.
+    expandedLines.forEach(function(entry) {
+        if (entry.block.isConnected) entry.position = sameSignatureLines(entry.signature).indexOf(entry.block);
     });
 }
 
@@ -274,17 +292,14 @@ function createCollapsibleLine(options) {
     const expanded = !!entry;
     if (entry) {
         // A streaming re-render: keep one entry, now pointing at this row.
-        entry.text = options.text;
-        entry.group = options.group;
+        entry.signature = lineSignature(options);
         entry.block = block;
     } else {
         block._lineKey = key;
-        block._lineKind = options.kind;
-        block._lineText = options.text;
-        block._lineGroup = options.group;
         freshCollapsibleLines.push(block);
         if (freshCollapsibleLines.length > 400) freshCollapsibleLines.splice(0, 200);
     }
+    block._lineSignature = lineSignature(options);
     block.className = 'collapsible-line ' + options.className + (expanded ? ' expanded' : '');
     block.tabIndex = 0;
     block.setAttribute('role', 'button');
@@ -307,8 +322,11 @@ function createCollapsibleLine(options) {
         const selection = window.getSelection ? window.getSelection() : null;
         if (selection && !selection.isCollapsed && block.contains(selection.anchorNode)) return;
         const open = !block.classList.contains('expanded');
-        if (open) expandedLines.set(key, {kind: options.kind, text: options.text, group: options.group, block});
-        else expandedLines.delete(key);
+        if (open) {
+            const signature = lineSignature(options);
+            expandedLines.set(key, {signature, block, position: sameSignatureLines(signature).indexOf(block)});
+        }
+        if (!open) expandedLines.delete(key);
         sync(open);
     }
     block._syncExpanded = sync;

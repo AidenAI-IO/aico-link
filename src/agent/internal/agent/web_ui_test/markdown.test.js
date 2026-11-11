@@ -126,7 +126,12 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
         addEventListener(type, handler) { this.handlers[type] = handler; }
         click() { this.handlers.click(); }
     }
-    context.document = {createElement: () => new Element()};
+    // Rows in creation order stand in for page order.
+    const created = [];
+    context.document = {
+        createElement: () => { const element = new Element(); created.push(element); return element; },
+        querySelectorAll: () => created.filter(element => element.isConnected && element.classes.has('collapsible-line'))
+    };
     context.window = {};
     const line = (key, text, kind = 'speech:0', group = '') => {
         const block = context.createCollapsibleLine({className: 'tts-block', iconClass: 'tts-icon', textClass: 'tts-text',
@@ -136,7 +141,7 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     };
     const expanded = block => block.classList.contains('expanded');
     const expandedLines = () => vm.runInContext('expandedLines', context);
-    const entries = () => Array.from(expandedLines().values()).map(entry => entry.text);
+    const entries = () => Array.from(expandedLines().values()).map(entry => entry.signature.split('\u001e').pop());
 
     let row = line('live', 'Hel');
     row.click();
@@ -187,6 +192,20 @@ assert.deepEqual(speech('<tts>Streaming'), ['S:Streaming']);
     const contextB = line('context-b\u001f0', 'Done.', 'speech:0', 'Done. Lights are off.');
     context.migrateExpandedLines();
     assert.deepEqual([expanded(contextA), expanded(contextB)], [false, true]);
+
+    // Two fully identical messages: the second keeps its state by position.
+    contextB.click();
+    context.migrateExpandedLines();
+    const sameA = line('run-c\u001f0', 'Ok.', 'speech:0', 'Ok.');
+    const sameB = line('run-d\u001f0', 'Ok.', 'speech:0', 'Ok.');
+    context.migrateExpandedLines();
+    sameB.click();
+    sameA.isConnected = false;
+    sameB.isConnected = false;
+    const reloadedA = line('context-c\u001f0', 'Ok.', 'speech:0', 'Ok.');
+    const reloadedB = line('context-d\u001f0', 'Ok.', 'speech:0', 'Ok.');
+    context.migrateExpandedLines();
+    assert.deepEqual([expanded(reloadedA), expanded(reloadedB)], [false, true]);
 }
 
 console.log('markdown tests passed');
