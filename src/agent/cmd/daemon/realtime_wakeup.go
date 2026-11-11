@@ -1367,12 +1367,22 @@ func realtimeVoiceDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	}
 }
 
-// realtimeVoicePlaybackDeviceFormat leaves SampleRate unset so the managed
-// realtime session follows the provider's native output rate. audio_service
-// opens an exact ALSA device rate and uses Rockchip AO resampler for 24 kHz
-// input; that keeps the Go userspace 24k→16k resampler off the hot path.
+// realtimeVoicePlaybackDeviceFormat chooses the PCM rate the managed session
+// exposes to audio_service.
+//
+// For most providers SampleRate stays unset so the session follows the
+// provider-native rate and audio_service/AO owns conversion (notably Qwen's
+// 24 kHz→16 kHz path, which keeps Go userspace resampling off the hot path).
+//
+// Moss Live is native 48 kHz. Pushing that PCM through audio_service and
+// relying on AO 48→16 underruns on current boards, so keep the board capture
+// rate here and let the managed session resample 48→16 in userspace — the path
+// that previously played smoothly.
 func realtimeVoicePlaybackDeviceFormat(cfg agent.Config) realtimevoice.AudioFormat {
 	format := realtimeVoiceDeviceFormat(cfg)
+	if realtimeProviderType(cfg) == realtimevoice.ProviderMoss {
+		return format
+	}
 	format.SampleRate = 0
 	return format
 }
