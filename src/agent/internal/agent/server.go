@@ -3967,6 +3967,7 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		if len(item.ToolResults) > 0 {
 			message.ToolName = item.ToolResults[0].Name
 			message.Content = item.ToolResults[0].Content
+			message.IsError = item.ToolResults[0].Meta != nil && item.ToolResults[0].Meta.IsError
 		}
 	case messages.MessageRoleNotice:
 		message.Type = "notice"

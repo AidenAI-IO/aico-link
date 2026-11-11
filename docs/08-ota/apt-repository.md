@@ -35,6 +35,11 @@ Packages for a new contract do not appear as candidates for an old contract. A d
 switches to the repository for the new base contract only after installing the new OTA.
 The package's preinst still checks the channel, contract, base release tag, and system fingerprint.
 
+The firmware page shows the installed business release beside the base firmware
+version (for example, `dev-v0.0.77 + aico-business-v0.0.78`). It reads the
+configured package from dpkg, so a business-only upgrade changes the displayed
+version without changing the base firmware version.
+
 Config Web's "Check and install updates" action (`POST /api/ota/updates`) starts
 `aico-hybrid-update.service`, which proceeds in this order:
 
@@ -128,13 +133,14 @@ only after publication or a manual trigger. APT still verifies index signatures 
 package checksums, and new versions in all three channels are still published manually.
 The Pages `github-pages` Environment must allow the branch running the release workflow.
 
-The latest three published packages are retained for each channel/contract combination,
-and repositories for old contracts remain available. Indexes use APT by-hash downloads;
-package paths are fixed by contract and release tag. Run `apt update` again if an old
-cache references a package that has been cleaned up. Deployment stops if the site exceeds
-900 MiB, preserving the old site. At that point, archive unsupported contracts to other
-static storage and adjust the generation policy; do not simply delete contract
-repositories still used by devices.
+Each channel's current contract retains its latest three published packages. Superseded
+contracts retain only their latest package, because hybrid updates install the OTA (and
+move the device to the current contract) before reading APT. If packages would exceed the
+900 MiB Pages budget, the oldest superseded contract suites are dropped until the site
+fits; the current contracts are never trimmed. Indexes use APT by-hash downloads; package
+paths are fixed by contract and release tag. Run `apt update` again if an old cache
+references a package that has been cleaned up. Deployment stops, preserving the old site,
+only if the current contracts alone exceed the budget or the built site still does.
 
 Source records, SHA256, package architecture/version, and embedded contracts must all pass
 validation before the entire site is signed and deployed atomically. The private key is

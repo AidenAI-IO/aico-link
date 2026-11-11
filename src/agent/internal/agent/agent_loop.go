@@ -522,6 +522,7 @@ func (l *AgentLoop) runIteration(ctx context.Context, iteration int, callOptions
 			},
 		})
 	}
+	prepared.IsError = toolExecution.Result.IsError()
 	appendErr := appendToolExecutionMessages(llmExecutor, parser, toolCallMessage, toolExecution.Step, prepared)
 	if err := ctx.Err(); err != nil {
 		if appendErr != nil {
@@ -1000,7 +1001,7 @@ func appendToolExecutionMessages(llmExecutor *executor.LLMExecutor, parser *Func
 		if content, visualFollowups := parser.observationMessagesForStep(step); len(visualFollowups) > 0 {
 			toolContent = content
 			followups = visualFollowups
-			prepared = PreparedToolResult{Content: content, Complete: true}
+			prepared = PreparedToolResult{Content: content, Complete: true, IsError: prepared.IsError}
 		}
 	}
 	prepared.Content = toolContent
