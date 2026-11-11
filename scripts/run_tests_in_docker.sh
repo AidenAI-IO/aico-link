@@ -28,7 +28,6 @@ Environment:
   AICO_TEST_JOBS    Parallel build jobs inside the container
   AICO_TEST_SUMMARY JSON summary output path
   AICO_TEST_SKIP_BUILD  Use an image built by CI's persistent BuildKit cache
-  AICO_TEST_TMPFS   Set to 1 to keep test temporary files in container memory
 EOF
 }
 
@@ -120,14 +119,6 @@ docker_args=(
     --volume "$CACHE_DIR:/tmp/aico-cache"
     --workdir "$REPO_ROOT"
 )
-# Shared runners can have slow synchronous disk writes. Opting in keeps test
-# scratch files, including Go test binaries, in memory without changing the tests.
-if [ "${AICO_TEST_TMPFS:-0}" = "1" ]; then
-    docker_args+=(
-        --tmpfs /tmp/aico-tmp:rw,exec,nosuid,size=8g,mode=1777
-        --env TMPDIR=/tmp/aico-tmp
-    )
-fi
 # Do not expose the host daemon to ordinary PR test commands. A suite that
 # explicitly needs sibling containers must opt in, so the privilege boundary is
 # visible at the call site.
