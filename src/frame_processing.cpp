@@ -145,31 +145,21 @@ static bool is_black_luma_line(const FrameMetadata& metadata,
     return mean <= 30.0 && std::sqrt(variance) <= 6.0;
 }
 
-// Like is_black_luma_line, but only over [begin, end) along the line. Used
-// to test a removed band against the region the other orientation would
-// keep, where a phone's content actually sits.
-static bool is_black_luma_span(const FrameMetadata& metadata,
-                               const std::vector<uint8_t>& frame,
-                               bool vertical,
-                               uint32_t position,
-                               uint32_t begin,
-                               uint32_t end) {
-    if (begin >= end) {
-        return true;
+// Counts pixels in [x0, x1) x [y0, y1) that are clearly brighter than a
+// black border. Used to measure how much visible content a crop removes.
+static uint64_t count_content_pixels(const FrameMetadata& metadata,
+                                     const std::vector<uint8_t>& frame,
+                                     uint32_t x0,
+                                     uint32_t x1,
+                                     uint32_t y0,
+                                     uint32_t y1) {
+    uint64_t count = 0;
+    for (uint32_t y = y0; y < y1; ++y) {
+        for (uint32_t x = x0; x < x1; ++x) {
+            count += frame_luma_at(metadata, frame, x, y) >= 48U;
+        }
     }
-    double sum = 0.0;
-    double squared_sum = 0.0;
-    for (uint32_t i = begin; i < end; ++i) {
-        const uint8_t luma = vertical
-                                 ? frame_luma_at(metadata, frame, position, i)
-                                 : frame_luma_at(metadata, frame, i, position);
-        sum += luma;
-        squared_sum += static_cast<double>(luma) * luma;
-    }
-    const double length = static_cast<double>(end - begin);
-    const double mean = sum / length;
-    const double variance = std::max(0.0, squared_sum / length - mean * mean);
-    return mean <= 30.0 && std::sqrt(variance) <= 6.0;
+    return count;
 }
 
 struct AxisCrop {
@@ -494,51 +484,37 @@ static BorderScore centered_crop_border_score(const FrameMetadata& metadata,
     return score;
 }
 
-// Scores every removed line of each orientation, measured only across the
-// other orientation's kept region. A dark phone screen leaves whole frame
-// lines black either way (its few bright pixels average out across 1920),
-// but the lines a wrong crop would cut still carry the phone's content
-// inside the true screen area, so this separates the two where the sampled
-// whole-line score ties. Bounds come from centered_crop_rect so the scored
-// regions match the even-aligned rectangles that are actually cropped.
-static bool cross_region_border_scores(const FrameMetadata& metadata,
-                                       const std::vector<uint8_t>& frame,
-                                       uint32_t portrait_width,
-                                       uint32_t portrait_height,
-                                       uint32_t landscape_width,
-                                       uint32_t landscape_height,
-                                       BorderScore* portrait,
-                                       BorderScore* landscape) {
+// Measures the content each orientation would remove, counted only inside
+// the other orientation's kept region. A dark phone screen leaves whole
+// frame lines black either way (its few bright pixels average out across
+// 1920), but a wrong crop still removes the phone's content inside its true
+// screen area, so this separates the two where the sampled whole-line score
+// ties. Bounds come from centered_crop_rect so the measured regions match
+// the even-aligned rectangles that are actually cropped.
+static bool cross_region_cut_content(const FrameMetadata& metadata,
+                                     const std::vector<uint8_t>& frame,
+                                     uint32_t portrait_width,
+                                     uint32_t portrait_height,
+                                     uint32_t landscape_width,
+                                     uint32_t landscape_height,
+                                     uint64_t* portrait_cut,
+                                     uint64_t* landscape_cut) {
     CenterCropRect portrait_rect;
     CenterCropRect landscape_rect;
     if (!centered_crop_rect(metadata, portrait_width, portrait_height, &portrait_rect) ||
         !centered_crop_rect(metadata, landscape_width, landscape_height, &landscape_rect)) {
         return false;
     }
-    const uint32_t portrait_x = portrait_rect.x;
-    portrait_width = portrait_rect.width;
-    const uint32_t landscape_y = landscape_rect.y;
-    landscape_height = landscape_rect.height;
-    *portrait = {0, 0};
-    *landscape = {0, 0};
-    // Portrait removes side columns; test them inside the landscape rows.
-    for (uint32_t x = 0; x < metadata.width; ++x) {
-        if (x >= portrait_x && x < portrait_x + portrait_width) {
-            continue;
-        }
-        portrait->black += is_black_luma_span(metadata, frame, true, x, landscape_y,
-                                              landscape_y + landscape_height);
-        ++portrait->total;
-    }
-    // Landscape removes top and bottom rows; test them inside the portrait columns.
-    for (uint32_t y = 0; y < metadata.height; ++y) {
-        if (y >= landscape_y && y < landscape_y + landscape_height) {
-            continue;
-        }
-        landscape->black += is_black_luma_span(metadata, frame, false, y, portrait_x,
-                                               portrait_x + portrait_width);
-        ++landscape->total;
-    }
+    const uint32_t px0 = portrait_rect.x;
+    const uint32_t px1 = portrait_rect.x + portrait_rect.width;
+    const uint32_t ly0 = landscape_rect.y;
+    const uint32_t ly1 = landscape_rect.y + landscape_rect.height;
+    // Portrait removes side columns; measure them inside the landscape rows.
+    *portrait_cut = count_content_pixels(metadata, frame, 0, px0, ly0, ly1) +
+                    count_content_pixels(metadata, frame, px1, metadata.width, ly0, ly1);
+    // Landscape removes top and bottom rows; measure them inside the portrait columns.
+    *landscape_cut = count_content_pixels(metadata, frame, px0, px1, 0, ly0) +
+                     count_content_pixels(metadata, frame, px0, px1, ly1, metadata.height);
     return true;
 }
 
@@ -591,23 +567,22 @@ bool resolve_frame_center_aspect_auto_crop(const FrameMetadata& metadata,
         // across the full width, so landscape looked as plausible as portrait
         // and the geometry fallback cut the top and bottom off. Compare every
         // removed line within the other orientation's region instead.
-        BorderScore portrait_cross = {0, 0};
-        BorderScore landscape_cross = {0, 0};
-        const bool scored = cross_region_border_scores(
+        uint64_t portrait_cut = 0;
+        uint64_t landscape_cut = 0;
+        const bool measured = cross_region_cut_content(
             metadata, frame, portrait_width, portrait_height, landscape_width,
-            landscape_height, &portrait_cross, &landscape_cross);
-        // Only a run of non-black lines counts as content a crop would cut;
-        // one stray bright pixel or a speck of noise must not pick the
-        // orientation. Status bar text alone spans ~18 rows at 1080p, so
-        // 1/128 of the short side (8 lines there) keeps sparse content.
-        const uint32_t min_content_lines =
-            std::max<uint32_t>(2, std::min(metadata.width, metadata.height) / 128U);
-        const bool portrait_cuts_content =
-            scored && portrait_cross.total - portrait_cross.black >= min_content_lines;
-        const bool landscape_cuts_content =
-            scored && landscape_cross.total - landscape_cross.black >= min_content_lines;
-        if (portrait_cuts_content != landscape_cuts_content) {
-            use_landscape = portrait_cuts_content;
+            landscape_height, &portrait_cut, &landscape_cut);
+        // Keep the crop that removes less content. A difference of a few
+        // pixels is noise, not orientation evidence, so it must exceed
+        // 1/64 of the short side (16 pixels at 1080p); one line of status
+        // bar text is already hundreds of pixels.
+        const uint64_t noise_pixels =
+            std::max<uint32_t>(4, std::min(metadata.width, metadata.height) / 64U);
+        const uint64_t difference = portrait_cut > landscape_cut
+                                        ? portrait_cut - landscape_cut
+                                        : landscape_cut - portrait_cut;
+        if (measured && difference > noise_pixels) {
+            use_landscape = portrait_cut > landscape_cut;
         } else {
             // Still ambiguous (for example an all-black frame): derive the
             // orientation from this frame's geometry.
