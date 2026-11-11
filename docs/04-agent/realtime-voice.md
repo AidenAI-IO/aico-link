@@ -116,6 +116,23 @@ realtime tool executor; tool results are sent back through
 `ToolResultSender`, and providers that require explicit continuation receive a
 new `CreateResponse` after all results for that response have arrived.
 
+Speech and tool or background-task execution can overlap in one response, so
+the realtime instructions require an outcome-claim gate: before a result showing
+the actual outcome is available, the model may only acknowledge that it is
+handling the request; it must report success or failure from that evidence
+afterward. A tool result that only says work was accepted, queued, or started
+does not count. A tool error does count as failure to start or update the work,
+so the model must report that instead of continuing to say it is handling the
+request. In backend mode the successful `create_agent_task` result is only an
+acknowledgement, so outcomes of accepted work come from a task update or
+`query_agent_task` result whose status is `completed` or `failed`. Cancellation
+is separate: `cancelling` means the stop is still in progress, and only
+`cancelled` confirms that the work stopped; that status is not a success or
+failure of the original work. Unrelated requests must start their own task
+instead of folding into existing work. Direct-tool mode
+(`use_backend_agent = false`) applies the gate to runtime tools such as
+`open_app` until they return.
+
 Task updates and voice notifications are injected only when the session is
 idle. Notification responses are private speech responses: they are played
 through the speaker and acknowledged only after playback drains, but they are
