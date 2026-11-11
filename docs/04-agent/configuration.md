@@ -851,6 +851,14 @@ Every decision writes one Agent log line under the `decision` component:
 where `dm` is the decision model's answer; `llm` and `agree` are filled in
 when the main model's answer was also used.
 
+Each user turn also asks the decision model once, from the utterance text
+alone, while the turn's screenshot is being captured (`turn_screenshot`):
+does responding need the phone screen? Only a confident "no", such as small
+talk, arithmetic or the weather, drops the screenshot from the turn; the main
+model can still call `screenshot`. The request is bounded at 4 seconds, and an
+unsure answer, a failed request or a disabled decision model keeps the
+screenshot.
+
 The TypeSafe API is region-restricted (HTTP 451 outside supported regions);
 the Agent reaches both providers through the same proxy environment it uses for
 other model providers.
