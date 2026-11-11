@@ -255,6 +255,10 @@ def publish(directory):
             # An unpublished tag is never a planning baseline, so the planner reuses
             # its version for a newer source commit. Without this, one interrupted
             # publication would block every later run of the channel.
+            # Re-read just before deleting: a local resume may have published it since.
+            existing = next((r for r in github_releases(repo) if r["tag_name"] == tag), None)
+            if existing and not existing["draft"]:
+                raise ValueError("Published releases are immutable")
             print(f"Replacing unpublished {tag} at {target} with {commit}", file=sys.stderr)
             if existing:
                 command("gh", "api", "--method", "DELETE", f"repos/{repo}/releases/{existing['id']}")
