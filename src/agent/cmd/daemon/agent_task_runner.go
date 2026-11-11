@@ -16,7 +16,7 @@ type runtimeAgentTaskRunner struct {
 }
 
 func newRealtimeAgentTaskManager(cfg agent.Config, runtime *agent.Runtime) *agenttask.Manager {
-	if !cfg.VoiceModel.UseBackendAgent {
+	if !cfg.UseBackendAgentEffective() {
 		return nil
 	}
 	return agenttask.NewManager(runtimeAgentTaskRunner{runtime: runtime})

@@ -531,10 +531,10 @@ func ConfigMeta() ConfigMetadata {
 						Default:     defaults.VoiceModel.Provider,
 						VisibleWhen: all(eq("agent.input_mode", "realtime"))},
 					{Key: "use_backend_agent", Label: "Use Backend Agent", Widget: WidgetBoolean,
-						Help:        "Enabled by default when the backend model has a credential. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected.",
+						Help:        "Enabled by default when the backend model has a credential. Uses the backend agent and exposes its communication tools. When disabled, the realtime model gets the runtime tools that the backend agent would otherwise use. Provider reasoning is unaffected. Hidden for Moss Live, which always runs without the backend agent without rewriting this stored value.",
 						Default:     defaults.VoiceModel.UseBackendAgent,
 						Advanced:    true,
-						VisibleWhen: all(eq("agent.input_mode", "realtime"))},
+						VisibleWhen: all(eq("agent.input_mode", "realtime"), ne("voice_model_providers.type", "moss"))},
 				},
 			},
 			{
@@ -578,7 +578,7 @@ func ConfigMeta() ConfigMetadata {
 					{Key: "endpoint", Label: "WebSocket Endpoint", Widget: WidgetText, Layout: "wide",
 						Help:        "Optional provider WebSocket endpoint override. Leave empty to use the provider default.",
 						Advanced:    true,
-						VisibleWhen: all(in("voice_model_providers.type", "qwen", "openai", "gemini", "xai"))},
+						VisibleWhen: all(in("voice_model_providers.type", "qwen", "openai", "gemini", "xai", "moss"))},
 					{Key: "thinking_level", Label: "Thinking Level", Widget: WidgetSelect,
 						Enum: []EnumOption{
 							{Value: "", Label: "LOW (default)"},
@@ -623,8 +623,9 @@ func ConfigMeta() ConfigMetadata {
 						Help: "Optional Qwen server_vad silence duration before completing a turn. Leave empty to use the provider default.", Placeholder: "Default: 800", Advanced: true,
 						VisibleWhen: all(eq("voice_model_providers.type", "qwen"), eq("voice_model_providers.turn_detection", "server_vad"))},
 					{Key: "voice", Label: "Voice", Widget: WidgetText, Default: defaults.VoiceModel.Voice,
-						Help:            "Realtime system voice name or voice-clone ID (provider-specific).",
-						PlaceholderWhen: realtimeProviderPlaceholders("voice")},
+						Help:            "Realtime system voice name or voice-clone ID (provider-specific). Moss Live ignores this field and uses its default persona.",
+						PlaceholderWhen: realtimeProviderPlaceholders("voice"),
+						VisibleWhen:     all(ne("voice_model_providers.type", "moss"))},
 				},
 			},
 			{

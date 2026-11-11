@@ -888,8 +888,11 @@ export async function voiceExtraPage(context) {
   const name = currentName(snapshot, kind);
   const record = name ? recordsOf(snapshot, kind)[name] : null;
 
-  // Preferences that hold whichever provider is selected (`stt.language`, ...).
-  const prefContext = {'agent.input_mode': shownMode};
+  // Preferences that hold whichever provider is selected (`stt.language`,
+  // `voice_model.use_backend_agent`, ...). Include the active record so
+  // provider-type visibleWhen rules (for example Moss hiding backend agent)
+  // can evaluate against the same context as record fields.
+  const prefContext = recordContext(kind, record, shownMode);
   const prefRows = sectionFields(schema, ref)
     .filter(field => prefs.includes(field.key) && matches(field.visibleWhen, prefContext))
     .map(field => settingRow(ref, field, refOf(snapshot, kind)[field.key], prefContext, '', saver,

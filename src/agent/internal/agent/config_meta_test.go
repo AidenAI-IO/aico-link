@@ -998,13 +998,21 @@ func TestConfigMeta_VoiceModelRequiresRealtimeInputMode(t *testing.T) {
 			if agentSwitch.VisibleWhen == nil {
 				t.Fatal("voice_model.use_backend_agent has no visibleWhen rule")
 			}
+			var sawRealtime, sawNotMoss bool
 			for _, cond := range agentSwitch.VisibleWhen.All {
 				if cond.Field == "agent.input_mode" && cond.Op == "eq" && cond.Value == "realtime" {
-					goto backendSwitchVisible
+					sawRealtime = true
+				}
+				if cond.Field == "voice_model_providers.type" && cond.Op == "ne" && cond.Value == "moss" {
+					sawNotMoss = true
 				}
 			}
-			t.Fatal("voice_model.use_backend_agent must require realtime input mode")
-		backendSwitchVisible:
+			if !sawRealtime {
+				t.Fatal("voice_model.use_backend_agent must require realtime input mode")
+			}
+			if !sawNotMoss {
+				t.Fatal("voice_model.use_backend_agent must stay hidden for Moss Live")
+			}
 		}
 	}
 
