@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"crypto/tls"
 	"errors"
 	"net"
 	"net/http"
@@ -74,7 +75,13 @@ func (s *Server) startUSBListener(srv *http.Server) {
 		if s.logger != nil {
 			s.logger.Info("USB listener ready on %s (%s)", address, s.usbIngress.Interface)
 		}
-		if err := srv.Serve(lanaccess.TrustListener(listener)); err != nil &&
+		trusted := lanaccess.TrustListener(listener)
+		if srv.TLSConfig != nil {
+			// The trust marker must wrap the raw connection: the TLS server
+			// wraps each accepted conn, and ConnContext sees the inner one.
+			trusted = tls.NewListener(trusted, srv.TLSConfig)
+		}
+		if err := srv.Serve(trusted); err != nil &&
 			!errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) && s.logger != nil {
 			s.logger.Warn("USB listener stopped: %v", err)
 		}

@@ -112,6 +112,10 @@ type RealtimeVoiceStatus struct {
 	Route     RealtimeAudioRoute `json:"route,omitempty"`
 	Muted     bool               `json:"muted"`
 	StartedAt *time.Time         `json:"started_at,omitempty"`
+	// HTTPSPort is the agent's HTTPS port, or 0 when HTTPS is off. A page
+	// opened over plain HTTP uses it to reopen itself where the browser
+	// allows microphone access.
+	HTTPSPort int `json:"https_port,omitempty"`
 }
 
 // realtimeVoiceController joins Web UI requests with the realtime session
@@ -301,7 +305,9 @@ func (s *Server) handleRealtimeVoice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, s.RealtimeVoiceStatus())
+	status := s.RealtimeVoiceStatus()
+	status.HTTPSPort = s.HTTPSPort()
+	writeJSON(w, status)
 }
 
 // handleRealtimeVoiceStop serves POST /api/realtime/voice/stop. It ends the

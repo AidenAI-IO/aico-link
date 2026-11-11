@@ -78,6 +78,7 @@ func main() {
 	var (
 		dataDir                   = flag.String("dir", "", "path to the agent data directory holding agent.toml, skills, memory, cache and logs (required)")
 		addr                      = flag.String("addr", "0.0.0.0:8080", "HTTP server address")
+		httpsAddr                 = flag.String("https-addr", "", "HTTPS server address for browser features that need a secure context, such as Web UI voice (empty disables HTTPS)")
 		deviceType                = registerDeviceTypeFlag(flag.CommandLine)
 		environmentBridgeMode     = flag.Bool("environment-bridge-mode", false, "Enable environment bridge screen and input providers")
 		environmentBridgeEndpoint = flag.String("environment-bridge-endpoint", "", "Environment bridge endpoint (e.g., http://192.168.50.123:8080)")
@@ -227,6 +228,14 @@ func main() {
 	server := agent.NewServer(runtime, *addr)
 	if *lanGuard {
 		server.EnableLANGuard(lanaccess.NewState(*lanAccessFile, "", ""), agent.USBIngress{Interface: *usbInterface, Address: *usbAddress})
+	}
+	if strings.TrimSpace(*httpsAddr) != "" {
+		// The local certificate authority lives with the agent data so it
+		// survives firmware updates and a browser that trusted it keeps
+		// trusting the board.
+		if err := server.EnableHTTPS(strings.TrimSpace(*httpsAddr), filepath.Join(*dataDir, "tls")); err != nil {
+			logging.Warnf("agent", "https", "HTTPS disabled: %v", err)
+		}
 	}
 	defer server.Close()
 	inputs := newInputLifecycle(runtime, server)

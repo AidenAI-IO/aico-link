@@ -60,6 +60,9 @@ type Server struct {
 	httpMu                  sync.Mutex
 	httpServer              *http.Server
 	shareServer             *http.Server
+	httpsServer             *http.Server
+	httpsAddr               string
+	httpsCertificates       *httpsCertificates
 	httpListener            net.Listener
 	usbListeners            []net.Listener
 	usbListenStops          []chan struct{}
@@ -566,6 +569,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/chat/steer", s.handleChatSteer)
 	mux.HandleFunc("/api/chat/steer/cancel", s.handleChatSteerCancel)
 	mux.HandleFunc("/api/chat/result", s.handleChatResult)
+	if s.httpsCertificates != nil {
+		mux.HandleFunc(httpsCAPath, s.httpsCertificates.handleTLSAuthority)
+	}
 	mux.HandleFunc("/api/realtime/voice", s.handleRealtimeVoice)
 	mux.HandleFunc("/api/realtime/voice/stop", s.handleRealtimeVoiceStop)
 	mux.HandleFunc("/api/realtime/voice/mute", s.handleRealtimeVoiceMute)
@@ -792,6 +798,7 @@ func (s *Server) Start() error {
 	errCh := make(chan error, 1)
 	defer s.Close()
 	s.startUSBListener(srv)
+	s.startHTTPS(handler)
 	if shareServer != nil {
 		s.startUSBListener(shareServer)
 		go func() {
@@ -837,6 +844,7 @@ func (s *Server) Close() {
 		s.httpMu.Lock()
 		srv := s.httpServer
 		shareServer := s.shareServer
+		httpsServer := s.httpsServer
 		listener := s.httpListener
 		usbListeners := s.usbListeners
 		for _, stop := range s.usbListenStops {
@@ -853,6 +861,9 @@ func (s *Server) Close() {
 
 		if shareServer != nil {
 			_ = shareServer.Close()
+		}
+		if httpsServer != nil {
+			_ = httpsServer.Close()
 		}
 		s.cancelAllActiveRuns()
 		s.interruptAllActiveOutputs()

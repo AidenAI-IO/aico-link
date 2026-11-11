@@ -175,13 +175,41 @@ The Web UI uses these endpoints:
   session runs at a time, so the endpoint rejects a start while another
   session is connecting or active.
 
+Browser echo cancellation is not guaranteed to remove speech played through
+Web Audio, so use headphones if the reply interrupts itself. A failed `web`
+session reports its error in the Web UI and does not play the device failure
+announcement.
+
+### HTTPS for browser audio
+
 Browsers expose the microphone only to a secure context, which means HTTPS or
-`localhost`. A page opened over plain HTTP by IP address, such as
-`http://192.168.42.1`, cannot start a `web` session; it can still display and
-control a `device` session. Browser echo cancellation is not guaranteed to
-remove speech played through Web Audio, so use headphones if the reply
-interrupts itself. A failed `web` session reports its error in the Web UI and
-does not play the device failure announcement.
+`localhost`. The Agent therefore also serves the Web UI and API over HTTPS
+when started with `-https-addr`; the shipped `aico-agent.service` uses
+`0.0.0.0:8443`. The HTTPS listener follows the same LAN access rules as port
+8080, and requests over the USB link are trusted on both.
+
+The board has no public DNS name, so it cannot use a publicly trusted
+certificate. On first start the Agent creates a local certificate authority in
+`/userdata/agent/tls/` (`ca.pem` and the private `ca-key.pem`), and issues a
+certificate for whichever address a client connects to, such as
+`192.168.42.1`, a Wi-Fi address, or `localhost`. The authority is
+name-constrained to loopback, private, and link-local addresses and to
+`localhost`, so trusting it cannot make a browser accept a certificate for a
+public site. It is kept in user data so it survives firmware updates.
+
+To use browser voice:
+
+1. Open `https://192.168.42.1:8443` (or the board's Wi-Fi address on port
+   8443). Pressing the voice button on a plain HTTP page opens this address
+   automatically.
+2. Either accept the browser's certificate warning for this site, or install
+   the authority from `https://192.168.42.1:8443/tls/ca.pem` (also served on
+   port 8080) as a trusted root to remove the warning. On macOS, open the file
+   in Keychain Access and set it to Always Trust. Firefox keeps its own
+   certificate store, so import it there as well.
+
+Deleting `/userdata/agent/tls/` makes the Agent create a new authority on its
+next start; browsers that trusted the old one then show the warning again.
 
 ## Configuration
 

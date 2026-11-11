@@ -125,7 +125,7 @@ async function refreshRealtimeVoiceStatus() {
 }
 
 function startRealtimeVoiceStatusPolling() {
-    refreshRealtimeVoiceStatus();
+    refreshRealtimeVoiceStatus().then(startRealtimeVoiceFromLocation);
     if (voiceStatusTimer) clearInterval(voiceStatusTimer);
     voiceStatusTimer = setInterval(function() {
         if (!document.hidden || voiceLocal) refreshRealtimeVoiceStatus();
@@ -159,6 +159,13 @@ function handleRealtimeVoiceEvent(event) {
 async function startRealtimeVoice() {
     if (voiceLocal || voiceModeActive()) return;
     if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const secureURL = realtimeVoiceSecureURL();
+        if (secureURL) {
+            // Browsers only expose the microphone to secure pages. Reopen this
+            // page over the agent's HTTPS port and start voice there.
+            location.assign(secureURL);
+            return;
+        }
         setComposerHint('Browser voice needs a secure page (HTTPS or localhost) for microphone access', true);
         return;
     }
@@ -200,6 +207,27 @@ async function startRealtimeVoice() {
         const reason = local.ended ? '' : voiceStartErrorMessage(err);
         teardownLocalVoice(local, reason);
     }
+}
+
+// realtimeVoiceSecureURL returns this page on the agent's HTTPS port, with a
+// marker that starts voice once it loads, or '' when HTTPS is unavailable.
+function realtimeVoiceSecureURL() {
+    const port = Number(voiceStatus.https_port) || 0;
+    if (!port || location.protocol === 'https:') return '';
+    const url = new URL(location.href);
+    url.protocol = 'https:';
+    url.port = String(port);
+    url.hash = 'voice';
+    return url.toString();
+}
+
+// A page opened from realtimeVoiceSecureURL starts voice after its first
+// status check. Browsers may still require a click before playing audio, so
+// the start button stays available if this attempt cannot begin.
+function startRealtimeVoiceFromLocation() {
+    if (location.hash !== '#voice') return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (voiceStatus.available && !voiceModeActive()) startRealtimeVoice();
 }
 
 function voiceStartErrorMessage(err) {
