@@ -66,6 +66,7 @@ type RealtimeVoiceSession struct {
 	startedAt time.Time
 	ready     atomic.Bool
 	muted     atomic.Bool
+	silenced  atomic.Bool
 	stop      chan struct{}
 	stopOnce  sync.Once
 }
@@ -90,6 +91,12 @@ func (v *RealtimeVoiceSession) Muted() bool {
 	return v != nil && v.muted.Load()
 }
 
+// SpeakerMuted reports whether reply audio should be dropped instead of
+// played. The conversation, transcripts and tools continue unchanged.
+func (v *RealtimeVoiceSession) SpeakerMuted() bool {
+	return v != nil && v.silenced.Load()
+}
+
 // StopRequested is closed when a user asks to end the session.
 func (v *RealtimeVoiceSession) StopRequested() <-chan struct{} {
 	if v == nil {
@@ -108,10 +115,12 @@ type RealtimeVoiceStatus struct {
 	// open a voice session.
 	Available bool `json:"available"`
 	// State is idle, connecting or active.
-	State     string             `json:"state"`
-	Route     RealtimeAudioRoute `json:"route,omitempty"`
-	Muted     bool               `json:"muted"`
-	StartedAt *time.Time         `json:"started_at,omitempty"`
+	State string             `json:"state"`
+	Route RealtimeAudioRoute `json:"route,omitempty"`
+	Muted bool               `json:"muted"`
+	// SpeakerMuted is true while reply audio is dropped instead of played.
+	SpeakerMuted bool       `json:"speaker_muted"`
+	StartedAt    *time.Time `json:"started_at,omitempty"`
 	// HTTPSPort is the agent's HTTPS port, or 0 when HTTPS is off. A page
 	// opened over plain HTTP uses it to reopen itself where the browser
 	// allows microphone access.
@@ -227,6 +236,7 @@ func (s *Server) RealtimeVoiceStatus() RealtimeVoiceStatus {
 		}
 		status.Route = c.active.route
 		status.Muted = c.active.muted.Load()
+		status.SpeakerMuted = c.active.silenced.Load()
 		startedAt := c.active.startedAt
 		status.StartedAt = &startedAt
 	case c.pending != nil:
@@ -286,7 +296,7 @@ func (s *Server) stopRealtimeVoice() bool {
 	return active != nil || pending != nil
 }
 
-func (s *Server) setRealtimeVoiceMuted(muted bool) bool {
+func (s *Server) setRealtimeVoiceMuted(microphone, speaker *bool) bool {
 	c := &s.realtimeVoice
 	c.mu.Lock()
 	active := c.active
@@ -294,7 +304,12 @@ func (s *Server) setRealtimeVoiceMuted(muted bool) bool {
 	if active == nil {
 		return false
 	}
-	active.muted.Store(muted)
+	if microphone != nil {
+		active.muted.Store(*microphone)
+	}
+	if speaker != nil {
+		active.silenced.Store(*speaker)
+	}
 	return true
 }
 
@@ -321,21 +336,27 @@ func (s *Server) handleRealtimeVoiceStop(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, s.RealtimeVoiceStatus())
 }
 
-// handleRealtimeVoiceMute serves POST /api/realtime/voice/mute with a
-// {"muted": bool} body.
+// handleRealtimeVoiceMute serves POST /api/realtime/voice/mute. The body sets
+// either or both of {"muted": bool} (microphone) and {"speaker_muted": bool};
+// an omitted field keeps its state.
 func (s *Server) handleRealtimeVoiceMute(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var body struct {
-		Muted bool `json:"muted"`
+		Muted        *bool `json:"muted"`
+		SpeakerMuted *bool `json:"speaker_muted"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1024)).Decode(&body); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	if !s.setRealtimeVoiceMuted(body.Muted) {
+	if body.Muted == nil && body.SpeakerMuted == nil {
+		http.Error(w, "Invalid request: set muted or speaker_muted", http.StatusBadRequest)
+		return
+	}
+	if !s.setRealtimeVoiceMuted(body.Muted, body.SpeakerMuted) {
 		http.Error(w, "no realtime voice session is active", http.StatusConflict)
 		return
 	}

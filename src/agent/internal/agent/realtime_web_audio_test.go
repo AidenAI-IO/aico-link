@@ -68,6 +68,14 @@ func TestWebRealtimeVoiceSessionCarriesBrowserAudio(t *testing.T) {
 		t.Fatalf("status = %+v, want an active web session", status)
 	}
 
+	// Muting one side must leave the other unchanged.
+	if !s.setRealtimeVoiceMuted(nil, boolPtr(true)) || !voice.SpeakerMuted() || voice.Muted() {
+		t.Fatalf("speaker mute: speaker=%t microphone=%t, want only the speaker muted", voice.SpeakerMuted(), voice.Muted())
+	}
+	if status := s.RealtimeVoiceStatus(); !status.SpeakerMuted || status.Muted {
+		t.Fatalf("status = %+v, want only the speaker muted", status)
+	}
+
 	recording := audio.Recording()
 	if _, err := recording.StartRecording(AudioFormat{SampleRate: 16000, Channels: 1, BitWidth: 16}); err != nil {
 		t.Fatal(err)

@@ -590,9 +590,33 @@ function updateEmptyState() {
     emptyStateEl.classList.toggle('hidden', messagesDiv.children.length > 0);
 }
 
+// The composer's round primary button sends a draft, steers a running
+// request, starts realtime voice when the box is empty, or ends a running
+// voice session. Its mode follows the draft and the voice state.
+function composerPrimaryMode() {
+    const hasDraft = inputEl.value.trim() !== '' || draftAttachments.length > 0;
+    if (currentChatRequestId) return 'steer';
+    if (hasDraft) return 'send';
+    if (typeof voiceModeActive === 'function' && voiceModeActive()) return 'end';
+    if (typeof voiceStatus !== 'undefined' && voiceStatus.available) return 'voice';
+    return 'send';
+}
+
+const composerPrimaryLabels = {send: 'Send', steer: 'Steer', voice: 'Start voice', end: 'End voice'};
+
+function renderComposerPrimary() {
+    const mode = composerPrimaryMode();
+    sendBtn.dataset.mode = mode;
+    sendBtn.title = composerPrimaryLabels[mode];
+    sendBtn.setAttribute('aria-label', composerPrimaryLabels[mode]);
+    const hasDraft = inputEl.value.trim() !== '' || draftAttachments.length > 0;
+    const isLoading = loadingDiv.classList.contains('active');
+    sendBtn.disabled = mode === 'send'
+        ? fileUploadPending || !hasDraft || (isLoading && !currentChatRequestId)
+        : mode === 'steer' ? fileUploadPending || pendingSteerSubmitting : false;
+}
+
 function setComposerState(isLoading) {
-    sendBtn.disabled = fileUploadPending || pendingSteerSubmitting || (isLoading && !currentChatRequestId);
-    sendBtn.textContent = currentChatRequestId ? 'Steer' : 'Send';
     const attachmentSlotsFull = draftAttachments.length >= maxDraftAttachments;
     const fileBtn = document.getElementById('fileBtn');
     if (fileBtn) {
@@ -608,6 +632,7 @@ function setComposerState(isLoading) {
         stopRunBtn.textContent = 'Stop';
     }
     loadingDiv.classList.toggle('active', isLoading);
+    renderComposerPrimary();
     setComposerBusy(isLoading);
     setActivityRunning(isLoading);
     renderPendingSteer();

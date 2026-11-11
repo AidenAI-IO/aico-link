@@ -11,7 +11,14 @@ const assistantTextReveal = createStreamingTextReveal({
     onIdle: () => resumeHistoryAfterTextReveal()
 });
 
-async function sendMessage() {
+async function sendMessage(options) {
+    // With an empty box the primary button starts or ends voice. Enter only
+    // sends, so a stray keypress never opens the microphone.
+    const mode = composerPrimaryMode();
+    if (mode === 'voice' || mode === 'end') {
+        if (options && options.fromKeyboard) return;
+        return mode === 'voice' ? startRealtimeVoice() : endRealtimeVoice();
+    }
     if (sendBtn.disabled) return;
     if (currentChatRequestId) {
         await submitSteerMessage();

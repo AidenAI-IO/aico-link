@@ -1840,7 +1840,7 @@ body { background: #f5f5f7; color: var(--text); }
 }
 
 .voice-stage.hidden,
-.voice-btn.hidden {
+.voice-toggle.hidden {
     display: none;
 }
 
@@ -1921,20 +1921,69 @@ body.voice-mode .conversation {
     .voice-orb, .voice-orb-cloud { animation: none !important; }
 }
 
-.voice-btn {
+/* The message list scrolls without a visible scrollbar. */
+.conversation {
+    scrollbar-width: none;
+}
+
+.conversation::-webkit-scrollbar {
+    display: none;
+}
+
+/* Composer, after the voice-first reference: a rounded box with the text on
+   top, an add-file button at the bottom left, and icon toggles beside one
+   round primary button at the bottom right. */
+.composer-shell {
+    border-radius: 24px;
+    padding: 14px 14px 12px 18px;
+}
+
+.composer-input,
+.composer-input:focus {
+    min-height: 44px;
+    font-size: 0.98rem;
+    background: transparent !important;
+    border: 0;
+}
+
+.composer-footer {
+    margin-top: 6px;
+    flex-wrap: nowrap;
+}
+
+.composer-toolbar {
+    flex-wrap: nowrap;
+    min-width: 0;
+}
+
+.composer-hint {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.composer-hint:empty {
+    display: none;
+}
+
+.composer-actions {
+    gap: 6px;
+}
+
+.composer-icon-btn,
+.composer-primary-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 38px;
-    height: 38px;
+    flex: 0 0 auto;
     padding: 0;
-    border: 1px solid transparent;
     border-radius: 50% !important;
     cursor: pointer;
-    transition: background 120ms ease, transform 120ms ease;
+    transition: background 120ms ease, color 120ms ease, opacity 120ms ease;
 }
 
-.voice-btn svg {
+.composer-icon-btn svg,
+.composer-primary-btn svg {
     width: 20px;
     height: 20px;
     fill: none;
@@ -1944,47 +1993,71 @@ body.voice-mode .conversation {
     stroke-linejoin: round;
 }
 
-.voice-start-btn,
-.voice-end-btn {
+.composer-icon-btn {
+    width: 36px;
+    height: 36px;
+    border: 0;
+    background: transparent;
+    color: var(--muted-strong);
+}
+
+.composer-icon-btn:hover,
+.composer-icon-btn:focus-visible {
+    background: var(--surface-soft);
+    color: var(--text);
+}
+
+.composer-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    background: transparent;
+}
+
+#fileBtn svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* Mic and speaker toggles: the slashed icon and a red tint mean off. */
+.voice-toggle .voice-icon-off,
+.voice-toggle.off .voice-icon-on {
+    display: none;
+}
+
+.voice-toggle.off .voice-icon-off {
+    display: block;
+}
+
+.voice-toggle.off {
+    color: var(--tool-error-text);
+}
+
+.composer-primary-btn {
+    width: 40px;
+    height: 40px;
+    border: 0;
     background: #d9622b;
     color: #ffffff;
 }
 
-.voice-start-btn:hover,
-.voice-start-btn:focus-visible,
-.voice-end-btn:hover,
-.voice-end-btn:focus-visible {
+.composer-primary-btn:hover:not(:disabled),
+.composer-primary-btn:focus-visible {
     background: #c4541f;
 }
 
-.voice-mute-btn {
+.composer-primary-btn:disabled {
     background: var(--surface-soft);
-    border-color: var(--line);
-    color: var(--text);
+    color: var(--muted);
+    cursor: not-allowed;
 }
 
-.voice-mute-btn .voice-icon-mic-off,
-.voice-mute-btn.muted .voice-icon-mic {
+.composer-primary-btn svg {
     display: none;
 }
 
-.voice-mute-btn.muted .voice-icon-mic-off {
+.composer-primary-btn[data-mode="send"] .primary-icon-send,
+.composer-primary-btn[data-mode="steer"] .primary-icon-steer,
+.composer-primary-btn[data-mode="voice"] .primary-icon-voice,
+.composer-primary-btn[data-mode="end"] .primary-icon-end {
     display: block;
-}
-
-.voice-mute-btn.muted {
-    color: var(--tool-error-text);
-}
-
-body.voice-mode .empty-state {
-    display: none;
-}
-
-/* The message list scrolls without a visible scrollbar. */
-.conversation {
-    scrollbar-width: none;
-}
-
-.conversation::-webkit-scrollbar {
-    display: none;
 }

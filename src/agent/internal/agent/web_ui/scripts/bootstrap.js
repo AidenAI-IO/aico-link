@@ -16,6 +16,7 @@ startResourcePolling();
 startRealtimeVoiceStatusPolling();
 
 inputEl.addEventListener('input', autoResizeInput);
+inputEl.addEventListener('input', renderComposerPrimary);
 document.getElementById('fileInput').addEventListener('change', handleFileSelection);
 inputEl.addEventListener('paste', handleComposerPaste);
 stateModalCloseEl.addEventListener('click', closeStateDetails);
@@ -26,7 +27,7 @@ toolSelectEl.addEventListener('change', syncSelectedTool);
 inputEl.addEventListener('keydown', function(event) {
     if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
         event.preventDefault();
-        sendMessage();
+        sendMessage({fromKeyboard: true});
     }
 });
 

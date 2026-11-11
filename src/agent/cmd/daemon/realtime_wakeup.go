@@ -2504,6 +2504,12 @@ func runRealtimeSessionWithRegistryAndSink(cfg agent.Config, sigChan chan os.Sig
 				if len(pcm) > 0 {
 					watchdog.progress()
 				}
+				if media.voice.SpeakerMuted() {
+					// Keep the playback position moving so barge-in still
+					// truncates the provider's reply at the right point, but
+					// play silence instead of speech.
+					pcm = make([]byte, len(pcm))
+				}
 				if err := playback.appendItem(playbackAudio, outputFormat, event.ItemID, pcm); err != nil {
 					return err
 				}

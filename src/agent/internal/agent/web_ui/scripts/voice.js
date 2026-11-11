@@ -8,16 +8,15 @@
 const voiceStageEl = document.getElementById('voiceStage');
 const voiceOrbEl = document.getElementById('voiceOrb');
 const voiceStatusEl = document.getElementById('voiceStatus');
-const voiceStartBtn = document.getElementById('voiceStartBtn');
 const voiceMuteBtn = document.getElementById('voiceMuteBtn');
-const voiceEndBtn = document.getElementById('voiceEndBtn');
+const voiceSpeakerBtn = document.getElementById('voiceSpeakerBtn');
 const voiceStatusPollMs = 1500;
 const voiceStartTimeoutMs = 30000;
 const voiceCaptureFrameMs = 20;
 const voicePlaybackLeadSeconds = 0.04;
 const defaultInputPlaceholder = inputEl ? inputEl.placeholder : '';
 
-let voiceStatus = {available: false, state: 'idle', muted: false};
+let voiceStatus = {available: false, state: 'idle', muted: false, speaker_muted: false};
 let voiceActivity = 'idle';
 let voiceLocal = null;
 let voiceStatusTimer = null;
@@ -76,7 +75,10 @@ function voiceModeActive() {
 function voiceStatusLabel() {
     if (voiceLocal && !voiceLocal.capturing) return 'Connecting…';
     if (!voiceLocal && voiceStatus.state === 'connecting') return 'Connecting…';
+    const speakerMuted = !!(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
+    if (voiceStatus.muted && speakerMuted) return 'Microphone and speaker muted';
     if (voiceStatus.muted) return 'Microphone muted';
+    if (speakerMuted && voiceActivity === 'speaking') return 'Speaker muted';
     const where = voiceLocal ? '' : voiceStatus.route === 'web' ? ' · audio in another browser' : ' · audio on device';
     switch (voiceActivity) {
         case 'listening': return 'Listening' + where;
@@ -100,14 +102,11 @@ function renderRealtimeVoice() {
     const wasActive = document.body.classList.contains('voice-mode');
     voiceStageEl.classList.toggle('hidden', !active);
     document.body.classList.toggle('voice-mode', active);
-    voiceStartBtn.classList.toggle('hidden', active || !voiceStatus.available);
-    voiceMuteBtn.classList.toggle('hidden', !active);
-    voiceEndBtn.classList.toggle('hidden', !active);
     const muted = !!(voiceStatus.muted || (voiceLocal && voiceLocal.muted));
-    voiceMuteBtn.classList.toggle('muted', muted);
-    voiceMuteBtn.setAttribute('aria-pressed', muted ? 'true' : 'false');
-    voiceMuteBtn.title = muted ? 'Unmute microphone' : 'Mute microphone';
-    voiceMuteBtn.setAttribute('aria-label', voiceMuteBtn.title);
+    const speakerMuted = !!(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
+    renderVoiceToggle(voiceMuteBtn, active, muted, 'microphone');
+    renderVoiceToggle(voiceSpeakerBtn, active, speakerMuted, 'speaker');
+    if (typeof renderComposerPrimary === 'function') renderComposerPrimary();
     const connecting = (voiceLocal && !voiceLocal.capturing) || (!voiceLocal && voiceStatus.state === 'connecting');
     voiceOrbEl.dataset.activity = connecting ? 'connecting' : muted && voiceActivity === 'listening' ? 'idle' : voiceActivity;
     voiceStatusEl.textContent = voiceStatusLabel();
@@ -118,6 +117,14 @@ function renderRealtimeVoice() {
     if (active && !wasActive) scrollToBottom();
 }
 
+function renderVoiceToggle(button, visible, off, name) {
+    button.classList.toggle('hidden', !visible);
+    button.classList.toggle('off', off);
+    button.setAttribute('aria-pressed', off ? 'true' : 'false');
+    button.title = (off ? 'Unmute ' : 'Mute ') + name;
+    button.setAttribute('aria-label', button.title);
+}
+
 async function refreshRealtimeVoiceStatus() {
     if (voiceStatusRefreshPending) return;
     voiceStatusRefreshPending = true;
@@ -126,11 +133,11 @@ async function refreshRealtimeVoiceStatus() {
         if (!res.ok) throw new Error(await res.text());
         const next = await res.json();
         const wasActive = voiceStatus.state !== 'idle';
-        voiceStatus = Object.assign({available: false, state: 'idle', muted: false}, next);
+        voiceStatus = Object.assign({available: false, state: 'idle', muted: false, speaker_muted: false}, next);
         if (voiceStatus.state === 'idle' || !wasActive) voiceActivity = 'idle';
     } catch (err) {
         // An older agent has no voice endpoint; keep the button hidden.
-        voiceStatus = {available: false, state: 'idle', muted: false};
+        voiceStatus = {available: false, state: 'idle', muted: false, speaker_muted: false};
     } finally {
         voiceStatusRefreshPending = false;
     }
@@ -185,7 +192,7 @@ async function startRealtimeVoice() {
     const local = {
         socket: null, stream: null, context: null, capture: null, resampler: null,
         captureFormat: null, playbackFormat: {sample_rate: 24000, channels: 1, bit_width: 16},
-        capturing: false, muted: false, pending: [], pendingSamples: 0,
+        capturing: false, muted: false, speakerMuted: false, pending: [], pendingSamples: 0,
         sources: new Set(), nextPlayTime: 0, inputAnalyser: null, outputAnalyser: null, outputGain: null,
         meterFrame: 0, startTimer: null, ended: false, endReason: ''
     };
@@ -424,15 +431,32 @@ async function toggleRealtimeVoiceMute() {
     }
     voiceStatus = Object.assign({}, voiceStatus, {muted});
     renderRealtimeVoice();
+    await postRealtimeVoiceMute({muted}, 'Could not change the microphone state');
+}
+
+// The agent silences the reply on either audio route; a browser session also
+// mutes its own output so speech already queued in this tab stops at once.
+async function toggleRealtimeVoiceSpeaker() {
+    const speakerMuted = !(voiceStatus.speaker_muted || (voiceLocal && voiceLocal.speakerMuted));
+    if (voiceLocal) {
+        voiceLocal.speakerMuted = speakerMuted;
+        if (voiceLocal.outputGain) voiceLocal.outputGain.gain.value = speakerMuted ? 0 : 1;
+    }
+    voiceStatus = Object.assign({}, voiceStatus, {speaker_muted: speakerMuted});
+    renderRealtimeVoice();
+    await postRealtimeVoiceMute({speaker_muted: speakerMuted}, 'Could not change the speaker state');
+}
+
+async function postRealtimeVoiceMute(body, failure) {
     try {
         const res = await fetch('/api/realtime/voice/mute', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({muted})
+            body: JSON.stringify(body)
         });
         if (!res.ok && res.status !== 409) throw new Error(await res.text());
     } catch (err) {
-        setComposerHint('Could not change the microphone state', true);
+        setComposerHint(failure, true);
     }
     refreshRealtimeVoiceStatus();
 }
