@@ -15,7 +15,14 @@ from ci.auto_improve.emulator import isolated_emulator, prepare_companion
 from ci.auto_improve.evidence import sanitize
 from ci.auto_improve.policy import digest
 from ci.plan import load_catalog
+from ci.run_case import _incomplete_run_reasons
 from runner.process import terminate_process_tree
+
+
+class CommandFailed(RuntimeError):
+    def __init__(self, returncode: int, log: Path):
+        super().__init__(f"Command failed ({returncode}); see {log.name}")
+        self.returncode = returncode
 
 
 def command(args: list[str], *, cwd: Path, log: Path, timeout: float, env: dict | None = None) -> None:
@@ -34,7 +41,7 @@ def command(args: list[str], *, cwd: Path, log: Path, timeout: float, env: dict 
         if log.is_file():
             log.write_text(sanitize(log.read_text(errors="replace")))
     if code:
-        raise RuntimeError(f"Command failed ({code}); see {log.name}")
+        raise CommandFailed(code, log)
 
 
 def benchmark_environment() -> dict[str, str]:
@@ -115,15 +122,13 @@ def rejudge_transient_errors(run: Path, *, deadline: float, delays: tuple[float,
         (run / "results.rejudged.jsonl").replace(results)
 
 
-def judge_error_only(run: Path, task_id: str) -> bool:
-    """A finished one-task run whose only defect is its judge call: the agent's evidence is complete."""
-    try:
-        totals = json.loads((run / "manifest.json").read_text())["totals"]
-        rows = [json.loads(line) for line in (run / "results.jsonl").read_text().splitlines() if line.strip()]
-    except (OSError, ValueError, KeyError, TypeError):
-        return False
-    return (len(rows) == 1 and rows[0].get("task_id") == task_id and rows[0].get("status") == "judge_error"
-            and totals.get("tasks") == 1 and totals.get("judge_error") == 1)
+def judge_error_only(run: Path) -> bool:
+    """A one-task run that exited 1 and passes run_case's completeness checks except its judge call.
+
+    Uses the same exit-code convention as run_cases: with the effective exit code 1, a complete
+    run whose only defect is one judge error yields exactly one reason.
+    """
+    return _incomplete_run_reasons(1, run / "manifest.json") == ["judge_errors=1"]
 
 
 def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadline: float, rejudge: bool = True) -> dict:
@@ -165,9 +170,10 @@ def run_task(root: Path, key: str, repeat: int, image: str, out: Path, *, deadli
                 command([sys.executable, "-c", code, str(case_file), run_id,
                          str(max(1, deadline - time.monotonic() - 30))], cwd=root / "benchmark",
                         log=out / "runner.log", timeout=max(1, deadline - time.monotonic()), env=env)
-            except RuntimeError:
+            except CommandFailed as exc:
                 # run_case exits 1 for a judge error; a complete judge-error result is data.
-                if not judge_error_only(root / "benchmark/runs" / run_id, task_id):
+                # Any other exit, such as 143 on cancellation, or an incomplete run still fails.
+                if exc.returncode != 1 or not judge_error_only(root / "benchmark/runs" / run_id):
                     raise
     finally:
         # Keep evidence even on timeout; no generated agent configuration is copied.

@@ -353,6 +353,43 @@ def test_judge_errors_are_rejudged_without_rerunning_the_agent(tmp_path, monkeyp
     assert not calls and json.loads((run / "results.jsonl").read_text())["status"] == "judge_error"
 
 
+def write_run(run, status, *, report=True):
+    """A one-task run with the artifacts run_case checks for completeness."""
+    run.mkdir(parents=True, exist_ok=True)
+    counts = {"passed": 0, "failed": 0, "skipped": 0, "judge_error": 0, "timeout": 0, status: 1}
+    (run / "manifest.json").write_text(json.dumps({"totals": {"tasks": 1, **counts},
+                                                   "planned_task_attempts": [{"task_id": "t", "attempt": 1}]}))
+    (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "attempt": 1, "status": status, "metrics": {}}) + "\n")
+    (run / "metrics.json").write_text("{}")
+    for name in ("summary.md",) + (("report.html",) if report else ()):
+        (run / name).write_text("x")
+
+
+@pytest.mark.parametrize("exit_code,status,report,accepted", [
+    (1, "judge_error", True, True),
+    (1, "judge_error", False, False),
+    (143, "judge_error", True, False),
+    (1, "failed", True, False),
+])
+def test_only_a_complete_judge_error_run_survives_a_failed_runner_exit(tmp_path, monkeypatch, exit_code, status,
+                                                                      report, accepted):
+    from ci.plan import Catalog, SuiteCase
+    root = tmp_path / "root"
+    monkeypatch.setattr(execution, "load_catalog", lambda **_: Catalog((SuiteCase("case", "suite.json", "isolated"),)))
+    def fake_command(args, **kwargs):
+        write_run(root / "benchmark/runs" / args[4], status, report=report)
+        raise execution.CommandFailed(exit_code, kwargs["log"])
+    monkeypatch.setattr(execution, "command", fake_command)
+    monkeypatch.setattr(execution, "rejudge_transient_errors", lambda run, **kwargs: None)
+    run = lambda: execution.run_task(root, "case:t", 1, "image", tmp_path / "out", deadline=time.monotonic() + 3600)
+    if accepted:
+        assert run()["status"] == "judge_error"
+    else:
+        # A cancellation, a missing report, or any other failure is never read as a result.
+        with pytest.raises(execution.CommandFailed):
+            run()
+
+
 @pytest.mark.parametrize("failure", [None, "timeout", "cancel_during_rejudge"])
 def test_run_task_rejudges_only_completed_runs_and_propagates_cancellation(tmp_path, monkeypatch, failure):
     from ci.plan import Catalog, SuiteCase
@@ -681,17 +718,3 @@ def test_dashboard_only_sources_do_not_block_a_failure_free_window(tmp_path):
     assert warnings == ["No completed suite manifests for source run 41-1"]
     # A window in which every source ran no task is settled too.
     assert evidence.source_failures_window(tmp_path, [("41", "1")], {}, empty=frozenset({"41-1"})) == ([], [])
-
-
-@pytest.mark.parametrize("status,totals,accepted", [
-    ("judge_error", {"tasks": 1, "judge_error": 1}, True),
-    ("failed", {"tasks": 1, "failed": 1}, False),
-    ("judge_error", {"tasks": 2, "judge_error": 1}, False),
-])
-def test_only_a_complete_judge_error_result_survives_a_failed_runner_exit(tmp_path, status, totals, accepted):
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "manifest.json").write_text(json.dumps({"totals": totals}))
-    (run / "results.jsonl").write_text(json.dumps({"task_id": "t", "status": status}) + "\n")
-    assert execution.judge_error_only(run, "t") is accepted
-    assert not execution.judge_error_only(tmp_path / "missing", "t")
