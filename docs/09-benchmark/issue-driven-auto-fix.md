@@ -66,16 +66,16 @@ flowchart TD
     C --> D["Maintainer adds the auto-fix label"]
     D --> E["Repair run for one issue"]
     E --> F["Triage"]
-    F -->|"not verifiable in CI"| X["Comment analysis; label not-verifiable"]
+    F -->|"not verifiable in CI"| X["Comment the analysis"]
     F --> G["Acceptance check"]
-    G -->|"cannot write a failing check"| Y["Comment what is missing; label needs-info"]
+    G -->|"cannot write a failing check"| Y["Comment what information is missing"]
     G --> R["Reproduce on main"]
     R --> S["Sandbox repair loop"]
     S --> V["Trusted verification"]
     V --> W["Final evidence audit"]
     W -->|"supported"| P["Draft PR: Fixes #N"]
-    W -->|"not supported"| Z["Comment result; label auto-fix:failed"]
-    P --> Q["Human review; /auto-fix comment starts another round"]
+    W -->|"not supported"| Z["Comment why verification rejected it"]
+    P --> Q["Human review; adding auto-fix again starts another round"]
 ```
 
 ## Part 1: Discovery creates issues
@@ -106,16 +106,19 @@ A repair run starts only when a maintainer adds the `auto-fix` label to an issue
 - Automatic labeling for high-confidence benchmark issues can be considered after
   the pipeline has a track record. It is not part of the first version.
 
-Issue state is shown with labels:
+`auto-fix` is the only label a maintainer manages, and it is the only one the
+pipeline uses. The pipeline removes it when a run starts, so the label means
+"repair requested, not yet started", and adding it again requests another run.
+Everything else is reported by the pipeline itself:
 
-| Label | Meaning |
-| --- | --- |
-| `auto-fix` | Maintainer requested a repair |
-| `auto-fix:running` | A repair run is in progress |
-| `auto-fix:pr-open` | A draft PR is open for review |
-| `needs-info` | No failing acceptance check could be established |
-| `not-verifiable` | The fix cannot be verified in CI |
-| `auto-fix:failed` | Verification rejected the candidate; the comment explains why |
+- It comments on the issue when a run starts, linking the workflow run, and
+  again with the outcome: a link to the draft PR, or why it stopped (not
+  verifiable in CI, missing information for a failing check, not reproduced, or
+  rejected by verification, with the reasons).
+- The draft PR links the issue with `Fixes #N`, so GitHub shows the open PR on
+  the issue and closes the issue when the PR is merged.
+- A maintainer acts on the comment: adds information and relabels, closes the
+  issue, or reviews the PR.
 
 ## Part 3: The repair run
 
@@ -124,14 +127,14 @@ the self-hosted runner, as auto-improve runs are today.
 
 | Step | Performed by | Description |
 | --- | --- | --- |
-| 1. Triage | Model, read-only | Decide whether the issue concerns code CI can verify (agent Go code and skills, benchmark code, web and scripts). Otherwise comment an analysis and stop with `not-verifiable`. |
-| 2. Acceptance check | Depends on source | Benchmark issues use their recorded acceptance tasks. For issues filed by people, the model writes a reproduction test in the sandbox: a Go or Python unit test, or a new benchmark task. If it cannot, comment what information is missing and stop with `needs-info`. |
+| 1. Triage | Model, read-only | Decide whether the issue concerns code CI can verify (agent Go code and skills, benchmark code, web and scripts). Otherwise comment an analysis and stop. |
+| 2. Acceptance check | Depends on source | Benchmark issues use their recorded acceptance tasks. For issues filed by people, the model writes a reproduction test in the sandbox: a Go or Python unit test, or a new benchmark task. If it cannot, comment what information is missing and stop. |
 | 3. Reproduce | Driver | Confirm the check fails on current `main`: benchmark tasks fail at least 2/3, and a test fails consistently. Otherwise comment and stop. |
 | 4. Repair | Model, in the sandbox | Edit the code, run the reproduction check, unit tests and `make check`, and iterate until they pass or the budget ends. |
 | 5. Verify | Driver, trusted | Rerun the reproduction check on base (must fail) and candidate (must pass) in fresh containers, run `make check` and the required suites, and validate the edit scope. Changes to agent behavior also pass the benchmark gate. |
 | 6. Final audit | Model, read-only | Audit the diff against all retained evidence, as the current verification review does. |
 | 7. Publish | Publisher job | Open a draft PR with `Fixes #N`, the reproduction check and the evidence, and report the outcome on the issue. |
-| 8. Feedback | People | A maintainer comments `/auto-fix` with review notes on the PR to start another round, up to three. Merging stays manual. |
+| 8. Feedback | People | To start another round, a maintainer leaves review notes on the PR and adds `auto-fix` to the issue again; the next run reads those notes. Up to three rounds. Merging stays manual. |
 
 The benchmark gate in step 5 is the current one: targets run three times per
 side and must reach at least 2/3, regression tasks are screened once per side
@@ -197,7 +200,7 @@ Reused largely as is: discovery and window aggregation, diagnosis, signature
 deduplication and issue publication, reproduction, the benchmark gate, the final
 audit, the publisher, artifact retention and cost reporting.
 
-New: the label-triggered workflow and permission check, issue state reporting,
+New: the label-triggered workflow and permission check, issue status comments,
 the reproduction-test step for issues filed by people, the sandbox image and
 launcher, and the key proxy with an internal network.
 
@@ -207,7 +210,7 @@ launcher, and the key proxy with an internal network.
    update one issue per cluster. Small change; makes findings visible to the team
    immediately.
 2. **Label-triggered repair for benchmark issues.** Add the `auto-fix` workflow
-   and state labels, reusing the current reproduction, fix, verification and
+   and issue comments, reusing the current reproduction, fix, verification and
    publication code with the issue as input.
 3. **Sandbox repair.** Replace the read-only fix session with the sandbox, the
    key proxy and the internal network. Measure the fraction of runs that reach a
