@@ -1545,7 +1545,7 @@ func syncRestoreRoots(s *Server, job *restoreJob) error {
 			}
 			continue
 		}
-		err = unix.Syncfs(fd)
+		err = syncFilesystem(fd)
 		_ = unix.Close(fd)
 		if err != nil {
 			return err

@@ -1,5 +1,9 @@
 # ADB Android Environment Bridge
 
+For interactive experiments with an Agent running directly on your computer,
+start with [Local Agent with a Real Phone](../../docs/01-getting-started/local-agent-real-phone.md).
+It covers native startup and Config Web before connecting this bridge.
+
 Controls an Android emulator (Genymotion) or a physical device through adb, and
 exposes an HTTP protocol to the benchmark that is **fully compatible with the
 MobileGym bridge**. The Aico Go Agent uses the bridge's screen and MNK

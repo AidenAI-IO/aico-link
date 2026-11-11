@@ -13,6 +13,8 @@ type apiEndpoint int
 
 const (
 	apiUnknown apiEndpoint = iota
+	apiIPhoneMirroring
+	apiIPhoneMirroringReconnect
 	apiDeviceSnapshot
 	apiConfigGet
 	apiConfigSchema
@@ -84,6 +86,8 @@ type apiRoute struct {
 }
 
 var apiRoutes = []apiRoute{
+	{apiIPhoneMirroring, routeVariant{http.MethodGet, apiPrefix + "/device/iphone-mirroring"}},
+	{apiIPhoneMirroringReconnect, routeVariant{http.MethodPost, apiPrefix + "/device/iphone-mirroring/reconnect"}},
 	{apiUSBInternetGet, routeVariant{http.MethodGet, apiPrefix + "/network/usb-internet"}},
 	{apiUSBInternetPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet"}},
 	{apiUSBInternetSessionPut, routeVariant{http.MethodPut, apiPrefix + "/network/usb-internet/session"}},
@@ -218,6 +222,15 @@ func matchAPIRequest(r *http.Request) apiMatch {
 
 func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	match := matchAPIRequest(r)
+	if s.options.LocalAgent {
+		if !s.allowLocalRequest(w, r) {
+			return
+		}
+		if !localAgentEndpoint(match.endpoint) {
+			writeJSONError(w, http.StatusNotFound, "not available for a local Agent")
+			return
+		}
+	}
 	if match.endpoint == apiUnknown {
 		http.Error(w, "Not Found", http.StatusNotFound)
 		return
@@ -229,6 +242,8 @@ func (s *Server) serveAPI(w http.ResponseWriter, r *http.Request) {
 	s.startDeferredRestartIfIdle()
 	w.Header().Set("X-Aico-API-Version", "1")
 	switch match.endpoint {
+	case apiIPhoneMirroring, apiIPhoneMirroringReconnect:
+		s.handleLocalIPhoneMirroring(w, r)
 	case apiUSBInternetGet, apiUSBInternetPut, apiUSBInternetSessionPut, apiUSBInternetSessionDelete:
 		s.handleUSBInternet(w, r)
 	case apiDeviceSnapshot:

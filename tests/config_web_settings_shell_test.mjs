@@ -43,7 +43,7 @@ async function listFiles(root, extension) {
 
 // 1. Documents only reference assets that exist. Client routes are served by the
 //    Go fallback, so they are checked against the route table instead.
-const documentNames = ['index.html', 'llm-logs.html'];
+const documentNames = ['index.html', 'local.html', 'llm-logs.html'];
 for (const name of documentNames) {
   const documentPath = path.join(webRoot, name);
   const source = await fs.readFile(documentPath, 'utf8');
@@ -167,3 +167,19 @@ for (const modulePath of modules) {
 }
 
 process.stdout.write('config web settings shell tests passed\n');
+
+// The host profile has its own route/navigation boundary, even if snapshot loading fails.
+const {LOCAL_ITEMS} = await import(pathToFileURL(path.join(uiRoot, 'app/nav-items.js')).href);
+const {localRoutes} = await import(pathToFileURL(path.join(uiRoot, 'app/routes.js')).href);
+const localPaths = new Set(localRoutes.map(route => route.path));
+for (const item of LOCAL_ITEMS) assert.ok(localPaths.has(item.route));
+for (const retired of ['/wifi', '/voice', '/storage', '/firmware', '/memory', '/advanced', '/basic']) {
+  assert.ok(!localPaths.has(retired), `host route exposes ${retired}`);
+}
+assert.ok(localPaths.has('/model/providers/edit'));
+assert.ok(localPaths.has('/advanced/logs/agent'));
+const {applicationLabel} = await import(pathToFileURL(path.join(uiRoot, 'app/pages/local.js')).href);
+assert.equal(applicationLabel({persisted: true, applied: false, pending: true}).key, 'local.apply_pending');
+assert.equal(applicationLabel({state: 'applied', applied: true}).key, 'local.applied');
+assert.equal(applicationLabel({state: 'failed', persisted: true}).key, 'local.apply_failed');
+assert.equal(applicationLabel(null).key, 'local.apply_unavailable');

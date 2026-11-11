@@ -42,7 +42,7 @@ func openSourcePath(value string, flags int) (*os.File, error) {
 		return nil, err
 	}
 	defer parent.Close()
-	fd, err := unix.Openat(int(parent.Fd()), name, flags|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	fd, err := unix.Openat(int(parent.Fd()), name, sourceOpenFlags(flags), 0)
 	if err != nil {
 		return nil, err
 	}
@@ -50,7 +50,7 @@ func openSourcePath(value string, flags int) (*os.File, error) {
 }
 
 func sourceLstat(value string) (fs.FileInfo, error) {
-	file, err := openSourcePath(value, unix.O_PATH)
+	file, err := openSourcePath(value, sourceMetadataOpenFlags)
 	if err != nil {
 		return nil, err
 	}

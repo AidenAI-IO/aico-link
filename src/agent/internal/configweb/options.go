@@ -31,6 +31,7 @@ const (
 // configuration portal. Paths are flags so host tests can run without device
 // files, while production keeps the established locations.
 type Options struct {
+	LocalAgent                bool
 	BindAddress               string
 	Port                      int
 	AgentConfigPath           string
@@ -174,6 +175,9 @@ func (o Options) Addr() string {
 }
 
 func (o Options) Validate() error {
+	if o.LocalAgent {
+		return validateLocalAgentOptions(o)
+	}
 	switch o.BindAddress {
 	case "0.0.0.0", "127.0.0.1", "192.168.42.1":
 	default:
