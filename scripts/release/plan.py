@@ -34,7 +34,7 @@ def github_read(*args, attempts=3):
     for attempt in range(attempts):
         try:
             return command("gh", "api", *args)
-        except subprocess.CalledProcessError:
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
             if attempt == attempts - 1:
                 raise
             time.sleep(5)
