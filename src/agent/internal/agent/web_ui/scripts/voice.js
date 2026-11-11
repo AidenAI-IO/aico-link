@@ -86,8 +86,18 @@ function voiceStatusLabel() {
     }
 }
 
+// The orb floats just above the composer, which grows with its input and
+// attachments, so follow its height instead of a fixed offset.
+const voiceComposerEl = document.querySelector('.composer');
+if (voiceComposerEl && window.ResizeObserver) {
+    new ResizeObserver(function() {
+        voiceStageEl.parentElement.style.setProperty('--voice-composer-height', voiceComposerEl.offsetHeight + 'px');
+    }).observe(voiceComposerEl);
+}
+
 function renderRealtimeVoice() {
     const active = voiceModeActive();
+    const wasActive = document.body.classList.contains('voice-mode');
     voiceStageEl.classList.toggle('hidden', !active);
     document.body.classList.toggle('voice-mode', active);
     voiceStartBtn.classList.toggle('hidden', active || !voiceStatus.available);
@@ -103,6 +113,9 @@ function renderRealtimeVoice() {
     voiceStatusEl.textContent = voiceStatusLabel();
     if (inputEl) inputEl.placeholder = active ? 'Type a message…' : defaultInputPlaceholder;
     if (!active) voiceOrbEl.style.removeProperty('--voice-level');
+    // Entering voice mode adds room under the last message for the orb; keep
+    // the reader at the bottom so the latest message stays above the fade.
+    if (active && !wasActive) scrollToBottom();
 }
 
 async function refreshRealtimeVoiceStatus() {

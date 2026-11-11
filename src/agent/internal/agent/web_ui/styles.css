@@ -1817,13 +1817,26 @@ body { background: #f5f5f7; color: var(--text); }
     .workspace-links, .session-actions { flex-wrap: wrap; }
 }
 
-/* Realtime voice mode. The same presentation serves device and browser audio. */
+/* Realtime voice mode. The same presentation serves device and browser audio.
+   The orb floats over the bottom of the message list instead of taking its own
+   row, and the list fades out underneath it rather than ending at an edge. */
+.workspace-content {
+    position: relative;
+}
+
 .voice-stage {
+    position: absolute;
+    left: 0;
+    right: 0;
+    /* Sit just above the composer; --voice-composer-height is set from JS. */
+    bottom: var(--voice-composer-height, 120px);
+    z-index: 2;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 14px;
-    padding: 26px 18px 8px;
+    gap: 10px;
+    padding: 0 18px 14px;
+    pointer-events: none;
 }
 
 .voice-stage.hidden,
@@ -1831,17 +1844,27 @@ body { background: #f5f5f7; color: var(--text); }
     display: none;
 }
 
+/* Messages fade out over the orb's area so it reads as floating on them. */
+body.voice-mode .conversation {
+    /* Fully visible above the fade, gone by the middle of the orb. */
+    --voice-fade-start: 230px;
+    --voice-fade-end: 110px;
+    padding-bottom: calc(var(--voice-fade-start) + 16px);
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--voice-fade-start)), transparent calc(100% - var(--voice-fade-end)));
+    mask-image: linear-gradient(to bottom, #000 calc(100% - var(--voice-fade-start)), transparent calc(100% - var(--voice-fade-end)));
+}
+
 .voice-orb {
     --voice-level: 0;
     position: relative;
-    width: 168px;
-    height: 168px;
+    width: 96px;
+    height: 96px;
     border-radius: 50%;
     overflow: hidden;
     background:
         radial-gradient(circle at 68% 74%, rgba(255, 250, 246, 0.95) 0, rgba(255, 238, 230, 0.7) 22%, transparent 52%),
         radial-gradient(circle at 30% 24%, #f07c62 0, #f3a08a 38%, #fbd8cb 72%, #fff1ea 100%);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 18px 60px rgba(240, 124, 98, 0.22);
+    box-shadow: 0 10px 34px rgba(240, 124, 98, 0.18);
     transform: scale(calc(1 + var(--voice-level) * 0.12));
     transition: transform 90ms linear, filter 300ms ease, opacity 300ms ease;
 }
@@ -1875,7 +1898,7 @@ body { background: #f5f5f7; color: var(--text); }
 .voice-orb[data-activity="speaking"] { animation: voice-orb-breathe 1.2s ease-in-out infinite; }
 
 .voice-status {
-    font-size: 0.82rem;
+    font-size: 0.78rem;
     color: var(--muted);
 }
 
@@ -1954,5 +1977,14 @@ body { background: #f5f5f7; color: var(--text); }
 }
 
 body.voice-mode .empty-state {
+    display: none;
+}
+
+/* The message list scrolls without a visible scrollbar. */
+.conversation {
+    scrollbar-width: none;
+}
+
+.conversation::-webkit-scrollbar {
     display: none;
 }
