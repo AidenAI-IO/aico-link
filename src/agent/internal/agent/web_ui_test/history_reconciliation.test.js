@@ -144,6 +144,16 @@ function createContextMarkerNode(msg, index) {
     return node;
 }
 
+function createToolGroupNode(group) {
+    const node = document.createElement('article');
+    updateToolGroupNode(node, group);
+    return node;
+}
+
+function updateToolGroupNode(node, group) {
+    node._toolGroup = group;
+}
+
 function contextMarkerSummary(msg, index) {
     return 'State ' + (index + 1) + ': ' + (msg.content || '');
 }
@@ -152,7 +162,10 @@ Object.assign(global, {
     assert,
     createMessageNode,
     createContextMarkerNode,
+    createToolGroupNode,
+    updateToolGroupNode,
     contextMarkerSummary,
+    setContextMarkerPreview: (button, msg, index) => { button.title = contextMarkerSummary(msg, index); },
     contextMarkerType: () => 'state',
     formatTime: timestamp => timestamp ? String(timestamp) : '',
     normalizeType: type => type || 'assistant',
@@ -339,8 +352,13 @@ assert.equal(pureMessages.length, 3, 'a reset should remove the matching live dr
 pureMessages = projectConversationMessages(pureMessages, {type: 'history', messages: pureHistory});
 assert.equal(pureMessages.length, 2, 'durable history should replace transient live messages');
 
+function renderedMessageType(msg) {
+    return isContextMarkerMessage(msg) ? 'state' : msg.type;
+}
+
 function renderedTypes() {
     return Array.from(messagesDiv.children).map(function(node) {
+        if (node._toolGroup) return 'tools[' + node._toolGroup.messages.map(renderedMessageType).join(',') + ']';
         return node._stateMessage ? 'state' : node._message.type;
     });
 }
@@ -367,12 +385,12 @@ handleChatStreamEvent({type: 'message', message: {
     type: 'tool_call', request_id: runId, tool_name: 'audio_volume', tool_input: '{"volume":0}',
     timestamp: 't-order-call'
 }});
-assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call'],
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tools[tool_call]'],
     'tool-call boundary should retire the provisional assistant draft');
 
 handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: runId,
     payload: {text: 'late tool-call text'}});
-assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call'],
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tools[tool_call]'],
     'a late delta from the tool-call response should not recreate its draft');
 
 handleChatStreamEvent({type: 'message', message: {
@@ -380,17 +398,17 @@ handleChatStreamEvent({type: 'message', message: {
     timestamp: 't-order-result'
 }});
 handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: 'Volume is now 0.'});
-assert.deepEqual(renderedTypes(), ['state', 'user', 'tool_call', 'tool_result', 'assistant'],
+assert.deepEqual(renderedTypes(), ['state', 'user', 'tools[tool_call,tool_result]', 'assistant'],
     'the first post-tool delta should render before the response finishes');
-assert.equal(messagesDiv.children[4]._message.content, 'Volume is now 0.');
+assert.equal(messagesDiv.children[3]._message.content, 'Volume is now 0.');
 handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: runId});
 handleChatStreamEvent({type: 'assistant_delta', request_id: runId, delta: ' Confirmed.'});
-assert.equal(messagesDiv.children[4]._message.content, 'Volume is now 0. Confirmed.',
+assert.equal(messagesDiv.children[3]._message.content, 'Volume is now 0. Confirmed.',
     'a delayed or duplicate SSE tool event must not block NDJSON deltas');
 handleChatStreamEvent({type: 'message', message: {
     type: 'assistant', request_id: runId, content: 'Volume is now 0.', timestamp: 't-order-final'
 }});
-const stableOrder = ['state', 'user', 'tool_call', 'tool_result', 'assistant'];
+const stableOrder = ['state', 'user', 'tools[tool_call,tool_result]', 'assistant'];
 assert.deepEqual(renderedTypes(), stableOrder,
     'live final response should follow its tool result without moving earlier messages');
 
@@ -409,6 +427,33 @@ assert.deepEqual(renderedTypes(), stableOrder,
 assert.strictEqual(messagesDiv.children[0], orderedStateNode,
     'the live state divider should be reused at its durable position');
 
+renderHistory([
+    {type: 'user', request_id: 'context-backend-50', content: 'navigate home'},
+    {type: 'tool_call', request_id: 'context-backend-51', tool_name: 'tap', tool_input: '{"x":1}'},
+    {type: 'tool_call', request_id: 'context-backend-52', tool_name: 'tap', tool_input: '{"x":2}'},
+    {type: 'tool_result', request_id: 'context-backend-53', tool_name: 'tap', content: 'first'},
+    {type: 'state', request_id: 'context-backend-54', content: 'screen: map'},
+    {type: 'tool_result', request_id: 'context-backend-55', tool_name: 'tap', content: 'second'},
+    {type: 'state', request_id: 'context-backend-56', content: 'app: Maps'},
+    {type: 'user', request_id: 'context-backend-57', content: 'thanks'}
+]);
+assert.deepEqual(renderedTypes(), ['user', 'tools[tool_call,tool_call,tool_result,state,tool_result]', 'state', 'user'],
+    'state produced by tools joins their group; turn-start state stays a divider');
+const pairedEntries = toolGroupEntries(messagesDiv.children[1]._toolGroup.messages);
+assert.deepEqual(pairedEntries.map(entry => entry.kind === 'tool'
+    ? entry.call.tool_input + '=' + entry.result.content : 'state'), ['{"x":1}=first', '{"x":2}=second', 'state'],
+    'each result pairs with the earliest open call of the same tool');
+
+renderHistory([]);
+const groupedRun = 'grouped-run';
+addMessage({type: 'user', request_id: groupedRun, content: 'tap'});
+handleChatStreamEvent({type: 'message', message: {type: 'tool_call', request_id: groupedRun, tool_name: 'tap'}});
+handleChatStreamEvent({type: 'message', message: {type: 'tool_result', request_id: groupedRun, tool_name: 'tap'}});
+handleSemanticEvent({schema_version: 2, kind: 'state.updated', turn_id: groupedRun,
+    payload: {type: 'state', request_id: 'context-backend-60', content: 'screen: changed'}});
+assert.deepEqual(renderedTypes(), ['user', 'tools[tool_call,tool_result,state]'],
+    'live state produced after a turn has output stays with that output');
+
 renderHistory([]);
 const laterRunId = 'later-ordering-run';
 addMessage({type: 'user', request_id: laterRunId, content: 'another tool', timestamp: 't-later-user'});
@@ -423,7 +468,7 @@ handleChatStreamEvent({type: 'assistant_delta', request_id: laterRunId, delta: '
 handleSemanticEvent({schema_version: 2, kind: 'tool.call_ready', turn_id: laterRunId});
 assert.equal(streamingAssistantDrafts[laterRunId].content, 'New draft',
     'a delayed semantic tool event must not retire the next model response');
-assert.deepEqual(renderedTypes(), ['user', 'tool_call', 'tool_result', 'assistant']);
+assert.deepEqual(renderedTypes(), ['user', 'tools[tool_call,tool_result]', 'assistant']);
 
 currentChatRequestId = laterRunId;
 handleSemanticEvent({schema_version: 2, kind: 'text.delta', turn_id: laterRunId,
@@ -494,15 +539,15 @@ handleChatStreamEvent({type: 'assistant_delta', request_id: 'reveal-tool', delta
 advanceAnimation();
 handleChatStreamEvent({type: 'message', message: {type: 'tool_call', request_id: 'reveal-tool', tool_name: 'weather'}});
 advanceAnimation(1000);
-assert.deepEqual(renderedTypes(), ['tool_call'], 'a retired draft must not reappear from an animation callback');
+assert.deepEqual(renderedTypes(), ['tools[tool_call]'], 'a retired draft must not reappear from an animation callback');
 handleChatStreamEvent({type: 'message', message: {type: 'tool_result', request_id: 'reveal-tool', tool_name: 'weather'}});
 handleChatStreamEvent({type: 'assistant_delta', request_id: 'reveal-tool', delta: 'The weather is sunny.'});
 advanceAnimation();
-assert.ok(messagesDiv.children[2].querySelector('.message-copy').textContent.length > 0,
+assert.ok(messagesDiv.children[1].querySelector('.message-copy').textContent.length > 0,
     'post-tool chunks should resume character playback');
 handleChatStreamEvent({type: 'assistant_delta_reset', request_id: 'reveal-tool'});
 advanceAnimation(1000);
-assert.deepEqual(renderedTypes(), ['tool_call', 'tool_result']);
+assert.deepEqual(renderedTypes(), ['tools[tool_call,tool_result]']);
 assert.equal(animationFrames.size, 0, 'reset should cancel queued reveal callbacks');
 
 renderHistory([]);
@@ -519,13 +564,13 @@ advanceAnimation();
 const progressPrefix = messagesDiv.children[0].querySelector('.message-copy').textContent;
 assert.ok(progressPrefix.length > 0 && progressPrefix.length < progressText.length);
 handleChatStreamEvent({type: 'message', message: progressCall});
-assert.deepEqual(renderedTypes(), ['assistant', 'tool_call']);
+assert.deepEqual(renderedTypes(), ['assistant', 'tools[tool_call]']);
 assert.equal(messagesDiv.children[0]._message.content, progressText);
 assert.equal(messagesDiv.children[0]._message.reasoning_content, progressCall.reasoning_content);
 assert.equal(messagesDiv.children[0].querySelector('.message-copy').textContent, progressPrefix,
     'tool text should keep its visible prefix while the remaining characters finish');
 handleChatStreamEvent({type: 'message', message: progressCall});
-assert.deepEqual(renderedTypes(), ['assistant', 'tool_call'], 'repeated tool events must not duplicate progress text');
+assert.deepEqual(renderedTypes(), ['assistant', 'tools[tool_call]'], 'repeated tool events must not duplicate progress text');
 const progressResult = {type: 'tool_result', request_id: progressRun, tool_name: 'weather', timestamp: 'result-1'};
 handleChatStreamEvent({type: 'message', message: progressResult});
 handleChatStreamEvent({type: 'assistant_delta', request_id: progressRun, delta: 'Checking tomorrow too.'});
@@ -536,7 +581,7 @@ handleChatStreamEvent({type: 'assistant_delta', request_id: progressRun, delta: 
 handleChatStreamEvent({type: 'message', message: {
     type: 'assistant', request_id: progressRun, content: 'Sunny today.', timestamp: 'progress-final'
 }});
-const progressOrder = ['assistant', 'tool_call', 'tool_result', 'assistant', 'tool_call', 'tool_result', 'assistant'];
+const progressOrder = ['assistant', 'tools[tool_call,tool_result]', 'assistant', 'tools[tool_call,tool_result]', 'assistant'];
 assert.deepEqual(renderedTypes(), progressOrder);
 for (let i = 0; i < 200 && assistantTextReveal.hasPending(); i++) advanceAnimation();
 assert.equal(messagesDiv.children[0].querySelector('.message-copy').textContent, progressText);

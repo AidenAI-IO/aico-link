@@ -48,9 +48,12 @@
               </section>
 
             <div class="loading" id="loading">
-                <span class="spinner" aria-hidden="true"></span>
-                <span>Working on it...</span>
-                <button type="button" class="stop-run-btn" id="stopRunBtn" onpointerdown="markStopRunPointer(event)" onclick="cancelCurrentRun(event)" disabled>Stop</button>
+                <div class="activity">
+                    <span class="activity-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+                    <span class="activity-label" id="activityLabel" role="status" aria-live="polite">Thinking</span>
+                    <span class="activity-time" id="activityTime" aria-hidden="true"></span>
+                    <button type="button" class="stop-run-btn" id="stopRunBtn" onpointerdown="markStopRunPointer(event)" onclick="cancelCurrentRun(event)" disabled>Stop</button>
+                </div>
             </div>
 
             <div class="pending-steer hidden" id="pendingSteer">
@@ -62,7 +65,7 @@
             </div>
 
               <form class="composer" onsubmit="event.preventDefault(); sendMessage();">
-                <div class="composer-shell">
+                <div class="composer-shell" id="composerShell">
                     <input type="file" id="fileInput" class="hidden-input" multiple />
                     <div class="draft-attachments" id="draftAttachments"></div>
                     <textarea
@@ -191,6 +194,7 @@
     <script defer src="/web-ui/scripts/events.js"></script>
     <script defer src="/web-ui/scripts/tools.js"></script>
     <script defer src="/web-ui/scripts/chat.js"></script>
+    <script defer src="/web-ui/scripts/markdown.js"></script>
     <script defer src="/web-ui/scripts/messages.js"></script>
     <script defer src="/web-ui/scripts/attachments.js"></script>
     <script defer src="/web-ui/scripts/tool_messages.js"></script>

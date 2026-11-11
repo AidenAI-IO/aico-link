@@ -184,6 +184,10 @@ function renderMessageAttachments(attachments) {
             const image = document.createElement('img');
             image.alt = attachment.name || 'Image attachment';
             image.src = attachmentDataURL(attachment);
+            image.className = 'zoomable';
+            image.addEventListener('click', function() {
+                openImageViewer([{src: image.src, caption: attachment.name || 'Image'}], 0);
+            });
             card.appendChild(image);
         } else if (attachment.kind === 'audio') {
             const audio = document.createElement('audio');

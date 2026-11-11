@@ -596,19 +596,41 @@ function renderHistory(history) {
     // writing to removed nodes. Unchanged nodes must also show their full text.
     assistantTextReveal.flush();
     assistantTextReveal.clear();
+    streamingAssistantDrafts = {};
+    assistantDraftBlockedByTool.clear();
+    reconcileConversation(history, false);
+    renderedHistoryFingerprint = fingerprint;
+}
+
+// Reconcile rendered nodes with the projected messages, reusing unchanged
+// nodes. Tool calls, results, and the state they produce render as groups.
+function reconcileConversation(messages, live) {
     const shouldStickToBottom = messagesDiv.children.length === 0 || isConversationNearBottom();
     const previousScrollTop = conversationEl.scrollTop;
     const previousMessageNodes = renderedMessageNodes;
     const previousStateMessages = renderedStateMessages;
+    const previousToolGroups = renderedToolGroups;
     const nextMessageKeys = new Set();
     const nextMessageNodes = new Map();
+    const nextToolGroups = new Map();
+    const usedToolGroups = new Set();
     renderedStateMessages = new Map();
-    streamingAssistantDrafts = {};
-    assistantDraftBlockedByTool.clear();
 
     const orderedNodes = [];
-    history.forEach(function(msg) {
-        if (isControlMessage(msg)) return;
+    groupConversationItems(messages.filter(msg => !isControlMessage(msg))).forEach(function(item) {
+        if (item.type === 'tools') {
+            let node = previousToolGroups.get(item.key);
+            if (!node || usedToolGroups.has(node)) {
+                node = matchingToolGroupNode(previousToolGroups, usedToolGroups, item);
+            }
+            if (node) updateToolGroupNode(node, item);
+            else node = createToolGroupNode(item);
+            usedToolGroups.add(node);
+            nextToolGroups.set(item.key, node);
+            orderedNodes.push(node);
+            return;
+        }
+        const msg = item.message;
         if (isContextMarkerMessage(msg)) {
             const key = messageIdentity(msg);
             if (renderedStateMessages.has(key)) return;
@@ -632,7 +654,7 @@ function renderHistory(history) {
         const existing = previousMessageNodes.get(key);
         let node = existing;
         if (!existing || existing._messageFingerprint !== incomingFingerprint) {
-            node = createTrackedMessageNode(msg, incomingFingerprint);
+            node = createTrackedMessageNode(msg, incomingFingerprint, live);
             if (existing) existing.replaceWith(node);
         }
         nextMessageNodes.set(key, node);
@@ -645,9 +667,13 @@ function renderHistory(history) {
     previousStateMessages.forEach(function(node, key) {
         if (!renderedStateMessages.has(key)) node.remove();
     });
+    previousToolGroups.forEach(function(node) {
+        if (!usedToolGroups.has(node)) node.remove();
+    });
 
     renderedMessageKeys = nextMessageKeys;
     renderedMessageNodes = nextMessageNodes;
+    renderedToolGroups = nextToolGroups;
     if (!renderedStateMessages.has(activeStateMessageKey)) {
         activeStateMessageKey = '';
     }
@@ -664,7 +690,20 @@ function renderHistory(history) {
     } else {
         conversationEl.scrollTop = previousScrollTop;
     }
-    renderedHistoryFingerprint = fingerprint;
+}
+
+// Live tool messages carry run-scoped IDs that history later replaces with
+// context IDs. Keep the same group node (and its expanded state) across that.
+function matchingToolGroupNode(previousToolGroups, usedToolGroups, group) {
+    const first = group.messages[0] || {};
+    for (const node of previousToolGroups.values()) {
+        if (usedToolGroups.has(node)) continue;
+        const candidate = (node._toolGroup && node._toolGroup.messages[0]) || {};
+        if (normalizeType(candidate.type) === normalizeType(first.type) &&
+            (candidate.tool_name || '') === (first.tool_name || '') &&
+            (candidate.tool_input || '') === (first.tool_input || '')) return node;
+    }
+    return null;
 }
 
 function addMessage(msg, beforeRequestId) {
@@ -679,20 +718,10 @@ function addMessage(msg, beforeRequestId) {
 }
 
 function renderLiveMessage(msg, beforeRequestId) {
-    if (isContextMarkerMessage(msg)) {
-        const key = messageIdentity(msg);
-        const userMessage = beforeRequestId && projectedMessages.find(function(item) {
-            return normalizeType(item.type) === 'user' && item.request_id === beforeRequestId;
-        });
-        const referenceNode = userMessage && renderedMessageNodes.get(messageIdentity(userMessage));
-        let node = renderedStateMessages.get(key);
-        if (!node || (referenceNode && node.nextSibling !== referenceNode)) {
-            renderedHistoryFingerprint = null;
-            const shouldStickToBottom = isConversationNearBottom();
-            if (!node) node = createContextMarkerNode(msg, renderedStateMessages.size);
-            messagesDiv.insertBefore(node, referenceNode || null);
-            if (shouldStickToBottom) scrollToBottom();
-        }
+    if (isContextMarkerMessage(msg) || isToolMessage(msg)) {
+        // Markers and tool messages may join or split an activity group.
+        renderedHistoryFingerprint = null;
+        reconcileConversation(projectedMessages, true);
         return;
     }
     const key = messageIdentity(msg);
@@ -737,7 +766,7 @@ function createTrackedMessageNode(msg, fingerprint, live) {
     if (live && normalizeType(msg.type) === 'assistant' &&
         (streamingAssistantDrafts[assistantStreamKey(msg)] || assistantTextReveal.has(key))) {
         assistantTextReveal.bind(key, {
-            content: node.querySelector('.message-copy'),
+            content: node._copyTarget || node.querySelector('.message-copy'),
             reasoning: node.querySelector('.reasoning-text')
         }, {content: msg.content || '', reasoning: msg.reasoning_content || ''});
     }
@@ -768,6 +797,6 @@ function updateContextMarkerNode(node, msg, index) {
     node._stateMessage = msg;
     const button = node.querySelector('.state-divider-button');
     if (!button) return;
-    button.title = contextMarkerSummary(msg, index);
+    setContextMarkerPreview(button, msg, index);
     button.setAttribute('aria-expanded', node.classList.contains('open') ? 'true' : 'false');
 }
