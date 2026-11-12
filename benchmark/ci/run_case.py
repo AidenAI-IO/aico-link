@@ -82,7 +82,7 @@ def _run_json(
     proc = subprocess.Popen(command, **popen_kwargs)
     try:
         stdout, _ = proc.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
+    except BaseException:
         terminate_process_tree(proc)
         raise
     if proc.returncode:
@@ -505,6 +505,9 @@ def run_case(
                     log_file.write(f"\n{message}\n")
                 print(f"Error: {message}", file=sys.stderr, flush=True)
                 return 1
+            except BaseException:
+                terminate_process_tree(proc)
+                raise
         manifest_path = BENCHMARK_ROOT / "runs" / run_id / "manifest.json"
         return _effective_exit_code(returncode, manifest_path)
     finally:

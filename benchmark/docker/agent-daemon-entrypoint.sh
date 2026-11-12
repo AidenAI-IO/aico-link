@@ -60,6 +60,31 @@ fi
 # use this entrypoint; bridged and scripted environments retain their tool catalog.
 if [ -n "${AICO_BENCHMARK_TOKEN_FILE:-}" ] && [ "$bridge_enabled" -eq 0 ]; then
     set -- "$@" --benchmark-headless
+    # Headless containers emulate only the MCU firmware peer, so the schedule
+    # tool runs the real routines and MCU service code instead of failing on a
+    # missing socket. Bridged environments keep their own device semantics.
+    # The daemon is exec'd below and stays PID 1, so supervise the emulator here:
+    # a crash restarts it on the same socket instead of silently losing the peer.
+    mcu_socket=/tmp/aico-mcu/mcu_service.sock
+    if command -v benchmark-mcu >/dev/null 2>&1; then
+        (
+            while :; do
+                benchmark-mcu -socket "$mcu_socket" || echo "benchmark MCU emulator exited; restarting" >&2
+                sleep 1
+            done
+        ) &
+        # The supervisor keeps retrying, so the daemon must know the socket even if startup is slow.
+        export AICO_MCU_SERVICE_SOCKET="$mcu_socket"
+    fi
+    waited=0
+    while command -v benchmark-mcu >/dev/null 2>&1 && [ ! -S "$mcu_socket" ] && [ "$waited" -lt 100 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    if command -v benchmark-mcu >/dev/null 2>&1 && ! [ -S "$mcu_socket" ]; then
+        # Only schedule tasks need the peer; do not fail every other headless task.
+        echo "benchmark MCU emulator did not start; continuing without an MCU service" >&2
+    fi
 fi
 
 exec "$@"
