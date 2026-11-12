@@ -776,11 +776,19 @@ def test_reproduce_command_matches_the_ci_invocation(task, flags, bridge):
     assert ("--environment-url" in command) is bridge
 
 
-@pytest.mark.parametrize("pattern", ["^(a+)+$", "(ab)*c", r"(x)\1", "(?=a)b", "(a|b){2,}"])
-def test_symptom_patterns_cannot_backtrack_catastrophically(pattern):
+@pytest.mark.parametrize("pattern", ["^(a+)+$", "^a*a*a*a*a*a*a*a*b$", "(x)\\1"])
+def test_symptom_patterns_are_literal_and_match_in_linear_time(pattern):
+    # Regex syntax is plain text: adversarial patterns neither backtrack nor match by accident.
+    row = {"metrics": {"error": "a" * (policy.SYMPTOM_TEXT_LIMIT - 1) + "!"}}
+    started = time.monotonic()
+    assert policy.symptom_matches({"kind": "error_text", "pattern": pattern}, row, []) == []
+    assert time.monotonic() - started < 0.5
+    symptom = {"kind": "error_text", "pattern": "Socket Missing | connection closed"}
+    policy.validate_symptom(symptom)
+    assert policy.symptom_matches(symptom, {"metrics": {"error": "dial: socket missing"}}, [])
+    assert policy.symptom_matches(symptom, {"metrics": {"error": "Connection closed by peer"}}, [])
     with pytest.raises(policy.InvalidFinding):
-        policy.validate_symptom({"kind": "error_text", "pattern": pattern})
-    policy.validate_symptom({"kind": "error_text", "pattern": "socket (missing|closed)"})
+        policy.validate_symptom({"kind": "error_text", "pattern": " | "})
 
 
 def test_symptom_search_is_bounded_to_a_prefix_of_each_text():

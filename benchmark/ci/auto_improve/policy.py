@@ -98,20 +98,22 @@ def validate_symptom(symptom: dict) -> None:
     pattern = symptom.get("pattern", "")
     if not isinstance(pattern, str) or len(pattern) > 200:
         raise InvalidFinding("Symptom pattern must be a short string")
-    # Quantified groups and backreferences can backtrack exponentially; a symptom needs neither.
-    if re.search(r"\)\s*[*+?{]|\\[1-9]|\(\?[=!<]", pattern):
-        raise InvalidFinding("Symptom pattern must not quantify groups, use backreferences or lookarounds")
-    if symptom["kind"] in {"tool_error", "hard_assertion", "error_text"} and not pattern:
+    if symptom["kind"] in {"tool_error", "hard_assertion", "error_text"} and not symptom_terms(pattern):
         raise InvalidFinding(f"Symptom {symptom['kind']} requires a pattern")
-    try:
-        re.compile(pattern)
-    except re.error as exc:
-        raise InvalidFinding("Symptom pattern is not a valid regular expression") from exc
+
+
+def symptom_terms(pattern: str) -> list[str]:
+    """A symptom pattern is literal text, with `|` separating alternatives; matching is case-insensitive.
+
+    Plain substring search runs in linear time, so a model-written pattern cannot stall the run
+    the way a backtracking regular expression can.
+    """
+    return [term.strip().casefold() for term in pattern.split("|") if term.strip()]
 
 
 def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
     """Return short evidence excerpts when one attempt shows the symptom."""
-    pattern = re.compile(symptom.get("pattern") or ".*", re.IGNORECASE | re.DOTALL)
+    terms = symptom_terms(symptom.get("pattern") or "")
     metrics = row.get("metrics") if isinstance(row.get("metrics"), dict) else {}
     errors = [str(metrics.get(k)) for k in ("error", "judge_error") if metrics.get(k)]
     kind = symptom["kind"]
@@ -130,8 +132,9 @@ def symptom_matches(symptom: dict, row: dict, traces: list[dict]) -> list[str]:
                  if isinstance(result, dict) and result.get("content") and tool_result_failed(result)]
     else:
         texts = errors
-    # Bound the searched text too, so one long error string cannot stall the run.
-    return [text[:300] for text in texts if pattern.search(text[:SYMPTOM_TEXT_LIMIT])][:3]
+    # An empty pattern matches any evidence of the symptom kind.
+    return [text[:300] for text in texts
+            if not terms or any(term in text[:SYMPTOM_TEXT_LIMIT].casefold() for term in terms)][:3]
 
 
 def reproduction(domain: str, row: dict, symptom: dict | None, traces: list[dict]) -> dict:
