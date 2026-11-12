@@ -308,6 +308,9 @@ type SaveMemoryRequest struct {
 	// UserRequest quotes the user's words asking to remember this. It is
 	// required only for a secret.
 	UserRequest string
+	// Durable is the model's judgment that the memory stays true and useful
+	// beyond the moment; nil when the model omitted it.
+	Durable *bool
 }
 
 // decodeSaveMemoryRequest tolerantly decodes a save_memory argument.
@@ -324,9 +327,18 @@ func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 		ExpectedRevision flexInt                `json:"expected_revision"`
 		Sensitive        flexScalarString       `json:"sensitive"`
 		UserRequest      string                 `json:"user_request"`
+		Durable          flexScalarString       `json:"durable"`
 	}
 	if err := json.Unmarshal([]byte(input), &flex); err != nil {
 		return SaveMemoryRequest{}, err
+	}
+	var durable *bool
+	switch strings.ToLower(strings.TrimSpace(string(flex.Durable))) {
+	case "true", "yes", "1":
+		durable = new(bool)
+		*durable = true
+	case "false", "no", "0":
+		durable = new(bool)
 	}
 	return SaveMemoryRequest{
 		Type:             flex.Type,
@@ -340,6 +352,7 @@ func decodeSaveMemoryRequest(input string) (SaveMemoryRequest, error) {
 		ExpectedRevision: int(flex.ExpectedRevision),
 		Sensitive:        string(flex.Sensitive),
 		UserRequest:      flex.UserRequest,
+		Durable:          durable,
 	}, nil
 }
 

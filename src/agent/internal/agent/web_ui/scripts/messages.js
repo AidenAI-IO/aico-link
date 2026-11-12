@@ -6,61 +6,52 @@ function createMessageNode(msg) {
     const shell = document.createElement('div');
     shell.className = 'message-shell';
 
-    const avatar = document.createElement('div');
-    avatar.className = 'message-avatar';
-    avatar.textContent = getAvatarLabel(msg.type);
-
     const body = document.createElement('div');
     body.className = 'message-body';
 
-    const role = document.createElement('div');
-    role.className = 'message-role';
-    role.textContent = getRoleLabel(msg.type, msg.tool_name, msg.role);
-
-    // Add voice indicator for voice messages
-    if (msg.source === 'voice') {
-        const voiceIcon = document.createElement('span');
-        voiceIcon.className = 'voice-icon';
-        voiceIcon.textContent = ' 🎤';
-        voiceIcon.title = 'Voice message';
-        role.appendChild(voiceIcon);
+    // User and assistant turns are identified by layout; other kinds keep a label.
+    const type = normalizeType(msg.type);
+    if (type !== 'user' && type !== 'assistant') {
+        const role = document.createElement('div');
+        role.className = 'message-role';
+        role.textContent = getRoleLabel(msg.type, msg.tool_name, msg.role);
+        body.appendChild(role);
     }
 
-    body.appendChild(role);
+    const attachmentsEl = renderMessageAttachments(msg.attachments || []);
+    if (attachmentsEl) {
+        body.appendChild(attachmentsEl);
+    }
 
-    if (msg.type === 'tool_call') {
-        body.appendChild(renderToolCall(msg));
-    } else if (msg.type === 'tool_result') {
-        body.appendChild(renderToolResult(msg));
-    } else {
-        const attachmentsEl = renderMessageAttachments(msg.attachments || []);
-        if (attachmentsEl) {
-            body.appendChild(attachmentsEl);
-        }
+    if (msg.reasoning_content) {
+        // Streaming reveal writes into .reasoning-text inside this line.
+        body.appendChild(createCollapsibleLine({
+            className: 'message-reasoning',
+            iconClass: 'reasoning-icon',
+            textClass: 'reasoning-text',
+            label: 'Reasoning',
+            text: msg.reasoning_content,
+            group: msg.content || '',
+            kind: 'reasoning',
+            expandKey: messageIdentity(msg) + '\u001freasoning'
+        }));
+    }
 
-        if (msg.reasoning_content) {
-            const reasoningDiv = document.createElement('div');
-            reasoningDiv.className = 'message-reasoning';
-            const reasoningLabel = document.createElement('div');
-            reasoningLabel.className = 'reasoning-label';
-            reasoningLabel.textContent = 'Reasoning';
-            reasoningDiv.appendChild(reasoningLabel);
-            const reasoningText = document.createElement('div');
-            reasoningText.className = 'reasoning-text';
-            reasoningText.textContent = msg.reasoning_content;
-            reasoningDiv.appendChild(reasoningText);
-            body.appendChild(reasoningDiv);
-        }
-
-        if (msg.content) {
-            const contentDiv = document.createElement('div');
-            contentDiv.className = 'message-copy';
+    if (msg.content) {
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-copy';
+        if (type === 'user' || type === 'steer') {
             contentDiv.textContent = msg.content || '';
-            body.appendChild(contentDiv);
+        } else {
+            // Streaming reveal writes through this target so partial
+            // <tts> markup is styled as it appears.
+            card._copyTarget = createSpeechTextTarget(contentDiv, messageIdentity(msg));
+            card._copyTarget.textContent = msg.content || '';
         }
+        body.appendChild(contentDiv);
     }
 
-    if (msg.type === 'assistant') {
+    if (msg.type === 'assistant' || msg.type === 'proactive') {
         const downloads = renderMessageAttachments(sharedLinksFromText(msg.content));
         if (downloads) body.appendChild(downloads);
     }
@@ -70,7 +61,7 @@ function createMessageNode(msg) {
         const audioBtn = document.createElement('button');
         audioBtn.type = 'button';
         audioBtn.className = 'audio-playback-btn';
-        audioBtn.textContent = '▶️ Play Audio';
+        audioBtn.textContent = 'Play recording';
 
         const filename = msg.audio_file.split('/').pop();
         const audioUrl = '/api/audio/' + encodeURIComponent(filename);
@@ -90,6 +81,14 @@ function createMessageNode(msg) {
     const footer = document.createElement('div');
     footer.className = 'message-footer';
 
+    if (msg.source === 'voice') {
+        const voice = document.createElement('span');
+        voice.className = 'message-voice';
+        voice.textContent = 'Voice';
+        voice.title = 'Voice message';
+        footer.appendChild(voice);
+    }
+
     const formattedTime = formatTime(msg.timestamp);
     if (formattedTime) {
         const timeDiv = document.createElement('div');
@@ -106,10 +105,239 @@ function createMessageNode(msg) {
         body.appendChild(footer);
     }
 
-    shell.appendChild(avatar);
     shell.appendChild(body);
     card.appendChild(shell);
     return card;
+}
+
+const speechTagPairs = [['<tts>', '</tts>'], ['[tts]', '[/tts]']];
+
+// Spoken and reasoning rows the user expanded: one entry per row, keyed by
+// message identity, holding the row's latest text and element. Streaming
+// re-renders reuse the key. When history replaces a live message (its run ID
+// becomes a context ID), migrateExpandedLines moves the entry from the
+// removed row to the new row with the same text.
+const expandedLines = new Map();
+// Rows rendered since the last migration. Only rows whose key is new (history
+// re-keys a replaced message) can inherit an entry, so a re-render of another
+// row with identical text never expands.
+let freshCollapsibleLines = [];
+const knownLineKeys = new Set();
+
+// A row's signature: its slot in the message, the message's text, and its own
+// text. Rows sharing one are told apart by their position on the page.
+function lineSignature(options) {
+    return [options.kind, options.group, options.text].join('\u001e');
+}
+
+function sameSignatureLines(signature) {
+    return Array.from(document.querySelectorAll('.collapsible-line'))
+        .filter(block => block._lineSignature === signature);
+}
+
+function migrateExpandedLines() {
+    const fresh = new Set(freshCollapsibleLines.filter(block => block.isConnected &&
+        !expandedLines.has(block._lineKey) && !knownLineKeys.has(block._lineKey)));
+    freshCollapsibleLines.forEach(block => knownLineKeys.add(block._lineKey));
+    if (knownLineKeys.size > 2000) knownLineKeys.clear();
+    freshCollapsibleLines = [];
+    const moved = [];
+    expandedLines.forEach(function(entry, key) {
+        if (entry.block.isConnected) return;
+        expandedLines.delete(key);
+        // Prefer the replacement at the removed row's position among rows
+        // with the same signature, so of identical messages the same one
+        // stays open.
+        const rows = sameSignatureLines(entry.signature);
+        const target = fresh.has(rows[entry.position]) ? rows[entry.position] : rows.find(block => fresh.has(block));
+        if (!target) return;
+        fresh.delete(target);
+        moved.push([target, entry]);
+    });
+    moved.forEach(function([target, entry]) {
+        expandedLines.set(target._lineKey, Object.assign({}, entry, {block: target}));
+        target._syncExpanded(true);
+    });
+    // Messages arriving or leaving shift positions; keep them current.
+    expandedLines.forEach(function(entry) {
+        if (entry.block.isConnected) entry.position = sameSignatureLines(entry.signature).indexOf(entry.block);
+    });
+}
+
+function createSpeechTextTarget(element, key) {
+    let text = '';
+    return {
+        get textContent() { return text; },
+        set textContent(value) {
+            text = String(value || '');
+            renderSpeechText(element, text, key);
+        }
+    };
+}
+
+// Split assistant text into spoken (<tts>/[tts]) and visible segments. An
+// unterminated block is still being streamed; a trailing partial tag is hidden.
+function splitSpeechText(text) {
+    const segments = [];
+    let rest = String(text || '');
+    while (rest) {
+        const code = markdownCodeRanges(rest);
+        let start = -1;
+        let pair = null;
+        speechTagPairs.forEach(function(candidate) {
+            const index = indexOutsideCode(rest, candidate[0], 0, code);
+            if (index >= 0 && (start < 0 || index < start)) {
+                start = index;
+                pair = candidate;
+            }
+        });
+        if (start < 0) {
+            segments.push({speech: false, text: trimPartialTag(rest, speechTagPairs.map(p => p[0]))});
+            break;
+        }
+        if (start > 0) segments.push({speech: false, text: rest.slice(0, start)});
+        rest = rest.slice(start + pair[0].length);
+        const end = rest.toLowerCase().indexOf(pair[1]);
+        if (end < 0) {
+            segments.push({speech: true, open: true, text: trimPartialTag(rest, [pair[1]])});
+            break;
+        }
+        segments.push({speech: true, text: rest.slice(0, end)});
+        rest = rest.slice(end + pair[1].length);
+    }
+    return segments.filter(segment => segment.speech || segment.text);
+}
+
+// [start, end) ranges of fenced code blocks and inline code spans, so a
+// documented <tts> or a TOML [tts] section is not taken as speech markup.
+// An unclosed fence runs to the end (it may still be streaming).
+function markdownCodeRanges(text) {
+    const ranges = [];
+    const fence = /^ {0,3}(`{3,}|~{3,})[^\n]*$/gm;
+    let match;
+    while ((match = fence.exec(text))) {
+        const closing = new RegExp('^ {0,3}' + match[1][0] + '{' + match[1].length + ',}[ \\t]*$', 'gm');
+        closing.lastIndex = match.index + match[0].length;
+        const close = closing.exec(text);
+        const end = close ? close.index + close[0].length : text.length;
+        ranges.push([match.index, end]);
+        fence.lastIndex = end;
+    }
+    const inline = /(`+)[^`\n]*?\1/g;
+    while ((match = inline.exec(text))) {
+        const start = match.index;
+        if (!ranges.some(range => start >= range[0] && start < range[1])) {
+            ranges.push([start, start + match[0].length]);
+        }
+    }
+    return ranges;
+}
+
+function indexOutsideCode(text, tag, from, ranges) {
+    const lower = text.toLowerCase();
+    for (let index = lower.indexOf(tag, from); index >= 0; index = lower.indexOf(tag, index + 1)) {
+        if (!ranges.some(range => index >= range[0] && index < range[1])) return index;
+    }
+    return -1;
+}
+
+function trimPartialTag(text, tags) {
+    const lower = text.toLowerCase();
+    for (let length = Math.min(text.length, 6); length > 0; length--) {
+        const suffix = lower.slice(-length);
+        if (tags.some(tag => tag.length > length && tag.indexOf(suffix) === 0)) {
+            return text.slice(0, -length);
+        }
+    }
+    return text;
+}
+
+function renderSpeechText(element, text, key) {
+    element.innerHTML = '';
+    let speechIndex = 0;
+    splitSpeechText(text).forEach(function(segment) {
+        if (segment.speech) {
+            const slot = speechIndex++;
+            element.appendChild(createSpeechBlock(segment, (key || '') + '\u001f' + slot, 'speech:' + slot, text));
+            return;
+        }
+        if (!segment.text.trim()) return;
+        const markdown = document.createElement('div');
+        markdown.className = 'markdown';
+        renderMarkdown(markdown, segment.text);
+        element.appendChild(markdown);
+    });
+}
+
+// Spoken text shows one line; clicking toggles the full text.
+function createSpeechBlock(segment, expandKey, kind, group) {
+    return createCollapsibleLine({
+        className: 'tts-block' + (segment.open ? ' streaming' : ''),
+        iconClass: 'tts-icon',
+        textClass: 'tts-text',
+        label: 'Spoken aloud',
+        kind,
+        group,
+        text: segment.text.trim(),
+        expandKey
+    });
+}
+
+// A quiet one-line row (icon + text with an ellipsis) that expands to the
+// full text on click or Enter. Expanded rows stay open across re-renders.
+function createCollapsibleLine(options) {
+    const block = document.createElement('div');
+    const key = options.expandKey;
+    const entry = expandedLines.get(key);
+    const expanded = !!entry;
+    if (entry) {
+        // A streaming re-render: keep one entry, now pointing at this row.
+        entry.signature = lineSignature(options);
+        entry.block = block;
+    } else {
+        block._lineKey = key;
+        freshCollapsibleLines.push(block);
+        if (freshCollapsibleLines.length > 400) freshCollapsibleLines.splice(0, 200);
+    }
+    block._lineSignature = lineSignature(options);
+    block.className = 'collapsible-line ' + options.className + (expanded ? ' expanded' : '');
+    block.tabIndex = 0;
+    block.setAttribute('role', 'button');
+    const icon = document.createElement('span');
+    icon.className = 'line-icon ' + options.iconClass;
+    icon.setAttribute('aria-hidden', 'true');
+    const copy = document.createElement('span');
+    copy.className = 'line-text ' + options.textClass;
+    copy.textContent = options.text;
+    block.appendChild(icon);
+    block.appendChild(copy);
+
+    function sync(open) {
+        block.classList.toggle('expanded', open);
+        block.setAttribute('aria-expanded', open ? 'true' : 'false');
+        block.title = open ? options.label : options.label + ' · click to show all';
+    }
+    function toggle() {
+        // Keep a text selection inside the row from collapsing it.
+        const selection = window.getSelection ? window.getSelection() : null;
+        if (selection && !selection.isCollapsed && block.contains(selection.anchorNode)) return;
+        const open = !block.classList.contains('expanded');
+        if (open) {
+            const signature = lineSignature(options);
+            expandedLines.set(key, {signature, block, position: sameSignatureLines(signature).indexOf(block)});
+        }
+        if (!open) expandedLines.delete(key);
+        sync(open);
+    }
+    block._syncExpanded = sync;
+    sync(expanded);
+    block.addEventListener('click', toggle);
+    block.addEventListener('keydown', function(event) {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        toggle();
+    });
+    return block;
 }
 
 function renderMessageUsage(usage) {
@@ -148,22 +376,52 @@ function createContextMarkerNode(msg, index) {
     card._stateMessage = msg;
     renderedStateMessages.set(key, card);
 
-    const line = document.createElement('div');
-    line.className = 'state-divider-line';
-
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'state-divider-button';
-    button.textContent = markerLabel;
-    button.title = contextMarkerSummary(msg, index);
     button.setAttribute('aria-controls', 'stateModal');
     button.setAttribute('aria-expanded', key === activeStateMessageKey ? 'true' : 'false');
+    const label = document.createElement('span');
+    label.className = 'state-divider-label';
+    label.textContent = markerLabel;
+    const preview = document.createElement('span');
+    preview.className = 'state-divider-preview';
+    button.appendChild(label);
+    button.appendChild(preview);
     button.addEventListener('click', function() {
         toggleStateDetails(key);
     });
-    line.appendChild(button);
-    card.appendChild(line);
+    const head = document.createElement('div');
+    head.className = 'state-divider-head';
+    head.appendChild(button);
+    const thumbs = document.createElement('div');
+    thumbs.className = 'tool-thumbs';
+    head.appendChild(thumbs);
+    card.appendChild(head);
+    setContextMarkerPreview(button, msg, index);
     return card;
+}
+
+function renderContextMarkerThumbs(card, msg) {
+    const container = card.querySelector('.tool-thumbs');
+    if (!container) return;
+    container.innerHTML = '';
+    const images = toolEntryImages({kind: 'marker', message: msg});
+    images.slice(0, maxGroupThumbs).forEach(function(image, index) {
+        container.appendChild(createToolThumb(images, index));
+    });
+}
+
+function setContextMarkerPreview(button, msg, index) {
+    button.title = contextMarkerSummary(msg, index);
+    const preview = button.querySelector('.state-divider-preview');
+    if (!preview) return;
+    const markerType = contextMarkerType(msg);
+    const content = formatContextMarkerContent(msg.content || '', markerType);
+    const firstLine = content.split('\n').map(line => line.trim()).find(Boolean);
+    preview.textContent = firstLine || ((msg.attachments || []).length ? 'attachment' : '');
+    const card = button.closest ? button.closest('.state-divider') : null;
+    if (card) renderContextMarkerThumbs(card, msg);
 }
 
 function toggleStateDetails(key) {
@@ -205,6 +463,12 @@ function renderStateModal() {
     stateModalTitleEl.textContent = markerLabel;
     stateModalBodyEl.innerHTML = '';
     stateModalBodyEl.classList.remove('has-attachments');
+    renderContextMarkerDetails(stateModalBodyEl, msg);
+}
+
+function renderContextMarkerDetails(container, msg) {
+    const markerType = contextMarkerType(msg);
+    const markerLabel = markerType === 'notice' ? 'Notice' : 'State';
     const content = formatContextMarkerContent(msg.content || '', markerType);
     if (content) {
         const rows = markerType === 'state' ? parseStateKeyValues(content) : null;
@@ -224,25 +488,25 @@ function renderStateModal() {
                 body.appendChild(tr);
             });
             table.appendChild(body);
-            stateModalBodyEl.appendChild(table);
+            container.appendChild(table);
         } else {
             const copy = document.createElement('pre');
             copy.className = 'state-detail-copy';
             copy.textContent = content;
-            stateModalBodyEl.appendChild(copy);
+            container.appendChild(copy);
         }
     }
     const attachmentsEl = renderMessageAttachments(msg.attachments || []);
     if (attachmentsEl) {
         attachmentsEl.classList.add('state-detail-attachments');
-        stateModalBodyEl.classList.add('has-attachments');
-        stateModalBodyEl.appendChild(attachmentsEl);
+        container.classList.add('has-attachments');
+        container.appendChild(attachmentsEl);
     }
     if (!content && !attachmentsEl) {
         const empty = document.createElement('div');
         empty.className = 'state-detail-empty';
         empty.textContent = 'No ' + markerLabel.toLowerCase() + ' details.';
-        stateModalBodyEl.appendChild(empty);
+        container.appendChild(empty);
     }
 }
 
@@ -344,7 +608,78 @@ function setComposerState(isLoading) {
         stopRunBtn.textContent = 'Stop';
     }
     loadingDiv.classList.toggle('active', isLoading);
+    setComposerBusy(isLoading);
+    setActivityRunning(isLoading);
     renderPendingSteer();
+}
+
+// The light sweep starts past the left edge when a run starts. When the run
+// ends it finishes its current pass instead of vanishing mid-edge; the wait
+// is timed from the pass start because animation events are throttled in
+// background tabs.
+const composerSweepMs = 1800;
+
+function setComposerBusy(isLoading) {
+    if (!composerShellEl) return;
+    if (composerBusyStopTimer) clearTimeout(composerBusyStopTimer);
+    composerBusyStopTimer = null;
+    if (isLoading) {
+        if (!composerShellEl.classList.contains('busy')) {
+            composerShellEl.classList.add('busy');
+            composerBusyStartedAt = Date.now();
+        }
+        return;
+    }
+    if (!composerShellEl.classList.contains('busy')) return;
+    const elapsed = Date.now() - composerBusyStartedAt;
+    const remaining = composerSweepMs - (elapsed % composerSweepMs);
+    composerBusyStopTimer = setTimeout(function() {
+        composerBusyStopTimer = null;
+        composerShellEl.classList.remove('busy');
+    }, remaining);
+}
+
+function setActivityRunning(isLoading) {
+    if (!isLoading) {
+        activityStartedAt = 0;
+        if (activityTimer) clearInterval(activityTimer);
+        activityTimer = null;
+        return;
+    }
+    if (!activityStartedAt) activityStartedAt = currentChatStartedAt || Date.now();
+    if (!activityTimer) activityTimer = setInterval(renderActivity, 250);
+    renderActivity();
+}
+
+function renderActivity() {
+    const label = currentActivityLabel();
+    if (activityLabelEl.textContent !== label) activityLabelEl.textContent = label;
+    const seconds = Math.max(0, Math.floor((Date.now() - activityStartedAt) / 1000));
+    activityTimeEl.textContent = seconds < 60
+        ? seconds + 's'
+        : Math.floor(seconds / 60) + 'm ' + String(seconds % 60).padStart(2, '0') + 's';
+}
+
+// Describe the run's current step from the latest projected message.
+function currentActivityLabel() {
+    for (let i = projectedMessages.length - 1; i >= 0; i--) {
+        const msg = projectedMessages[i];
+        if (isContextMarkerMessage(msg)) continue;
+        const type = normalizeType(msg.type);
+        if (isToolMessage(msg)) {
+            let start = i;
+            while (start > 0 && (isToolMessage(projectedMessages[start - 1]) ||
+                isContextMarkerMessage(projectedMessages[start - 1]))) start--;
+            const pending = toolGroupEntries(projectedMessages.slice(start, i + 1).filter(isToolMessage))
+                .filter(entry => entry.kind === 'tool' && !entry.result);
+            return pending.length ? 'Running ' + entryToolName(pending[pending.length - 1]) : 'Thinking';
+        }
+        if (type === 'assistant' && streamingAssistantDrafts[assistantStreamKey(msg)]) {
+            return msg.content ? 'Writing' : 'Reasoning';
+        }
+        return 'Thinking';
+    }
+    return 'Thinking';
 }
 
 function renderPendingSteer() {
@@ -380,18 +715,8 @@ function getRoleLabel(type, toolName, role) {
     if (type === 'tool_call') return toolName ? 'Tool Call · ' + toolName : 'Tool Call';
     if (type === 'tool_result') return toolName ? 'Tool Result · ' + toolName : 'Tool Result';
     if (type === 'state') return 'State';
+    if (type === 'proactive') return 'Aico · Proactive';
     return 'Aico';
-}
-
-function getAvatarLabel(type) {
-    if (type === 'user') return 'You';
-    if (type === 'steer') return 'Edit';
-    if (type === 'episode_status') return 'Task';
-    if (type === 'role_output') return 'Role';
-    if (type === 'tool_call') return 'Call';
-    if (type === 'tool_result') return 'Tool';
-    if (type === 'state') return 'State';
-    return 'AI';
 }
 
 function formatTime(timestamp) {

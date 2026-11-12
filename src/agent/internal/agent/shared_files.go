@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -172,12 +173,13 @@ func (s *Server) sharedFilesHandler() http.Handler {
 
 func sharedFileHeaders(w http.ResponseWriter, r *http.Request) bool {
 	// Web transfers use the current origin; native clients do not send Origin.
-	// Reject cross-origin browser writes as multipart POST can skip preflight.
-	if r.Method == http.MethodPost {
+	// Reject cross-origin browser writes: multipart POST can skip preflight,
+	// and DELETE gets the same check rather than relying on CORS alone.
+	if r.Method == http.MethodPost || r.Method == http.MethodDelete {
 		origin := r.Header.Get("Origin")
 		parsed, err := url.Parse(origin)
 		if r.Header.Get("Sec-Fetch-Site") == "cross-site" || (origin != "" && (err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host != r.Host)) {
-			http.Error(w, "Cross-origin uploads are not allowed", http.StatusForbidden)
+			http.Error(w, "Cross-origin writes are not allowed", http.StatusForbidden)
 			return true
 		}
 	}
@@ -205,8 +207,10 @@ func (s *Server) handleSharedFiles(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, map[string]any{"files": entries, "max_upload_bytes": maxSharedFileBytes})
+	case http.MethodDelete:
+		deleteSharedFile(w, r, r.URL.Query().Get("path"))
 	default:
-		w.Header().Set("Allow", "GET, POST, OPTIONS")
+		w.Header().Set("Allow", "GET, POST, DELETE, OPTIONS")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -295,6 +299,95 @@ func uploadSharedFileWithLimit(w http.ResponseWriter, r *http.Request, limit int
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	writeJSON(w, sharedFileInfo(published, info))
+}
+
+// deleteSharedFile removes one regular file or one empty folder below the
+// shared root. Like downloads, it never follows or removes symbolic links,
+// hidden entries, or special files; those answer 404 as if absent. A folder
+// that still has entries answers 409, so a single request never removes a
+// whole tree.
+func deleteSharedFile(w http.ResponseWriter, r *http.Request, rel string) {
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		http.Error(w, "path is required", http.StatusBadRequest)
+		return
+	}
+	if !validSharedRelative(rel) {
+		http.NotFound(w, r)
+		return
+	}
+	root, err := os.OpenRoot(sharedFilesDir())
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	defer root.Close()
+	if err := removeSharedEntry(root, rel); err != nil {
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+			http.NotFound(w, r)
+		case errors.Is(err, syscall.ENOTEMPTY) || errors.Is(err, syscall.EEXIST):
+			http.Error(w, "Folder is not empty", http.StatusConflict)
+		default:
+			http.Error(w, "Cannot delete file", http.StatusInternalServerError)
+		}
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// sharedRemoveHook runs between validating the parent folder and removing the
+// entry; tests use it to swap folders in that window.
+var sharedRemoveHook func()
+
+// removeSharedEntry removes rel without following symbolic links. It opens each
+// parent folder in turn and checks that the open handle is the folder Lstat saw,
+// then removes the last name inside that handle. Swapping a parent for a link
+// afterwards cannot redirect the removal to another folder.
+func removeSharedEntry(root *os.Root, rel string) error {
+	parts := strings.Split(rel, "/")
+	dir := root
+	defer func() {
+		if dir != root {
+			dir.Close()
+		}
+	}()
+	for _, name := range parts[:len(parts)-1] {
+		info, err := dir.Lstat(name)
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() {
+			return os.ErrNotExist
+		}
+		next, err := dir.OpenRoot(name)
+		if err != nil {
+			return err
+		}
+		if dir != root {
+			dir.Close()
+		}
+		dir = next
+		opened, err := dir.Stat(".")
+		if err != nil {
+			return err
+		}
+		if !os.SameFile(info, opened) {
+			return os.ErrNotExist
+		}
+	}
+	name := parts[len(parts)-1]
+	info, err := dir.Lstat(name)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() && !info.Mode().IsRegular() {
+		return os.ErrNotExist
+	}
+	if sharedRemoveHook != nil {
+		sharedRemoveHook()
+	}
+	return dir.Remove(name)
 }
 
 func listSharedFiles(rel string) ([]sharedFile, error) {

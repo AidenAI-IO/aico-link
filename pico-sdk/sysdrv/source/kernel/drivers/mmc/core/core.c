@@ -2148,31 +2148,14 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	pr_debug("%s: %s: trying to init card at %u Hz\n",
 		mmc_hostname(host), __func__, host->f_init);
 
-	/* An invalid retained-module description must not fall back to resets. */
-	if (mmc_sdio_aic_retained_host(host) &&
-	    !mmc_sdio_aic_retained_configured(host)) {
-		pr_err("%s: rejecting unsafe AIC retained SDIO host configuration\n",
-			mmc_hostname(host));
-		return -EINVAL;
-	}
 	mmc_power_up(host, host->ocr_avail);
-	if (mmc_sdio_aic_retained_host(host) &&
-	    !mmc_sdio_aic_retained_allowed(host)) {
-		pr_err("%s: unsafe AIC retained SDIO IOS power=%u voltage=%u vdd=%u\n",
-			mmc_hostname(host), host->ios.power_mode,
-			host->ios.signal_voltage, host->ios.vdd);
-		/* Fixed, always-on rails stay powered while the host is stopped. */
-		mmc_power_off(host);
-		return -EINVAL;
-	}
 
 	/*
 	 * Some eMMCs (with VCCQ always on) may not be reset after power up, so
 	 * do a hardware reset if possible.
 	 */
 #ifndef CONFIG_ROCKCHIP_THUNDER_BOOT_MMC
-	if (!mmc_sdio_aic_retained_host(host))
-		mmc_hw_reset_for_init(host);
+	mmc_hw_reset_for_init(host);
 #endif
 
 	/*
@@ -2181,13 +2164,8 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	 * should be ignored by SD/eMMC cards.
 	 * Skip it if we already know that we do not support SDIO commands
 	 */
-	if (!(host->caps2 & MMC_CAP2_NO_SDIO)) {
-		if (mmc_sdio_aic_retained_host(host))
-			pr_debug("%s: preserving externally powered SDIO card at %u Hz\n",
-				mmc_hostname(host), freq);
-		else
-			sdio_reset(host);
-	}
+	if (!(host->caps2 & MMC_CAP2_NO_SDIO))
+		sdio_reset(host);
 
 	mmc_go_idle(host);
 

@@ -75,6 +75,8 @@ type PreparedToolResult struct {
 	ContextBytes         int
 	ContextTokens        int
 	ProcessingDurationMs int64
+	// IsError marks a failed tool execution; it is persisted in result metadata.
+	IsError bool
 }
 
 type ToolResultPolicy interface {

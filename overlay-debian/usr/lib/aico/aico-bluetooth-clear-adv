@@ -1,10 +1,11 @@
 #!/bin/sh
 set -eu
 
-# A warm reboot reuses the running AIC8800 firmware, and the controller keeps
-# its extended advertising sets across the kernel's HCI Reset. BlueZ then gets
-# Command Disallowed for every new set and ble_service never advertises. Only
-# ble_service advertises on this board, so clear every set before it starts.
+# While its firmware keeps running, for example across a Bluetooth stack
+# restart, the AIC8800 controller keeps its extended advertising sets across
+# the kernel's HCI Reset. BlueZ then gets Command Disallowed for every new set
+# and ble_service never advertises. Only ble_service advertises on this board,
+# so clear every set before it starts.
 
 elapsed=0
 until hciconfig hci0 2>/dev/null | grep -q 'UP RUNNING'; do

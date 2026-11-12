@@ -1170,7 +1170,8 @@ def _attempt_scores(*, output: Any, **_: Any) -> list[dict[str, Any]]:
 def _run_scores(aggregate: Mapping[str, Any]) -> list[dict[str, Any]]:
     evaluations: list[dict[str, Any]] = []
     # Explicit counts distinguish a healthy run from a partial score upload.
-    # Publish these before capability scores; history requires both counts.
+    # Publish these before capability scores. Older history defaults absent
+    # counts to zero.
     failure_classes = aggregate.get("failure_classes") or {}
     for kind in ("environment", "evaluation"):
         _add_score(evaluations, f"failures.class.{kind}", failure_classes.get(kind, 0))

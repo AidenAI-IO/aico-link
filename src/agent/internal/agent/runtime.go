@@ -696,6 +696,11 @@ func NewRuntimeWithDeps(cfg Config, models model.Model, memories *MemoryManager,
 			tools.RegisterMemoryTools(cfg.ConfigDir, memoryDir, longTermStore)
 		}
 	}
+	if tool, ok := tools.Get("save_memory"); ok && models != nil {
+		if saveTool, ok := tool.(*SaveMemoryTool); ok {
+			saveTool.SetRequestModel(models)
+		}
+	}
 
 	rt := &Runtime{
 		config:        cfg,
@@ -1491,6 +1496,8 @@ func (r *Runtime) getStateHook() contextmanager.AppendMessageHook {
 		}
 		// The decision model reads the utterance while the screenshot is
 		// captured, so it only adds latency when it is the slower of the two.
+		// A turn with the user's own image takes no screenshot but still gets
+		// the memory recall from the same request.
 		turn := r.startTurnDecision(message.Content)
 		// A user turn carries a fresh screenshot, grounded when UI Grounding
 		// is on, unless the user attached an image of their own or the

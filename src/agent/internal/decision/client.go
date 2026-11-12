@@ -237,6 +237,11 @@ func (r Response) Answer(id, questionType string) (Answer, error) {
 		if answer.Noul == nil {
 			return Answer{}, fmt.Errorf("decision answer %q has no noul", id)
 		}
+		// A probability outside 0..1 is malformed; read as is, a negative
+		// one would pass for a confident "no".
+		if *answer.Noul < 0 || *answer.Noul > 1 {
+			return Answer{}, fmt.Errorf("decision answer %q has noul %g outside 0..1", id, *answer.Noul)
+		}
 	case TypeChoice:
 		if answer.Choice == "" || answer.Confidence == nil {
 			return Answer{}, fmt.Errorf("decision answer %q has no choice", id)

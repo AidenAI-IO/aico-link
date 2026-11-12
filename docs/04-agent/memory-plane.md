@@ -43,7 +43,18 @@ depend on understanding the language the user spoke.
 ### Near-Term Plans
 
 A plan such as "I have a check-up tomorrow morning" is useful for days, not
-for the user's lasting profile, so `save_memory` does not keep it. It stays in
+for the user's lasting profile, so `save_memory` does not keep it. The tool
+requires a `durable` argument that follows the admission table above: `false`
+for a one-off plan, appointment, reminder, or passing state, and `true` for a
+lasting preference, rule, procedure, or personal fact, including a preference
+the user limits to a period. There is no fixed time threshold. A call with
+`durable=false` returns `status=refused` and writes nothing, whether it adds a
+memory or replaces one with `replaces_id`; the Agent then replies without
+saying it noted or saved the plan. `durable` is the calling model's own
+classification, a self-check before it saves rather than an independent
+admission check: a model that misreads a plan can also report `durable=true`.
+A call that omits `durable` is not refused, so a model that ignores the schema
+saves as before. The plan stays in
 the conversation. When context compaction summarizes older messages, the
 summary has a section for user plans and time-bound information: the compactor
 labels each message with its send time in the configured timezone and asks the
@@ -67,10 +78,29 @@ a request made one turn before the secret, such as "remember my door code"
 followed by the code after the Agent asks for it. A context compaction summary
 is stored as a user message but is written by the model, so it never counts as
 one of them, and the window never reaches past it into older messages. The quote must contain at least two letters, so citing the secret value
-alone does not count. Otherwise the tool returns `status=refused`, nothing is
-written, and the Agent tells the user it was not remembered. The quote check
-stops the model from inventing a request; whether the quoted words ask to
-remember remains the model's judgment.
+alone does not count. The quote check stops the model from inventing a request,
+but a statement such as "my Wi-Fi password is …" is also the user's own words.
+So a separate model call, the request judge, then reads the same user messages,
+the candidate memory, and the request the model cited, and answers whether the
+user asked to remember this information. A statement of the secret is not a request, nor is a request to
+remember something else, and a later withdrawal cancels a request. The judge
+uses the main model with a 20-second timeout. If the quote check fails, the
+judge says the user did not ask, or the judge call fails or times out, the tool
+returns `status=refused`, nothing is written, and the Agent tells the user it
+was not remembered. The user can ask again, whereas a secret written by mistake
+would persist.
+
+The model can also leave `sensitive` unset on a secret. When an undeclared
+memory contains a run of at least four ASCII letters and digits with a digit in
+it, the shape of most passwords, PINs, and card numbers, the tool asks the same
+judge whether the content is a secret. A secret the user did not ask to keep
+is refused; one the user asked to keep is saved as a sensitive `credential`.
+Content without that shape, and every save when the judge call fails, is saved
+as before, so the check adds a model call only where a secret is plausible and
+never blocks an ordinary memory. A secret without a digit, such as an
+all-letter password the model did not mark sensitive, is not judged and is
+saved as an ordinary memory. Each judgment is logged with its verdict and
+latency.
 
 A saved sensitive memory is marked `sensitive: true` in its file and index
 entry. It is returned by `recall_memory` only for a query with tags or entities

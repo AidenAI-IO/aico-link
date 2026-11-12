@@ -99,8 +99,12 @@ func decideTurn(ctx context.Context, decider *decisionAdvisor, utterance, previo
 		return turnDecision{}
 	}
 
+	// Each question is read on its own: an unreadable screen answer keeps the
+	// screenshot without discarding the memory answers in the same response.
 	var result turnDecision
-	if need, sure, p, err := noulAnswer(resp, "screen", minConfidence); err == nil {
+	if need, sure, p, err := noulAnswer(resp, "screen", minConfidence); err != nil {
+		logDecision(DecisionOpTurnScreenshot, provider, "", 0, "", "", ms, 0, "error: "+err.Error())
+	} else {
 		result.SkipScreenshot = sure && !need
 		fallback := ""
 		if !sure {
@@ -206,9 +210,10 @@ func (r *Runtime) longTermMemoryStore() *LongTermMemoryStore {
 	return r.memories.longTerm
 }
 
-// previousTurnMessages bounds how far back previousTurnText looks; a turn that
-// operated the phone is a few dozen messages at most.
-const previousTurnMessages = 60
+// previousTurnTailMessages bounds the tool calls previousTurnText reads after
+// the previous request; the request itself and the final reply are always
+// read, however long the run between them.
+const previousTurnTailMessages = 60
 
 // previousTurnRunes bounds each text part of previousTurnText.
 const previousTurnRunes = 300
@@ -217,30 +222,39 @@ const previousTurnRunes = 300
 // turn decision: the user's request, the tools the assistant called for it,
 // and its final reply. It is empty for a new conversation.
 func previousTurnText(manager *contextmanager.ContextManager) string {
-	window := manager.MessageListWindow(func(_ string, view []messages.Message) (int, int) {
-		return len(view) - previousTurnMessages, len(view)
-	})
 	var request, reply string
 	var tools []string
-	for i := len(window.Messages) - 1; i >= 0; i-- {
-		message := window.Messages[i]
-		switch message.Role {
-		case messages.MessageRoleUser:
-			request = strings.TrimSpace(message.Content)
-		case messages.MessageRoleAssistant, messages.MessageRoleToolCall:
-			if reply == "" && message.Role == messages.MessageRoleAssistant {
-				reply = strings.TrimSpace(message.Content)
+	manager.MessageListWindow(func(_ string, view []messages.Message) (int, int) {
+		start := -1
+		for i := len(view) - 1; i >= 0; i-- {
+			if view[i].Role == messages.MessageRoleUser {
+				start = i
+				break
 			}
-			for j := len(message.ToolCalls) - 1; j >= 0; j-- {
-				if name := message.ToolCalls[j].Name; name != "" && !slices.Contains(tools, name) {
+		}
+		if start < 0 {
+			return 0, 0
+		}
+		request = strings.TrimSpace(view[start].Content)
+		for i := len(view) - 1; i > start && reply == ""; i-- {
+			if view[i].Role == messages.MessageRoleAssistant {
+				reply = strings.TrimSpace(view[i].Content)
+			}
+		}
+		// Tool names come from the end of the run, the part a follow-up
+		// most likely continues.
+		for i := len(view) - 1; i > start && i >= len(view)-previousTurnTailMessages; i-- {
+			if view[i].Role != messages.MessageRoleAssistant && view[i].Role != messages.MessageRoleToolCall {
+				continue
+			}
+			for j := len(view[i].ToolCalls) - 1; j >= 0; j-- {
+				if name := view[i].ToolCalls[j].Name; name != "" && !slices.Contains(tools, name) {
 					tools = append(tools, name)
 				}
 			}
 		}
-		if request != "" {
-			break
-		}
-	}
+		return 0, 0
+	})
 	if request == "" {
 		return ""
 	}

@@ -184,6 +184,9 @@ func normalizePublicMessage(message Message) (Message, bool) {
 		message.Type = runEventToolCall
 	case "tool_result":
 		message.Type = "tool_result"
+	case messageTypeProactive:
+		message.Type = messageTypeProactive
+		message.Role = ""
 	default:
 		return Message{}, false
 	}
@@ -569,6 +572,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/live-activity/current", s.handleLiveActivityCurrent)
 	mux.HandleFunc("/api/events", s.handleEvents)
 	mux.HandleFunc("/api/history", s.handleHistory)
+	mux.HandleFunc("/api/proactive", s.handleProactive)
 	mux.HandleFunc("/api/context", s.handleContext)
 	mux.HandleFunc("/api/context/attachment", s.handleContextAttachment)
 	mux.HandleFunc("/api/episodes/", s.handleEpisodes)
@@ -3951,6 +3955,9 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		message.Type = "user"
 	case messages.MessageRoleAssistant:
 		message.Type = "assistant"
+		if item.Proactive {
+			message.Type = messageTypeProactive
+		}
 	case messages.MessageRoleToolCall:
 		message.Type = "tool_call"
 		if len(item.ToolCalls) > 0 {
@@ -3962,6 +3969,7 @@ func webMessageFromContextMessage(item messages.Message, contextRole string) (Me
 		if len(item.ToolResults) > 0 {
 			message.ToolName = item.ToolResults[0].Name
 			message.Content = item.ToolResults[0].Content
+			message.IsError = item.ToolResults[0].Meta != nil && item.ToolResults[0].Meta.IsError
 		}
 	case messages.MessageRoleNotice:
 		message.Type = "notice"

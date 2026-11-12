@@ -77,6 +77,8 @@ func TestStateHookTurnDecisionScreenshot(t *testing.T) {
 		{name: "screen not needed", enabled: true, body: answer(0.05), wantScreenshot: false, wantAsked: 1},
 		{name: "unsure keeps screenshot", enabled: true, body: answer(0.5), wantScreenshot: true, wantAsked: 1},
 		{name: "failed request keeps screenshot", enabled: true, body: `not json`, wantScreenshot: true, wantAsked: 1},
+		{name: "out-of-range noul keeps screenshot", enabled: true, body: answer(-0.5), wantScreenshot: true, wantAsked: 1},
+		{name: "missing answer keeps screenshot", enabled: true, body: `{"answers":{}}`, wantScreenshot: true, wantAsked: 1},
 		{name: "disabled asks nothing", enabled: false, body: answer(0.05), wantScreenshot: true, wantAsked: 0},
 	}
 	for _, tc := range cases {
@@ -148,16 +150,21 @@ func TestStateHookTurnDecisionRecallsMemories(t *testing.T) {
 }
 
 // A follow-up is judged together with the exchange before it, so the request
-// carries the previous user turn, the tools it used and the final reply.
+// carries the previous user turn, the tools it used and the final reply, also
+// after a tool run longer than the tool-name window.
 func TestStateHookTurnDecisionSendsPreviousTurn(t *testing.T) {
 	server := newDecisionServer(t, `{"answers":{"screen":{"type":"noul","noul":0.95}}}`)
 	_, manager := turnDecisionHookRuntime(t, true, server.URL, nil)
-	if err := manager.AppendMessages([]messages.Message{
-		{Role: messages.MessageRoleUser, Content: "open the calculator"},
-		{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: "c1", Name: "open_app", Arguments: `{}`}}},
-		{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: "c1", Content: "ok"}}},
-		{Role: messages.MessageRoleAssistant, Content: "The calculator is open."},
-	}); err != nil {
+	run := []messages.Message{{Role: messages.MessageRoleUser, Content: "open the calculator"}}
+	for i := 0; i < previousTurnTailMessages; i++ {
+		id := fmt.Sprintf("c%d", i)
+		run = append(run,
+			messages.Message{Role: messages.MessageRoleToolCall, ToolCalls: []messages.ToolCall{{ID: id, Name: "open_app", Arguments: `{}`}}},
+			messages.Message{Role: messages.MessageRoleToolResult, ToolResults: []messages.ToolResult{{ToolCallID: id, Content: "ok"}}},
+		)
+	}
+	run = append(run, messages.Message{Role: messages.MessageRoleAssistant, Content: "The calculator is open."})
+	if err := manager.AppendMessages(run); err != nil {
 		t.Fatal(err)
 	}
 	server.mu.Lock()
@@ -175,6 +182,34 @@ func TestStateHookTurnDecisionSendsPreviousTurn(t *testing.T) {
 		if !strings.Contains(string(body), want) {
 			t.Fatalf("request lacks %q: %s", want, body)
 		}
+	}
+}
+
+// A turn with the user's own image takes no screenshot, but the same
+// decision request still recalls memories for it.
+func TestStateHookTurnDecisionRecallsForUserImage(t *testing.T) {
+	server := newDecisionServer(t, `{"answers":{"screen":{"type":"noul","noul":0.95},"recall_memory_0":{"type":"noul","noul":0.9}}}`)
+	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
+	if _, err := store.AddMemory(context.Background(), MemoryItem{
+		ID: "mem_1700000000000000000_test", Type: "fact", Priority: 90, Confidence: 1,
+		Title: "Daughter", Content: "Daughter note", EvidenceExcerpts: []string{"Daughter"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, manager := turnDecisionHookRuntime(t, true, server.URL, NewMemoryManager(t.TempDir(), WithLongTermMemoryStore(store)))
+	if err := manager.AppendMessage(messages.Message{
+		Role:        messages.MessageRoleUser,
+		Content:     "is this my daughter's school",
+		Attachments: []messages.Attachment{{MIMEType: "image/jpeg"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	list := manager.MessageListDump().Messages
+	if len(list) < 2 || list[0].Role != messages.MessageRoleState || !strings.Contains(list[0].Content, "Daughter note") {
+		t.Fatalf("state message = %#v, want the recalled memory", list[0])
+	}
+	if len(list[0].Attachments) != 0 {
+		t.Fatalf("a screenshot was attached next to the user's own image")
 	}
 }
 
