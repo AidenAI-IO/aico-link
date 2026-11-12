@@ -84,16 +84,33 @@ def test_non_main_discovery_and_publication_are_rejected_before_side_effects(tmp
     assert not (tmp_path / "source").exists()
 
 
-@pytest.mark.parametrize("ref,status,expected", [
-    ("refs/heads/main", "completed", "auto-improve-source-"),
-    ("refs/heads/main", "diagnosed", "auto-improve-retry-"),
-    ("refs/heads/main", "blocked", "auto-improve-retry-"),
-    ("refs/heads/main", "error", "auto-improve-retry-"),
-    ("refs/heads/main", "", "auto-improve-retry-"),
-    ("refs/heads/auto-improve-test/improve/x", "completed", "auto-improve-test-source-"),
+@pytest.mark.parametrize("status,expected", [
+    ("completed", "auto-improve-source-"), ("no_failures", "auto-improve-source-"),
+    ("diagnosed", "auto-improve-retry-"), ("blocked", "auto-improve-retry-"),
+    ("error", "auto-improve-retry-"), ("", "auto-improve-retry-"),
 ])
-def test_only_settled_main_runs_mark_sources_processed(ref, status, expected):
-    assert policy.artifact_name(ref, "41-1__42-1", status) == expected + "41-1__42-1"
+def test_only_settled_runs_mark_sources_processed(status, expected):
+    assert policy.artifact_name("refs/heads/main", "41-1__42-1", status) == expected + "41-1__42-1"
+    # An analyze-only run files nothing, so it never consumes the window.
+    assert policy.artifact_name("refs/heads/main", "41-1__42-1", status, publish=False) == "auto-improve-retry-41-1__42-1"
+    with pytest.raises(ValueError, match="only supports main"):
+        policy.artifact_name("refs/heads/feature", "41-1__42-1", status)
+
+
+@pytest.mark.parametrize("event,ref,requested,expected", [
+    ("schedule", "refs/heads/main", False, True),
+    ("workflow_dispatch", "refs/heads/main", False, False),
+    ("workflow_dispatch", "refs/heads/main", True, True),
+    ("push", "refs/heads/main", True, None),
+    ("workflow_dispatch", "refs/heads/feature", True, None),
+    ("schedule", "refs/heads/auto-improve-test/x", False, None),
+])
+def test_runs_and_publication_are_limited_to_main(event, ref, requested, expected):
+    if expected is None:
+        with pytest.raises(ValueError):
+            policy.execution_policy(event, ref, requested)
+    else:
+        assert policy.execution_policy(event, ref, requested) == {"publish": expected}
 
 
 @pytest.mark.parametrize("manifest,expected", [({"status": "completed"}, "auto-improve-source-"),
@@ -115,8 +132,7 @@ def test_workflow_policy_command_needs_no_github_credentials(tmp_path, monkeypat
     monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
     output = tmp_path / "output"
     monkeypatch.setenv("GITHUB_OUTPUT", str(output))
-    monkeypatch.setattr("sys.argv", ["control", "policy", "--event", "push", "--ref",
-                                    "refs/heads/auto-improve-test/diagnose/first"])
+    monkeypatch.setattr("sys.argv", ["control", "policy", "--event", "workflow_dispatch", "--ref", "refs/heads/main"])
     assert control.cli() == 0
     values = dict(line.split("=", 1) for line in output.read_text().splitlines())
     assert values == {"publish": "false"}
@@ -443,12 +459,9 @@ def test_review_contract_rejects_values_outside_the_schema(change):
 
 
 @pytest.mark.parametrize("nested", [False, True])
-@pytest.mark.parametrize("branch_test", [False, True])
-def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested, branch_test):
-    monkeypatch.setenv("AUTO_IMPROVE_TEST_RUN", str(branch_test).lower())
+def test_discovery_normalizes_artifact_root(tmp_path, monkeypatch, nested):
     class API:
         def discover(self, *args, **kwargs):
-            assert kwargs["include_processed"] is branch_test
             return {"identity": "40-1__41-1__42-1", "sources": [
                 {"artifact": {"id": i}, "identity": f"{i}-1", "run": {"id": i}} for i in (40, 41, 42)]}
         def download(self, artifact, destination):
@@ -695,7 +708,7 @@ def test_publisher_rechecks_current_issues_and_retries_idempotently(tmp_path, mo
     assert control.publish(API(), out, "main") == [] and calls == []
     manifest = json.loads((out / "manifest.json").read_text())
     (out / "manifest.json").write_text(json.dumps({**manifest, "execution_ref": "refs/heads/auto-improve-test/x"}))
-    with pytest.raises(ValueError, match="Branch-test"):
+    with pytest.raises(ValueError, match="Only findings from main"):
         control.publish(API(), out, "main")
     (out / "manifest.json").write_text(json.dumps(manifest))
     current.clear()

@@ -21,8 +21,8 @@ def timestamp(value: str) -> datetime:
 
 
 def choose_window(runs: list[dict], processed: set[str], *, branch: str, now: datetime,
-                  delay_hours: float = 3, requested: tuple[str, ...] = (), limit: int = 13,
-                  include_processed: bool = False) -> tuple[list[dict], list[dict]]:
+                  delay_hours: float = 3, requested: tuple[str, ...] = (),
+                  limit: int = 13) -> tuple[list[dict], list[dict]]:
     """Select the complete pending window, oldest first; never silently drop a run."""
     require_main_branch(branch)
     if not 1 <= limit <= 13:
@@ -43,8 +43,7 @@ def choose_window(runs: list[dict], processed: set[str], *, branch: str, now: da
         if {str(r["id"]) for r in eligible} != set(requested):
             return [], []
         return eligible, []
-    if not include_processed:
-        eligible = [r for r in eligible if run_identity(r) not in processed]
+    eligible = [r for r in eligible if run_identity(r) not in processed]
     if len(eligible) > limit:
         raise ValueError("Pending window exceeds run budget; explicitly select sources to investigate")
     return eligible, []
@@ -147,7 +146,7 @@ class GitHub:
         extract_archive(data, destination)
 
     def discover(self, branch: str, requested: tuple[str, ...] = (), delay_hours: float = 3,
-                 *, include_processed: bool = False, limit: int = 13) -> dict | None:
+                 *, limit: int = 13) -> dict | None:
         require_main_branch(branch)
         cutoff = datetime.now(timezone.utc) - timedelta(days=14)
         created = urllib.parse.quote(">=" + cutoff.strftime("%Y-%m-%d"))
@@ -158,8 +157,7 @@ class GitHub:
                      if not a.get("expired") and a["name"].startswith("auto-improve-source-")
                      for identity in a["name"].removeprefix("auto-improve-source-").split("__")}
         window, skipped = choose_window(runs, processed, branch=branch, now=datetime.now(timezone.utc),
-                                        requested=requested, delay_hours=delay_hours, limit=limit,
-                                        include_processed=include_processed)
+                                        requested=requested, delay_hours=delay_hours, limit=limit)
         if requested and not window:
             raise ValueError("Requested sources are not completed eligible daily runs")
         sources, missing = [], []

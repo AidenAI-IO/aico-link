@@ -4,9 +4,9 @@ sidebar_position: 5
 
 # Benchmark Auto-Improve
 
-> Status: disabled until configured. Deterministic policy, rendering and
-> publication tests exist; live model, Docker and issue publication still
-> require validation on the runner. The pipeline never edits code.
+> Status: disabled until configured. The analysis has run on the self-hosted
+> runner and filed a real issue during pre-merge trials; the follow-up comment on
+> an open issue in a new window is covered by tests. The pipeline never edits code.
 
 Auto-improve analyzes completed daily benchmark runs and reports the defects it
 can support with evidence as GitHub issues. A developer fixes each issue locally,
@@ -136,13 +136,12 @@ Entry points are [the workflow](../../.github/workflows/auto-improve.yml),
 [issue renderer](../../benchmark/ci/auto_improve/issues.py) and the
 [discovery and publisher](../../benchmark/ci/auto_improve/control.py).
 
-- **Branch test.** Pushing to any `auto-improve-test/` branch runs the full
-  analysis with that branch's code against main's daily runs. It never writes to
-  GitHub: the artifact contains `issues.json` and the rendered `issues/*.md`.
-  Branch tests use `auto-improve-test-source-*` artifacts and may reuse sources
-  already processed on `main`.
-- **Manual run on `main`.** After the workflow is merged, dispatch it from
-  `main`. Issues are filed only with `publish_issues=true`:
+The workflow runs only on `main`; other branches and pull requests never trigger it.
+
+- **Manual run.** Dispatch it from `main`. Without `publish_issues=true` the run
+  only analyzes: the artifact contains `issues.json` and the rendered
+  `issues/*.md`, and nothing is written to GitHub. Issues are filed only with
+  `publish_issues=true`:
 
   ```bash
   gh workflow run auto-improve.yml --ref main -f publish_issues=true
@@ -152,10 +151,11 @@ Entry points are [the workflow](../../.github/workflows/auto-improve.yml),
 - **Schedule.** Set `AUTO_IMPROVE_ENABLED=true`. Scheduled runs on `main` file
   issues.
 
-Only a settled main run (`completed` or `no_failures`) uploads
+Only a settled run (`completed` or `no_failures`) that publishes uploads
 `auto-improve-source-<identity>` and marks its daily runs processed. A run that
-errors, is cancelled, or could not execute a reproduction attempt uploads
-`auto-improve-retry-<identity>`, so the next run analyzes the same window again.
+errors, is cancelled, could not execute a reproduction attempt, or only analyzed
+(a manual run without `publish_issues=true`) uploads `auto-improve-retry-<identity>`,
+so the next run analyzes the same window again.
 
 ## Configuration
 

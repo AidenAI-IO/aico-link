@@ -27,7 +27,6 @@ def discover(client: GitHub, out: Path, requested: str, branch: str) -> dict | N
     if any(not part.isdigit() for part in ids):
         raise ValueError("source_run must be one or more comma-separated run IDs")
     window = client.discover(branch, ids, float(os.environ.get("AUTO_IMPROVE_DELAY_HOURS", "3")),
-                             include_processed=os.environ.get("AUTO_IMPROVE_TEST_RUN") == "true",
                              limit=int(os.environ.get("AUTO_IMPROVE_WINDOW_LIMIT", "13")))
     if window is None:
         return None
@@ -87,7 +86,7 @@ def publish(client: GitHub, artifacts: Path, branch: str) -> list[str]:
     manifest = json.loads((artifacts / "manifest.json").read_text())
     require_main_branch(manifest.get("base_branch", ""))
     if manifest.get("execution_ref") != f"refs/heads/{BASE_BRANCH}":
-        raise ValueError("Branch-test findings cannot be published")
+        raise ValueError("Only findings from main can be published")
     drafts_file = artifacts / "issues.json"
     drafts = json.loads(drafts_file.read_text()) if drafts_file.is_file() else []
     if not drafts:
@@ -131,6 +130,7 @@ def cli() -> int:
     parser.add_argument("--ref", default="")
     parser.add_argument("--publish-requested", default="false")
     parser.add_argument("--identity", default="")
+    parser.add_argument("--publish", default="true")
     args = parser.parse_args()
     if args.operation == "artifact":
         # A missing or unreadable manifest means the run did not settle its sources.
@@ -139,7 +139,8 @@ def cli() -> int:
             status = json.loads(manifest.read_text()).get("status", "") if manifest else ""
         except (OSError, ValueError):
             status = ""
-        name = policy.artifact_name(args.ref, evidence_identity(args.identity), status)
+        name = policy.artifact_name(args.ref, evidence_identity(args.identity), status,
+                                    args.publish.lower() == "true")
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
                 stream.write(f"name={name}\n")

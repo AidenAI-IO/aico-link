@@ -12,7 +12,6 @@ from runner.metrics import status_fields
 from runner.trace import tool_result_failed
 
 BASE_BRANCH = "main"
-TEST_BRANCH_PREFIX = "refs/heads/auto-improve-test/"
 # Findings that the runner can reproduce on current main. External code is not executed here.
 REPRODUCIBLE_DOMAINS = ("agent", "benchmark")
 DOMAINS = (*REPRODUCIBLE_DOMAINS, "external")
@@ -40,30 +39,22 @@ def require_main_branch(branch: str) -> None:
 
 
 def execution_policy(event: str, ref: str, publish_requested: bool = False) -> dict:
-    """Branch tests render issues into the artifact; only main may file them."""
-    if not ref.startswith("refs/heads/"):
-        raise ValueError("Expected a repository branch")
-    if event == "schedule":
-        if ref != f"refs/heads/{BASE_BRANCH}":
-            raise ValueError("Scheduled auto-improve runs only on main")
-    elif event == "push":
-        if not ref.startswith(TEST_BRANCH_PREFIX):
-            raise ValueError("Push tests require an auto-improve-test/ branch")
-    elif event == "workflow_dispatch":
-        if ref != f"refs/heads/{BASE_BRANCH}" and not ref.startswith(TEST_BRANCH_PREFIX):
-            raise ValueError("Manual auto-improve runs require main or a test branch")
-    else:
-        raise ValueError("Unsupported auto-improve trigger")
-    publish = (ref == f"refs/heads/{BASE_BRANCH}" and
-               (event == "schedule" or (event == "workflow_dispatch" and publish_requested)))
-    return {"publish": publish}
-
-
-def artifact_name(ref: str, identity: str, status: str) -> str:
-    """Only a settled main run marks its sources processed; failed runs stay eligible."""
+    """Runs only on main: scheduled runs file issues; manual runs file them only on request."""
     if ref != f"refs/heads/{BASE_BRANCH}":
-        return f"auto-improve-test-source-{identity}"
-    prefix = "auto-improve-source-" if status in SETTLED_STATUSES else "auto-improve-retry-"
+        raise ValueError("Auto-improve runs only on main")
+    if event not in {"schedule", "workflow_dispatch"}:
+        raise ValueError("Unsupported auto-improve trigger")
+    return {"publish": event == "schedule" or publish_requested}
+
+
+def artifact_name(ref: str, identity: str, status: str, publish: bool = True) -> str:
+    """Only a settled, publishing run marks its sources processed.
+
+    Failed runs and analyze-only manual runs keep the window eligible, so the next
+    scheduled run still files issues for it.
+    """
+    require_main_branch(ref.removeprefix("refs/heads/"))
+    prefix = "auto-improve-source-" if publish and status in SETTLED_STATUSES else "auto-improve-retry-"
     return prefix + identity
 
 

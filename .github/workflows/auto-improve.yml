@@ -6,10 +6,6 @@ on:
     # Odd calendar days (09:37 Asia/Shanghai); discovery aggregates all pending daily runs.
     # Month boundaries can produce consecutive days; sources are deduplicated individually.
     - cron: '37 1 */2 * *'
-  push:
-    branches:
-      # Explicit pre-merge testing; renders issues into the artifact, never files them.
-      - 'auto-improve-test/**'
   workflow_dispatch:
     inputs:
       source_run:
@@ -34,12 +30,9 @@ concurrency:
 jobs:
   analyze:
     if: >-
-      startsWith(github.ref, 'refs/heads/') &&
-      github.event_name != 'pull_request' && github.event_name != 'pull_request_target' &&
-      !(github.ref_name != 'main' && !startsWith(github.ref, 'refs/heads/auto-improve-test/')) &&
-      !(github.event_name != 'workflow_dispatch' &&
-        !(github.event_name == 'schedule' && github.ref_name == 'main' && vars.AUTO_IMPROVE_ENABLED == 'true') &&
-        !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/auto-improve-test/')))
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'schedule' && vars.AUTO_IMPROVE_ENABLED == 'true'))
     runs-on: ${{ vars.AICO_RUNNER_PRIMARY || 'aiden-hosted-02' }}
     timeout-minutes: 150
     env:
@@ -94,7 +87,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SOURCE_RUN: ${{ inputs.source_run }}
-          AUTO_IMPROVE_TEST_RUN: ${{ github.ref_name != 'main' }}
           AUTO_IMPROVE_DELAY_HOURS: ${{ vars.AUTO_IMPROVE_DELAY_HOURS || '3' }}
         run: >-
           uv run python -m ci.auto_improve.control discover
@@ -165,10 +157,12 @@ jobs:
         working-directory: benchmark
         env:
           IDENTITY: ${{ steps.discover.outputs.identity }}
-        # Only a settled main run marks its sources processed; an errored, blocked or
-        # cancelled run is uploaded as auto-improve-retry-* so discovery retries it.
+          PUBLISH: ${{ steps.mode.outputs.publish }}
+        # Only a settled, publishing run marks its sources processed; an errored, blocked,
+        # cancelled or analyze-only run is uploaded as auto-improve-retry-* so it is retried.
         run: >-
           uv run python -m ci.auto_improve.control artifact --ref "$GITHUB_REF" --identity "$IDENTITY"
+          --publish "${PUBLISH:-false}"
           --out "$AUTO_IMPROVE_WORK_ROOT/auto-improve-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/result"
       - name: Retain evidence for fourteen days
         id: evidence
