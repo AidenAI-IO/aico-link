@@ -72,7 +72,8 @@ type webRealtimeAudio struct {
 	recordingID   uint64
 	recordingStop chan struct{}
 	playbackID    uint64
-	// unsent counts speech frames queued or being written. playEnd is when
+	// unsent counts speech frames not yet written to the browser: queued,
+	// being written, or discarded when the endpoint closed. playEnd is when
 	// the browser finishes playing the speech written so far.
 	unsent  int
 	playEnd time.Time
@@ -103,9 +104,9 @@ func (w *webRealtimeAudio) Close(reason string) {
 	}
 	w.closing = true
 	ended, _ := json.Marshal(map[string]string{"type": "ended", "reason": reason})
-	// Speech still queued is not worth sending to a session that is over.
+	// Speech still queued is not worth sending to a session that is over. It
+	// stays counted in unsent, so a later drain does not report it as heard.
 	w.out = []webRealtimeFrame{{kind: websocket.MessageText, data: ended}, {}}
-	w.unsent = 0
 	w.mu.Unlock()
 	w.shutdown("")
 	w.signal()

@@ -316,4 +316,10 @@ func TestWebRealtimePlaybackDrainWaitsForUnsentSpeech(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("the drain did not end after the browser left")
 	}
+	// Closing the endpoint discards the queued speech. A drain that starts
+	// only afterwards must still fail.
+	web.Close("")
+	if err := waiter.WaitForPlaybackDrain(context.Background()); err == nil {
+		t.Fatal("a drain after the endpoint closed reported discarded speech as played")
+	}
 }
