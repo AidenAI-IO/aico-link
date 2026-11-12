@@ -429,7 +429,8 @@ def cluster(**overrides):
 
 def observation(source, success=False, eligible=True):
     return {"source": source, "status": "passed" if success else "failed", "agent_eligible": eligible,
-            "metrics": {"success": success, "agent_eligible": eligible}, "manifest": {"agent_model": "m1"}}
+            "metrics": {"success": success, "agent_eligible": eligible},
+            "manifest": {"agent_model": "m2" if success else "m1"}}
 
 
 def analyze(tmp_path, monkeypatch, clusters, *, outcome="failed", audit=None, feedback=(), evaluation_issues=(),
@@ -568,6 +569,8 @@ def test_findings_the_runner_cannot_execute_need_repeated_daily_failures(tmp_pat
                                      failing_runs=failing_runs)
     assert runs == [] and [f["status"] for f in state["findings"]] == [status]
     assert len(drafts) == (status == "issue_ready")
+    # The day that passed used another model; only the failing model is named.
+    assert state["findings"][0]["agent_models"] == ["m1"]
 
 
 def test_new_issues_are_ranked_capped_and_deduplicated_within_a_run(tmp_path, monkeypatch):

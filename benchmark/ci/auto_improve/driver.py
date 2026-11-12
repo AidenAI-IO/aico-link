@@ -211,7 +211,10 @@ def write_observations(out: Path, finding: dict, failures: list[dict]) -> None:
                      for o in by_key.get(target, {}).get("observations", [])]
             for target in finding["key"]["targets"]}
     write(out / f"finding-{finding['number']}" / "daily-observations.json", rows)
-    finding["agent_models"] = sorted({o["agent_model"] for target in rows.values() for o in target if o["agent_model"]})
+    # Only models that failed: a day that passed with another model does not implicate it.
+    finding["agent_models"] = sorted({(o.get("manifest") or {}).get("agent_model") for t in finding["key"]["targets"]
+                                      for o in by_key.get(t, {}).get("observations", [])
+                                      if status_fields(o)[0] is not True} - {None, ""})
 
 
 def rescope(finding: dict, targets: list[str], failures: list[dict], feedback: list[dict],
