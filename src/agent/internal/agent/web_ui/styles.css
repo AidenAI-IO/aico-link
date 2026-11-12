@@ -1939,11 +1939,15 @@ body.voice-mode .conversation {
 }
 
 .composer-input,
-.composer-input:focus {
+.composer-input:focus,
+.composer-input:focus-visible {
     min-height: 44px;
     font-size: 0.98rem;
     background: transparent !important;
     border: 0;
+    /* The rounded box shows focus; the text area draws no ring of its own. */
+    outline: none;
+    box-shadow: none;
 }
 
 .composer-footer {
