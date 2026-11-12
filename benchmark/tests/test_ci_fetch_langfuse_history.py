@@ -311,21 +311,46 @@ def test_local_metrics_use_the_publishers_score_mapping_and_configuration(tmp_pa
     assert records[0]["workflow_run_attempt"] == "1"
 
 
+@pytest.mark.parametrize("kind", ["environment", "evaluation"])
 @pytest.mark.parametrize("count", [None, -1, 0.5, float("nan"), 1, 0])
-def test_failure_counts_must_be_explicit_valid_and_zero_for_complete_measurement(count):
+def test_failure_counts_default_to_zero_but_reject_invalid_or_nonzero_values(kind, count):
     scores = {s["name"]: float(s["value"]) for s in _metrics()}
     if count is None:
-        del scores["failures.class.environment"]
+        del scores[f"failures.class.{kind}"]
     else:
-        scores["failures.class.environment"] = count
+        scores[f"failures.class.{kind}"] = count
     record = history._record(metadata={}, run_id="partial", timestamp=NOW,
                              scores=scores, experiment_id=None, source="langfuse")
-    if count == 0:
+    if count is None or count == 0:
         assert not record["missing_metrics"]
         assert record["pass_at_1"] == 15 / 16
+        assert record["pass_at_k"] == 1
+        assert record["pass_pow_k"] == 0.75
+        assert record["failure_classes"][kind] == 0
     else:
         assert record["missing_metrics"]
         assert all(record[metric] is None for metric in ("pass_at_1", "pass_at_k", "pass_pow_k"))
+
+
+def test_legacy_failure_counts_participate_in_weekly_rates_and_changes():
+    def handler(request):
+        if request.url.path.endswith("/experiments"):
+            previous = _experiment("previous", benchmark_run_id="ci-122-1-memory")
+            previous["startTime"] = "2026-10-05T08:04:20Z"
+            return _response([previous, _experiment()])
+        return _response([
+            score for experiment_id in ("previous", "exp-1")
+            for score in _metrics(experiment_id)
+            if not score["name"].startswith("failures.class.")
+        ])
+
+    result = history.fetch_benchmark_history(client=_client(handler), now=NOW)
+    assert not result.warnings
+    report = summarize_weekly(result.records, end=NOW)
+    assert report["totals"]["pass_at_1"] == 15 / 16
+    assert report["previous_totals"]["pass_at_1"] == 15 / 16
+    assert report["suites"][0]["change"] == 0
+    assert report["change"] == 0
 
 
 def test_inconsistent_pass_counts_are_unknown():
