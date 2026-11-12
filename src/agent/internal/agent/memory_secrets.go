@@ -1,11 +1,18 @@
 package agent
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"aico-agent/internal/agent/contextmanager"
 	"aico-agent/internal/agent/messages"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 // priorUserTurnsForMemoryRequests is how many earlier user messages count as
@@ -106,4 +113,60 @@ func normalizeQuotedText(text string) string {
 		}
 		return -1
 	}, text)
+}
+
+// memoryRequestJudgeTimeout bounds the judgment so that a slow model cannot
+// hold up the reply; a timeout refuses the save.
+const memoryRequestJudgeTimeout = 20 * time.Second
+
+// memoryRequestJudge reports whether the user's recent messages ask the Agent
+// to remember something. userRequestQuoted only proves that a quote is the
+// user's own words; a statement such as "my Wi-Fi password is …" passes it
+// although nothing was requested. Telling a request from a statement in any
+// language needs a model, and the model that wanted to save is the one that
+// misread it, so a separate call answers that single question.
+type memoryRequestJudge func(ctx context.Context, userTexts []string) (bool, error)
+
+func newModelMemoryRequestJudge(model llms.Model) memoryRequestJudge {
+	return func(ctx context.Context, userTexts []string) (bool, error) {
+		var quoted strings.Builder
+		for _, text := range userTexts {
+			if text = strings.TrimSpace(text); text != "" {
+				quoted.WriteString("- ")
+				quoted.WriteString(strconv.Quote(text))
+				quoted.WriteString("\n")
+			}
+		}
+		prompt := `Below are a user's most recent messages to an assistant, oldest first.
+Did the user explicitly ask the assistant to remember, save, note down, or keep some information for later?
+Only a request counts. Merely stating or sharing information, even a password, is not a request.
+Answer with JSON only: {"asked": true} or {"asked": false}.
+
+Messages:
+` + quoted.String()
+		callCtx, cancel := context.WithTimeout(ctx, memoryRequestJudgeTimeout)
+		defer cancel()
+		raw, err := llms.GenerateFromSinglePrompt(callCtx, model, prompt, llms.WithJSONMode(), llms.WithMaxTokens(64))
+		if err != nil {
+			return false, err
+		}
+		var verdict struct {
+			Asked bool `json:"asked"`
+		}
+		if err := json.Unmarshal([]byte(stripJSONFences(raw)), &verdict); err != nil {
+			return false, fmt.Errorf("parse memory request judgment %q: %w", raw, err)
+		}
+		return verdict.Asked, nil
+	}
+}
+
+// userAskedToKeep reports whether the judge confirms that the user asked to
+// remember something. Without a judge, or when it fails, the secret is not
+// saved: the user can ask again, but a secret written by mistake persists.
+func (t *SaveMemoryTool) userAskedToKeep(ctx context.Context, userTexts []string) bool {
+	if t.requestJudge == nil {
+		return false
+	}
+	asked, err := t.requestJudge(ctx, userTexts)
+	return err == nil && asked
 }

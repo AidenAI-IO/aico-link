@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/tmc/langchaingo/llms"
 )
 
 type RecallMemoryTool struct {
@@ -15,6 +17,9 @@ type RecallMemoryTool struct {
 
 type SaveMemoryTool struct {
 	store *LongTermMemoryStore
+	// requestJudge decides whether the user asked to keep a secret; without
+	// one, no secret is saved.
+	requestJudge memoryRequestJudge
 }
 
 type ForgetMemoryTool struct {
@@ -236,6 +241,16 @@ func NewSaveMemoryTool(store *LongTermMemoryStore) *SaveMemoryTool {
 	return &SaveMemoryTool{store: store}
 }
 
+// SetRequestModel sets the model that decides whether the user asked to keep a
+// secret.
+func (t *SaveMemoryTool) SetRequestModel(model llms.Model) {
+	if model == nil {
+		t.requestJudge = nil
+		return
+	}
+	t.requestJudge = newModelMemoryRequestJudge(model)
+}
+
 func (t *SaveMemoryTool) Name() string { return "save_memory" }
 
 func (t *SaveMemoryTool) Description() string {
@@ -246,6 +261,7 @@ func (t *SaveMemoryTool) Description() string {
 		"Do not tell the user something was remembered or saved until this tool returns status=saved or status=ignored as a duplicate.",
 		"Use profile for durable user facts (name, nickname, location, timezone, home city, role, background); preference/rule for future defaults and must/must-not behavior such as a default city; fact for stable info that should be recalled but not surfaced in the synthesized user profile.",
 		"A secret is kept only if the user explicitly asked to keep it: set sensitive and put in user_request only their words asking to remember it, never the sentence stating the secret; otherwise it is refused and you must say it was not remembered.",
+		"Set durable=false, or do not call at all, when the information will not still be true and useful a month from now; such a call is refused.",
 		"Returns status=saved with id, ignored for a duplicate, or refused.",
 		"To correct a previously saved memory, first recall it, then pass its id as replaces_id and its revision as expected_revision. Do not guess the target; a stale revision is rejected.",
 	}, " ")
@@ -263,8 +279,9 @@ func (t *SaveMemoryTool) ArgsSchema() map[string]any {
 		"replaces_id":       stringArgSchema("ID returned by recall_memory when correcting an existing memory; requires expected_revision."),
 		"expected_revision": minIntegerArgSchema("Revision returned by recall_memory for replaces_id.", 1),
 		"sensitive":         stringEnumArgSchema("Secret kind, if any.", "none", "credential", "payment_card"),
-		"user_request":      stringArgSchema("For a secret: only the user's verbatim words asking to remember it, without the secret itself."),
-	}, "type", "content")
+		"user_request":      stringArgSchema("For a secret: the user's verbatim words asking to remember it."),
+		"durable":           boolArgSchema("Whether this will still be true and useful a month from now. false for one-off plans, appointments, reminders, and passing states."),
+	}, "type", "content", "durable")
 }
 
 func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error) {
@@ -278,12 +295,27 @@ func (t *SaveMemoryTool) Call(ctx context.Context, input string) (string, error)
 	if strings.TrimSpace(req.Content) == "" {
 		return "", fmt.Errorf("content is required")
 	}
-	sensitive := parseMemorySensitiveKind(req.Sensitive)
-	if sensitive != memorySensitiveNone && !userRequestQuoted(req.UserRequest, EpisodeRecorderFromContext(ctx).UserTexts()...) {
+	if req.Durable != nil && !*req.Durable && req.ReplacesID == "" {
 		return encodeToolJSON(map[string]string{
 			"status": "refused",
-			"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+			"reason": "durable=false: one-off or time-bound information is not kept in long-term memory. Do not retry; reply without saying it was remembered or saved.",
 		})
+	}
+	sensitive := parseMemorySensitiveKind(req.Sensitive)
+	if sensitive != memorySensitiveNone {
+		userTexts := EpisodeRecorderFromContext(ctx).UserTexts()
+		if !userRequestQuoted(req.UserRequest, userTexts...) {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "sensitive " + string(sensitive) + " without a user_request quoting the user's own words asking to remember it; secrets are not saved by default. Tell the user it was not remembered.",
+			})
+		}
+		if !t.userAskedToKeep(ctx, userTexts) {
+			return encodeToolJSON(map[string]string{
+				"status": "refused",
+				"reason": "the user did not ask to remember this " + string(sensitive) + "; a secret that is only mentioned is not saved. Do not retry; tell the user it was not remembered.",
+			})
+		}
 	}
 	if len(req.Evidence) == 0 {
 		req.Evidence = []string{req.Content}

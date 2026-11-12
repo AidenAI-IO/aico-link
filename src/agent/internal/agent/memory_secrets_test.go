@@ -43,6 +43,14 @@ func TestUserRequestQuoted(t *testing.T) {
 	}
 }
 
+// newRequestedSaveMemoryTool returns a save_memory tool whose judge confirms
+// that the user asked to keep the secret.
+func newRequestedSaveMemoryTool(store *LongTermMemoryStore) *SaveMemoryTool {
+	tool := NewSaveMemoryTool(store)
+	tool.requestJudge = func(context.Context, []string) (bool, error) { return true, nil }
+	return tool
+}
+
 func saveMemoryForTest(t *testing.T, ctx context.Context, tool *SaveMemoryTool, input string) map[string]string {
 	t.Helper()
 	out, err := tool.Call(ctx, input)
@@ -83,10 +91,32 @@ func TestSaveMemoryToolRefusesSensitiveWithoutQuotedRequest(t *testing.T) {
 	}
 }
 
+// A statement of a secret is the user's own words, so it passes the quote
+// check; only the judge can tell that nothing was requested.
+func TestSaveMemoryToolRefusesSecretTheJudgeFindsUnrequested(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "long_term")
+	tool := NewSaveMemoryTool(NewLongTermMemoryStore(root))
+	ctx := userRunContext("顺便说下，我家 Wi-Fi 密码是 qwer8826。")
+	input := `{"type":"fact","content":"家里 Wi-Fi 密码是 qwer8826","sensitive":"credential","user_request":"我家 Wi-Fi 密码是 qwer8826"}`
+	for name, judge := range map[string]memoryRequestJudge{
+		"no judge":    nil,
+		"not asked":   func(context.Context, []string) (bool, error) { return false, nil },
+		"judge error": func(context.Context, []string) (bool, error) { return true, context.DeadlineExceeded },
+	} {
+		tool.requestJudge = judge
+		if result := saveMemoryForTest(t, ctx, tool, input); result["status"] != "refused" {
+			t.Errorf("%s: result = %v, want refused", name, result)
+		}
+	}
+	if files, _ := filepath.Glob(filepath.Join(root, "memories", "*.md")); len(files) != 0 {
+		t.Fatalf("stored %v, want nothing", files)
+	}
+}
+
 func TestSaveMemoryToolKeepsRequestedSecretOutOfBrowsing(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "long_term")
 	store := NewLongTermMemoryStore(root)
-	tool := NewSaveMemoryTool(store)
+	tool := newRequestedSaveMemoryTool(store)
 	ctx := userRunContext("保险箱密码是 7316，帮我记住")
 	result := saveMemoryForTest(t, ctx, tool, `{"type":"profile","title":"保险箱密码","content":"用户的保险箱密码是 7316","tags":["保险箱"],"sensitive":"credential","user_request":"帮我记住"}`)
 	if result["status"] != "saved" {
@@ -127,7 +157,7 @@ func TestSaveMemoryToolKeepsRequestedSecretOutOfBrowsing(t *testing.T) {
 
 func TestSaveMemoryToolAcceptsRequestFromSteer(t *testing.T) {
 	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-	tool := NewSaveMemoryTool(store)
+	tool := newRequestedSaveMemoryTool(store)
 	recorder := NewEpisodeRecorder(MemoryRetrieveRequest{Input: "等一下"}, MemoryContext{})
 	// The request may arrive as a steer while the run is in progress.
 	recorder.RecordEvent(TaskEpisodeEvent{Type: "steer", Role: "user", Content: "门禁卡密码 2690，先帮我记一下"})
@@ -140,7 +170,7 @@ func TestSaveMemoryToolAcceptsRequestFromSteer(t *testing.T) {
 
 func TestSaveMemoryToolAcceptsRequestFromPreviousTurn(t *testing.T) {
 	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-	tool := NewSaveMemoryTool(store)
+	tool := newRequestedSaveMemoryTool(store)
 	manager, err := contextmanager.NewContextManagerFromMessageList(t.TempDir(), []messages.Message{
 		{Role: messages.MessageRoleSystem, Content: "system"},
 		{Role: messages.MessageRoleUser, Content: "今天天气怎么样"},
@@ -179,6 +209,20 @@ func TestRecentUserTextsStopsAtCompactionSummary(t *testing.T) {
 	texts := recentUserTexts(manager, 2)
 	if len(texts) != 1 || texts[0] != "今天几号" {
 		t.Fatalf("recentUserTexts() = %q, want only the user's own message", texts)
+	}
+}
+
+func TestSaveMemoryToolRefusesNonDurableMemory(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "long_term")
+	tool := NewSaveMemoryTool(NewLongTermMemoryStore(root))
+	for _, durable := range []string{`false`, `"false"`} {
+		result := saveMemoryForTest(t, userRunContext("明天上午我要去趟医院复查。"), tool, `{"type":"fact","content":"用户明天上午去医院复查","durable":`+durable+`}`)
+		if result["status"] != "refused" {
+			t.Errorf("durable=%s: result = %v, want refused", durable, result)
+		}
+	}
+	if files, _ := filepath.Glob(filepath.Join(root, "memories", "*.md")); len(files) != 0 {
+		t.Fatalf("stored %v, want nothing", files)
 	}
 }
 
@@ -237,7 +281,7 @@ func TestSaveMemoryToolClaimsNotificationDuplicate(t *testing.T) {
 
 func TestSaveMemoryToolMarksOrdinaryDuplicateSensitive(t *testing.T) {
 	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-	tool := NewSaveMemoryTool(store)
+	tool := newRequestedSaveMemoryTool(store)
 	first := saveMemoryForTest(t, context.Background(), tool, `{"type":"fact","content":"保险箱密码 5093。"}`)
 	if first["status"] != "saved" {
 		t.Fatalf("first save = %v", first)
@@ -259,7 +303,7 @@ func TestSaveMemoryToolMarksOrdinaryDuplicateSensitive(t *testing.T) {
 // a secret without tags creates a second copy of it.
 func TestSaveMemoryToolDeduplicatesSensitiveMemory(t *testing.T) {
 	store := NewLongTermMemoryStore(filepath.Join(t.TempDir(), "long_term"))
-	tool := NewSaveMemoryTool(store)
+	tool := newRequestedSaveMemoryTool(store)
 	input := `{"type":"fact","content":"门禁卡密码 2690。","sensitive":"credential","user_request":"帮我记一下"}`
 	first := saveMemoryForTest(t, userRunContext("门禁卡密码 2690，帮我记一下"), tool, input)
 	second := saveMemoryForTest(t, userRunContext("门禁卡密码 2690，帮我记一下"), tool, input)

@@ -701,7 +701,7 @@ func TestSaveMemoryReplacementRespectsAdmissionAndOrigin(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			result := saveMemoryForTest(t, ctx, NewSaveMemoryTool(store), string(encoded))
+			result := saveMemoryForTest(t, ctx, newRequestedSaveMemoryTool(store), string(encoded))
 			old, err := readMemoryMarkdown(store.memoryPath(oldID))
 			if err != nil {
 				t.Fatal(err)
